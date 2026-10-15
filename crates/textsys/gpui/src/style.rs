@@ -552,7 +552,7 @@ impl TextStyle {
 
     /// Returns the rounded line height in pixels.
     pub fn line_height_in_pixels(&self, rem_size: Pixels) -> Pixels {
-        self.line_height.to_pixels(self.font_size, rem_size).round()
+        self.line_height.to_pixels(self.font_size, rem_size)
     }
 
     /// Convert this text style into a [`TextRun`], for the given length of the text.

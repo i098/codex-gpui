@@ -70,8 +70,9 @@ struct State {
     /// `(face, size bits)` -> font at that CSS size.
     sized: HashMap<(usize, u32), CTFont>,
     shapers: HashMap<(usize, u32), shape::HbFont>,
-    /// CSS `letter-spacing` per face, from [`crate::letter_spacing`].
-    letter_spacing: HashMap<usize, f32>,
+    /// Per face: CSS `letter-spacing` (from [`crate::letter_spacing`]) and the other
+    /// `FontFeatures` as OpenType (tag, value) pairs for HarfBuzz.
+    shaping: HashMap<usize, (f32, Vec<(u32, u32)>)>,
 }
 
 enum Face {
@@ -332,14 +333,15 @@ impl PlatformTextSystem for SkiaMatchedTextSystem {
             let name = matched.postscript_name();
             state.face_id(Face::Fixed(matched), Some(name))
         };
-        if let Some(&(_, v)) = font
-            .features
-            .tag_value_list()
-            .iter()
-            .find(|(t, _)| t == crate::LETTER_SPACING_TAG)
-        {
-            state.letter_spacing.insert(id.0, v as i32 as f32 / 100.);
+        let mut shaping = (0., Vec::new());
+        for (tag, value) in font.features.tag_value_list() {
+            if tag == crate::LETTER_SPACING_TAG {
+                shaping.0 = *value as i32 as f32 / 100.;
+            } else if let Ok(tag) = <[u8; 4]>::try_from(tag.as_bytes()) {
+                shaping.1.push((u32::from_be_bytes(tag), *value));
+            }
         }
+        state.shaping.insert(id.0, shaping);
         state.by_font.insert(font.clone(), id);
         Ok(id)
     }
@@ -500,10 +502,6 @@ impl PlatformTextSystem for SkiaMatchedTextSystem {
             // ascent and descent there.
             let device = |v: CGFloat| (v * DEVICE_SCALE).round();
             let (a, d) = (device(font.ascent()), device(font.descent()));
-            // Blink floors the half leading to whole device px; GPUI centers exactly
-            // (`(line_height - ascent - descent) / 2`). One more device px of descent when
-            // ascent + descent is odd makes them agree for integer CSS line heights.
-            let d = d + (a + d) % 2.;
             ascent = ascent.max((a / DEVICE_SCALE) as f32);
             descent = descent.max((d / DEVICE_SCALE) as f32);
             // Alternate a 1-ulp size change so CoreText never forms ligatures across runs.
@@ -556,11 +554,14 @@ impl PlatformTextSystem for SkiaMatchedTextSystem {
             let is_emoji = name == "AppleColorEmoji" || name == ".AppleColorEmojiUI";
             let mut glyphs = Vec::new();
             if requested_id.is_some() {
-                let spacing = state.letter_spacing.get(&font_id.0).copied().unwrap_or(0.);
-                let (hb_glyphs, width) =
-                    state
-                        .hb(font_id, css)
-                        .shape(&text[start..end], DEVICE_SCALE as f32, spacing);
+                let (spacing, features) =
+                    state.shaping.get(&font_id.0).cloned().unwrap_or_default();
+                let (hb_glyphs, width) = state.hb(font_id, css).shape(
+                    &text[start..end],
+                    DEVICE_SCALE as f32,
+                    spacing,
+                    &features,
+                );
                 glyphs.extend(
                     hb_glyphs
                         .into_iter()

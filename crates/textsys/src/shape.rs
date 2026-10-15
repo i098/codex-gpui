@@ -68,7 +68,7 @@ impl HbFont {
             // does not. Shape without `trak` and add its advance per cluster instead.
             let space = |ptem| {
                 hb::hb_font_set_ptem(hb_font, ptem);
-                shape_raw(hb_font, 0, " ", false).1
+                shape_raw(hb_font, 0, " ", &[]).1
             };
             let tracking = space(css_size as f32) - space(0.);
             hb::hb_font_set_ptem(hb_font, 0.);
@@ -76,18 +76,32 @@ impl HbFont {
         }
     }
 
-    /// Glyphs and the total advance, CSS px. `letter_spacing` (CSS px) goes after every
-    /// cluster, and optional ligatures are off when it is set, as in Blink.
-    /// Glyphs are (id, x, y down, byte cluster), CSS px relative to the run start.
+    /// Glyphs and the total advance, CSS px. `features` are OpenType (tag, value) pairs.
+    /// `letter_spacing` (CSS px) goes after every cluster, and optional ligatures are off when
+    /// it is set, as in Blink. Glyphs are (id, x, y down, byte cluster), CSS px relative to the
+    /// run start.
     pub fn shape(
         &self,
         text: &str,
         device_scale: f32,
         letter_spacing: f32,
+        features: &[(u32, u32)],
     ) -> (Vec<(u32, f32, f32, usize)>, f32) {
         let to_css = |v: i32| v as f32 / 65536. / device_scale;
         let spacing = (letter_spacing * device_scale * 65536.) as i32;
-        let (glyphs, width) = shape_raw(self.0, self.1 + spacing, text, spacing != 0);
+        let no_ligatures =
+            [b"liga", b"clig", b"dlig", b"hlig", b"calt"].map(|tag| (u32::from_be_bytes(*tag), 0));
+        let features: Vec<hb::hb_feature_t> = features
+            .iter()
+            .chain(if spacing != 0 { &no_ligatures[..] } else { &[] })
+            .map(|&(tag, value)| hb::hb_feature_t {
+                tag,
+                value,
+                start: 0,
+                end: u32::MAX,
+            })
+            .collect();
+        let (glyphs, width) = shape_raw(self.0, self.1 + spacing, text, &features);
         let glyphs = glyphs
             .into_iter()
             .map(|(id, x, y, cluster)| (id, to_css(x), -to_css(y), cluster))
@@ -101,7 +115,7 @@ fn shape_raw(
     font: *mut hb::hb_font_t,
     tracking: i32,
     text: &str,
-    no_ligatures: bool,
+    features: &[hb::hb_feature_t],
 ) -> (Vec<(u32, i32, i32, usize)>, i32) {
     unsafe {
         let buffer = hb::hb_buffer_create();
@@ -113,13 +127,6 @@ fn shape_raw(
             text.len() as i32,
         );
         hb::hb_buffer_guess_segment_properties(buffer);
-        let features = [b"liga", b"clig", b"dlig", b"hlig", b"calt"].map(|tag| hb::hb_feature_t {
-            tag: u32::from_be_bytes(*tag),
-            value: 0,
-            start: 0,
-            end: u32::MAX,
-        });
-        let features: &[hb::hb_feature_t] = if no_ligatures { &features } else { &[] };
         hb::hb_shape(font, buffer, features.as_ptr(), features.len() as u32);
         let mut len = 0;
         let infos = hb::hb_buffer_get_glyph_infos(buffer, &mut len);

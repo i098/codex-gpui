@@ -6,8 +6,8 @@
 use anyhow::{Context as _, Result, bail};
 use gpui::{
     App, AppContext, Bounds, Font, FontFeatures, FontStyle, FontWeight, HeadlessAppContext,
-    IntoElement, PlatformTextSystem, Render, Rgba, SharedString, Styled, TextAlign, TextRun,
-    Window, canvas, fill, point, px, size,
+    IntoElement, ParentElement, PlatformTextSystem, Render, Rgba, SharedString, Styled, TextAlign,
+    TextRun, Window, canvas, div, fill, point, px, size,
 };
 use image::RgbaImage;
 use std::{cell::RefCell, fmt::Write as _, fs, path::Path, rc::Rc, sync::Arc};
@@ -25,6 +25,8 @@ struct Run {
     text: &'static str,
     /// CSS `letter-spacing`, px.
     spacing: f32,
+    /// CSS `font-feature-settings`.
+    features: &'static [(&'static str, u32)],
 }
 
 const SAMPLES: [&str; 4] = [
@@ -34,6 +36,19 @@ const SAMPLES: [&str; 4] = [
     "Settings General Appearance Keyboard shortcuts Ww Qq",
 ];
 const MONO_SAMPLE: &str = "fn main() { let x = 42; } // diff +12 -3 [ok]";
+
+/// A wrapped paragraph with a fractional line height (14px/22.75px, 8 lines at 300px).
+const PARAGRAPH: &str = "Codex read the failing test output, traced the panic to an off-by-one \
+    in the tokenizer, and patched the boundary check. It then reran the parser suite, updated \
+    two snapshots that depended on the old behavior, and summarized the change with links to \
+    every touched file so you can review it before merging.";
+const PARAGRAPH_WIDTH: f32 = 300.;
+const PARAGRAPH_HEIGHT: f32 = 8. * 22.75 + 16.;
+
+/// Top of the paragraph block (below the runs).
+fn paragraph_top(rows: &[(f32, f32, f32, f32)]) -> f32 {
+    rows.last().map_or(0., |r| r.0 + r.1)
+}
 
 fn rgb(r: u8, g: u8, b: u8, a: f32) -> Rgba {
     let c = |v: u8| f32::from(v) / 255.;
@@ -83,6 +98,7 @@ fn runs() -> Vec<Run> {
                 bg,
                 text,
                 spacing: 0.,
+                features: &[],
             });
         }
         let alpha = |a| rgb(fg.0, fg.1, fg.2, a);
@@ -114,6 +130,7 @@ fn runs() -> Vec<Run> {
                     bg,
                     text,
                     spacing: 0.,
+                    features: &[],
                 });
             }
         }
@@ -127,6 +144,7 @@ fn runs() -> Vec<Run> {
                 bg: bg2,
                 text,
                 spacing: 0.,
+                features: &[],
             });
         }
         let (ibg, ifg) = if dark {
@@ -143,6 +161,7 @@ fn runs() -> Vec<Run> {
             bg: ibg,
             text,
             spacing: 0.,
+            features: &[],
         });
         for (size, weight) in [(12., 430.), (12.88, 430.), (13., 400.)] {
             out.push(Run {
@@ -153,6 +172,7 @@ fn runs() -> Vec<Run> {
                 bg,
                 text: MONO_SAMPLE,
                 spacing: 0.,
+                features: &[],
             });
         }
     }
@@ -170,8 +190,25 @@ fn runs() -> Vec<Run> {
                 bg,
                 text: SAMPLES[0],
                 spacing,
+                features: &[],
             });
         }
+    }
+    // Diff stats: tabular, alternate digits.
+    for (fg, bg) in [
+        ((255, 255, 255), [24, 24, 24]),
+        ((26, 28, 31), [255, 255, 255]),
+    ] {
+        out.push(Run {
+            mono: false,
+            size: 16.,
+            weight: 430.,
+            color: rgb(fg.0, fg.1, fg.2, 1.),
+            bg,
+            text: "+1234 -567 0123456789 1,111",
+            spacing: 0.,
+            features: &[("tnum", 1), ("cv01", 1), ("cv02", 1)],
+        });
     }
     out
 }
@@ -208,7 +245,7 @@ fn css_color(c: Rgba) -> String {
 fn page(dir: &Path) -> Result<()> {
     let runs = runs();
     let rows = rows(&runs);
-    let height = rows.last().map_or(0., |r| r.0 + r.1).ceil();
+    let height = (paragraph_top(&rows) + PARAGRAPH_HEIGHT).ceil();
     let mut html = format!(
         "<!doctype html><html><head><meta charset=utf-8><style>\
          html{{-webkit-font-smoothing:antialiased}}\
@@ -221,7 +258,7 @@ fn page(dir: &Path) -> Result<()> {
         write!(
             html,
             "<div class=r style=\"top:{top}px;height:{h}px;background:rgb({r},{g},{b})\"></div>\
-             <span class=t style=\"left:{x}px;top:{y}px;font:{} {}px/{}px {};color:{};letter-spacing:{}px\">\
+             <span class=t style=\"left:{x}px;top:{y}px;font:{} {}px/{}px {};color:{};letter-spacing:{}px;font-feature-settings:{}\">\
              {}</span>",
             run.weight,
             run.size,
@@ -229,9 +266,26 @@ fn page(dir: &Path) -> Result<()> {
             if run.mono { MONO } else { SANS },
             css_color(run.color),
             run.spacing,
+            if run.features.is_empty() {
+                "normal".to_string()
+            } else {
+                run.features
+                    .iter()
+                    .map(|(t, v)| format!("'{t}' {v}"))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            },
             run.text
         )?;
     }
+    let top = paragraph_top(&rows);
+    write!(
+        html,
+        "<div class=r style=\"top:{top}px;height:{PARAGRAPH_HEIGHT}px;background:rgb(24,24,24)\"></div>\
+         <span class=t style=\"left:10px;top:{}px;width:{PARAGRAPH_WIDTH}px;white-space:normal;\
+         font:430 14px/22.75px {SANS};color:#fff\">{PARAGRAPH}</span>",
+        top + 8.
+    )?;
     html.push_str(
         "<pre id=m></pre><script>\
          const r=document.createRange();\
@@ -275,11 +329,15 @@ fn dom(dir: &Path) -> Result<Vec<Measured>> {
 fn gpui_font(run: &Run) -> Font {
     Font {
         family: SharedString::new_static(if run.mono { "Menlo" } else { ".SystemUIFont" }),
-        features: if run.spacing != 0. {
+        features: FontFeatures(Arc::new(
             textsys::letter_spacing(run.spacing)
-        } else {
-            FontFeatures::default()
-        },
+                .tag_value_list()
+                .iter()
+                .filter(|_| run.spacing != 0.)
+                .cloned()
+                .chain(run.features.iter().map(|&(t, v)| (t.to_string(), v)))
+                .collect(),
+        )),
         weight: FontWeight(run.weight),
         style: FontStyle::Normal,
         fallbacks: None,
@@ -298,10 +356,18 @@ impl Render for Lab {
     fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
         let measured = self.measured.clone();
         let measured_out = self.measured_out.clone();
-        canvas(
+        let paragraph = paragraph_top(&rows(&runs()));
+        let text = canvas(
             |_, _, _| {},
             move |_, _, window, cx| {
                 let runs = runs();
+                window.paint_quad(fill(
+                    Bounds::new(
+                        point(px(0.), px(paragraph)),
+                        size(px(W), px(PARAGRAPH_HEIGHT)),
+                    ),
+                    rgb(24, 24, 24, 1.),
+                ));
                 for ((run, row), m) in runs.iter().zip(rows(&runs)).zip(measured.iter()) {
                     let [r, g, b] = run.bg;
                     window.paint_quad(fill(
@@ -330,10 +396,10 @@ impl Render for Lab {
                     // Placed as a GPUI text element would be: line box top-left = CSS span box.
                     let lh = px(line_height(run));
                     let origin = point(px(row.2), px(row.3));
-                    let top = (lh - line.ascent - line.descent) / 2.;
+                    let top = (f32::from(lh - line.ascent - line.descent)).floor() / 2.;
                     let rect = [
                         m.rect[0],
-                        row.3 + f32::from(top),
+                        row.3 + top,
                         m.rect[2],
                         f32::from(line.ascent + line.descent),
                     ];
@@ -350,7 +416,21 @@ impl Render for Lab {
                 }
             },
         )
-        .size_full()
+        .absolute()
+        .size_full();
+        div().size_full().child(text).child(
+            div()
+                .absolute()
+                .left(px(10.))
+                .top(px(paragraph + 8.))
+                .w(px(PARAGRAPH_WIDTH))
+                .font_family(".SystemUIFont")
+                .font_weight(FontWeight(430.))
+                .text_size(px(14.))
+                .line_height(px(22.75))
+                .text_color(rgb(255, 255, 255, 1.))
+                .child(PARAGRAPH),
+        )
     }
 }
 
@@ -430,6 +510,20 @@ fn compare(dir: &Path) -> Result<()> {
             err
         )?;
     }
+    let rect = measured
+        .get(runs.len())
+        .context("paragraph not measured")?
+        .rect;
+    let (nb, total) = diff(&chrome, &before, rect, &mut scratch);
+    let (na, _) = diff(&chrome, &after, rect, &mut diff_img);
+    (tb, ta, tt) = (tb + nb, ta + na, tt + total);
+    let pct = |n: u32| 100. * n as f64 / total as f64;
+    writeln!(
+        table,
+        "| p | 430 14/22.75 wrapped | rgba(255, 255, 255, 1) | [24, 24, 24] | {:.2}% | {:.2}% | |",
+        pct(nb),
+        pct(na)
+    )?;
     let pct = |n: u32| 100. * n as f64 / tt as f64;
     writeln!(table, "| all | | | | {:.2}% | {:.2}% | |", pct(tb), pct(ta))?;
     diff_img.save(dir.join("diff.png"))?;

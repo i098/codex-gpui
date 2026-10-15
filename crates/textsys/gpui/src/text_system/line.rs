@@ -545,7 +545,10 @@ fn paint_line(
         wrap_boundaries,
     );
     window.paint_layer(line_bounds, |window| {
-        let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
+        // Blink floors the half leading to whole device px.
+        let scale = window.scale_factor();
+        let leading = f32::from(line_height - layout.ascent - layout.descent);
+        let padding_top = px((leading * scale / 2.).floor() / scale);
         let baseline_offset = point(px(0.), padding_top + layout.ascent);
         let underline_y_offset = underline_y_offset(line_height, layout.ascent, layout.descent);
         let mut decoration_runs = decoration_runs.iter();
