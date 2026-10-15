@@ -1267,6 +1267,7 @@ pub struct Window {
     pub(crate) next_tooltip_id: TooltipId,
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     pub(crate) next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
+    draw_count: u64,
     pub(crate) dirty_views: FxHashSet<EntityId>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     pub(crate) focus_lost_listeners: SubscriberSet<(), AnyObserver>,
@@ -2167,6 +2168,7 @@ impl Window {
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame_callbacks,
+            draw_count: 0,
             next_hitbox_id: HitboxId(0),
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
@@ -3444,6 +3446,7 @@ impl Window {
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
+        self.draw_count += 1;
         // Drain every draw in profiler builds so a previous frame's
         // first-invalidation timestamp can't be attributed to this one.
         #[cfg(feature = "profiler")]
@@ -4260,6 +4263,12 @@ impl Window {
         result
     }
 
+    /// How many times this window started a draw: state kept for one frame is stale once it
+    /// changes.
+    pub fn draw_count(&self) -> u64 {
+        self.draw_count
+    }
+
     /// The window origin of the innermost `Styled::layer` element being painted: where
     /// Chromium's tiles of that composited layer start (crates/shapes rasterizes per tile).
     pub fn composited_layer_origin(&self) -> Option<Point<Pixels>> {
@@ -4286,14 +4295,20 @@ impl Window {
     /// opacity into a lone non-text draw (cc `PlaybackFoldingIterator`), so svgs and masks take
     /// the opacity in their color and blend through the opaque (composited) layers only.
     /// ponytail: several non-text draws under one opacity are folded each, not layered.
-    fn sprite_color_and_layers(&self, color: Hsla, text: bool) -> (Hsla, u32) {
+    /// None under an opacity of 0: Chromium paints nothing there, and a sprite outside the
+    /// layers would reset the layer state of the pixels it covers (a hidden hover fill would
+    /// detach the text painted over it from its composited layer).
+    fn sprite_color_and_layers(&self, color: Hsla, text: bool) -> Option<(Hsla, u32)> {
+        if self.element_opacity <= 0. {
+            return None;
+        }
         let folded = color.opacity(self.element_opacity);
         let mut layers = self
             .element_layers
             .iter()
             .filter(|&&(_, _, all)| text || all);
-        match layers.next() {
-            Some(&(id, alpha, _)) if self.element_opacity > 0. => {
+        Some(match layers.next() {
+            Some(&(id, alpha, _)) => {
                 // ponytail: two layers; deeper ones multiply their alpha into the second.
                 let inner = layers.next().map_or(0, |&(id, alpha, _)| {
                     let alpha = layers.fold(u32::from(alpha), |a, &(_, b, _)| {
@@ -4305,7 +4320,7 @@ impl Window {
                 (color, u32::from(id) << 8 | u32::from(alpha) | inner << 16)
             }
             _ => (folded, 0),
-        }
+        })
     }
 
     /// Perform prepaint on child elements in a "retryable" manner, so that any side effects
@@ -4383,7 +4398,7 @@ impl Window {
     /// Obtain the current element opacity. This method should only be called during the
     /// prepaint phase of element drawing.
     #[inline]
-    pub(crate) fn element_opacity(&self) -> f32 {
+    pub fn element_opacity(&self) -> f32 {
         self.invalidator.debug_assert_paint_or_prepaint();
         self.element_opacity
     }
@@ -4963,7 +4978,9 @@ impl Window {
                     transformation: TransformationMatrix::unit(),
                 });
             } else {
-                let (color, layers) = self.sprite_color_and_layers(color, true);
+                let Some((color, layers)) = self.sprite_color_and_layers(color, true) else {
+                    return Ok(());
+                };
                 self.next_frame.scene.insert_primitive(MonochromeSprite {
                     order: 0,
                     layers,
@@ -5111,7 +5128,9 @@ impl Window {
             .map_origin(|value| ScaledPixels(round_half_up(value.0)))
             .map_size(|size| size.ceil());
 
-        let (color, layers) = self.sprite_color_and_layers(color, false);
+        let Some((color, layers)) = self.sprite_color_and_layers(color, false) else {
+            return Ok(());
+        };
         self.next_frame.scene.insert_primitive(MonochromeSprite {
             order: 0,
             layers,

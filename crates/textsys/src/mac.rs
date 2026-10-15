@@ -552,9 +552,10 @@ impl PlatformTextSystem for SkiaMatchedTextSystem {
             let utf8 = |i: isize| utf8_offsets[(i as usize).min(utf8_offsets.len() - 1)];
             let (start, end) = (utf8(range.location), utf8(range.location + range.length));
             let name = font.postscript_name();
-            let requested_id = requested
-                .iter()
-                .find(|(end, ..)| range.location < *end)
+            // The CSS run covering this one: letter-spacing and font features are the
+            // element's, so fallback fonts (emoji) take them too.
+            let covering = requested.iter().find(|(end, ..)| range.location < *end);
+            let requested_id = covering
                 .filter(|(_, _, requested_name)| *requested_name == name)
                 .map(|(_, id, _)| *id);
             let font_id =
@@ -564,8 +565,9 @@ impl PlatformTextSystem for SkiaMatchedTextSystem {
                 });
             let mut glyphs = Vec::new();
             if requested_id.is_some() || is_emoji {
-                let (spacing, features) =
-                    state.shaping.get(&font_id.0).cloned().unwrap_or_default();
+                let (spacing, features) = covering
+                    .and_then(|(_, id, _)| state.shaping.get(&id.0).cloned())
+                    .unwrap_or_default();
                 let (hb_glyphs, width) = state.hb(font_id, css).shape(
                     &text[start..end],
                     DEVICE_SCALE as f32,

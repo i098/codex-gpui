@@ -150,6 +150,7 @@ impl ShapedLine {
             align_width,
             &self.decoration_runs,
             &[],
+            &self.text,
             window,
             cx,
             &mut paint_underline,
@@ -174,6 +175,7 @@ impl ShapedLine {
             align_width,
             &self.decoration_runs,
             &[],
+            &self.text,
             window,
             cx,
         )?;
@@ -403,6 +405,7 @@ impl LineLayout {
             align_width,
             decoration_runs,
             &[],
+            "",
             window,
             cx,
             &mut |_, origin, width, style, window| window.paint_underline(origin, width, style),
@@ -432,6 +435,7 @@ impl LineLayout {
             align_width,
             decoration_runs,
             &[],
+            "",
             window,
             cx,
         )
@@ -479,6 +483,7 @@ impl WrappedLine {
             align_width,
             &self.decoration_runs,
             &self.wrap_boundaries,
+            &self.text,
             window,
             cx,
             &mut |_, origin, width, style, window| window.paint_underline(origin, width, style),
@@ -510,6 +515,7 @@ impl WrappedLine {
             align_width,
             &self.decoration_runs,
             &self.wrap_boundaries,
+            &self.text,
             window,
             cx,
         )?;
@@ -526,6 +532,7 @@ fn paint_line(
     align_width: Option<Pixels>,
     decoration_runs: &[DecorationRun],
     wrap_boundaries: &[WrapBoundary],
+    text: &str,
     window: &mut Window,
     cx: &mut App,
     paint_underline: &mut dyn FnMut(
@@ -543,6 +550,7 @@ fn paint_line(
         align,
         align_width,
         wrap_boundaries,
+        text,
     );
     window.paint_layer(line_bounds, |window| {
         // Blink floors the half leading to whole device px.
@@ -565,6 +573,7 @@ fn paint_line(
                 px(0.0),
                 &align,
                 layout,
+                text,
                 wraps.peek(),
             ),
             origin.y,
@@ -628,6 +637,7 @@ fn paint_line(
                         glyph.position.x,
                         &align,
                         layout,
+                        text,
                         wraps.peek(),
                     );
                     glyph_origin.y += line_height;
@@ -799,6 +809,7 @@ fn paint_line_background(
     align_width: Option<Pixels>,
     decoration_runs: &[DecorationRun],
     wrap_boundaries: &[WrapBoundary],
+    text: &str,
     window: &mut Window,
     cx: &mut App,
 ) -> Result<()> {
@@ -809,6 +820,7 @@ fn paint_line_background(
         align,
         align_width,
         wrap_boundaries,
+        text,
     );
     window.paint_layer(line_bounds, |window| {
         let mut decoration_runs = decoration_runs.iter();
@@ -823,6 +835,7 @@ fn paint_line_background(
                 px(0.0),
                 &align,
                 layout,
+                text,
                 wraps.peek(),
             ),
             origin.y,
@@ -863,6 +876,7 @@ fn paint_line_background(
                         glyph.position.x,
                         &align,
                         layout,
+                        text,
                         wraps.peek(),
                     );
                     glyph_origin.y += line_height;
@@ -948,6 +962,7 @@ fn line_paint_bounds(
     align: TextAlign,
     align_width: Option<Pixels>,
     wrap_boundaries: &[WrapBoundary],
+    text: &str,
 ) -> Bounds<Pixels> {
     let mut bounds = Bounds::new(
         origin,
@@ -961,16 +976,17 @@ fn line_paint_bounds(
     }
 
     let align_width = align_width.unwrap_or(layout.width);
-    let mut row_start = Pixels::ZERO;
     let row_ends = wrap_boundaries
         .iter()
-        .map(|boundary| {
-            layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix]
-                .position
-                .x
-        })
+        .map(|boundary| row_end(layout, text, Some(boundary)))
         .chain([layout.width]);
-    for (row, row_end) in row_ends.enumerate() {
+    let row_starts = wrap_boundaries.iter().map(|boundary| {
+        layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix]
+            .position
+            .x
+    });
+    let row_starts = [Pixels::ZERO].into_iter().chain(row_starts);
+    for (row, (row_start, row_end)) in row_starts.zip(row_ends).enumerate() {
         let width = row_end - row_start;
         let offset = match align {
             TextAlign::Left => Pixels::ZERO,
@@ -981,7 +997,6 @@ fn line_paint_bounds(
             point(origin.x + offset, origin.y + line_height * row as f32),
             size(width, line_height),
         ));
-        row_start = row_end;
     }
     bounds
 }
@@ -992,21 +1007,33 @@ fn aligned_origin_x(
     last_glyph_x: Pixels,
     align: &TextAlign,
     layout: &LineLayout,
+    text: &str,
     wrap_boundary: Option<&&WrapBoundary>,
 ) -> Pixels {
-    let end_of_line = if let Some(WrapBoundary { run_ix, glyph_ix }) = wrap_boundary {
-        layout.runs[*run_ix].glyphs[*glyph_ix].position.x
-    } else {
-        layout.width
-    };
-
-    let line_width = end_of_line - last_glyph_x;
+    let line_width = row_end(layout, text, wrap_boundary.copied()) - last_glyph_x;
 
     match align {
         TextAlign::Left => origin.x,
         TextAlign::Center => (origin.x * 2.0 + align_width - line_width) / 2.0,
         TextAlign::Right => origin.x + align_width - line_width,
     }
+}
+
+/// Where the row that ends at `boundary` (the last row: `None`) ends for alignment: Blink
+/// hangs the spaces before a soft wrap, so they are not centered or right-aligned.
+fn row_end(layout: &LineLayout, text: &str, boundary: Option<&WrapBoundary>) -> Pixels {
+    let Some(&WrapBoundary { run_ix, glyph_ix }) = boundary else {
+        return layout.width;
+    };
+    let end = layout.runs[run_ix].glyphs[glyph_ix].position.x;
+    layout.runs[..run_ix]
+        .iter()
+        .flat_map(|run| &run.glyphs)
+        .chain(&layout.runs[run_ix].glyphs[..glyph_ix])
+        .rev()
+        .take_while(|glyph| text.as_bytes().get(glyph.index) == Some(&b' '))
+        .last()
+        .map_or(end, |glyph| glyph.position.x)
 }
 
 #[cfg(test)]
@@ -1054,6 +1081,18 @@ mod tests {
     }
 
     #[test]
+    fn test_row_end_hangs_trailing_spaces() {
+        let glyphs = [(0, 0.), (1, 10.), (2, 20.), (3, 25.), (4, 30.), (5, 40.)];
+        let line = make_shaped_line("ab  cd", &glyphs, 50., &[]);
+        let wrap = WrapBoundary {
+            run_ix: 0,
+            glyph_ix: 4,
+        };
+        assert_eq!(row_end(&line.layout, &line.text, Some(&wrap)), px(20.));
+        assert_eq!(row_end(&line.layout, &line.text, None), px(50.));
+    }
+
+    #[test]
     fn test_aligned_line_paint_bounds() {
         let line = make_shaped_line("abcd", &[(0, 0.), (1, 10.), (2, 20.), (3, 30.)], 40., &[]);
         let origin = point(px(10.), px(20.));
@@ -1090,6 +1129,7 @@ mod tests {
                         align,
                         align_width.map(px),
                         &boundaries,
+                        "abcd",
                     ),
                     Bounds::new(
                         point(px(left), origin.y),
@@ -1108,7 +1148,8 @@ mod tests {
                     line_height,
                     align,
                     Some(px(100.)),
-                    &[]
+                    &[],
+                    "",
                 ),
                 Bounds::new(origin, size(Pixels::ZERO, line_height)),
             );
@@ -1399,6 +1440,7 @@ mod tests {
                     Some(px(16.)),
                     &wrapped.decoration_runs,
                     &wrapped.wrap_boundaries,
+                    &wrapped.text,
                     window,
                     cx,
                     &mut |range, origin, width, style, window| {
