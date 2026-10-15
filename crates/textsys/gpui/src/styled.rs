@@ -767,6 +767,14 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Starts this element and its content at its origin rounded to device pixels, dropping
+    /// the subpixel fraction its content would inherit: Blink's paint offset at a CSS
+    /// `contain: paint` box, or a transform rounded by Floating UI's `roundByDPR`.
+    fn snap_origin(mut self) -> Self {
+        self.style().snap_origin = Some(true);
+        self
+    }
+
     /// Sets the grid columns of this element.
     fn grid_cols(mut self, cols: u16) -> Self {
         self.style().grid_cols = Some(GridTemplate {

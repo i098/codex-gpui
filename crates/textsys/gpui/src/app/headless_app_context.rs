@@ -170,6 +170,19 @@ impl HeadlessAppContext {
         app.update_window(window, |_, window, _| window.render_to_image())?
     }
 
+    /// Simulates the user resizing the window to `size` (runs its resize callbacks).
+    pub fn simulate_window_resize(&mut self, window: AnyWindowHandle, size: Size<Pixels>) {
+        let mut test_window = self
+            .app
+            .borrow_mut()
+            .windows
+            .get_mut(window.id)
+            .and_then(|w| w.as_deref_mut())
+            .and_then(|w| w.platform_window.as_test().cloned())
+            .expect("open test window");
+        test_window.simulate_resize(size);
+    }
+
     /// Returns the text system.
     pub fn text_system(&self) -> &Arc<TextSystem> {
         &self.text_system

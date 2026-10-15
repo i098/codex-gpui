@@ -57,6 +57,8 @@ pub struct Theme {
     pub text_alpha_5: Hsla,
     /// `color-mix(in oklab, var(--color-text) 10%, transparent)` `hover:bg-text/10`.
     pub text_alpha_10: Hsla,
+    /// `color-mix(in oklab, var(--color-text) 60%, transparent)` thread activity rows.
+    pub text_alpha_60: Hsla,
     /// `var(--color-background-panel)` Settings group card.
     pub background_panel: Hsla,
     /// `var(--color-background-composer-primary)` Composer send / voice button.
@@ -199,6 +201,7 @@ impl Theme {
             primary_soft_alpha: rgba(0xffffff08).into(),
             text_alpha_5: white_mix(0.05),
             text_alpha_10: white_mix(0.1),
+            text_alpha_60: white_mix(0.6),
             background_panel: rgba(0x232323ff).into(),
             composer_primary: rgba(0xffffffff).into(),
             user_message_background: rgba(0x323232d9).into(),
@@ -276,6 +279,7 @@ impl Theme {
             primary_soft_alpha: rgba(0xfffffff5).into(),
             text_alpha_5: rgba(0x1a1c1f0d).into(),
             text_alpha_10: rgba(0x1a1c1f1a).into(),
+            text_alpha_60: rgba(0x1a1c1f99).into(),
             background_panel: rgba(0xffffffff).into(),
             composer_primary: rgba(0x000000ff).into(),
             user_message_background: rgba(0x000000ff).into(),
