@@ -103,7 +103,7 @@ impl ThreadView {
     }
 
     /// `Toggle summary` panel: project changes and background processes.
-    fn summary(&self, t: &Theme) -> Div {
+    fn summary(&self, window: &Window, t: &Theme) -> Div {
         let project = self.cwd.rsplit('/').next().unwrap_or(&self.cwd).to_owned();
         let header = |label: String| {
             div()
@@ -122,7 +122,12 @@ impl ThreadView {
                     t.text_secondary,
                 )))
         };
-        let row = |name: &'static str, label: String| {
+        // `trailing`: the row's hover-only actions keep their space; a label that overflows its
+        // viewport gets the marquee's right fade (`_overflowingViewport`, 1.14286em).
+        let row = |name: &'static str, label: String, trailing: f32| {
+            let clip = 260. - 30. - trailing;
+            let overflows = f32::from(width(window, &label, 13., 430., None)) > clip;
+            let bg = t.surface_elevated_secondary;
             div().h(px(28.)).px(px(20.)).py(px(4.)).child(
                 div()
                     .h(px(20.))
@@ -132,10 +137,25 @@ impl ThreadView {
                     .child(div().mr(px(8.)).child(icon(name, 18., t.text)))
                     .child(
                         div()
-                            .flex_1()
-                            .min_w_0()
+                            .relative()
+                            .w(px(clip))
                             .overflow_hidden()
-                            .child(text(label, 13., 18.5714, 430., t.text)),
+                            .child(text(label, 13., 18.5714, 430., t.text))
+                            .when(overflows, |d| {
+                                d.child(
+                                    div()
+                                        .absolute()
+                                        .top_0()
+                                        .right_0()
+                                        .h_full()
+                                        .w(px(13. * 1.14286))
+                                        .bg(gpui::linear_gradient(
+                                            90.,
+                                            gpui::linear_color_stop(bg.opacity(0.), 0.),
+                                            gpui::linear_color_stop(bg, 1.),
+                                        )),
+                                )
+                            }),
                     ),
             )
         };
@@ -161,7 +181,7 @@ impl ThreadView {
                     ),
                 )
                 .when(has_changes, |d| {
-                    d.child(row("thread-summary-changes", "Changes".into()))
+                    d.child(row("thread-summary-changes", "Changes".into(), 32.))
                 }),
         ];
         if !terminals.is_empty() {
@@ -174,7 +194,7 @@ impl ThreadView {
                     .children(
                         terminals
                             .into_iter()
-                            .map(|(command, _)| row("thread-summary-terminal", command)),
+                            .map(|(command, _)| row("thread-summary-terminal", command, 22.)),
                     ),
             );
         }
@@ -185,8 +205,11 @@ impl ThreadView {
             .top(px(8.))
             .right(px(8.))
             .w(px(300.))
+            // A fixed popover: its own composited layer.
+            .layer()
             .child(shapes::decoration(shapes::Decoration {
                 radius: Corners::all(Theme::RADIUS_2XL),
+                corner: shapes::Corner::Squircle,
                 fill: Some(t.surface_elevated_secondary),
                 // `--elevation-prominent`
                 shadows: vec![
@@ -565,23 +588,34 @@ impl Render for ThreadView {
                     .child(div().h(px(114.))),
             )
             .child(top_fade.absolute().top_0().left_0())
-            .when(self.summary_open, |d| d.child(self.summary(&t)))
+            // A portal in the original: its shadow spills over the titlebar and the sidebar.
+            .when(self.summary_open, |d| {
+                d.child(gpui::deferred(self.summary(window, &t)))
+            })
+            // The `z-20` composer band is its own cc layer; its rect (and tile grid) starts at
+            // the composer shadow's ink, 84 px above the band (80 px blur + 8 spread - 4 y).
             .child(
                 div()
                     .absolute()
                     .left_0()
                     .right_0()
                     .bottom_0()
-                    .pb(px(16.))
-                    .bg(t.surface)
-                    .child(bottom_fade.absolute().top(px(-32.)).left_0())
+                    .pt(px(84.))
+                    .layer()
                     .child(
                         div()
-                            .mx_auto()
-                            .w_full()
-                            .max_w(CONTENT_MAX_WIDTH)
-                            .px(px(16.))
-                            .child(self.composer.clone()),
+                            .relative()
+                            .pb(px(16.))
+                            .bg(t.surface)
+                            .child(bottom_fade.absolute().top(px(-32.)).left_0())
+                            .child(
+                                div()
+                                    .mx_auto()
+                                    .w_full()
+                                    .max_w(CONTENT_MAX_WIDTH)
+                                    .px(px(16.))
+                                    .child(self.composer.clone()),
+                            ),
                     ),
             )
     }
@@ -673,15 +707,20 @@ fn measured(
     })
 }
 
-/// Right-aligned user message: `bg-user-message`, 22 px radius, at most 70% wide.
+/// Right-aligned user message: `bg-user-message`, 22 px squircle, at most 70% wide.
 fn user_bubble(message: &str, t: &Theme) -> Div {
     div().flex().flex_col().items_end().pb(px(30.)).child(
         div()
+            .relative()
             .max_w(relative(0.7))
             .py(px(10.))
             .px(px(16.))
-            .rounded(px(22.))
-            .bg(over(t.user_message_background, t.surface))
+            .child(shapes::decoration(shapes::Decoration {
+                radius: Corners::all(px(22.)),
+                corner: shapes::Corner::Squircle,
+                fill: Some(over(t.user_message_background, t.surface)),
+                ..Default::default()
+            }))
             .child(
                 div()
                     .text_size(px(14.))
@@ -700,21 +739,10 @@ fn wrap_row() -> Div {
     div().flex().flex_wrap().mr(px(-4.))
 }
 
-/// 14 px words of `s`, each with its trailing space, in `line` px line boxes. A box taller than
-/// 21 px puts Blink's glyphs 1 px lower (22.75 and 23.75 px chat lines).
-fn words(s: &str, line: f32, weight: f32, color: Hsla, window: &Window) -> Vec<Div> {
+/// 14 px words of `s`, each with its trailing space, in 22.75 px line boxes.
+fn words(s: &str, weight: f32, color: Hsla, window: &Window) -> Vec<Div> {
     s.split_inclusive(' ')
-        .map(|word| {
-            div().h(px(line)).pt(px(1.)).child(measured(
-                window,
-                word.to_owned(),
-                14.,
-                21.,
-                weight,
-                color,
-                None,
-            ))
-        })
+        .map(|word| measured(window, word.to_owned(), 14., 22.75, weight, color, None))
         .collect()
 }
 
@@ -844,20 +872,14 @@ fn markdown(source: &str, window: &Window, t: &Theme) -> Div {
         .map(|p| {
             let p = p.replace('\n', " ");
             let parts = inlines(&p);
-            // Inline code (12.88 px mono in a 22.75 px line) makes its line box 1 px taller:
-            // 23.75 px, whose following box edge Blink snaps 1 device px up from where a
-            // 23.75 px GPUI box (snapped to 24) puts it.
-            let line = if parts.iter().any(|i| matches!(i, Inline::Code(_))) {
-                23.5
-            } else {
-                22.75
-            };
+            // Each flex line is as tall as Blink's line box: 22.75 px, or 23.75 px with inline
+            // code (the 12.88 px mono font's descent). Items stretch to it.
             let mut row = wrap_row();
             for part in parts {
                 row = match part {
-                    Inline::Text(s) => row.children(words(s, line, 430., t.text, window)),
+                    Inline::Text(s) => row.children(words(s, 430., t.text, window)),
                     Inline::Code(code) => row.child(
-                        div().h(px(line)).pt(px(3.5)).child(
+                        div().pt(px(3.5)).pb(px(3.25)).child(
                             div()
                                 .h(px(17.))
                                 .py(px(1.))
@@ -877,26 +899,29 @@ fn markdown(source: &str, window: &Window, t: &Theme) -> Div {
                     ),
                     Inline::Link { label, target } => row.child(
                         div()
-                            .h(px(line))
+                            .relative()
                             .flex()
                             // ponytail: only the Python language icon is bundled; other files show
                             // the bare label until their icons are added.
                             .when(target.ends_with(".py"), |d| {
-                                d.child(div().w(px(19.)).pt(px(4.38)).child(icon(
-                                    "thread-lang-python",
-                                    16.,
-                                    tones.mention,
-                                )))
+                                // The icon box is bottom-aligned in the line box.
+                                d.child(div().w(px(19.))).child(
+                                    div().absolute().left_0().bottom(px(3.37)).child(icon(
+                                        "thread-lang-python",
+                                        16.,
+                                        tones.mention,
+                                    )),
+                                )
                             })
-                            .child(div().pt(px(1.)).child(measured(
+                            .child(measured(
                                 window,
                                 label.to_owned(),
                                 14.,
-                                21.,
+                                22.75,
                                 500.,
                                 tones.mention,
                                 None,
-                            ))),
+                            )),
                     ),
                 };
             }
@@ -933,49 +958,30 @@ fn diff_card(items: &[ThreadItem], window: &Window, t: &Theme) -> Option<Div> {
     };
     let tones = tones(t);
     let card_bg = tones.card;
-    // `tabular-nums tracking-tight`: -0.325 px per character.
-    let stat = |s: String, color: Hsla| {
-        let w = width(window, &s, 13., 430., None) - px(0.325 * s.chars().count() as f32);
-        div().flex_none().w(w).child(text(s, 13., 13., 430., color))
-    };
-    let button_bg = over(tones.secondary_button, card_bg);
-    let button = |label: &'static str| {
+    // A 1 px border box (`px-2 border`): the padding stands in for the border, which the
+    // decoration paints under the label.
+    let button = |label: &'static str, decoration: Option<gpui::AnyElement>| {
         div()
+            .relative()
             .h(px(28.))
             .flex()
             .items_center()
             .gap(px(4.))
-            .px(px(8.))
-            .border_1()
-            .rounded(Theme::RADIUS_LG)
+            .px(px(9.))
+            .children(decoration)
             .child(measured(window, label, 13., 18., 430., t.text, None))
     };
     Some(
         div()
             .relative()
-            .rounded(Theme::RADIUS_LG)
-            .bg(card_bg)
-            // `box-shadow: 0 0 0 0.5px` ring outside the card.
-            .child(
-                div()
-                    .absolute()
-                    .top(px(-0.5))
-                    .left(px(-0.5))
-                    .right(px(-0.5))
-                    .bottom(px(-0.5))
-                    .rounded(Theme::RADIUS_LG + px(0.5))
-                    .map(|mut d| {
-                        let hairline = Some(px(0.5).into());
-                        d.style().border_widths = gpui::EdgesRefinement {
-                            top: hairline,
-                            right: hairline,
-                            bottom: hairline,
-                            left: hairline,
-                        };
-                        // The ring lies outside the card, over the page surface.
-                        d.border_color(over(t.border_strong, t.surface))
-                    }),
-            )
+            .child(shapes::decoration(shapes::Decoration {
+                radius: Corners::all(Theme::RADIUS_LG),
+                corner: shapes::Corner::Squircle,
+                fill: Some(card_bg),
+                // `box-shadow: 0 0 0 0.5px` ring.
+                shadows: vec![shadow(t.border_strong, 0., 0., 0.5, false)],
+                ..Default::default()
+            }))
             .child(
                 div()
                     .flex()
@@ -984,20 +990,26 @@ fn diff_card(items: &[ThreadItem], window: &Window, t: &Theme) -> Option<Div> {
                     .p(px(12.))
                     .child(
                         div()
+                            .relative()
                             .size(px(40.))
                             .flex_none()
                             .flex()
                             .items_center()
                             .justify_center()
-                            .rounded(Theme::RADIUS_LG)
-                            .bg(over(
-                                Hsla {
-                                    a: 0.92,
-                                    ..t.surface_secondary
-                                },
-                                // The refs show the icon well over the page surface, not the card.
-                                t.surface,
-                            ))
+                            .child(shapes::decoration(shapes::Decoration {
+                                radius: Corners::all(Theme::RADIUS_LG),
+                                corner: shapes::Corner::Squircle,
+                                // The refs show the icon well over the page surface, not the
+                                // card.
+                                fill: Some(over(
+                                    Hsla {
+                                        a: 0.92,
+                                        ..t.surface_secondary
+                                    },
+                                    t.surface,
+                                )),
+                                ..Default::default()
+                            }))
                             .child(icon("thread-file-diff", 24., t.text_secondary)),
                     )
                     .child(
@@ -1007,16 +1019,9 @@ fn diff_card(items: &[ThreadItem], window: &Window, t: &Theme) -> Option<Div> {
                             .flex()
                             .flex_col()
                             .child(text(title, 14., 21., 500., t.text).text_ellipsis())
-                            .child(
-                                div().h(px(19.5)).pt(px(3.)).child(
-                                    div()
-                                        .h(px(13.))
-                                        .flex()
-                                        .gap(px(4.))
-                                        .child(stat(format!("+{}", lines('+')), t.git_added))
-                                        .child(stat(format!("-{}", lines('-')), t.git_deleted)),
-                                ),
-                            ),
+                            .child(div().h(px(19.5)).pt(px(3.)).child(
+                                crate::screens::diff::panel::stats(lines('+'), lines('-'), 13., t),
+                            )),
                     )
                     .child(
                         div()
@@ -1024,16 +1029,26 @@ fn diff_card(items: &[ThreadItem], window: &Window, t: &Theme) -> Option<Div> {
                             .flex_none()
                             .items_center()
                             .gap(px(8.))
-                            .child(
-                                button("Undo")
-                                    .border_color(gpui::transparent_black())
-                                    .child(icon("thread-undo", 14., t.text)),
-                            )
-                            .child(
-                                button("View changes")
-                                    .bg(button_bg)
-                                    .border_color(over(t.border, button_bg)),
-                            ),
+                            .child(button("Undo", None).child(icon("thread-undo", 14., t.text)))
+                            // Blink's background bleed avoidance paints the fill and the
+                            // translucent border into one transparency layer.
+                            .child(button(
+                                "View changes",
+                                Some(
+                                    div()
+                                        .absolute()
+                                        .inset_0()
+                                        .layer()
+                                        .child(shapes::decoration(shapes::Decoration {
+                                            radius: Corners::all(Theme::RADIUS_LG),
+                                            corner: shapes::Corner::Squircle,
+                                            fill: Some(tones.secondary_button),
+                                            border: Some((px(1.), t.border)),
+                                            ..Default::default()
+                                        }))
+                                        .into_any_element(),
+                                ),
+                            )),
                     ),
             ),
     )

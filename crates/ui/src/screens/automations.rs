@@ -7,11 +7,15 @@ use crate::{Shell, icon, icon_button, text};
 use gpui::{
     Action, AnyView, App, AppContext as _, Bounds, Context, Hsla, InteractiveElement, IntoElement,
     ParentElement, PathBuilder, Pixels, Render, SharedString, StatefulInteractiveElement, Styled,
-    Window, actions, canvas, div, fill, img, point, px, size,
+    Window, actions, canvas, div, img, point, px,
 };
 use serde::Deserialize;
 use serde_json::Value;
-use std::{f32::consts::FRAC_PI_2, fs, path::Path};
+use std::{
+    f32::consts::{FRAC_1_SQRT_2, FRAC_PI_2},
+    fs,
+    path::Path,
+};
 use theme::{ActiveTheme as _, Theme};
 
 actions!(
@@ -145,19 +149,23 @@ pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
 /// border's centerline, starting at the end of the top-left corner and running clockwise;
 /// dash and base gap are 3x / 2x the device border width (2x / 1x from 3 device px), and the
 /// gap is stretched so whole periods fit the truncated device path length
-/// (`SelectBestDashGap`). Straight dashes are quads, corner dashes stroked arcs.
-/// GPUI's own `border_dashed` uses a fixed 2:1 pattern.
+/// (`SelectBestDashGap`). The dashes are one stroked svg path rasterized by Chromium's Skia
+/// (`shapes::paint_icon`), a GPUI path where that is not available. GPUI's own
+/// `border_dashed` uses a fixed 2:1 pattern.
 fn dashed_border(width: Pixels, radius: Pixels, color: Hsla) -> impl IntoElement {
-    canvas(
+    let dashes = canvas(
         |_, _, _| {},
-        move |b: Bounds<Pixels>, _, window, _| {
+        move |b: Bounds<Pixels>, _, window, cx| {
             let (bw, r) = (f32::from(width), f32::from(radius));
             let scale = window.scale_factor();
             let rc = r - bw / 2.;
-            let (x, y) = (f32::from(b.origin.x), f32::from(b.origin.y));
             let (w, h) = (f32::from(b.size.width), f32::from(b.size.height));
-            let (l, t, rt, bt) = (x + bw / 2., y + bw / 2., x + w - bw / 2., y + h - bw / 2.);
-            let (sw, sh, arc) = (rt - l - 2. * rc, bt - t - 2. * rc, FRAC_PI_2 * rc);
+            // Centerline box, local CSS px.
+            let (l, t, rt, bt) = (bw / 2., bw / 2., w - bw / 2., h - bw / 2.);
+            // The corners' length as Skia measures the conics (chords), not the true arc.
+            let chords = quarter_chords(rc * scale);
+            let arc = chords.last().map_or(0., |c| c.1) / scale;
+            let (sw, sh) = (rt - l - 2. * rc, bt - t - 2. * rc);
             let thick = bw * scale;
             let (dash_ratio, gap_ratio) = if thick >= 3. { (2., 1.) } else { (3., 2.) };
             let (dash, gap) = (thick * dash_ratio, thick * gap_ratio);
@@ -181,6 +189,8 @@ fn dashed_border(width: Pixels, radius: Pixels, color: Hsla) -> impl IntoElement
                 (2. * sw + 3. * arc + sh, sh, 6),
                 (2. * sw + 3. * arc + 2. * sh, arc, 7),
             ];
+            // Each dash piece on the centerline: (is a quarter-circle arc, start, end).
+            let mut pieces = Vec::new();
             let mut start = 0.;
             while start < len / scale {
                 let end = start + dash;
@@ -189,17 +199,11 @@ fn dashed_border(width: Pixels, radius: Pixels, color: Hsla) -> impl IntoElement
                     if s0 >= s1 {
                         continue;
                     }
-                    let quad = |x0: f32, y0: f32, x1: f32, y1: f32| {
-                        fill(
-                            Bounds::new(point(px(x0), px(y0)), size(px(x1 - x0), px(y1 - y0))),
-                            color,
-                        )
-                    };
-                    match kind {
-                        0 => window.paint_quad(quad(l + rc + s0, y, l + rc + s1, y + bw)),
-                        2 => window.paint_quad(quad(x + w - bw, t + rc + s0, x + w, t + rc + s1)),
-                        4 => window.paint_quad(quad(rt - rc - s1, y + h - bw, rt - rc - s0, y + h)),
-                        6 => window.paint_quad(quad(x, bt - rc - s1, x + bw, bt - rc - s0)),
+                    pieces.push(match kind {
+                        0 => (false, (l + rc + s0, t), (l + rc + s1, t)),
+                        2 => (false, (rt, t + rc + s0), (rt, t + rc + s1)),
+                        4 => (false, (rt - rc - s0, bt), (rt - rc - s1, bt)),
+                        6 => (false, (l, bt - rc - s0), (l, bt - rc - s1)),
                         _ => {
                             let (cx, cy, a0) = match kind {
                                 1 => (rt - rc, t + rc, -FRAC_PI_2),
@@ -208,26 +212,90 @@ fn dashed_border(width: Pixels, radius: Pixels, color: Hsla) -> impl IntoElement
                                 _ => (l + rc, t + rc, 2. * FRAC_PI_2),
                             };
                             let at = |s: f32| {
-                                let a = a0 + s / rc;
-                                point(px(cx + rc * a.cos()), px(cy + rc * a.sin()))
+                                let a = a0 + quarter_angle(&chords, s * scale);
+                                (cx + rc * a.cos(), cy + rc * a.sin())
                             };
-                            let mut path = PathBuilder::stroke(width);
-                            path.move_to(at(s0));
-                            path.arc_to(point(px(rc), px(rc)), px(0.), false, true, at(s1));
-                            if let Ok(path) = path.build() {
-                                window.paint_path(path, color);
-                            }
+                            (true, at(s0), at(s1))
                         }
-                    }
+                    });
                 }
                 start += period;
             }
+            let d: String = pieces
+                .iter()
+                .map(|&(arc, (x0, y0), (x1, y1))| match arc {
+                    true => format!("M{x0} {y0}A{rc} {rc} 0 0 1 {x1} {y1}"),
+                    false => format!("M{x0} {y0}L{x1} {y1}"),
+                })
+                .collect();
+            let svg = format!(
+                r#"<svg viewBox="0 0 {w} {h}" fill="none"><path d="{d}" stroke="black" stroke-width="{bw}"/></svg>"#
+            );
+            let key = format!("dashed-border-{w}x{h}-{bw}-{r}");
+            if shapes::paint_icon(svg.as_bytes(), &key, b, false, color, None, window, cx) {
+                return;
+            }
+            let at = |(x, y): (f32, f32)| b.origin + point(px(x), px(y));
+            let mut path = PathBuilder::stroke(width);
+            for &(arc, p0, p1) in &pieces {
+                path.move_to(at(p0));
+                match arc {
+                    true => path.arc_to(point(px(rc), px(rc)), px(0.), false, true, at(p1)),
+                    false => path.line_to(at(p1)),
+                }
+            }
+            if let Ok(path) = path.build() {
+                window.paint_path(path, color);
+            }
         },
     )
-    .absolute()
-    .top_0()
-    .left_0()
-    .size_full()
+    .size_full();
+    // Blink paints the translucent sides as an opacity group: a layer composited onto the card.
+    div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .layer()
+        .child(dashes)
+}
+
+/// A rounded corner's conic (`SkPath::addRRect`, radius `r` device px) as `SkContourMeasure`
+/// splits it: halved in t while the curve's midpoint is more than 0.5 px (larger axis) from
+/// the chord's. Returns `(t, length so far)` at each chord end.
+fn quarter_chords(r: f32) -> Vec<(f32, f32)> {
+    fn split(r: f32, t0: f32, t1: f32, out: &mut Vec<(f32, f32)>) {
+        let (p0, pm, p1) = (conic(r, t0), conic(r, (t0 + t1) / 2.), conic(r, t1));
+        let (dx, dy) = (pm.0 - (p0.0 + p1.0) / 2., pm.1 - (p0.1 + p1.1) / 2.);
+        if dx.abs().max(dy.abs()) > 0.5 {
+            split(r, t0, (t0 + t1) / 2., out);
+            split(r, (t0 + t1) / 2., t1, out);
+        } else {
+            let len = out.last().map_or(0., |c| c.1) + (p1.0 - p0.0).hypot(p1.1 - p0.1);
+            out.push((t1, len));
+        }
+    }
+    let mut out = vec![(0., 0.)];
+    split(r, 0., 1., &mut out);
+    out
+}
+
+/// Point `t` of the quarter circle conic (r, 0) → (0, r), weight √½.
+fn conic(r: f32, t: f32) -> (f32, f32) {
+    let (u, k) = (1. - t, 2. * FRAC_1_SQRT_2 * t * (1. - t));
+    let d = u * u + k + t * t;
+    ((u * u + k) * r / d, (k + t * t) * r / d)
+}
+
+/// The angle into the corner at measured length `s` (device px): Skia's dash maps length to t
+/// linearly within each chord.
+fn quarter_angle(chords: &[(f32, f32)], s: f32) -> f32 {
+    let i = chords
+        .partition_point(|c| c.1 < s)
+        .clamp(1, chords.len() - 1);
+    let ((t0, c0), (t1, c1)) = (chords[i - 1], chords[i]);
+    let (x, y) = conic(1., t0 + (t1 - t0) * ((s - c0) / (c1 - c0)).clamp(0., 1.));
+    y.atan2(x)
 }
 
 /// `ScheduledSidebar`: header `Scheduled` + search, `New task`, section `Upcoming`.
@@ -329,16 +397,29 @@ impl AutomationsPage {
     fn card(&self, i: usize, s: &Suggestion, cx: &App) -> impl IntoElement {
         let t: &Theme = cx.theme();
         let hover_bg = t.ghost_hover;
-        // `icon_url` is shown from its bundled copy under assets/ui/automations. The copies
-        // declare 40x40 (the 20 px slot at 2x): GPUI rasterizes SVG images at their intrinsic
-        // size.
+        // `icon_url` is shown from its bundled copy under assets/ui/automations, its paths
+        // rasterized by Chromium's Skia like Blink draws an svg `<img>`. Elsewhere GPUI's own
+        // image raster (the copies declare 40x40, the 20 px slot at 2x: GPUI rasterizes svg
+        // images at their intrinsic size).
         let glyph = match &s.icon_url {
-            Some(url) => img(format!(
-                "ui/automations/{}",
-                url.rsplit('/').next().unwrap_or(url)
-            ))
-            .size(px(20.))
-            .into_any_element(),
+            Some(url) => {
+                let path = format!("ui/automations/{}", url.rsplit('/').next().unwrap_or(url));
+                if cfg!(target_os = "macos") {
+                    canvas(
+                        |_, _, _| {},
+                        move |b, (), window, cx| {
+                            if let Ok(Some(src)) = cx.asset_source().load(&path) {
+                                let white = gpui::white();
+                                shapes::paint_icon(&src, &path, b, false, white, None, window, cx);
+                            }
+                        },
+                    )
+                    .size(px(20.))
+                    .into_any_element()
+                } else {
+                    img(path).size(px(20.)).into_any_element()
+                }
+            }
             None => text(s.emoji.clone(), 28., 28., 430., t.text).into_any_element(),
         };
         let prompt = s.user_message.clone();

@@ -5,15 +5,11 @@
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, Bounds, ClickEvent, Context, Corners, Div,
     FontWeight, Hsla, Image, ImageFormat, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, Pixels, Render, RenderImage, Rgba, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, Svg, Visibility, Window, actions, canvas, div, img, point,
-    prelude::FluentBuilder as _, px, svg,
+    ParentElement, Pixels, Point, Render, Rgba, SharedString, Stateful, StatefulInteractiveElement,
+    Styled, Svg, Window, actions, canvas, div, img, point, prelude::FluentBuilder as _, px, svg,
 };
-use std::{
-    collections::HashMap,
-    sync::{Arc, LazyLock, Mutex},
-};
-use theme::{ActiveTheme as _, Appearance, Theme};
+use std::sync::{Arc, LazyLock};
+use theme::{ActiveTheme as _, Theme};
 
 pub mod composer;
 pub mod fixture;
@@ -183,6 +179,22 @@ pub fn dispatch<A: Action + Default>(_: &ClickEvent, window: &mut Window, cx: &m
     window.dispatch_action(Box::new(A::default()), cx);
 }
 
+/// [`shapes::decoration`] for a box Chromium paints into the composited layer whose origin
+/// (window px) `at` gives at paint.
+pub(crate) fn in_layer(
+    d: shapes::Decoration,
+    at: impl Fn() -> Point<Pixels> + 'static,
+) -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        move |b, (), window, cx| shapes::paint(&d, Some(at()), b, window, cx),
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+}
+
 /// 28 px secondary ghost `_Button`: tertiary icon; on hover a `ghost_hover` fill and white icon.
 /// `glyph` is a [`icon::icon`] (Chromium-exact) or a plain [`icon`] svg.
 pub fn icon_button(
@@ -339,25 +351,24 @@ pub fn home_sidebar_header(cx: &App) -> Div {
                         .items_center()
                         .gap(px(6.))
                         .rounded(RADIUS_BUTTON_XL)
-                        .child(
-                            svg()
-                                .path("icons/codex-wordmark.svg")
-                                .w(px(53.22))
-                                .h(px(18.))
-                                .text_color(t.text_default_nav),
-                        )
-                        .child(icon("chevron-down-medium", 14., t.text_tertiary)),
+                        .child(icon::icon_sized(
+                            "codex-wordmark",
+                            53.22,
+                            18.,
+                            t.text_default_nav,
+                        ))
+                        .child(icon::icon("chevron-down-medium", 14., t.text_tertiary)),
                 )
                 .child(div().flex_1())
                 .child(icon_button(
                     "activity",
-                    icon("bell", 16., t.text_tertiary),
+                    icon::icon("bell", 16., t.text_tertiary),
                     t,
                 ))
                 .child(div().w(px(4.)))
                 .child(icon_button(
                     "search",
-                    icon("search", 16., t.text_tertiary),
+                    icon::icon("search", 16., t.text_tertiary),
                     t,
                 )),
         )
@@ -371,7 +382,7 @@ pub fn home_sidebar_header(cx: &App) -> Div {
                 .child(
                     row(
                         "new-chat",
-                        icon("new-chat", 16., t.text_default_nav).into_any_element(),
+                        icon::icon("new-chat", 16., t.text_default_nav).into_any_element(),
                         "New chat",
                     )
                     .on_click(dispatch::<NewChat>),
@@ -384,44 +395,25 @@ pub fn home_sidebar_header(cx: &App) -> Div {
         )
 }
 
-/// The rail list's `vertical-scroll-fade-mask`: Chromium fades the list's top 16 px (rows
-/// 50..66 CSS), which covers the top of the Home item. GPUI has no mask layers, so this paints
-/// that band of the Home item as captured from the refs (its pixels are the same on every
-/// screen): selected from refs/home, unselected from refs/settings. Hidden while hovered.
-fn rail_fade(appearance: Appearance, selected: bool, group: SharedString) -> impl IntoElement {
-    static PATCHES: LazyLock<[Arc<Image>; 4]> = LazyLock::new(|| {
-        [
-            &include_bytes!("../assets/rail-fade-dark-off.png")[..],
-            include_bytes!("../assets/rail-fade-dark-on.png"),
-            include_bytes!("../assets/rail-fade-light-off.png"),
-            include_bytes!("../assets/rail-fade-light-on.png"),
-        ]
-        .map(|png| Arc::new(Image::from_bytes(ImageFormat::Png, png.to_vec())))
-    });
-    let index = 2 * usize::from(appearance == Appearance::Light) + usize::from(selected);
-    img(PATCHES[index].clone())
-        .absolute()
-        .top_0()
-        .left_0()
-        .w(px(36.))
-        .h(px(14.))
-        .group_hover(group, |mut s| {
-            s.visibility = Some(Visibility::Hidden);
-            s
-        })
-}
-
 impl Shell {
     fn rail(&self, t: &Theme) -> Div {
         let (hover_bg, hover_fg) = (t.ghost_hover, t.text);
         let selected = self.selected_rail;
-        let fill = |color: Hsla| {
-            shapes::decoration(shapes::Decoration {
-                radius: Corners::all(RADIUS_RAIL),
-                corner: shapes::Corner::Squircle,
-                fill: Some(color),
-                ..Default::default()
-            })
+        // The list (`[6, 50, 40, 732]`) is a composited scroller: its items paint into the
+        // layer's transparent tiles, which `vertical-scroll-fade-mask` fades over the top 16 px
+        // (the scroll timeline is inactive, so `--top-fade` is 1rem) before the compositor
+        // blends the layer onto the page.
+        let list = point(px(6.), Theme::TITLEBAR_HEIGHT + px(6.));
+        let fill = move |color: Hsla| {
+            in_layer(
+                shapes::Decoration {
+                    radius: Corners::all(RADIUS_RAIL),
+                    corner: shapes::Corner::Squircle,
+                    fill: Some(color),
+                    ..Default::default()
+                },
+                move || list,
+            )
         };
         let item = move |name: &'static str| {
             let on = selected == Some(name);
@@ -446,9 +438,9 @@ impl Shell {
                 .when(!on, |d| d.hover(move |s| s.bg(hover_bg)))
                 .child(
                     icon::icon(&glyph, 20., fg)
-                        .group_hover(id.clone(), move |s| s.text_color(hover_fg)),
+                        .composited(Some(list))
+                        .group_hover(id, move |s| s.text_color(hover_fg)),
                 )
-                .when(name == "home", |d| d.child(rail_fade(t.appearance, on, id)))
         };
         div()
             .absolute()
@@ -459,15 +451,18 @@ impl Shell {
             .flex()
             .flex_col()
             .items_center()
-            .pt(px(8.))
+            .pt(px(6.))
             .pb(px(4.))
             .child(
                 div()
                     .flex_1()
+                    .w(px(40.))
+                    .pt(px(2.))
                     .flex()
                     .flex_col()
                     .items_center()
                     .gap(px(8.))
+                    .layer()
                     .child(item("home").on_click(dispatch::<NewChat>))
                     .child(item("space"))
                     .child(item("scheduled"))
@@ -480,16 +475,20 @@ impl Shell {
                                 .top(px(4.))
                                 .right(px(4.))
                                 .size(px(8.))
-                                .child(shapes::decoration(shapes::Decoration {
-                                    radius: Corners::all(Theme::RADIUS_FULL),
-                                    fill: Some(t.info_solid),
-                                    ..Default::default()
-                                })),
+                                .child(in_layer(
+                                    shapes::Decoration {
+                                        radius: Corners::all(Theme::RADIUS_FULL),
+                                        fill: Some(t.info_solid),
+                                        ..Default::default()
+                                    },
+                                    move || list,
+                                )),
                         ),
                     )
                     .child(div().w(px(24.)).h(px(1.)).bg(t.border))
                     .child(item("rail-code-review"))
-                    .child(item("sites")),
+                    .child(item("sites"))
+                    .child(shapes::top_fade(px(16.))),
             )
             .child(
                 div()
@@ -505,8 +504,8 @@ impl Shell {
     }
 
     /// `.sidebar-navigation`: its left corners come from `clip-path: inset(... round 12px)`.
-    /// ponytail: filled with the opaque composite of its translucent color over the layout,
-    /// exact inside; the corner AA pixels blend that composite instead of the CSS color.
+    /// It is a composited cc layer: its tile holds the translucent background and the content
+    /// is blitted onto it before the layer is composited (`.layer()`).
     fn sidebar_panel(&self, t: &Theme) -> Div {
         let r = Theme::RADIUS_XL_BASE;
         div()
@@ -518,13 +517,14 @@ impl Shell {
             .flex()
             .flex_col()
             .overflow_hidden()
+            .layer()
             .child(shapes::decoration(shapes::Decoration {
                 radius: Corners {
                     top_left: r,
                     bottom_left: r,
                     ..Default::default()
                 },
-                fill: Some(over(t.sidebar_background, layout_color(t))),
+                fill: Some(t.sidebar_background),
                 ..Default::default()
             }))
             .child(self.sidebar.clone())
@@ -658,182 +658,63 @@ impl Shell {
     }
 }
 
-macro_rules! frame {
-    ($($n:literal),*) => {
-        &[$(($n, include_bytes!(concat!("../assets/frame/", $n, ".png")))),*]
-    };
-}
-
-/// Pieces of the window frame around `_PageSurface` at 2x, captured from the refs
-/// (`assets/frame/<theme>-<piece>[-open|-closed].png`): its `--shadow-card` drop shadow and
-/// 0.5 px ring outside the box, plus the panels' rounded-corner AA pixels inside it (opaque),
-/// fully covered panel pixels transparent. Corner blocks (device px, from the window edges)
-/// and 256 px strips that repeat along the straight edges.
-///
-/// ponytail: stopgap until `shapes` lands Chromium's pixels for this shadow. Chromium blends
-/// it with Skia's lowp srcover (`(x + 255) >> 8`), `shapes` currently one level darker along
-/// every straight edge. Drop this and paint the `shapes` page surface at every scale then.
-const FRAME: &[(&str, &[u8])] = frame!(
-    "dark-tl-open",
-    "dark-bl-open",
-    "dark-tl-closed",
-    "dark-bl-closed",
-    "dark-tr",
-    "dark-br",
-    "dark-left",
-    "dark-top",
-    "dark-right",
-    "dark-bottom",
-    "light-tl-open",
-    "light-bl-open",
-    "light-tl-closed",
-    "light-bl-closed",
-    "light-tr",
-    "light-br",
-    "light-left",
-    "light-top",
-    "light-right",
-    "light-bottom"
-);
-
-fn frame_piece(name: &str, cx: &App) -> Arc<RenderImage> {
-    static CACHE: LazyLock<Mutex<HashMap<String, Arc<RenderImage>>>> =
-        LazyLock::new(Default::default);
-    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
-    cache
-        .entry(name.to_string())
-        .or_insert_with(|| {
-            let (_, png) = FRAME.iter().find(|(n, _)| *n == name).expect("frame piece");
-            Image::from_bytes(ImageFormat::Png, png.to_vec())
-                .to_image_data(cx.svg_renderer())
-                .expect("frame piece png")
-        })
-        .clone()
-}
-
-/// Paints [`FRAME`] for a window of `bounds` (2x only).
-fn paint_frame(
-    bounds: Bounds<Pixels>,
-    appearance: Appearance,
-    open: bool,
-    window: &mut Window,
-    cx: &App,
-) {
-    let theme = if appearance == Appearance::Dark {
-        "dark"
-    } else {
-        "light"
-    };
-    let side = if open { "open" } else { "closed" };
-    let dev = |v: Pixels| (f32::from(v) * 2.).round() as i32;
-    let (w, h) = (dev(bounds.size.width), dev(bounds.size.height));
-    let rect = |x: i32, y: i32, w: i32, h: i32| {
-        Bounds::new(
-            point(px(x as f32 / 2.), px(y as f32 / 2.)) + bounds.origin,
-            gpui::size(px(w as f32 / 2.), px(h as f32 / 2.)),
-        )
-    };
-    let mut paint = |name: String, clip: Bounds<Pixels>, at: Bounds<Pixels>| {
-        window
-            .paint_image(
-                clip,
-                at,
-                Corners::default(),
-                frame_piece(&name, cx),
-                0,
-                false,
-            )
-            .ok();
-    };
-    // Corner blocks: (piece, x, y, w, h) in device px.
-    for (piece, x, y, bw, bh) in [
-        (format!("{theme}-tl-{side}"), 76, 72, 72, 88),
-        (format!("{theme}-bl-{side}"), 76, h - 76, 72, 76),
-        (format!("{theme}-tr"), w - 56, 72, 56, 88),
-        (format!("{theme}-br"), w - 56, h - 76, 56, 76),
-    ] {
-        let at = rect(x, y, bw, bh);
-        paint(piece, at, at);
-    }
-    // Straight edges between the corner blocks, 256 px pieces clipped to the span.
-    for (piece, x, y, thick, len, vertical) in [
-        ("left", 76, 160, 28, h - 236, true),
-        ("right", w - 8, 160, 8, h - 236, true),
-        ("top", 148, 72, 16, w - 204, false),
-        ("bottom", 148, h - 8, 8, w - 204, false),
-    ] {
-        let name = format!("{theme}-{piece}");
-        let span = if vertical {
-            rect(x, y, thick, len)
-        } else {
-            rect(x, y, len, thick)
-        };
-        for offset in (0..len.max(0)).step_by(256) {
-            let at = if vertical {
-                rect(x, y + offset, thick, 256)
-            } else {
-                rect(x + offset, y, 256, thick)
-            };
-            paint(name.clone(), span, at);
-        }
-    }
-}
-
 impl Render for Shell {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
-        let (appearance, open) = (t.appearance, self.sidebar_open);
-        let captured_frame = window.scale_factor() == 2.;
-        // `_PageSurface`: drop shadow (`--shadow-card`) and its 0.5 px ring
-        // (`--elevation-stroke-subtle`) through `shapes` where [`FRAME`] does not apply.
-        let page_surface = div()
-            .absolute()
-            .left(RAIL_WIDTH)
-            .top(Theme::TITLEBAR_HEIGHT)
-            .right(PAGE_INSET)
-            .bottom(PAGE_INSET)
-            .child(shapes::decoration(shapes::Decoration {
-                radius: Corners::all(Theme::RADIUS_XL_BASE),
-                shadows: vec![
-                    shapes::Shadow {
-                        color: t.page_surface_stroke,
-                        offset: point(px(0.), px(0.)),
-                        blur: px(0.),
-                        spread: px(0.5),
-                        inset: false,
-                    },
-                    shapes::Shadow {
-                        color: t.shadow_card,
-                        offset: point(px(0.), px(4.)),
-                        blur: px(16.),
-                        spread: px(0.),
-                        inset: false,
-                    },
-                ],
-                ..Default::default()
-            }));
+        // Chromium paints the page (everything over the body background) into one composited
+        // layer: its tile holds `_PageSurfaceLayout`'s translucent color, the page surface's
+        // drop shadow (`--shadow-card`) and 0.5 px ring (`--elevation-stroke-subtle`) blend onto
+        // that translucent pixel with the blits Skia picks for them (not `.layer()`'s
+        // transparent-tile blits), and the compositor blends the tile onto the body.
+        let layout = shapes::Decoration {
+            fill: Some(t.page_surface_layout),
+            ..Default::default()
+        };
+        let surface = shapes::Decoration {
+            radius: Corners::all(Theme::RADIUS_XL_BASE),
+            shadows: vec![
+                shapes::Shadow {
+                    color: t.page_surface_stroke,
+                    offset: point(px(0.), px(0.)),
+                    blur: px(0.),
+                    spread: px(0.5),
+                    inset: false,
+                },
+                shapes::Shadow {
+                    color: t.shadow_card,
+                    offset: point(px(0.), px(4.)),
+                    blur: px(16.),
+                    spread: px(0.),
+                    inset: false,
+                },
+            ],
+            ..Default::default()
+        };
+        let page = canvas(
+            |_, _, _| {},
+            move |bounds, (), window, cx| {
+                let page_surface = Bounds::from_corners(
+                    bounds.origin + point(RAIL_WIDTH, Theme::TITLEBAR_HEIGHT),
+                    bounds.bottom_right() - point(PAGE_INSET, PAGE_INSET),
+                );
+                window.with_skia_layer(255, |window| {
+                    shapes::paint(&layout, None, bounds, window, cx);
+                    shapes::paint(&surface, None, page_surface, window, cx);
+                });
+            },
+        )
+        .absolute()
+        .size_full();
         // The rail and titlebar do not overlap the panels, so they paint after the frame.
         div()
             .size_full()
             .relative()
             .overflow_hidden()
             .font_family(SANS)
-            .bg(layout_color(&t))
-            .when(!captured_frame, |d| d.child(page_surface))
+            .bg(t.background_surface_under)
+            .child(page)
             .when(self.sidebar_open, |d| d.child(self.sidebar_panel(&t)))
             .child(self.main_panel(&t))
-            .when(captured_frame, |d| {
-                d.child(
-                    canvas(
-                        |_, _, _| {},
-                        move |bounds, (), window, cx| {
-                            paint_frame(bounds, appearance, open, window, cx)
-                        },
-                    )
-                    .absolute()
-                    .size_full(),
-                )
-            })
             .child(self.rail(&t))
             .child(self.titlebar(&t, cx))
     }

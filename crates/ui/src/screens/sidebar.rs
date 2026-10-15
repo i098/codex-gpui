@@ -3,15 +3,15 @@
 //! refs/home and refs/sidebar.
 
 use crate::{
-    Shell, blit, fixture, home_sidebar_header, icon::icon, layout_color, over, sidebar_empty,
-    sidebar_section, text,
+    Shell, blit, fixture, home_sidebar_header, icon::icon, in_layer, layout_color, over,
+    sidebar_empty, sidebar_section, text,
 };
 use bridge::types::{Thread, ThreadListResponse};
 use gpui::{
     AnyView, App, AppContext as _, Context, Corners, Div, EventEmitter, FocusHandle, FontWeight,
     HighlightStyle, Hsla, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
     ParentElement, Pixels, Render, Rgba, SharedString, Stateful, StatefulInteractiveElement,
-    Styled, StyledText, Window, div, linear_color_stop, linear_gradient, point,
+    Styled, StyledText, TextRun, Window, div, linear_color_stop, linear_gradient, point,
     prelude::FluentBuilder as _, px, relative, rgba,
 };
 use std::{ops::Range, path::Path};
@@ -543,6 +543,13 @@ impl Render for CommandMenu {
         // `border-color: var(--color-border)` in dark, transparent in light.
         let border = (t.appearance == Appearance::Dark).then_some((px(1.), t.border));
         let query = self.query.trim();
+        // The open dialog is its own composited layer (Radix's enter animation): it rasterizes
+        // into transparent tiles that start at its ink overflow, i.e. the shadow's (3σ of the
+        // 32 px blur, less the 8 px spread, minus the 16 px offset on top).
+        let layer = point(px((w - width) / 2. - 40.), px(top - 24.));
+        // A row's text column: the dialog less its 1 px border and `p-1`, the row's `px-2`, and
+        // the 16 px icon slot with its 8 px gap.
+        let text_width = width - 2. * 5. - 2. * 8. - 16. - 8.;
         let mut index = 0;
         let groups = self.visible().into_iter().map(|(heading, items)| {
             // While a query is typed the original also searches ChatGPT conversations and
@@ -576,7 +583,7 @@ impl Render for CommandMenu {
                             let selected = index == self.selected;
                             index += 1;
                             // `Chats` is the first group, so a chat's ordinal is `index`.
-                            menu_row(item, query, index, selected, t)
+                            menu_row(item, query, index, selected, text_width, t, window)
                         })),
                 )
         });
@@ -594,19 +601,22 @@ impl Render for CommandMenu {
                 .left(px((w - width) / 2.))
                 .top(px(top))
                 .w(px(width))
-                .child(shapes::decoration(shapes::Decoration {
-                    radius: Corners::all(px(20.)),
-                    fill: Some(surface),
-                    border,
-                    shadows: vec![shapes::Shadow {
-                        color: rgba(0x00000030).into(),
-                        offset: point(px(0.), px(16.)),
-                        blur: px(32.),
-                        spread: px(-8.),
-                        inset: false,
-                    }],
-                    ..Default::default()
-                }))
+                .child(in_layer(
+                    shapes::Decoration {
+                        radius: Corners::all(px(20.)),
+                        fill: Some(surface),
+                        border,
+                        shadows: vec![shapes::Shadow {
+                            color: rgba(0x00000030).into(),
+                            offset: point(px(0.), px(16.)),
+                            blur: px(32.),
+                            spread: px(-8.),
+                            inset: false,
+                        }],
+                        ..Default::default()
+                    },
+                    move || layer,
+                ))
                 // 1 px border + `p-1`.
                 .child(
                     div()
@@ -622,6 +632,9 @@ impl Render for CommandMenu {
                                 .id("command-menu-list")
                                 .max_h(px(list_height))
                                 .overflow_y_scroll()
+                                // Its contents end 0.1 px past the box, so Chromium scrolls and
+                                // composites them in their own transparent layer.
+                                .layer()
                                 .flex()
                                 .flex_col()
                                 .children(groups),
@@ -657,19 +670,28 @@ fn layered(color: Hsla, opacities: &[f32], bottom: Hsla) -> Hsla {
     .into()
 }
 
-/// A command menu row. CSS dims unselected rows with `opacity: .75` and the `kbd` with `.8`;
-/// here each fill is precomputed with [`layered`] and the glyphs get the alpha directly.
+/// A command menu row. CSS dims unselected rows with `opacity: .75` and the `kbd` with `.8`:
+/// the glyphs blend through those layers (element `opacity`); fills are precomputed with
+/// [`layered`] and icons take the alpha in their color (Chromium folds a lone draw's opacity).
 /// Query matches show in the text color, the rest of a filtered title in the description
-/// color; a chat matching the query shows its first message under the title.
-fn menu_row(item: &Item, query: &str, ordinal: usize, selected: bool, t: &Theme) -> Div {
+/// color; a chat matching the query shows its first message under the title. `text_width`:
+/// the width of the row's text column.
+fn menu_row(
+    item: &Item,
+    query: &str,
+    ordinal: usize,
+    selected: bool,
+    text_width: f32,
+    t: &Theme,
+    window: &Window,
+) -> Div {
     let surface = t.surface_elevated_secondary;
     let (bottom, row_opacity) = if selected {
         (blit(t.ghost_hover, surface), 1.)
     } else {
         (surface, 0.75)
     };
-    let fg = t.text.opacity(row_opacity);
-    let dim = t.text_tertiary.opacity(row_opacity);
+    let (fg, dim) = (t.text, t.text_tertiary);
     let snippet = (item.is_chat() && !query.is_empty())
         .then(|| item.keywords.clone())
         .filter(|s| s.to_lowercase().contains(&query.to_lowercase()));
@@ -680,7 +702,8 @@ fn menu_row(item: &Item, query: &str, ordinal: usize, selected: bool, t: &Theme)
         21.,
         fg,
         dim,
-    );
+    )
+    .opacity(row_opacity);
     let line = div()
         .flex()
         .items_center()
@@ -689,7 +712,8 @@ fn menu_row(item: &Item, query: &str, ordinal: usize, selected: bool, t: &Theme)
             Some(description) => d
                 .child(label.flex_none().max_w(relative(0.6)).truncate())
                 .child(
-                    text(description, 13., 18.5, 430., dim)
+                    text(description, 13., 130. / 7., 430., dim)
+                        .opacity(row_opacity)
                         .flex_1()
                         .min_w_0()
                         .truncate(),
@@ -703,7 +727,7 @@ fn menu_row(item: &Item, query: &str, ordinal: usize, selected: bool, t: &Theme)
                     .flex_none()
                     .flex()
                     .justify_end()
-                    .child(text(project, 13., 18.5, 430., dim)),
+                    .child(text(project, 13., 130. / 7., 430., dim).opacity(row_opacity)),
             )
         })
         .when_some(
@@ -726,12 +750,19 @@ fn menu_row(item: &Item, query: &str, ordinal: usize, selected: bool, t: &Theme)
                                 fill: Some(kbd_bg),
                                 ..Default::default()
                             }))
-                            .child(text(keys, 12., 12., 430., fg.opacity(0.8)).relative()),
+                            .child(
+                                div()
+                                    .relative()
+                                    .opacity(row_opacity)
+                                    .child(text(keys, 12., 12., 430., fg).opacity(0.8)),
+                            ),
                     ),
                 )
             },
         )
-        .when(item.external, |d| d.child(icon("arrow-up-right", 16., fg)));
+        .when(item.external, |d| {
+            d.child(icon("arrow-up-right", 16., fg.opacity(row_opacity)))
+        });
     div()
         .relative()
         .py(px(5.))
@@ -747,10 +778,10 @@ fn menu_row(item: &Item, query: &str, ordinal: usize, selected: bool, t: &Theme)
             }))
         })
         .child(
-            div()
-                .size(px(16.))
-                .flex_none()
-                .children(item.icon.map(|name| icon(name, 16., fg))),
+            div().size(px(16.)).flex_none().children(
+                item.icon
+                    .map(|name| icon(name, 16., fg.opacity(row_opacity))),
+            ),
         )
         .child(
             div()
@@ -760,16 +791,65 @@ fn menu_row(item: &Item, query: &str, ordinal: usize, selected: bool, t: &Theme)
                 .flex_col()
                 .child(line)
                 .when_some(snippet, |d, snippet| {
+                    // The original wraps every char in its own span: each starts where the
+                    // previous span's LayoutUnit-ceiled width ends. `text-overflow: ellipsis`
+                    // then drops the spans that leave no room for the `…` in `text_width`.
                     let marks = highlight(&snippet, query, false);
+                    let ellipsis = span_widths("…", 12., window)[0];
+                    let mut x = 0.;
+                    let kept: Vec<_> = snippet
+                        .chars()
+                        .zip(marks)
+                        .zip(span_widths(&snippet, 12., window))
+                        .take_while(|&(_, w)| {
+                            x += w;
+                            x + ellipsis <= text_width
+                        })
+                        .collect();
+                    let cut = kept.len() < snippet.chars().count();
+                    let span = |s: String, w: f32, c: Hsla| {
+                        div().flex_none().w(px(w)).child(text(s, 12., 16., 430., c))
+                    };
                     d.child(
-                        div().pt(px(2.)).child(
-                            marked(snippet, &marks, 12., 16., fg, dim)
-                                .min_w_0()
-                                .truncate(),
-                        ),
+                        div()
+                            .pt(px(2.))
+                            .flex()
+                            .overflow_hidden()
+                            .opacity(row_opacity)
+                            .children(kept.into_iter().map(|((c, m), w)| {
+                                span(c.to_string(), w, if m { fg } else { dim })
+                            }))
+                            .when(cut, |d| d.child(span("…".into(), ellipsis, dim))),
                     )
                 }),
         )
+}
+
+/// Width of each char of `s` (430 weight, `size` px) inside the run shaped whole, ceiled to
+/// Blink's LayoutUnit (1/64 device px) as an inline span's width is.
+fn span_widths(s: &str, size: f32, window: &Window) -> Vec<f32> {
+    let mut font = window.text_style().font();
+    font.weight = FontWeight(430.);
+    let run = TextRun {
+        len: s.len(),
+        font,
+        color: gpui::black(),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    let line = window
+        .text_system()
+        .shape_line(s.to_string().into(), px(size), &[run], None);
+    let unit = window.scale_factor() * 64.;
+    let ends = s.char_indices().skip(1).map(|(i, _)| i).chain([s.len()]);
+    s.char_indices()
+        .zip(ends)
+        .map(|((start, _), end)| {
+            let w = f32::from(line.x_for_index(end) - line.x_for_index(start));
+            (w * unit).ceil() / unit
+        })
+        .collect()
 }
 
 /// Home with the sidebar `Search` command menu open and `math` typed.
