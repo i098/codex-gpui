@@ -654,7 +654,8 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
   // crates/shapes picks Skia's other 8-bit blends by adding 2 * mode to the hue (real hues
   // are in [0, 1)): 1 = `SkBlendARGB32` (AAA `blitAntiH2`), 2 = raster pipeline lowp srcover,
   // 3 = blit into a transparent composited layer, then the layer's srcover onto the target,
-  // 5 = scale the innermost layer's pixel by the coverage (a `mask` layer's DstIn).
+  // 5 = scale the innermost layer's pixel by the coverage (a `mask` layer's DstIn). The
+  // fragment picks 4 = raster pipeline highp srcover for a mode 0 color outside [0, 1].
   Hsla hsla = sprite.color;
   uint skia_mode = uint(clamp(floor(hsla.h / 2.0), 0.0, 5.0));
   hsla.h -= 2.0 * skia_mode;
@@ -669,8 +670,9 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
 }
 
 // Skia's 8-bit blit of the premultiplied color `src` (alpha `ca`) at mask coverage `m` onto the
-// premultiplied pixel `d` (the target, or a transparent layer's pixel).
-uint4 skia_blit(uint mode, uint m, uint4 src, uint ca, uint4 d) {
+// premultiplied pixel `d` (the target, or a transparent layer's pixel); `fsrc` is the float
+// premultiplied color mode 4 blends.
+uint4 skia_blit(uint mode, uint m, uint4 src, uint ca, uint4 d, float4 fsrc) {
   uint scale = m + 1;
   if (mode == 5) {
     // Raster pipeline `scale_u8` (NEON `div255` rounds exactly).
@@ -690,6 +692,12 @@ uint4 skia_blit(uint mode, uint m, uint4 src, uint ca, uint4 d) {
     s = (s + ((s + 128) >> 8) + 128) >> 8;
     uint4 t = d * (255 - s.a);
     return s + ((t + ((t + 128) >> 8) + 128) >> 8);
+  }
+  if (mode == 4) {
+    // SkRasterPipeline highp: scale_u8, srcover (`mad`), store_8888 (round to nearest).
+    float4 s = fsrc * (float(m) * (1.0 / 255.0));
+    float4 o = fma(float4(d) * (1.0 / 255.0), 1.0 - s.a, s);
+    return uint4(rint(saturate(o) * 255.0));
   }
   if (mode == 3) {
     // `blitAntiH` into the transparent tile of a composited layer, then the compositor's
@@ -754,13 +762,19 @@ fragment MonochromeSpriteTargets monochrome_sprite_fragment(
   uint4 c = uint4(round(saturate(input.color) * 255.0));
   uint3 prod = c.rgb * c.a + 128;
   uint4 src = uint4((prod + (prod >> 8)) >> 8, c.a);
+  // A color outside [0, 1] (an out-of-gamut CSS oklab/color-mix result) does not fit Skia's
+  // 8-bit legacy blitter, so Skia blits it with its float raster pipeline.
+  float4 fsrc = float4(input.color.rgb * input.color.a, input.color.a);
+  if (mode == 0 && any(input.color.rgb > 1.0)) {
+    mode = 4;
+  }
   uint4 d = uint4(round(target * 255.0));
   uint4 l1 = uint4(round(outer * 255.0));
   uint4 l2 = uint4(round(inner * 255.0));
   uint4 b = uint4(round(backdrop * 255.0));
   uint4 s = uint4(round(ids * 255.0));
   if (layers == 0) {
-    d = skia_blit(mode, m, src, c.a, d);
+    d = skia_blit(mode, m, src, c.a, d, fsrc);
     s.x = 0;
   } else {
     // Blit into the layer's pixel and blend the layers onto their backdrop, as Chromium
@@ -782,14 +796,14 @@ fragment MonochromeSpriteTargets monochrome_sprite_fragment(
       s.y = 0;
     }
     if (id2 == 0) {
-      l1 = skia_blit(mode, m, src, c.a, l1);
+      l1 = skia_blit(mode, m, src, c.a, l1, fsrc);
       d = skia_layer(l1, b, a1);
     } else {
       if (s.y == 0) {
         l2 = 0;
         s.yz = uint2(id2, a2);
       }
-      l2 = skia_blit(mode, m, src, c.a, l2);
+      l2 = skia_blit(mode, m, src, c.a, l2, fsrc);
       d = skia_layer(skia_layer(l2, l1, a2), b, a1);
     }
     s.x = id1;

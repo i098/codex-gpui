@@ -54,80 +54,142 @@ fn paragraph_top(rows: &[(f32, f32, f32, f32)]) -> f32 {
 /// CSS `opacity` into a transparent layer and blends that onto the tile (`saveLayerAlpha`),
 /// and rasterizes a composited layer (here `will-change: transform`; the app's sidebar is one)
 /// into a transparent tile that the compositor blends onto the page.
+#[derive(Default)]
 struct LayerRun {
     name: &'static str,
     bg: u8,
     /// A `rgba(24, 24, 24, .65)` box holds the content; true: a composited layer.
     boxed: Option<bool>,
     opacity: bool,
-    /// A rounded fill (radius 8) under the text.
-    fill: Option<Rgba>,
+    /// A rounded fill (radius 8) under the text, and its own CSS `opacity`.
+    fill: Option<(Rgba, f32)>,
     /// Text, size, weight, alpha (white).
     text: Option<(&'static str, f32, f32, f32)>,
+    /// CSS `mask-image` on the text box (Chromium paints it into a transparent saveLayer, then
+    /// `DstIn`, then restores it), and whether the GPUI side paints the text in a `.layer()`.
+    mask: Option<(&'static str, bool)>,
+    /// The text's CSS color instead of white at the text alpha (GPUI keeps white at it).
+    color: Option<&'static str>,
 }
 
 const LAYER_ROW: f32 = 40.;
 
-fn layer_runs() -> [LayerRun; 7] {
+/// `.text-fade-truncate` (sidebar `New chat`) and the Recents marquee `_overflowingViewport`.
+const FADE_TRUNCATE: &str = "linear-gradient(to right, #000 calc(100% - 16px), transparent)";
+const MARQUEE: &str =
+    "linear-gradient(to right, transparent, #000 8px, #000 calc(100% - 16px), transparent)";
+/// The masked text box: `MASK_PAD` px left of the text (the marquee's left fade), `MASK_W` px
+/// wide; the text ends before the right fade, so GPUI needs no `DstIn` sprites.
+const MASK_PAD: f32 = 8.;
+const MASK_W: f32 = 272.;
+
+/// The app's dark `--color-text`: `color-mix(in oklab, #fff 85%, transparent)`, whose sRGB red
+/// is just above 1.
+const OKLAB_TEXT: &str = "color-mix(in oklab, #fff 85%, transparent)";
+
+fn layer_runs() -> [LayerRun; 13] {
     let white = |a| rgb(255, 255, 255, a);
     let no_projects = Some(("No projects", 14., 430., 0.498));
     let recents = Some(("Recents", 14., 500., 0.498));
+    let new_chat = Some(("New chat Add a subtract(a, b)", 14., 430., 0.85));
     [
         LayerRun {
             name: "opacity .5 text .498",
             bg: 29,
-            boxed: None,
             opacity: true,
-            fill: None,
             text: no_projects,
+            ..Default::default()
         },
         LayerRun {
             name: "opacity .5 text",
             bg: 24,
-            boxed: None,
             opacity: true,
-            fill: None,
             text: Some((SAMPLES[1], 13., 400., 1.)),
+            ..Default::default()
         },
         LayerRun {
             name: "opacity .5 rounded fill",
             bg: 24,
-            boxed: None,
             opacity: true,
-            fill: Some(white(1.)),
-            text: None,
+            fill: Some((white(1.), 1.)),
+            ..Default::default()
         },
         LayerRun {
             name: "translucent box, text",
             bg: 36,
             boxed: Some(false),
-            opacity: false,
-            fill: None,
             text: recents,
+            ..Default::default()
         },
         LayerRun {
             name: "composited translucent box, text",
             bg: 36,
             boxed: Some(true),
-            opacity: false,
-            fill: None,
             text: recents,
+            ..Default::default()
         },
         LayerRun {
             name: "composited translucent box, opacity .5 text",
             bg: 36,
             boxed: Some(true),
             opacity: true,
-            fill: None,
             text: no_projects,
+            ..Default::default()
         },
         LayerRun {
             name: "composited translucent box, fill .1, text",
             bg: 36,
             boxed: Some(true),
-            opacity: false,
-            fill: Some(white(0.1)),
+            fill: Some((white(0.1), 1.)),
             text: Some((SAMPLES[2], 13., 400., 1.)),
+            ..Default::default()
+        },
+        LayerRun {
+            name: "composited translucent box, fade-truncate text .85, direct",
+            bg: 36,
+            boxed: Some(true),
+            text: new_chat,
+            mask: Some((FADE_TRUNCATE, false)),
+            ..Default::default()
+        },
+        LayerRun {
+            name: "composited translucent box, fade-truncate text .85, layer",
+            bg: 36,
+            boxed: Some(true),
+            text: new_chat,
+            mask: Some((FADE_TRUNCATE, true)),
+            ..Default::default()
+        },
+        LayerRun {
+            name: "composited translucent box, marquee text .85, layer",
+            bg: 36,
+            boxed: Some(true),
+            text: new_chat,
+            mask: Some((MARQUEE, true)),
+            ..Default::default()
+        },
+        LayerRun {
+            name: "composited translucent box, opacity 0 fill under text .85",
+            bg: 36,
+            boxed: Some(true),
+            fill: Some((white(0.1), 0.)),
+            text: new_chat,
+            ..Default::default()
+        },
+        LayerRun {
+            name: "oklab --color-text (85% white) on 29",
+            bg: 29,
+            text: new_chat,
+            color: Some(OKLAB_TEXT),
+            ..Default::default()
+        },
+        LayerRun {
+            name: "composited translucent box, oklab --color-text",
+            bg: 36,
+            boxed: Some(true),
+            text: new_chat,
+            color: Some(OKLAB_TEXT),
+            ..Default::default()
         },
     ]
 }
@@ -404,21 +466,30 @@ fn page(dir: &Path) -> Result<()> {
             "<div class=r style=\"top:{top}px;height:{LAYER_ROW}px;background:rgb({g},{g},{g})\"></div>"
         )?;
         let mut inner = String::new();
-        if let Some(c) = run.fill {
+        if let Some((c, opacity)) = run.fill {
             let [x, y, w, h] = LAYER_FILL;
             write!(
                 inner,
                 "<div style=\"position:absolute;left:{x}px;top:{y}px;width:{w}px;height:{h}px;\
-                 border-radius:8px;background:{}\"></div>",
+                 border-radius:8px;background:{};opacity:{opacity}\"></div>",
                 css_color(c)
             )?;
         }
         if let Some((text, size, weight, a)) = run.text {
             let (x, y) = LAYER_TEXT;
+            let mask = run.mask.map_or(String::new(), |(m, _)| {
+                format!(
+                    "margin-left:-{MASK_PAD}px;padding-left:{MASK_PAD}px;width:{MASK_W}px;\
+                     overflow:hidden;mask-image:{m}"
+                )
+            });
+            let color = run
+                .color
+                .map_or(format!("rgba(255,255,255,{a})"), str::to_string);
             write!(
                 inner,
                 "<div style=\"position:absolute;left:{x}px;top:{y}px;white-space:nowrap;\
-                 font:{weight} {size}px/21px {SANS};color:rgba(255,255,255,{a})\">{text}</div>"
+                 font:{weight} {size}px/21px {SANS};color:{color};{mask}\">{text}</div>"
             )?;
         }
         if run.opacity {
@@ -603,30 +674,42 @@ fn abs([x, y, w, h]: [f32; 4]) -> gpui::Div {
 
 fn layer_row(run: &LayerRun, top: f32) -> gpui::Div {
     let mut inner = abs([0., 0., W, LAYER_ROW]);
-    if let Some(c) = run.fill {
-        inner = inner.child(
-            abs(LAYER_FILL).child(shapes::decoration(shapes::Decoration {
+    if let Some((c, opacity)) = run.fill {
+        inner = inner.child(abs(LAYER_FILL).opacity(opacity).child(shapes::decoration(
+            shapes::Decoration {
                 radius: Corners::all(px(8.)),
                 fill: Some(c.into()),
                 ..Default::default()
-            })),
-        );
+            },
+        )));
     }
     if let Some((text, size, weight, a)) = run.text {
         let (x, y) = LAYER_TEXT;
-        inner = inner.child(
-            div()
-                .absolute()
-                .left(px(x))
-                .top(px(y))
-                .whitespace_nowrap()
-                .font_family(".SystemUIFont")
-                .font_weight(FontWeight(weight))
-                .text_size(px(size))
-                .line_height(px(21.))
-                .text_color(rgb(255, 255, 255, a))
-                .child(text),
-        );
+        let label = div()
+            .absolute()
+            .left(px(x))
+            .top(px(y))
+            .whitespace_nowrap()
+            .font_family(".SystemUIFont")
+            .font_weight(FontWeight(weight))
+            .text_size(px(size))
+            .line_height(px(21.))
+            .text_color(match run.color {
+                // Chromium's sRGB for that oklab color: red just above 1, green just below
+                // (fitted to its float blits).
+                Some(_) => Rgba {
+                    r: 1.00003,
+                    g: 0.99999,
+                    b: 1.,
+                    a: 0.85,
+                },
+                None => rgb(255, 255, 255, a),
+            })
+            .child(text);
+        inner = inner.child(match run.mask {
+            Some((_, true)) => label.layer(),
+            _ => label,
+        });
     }
     if run.opacity {
         inner = inner.opacity(0.5);

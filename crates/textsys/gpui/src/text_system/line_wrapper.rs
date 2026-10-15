@@ -530,9 +530,10 @@ impl LineWrapper {
         // Closing punctuation never starts a line (UAX #14 LB13: no break
         // before `!`, `)`, `]`, `}`, closing quotes or an ellipsis) — `plz!`,
         // `see)`, `quoted”` wrap as one word instead of orphaning the mark on
-        // the next line. `/` and `?` stay break opportunities so long paths
-        // and URLs (`a/b`, `foo?b=2`) can wrap.
-        matches!(c, '!' | ')' | ']' | '}' | '"' | '”' | '»' | '…') ||
+        // the next line. `/` (UAX #14 SY) joins too: Blink keeps `src/math.py` whole
+        // (LB13 forbids a break before it, SY×AL and SY×NU are indirect); `?` stays a
+        // break opportunity.
+        matches!(c, '!' | ')' | ']' | '}' | '"' | '”' | '»' | '…' | '/') ||
         // `⋯` character is special used in Zed, to keep this at the end of the line.
         matches!(c, '⋯') ||
 
