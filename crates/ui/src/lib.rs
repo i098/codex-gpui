@@ -282,6 +282,7 @@ pub static SCREENS: &[(&str, ScreenBuilder)] = &[
     ("thread", screens::thread::build),
     ("composer", screens::composer::build),
     ("diff", screens::diff::build),
+    ("settings", screens::settings::build),
     ("terminal", screens::terminal::build),
 ];
 
