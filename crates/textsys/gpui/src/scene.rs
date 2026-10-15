@@ -710,7 +710,9 @@ impl Default for TransformationMatrix {
 #[expect(missing_docs)]
 pub struct MonochromeSprite {
     pub order: DrawOrder,
-    pub pad: u32,
+    /// The Chromium layers the sprite is painted into (`Window::sprite_layers`): 0 for none,
+    /// else the outermost in the low 16 bits and the next in the high 16, each `id << 8 | alpha`.
+    pub layers: u32,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub color: Hsla,
@@ -748,7 +750,9 @@ impl From<SubpixelSprite> for Primitive {
 #[expect(missing_docs)]
 pub struct PolychromeSprite {
     pub order: DrawOrder,
-    pub pad: u32,
+    /// 1: premultiplied texels (a color glyph) that the shader blends like Skia's 8-bit
+    /// srcover; 0: straight alpha, blended by the pipeline.
+    pub skia: u32,
     pub grayscale: PaddedBool32,
     pub opacity: f32,
     pub bounds: Bounds<ScaledPixels>,

@@ -1,7 +1,10 @@
 # zed `crates/gpui` at the pinned rev 3e145061d861ed32bb6a08dad7b03f2b5e455ad8, patched in by the
 # root Cargo.toml. Changes vs upstream: this manifest (workspace deps made explicit; no dev-deps,
 # examples, benches), svg_renderer.rs font include paths (fonts copied to assets/), and
-# util.rs `round_half_toward_zero*`: Blink's round-half-up device-pixel snapping.
+# util.rs `round_half_toward_zero*`: Blink's round-half-up device-pixel snapping. Also Blink
+# LayoutUnit lengths and unsnapped text x (taffy.rs, elements/text.rs), and Chromium layers for
+# monochrome sprites (`Styled::layer`, `Window::with_skia_layer`, scene.rs
+# `MonochromeSprite::layers`).
 [package]
 name = "gpui"
 version = "0.2.2"

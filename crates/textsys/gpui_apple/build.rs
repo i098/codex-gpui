@@ -96,20 +96,9 @@ mod apple_build {
         output_path
     }
 
-    /// Locate the gpui crate directory: the pinned zed git checkout in cargo's cache
-    /// (vendored copy; upstream uses the sibling `../gpui`).
+    /// The vendored gpui next to this crate (crates/textsys/gpui), as upstream's sibling `../gpui`.
     fn find_gpui_crate_dir() -> PathBuf {
-        let cargo_home = env::var("CARGO_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(env::var("HOME").unwrap()).join(".cargo"));
-        let checkouts = cargo_home.join("git/checkouts");
-        std::fs::read_dir(&checkouts)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .map(|repo| repo.path().join("3e14506/crates/gpui"))
-            .find(|dir| dir.join("src/scene.rs").exists())
-            .expect("zed checkout at rev 3e14506 in cargo git cache")
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("../gpui")
     }
 
     /// To enable runtime compilation, we need to "stitch" the shaders file with the generated header

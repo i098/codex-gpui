@@ -748,6 +748,16 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Paints this element and its children into a transparent layer that is then blended onto
+    /// what is below it, as Chromium does for a composited layer (`will-change`, a scroller's
+    /// contents). Monochrome sprites (text, svgs, masks) blend exactly through it. The layer's
+    /// tiles start at this element's origin (`Window::composited_layer_origin`): give it
+    /// Chromium's layer rect, ink overflow such as shadows included.
+    fn layer(mut self) -> Self {
+        self.style().layer = Some(true);
+        self
+    }
+
     /// Sets the grid columns of this element.
     fn grid_cols(mut self, cols: u16) -> Self {
         self.style().grid_cols = Some(GridTemplate {

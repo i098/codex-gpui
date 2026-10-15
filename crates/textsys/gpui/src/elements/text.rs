@@ -281,10 +281,10 @@ impl Element for &'static str {
         _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         text_layout: &mut Self::RequestLayoutState,
-        _window: &mut Window,
+        window: &mut Window,
         _cx: &mut App,
     ) {
-        text_layout.prepaint(bounds, self)
+        text_layout.prepaint(bounds, self, window)
     }
 
     fn paint(
@@ -355,10 +355,10 @@ impl Element for SharedString {
         _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         text_layout: &mut Self::RequestLayoutState,
-        _window: &mut Window,
+        window: &mut Window,
         _cx: &mut App,
     ) {
-        text_layout.prepaint(bounds, self.as_ref())
+        text_layout.prepaint(bounds, self.as_ref(), window)
     }
 
     fn paint(
@@ -581,10 +581,10 @@ impl Element for StyledText {
         _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
-        _window: &mut Window,
+        window: &mut Window,
         _cx: &mut App,
     ) {
-        self.layout.prepaint(bounds, &self.text)
+        self.layout.prepaint(bounds, &self.text, window)
     }
 
     fn paint(
@@ -611,7 +611,10 @@ impl IntoElement for StyledText {
 
 /// The Layout for TextElement. This can be used to map indices to pixels and vice versa.
 #[derive(Default, Clone)]
-pub struct TextLayout(Rc<RefCell<Option<TextLayoutInner>>>);
+pub struct TextLayout(
+    Rc<RefCell<Option<TextLayoutInner>>>,
+    Cell<Option<LayoutId>>,
+);
 
 #[derive(Clone, Copy)]
 enum TextPaintPass {
@@ -640,17 +643,20 @@ impl TextLayout {
     ) -> LayoutId {
         let text_style = window.text_style();
         let font_size = text_style.font_size.to_pixels(window.rem_size());
-        // Fractional like Blink; lines and glyphs snap when painted.
+        // Fractional like Blink (LayoutUnit::FromFloatRound of the device-px value, 1/64 px);
+        // lines and glyphs snap when painted.
+        let units = window.scale_factor() * 64.;
         let line_height = text_style
             .line_height
             .to_pixels(font_size.into(), window.rem_size());
+        let line_height = Pixels((line_height.0 * units).round() / units);
 
         let runs = if let Some(runs) = runs {
             runs
         } else {
             vec![text_style.to_run(text.len())]
         };
-        window.request_measured_layout(Default::default(), {
+        let layout_id = window.request_measured_layout(Default::default(), {
             let element_state = self.clone();
 
             move |known_dimensions, available_space, window, cx| {
@@ -768,7 +774,7 @@ impl TextLayout {
                 for line in &lines {
                     let line_size = line.size(line_height);
                     size.height += line_size.height;
-                    size.width = size.width.max(line_size.width).ceil();
+                    size.width = size.width.max(line_size.width);
                 }
 
                 element_state.0.borrow_mut().replace(TextLayoutInner {
@@ -783,10 +789,17 @@ impl TextLayout {
 
                 size
             }
-        })
+        });
+        self.1.set(Some(layout_id));
+        layout_id
     }
 
-    fn prepaint(&self, bounds: Bounds<Pixels>, text: &str) {
+    fn prepaint(&self, mut bounds: Bounds<Pixels>, text: &str, window: &mut Window) {
+        // Blink paints text at the box's fractional LayoutUnit x (glyphs take a subpixel
+        // variant); only the box snaps to device pixels.
+        if let Some(layout_id) = self.1.get() {
+            bounds.origin.x += window.layout_origin_residual_x(layout_id);
+        }
         let mut element_state = self.0.borrow_mut();
         let element_state = element_state
             .as_mut()

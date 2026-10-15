@@ -1,10 +1,7 @@
 use crate::{
     AbsoluteLength, App, Bounds, DefiniteLength, Edges, GridTemplate, Length, Pixels, Point, Size,
     Style, Window, size,
-    util::{
-        ceil_to_device_pixel, round_half_up, round_stroke_to_device_pixel,
-        round_to_device_pixel,
-    },
+    util::{round_half_up, round_stroke_to_device_pixel, round_to_device_pixel},
 };
 use collections::{FxHashMap, FxHashSet};
 use std::{fmt::Debug, ops::Range};
@@ -290,11 +287,11 @@ impl TaffyLayoutEngine {
     //
     // Pixel snapping is done in two phases:
     //
-    //  1. Pre-layout metric snapping. Before Taffy computes layout, all
-    //     authored absolute lengths are rounded in `to_taffy`. This
-    //     includes borders, padding, gaps, and explicit sizes.
-    //     Custom-measured leaf nodes have their measured sizes rounded up
-    //     to integer device-pixel lengths.
+    //  1. Pre-layout metric quantization. Before Taffy computes layout,
+    //     authored absolute lengths (padding, gaps, explicit sizes) become
+    //     LayoutUnits (1/64 device px) in `to_taffy`, as in Blink; border
+    //     widths snap to whole device pixels. Custom-measured leaf nodes
+    //     have their measured sizes quantized the same way.
     //
     //  2. Post-layout edge snapping. After Taffy resolves the tree, layout
     //     relationships such as flex shares, grid tracks, percentages, and
@@ -377,6 +374,13 @@ impl TaffyLayoutEngine {
         self.absolute_layout_bounds.insert(id, bounds);
         bounds
     }
+
+    /// `layout_bounds(id)`'s unsnapped minus snapped origin x, in pixels.
+    pub fn layout_origin_residual_x(&mut self, id: LayoutId, scale_factor: f32) -> Pixels {
+        self.layout_bounds(id, scale_factor);
+        let x = self.absolute_outer_origins[&id].x;
+        Pixels((x - round_half_up(x)) / scale_factor)
+    }
 }
 
 /// A unique identifier for a layout node, generated when requesting a layout from Taffy
@@ -409,8 +413,14 @@ impl From<LayoutId> for NodeId {
     }
 }
 
+/// Blink keeps measured text in LayoutUnit (1/64 device px): widths ceiled, line heights
+/// rounded. Snapping to whole device px happens at paint.
 fn snap_measured_size_to_device_pixels(size: Size<Pixels>, scale_factor: f32) -> Size<f32> {
-    size.map(|d| ceil_to_device_pixel(d.0.max(0.0), scale_factor))
+    let units = scale_factor * 64.;
+    Size {
+        width: (size.width.0.max(0.0) * units).ceil() / 64.,
+        height: (size.height.0.max(0.0) * units).round() / 64.,
+    }
 }
 
 fn border_widths_to_taffy(
@@ -521,8 +531,10 @@ impl ToTaffy<taffy::style::Style> for Style {
 }
 
 impl ToTaffy<f32> for AbsoluteLength {
+    /// Blink keeps authored lengths as LayoutUnit (`FromFloatRound`, 1/64 device px); boxes
+    /// snap to device pixels in `layout_bounds`, text keeps the fraction.
     fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> f32 {
-        round_to_device_pixel(self.to_pixels(rem_size).0, scale_factor)
+        (self.to_pixels(rem_size).0 * scale_factor * 64.).round() / 64.
     }
 }
 

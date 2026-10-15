@@ -1247,6 +1247,12 @@ pub struct Window {
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) element_opacity: f32,
+    /// The Chromium layers enclosing the element being painted, outermost first: (id, alpha,
+    /// whether non-text sprites blend through it too).
+    element_layers: Vec<(u8, u8, bool)>,
+    /// The origin of the innermost `Styled::layer` element being painted.
+    composited_layer_origin: Option<Point<Pixels>>,
+    next_layer_id: u8,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
     /// The [`TextInputConfiguration`] most recently forwarded to the platform
@@ -2152,6 +2158,9 @@ impl Window {
             element_offset_stack: Vec::new(),
             content_mask_stack: Vec::new(),
             element_opacity: 1.0,
+            element_layers: Vec::new(),
+            composited_layer_origin: None,
+            next_layer_id: 0,
             requested_autoscroll: None,
             last_text_input_configuration: None,
             focused_text_input: None,
@@ -4223,22 +4232,80 @@ impl Window {
         result
     }
 
+    /// Paints `f` at `opacity`. Like Chromium, text inside an opacity below 1 or a composited
+    /// `layer` (whose origin is given) is blitted into that transparent layer, which is then
+    /// blended onto what is below it; other primitives fold the opacity into their color (see
+    /// `sprite_color_and_layers`).
     pub(crate) fn with_element_opacity<R>(
         &mut self,
         opacity: Option<f32>,
+        layer: Option<Point<Pixels>>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         self.invalidator.debug_assert_paint_or_prepaint();
 
-        let Some(opacity) = opacity else {
+        let opacity = opacity.unwrap_or(1.);
+        if layer.is_none() && opacity >= 1. {
             return f(self);
-        };
-
+        }
         let previous_opacity = self.element_opacity;
+        let previous_origin = self.composited_layer_origin;
         self.element_opacity = previous_opacity * opacity;
-        let result = f(self);
+        self.composited_layer_origin = layer.or(previous_origin);
+        // Skia's `SkPaint::setAlphaf`: rounded to a byte.
+        let alpha = (opacity.clamp(0., 1.) * 255.).round() as u8;
+        let result = self.push_layer(alpha, alpha == 255, f);
         self.element_opacity = previous_opacity;
+        self.composited_layer_origin = previous_origin;
         result
+    }
+
+    /// The window origin of the innermost `Styled::layer` element being painted: where
+    /// Chromium's tiles of that composited layer start (crates/shapes rasterizes per tile).
+    pub fn composited_layer_origin(&self) -> Option<Point<Pixels>> {
+        self.composited_layer_origin
+    }
+
+    /// Paints `f` into a Chromium `saveLayerAlpha(alpha)` that every monochrome sprite (svgs
+    /// and masks too) blends through; the element opacity is unchanged.
+    pub fn with_skia_layer<R>(&mut self, alpha: u8, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.push_layer(alpha, true, f)
+    }
+
+    fn push_layer<R>(&mut self, alpha: u8, all: bool, f: impl FnOnce(&mut Self) -> R) -> R {
+        // Ids only tell overlapping layers apart within a frame.
+        self.next_layer_id = self.next_layer_id % 255 + 1;
+        self.element_layers.push((self.next_layer_id, alpha, all));
+        let result = f(self);
+        self.element_layers.pop();
+        result
+    }
+
+    /// A monochrome sprite's color and `MonochromeSprite::layers` for the current element. Text
+    /// keeps its color and blends through every layer at the layer's alpha. Chromium folds an
+    /// opacity into a lone non-text draw (cc `PlaybackFoldingIterator`), so svgs and masks take
+    /// the opacity in their color and blend through the opaque (composited) layers only.
+    /// ponytail: several non-text draws under one opacity are folded each, not layered.
+    fn sprite_color_and_layers(&self, color: Hsla, text: bool) -> (Hsla, u32) {
+        let folded = color.opacity(self.element_opacity);
+        let mut layers = self
+            .element_layers
+            .iter()
+            .filter(|&&(_, _, all)| text || all);
+        match layers.next() {
+            Some(&(id, alpha, _)) if self.element_opacity > 0. => {
+                // ponytail: two layers; deeper ones multiply their alpha into the second.
+                let inner = layers.next().map_or(0, |&(id, alpha, _)| {
+                    let alpha = layers.fold(u32::from(alpha), |a, &(_, b, _)| {
+                        (a * u32::from(b) + 127) / 255
+                    });
+                    u32::from(id) << 8 | alpha
+                });
+                let color = if text { color } else { folded };
+                (color, u32::from(id) << 8 | u32::from(alpha) | inner << 16)
+            }
+            _ => (folded, 0),
+        }
     }
 
     /// Perform prepaint on child elements in a "retryable" manner, so that any side effects
@@ -4896,12 +4963,13 @@ impl Window {
                     transformation: TransformationMatrix::unit(),
                 });
             } else {
+                let (color, layers) = self.sprite_color_and_layers(color, true);
                 self.next_frame.scene.insert_primitive(MonochromeSprite {
                     order: 0,
-                    pad: 0,
+                    layers,
                     bounds,
                     content_mask,
-                    color: color.opacity(element_opacity),
+                    color,
                     tile,
                     transformation: TransformationMatrix::unit(),
                 });
@@ -4948,7 +5016,8 @@ impl Window {
 
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
-        let integer_origin = glyph_origin.map(|c| ScaledPixels(round_half_toward_zero(c.0)));
+        // Skia places bitmap glyphs at the device origin rounded half up.
+        let integer_origin = glyph_origin.map(|c| ScaledPixels(round_half_up(c.0)));
         let params = RenderGlyphParams {
             font_id,
             glyph_id,
@@ -4979,7 +5048,7 @@ impl Window {
 
             self.next_frame.scene.insert_primitive(PolychromeSprite {
                 order: 0,
-                pad: 0,
+                skia: 1,
                 grayscale: false.into(),
                 bounds,
                 corner_radii: Default::default(),
@@ -5005,7 +5074,6 @@ impl Window {
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
-        let element_opacity = self.element_opacity();
         let bounds = self.snap_bounds(bounds);
 
         let params = RenderSvgParams {
@@ -5043,12 +5111,13 @@ impl Window {
             .map_origin(|value| ScaledPixels(round_half_up(value.0)))
             .map_size(|size| size.ceil());
 
+        let (color, layers) = self.sprite_color_and_layers(color, false);
         self.next_frame.scene.insert_primitive(MonochromeSprite {
             order: 0,
-            pad: 0,
+            layers,
             bounds: final_bounds,
             content_mask,
-            color: color.opacity(element_opacity),
+            color,
             tile,
             transformation,
         });
@@ -5151,7 +5220,7 @@ impl Window {
 
         self.next_frame.scene.insert_primitive(PolychromeSprite {
             order: 0,
-            pad: 0,
+            skia: 0,
             grayscale: grayscale.into(),
             bounds: visible_bounds_snapped,
             content_mask,
@@ -5299,6 +5368,18 @@ impl Window {
         let snapped_offset = self.pixel_snap_point(self.element_offset());
         bounds.origin += snapped_offset;
         bounds
+    }
+
+    /// The unsnapped minus the snapped x of the layout's origin (`layout_bounds` snaps it to
+    /// device pixels): add it to the x where an element paints text, as Blink paints glyphs at
+    /// the fractional LayoutUnit x. Call during prepaint or paint, with the id `request_layout`
+    /// returned.
+    pub fn layout_origin_residual_x(&mut self, layout_id: LayoutId) -> Pixels {
+        let scale_factor = self.scale_factor();
+        self.layout_engine
+            .as_mut()
+            .unwrap()
+            .layout_origin_residual_x(layout_id, scale_factor)
     }
 
     /// This method should be called during `prepaint`. You can use
@@ -9546,8 +9627,8 @@ mod tests {
             let origin = point(px(-1.25), px(9.25));
             let width = px(24.);
             window.with_content_mask(Some(mask), |window| {
-                window.with_element_opacity(Some(0.5), |window| {
-                    window.with_element_opacity(Some(0.5), |window| {
+                window.with_element_opacity(Some(0.5), None, |window| {
+                    window.with_element_opacity(Some(0.5), None, |window| {
                         let original = paint_test_underlines(window, |window| {
                             window.paint_underline(origin, width, &style);
                         })[0];

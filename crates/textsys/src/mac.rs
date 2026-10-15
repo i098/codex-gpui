@@ -43,7 +43,7 @@ use core_text::{
 use gpui::{
     Bounds, DevicePixels, Font, FontId, FontMetrics, FontRun, FontStyle, GlyphId, LineLayout,
     Pixels, PlatformTextSystem, RenderGlyphParams, Result, SUBPIXEL_VARIANTS_X, ShapedGlyph,
-    ShapedRun, Size, TextRenderingMode, point, px, size, swap_rgba_pa_to_bgra,
+    ShapedRun, Size, TextRenderingMode, point, px, size,
 };
 use parking_lot::Mutex;
 
@@ -469,7 +469,8 @@ impl PlatformTextSystem for SkiaMatchedTextSystem {
         font.draw_glyphs(&[glyph], &[origin], cx);
         if params.is_emoji {
             for pixel in pixels.as_chunks_mut::<4>().0 {
-                swap_rgba_pa_to_bgra(pixel);
+                // Premultiplied, as Skia blends it (PolychromeSprite::skia).
+                pixel.swap(0, 2);
             }
             return Ok((bounds.size, pixels));
         }
@@ -536,7 +537,17 @@ impl PlatformTextSystem for SkiaMatchedTextSystem {
                     .and_then(|a| a.find(kCTFontAttributeName).map(|f| f.downcast::<CTFont>()))
                     .flatten()
             };
-            let Some(font) = font else { continue };
+            let Some(mut font) = font else { continue };
+            // Blink falls back to "Apple Color Emoji" for emoji, not CoreText's UI variant
+            // (whose advances are wider), and shapes it with HarfBuzz.
+            let is_emoji = match font.postscript_name().as_str() {
+                ".AppleColorEmojiUI" => {
+                    font = core_text::font::new_from_name("AppleColorEmoji", font.pt_size())
+                        .unwrap_or(font);
+                    true
+                }
+                name => name == "AppleColorEmoji",
+            };
             let range = unsafe { CTRunGetStringRange(run.as_concrete_TypeRef()) };
             let utf8 = |i: isize| utf8_offsets[(i as usize).min(utf8_offsets.len() - 1)];
             let (start, end) = (utf8(range.location), utf8(range.location + range.length));
@@ -551,9 +562,8 @@ impl PlatformTextSystem for SkiaMatchedTextSystem {
                     Some(&id) => id,
                     None => state.face_id(Face::Fixed(font.clone()), Some(name.clone())),
                 });
-            let is_emoji = name == "AppleColorEmoji" || name == ".AppleColorEmojiUI";
             let mut glyphs = Vec::new();
-            if requested_id.is_some() {
+            if requested_id.is_some() || is_emoji {
                 let (spacing, features) =
                     state.shaping.get(&font_id.0).cloned().unwrap_or_default();
                 let (hb_glyphs, width) = state.hb(font_id, css).shape(
