@@ -102,6 +102,12 @@ const FLOWS: &[(&str, Flow)] = &[
 ];
 
 fn main() {
+    // The flows render through the Metal headless renderer and the CoreText text system;
+    // other platforms (Linux CI) have neither.
+    if !cfg!(target_os = "macos") {
+        println!("flows: macOS only, skipped");
+        return;
+    }
     let filter = std::env::args().skip(1).find(|a| !a.starts_with('-'));
     let flows: Vec<_> = FLOWS
         .iter()
