@@ -36,6 +36,7 @@ pub fn icon_sized(name: &str, width: f32, height: f32, color: Hsla) -> Icon {
         height,
         flip_x: false,
         composited: None,
+        own_layer: false,
         interactivity: Interactivity::new(),
     }
     .w(px(width))
@@ -51,6 +52,7 @@ pub struct Icon {
     height: f32,
     flip_x: bool,
     composited: Option<Point<Pixels>>,
+    own_layer: bool,
     interactivity: Interactivity,
 }
 
@@ -67,6 +69,15 @@ impl Icon {
     pub fn composited(mut self, layer: Option<Point<Pixels>>) -> Self {
         self.composited = layer;
         self
+    }
+
+    /// Chromium blits this icon into the transparent overlap layer at `layer` that squashes
+    /// it, which it then composites. Rasterized at runtime in that layer (whose origin sets
+    /// the raster's float geometry), as the fitted images hold the page blit.
+    pub fn own_layer(mut self, layer: Point<Pixels>) -> Self {
+        self.composited = Some(layer);
+        self.own_layer = true;
+        self.top_layer()
     }
 }
 
@@ -157,7 +168,8 @@ impl Element for Icon {
     ) {
         // The icon's own opacity goes into the color (and the fitted images' key).
         let opacity = self.interactivity.base_style.opacity.take().unwrap_or(1.);
-        let (name, flip_x, composited) = (self.name.clone(), self.flip_x, self.composited);
+        let (name, flip_x, own_layer) = (self.name.clone(), self.flip_x, self.own_layer);
+        let composited = self.composited;
         let css = size(px(self.width), px(self.height));
         self.interactivity.paint(
             global_id,
@@ -180,9 +192,11 @@ impl Element for Icon {
                 let flipped = if flip_x { "-flipx" } else { "" };
                 let key = color_key(color);
                 let dir = format!("icons/px/{name}{flipped}@{w}x{h}/{key}");
-                if let Some(image) = load(format!("{dir}@{x}_{y}.png"), cx)
-                    .or_else(|| load(format!("{dir}.png"), cx))
-                {
+                let fitted = || {
+                    load(format!("{dir}@{x}_{y}.png"), cx)
+                        .or_else(|| load(format!("{dir}.png"), cx))
+                };
+                if let Some(image) = (!own_layer).then(fitted).flatten() {
                     let device = Bounds {
                         origin: point(px(x / scale), px(y / scale)),
                         size: size(px(w / scale), px(h / scale)),

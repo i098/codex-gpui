@@ -68,20 +68,27 @@ fn utility_bar(t: &Theme) -> Div {
                 fill: Some(t.composer_action_bar),
                 ..Default::default()
             }))
+            // `horizontal-scroll-fade-mask` scroller (`-m-0.5`, `p-0.5`): its contents fade over
+            // 1rem at both ends (the scroll timeline is inactive) in their own layer.
             .child(
-                div()
-                    .py(px(5.))
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .child(chip(
-                        "choose-project",
-                        "folder",
-                        "Choose project",
-                        t.text_tertiary,
-                        t,
-                    ))
-                    .child(chip("work-in", "laptop", "This computer", t.text, t)),
+                div().py(px(3.)).child(
+                    div()
+                        .mx(px(-2.))
+                        .p(px(2.))
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .layer()
+                        .child(chip(
+                            "choose-project",
+                            "folder",
+                            "Choose project",
+                            t.text_tertiary,
+                            t,
+                        ))
+                        .child(chip("work-in", "laptop", "This computer", t.text, t))
+                        .child(shapes::x_fade(px(16.), px(16.))),
+                ),
             ),
     )
 }

@@ -36,6 +36,16 @@ pub fn panel_width(window: &Window) -> Pixels {
     px(STORED_WIDTH).min((main - px(MIN_CHAT)).max(px(MIN_CHAT)))
 }
 
+/// The panel at its clamped width (the chat at `MIN_CHAT`): with `Shell::main_layer`,
+/// Chromium hides the surface's own fill under the content's at the corners and clips that
+/// content twice (coverage m m) instead of stacking both (each m).
+/// ponytail: measured, not derived: refs/diff at 1280 and 1300 px wide (side panel at its
+/// clamped width) clip twice, at 1400 and 1440 (stored width) they stack. Find cc's rule
+/// if another window size disagrees.
+pub fn panel_clamped(window: &Window) -> bool {
+    panel_width(window) < px(STORED_WIDTH)
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Kind {
     Context,
@@ -144,6 +154,18 @@ impl DiffPanel {
                 },
             )
         };
+        // A tool with a lens is its own composited layer: the icon blends onto transparent.
+        let lensed = |name| {
+            div()
+                .relative()
+                .size(px(28.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .layer()
+                .child(lens())
+                .child(icon(name, 16., t.text_tertiary))
+        };
         div()
             .h(px(48.))
             .flex_none()
@@ -179,21 +201,12 @@ impl DiffPanel {
                                 .flex()
                                 .gap(px(6.))
                                 .child(tool("diff-refresh"))
-                                .child(tool("diff-word-wrap"))
+                                .child(lensed("diff-word-wrap"))
                                 .child(tool("diff-load-full-files"))
                                 .child(tool("diff-word-diffs")),
                         )
                     })
-                    .child(
-                        div()
-                            .relative()
-                            .size(px(28.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(lens())
-                            .child(icon("diff-show-files", 16., t.text_tertiary)),
-                    ),
+                    .child(lensed("diff-show-files")),
             )
     }
 }
@@ -217,28 +230,34 @@ impl Render for DiffPanel {
                 })
         });
         // No fill: the main panel's rounded fill (a `shapes` decoration the capsules' backdrop
-        // blur reads) shows through, so its corners stay round. The capsules' shadows reach into
-        // the body's 1 px top border (translucent) but not into the opaque scroller under it,
-        // which Chromium composites in its own layer above them: clip them there.
+        // blur reads) shows through, so its corners stay round. The body's 1 px top border
+        // (translucent) sits in the layer under the capsules, whose shadows blend over it; they
+        // do not reach the opaque scroller under it, which Chromium composites in its own layer
+        // above them: clip them there.
         div()
             .size_full()
             .flex()
             .flex_col()
             .child(
                 div()
+                    .relative()
                     .flex_none()
                     .overflow_hidden()
-                    .child(self.header(&t, wide))
-                    // Skia blends it over the shadows like Chromium (a GPUI quad rounds apart).
+                    .pb(px(1.))
+                    // Skia blends it like Chromium (a GPUI quad rounds apart).
                     .child(
                         div()
-                            .relative()
+                            .absolute()
+                            .bottom_0()
+                            .left_0()
+                            .right_0()
                             .h(px(1.))
                             .child(shapes::decoration(Decoration {
                                 fill: Some(t.border),
                                 ..Default::default()
                             })),
-                    ),
+                    )
+                    .child(self.header(&t, wide)),
             )
             .child(
                 div()
@@ -353,8 +372,9 @@ pub fn tab_strip(t: &Theme, tab_icon: &str, label: SharedString, window: &Window
                 .on_click(dispatch::<CloseSidePanel>)
                 .child(icon("diff-tab-close", 14., t.text_tertiary)),
         );
-    // 28 px `_Button`: 12.5 px `--codex-corner-shape` squircle, `border border-transparent`
-    // (Blink paints its fill in a clip layer).
+    // 28 px `_Button`: 12.5 px `--codex-corner-shape` squircle, `border border-transparent`.
+    // Blink's clip layer for its fill composites onto the titlebar layer's transparent tile
+    // unchanged, so the fill paints straight into the strip's layer.
     let button = |name: &str, color: Hsla, fill: Option<Hsla>| {
         div()
             .relative()
@@ -367,7 +387,6 @@ pub fn tab_strip(t: &Theme, tab_icon: &str, label: SharedString, window: &Window
                     radius: Corners::all(px(12.5)),
                     corner: shapes::Corner::Squircle,
                     fill: Some(fill),
-                    border: Some((px(1.), gpui::transparent_black())),
                     ..Default::default()
                 }))
             })
@@ -487,7 +506,9 @@ impl Render for SplitScreen {
                         .absolute()
                         .top_0()
                         .left(left)
-                        .right_0(),
+                        .right_0()
+                        // In the composited `group/titlebar`, like the thread's header.
+                        .layer(),
                 )
             })
     }
@@ -529,8 +550,12 @@ pub fn with_side_panel(
     shell.update(cx, |shell, cx| {
         // A panel's tab strip brings its own `New tab`.
         shell.new_tab = panel.is_none();
-        // The thread route's main surface is a composited layer.
+        // The thread route's main surface is a composited layer; with the Changes panel,
+        // Chromium composites the surface itself too.
         shell.main_composited = true;
+        shell.main_layer = panel
+            .as_ref()
+            .is_some_and(|(view, ..)| view.clone().downcast::<DiffPanel>().is_ok());
         shell.set_main(main, cx);
     });
     let tab = panel.map(|(_, icon, label)| (icon, label));

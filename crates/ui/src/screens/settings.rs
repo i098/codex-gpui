@@ -7,7 +7,7 @@ use crate::{
     composer::{popover, shadow},
     fixture,
     icon::icon,
-    in_layer, layout_color, over, sidebar_section, text,
+    in_layer, layout_color, over, rounded_clip, sidebar_section, text,
 };
 use bridge::Bridge;
 use bridge::types::{AccountReadResponse, ConfigReadResponse};
@@ -15,12 +15,17 @@ use gpui::{
     Anchor, AnyElement, AnyView, App, AppContext as _, Bounds, ClipboardItem, Context, Corners,
     Div, Entity, EventEmitter, FocusHandle, Font, FontWeight, Global, HighlightStyle, Hsla,
     InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Pixels, Point, Render,
-    SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun, Window,
-    anchored, canvas, deferred, div, font, img, point, prelude::FluentBuilder as _, px, size,
+    RenderImage, SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun,
+    Window, anchored, canvas, deferred, div, font, img, point, prelude::FluentBuilder as _, px,
+    size,
 };
 use serde_json::{Value, json};
 use shapes::Corner::{self, Round, Squircle};
-use std::{cell::Cell, rc::Rc, sync::Arc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    sync::Arc,
+};
 use theme::{ActiveTheme as _, Theme};
 
 /// The app's theme setting (`ThemeSetting`): `system`, `light` or `dark`.
@@ -670,12 +675,7 @@ impl SettingsPane {
                         Some("Where files and folders open by default"),
                         select(
                             "Zed",
-                            Some(
-                                img("icons/settings-zed.png")
-                                    .size(px(18.))
-                                    .flex_none()
-                                    .into_any_element(),
-                            ),
+                            Some(app_icon(over(t.primary_soft_alpha, t.background_panel))),
                             false,
                             t,
                         )
@@ -920,20 +920,29 @@ impl Render for SettingsPane {
                             t.background_panel,
                             Some(t.border),
                         ))
-                        .children(rows.into_iter().enumerate().map(|(i, r)| {
-                            r.when(i < last, |d| {
-                                // `after:inset-x-4 after:bottom-0 after:h-px after:bg-border`
-                                d.child(
-                                    div()
-                                        .absolute()
-                                        .left(px(16.))
-                                        .right(px(16.))
-                                        .bottom_0()
-                                        .h(px(1.))
-                                        .bg(card_border),
-                                )
-                            })
-                        })),
+                        // `overflow: hidden`: the rows draw under the card's rounded clip.
+                        .child(rounded_clip(
+                            px(19.),
+                            Squircle,
+                            div()
+                                .flex()
+                                .flex_col()
+                                .children(rows.into_iter().enumerate().map(|(i, r)| {
+                                    r.when(i < last, |d| {
+                                        // `after:inset-x-4 after:bottom-0 after:h-px
+                                        // after:bg-border`
+                                        d.child(
+                                            div()
+                                                .absolute()
+                                                .left(px(16.))
+                                                .right(px(16.))
+                                                .bottom_0()
+                                                .h(px(1.))
+                                                .bg(card_border),
+                                        )
+                                    })
+                                })),
+                        )),
                 )
         });
         let column = |d: Div| d.w_full().max_w(px(768.));
@@ -1189,6 +1198,60 @@ fn select(label: &'static str, leading: Option<AnyElement>, disabled: bool, t: &
                 .child(text(label, 13., 18., 430., t.text)),
         )
         .child(icon("chevron-down", 14., t.text_tertiary))
+}
+
+/// The `Zed` app icon `<img>` (the app's 64 px `apps/zed.png` in an 18 px box) over the
+/// opaque `page`. Chromium draws it at its unsnapped position with bilinear filtering; on
+/// macOS Skia does the same (`shapes::raster_images`), drawn 1:1. Elsewhere GPUI scales it.
+fn app_icon(page: Hsla) -> AnyElement {
+    const PATH: &str = "icons/settings-zed.png";
+    if !cfg!(target_os = "macos") {
+        return img(PATH).size(px(18.)).flex_none().into_any_element();
+    }
+    // (box, page) -> the drawn device rect and its image.
+    type Cached = (Bounds<Pixels>, Hsla, Bounds<Pixels>, Arc<RenderImage>);
+    thread_local! {
+        static CACHE: RefCell<Option<Cached>> = const { RefCell::new(None) };
+    }
+    canvas(
+        move |bounds, window, cx| {
+            if let Some((b, p, at, image)) = CACHE.with_borrow(|c| c.clone())
+                && b == bounds
+                && p == page
+            {
+                return Some((at, image));
+            }
+            let src = image::load_from_memory(&cx.asset_source().load(PATH).ok()??).ok()?;
+            let mut src = src.to_rgba8();
+            shapes::premultiply(&mut src);
+            let image = Arc::new(shapes::raster_images(
+                &[(&src, bounds)],
+                bounds,
+                Corners::default(),
+                Round,
+                page,
+                window,
+            )?);
+            // The box's snapped device px rect, which `raster_images` fills.
+            let s = window.scale_factor();
+            let dev = |v: Pixels| (f32::from(v) * s).round();
+            let (x, y) = (dev(bounds.left()), dev(bounds.top()));
+            let (w, h) = (dev(bounds.right()) - x, dev(bounds.bottom()) - y);
+            let at = Bounds::new(point(px(x / s), px(y / s)), size(px(w / s), px(h / s)));
+            CACHE.set(Some((bounds, page, at, image.clone())));
+            Some((at, image))
+        },
+        |_, image, window, _| {
+            if let Some((at, image)) = image {
+                window
+                    .paint_image(at, at, Corners::default(), image, 0, false)
+                    .ok();
+            }
+        },
+    )
+    .size(px(18.))
+    .flex_none()
+    .into_any_element()
 }
 
 /// Signed-out start (`LoginRoute`, welcome v2): ChatGPT sign-in, another way (API key), sign up.

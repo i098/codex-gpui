@@ -459,7 +459,8 @@ impl ThreadView {
                                 .child(shapes::decoration(shapes::Decoration {
                                     radius: Corners::all(px(12.5)),
                                     corner: shapes::Corner::Squircle,
-                                    fill: Some(over(Hsla { a: 0.1, ..t.text }, layout_color(t))),
+                                    // Translucent in the titlebar's transparent layer.
+                                    fill: Some(Hsla { a: 0.1, ..t.text }),
                                     ..Default::default()
                                 }))
                                 .child(icon("thread-summary", 16., t.text))

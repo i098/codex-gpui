@@ -20,6 +20,7 @@ use skia_safe::{
     PathOp, RRect, Rect, SamplingOptions, Vector, color_filters, surfaces,
 };
 use std::{
+    cell::RefCell,
     collections::HashMap,
     hash::{DefaultHasher, Hash as _, Hasher as _},
     sync::{Arc, LazyLock},
@@ -167,6 +168,15 @@ impl Contour {
 
     fn round_curvature(&self) -> bool {
         self.k.iter().all(|&k| k == 2.) || !self.is_rounded()
+    }
+
+    /// The contour moved by `[dx, dy]` device px.
+    fn moved(mut self, [dx, dy]: [f32; 2]) -> Self {
+        for r in [&mut self.rr.r, &mut self.origin.r] {
+            r[0] += dx;
+            r[1] += dy;
+        }
+        self
     }
 
     /// `PathBuilder::AddContouredRect`: when the rect differs from its origin rect (spread
@@ -853,11 +863,14 @@ pub(crate) fn tiles(
 /// the paint (opaque legacy, translucent, color filter), so the probes that tell the modes
 /// apart draw with the real color's `alpha`. AAA blits some edge pixels twice (a partial
 /// row, then the rest of it): those are solved for two blits. In a composited layer every
-/// pixel is one [`LAYER`] blit of its coverage.
+/// pixel is one [`LAYER`] blit of its coverage. `clips` (layer space) are the ancestors'
+/// anti-aliased clips ([`with_rounded_clip`]): Skia draws inside them, and in a tile their
+/// curves reach the AA clip makes AAA blit runs only.
 fn raster(
     [x0, y0, x1, y1]: [i32; 4],
     layer: Layer,
     alpha: u8,
+    clips: &[Contour],
     draw: &dyn Fn(&Canvas, Color4f),
 ) -> ([i32; 4], Vec<Blits>) {
     let [lx, ly] = layer.origin;
@@ -903,7 +916,12 @@ fn raster(
         Color4f::new(f(r), f(g), f(b), f(a))
     };
     let tile = |o: [i32; 2], size: (i32, i32), p: Probe| {
-        tile_pixels(o, size, color(p.bg, 255), |c| draw(c, color(p.fg, p.a)))
+        tile_pixels(o, size, color(p.bg, 255), |c| {
+            for clip in clips {
+                clip.clip(c, ClipOp::Intersect);
+            }
+            draw(c, color(p.fg, p.a));
+        })
     };
     for (o, ts, [ox0, oy0, ox1, oy1]) in tiles([x0, y0, x1, y1], size) {
         let seen: Vec<_> = probes.iter().map(|&p| tile(o, ts, p)).collect();
@@ -921,7 +939,21 @@ fn raster(
                 }
                 out[((y - y0) * w + x - x0) as usize] = match fixed {
                     Some(mode) => [m, mode, 0, MASK],
-                    None => solve(&probes, &px, modes).unwrap_or([m, MASK, 0, MASK]),
+                    None => solve(&probes, &px, modes).unwrap_or_else(|| {
+                        // AAA may split a translucent paint's edge px into other blits than the
+                        // opaque probe's: one `blitAntiH` (as under an AA clip, which forces
+                        // AAA's run blitter) of the coverage the translucent white probe shows,
+                        // the nearest to the opaque one.
+                        let v = px[px.len() - 1][0];
+                        let fit = |c: &u8| blend(MASK, 255, alpha, 0, *c) == v;
+                        let rle = (0..=255).filter(fit).min_by_key(|c| c.abs_diff(m));
+                        [
+                            if alpha == 255 { m } else { rle.unwrap_or(m) },
+                            MASK,
+                            0,
+                            MASK,
+                        ]
+                    }),
                 };
             }
         }
@@ -1294,11 +1326,43 @@ pub(crate) fn alpha_byte(a: f32) -> u8 {
     (a.clamp(0., 1.) * 255.).round() as u8
 }
 
+thread_local! {
+    /// The anti-aliased clips of [`with_rounded_clip`], window device px, outermost first.
+    static CLIPS: RefCell<Vec<Contour>> = const { RefCell::new(Vec::new()) };
+}
+
+/// `crate::with_rounded_clip` on macOS.
+pub(crate) fn with_rounded_clip<R>(
+    radius: gpui::Corners<Pixels>,
+    corner: Corner,
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    paint: impl FnOnce(&mut Window) -> R,
+) -> R {
+    let d = Decoration {
+        radius,
+        corner,
+        ..Default::default()
+    };
+    let (clip, _) = ops(&d, bounds, window.scale_factor());
+    CLIPS.with_borrow_mut(|c| c.push(clip));
+    let out = paint(window);
+    CLIPS.with_borrow_mut(|c| c.pop());
+    out
+}
+
+/// The active [`CLIPS`] in `layer`'s space.
+fn clips(layer: Layer) -> Vec<Contour> {
+    let [x, y] = layer.origin.map(|v| -v as f32);
+    CLIPS.with_borrow(|c| c.iter().map(|c| c.moved([x, y])).collect())
+}
+
 fn paint_op(op: Op, color: Hsla, layer: Layer, window: &mut Window, cx: &App) {
     // GPUI folds an `opacity` into a lone sprite's color, as cc folds it into the paint: Skia
     // picks its blitter by that alpha.
     let a = alpha_byte(color.a * window.element_opacity());
     if matches!(op, Op::ClipLayer { .. }) || op.restored(a) {
+        // ponytail: restored layers ignore the ancestors' AA clips.
         let mut col = color4f(color);
         col.a *= window.element_opacity();
         let sprites = cached(format!("{op:?}{layer:?}{col:?}"), || {
@@ -1306,8 +1370,9 @@ fn paint_op(op: Op, color: Hsla, layer: Layer, window: &mut Window, cx: &App) {
         });
         return paint_sprites(&sprites, color, window, cx);
     }
-    let sprites = sprites(format!("{op:?}{layer:?}{a}"), || {
-        raster(op.bbox(), layer, a, &|c, col| op.draw(c, col))
+    let clips = clips(layer);
+    let sprites = sprites(format!("{op:?}{layer:?}{a}{clips:?}"), || {
+        raster(op.bbox(), layer, a, &clips, &|c, col| op.draw(c, col))
     });
     paint_sprites(&sprites, color, window, cx);
 }
@@ -1355,7 +1420,7 @@ pub(crate) fn raster_images(
     corner: Corner,
     page: Hsla,
     window: &Window,
-) -> Vec<u8> {
+) -> gpui::RenderImage {
     let (layer, s) = (Layer::new(window, None), window.scale_factor());
     let d = Decoration {
         radius,
@@ -1402,11 +1467,13 @@ pub(crate) fn raster_images(
             for x in ox0..ox1 {
                 let i = (y - o[1]) as usize * row + (x - o[0]) as usize * 4;
                 let j = (((y - y0) * w + x - x0) * 4) as usize;
-                out[j..j + 4].copy_from_slice(&px[i..i + 4]);
+                // BGRA, as GPUI's images hold it.
+                out[j..j + 4].copy_from_slice(&[px[i + 2], px[i + 1], px[i], px[i + 3]]);
             }
         }
     }
-    out
+    let out = image::RgbaImage::from_raw(w as u32, h as u32, out).expect("shapes: raster");
+    gpui::RenderImage::new([image::Frame::new(out)])
 }
 
 /// Blink's paint ops for the decoration `d` of the border box `bounds` (window px at scale
@@ -1788,9 +1855,10 @@ pub(crate) fn paint_icon(
         let a = if p.color.is_some() { 1. } else { rgba.a } * p.opacity * p.layer;
         let color = Rgba { a, ..c };
         let a = alpha_byte(a * window.element_opacity());
+        let clips = clips(layer);
         let sprites = sprites(
-            format!("{key}#{n}{flip_x}{origin:?}{w}x{h}{layer:?}{a}"),
-            || raster(bbox, layer, a, &draw),
+            format!("{key}#{n}{flip_x}{origin:?}{w}x{h}{layer:?}{a}{clips:?}"),
+            || raster(bbox, layer, a, &clips, &draw),
         );
         paint_sprites(&sprites, color.into(), window, cx);
     }
