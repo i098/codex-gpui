@@ -70,10 +70,12 @@ impl Render for Root {
 }
 
 fn headless(assets: Arc<dyn AssetSource>) -> HeadlessAppContext {
-    let text_system = gpui_platform::current_platform(true).text_system();
-    HeadlessAppContext::with_platform(text_system, assets, || {
+    let text_system = textsys::text_system();
+    let mut cx = HeadlessAppContext::with_platform(text_system, assets, || {
         gpui_platform::current_headless_renderer()
-    })
+    });
+    cx.update(theme::load_fonts);
+    cx
 }
 
 fn render_in(cx: &mut HeadlessAppContext, case: &Case, w: u32, h: u32) -> Result<RgbaImage> {

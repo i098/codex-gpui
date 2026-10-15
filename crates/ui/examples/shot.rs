@@ -14,7 +14,7 @@ impl Render for Root {
 }
 
 fn main() -> anyhow::Result<()> {
-    let text_system = gpui_platform::current_platform(true).text_system();
+    let text_system = textsys::text_system();
     let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(theme::Assets), || {
         gpui_platform::current_headless_renderer()
     });
