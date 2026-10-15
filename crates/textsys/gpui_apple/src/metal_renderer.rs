@@ -132,6 +132,8 @@ pub struct MetalRenderer {
     path_intermediate_texture: Option<metal::Texture>,
     path_intermediate_msaa_texture: Option<metal::Texture>,
     path_sample_count: u32,
+    /// The monochrome sprite shader's per-pixel layer state, color attachments 1 to 4.
+    layer_textures: Vec<metal::Texture>,
     /// Offscreen render target reused across `render_scene` calls when
     /// rendering headlessly without reading pixels back.
     #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
@@ -406,6 +408,7 @@ impl MetalRenderer {
             path_intermediate_texture: None,
             path_intermediate_msaa_texture: None,
             path_sample_count: PATH_SAMPLE_COUNT,
+            layer_textures: Vec::new(),
             #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
             headless_render_target: None,
         }
@@ -447,6 +450,7 @@ impl MetalRenderer {
         if size.width.0 <= 0 || size.height.0 <= 0 {
             self.path_intermediate_texture = None;
             self.path_intermediate_msaa_texture = None;
+            self.layer_textures.clear();
             return;
         }
 
@@ -476,6 +480,16 @@ impl MetalRenderer {
         } else {
             self.path_intermediate_msaa_texture = None;
         }
+
+        let layer_descriptor = metal::TextureDescriptor::new();
+        layer_descriptor.set_width(size.width.0 as u64);
+        layer_descriptor.set_height(size.height.0 as u64);
+        layer_descriptor.set_pixel_format(LAYER_FORMAT);
+        layer_descriptor.set_storage_mode(metal::MTLStorageMode::Private);
+        layer_descriptor.set_usage(metal::MTLTextureUsage::RenderTarget);
+        self.layer_textures = (0..LAYER_TARGETS)
+            .map(|_| self.device.new_texture(&layer_descriptor))
+            .collect();
     }
 
     pub fn update_transparency(&mut self, transparent: bool) {
@@ -724,6 +738,7 @@ impl MetalRenderer {
         let mut command_encoder = new_command_encoder_for_texture(
             command_buffer,
             texture,
+            &self.layer_textures,
             viewport_size,
             Some(metal::MTLClearColor::new(0., 0., 0., alpha)),
         );
@@ -750,6 +765,7 @@ impl MetalRenderer {
                     command_encoder = new_command_encoder_for_texture(
                         command_buffer,
                         texture,
+                        &self.layer_textures,
                         viewport_size,
                         None,
                     );
@@ -1279,21 +1295,28 @@ impl MetalRenderer {
 fn new_command_encoder_for_texture<'a>(
     command_buffer: &'a metal::CommandBufferRef,
     texture: &'a metal::TextureRef,
+    layer_textures: &[metal::Texture],
     viewport_size: Size<DevicePixels>,
     clear_color: Option<metal::MTLClearColor>,
 ) -> &'a metal::RenderCommandEncoderRef {
     let render_pass_descriptor = metal::RenderPassDescriptor::new();
-    let color_attachment = render_pass_descriptor
-        .color_attachments()
-        .object_at(0)
-        .unwrap();
-    color_attachment.set_texture(Some(texture));
-    color_attachment.set_store_action(metal::MTLStoreAction::Store);
-    if let Some(clear_color) = clear_color {
-        color_attachment.set_load_action(metal::MTLLoadAction::Clear);
-        color_attachment.set_clear_color(clear_color);
-    } else {
-        color_attachment.set_load_action(metal::MTLLoadAction::Load);
+    let layer_clear = clear_color.map(|_| metal::MTLClearColor::new(0., 0., 0., 0.));
+    for (index, (texture, clear_color)) in std::iter::once((texture, clear_color))
+        .chain(layer_textures.iter().map(|t| (&**t, layer_clear)))
+        .enumerate()
+    {
+        let color_attachment = render_pass_descriptor
+            .color_attachments()
+            .object_at(index as u64)
+            .unwrap();
+        color_attachment.set_texture(Some(texture));
+        color_attachment.set_store_action(metal::MTLStoreAction::Store);
+        if let Some(clear_color) = clear_color {
+            color_attachment.set_load_action(metal::MTLLoadAction::Clear);
+            color_attachment.set_clear_color(clear_color);
+        } else {
+            color_attachment.set_load_action(metal::MTLLoadAction::Load);
+        }
     }
 
     let command_encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
@@ -1367,10 +1390,31 @@ fn build_pipeline_state(
     color_attachment.set_source_alpha_blend_factor(metal::MTLBlendFactor::One);
     color_attachment.set_destination_rgb_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
     color_attachment.set_destination_alpha_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
+    set_layer_targets(
+        &descriptor,
+        fragment_fn_name == "monochrome_sprite_fragment",
+    );
 
     device
         .new_render_pipeline_state(&descriptor)
         .expect("could not create render pipeline state")
+}
+
+/// Color attachments 1 to 4 of the main pass: the monochrome sprite shader's layer state
+/// (written only by that pipeline).
+const LAYER_TARGETS: u64 = 4;
+const LAYER_FORMAT: MTLPixelFormat = MTLPixelFormat::RGBA8Unorm;
+
+fn set_layer_targets(descriptor: &metal::RenderPipelineDescriptorRef, write: bool) {
+    for index in 1..=LAYER_TARGETS {
+        let attachment = descriptor.color_attachments().object_at(index).unwrap();
+        attachment.set_pixel_format(LAYER_FORMAT);
+        attachment.set_write_mask(if write {
+            metal::MTLColorWriteMask::all()
+        } else {
+            metal::MTLColorWriteMask::empty()
+        });
+    }
 }
 
 fn build_path_sprite_pipeline_state(
@@ -1401,6 +1445,7 @@ fn build_path_sprite_pipeline_state(
     color_attachment.set_source_alpha_blend_factor(metal::MTLBlendFactor::One);
     color_attachment.set_destination_rgb_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
     color_attachment.set_destination_alpha_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
+    set_layer_targets(&descriptor, false);
 
     device
         .new_render_pipeline_state(&descriptor)

@@ -301,6 +301,10 @@ pub struct Style {
     /// The opacity of this element
     pub opacity: Option<f32>,
 
+    /// Paint this element and its children into a transparent layer that is then blended
+    /// onto what is below it, as Chromium does for a composited layer
+    pub layer: bool,
+
     /// The grid columns of this element
     /// Roughly equivalent to the Tailwind `grid-cols-<number>`
     pub grid_cols: Option<GridTemplate>,
@@ -809,6 +813,7 @@ impl Default for Style {
             text: TextStyleRefinement::default(),
             mouse_cursor: None,
             opacity: None,
+            layer: false,
             grid_rows: None,
             grid_cols: None,
             grid_location: None,

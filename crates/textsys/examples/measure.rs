@@ -5,9 +5,9 @@
 
 use anyhow::{Context as _, Result, bail};
 use gpui::{
-    App, AppContext, Bounds, Font, FontFeatures, FontStyle, FontWeight, HeadlessAppContext,
-    IntoElement, ParentElement, PlatformTextSystem, Render, Rgba, SharedString, Styled, TextAlign,
-    TextRun, Window, canvas, div, fill, point, px, size,
+    App, AppContext, Bounds, Corners, Font, FontFeatures, FontStyle, FontWeight,
+    HeadlessAppContext, IntoElement, ParentElement, PlatformTextSystem, Render, Rgba, SharedString,
+    Styled, TextAlign, TextRun, Window, canvas, div, fill, point, px, size,
 };
 use image::RgbaImage;
 use std::{cell::RefCell, fmt::Write as _, fs, path::Path, rc::Rc, sync::Arc};
@@ -48,6 +48,97 @@ const PARAGRAPH_HEIGHT: f32 = 8. * 22.75 + 16.;
 /// Top of the paragraph block (below the runs).
 fn paragraph_top(rows: &[(f32, f32, f32, f32)]) -> f32 {
     rows.last().map_or(0., |r| r.0 + r.1)
+}
+
+/// Layer runs, below the paragraph; the whole row is diffed. Chromium blits the content of a
+/// CSS `opacity` into a transparent layer and blends that onto the tile (`saveLayerAlpha`),
+/// and rasterizes a composited layer (here `will-change: transform`; the app's sidebar is one)
+/// into a transparent tile that the compositor blends onto the page.
+struct LayerRun {
+    name: &'static str,
+    bg: u8,
+    /// A `rgba(24, 24, 24, .65)` box holds the content; true: a composited layer.
+    boxed: Option<bool>,
+    opacity: bool,
+    /// A rounded fill (radius 8) under the text.
+    fill: Option<Rgba>,
+    /// Text, size, weight, alpha (white).
+    text: Option<(&'static str, f32, f32, f32)>,
+}
+
+const LAYER_ROW: f32 = 40.;
+
+fn layer_runs() -> [LayerRun; 7] {
+    let white = |a| rgb(255, 255, 255, a);
+    let no_projects = Some(("No projects", 14., 430., 0.498));
+    let recents = Some(("Recents", 14., 500., 0.498));
+    [
+        LayerRun {
+            name: "opacity .5 text .498",
+            bg: 29,
+            boxed: None,
+            opacity: true,
+            fill: None,
+            text: no_projects,
+        },
+        LayerRun {
+            name: "opacity .5 text",
+            bg: 24,
+            boxed: None,
+            opacity: true,
+            fill: None,
+            text: Some((SAMPLES[1], 13., 400., 1.)),
+        },
+        LayerRun {
+            name: "opacity .5 rounded fill",
+            bg: 24,
+            boxed: None,
+            opacity: true,
+            fill: Some(white(1.)),
+            text: None,
+        },
+        LayerRun {
+            name: "translucent box, text",
+            bg: 36,
+            boxed: Some(false),
+            opacity: false,
+            fill: None,
+            text: recents,
+        },
+        LayerRun {
+            name: "composited translucent box, text",
+            bg: 36,
+            boxed: Some(true),
+            opacity: false,
+            fill: None,
+            text: recents,
+        },
+        LayerRun {
+            name: "composited translucent box, opacity .5 text",
+            bg: 36,
+            boxed: Some(true),
+            opacity: true,
+            fill: None,
+            text: no_projects,
+        },
+        LayerRun {
+            name: "composited translucent box, fill .1, text",
+            bg: 36,
+            boxed: Some(true),
+            opacity: false,
+            fill: Some(white(0.1)),
+            text: Some((SAMPLES[2], 13., 400., 1.)),
+        },
+    ]
+}
+
+/// Box, fill and text geometry of a layer run (CSS px): box in the row, content in the box.
+const LAYER_BOX: [f32; 4] = [4., 2., 600., 36.];
+const LAYER_FILL: [f32; 4] = [6., 6., 120., 24.];
+const LAYER_TEXT: (f32, f32) = (12.25, 7.5);
+
+fn layers_top(rows: &[(f32, f32, f32, f32)]) -> f32 {
+    paragraph_top(rows) + PARAGRAPH_HEIGHT
 }
 
 fn rgb(r: u8, g: u8, b: u8, a: f32) -> Rgba {
@@ -210,6 +301,25 @@ fn runs() -> Vec<Run> {
             features: &[("tnum", 1), ("cv01", 1), ("cv02", 1)],
         });
     }
+    // Color emoji (Apple Color Emoji bitmaps) as refs/automations: 28 px cards, 48 px hero with
+    // `tracking-tight` (-0.025em), at two x phases each.
+    for (size, weight, spacing, text) in [
+        (28., 430., 0., "🥗"),
+        (28., 430., 0., "😴💰"),
+        (48., 400., -1.2, "🕗"),
+        (48., 400., -1.2, "🕗"),
+    ] {
+        out.push(Run {
+            mono: false,
+            size,
+            weight,
+            color: rgb(255, 255, 255, 1.),
+            bg: [24, 24, 24],
+            text,
+            spacing,
+            features: &[],
+        });
+    }
     out
 }
 
@@ -245,7 +355,7 @@ fn css_color(c: Rgba) -> String {
 fn page(dir: &Path) -> Result<()> {
     let runs = runs();
     let rows = rows(&runs);
-    let height = (paragraph_top(&rows) + PARAGRAPH_HEIGHT).ceil();
+    let height = (layers_top(&rows) + layer_runs().len() as f32 * LAYER_ROW).ceil();
     let mut html = format!(
         "<!doctype html><html><head><meta charset=utf-8><style>\
          html{{-webkit-font-smoothing:antialiased}}\
@@ -286,6 +396,49 @@ fn page(dir: &Path) -> Result<()> {
          font:430 14px/22.75px {SANS};color:#fff\">{PARAGRAPH}</span>",
         top + 8.
     )?;
+    for (j, run) in layer_runs().iter().enumerate() {
+        let top = layers_top(&rows) + j as f32 * LAYER_ROW;
+        let g = run.bg;
+        write!(
+            html,
+            "<div class=r style=\"top:{top}px;height:{LAYER_ROW}px;background:rgb({g},{g},{g})\"></div>"
+        )?;
+        let mut inner = String::new();
+        if let Some(c) = run.fill {
+            let [x, y, w, h] = LAYER_FILL;
+            write!(
+                inner,
+                "<div style=\"position:absolute;left:{x}px;top:{y}px;width:{w}px;height:{h}px;\
+                 border-radius:8px;background:{}\"></div>",
+                css_color(c)
+            )?;
+        }
+        if let Some((text, size, weight, a)) = run.text {
+            let (x, y) = LAYER_TEXT;
+            write!(
+                inner,
+                "<div style=\"position:absolute;left:{x}px;top:{y}px;white-space:nowrap;\
+                 font:{weight} {size}px/21px {SANS};color:rgba(255,255,255,{a})\">{text}</div>"
+            )?;
+        }
+        if run.opacity {
+            inner = format!("<div style=\"position:absolute;inset:0;opacity:.5\">{inner}</div>");
+        }
+        let [x, y, w, h] = match run.boxed {
+            Some(_) => LAYER_BOX,
+            None => [0., 0., W, LAYER_ROW],
+        };
+        write!(
+            html,
+            "<div style=\"position:absolute;left:{x}px;top:{}px;width:{w}px;height:{h}px;{}\">{inner}</div>",
+            top + y,
+            match run.boxed {
+                Some(true) => "background:rgba(24,24,24,.65);will-change:transform",
+                Some(false) => "background:rgba(24,24,24,.65)",
+                None => "",
+            }
+        )?;
+    }
     html.push_str(
         "<pre id=m></pre><script>\
          const r=document.createRange();\
@@ -405,7 +558,7 @@ impl Render for Lab {
                     ];
                     let mut err = 0f32;
                     for glyph in line.runs.iter().flat_map(|r| &r.glyphs) {
-                        let ci = run.text[..glyph.index].chars().count();
+                        let ci = run.text[..glyph.index].encode_utf16().count();
                         if let Some(x) = m.xs.get(ci) {
                             err = err.max((f32::from(glyph.position.x) + row.2 - x).abs());
                         }
@@ -418,20 +571,80 @@ impl Render for Lab {
         )
         .absolute()
         .size_full();
-        div().size_full().child(text).child(
+        let layers = layers_top(&rows(&runs()));
+        div()
+            .size_full()
+            .child(text)
+            .child(
+                div()
+                    .absolute()
+                    .left(px(10.))
+                    .top(px(paragraph + 8.))
+                    .w(px(PARAGRAPH_WIDTH))
+                    .font_family(".SystemUIFont")
+                    .font_weight(FontWeight(430.))
+                    .text_size(px(14.))
+                    .line_height(px(22.75))
+                    .text_color(rgb(255, 255, 255, 1.))
+                    .child(PARAGRAPH),
+            )
+            .children(
+                layer_runs()
+                    .iter()
+                    .enumerate()
+                    .map(|(j, run)| layer_row(run, layers + j as f32 * LAYER_ROW)),
+            )
+    }
+}
+
+fn abs([x, y, w, h]: [f32; 4]) -> gpui::Div {
+    div().absolute().left(px(x)).top(px(y)).w(px(w)).h(px(h))
+}
+
+fn layer_row(run: &LayerRun, top: f32) -> gpui::Div {
+    let mut inner = abs([0., 0., W, LAYER_ROW]);
+    if let Some(c) = run.fill {
+        inner = inner.child(
+            abs(LAYER_FILL).child(shapes::decoration(shapes::Decoration {
+                radius: Corners::all(px(8.)),
+                fill: Some(c.into()),
+                ..Default::default()
+            })),
+        );
+    }
+    if let Some((text, size, weight, a)) = run.text {
+        let (x, y) = LAYER_TEXT;
+        inner = inner.child(
             div()
                 .absolute()
-                .left(px(10.))
-                .top(px(paragraph + 8.))
-                .w(px(PARAGRAPH_WIDTH))
+                .left(px(x))
+                .top(px(y))
+                .whitespace_nowrap()
                 .font_family(".SystemUIFont")
-                .font_weight(FontWeight(430.))
-                .text_size(px(14.))
-                .line_height(px(22.75))
-                .text_color(rgb(255, 255, 255, 1.))
-                .child(PARAGRAPH),
-        )
+                .font_weight(FontWeight(weight))
+                .text_size(px(size))
+                .line_height(px(21.))
+                .text_color(rgb(255, 255, 255, a))
+                .child(text),
+        );
     }
+    if run.opacity {
+        inner = inner.opacity(0.5);
+    }
+    let content = match run.boxed {
+        Some(composited) => {
+            let b = abs(LAYER_BOX).child(shapes::decoration(shapes::Decoration {
+                fill: Some(rgb(24, 24, 24, 0.65).into()),
+                ..Default::default()
+            }));
+            let b = if composited { b.layer() } else { b };
+            b.child(inner)
+        }
+        None => inner,
+    };
+    abs([0., top, W, LAYER_ROW])
+        .bg(rgb(run.bg, run.bg, run.bg, 1.))
+        .child(content)
 }
 
 fn render(
@@ -524,6 +737,23 @@ fn compare(dir: &Path) -> Result<()> {
         pct(nb),
         pct(na)
     )?;
+    let layers = layers_top(&rows(&runs));
+    for (j, run) in layer_runs().iter().enumerate() {
+        // The whole row (`diff` inflates the rect by one device px).
+        let rect = [0., layers + j as f32 * LAYER_ROW + 0.5, W, LAYER_ROW - 1.];
+        let (nb, total) = diff(&chrome, &before, rect, &mut scratch);
+        let (na, _) = diff(&chrome, &after, rect, &mut diff_img);
+        (tb, ta, tt) = (tb + nb, ta + na, tt + total);
+        let pct = |n: u32| 100. * n as f64 / total as f64;
+        writeln!(
+            table,
+            "| L{j} | {} | | {} | {:.2}% | {:.2}% | |",
+            run.name,
+            run.bg,
+            pct(nb),
+            pct(na)
+        )?;
+    }
     let pct = |n: u32| 100. * n as f64 / tt as f64;
     writeln!(table, "| all | | | | {:.2}% | {:.2}% | |", pct(tb), pct(ta))?;
     diff_img.save(dir.join("diff.png"))?;

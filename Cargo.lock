@@ -135,6 +135,8 @@ dependencies = [
  "chrono",
  "gpui",
  "gpui_platform",
+ "image",
+ "parity",
  "serde",
  "serde_json",
  "textsys",
@@ -5069,6 +5071,7 @@ dependencies = [
  "image",
  "parking_lot",
  "serde_json",
+ "shapes",
 ]
 
 [[package]]

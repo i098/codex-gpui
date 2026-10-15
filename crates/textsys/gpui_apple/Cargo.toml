@@ -1,7 +1,8 @@
 # zed `crates/gpui_apple` at the pinned rev 3e145061d861ed32bb6a08dad7b03f2b5e455ad8, patched in
 # by the root Cargo.toml. Changes vs upstream: this manifest (workspace deps made explicit),
-# build.rs `find_gpui_crate_dir`, and the Skia 8-bit glyph blend in shaders.metal
-# `monochrome_sprite_fragment` + metal_renderer.rs (blending off for that pipeline), and
+# build.rs `find_gpui_crate_dir` (the vendored ../gpui), the Skia 8-bit glyph blend and
+# Chromium layer compositing in shaders.metal `monochrome_sprite_fragment` + metal_renderer.rs
+# (blending off for that pipeline; layer state in color attachments 1-4), and
 # `AppleTextSystem` = `textsys::SkiaMatchedTextSystem` (gpui_apple.rs; text_system.rs and
 # open_type.rs removed).
 [package]
