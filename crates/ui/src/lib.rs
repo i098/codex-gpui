@@ -115,12 +115,10 @@ fn icon(name: &str, size: f32, color: Hsla) -> Svg {
         .text_color(color)
 }
 
-/// Chromium rounds the font's ascent and descent to whole px before centering a line in its
-/// line box; GPUI does not, so its 14/21 px SF lines sit 0.5 px lower than the original's.
+/// One line of UI text. `textsys` lands glyphs on Chromium's baseline (ascent and descent
+/// rounded in device px), so no offset is needed here.
 fn text(s: impl Into<SharedString>, size: f32, line_height: f32, weight: f32, color: Hsla) -> Div {
     div()
-        .relative()
-        .top(px(-0.5))
         .text_size(px(size))
         .line_height(px(line_height))
         .font_weight(FontWeight(weight))
