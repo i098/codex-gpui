@@ -14,7 +14,7 @@ use bridge::types::{ThreadItem, TurnStatus};
 use gpui::{
     Action, AnyWindowHandle, App, AppContext as _, Entity, EntityInputHandler as _, Focusable as _,
     HeadlessAppContext, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, PlatformInput, Point, point, px, size,
+    MouseUpEvent, PlatformInput, Point, ScrollDelta, ScrollWheelEvent, TouchPhase, point, px, size,
 };
 use image::RgbaImage;
 use serde_json::{Value, json};
@@ -138,6 +138,18 @@ const FLOWS: &[(&str, Flow)] = &[
             fx.keys("m a t h")
         })
     }),
+    ("worked_for_expands", worked_for_expands),
+    ("copy_response", copy_response),
+    ("fork_chat", fork_chat),
+    ("earlier_turn_actions_hover", earlier_turn_actions_hover),
+    ("undo_reverts_turn", undo_reverts_turn),
+    ("file_link_opens_changes", file_link_opens_changes),
+    ("approval_round_trip", approval_round_trip),
+    ("archive_chat", archive_chat),
+    ("recent_chat_keys", recent_chat_keys),
+    ("effort_pick_writes_config", effort_pick_writes_config),
+    ("settings_value_round_trip", settings_value_round_trip),
+    ("resize_live", resize_live),
 ];
 
 fn main() {
@@ -198,21 +210,21 @@ impl Fx {
     /// recorded line first.
     fn with(
         theme: &'static str,
-        (w, h): (f32, f32),
+        size: (f32, f32),
         session: Option<&str>,
         edit: fn(&mut Value),
     ) -> Result<Self> {
+        Self::open(theme, size, script(session, edit)?)
+    }
+
+    /// Dark, 1280x832, on the replay script `lines` ([`script`] plus crafted lines).
+    fn scripted(lines: Vec<Value>) -> Result<Self> {
+        Self::open("dark", (1280., 832.), lines)
+    }
+
+    fn open(theme: &'static str, (w, h): (f32, f32), lines: Vec<Value>) -> Result<Self> {
         static SCRIPTS: AtomicUsize = AtomicUsize::new(0);
-        let mut script = String::new();
-        for file in std::iter::once("readback.jsonl").chain(session) {
-            let path = format!("{ROOT}/fixtures/{file}");
-            let text = fs::read_to_string(&path).with_context(|| path.clone())?;
-            for line in text.lines().filter(|l| !l.trim().is_empty()) {
-                let mut v: Value = serde_json::from_str(line)?;
-                edit(&mut v);
-                script.push_str(&format!("{v}\n"));
-            }
-        }
+        let script: String = lines.iter().map(|v| format!("{v}\n")).collect();
         let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("flows");
         fs::create_dir_all(&dir)?;
         let path = dir.join(format!(
@@ -339,6 +351,17 @@ impl Fx {
         }))
     }
 
+    /// Scrolls the wheel at `at` by `dy` CSS px (negative: down the page).
+    fn scroll(&mut self, at: (f32, f32), dy: f32) -> Result<()> {
+        self.hover(at)?;
+        self.input(PlatformInput::ScrollWheel(ScrollWheelEvent {
+            position: point(px(at.0), px(at.1)),
+            delta: ScrollDelta::Pixels(point(px(0.), px(dy))),
+            modifiers: Modifiers::default(),
+            touch_phase: TouchPhase::Moved,
+        }))
+    }
+
     fn click(&mut self, at: (f32, f32)) -> Result<()> {
         self.hover(at)?;
         let position: Point<_> = point(px(at.0), px(at.1));
@@ -451,6 +474,43 @@ impl Fx {
             if m.pass { "PASS" } else { "FAIL" }
         ))
     }
+}
+
+/// readback.jsonl, then `session` (under fixtures/), each recorded line rewritten by `edit`.
+fn script(session: Option<&str>, edit: fn(&mut Value)) -> Result<Vec<Value>> {
+    let mut lines = Vec::new();
+    for file in std::iter::once("readback.jsonl").chain(session) {
+        let path = format!("{ROOT}/fixtures/{file}");
+        let text = fs::read_to_string(&path).with_context(|| path.clone())?;
+        for line in text.lines().filter(|l| !l.trim().is_empty()) {
+            let mut v: Value = serde_json::from_str(line)?;
+            edit(&mut v);
+            lines.push(v);
+        }
+    }
+    Ok(lines)
+}
+
+/// A crafted `method` request that the replay answers with `result`. The fixtures hold no
+/// recording of it; the replay matches it by method (the app's params are not compared).
+fn exchange(method: &str, result: Value) -> [Value; 2] {
+    static IDS: AtomicUsize = AtomicUsize::new(90_000);
+    let id = IDS.fetch_add(1, Ordering::Relaxed);
+    [
+        json!({ "dir": "send", "msg": { "id": id, "method": method, "params": {} } }),
+        json!({ "dir": "recv", "msg": { "id": id, "result": result } }),
+    ]
+}
+
+/// readback.jsonl's `thread/read` thread `id`, with its turns.
+fn recorded_thread(id: &str) -> Result<Value> {
+    script(None, |_| {})?
+        .into_iter()
+        .find_map(|mut v| {
+            let thread = v.pointer_mut("/msg/result/thread")?.take();
+            (thread["id"] == id && thread["turns"].is_array()).then_some(thread)
+        })
+        .with_context(|| format!("no thread/read of {id}"))
 }
 
 /// Device pixels that differ inside the CSS-px `rect` (the window is 2x).
@@ -1289,4 +1349,325 @@ fn settings_select_menu() -> Result<String> {
     let left = changed(&before, &after, MAIN_PANEL);
     ensure!(left < n / 2, "the menu stayed open ({left} px)");
     Ok(format!("{n} px"))
+}
+
+// --- Thread actions ---
+
+fn open_subtract(fx: &mut Fx) -> Result<()> {
+    fx.click(fx.at("home", "Add a subtract")?)?;
+    fx.wait_thread(SUBTRACT)
+}
+
+/// The open thread holds agent message `id`.
+fn has_item(fx: &Fx, id: &str) -> bool {
+    fx.read(|r, cx| {
+        r.thread().is_some_and(|v| {
+            v.read(cx)
+                .turns()
+                .iter()
+                .flat_map(|t| &t.items)
+                .any(|i| matches!(i, ThreadItem::AgentMessage { id: item, .. } if item == id))
+        })
+    })
+}
+
+/// `Worked for 17s` expands the turn's hidden work, and a second click folds it again. Only
+/// the transcript above the docked composer is compared (its caret blinks).
+fn worked_for_expands() -> Result<String> {
+    let transcript = [340., 44., 936., 600.];
+    let mut fx = Fx::new()?;
+    open_subtract(&mut fx)?;
+    let at = fx.at("thread", "Worked for")?;
+    fx.hover((640., 22.))?;
+    let folded = fx.shot()?;
+    fx.click(at)?;
+    fx.hover((640., 22.))?;
+    let n = changed(&folded, &fx.shot()?, transcript);
+    ensure!(n > 1000, "expanding repainted {n} px");
+    fx.click(at)?;
+    fx.hover((640., 22.))?;
+    let left = changed(&folded, &fx.shot()?, transcript);
+    ensure!(left == 0, "folding left {left} px");
+    Ok(format!("{n} px"))
+}
+
+fn copy_response() -> Result<String> {
+    let mut fx = Fx::new()?;
+    open_subtract(&mut fx)?;
+    fx.click(fx.at("thread", "Copy")?)?;
+    let copied = fx
+        .cx
+        .update(|cx| cx.read_from_clipboard().and_then(|c| c.text()));
+    let answer = fx.read(|r, cx| {
+        let view = r.thread().expect("thread").read(cx);
+        match view.turns().last().and_then(|t| t.items.last()) {
+            Some(ThreadItem::AgentMessage { text, .. }) => text.clone(),
+            _ => String::new(),
+        }
+    });
+    ensure!(
+        !answer.is_empty() && copied.as_deref() == Some(answer.as_str()),
+        "clipboard {copied:?}"
+    );
+    Ok(String::new())
+}
+
+/// `Fork chat from here` under the last turn: `thread/fork` (no rollback), the fork opens
+/// and heads Recents.
+fn fork_chat() -> Result<String> {
+    const FORK: &str = "fork-of-subtract";
+    let mut thread = recorded_thread(SUBTRACT)?;
+    thread["id"] = FORK.into();
+    let mut lines = script(None, |_| {})?;
+    lines.extend(exchange("thread/fork", json!({ "thread": thread })));
+    let mut fx = Fx::scripted(lines)?;
+    open_subtract(&mut fx)?;
+    fx.click(fx.at("thread", "Fork chat from here")?)?;
+    fx.wait_thread(FORK)?;
+    let recents = fx.read(|r, _| r.recents());
+    ensure!(
+        recents.first().map(String::as_str) == Some(FORK),
+        "{recents:?}"
+    );
+    Ok(String::new())
+}
+
+/// A thread with two turns: hovering the first one shows its message actions.
+fn earlier_turn_actions_hover() -> Result<String> {
+    let mut fx = Fx::with("dark", (1280., 832.), None, |v| {
+        if let Some(thread) = v.pointer_mut("/msg/result/thread")
+            && thread["id"] == SUBTRACT
+            && let Some(turns) = thread["turns"].as_array_mut()
+        {
+            let mut later = turns[0].clone();
+            later["id"] = "later-turn".into();
+            turns.push(later);
+        }
+    })?;
+    open_subtract(&mut fx)?;
+    // The first turn sits where refs/thread shows the only one.
+    let actions = fx.at("thread", "Copy")?;
+    let row = [actions.0 - 16., actions.1 - 16., 120., 32.];
+    let at = fx.at("thread", "Worked for")?;
+    let n = assert_hover(&mut fx, at, row, 50)?;
+    Ok(format!("{n} px"))
+}
+
+/// The card's `Undo`: `thread/resume`, then `thread/revert` before the turn; the view shows
+/// the reverted thread.
+fn undo_reverts_turn() -> Result<String> {
+    let thread = recorded_thread(SUBTRACT)?;
+    let mut reverted = thread.clone();
+    reverted["turns"] = json!([]);
+    let mut lines = script(None, |_| {})?;
+    lines.extend(exchange("thread/resume", json!({ "thread": thread })));
+    lines.extend(exchange("thread/revert", json!({ "thread": reverted })));
+    let mut fx = Fx::scripted(lines)?;
+    open_subtract(&mut fx)?;
+    fx.click(fx.at("thread", "Undo")?)?;
+    fx.wait("thread/revert", |fx| {
+        fx.read(|r, cx| r.thread().is_some_and(|v| v.read(cx).turns().is_empty()))
+    })?;
+    ensure!(fx.route() == Route::Thread(SUBTRACT.into()));
+    Ok(String::new())
+}
+
+fn file_link_opens_changes() -> Result<String> {
+    let mut fx = Fx::new()?;
+    open_subtract(&mut fx)?;
+    fx.click(fx.at("thread", "src/math.py")?)?;
+    ensure!(side(&fx) == Some(SidePanel::Changes), "{:?}", side(&fx));
+    Ok(String::new())
+}
+
+/// Center of the approval card's `Allow once` pill (`button_primary_solid`, white in dark):
+/// the first run of its color, from the top, on a vertical line 6 px inside the pill's right
+/// end (the card ends 12 px inside the 736 px content column's right edge, x 1176). Runs of
+/// at least 18 CSS px skip glyph stems; the composer's send button is lower.
+fn allow_once(shot: &RgbaImage) -> Result<(f32, f32)> {
+    let x = 1158.;
+    let c = gpui::Rgba::from(theme::Theme::dark().button_primary_solid);
+    let want = [c.r, c.g, c.b].map(|v| (v * 255.).round() as i32);
+    let hit = |y: u32| {
+        let p = shot.get_pixel((x * 2.) as u32, y);
+        (0..3).all(|i| (p[i] as i32 - want[i]).abs() <= 2)
+    };
+    let mut run = 0;
+    for y in 0..shot.height() {
+        if hit(y) {
+            run += 1;
+        } else if run >= 36 {
+            return Ok((x - 4., (y as f32 - run as f32 / 2.) / 2.));
+        } else {
+            run = 0;
+        }
+    }
+    anyhow::bail!("no Allow once pill at x {x}")
+}
+
+/// A command approval request (crafted from `CommandApprovalRequest`: the sessions ran with
+/// `approvalPolicy: never`) arrives with the greeting turn; `Allow once` answers it, and the
+/// replay's reply to that answer (matched by request id) reaches the thread.
+fn approval_round_trip() -> Result<String> {
+    const TURN: &str = "01a13de9-c4f9-7370-99bd-0512afdf8126";
+    let mut lines = script(Some("sessions/greeting.jsonl"), |_| {})?;
+    let reply = lines
+        .iter()
+        .position(|v| v["dir"] == "recv" && v["msg"]["result"]["turn"]["id"] == TURN)
+        .context("no turn/start reply")?;
+    let params = json!({
+        "threadId": GREETING, "turnId": TURN, "itemId": "call-approval",
+        "command": "python3 hello.py", "cwd": CWD, "reason": "Run the edited script",
+    });
+    let method = "item/commandExecution/requestApproval";
+    let request = json!({ "id": "approval-1", "method": method, "params": params });
+    lines.insert(reply + 1, json!({ "dir": "recv", "msg": request }));
+    let answer = json!({ "id": "approval-1", "result": { "decision": "accept" } });
+    lines.push(json!({ "dir": "send", "msg": answer }));
+    let item = json!({ "type": "agentMessage", "id": "approval-ack", "text": "Accepted." });
+    let ack = json!({ "threadId": GREETING, "turnId": TURN, "item": item });
+    lines.push(json!({ "dir": "recv", "msg": { "method": "item/completed", "params": ack } }));
+    let mut fx = Fx::scripted(lines)?;
+    fx.type_text(GREETING_PROMPT)?;
+    fx.keys("enter")?;
+    fx.wait_thread(GREETING)?;
+    let composer = fx.composer();
+    let pending = |fx: &Fx| fx.read(|_, cx| composer.read(cx).approval().is_some());
+    fx.wait("the approval card", |fx| pending(fx))?;
+    ensure!(
+        !has_item(&fx, "approval-ack"),
+        "acknowledged before the answer"
+    );
+    fx.hover((640., 22.))?;
+    let at = allow_once(&fx.shot()?)?;
+    fx.click(at)?;
+    ensure!(!pending(&fx), "the card stayed after Allow once at {at:?}");
+    fx.wait("the answer's ack", |fx| has_item(fx, "approval-ack"))?;
+    Ok(String::new())
+}
+
+// --- Sidebar, shortcuts ---
+
+/// A Recents row's `Archive chat`, then `⌘⇧A` on the open chat: `thread/archive`, the row
+/// leaves Recents, the open chat leaves for Home.
+fn archive_chat() -> Result<String> {
+    let mut lines = script(None, |_| {})?;
+    for _ in 0..2 {
+        lines.extend(exchange("thread/archive", json!({})));
+    }
+    let mut fx = Fx::scripted(lines)?;
+    // The row's actions end 8 px inside its right edge (x 332): Archive is the last, 20 px.
+    let row = fx.at("home", "Change the greeting")?;
+    fx.click((314., row.1))?;
+    fx.wait("thread/archive", |fx| {
+        fx.read(|r, _| r.recents() == [SUBTRACT, EXPLAIN])
+    })?;
+    ensure!(fx.route() == Route::Home, "{:?}", fx.route());
+    fx.keys("cmd-1")?;
+    fx.wait_thread(SUBTRACT)?;
+    fx.keys("cmd-shift-a")?;
+    fx.wait("cmd-shift-a", |fx| fx.read(|r, _| r.recents() == [EXPLAIN]))?;
+    ensure!(fx.route() == Route::Home, "{:?}", fx.route());
+    Ok(String::new())
+}
+
+/// `⌘⌥1`…`⌘⌥6` follow the last update, not the Recents order: the explain chat is made the
+/// newest.
+fn recent_chat_keys() -> Result<String> {
+    let mut fx = Fx::with("dark", (1280., 832.), None, |v| {
+        if let Some(data) = v
+            .pointer_mut("/msg/result/data")
+            .and_then(Value::as_array_mut)
+        {
+            for t in data.iter_mut().filter(|t| t["id"] == EXPLAIN) {
+                t["updatedAt"] = 1_792_050_000.into();
+            }
+        }
+    })?;
+    fx.keys("cmd-alt-1")?;
+    fx.wait_thread(EXPLAIN)?;
+    fx.keys("cmd-alt-2")?;
+    fx.wait_thread(GREETING)?;
+    fx.keys("cmd-alt-6")?;
+    ensure!(
+        fx.route() == Route::Thread(GREETING.into()),
+        "cmd-alt-6 moved"
+    );
+    Ok(String::new())
+}
+
+// --- Config writes ---
+
+/// The effort slider's last dot: `config/batchWrite` of the model and effort; the app keeps
+/// the written values once the server took them.
+fn effort_pick_writes_config() -> Result<String> {
+    let mut lines = script(None, |_| {})?;
+    lines.extend(exchange("config/batchWrite", json!({ "status": "ok" })));
+    let mut fx = Fx::scripted(lines)?;
+    let before = fx.read(|r, _| r.config()["model_reasoning_effort"].clone());
+    fx.click(fx.at("home", "GPT-6 Astra")?)?;
+    // refs/composer: the menu's effort label; the 230 px track starts 127 - 12 px left of
+    // its center, 52 px lower, dots at 13 + 51·i.
+    let (x, y) = fx.at("composer", "Light")?;
+    fx.click((x - 115. + 13. + 51. * 4., y + 51.75))?;
+    fx.wait("config/batchWrite", |fx| {
+        fx.read(|r, _| r.config()["model_reasoning_effort"] != before)
+    })?;
+    let (model, effort) = fx.read(|r, _| {
+        let c = r.config();
+        (c["model"].clone(), c["model_reasoning_effort"].clone())
+    });
+    ensure!(model.is_string() && effort.is_string(), "{model} {effort}");
+    Ok(format!("{before} -> {effort}"))
+}
+
+/// General ▸ Default terminal location ▸ `Right`: `config/value/write`; leaving and reopening
+/// Settings shows the written value.
+fn settings_value_round_trip() -> Result<String> {
+    let mut lines = script(None, |_| {})?;
+    lines.extend(exchange("config/value/write", json!({ "status": "ok" })));
+    let mut fx = Fx::scripted(lines)?;
+    let open = |fx: &mut Fx| -> Result<RgbaImage> {
+        fx.keys("cmd-,")?;
+        fx.scroll((800., 400.), -300.)?;
+        fx.hover((640., 22.))?;
+        fx.shot()
+    };
+    let before = open(&mut fx)?;
+    let right = fx.at("settings", "Right")?;
+    fx.click((right.0, right.1 - 300.))?;
+    fx.wait("config/value/write", |fx| {
+        fx.read(|r, _| r.config()["desktop"]["defaultTerminalLocation"] == "right")
+    })?;
+    fx.hover((640., 22.))?;
+    let set = fx.shot()?;
+    let n = changed(&before, &set, MAIN_PANEL);
+    ensure!(n > 50, "the segment repainted {n} px");
+    fx.keys("cmd-[")?;
+    ensure!(fx.route() == Route::Home);
+    let left = changed(&set, &open(&mut fx)?, MAIN_PANEL);
+    ensure!(left < 50, "reopened Settings differ by {left} px");
+    Ok(format!("{n} px"))
+}
+
+// --- Window ---
+
+/// Live resizes across the 768 px breakpoint: the sidebar hides below it and comes back as
+/// the user left it.
+fn resize_live() -> Result<String> {
+    let mut fx = Fx::new()?;
+    let resize = |fx: &mut Fx, w: f32| {
+        fx.cx
+            .simulate_window_resize(fx.window, size(px(w), px(832.)));
+        fx.cx.run_until_parked();
+    };
+    for (w, open) in [(767., false), (1280., true), (600., false), (1440., true)] {
+        resize(&mut fx, w);
+        ensure!(fx.sidebar_open() == open, "{w} px: sidebar_open {}", !open);
+    }
+    fx.keys("cmd-b")?;
+    resize(&mut fx, 767.);
+    resize(&mut fx, 1280.);
+    ensure!(!fx.sidebar_open(), "the closed sidebar came back");
+    Ok(String::new())
 }

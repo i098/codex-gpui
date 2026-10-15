@@ -4,6 +4,7 @@ This document gives the flow status of the port for each screen of `docs/invento
 The harness is `crates/app/tests/flows.rs`.
 It builds the real `app::Root` on a replayed app-server (`Bridge::replay` on `fixtures/readback.jsonl`, plus `fixtures/sessions/greeting.jsonl` for turns) in a headless window with the `textsys` text system and the Metal headless renderer.
 It clicks at the original's element bounds (`refs/<screen>/dark@1280x832.spec.json`), types keys, dispatches the menu bar's actions, and then checks the route, rail selection, sidebar, open thread, composer text and focus, popovers (repainted pixels) and theme.
+The fixtures do not record some methods (`thread/archive`, `thread/fork`, `thread/resume`, `thread/revert`, `config/batchWrite`, `config/value/write`) or any approval request. For these, a flow adds crafted lines to the replay script (`exchange`): the replay answers such a request by its method, and the flow checks the state the answer leads to. The headless window also takes live resizes (`HeadlessAppContext::simulate_window_resize`).
 
 Run it on the Mac: `tools/mac.sh -l flows 'cargo test -p app'`.
 To run some flows only, add a name filter: `cargo test -p app --test flows -- settings`.
@@ -21,22 +22,22 @@ The rows were not clicked again on the original through `tools/route1`: its `ser
 
 | Screen | Rows | PASS | FAIL | NOT WIRED |
 |---|---|---|---|---|
-| App shell: shortcuts, menu bar, window | 20 | 11 | 4 | 5 |
+| App shell: shortcuts, menu bar, window | 20 | 13 | 3 | 4 |
 | 14.1 Left rail | 12 | 4 | 1 | 7 |
-| 14.2 Sidebar | 23 | 11 | 3 | 9 |
+| 14.2 Sidebar | 23 | 11 | 4 | 8 |
 | 14.3 Home | 21 | 10 | 3 | 8 |
-| 14.4 Thread view | 20 | 2 | 4 | 14 |
+| 14.4 Thread view | 20 | 6 | 3 | 11 |
 | 14.5 Composer | 20 | 5 | 4 | 11 |
 | 14.6 Diff view | 20 | 1 | 1 | 18 |
 | 14.7 Settings, login and onboarding | 20 | 7 | 8 | 5 |
 | 15.1 Automations | 16 | 2 | 2 | 12 |
 | 15.2 Background terminal | 10 | 2 | 2 | 6 |
 | 15.3 Mobile setup | 10 | 2 | 1 | 7 |
-| **All** | **192** | **57** | **33** | **102** |
+| **All** | **192** | **63** | **32** | **97** |
 
-Before round 4 (F1Flows): 42 PASS, 25 FAIL, 125 NOT WIRED.
+Before round 5 (F2Flows): 57 PASS, 33 FAIL, 102 NOT WIRED. Before round 4 (F1Flows): 42 PASS, 25 FAIL, 125 NOT WIRED.
 
-Last run: 58 flows, 58 passed.
+Last run: 70 flows, 70 passed.
 
 ## Parity of the states the flows reach
 
@@ -106,14 +107,14 @@ Numbers from the round 4 run (F1Flows); the screen builder column is a run of th
 | 9 | System appearance and Settings ▸ Appearance ▸ Theme | click | Light / Dark / System applies at once. | `State.theme` (`ThemeSetting`) is applied on each appearance change and by `Root::set_theme`. | PASS (`theme_switch`) |
 | 10 | `⌘M`, Window ▸ Minimize, Zoom | shortcut | Minimize, zoom. | Bound; `window.minimize_window()`, `zoom_window()`. | FAIL (no headless check: the test window ignores minimize and zoom) |
 | 11 | `⌘Q`, `⌘H`, `⌥⌘H`, Show All | shortcut | Quit, hide, hide others, show all. | Bound; app-level handlers in `app::init`. | FAIL (no headless check: quitting or hiding ends the test app) |
-| 12 | Window minimum size | resize | `getPrimaryMinimumSize()` 480x600. | `window_min_size` in `main.rs`. | FAIL (no headless check: the test window is not resizable) |
-| 13 | Live window resize across 768 px | resize | The sidebar hides below 768 px and comes back above it. | `Root::fit` on `observe_window_bounds`. | FAIL (no headless check: the test window has no resize callback; the 3 widths are checked at open in `resize_three_widths`) |
+| 12 | Window minimum size | resize | `getPrimaryMinimumSize()` 480x600. | `window_min_size` in `main.rs`. | FAIL (no headless check: the test window does not apply a minimum size) |
+| 13 | Live window resize across 768 px | resize | The sidebar hides below 768 px and comes back above it. | `Root::fit` on `observe_window_bounds`: live resizes to 767, 1280, 600 and 1440 px hide and show the sidebar; a sidebar the user closed stays closed. | PASS (`resize_live`, `resize_three_widths`) |
 | 14 | `⌘K`, `⌘⇧P` | shortcut | Command menu. | `CommandMenu` over live Recents, focused; Escape or a click outside closes it; Enter or a click runs the row (chat, `New chat`, `Manage scheduled tasks`, settings pages). | PASS (`command_menu_keys`, `command_menu_settings_page`) |
 | 15 | `⌘F` | shortcut | Find in chat. | — | NOT WIRED (`crates/ui/src/thread.rs`: no find bar) |
 | 16 | `⌥⌘B` | shortcut | Toggle Changes panel. | The thread route's side panel (`ui::screens::diff::panel::with_side_panel`) shows the last turn's diff; the tab's close button closes it. | PASS (`changes_panel_keys`) |
 | 17 | `⌘J` | shortcut | Toggle bottom panel. | — | NOT WIRED (`crates/ui/src/lib.rs` `Shell`: no bottom panel) |
 | 18 | `⌘⇧N`, `⌘⌥O` | shortcut | Temporary chat, standalone chat. | — | NOT WIRED (`crates/app/src/lib.rs`: no projects or temporary chats) |
-| 19 | `⌘⌥1`…`⌘⌥6` | shortcut | Go to recently viewed chat N. | — | NOT WIRED (`crates/app/src/lib.rs`: no recently-viewed list) |
+| 19 | `⌘⌥1`…`⌘⌥6` | shortcut | Go to recent chat N (`recentThread1..6`: the chats by last update, newest first). | `GoToRecentChat`: the Nth Recents thread by `updatedAt`; past the end does nothing. | PASS (`recent_chat_keys`) |
 | 20 | `⌘+`, `⌘-`, `⌘0` | shortcut | Zoom in, zoom out, actual size. | — | NOT WIRED (`crates/ui/src/lib.rs`: no UI scale) |
 
 ## 14.1 Left rail
@@ -149,7 +150,7 @@ Numbers from the round 4 run (F1Flows); the screen builder column is a run of th
 | 10 | `Recents` section toggle | click | Collapses or expands. | Same; a collapsed Recents row no longer opens. | PASS (`sidebar_section_collapse`) |
 | 11 | Thread row | click | Opens `/local/:conversationId`. | `OpenThread` → route Thread, `thread/read`, row selected. | PASS (`thread_row_opens_thread`) |
 | 12 | Thread row hover | hover | Row background; Archive / Pin actions appear. | Fill and actions show (31848 px repainted). | PASS (`thread_row_hover`) |
-| 13 | Thread row context menu | click | Pin, Rename, Archive, Mark as unread, Open in new window, Delete. | No menu; Pin and Archive buttons have no handler. | NOT WIRED (`crates/ui/src/screens/sidebar.rs` `thread_row`; then `thread/archive` etc. in `crates/app/src/lib.rs`) |
+| 13 | Thread row context menu | click | Pin, Rename, Archive, Mark as unread, Open in new window, Delete. | The row's `Archive chat` sends `thread/archive` and drops the row. No context menu; `Pin chat` has no handler (the original pins through the host's `set-thread-pinned`). | FAIL (no context menu or pin: `crates/ui/src/screens/sidebar.rs` `thread_row`; Archive checked by `archive_chat`) |
 | 14 | `⌘1`…`⌘9` | shortcut | Go to chat N. | Opens Recents row N; `⌘9` past the end does nothing. | PASS (`cmd_digit_goes_to_chat`) |
 | 15 | `⌘⇧[` / `⌘⇧]` | shortcut | Previous / next chat. | Previous / next Recents row. | PASS (`previous_next_chat`, `menu_bar_actions`) |
 | 16 | `⌘⇧S` / `⌘B` | shortcut | Toggle sidebar. | Toggles. | PASS (`sidebar_toggle_keys`) |
@@ -198,15 +199,15 @@ Numbers from the round 4 run (F1Flows); the screen builder column is a run of th
 | 5 | Streaming agent message | loading | Text grows by deltas; `Working` shimmer. | The replayed turn streams into the view to `turn/completed`. Shimmer not checked. | PASS (`submit_enter_starts_thread`) |
 | 6 | Reasoning item | click | Toggles `Thought for {elapsed}`. | No handler. | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 7 | Command card | click | Expands output; copy buttons. | No handler. | NOT WIRED (`crates/ui/src/thread.rs`) |
-| 8 | File change card | click | `View changes` opens Changes; `Undo` / `Reapply`. | `View changes` opens the Changes side panel; `Undo` has no handler. | FAIL (`Undo`: the original reverts through the host git worker, which the port does not have; `View changes` checked by `view_changes_opens_panel`) |
-| 9 | Collapsed turn `Worked for {time}` | click | Expands hidden items. | No handler. | NOT WIRED (`crates/ui/src/thread.rs`) |
+| 8 | File change card | click | `View changes` opens Changes; `Undo` / `Reapply`. | `View changes` opens the Changes side panel; `Undo` sends `thread/revert` (`beforeTurnId`, after `thread/resume` if needed) and shows the reverted thread. No `Reapply`. | FAIL (`Reapply`: the original re-applies through the host git worker; `Undo` checked by `undo_reverts_turn`, `View changes` by `view_changes_opens_panel`) |
+| 9 | Collapsed turn `Worked for {time}` | click | Expands hidden items. | A click shows the turn's work above the answer (agent messages, `Ran commands`) and turns the chevron down; a second click folds it. | PASS (`worked_for_expands`) |
 | 10 | User message hover | hover | Copy and Edit appear. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
-| 11 | Assistant message hover | hover | Copy, Fork chat from here. | Actions show statically under the last turn. | NOT WIRED (`crates/ui/src/thread.rs`) |
+| 11 | Assistant message hover | hover | Copy, Fork chat from here. | Shown under the last turn, on hover under earlier turns. `Copy` puts the answer on the clipboard; `Fork chat from here` sends `thread/fork` (then `thread/rollback` of the later turns) and opens the fork at the top of Recents. `Read aloud` and `Rate response` have no handler. | PASS (`copy_response`, `fork_chat`, `earlier_turn_actions_hover`) |
 | 12 | `Scroll to bottom` | click | Jumps to the newest turn. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 13 | `⌘F` | shortcut | Find bar. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
-| 14 | `⌘⇧A` | shortcut | Archives the chat. | — | NOT WIRED (`crates/app/src/lib.rs`: no `thread/archive`; fixtures hold no recorded archive) |
+| 14 | `⌘⇧A` | shortcut | Archives the chat. | `ArchiveChat`: `thread/archive`, the row leaves Recents, the route goes to Home. | PASS (`archive_chat`) |
 | 15 | `⌘⌥R` | shortcut | Rename dialog. | — | NOT WIRED (`crates/ui`: no rename dialog) |
-| 16 | Approval card | click | Approve, Allow similar, Allow all edits, Deny. | `Root::on_event` shows the card and answers with the decision. | FAIL (no flow: the sessions are recorded with `approvalPolicy: never`, so no approval request replays) |
+| 16 | Approval card | click | Approve, Allow similar, Allow all edits, Deny. | `Root::on_event` shows the card; `Allow once`, the scoped allow and `Deny` answer the server request by its id. | PASS (`approval_round_trip`: a command approval request crafted from `CommandApprovalRequest`, because the sessions ran with `approvalPolicy: never`) |
 | 17 | Stream error | error | `Reconnecting {progress}`. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 18 | Usage limit | error | Usage limit banner. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 19 | Focus ring on cards | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
@@ -224,8 +225,8 @@ Numbers from the round 4 run (F1Flows); the screen builder column is a run of th
 | 6 | `/` | shortcut | Slash command menu. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 7 | Paste large text | click | `Pasted text.txt` chip. | Paste inserts the text. | NOT WIRED (`crates/ui/src/composer.rs` `paste`) |
 | 8 | Drag file over composer | hover | `Drop to attach`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
-| 9 | Attachment chip remove | click | Removes the attachment. | Handler exists (`remove-attachment`). | FAIL (no flow: attachments come only from the system file picker, which a headless window cannot answer) |
-| 10 | Model picker | click | `Select model`, `Select effort`, Fast. | Opens; parity: see `parity_composer`. | PASS (`model_picker_popover`, `parity_composer`) |
+| 9 | Attachment chip remove | click | Removes the attachment. | Handler exists (`remove-attachment`). | FAIL (no flow: attachments come only from the system file picker, which the headless window does not answer) |
+| 10 | Model picker | click | `Select model`, `Select effort`, Fast. | Opens; a model or effort choice writes `model` and `model_reasoning_effort` with `config/batchWrite` (the original's `writeModel`); parity: see `parity_composer`. | PASS (`model_picker_popover`, `effort_pick_writes_config`, `parity_composer`) |
 | 11 | Permissions dropdown | click | Ask / Approve for me / Full access / Custom. | Opens. | PASS (`permissions_popover`) |
 | 12 | Submit while running | click | Stop; with text Queue or Steer. | The send button keeps its arrow. | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 13 | Stop | click | `turn/interrupt`. | — | NOT WIRED (`crates/ui/src/composer.rs`, then `crates/app/src/lib.rs`) |
@@ -243,7 +244,7 @@ Numbers from the round 4 run (F1Flows); the screen builder column is a run of th
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
-| 1 | Open Changes panel | entry | `⌥⌘B` or `View changes`. | Both open it; the last turn's diff (`Last Turn` source). | PASS (`changes_panel_keys`, `view_changes_opens_panel`, `parity_diff`) |
+| 1 | Open Changes panel | entry | `⌥⌘B` or `View changes`. | Both open it, and so does a file link in an answer; the last turn's diff (`Last Turn` source). | PASS (`changes_panel_keys`, `view_changes_opens_panel`, `file_link_opens_changes`, `parity_diff`) |
 | 2 | `/diff` window | entry | Single file diff. | — | NOT WIRED (`crates/app/src/main.rs`: one window only) |
 | 3 | Source selector | click | Uncommitted / Staged / … | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 4 | Show / Hide files | click | Toggles the file tree. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
@@ -265,6 +266,8 @@ Numbers from the round 4 run (F1Flows); the screen builder column is a run of th
 | 20 | Resize | resize | Split → inline for narrow panes. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 
 ## 14.7 Settings, login and onboarding
+
+A settings row reports its change to `Root`: `desktop.*` and `features.*` rows persist with `config/value/write` and `Root` keeps the value once the server took it; host and session rows keep their value for the session. Leaving and reopening Settings shows the kept value (`settings_value_round_trip`).
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
@@ -350,7 +353,7 @@ Numbers from the round 4 run (F1Flows); the screen builder column is a run of th
 
 A row above that names a `crates/ui` owner needs that change first. The changes that unblock the most rows:
 
-1. `crates/ui/src/thread.rs`: click handlers on the cards (reasoning, command, collapsed turn, `Undo`), hover-only message actions, a find bar, and loading and error views.
-2. `crates/ui/src/diff.rs`: the Changes header controls (source selector, file tree, layout, wrap), empty, loading and error states.
+1. `crates/ui/src/thread.rs`: click handlers on the reasoning and command cards, `Reapply`, the user message's hover actions, a find bar, and loading and error views.
+2. `crates/ui/src/diff.rs`: the Changes header controls (source selector, file tree, layout, wrap, refresh), empty, loading and error states.
 3. `crates/ui/src/screens/mobile.rs`: the allow-host, pairing and connected steps (`remoteControl/*`).
 4. Tooltips and focus-visible rings on the shared buttons (`icon_button`, `pill`, rail items).

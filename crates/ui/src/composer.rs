@@ -278,6 +278,8 @@ enum Menu {
 
 type SubmitHandler = Rc<dyn Fn(&Submission, &mut Window, &mut App)>;
 type ApprovalHandler = Rc<dyn Fn(ApprovalDecision, &mut Window, &mut App)>;
+/// `(model id, effort)` after the user picks them.
+type ModelHandler = Rc<dyn Fn(&str, &str, &mut App)>;
 
 pub struct Composer {
     focus_handle: FocusHandle,
@@ -308,6 +310,7 @@ pub struct Composer {
     approval: Option<Approval>,
     on_submit: Option<SubmitHandler>,
     on_approval: Option<ApprovalHandler>,
+    on_model: Option<ModelHandler>,
 }
 
 impl Composer {
@@ -346,6 +349,7 @@ impl Composer {
             approval: None,
             on_submit: None,
             on_approval: None,
+            on_model: None,
         }
     }
 
@@ -391,6 +395,16 @@ impl Composer {
         self.on_approval = Some(Rc::new(f));
     }
 
+    /// Called when the user picks a model or an effort in the picker.
+    pub fn on_model(&mut self, f: impl Fn(&str, &str, &mut App) + 'static) {
+        self.on_model = Some(Rc::new(f));
+    }
+
+    /// The approval card's request, while one shows.
+    pub fn approval(&self) -> Option<&Approval> {
+        self.approval.as_ref()
+    }
+
     /// Icon-only footer for a known narrow composer; the editor sets the measured width.
     pub fn set_compact(&mut self, compact: bool, cx: &mut Context<Self>) {
         self.footer_width = if compact { 0. } else { f32::INFINITY };
@@ -417,6 +431,13 @@ impl Composer {
 
     fn current_model(&self) -> Option<&ModelOption> {
         self.models.get(self.model)
+    }
+
+    /// Reports the picked model and effort to [`Self::on_model`].
+    fn picked(&self, cx: &mut App) {
+        if let (Some(f), Some(model)) = (self.on_model.clone(), self.current_model()) {
+            f(&model.id, &self.effort, cx);
+        }
     }
 
     fn submit(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
@@ -1054,9 +1075,10 @@ pub fn pill(id: impl Into<ElementId>, t: &Theme) -> Stateful<Div> {
         .hover(move |s| s.bg(hover))
 }
 
-/// 13/18 composer footer label.
+/// 13/18 composer footer label. Its text blends like a transparent cc layer onto the final
+/// pill/bar pixel (the fills under it do not).
 pub fn label(s: impl Into<SharedString>, color: Hsla) -> Div {
-    text(s, 13., 18., 400., color)
+    text(s, 13., 18., 400., color).top_layer()
 }
 
 /// The model name sits in a `tabular-nums` span (`GPT-6`'s digit takes its tabular advance).
@@ -1299,6 +1321,7 @@ impl Composer {
                     .right_0()
                     .on_click(cx.listener(|this, _, _, cx| {
                         (this.model, this.effort) = this.default_selection.clone();
+                        this.picked(cx);
                         cx.notify();
                     })),
             );
@@ -1358,26 +1381,36 @@ impl Composer {
                                 .size(px(4.))
                                 .child(shapes::decoration(deco(9999., color, vec![])))
                         }))
+                        // `_ThumbSpring` (a transform) is its own composited layer over the
+                        // track: its ink (the `0 0 2px` shadow) starts 4 px out.
                         .child(
                             div()
                                 .absolute()
-                                .left(px(dot_x(selected) - 14.))
-                                .top(px(-2.))
-                                .size(px(28.))
-                                .child(shapes::decoration(shapes::Decoration {
-                                    border: Some((px(1.), t.border_strong)),
-                                    ..deco(
-                                        9999.,
-                                        t.control_thumb,
-                                        vec![shadow(
-                                            gpui::rgba(0x0000001a).into(),
-                                            0.,
-                                            2.,
-                                            0.,
-                                            false,
-                                        )],
-                                    )
-                                })),
+                                .left(px(dot_x(selected) - 18.))
+                                .top(px(-6.))
+                                .size(px(36.))
+                                .top_layer()
+                                .child(
+                                    div()
+                                        .absolute()
+                                        .left(px(4.))
+                                        .top(px(4.))
+                                        .size(px(28.))
+                                        .child(shapes::decoration(shapes::Decoration {
+                                            border: Some((px(0.5), t.border_strong)),
+                                            ..deco(
+                                                9999.,
+                                                t.control_thumb,
+                                                vec![shadow(
+                                                    gpui::rgba(0x0000001a).into(),
+                                                    0.,
+                                                    2.,
+                                                    0.,
+                                                    false,
+                                                )],
+                                            )
+                                        })),
+                                ),
                         )
                         .children(efforts.iter().enumerate().map(|(i, effort)| {
                             let effort = effort.clone();
@@ -1390,6 +1423,7 @@ impl Composer {
                                 .h_full()
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.effort = effort.clone();
+                                    this.picked(cx);
                                     cx.notify();
                                 }))
                         })),
@@ -1431,6 +1465,7 @@ impl Composer {
                             this.effort = first.clone();
                         }
                         this.menu = Some(Menu::Effort);
+                        this.picked(cx);
                         cx.notify();
                     }))
             }))
@@ -1551,8 +1586,11 @@ impl Composer {
     /// Popover anchored above a footer button. `width`: the box the original centers on the
     /// button (`None`: left-aligned).
     fn anchored_menu(menu: Div, center_width: Option<f32>, cx: &mut Context<Self>) -> AnyElement {
+        // `occlude`: a click in the menu must not reach the editor under it, whose mouse
+        // down closes the menu.
         let menu = div()
             .id("menu")
+            .occlude()
             .on_hover(cx.listener(|this, hovered: &bool, _, _| this.menu_hovered = *hovered))
             .child(menu);
         let slot = div().absolute().bottom(px(36.)).flex();
@@ -1591,7 +1629,8 @@ impl Composer {
                         .inset_0()
                         .flex()
                         .justify_center()
-                        .child(label("Select effort", t.text_tertiary)),
+                        // Over the open pill: blitted directly, unlike the footer labels.
+                        .child(text("Select effort", 13., 18., 400., t.text_tertiary)),
                 )
             });
         let trigger = if self.footer_width <= XS_WIDTH {

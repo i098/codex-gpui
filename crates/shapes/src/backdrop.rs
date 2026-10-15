@@ -12,7 +12,7 @@ use crate::{
     Decoration, Fill,
     skia::{self, Contour, Layer, Op, color4f},
 };
-use gpui::{Bounds, Corners, Hsla, Pixels, RenderImage, Rgba, Window, WindowId, point, px};
+use gpui::{Bounds, Corners, Hsla, Pixels, RenderImage, Window, WindowId, point, px};
 use image::{Frame, RgbaImage};
 use skia_safe::{
     Canvas, ClipOp, Color, Color4f, ColorSpace, Paint, Rect, TileMode, gradient, image_filters,
@@ -20,7 +20,8 @@ use skia_safe::{
 use std::{cell::RefCell, collections::HashMap, sync::Arc};
 
 /// A box with a backdrop filter, device px: its contour, blur sigma and layer ops; `gradient`:
-/// its fill is a one-color `linear-gradient()` image of this (unquantized) color.
+/// its fill is a one-color `linear-gradient()` image of this color (8-bit, as Blink passes it:
+/// an alpha of 0.96 is 245, whose premultiplied white the dither leaves at 245).
 #[derive(Clone, Debug)]
 struct Filtered {
     contour: Contour,
@@ -90,10 +91,7 @@ pub(crate) fn paint(
 ) {
     let s = window.scale_factor();
     let (contour, ops) = skia::ops(d, bounds, s);
-    let gradient = d.fill.filter(|_| fill == Fill::Gradient).map(|c| {
-        let c = Rgba::from(c);
-        Color4f::new(c.r, c.g, c.b, c.a)
-    });
+    let gradient = d.fill.filter(|_| fill == Fill::Gradient).map(color4f);
     let filtered = Filtered {
         contour,
         sigma: f32::from(blur) * s,

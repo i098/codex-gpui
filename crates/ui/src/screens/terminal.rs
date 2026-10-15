@@ -10,10 +10,10 @@ use gpui::{
 use serde_json::{Value, json};
 use theme::{ActiveTheme as _, Appearance};
 
-use super::diff::panel::split_screen;
-use super::sidebar::home_sidebar;
+use super::diff::panel::with_side_panel;
+use super::sidebar::{HomeSidebar, home_sidebar};
 use super::thread::{subtract_thread_beside_panel, view::ThreadView};
-use crate::text;
+use crate::{Shell, text};
 
 pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
     let thread = subtract_thread_beside_panel(window, cx, true);
@@ -31,13 +31,19 @@ pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
         .map(|(command, _)| command.clone())
         .unwrap_or_default();
     let xterm = cx.new(|cx| Xterm::new(thread.clone(), cx));
+    // The turn completed while the user was away: the thread is unread ("needs attention").
     let sidebar = home_sidebar(cx, Some(&id));
-    split_screen(
-        sidebar,
-        thread,
-        Some((xterm.into(), "thread-terminal", label.into())),
-        cx,
-    )
+    if let Ok(sidebar) = sidebar.clone().downcast::<HomeSidebar>() {
+        sidebar.update(cx, |sidebar, _| sidebar.unread = vec![id]);
+    }
+    let shell = cx.new(|_| {
+        let mut shell = Shell::new(sidebar, thread.clone().into());
+        shell.can_go_back = true;
+        shell.attention = true;
+        shell
+    });
+    let panel = (xterm.into(), "thread-terminal", label.into());
+    with_side_panel(shell, thread, Some(panel), cx).into()
 }
 
 /// `Background terminal` tab: the first background command's output (xterm DOM renderer,

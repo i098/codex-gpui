@@ -32,6 +32,7 @@ NAMES = {
     "e06d40d7cb": "chevron-down-medium",
     "8c95f6018f": "bell",
     "1e0845ea5b": "search",
+    "ff6e9568f5": "bell-unread",
     "ff58624875": "new-chat",
     "fb6a94331e": "arrow-left",  # Back; Forward is the same glyph mirrored (-scale-x-100)
     "d3e3e867e7": "sidebar",

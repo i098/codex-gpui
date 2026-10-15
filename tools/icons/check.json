@@ -13,9 +13,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/light@1440x900.png",
@@ -31,9 +31,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/dark@1280x832.png",
@@ -49,9 +49,9 @@
 45,
 45
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/dark@1440x900.png",
@@ -67,9 +67,9 @@
 45,
 45
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -85,9 +85,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -103,9 +103,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -121,9 +121,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -139,9 +139,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1280x832.png",
@@ -157,9 +157,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1440x900.png",
@@ -175,9 +175,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -193,9 +193,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -211,9 +211,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1280x832.png",
@@ -229,9 +229,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1440x900.png",
@@ -247,9 +247,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/light@1280x832.png",
@@ -265,9 +265,9 @@
 221,
 221
 ],
-"fitted": false,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/light@1440x900.png",
@@ -283,9 +283,9 @@
 221,
 221
 ],
-"fitted": false,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -301,9 +301,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -319,9 +319,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1280x832.png",
@@ -337,9 +337,9 @@
 255,
 255
 ],
-"fitted": false,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/thread/light@1440x900.png",
@@ -355,9 +355,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1280x832.png",
@@ -373,9 +373,9 @@
 54,
 54
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1440x900.png",
@@ -391,9 +391,9 @@
 54,
 54
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -409,9 +409,9 @@
 54,
 54
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -427,9 +427,9 @@
 54,
 54
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1280x832.png",
@@ -445,9 +445,9 @@
 54,
 54
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1440x900.png",
@@ -463,9 +463,9 @@
 54,
 54
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/dark@1280x832.png",
@@ -481,9 +481,9 @@
 47,
 47
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/dark@1440x900.png",
@@ -499,9 +499,9 @@
 47,
 47
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -517,9 +517,9 @@
 54,
 54
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -535,9 +535,9 @@
 54,
 54
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
@@ -553,9 +553,9 @@
 54,
 54
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
@@ -571,9 +571,9 @@
 54,
 54
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -589,9 +589,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -607,9 +607,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -625,9 +625,9 @@
 45,
 45
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -643,9 +643,9 @@
 45,
 45
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/light@1280x832.png",
@@ -661,9 +661,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/light@1440x900.png",
@@ -679,9 +679,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/dark@1280x832.png",
@@ -697,9 +697,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/dark@1440x900.png",
@@ -715,9 +715,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -733,9 +733,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -751,9 +751,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -769,9 +769,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -787,9 +787,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -805,9 +805,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -823,9 +823,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1280x832.png",
@@ -841,9 +841,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1440x900.png",
@@ -859,9 +859,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -877,9 +877,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -895,9 +895,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -913,9 +913,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -931,9 +931,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
@@ -949,9 +949,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
@@ -967,9 +967,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -985,9 +985,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -1003,9 +1003,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -1021,9 +1021,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -1039,9 +1039,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -1057,9 +1057,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -1075,9 +1075,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -1093,9 +1093,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -1111,9 +1111,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -1129,9 +1129,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -1147,9 +1147,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -1165,9 +1165,9 @@
 54,
 54
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -1183,9 +1183,9 @@
 54,
 54
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/light@1280x832.png",
@@ -1201,9 +1201,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/light@1440x900.png",
@@ -1219,9 +1219,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -1237,9 +1237,9 @@
 240,
 240
 ],
-"fitted": true,
 "css_color": "1a1c1fa6",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -1255,9 +1255,9 @@
 240,
 240
 ],
-"fitted": true,
 "css_color": "1a1c1fa6",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/dark@1280x832.png",
@@ -1273,9 +1273,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/dark@1440x900.png",
@@ -1291,9 +1291,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -1309,9 +1309,9 @@
 46,
 46
 ],
-"fitted": true,
 "css_color": "ffffffa6",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -1327,9 +1327,9 @@
 46,
 46
 ],
-"fitted": true,
 "css_color": "ffffffa6",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -1345,9 +1345,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -1363,9 +1363,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -1381,9 +1381,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -1399,9 +1399,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -1417,9 +1417,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -1435,9 +1435,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -1453,9 +1453,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -1471,9 +1471,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -1489,9 +1489,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -1507,9 +1507,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -1525,9 +1525,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -1543,9 +1543,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -1561,9 +1561,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f99",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -1579,9 +1579,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f99",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -1597,9 +1597,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -1615,9 +1615,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -1633,9 +1633,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffff99",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -1651,9 +1651,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffff99",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -1669,9 +1669,9 @@
 53,
 53
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -1687,9 +1687,9 @@
 53,
 53
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -1705,9 +1705,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -1723,9 +1723,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -1741,9 +1741,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -1759,9 +1759,45 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
+},
+{
+"ref": "refs/diff/light@1440x900.png",
+"name": "diff-word-diffs",
+"flip": false,
+"w": 16,
+"h": 16,
+"x": 2748,
+"y": 120,
+"color": "1a1c1f7e",
+"bg": [
+255,
+255,
+255
+],
+"css_color": "1a1c1f7e",
+"opacity": 1.0,
+"fitted": true
+},
+{
+"ref": "refs/diff/dark@1440x900.png",
+"name": "diff-word-diffs",
+"flip": false,
+"w": 16,
+"h": 16,
+"x": 2748,
+"y": 120,
+"color": "ffffff7f",
+"bg": [
+45,
+45,
+45
+],
+"css_color": "ffffff7f",
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/light@1280x832.png",
@@ -1777,9 +1813,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/light@1440x900.png",
@@ -1795,9 +1831,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1280x832.png",
@@ -1813,9 +1849,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1440x900.png",
@@ -1831,9 +1867,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -1849,9 +1885,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -1867,9 +1903,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1280x832.png",
@@ -1885,9 +1921,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1440x900.png",
@@ -1903,9 +1939,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/light@1280x832.png",
@@ -1921,9 +1957,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/light@1440x900.png",
@@ -1939,9 +1975,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -1957,9 +1993,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -1975,9 +2011,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/light@1280x832.png",
@@ -1993,9 +2029,9 @@
 213,
 213
 ],
-"fitted": false,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/light@1440x900.png",
@@ -2011,9 +2047,9 @@
 213,
 213
 ],
-"fitted": false,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -2029,9 +2065,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -2047,9 +2083,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1280x832.png",
@@ -2065,9 +2101,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1440x900.png",
@@ -2083,9 +2119,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/dark@1280x832.png",
@@ -2101,9 +2137,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/dark@1440x900.png",
@@ -2119,9 +2155,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1280x832.png",
@@ -2137,9 +2173,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1440x900.png",
@@ -2155,9 +2191,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -2173,9 +2209,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -2191,9 +2227,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1280x832.png",
@@ -2209,9 +2245,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1440x900.png",
@@ -2227,9 +2263,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/dark@1280x832.png",
@@ -2245,9 +2281,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/dark@1440x900.png",
@@ -2263,9 +2299,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -2281,9 +2317,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -2299,9 +2335,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/dark@1280x832.png",
@@ -2317,9 +2353,9 @@
 31,
 31
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/dark@1440x900.png",
@@ -2335,9 +2371,9 @@
 31,
 31
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -2353,9 +2389,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -2371,9 +2407,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
@@ -2389,9 +2425,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
@@ -2407,13 +2443,13 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/light@1280x832.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2425,13 +2461,13 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/light@1440x900.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2443,13 +2479,13 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1280x832.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2461,13 +2497,13 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1440x900.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2479,13 +2515,13 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2497,13 +2533,13 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2515,13 +2551,13 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1280x832.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2533,13 +2569,13 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1440x900.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2551,13 +2587,13 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/light@1280x832.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2569,13 +2605,13 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/light@1440x900.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2587,13 +2623,13 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2605,13 +2641,13 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2623,13 +2659,13 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/light@1280x832.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2641,13 +2677,13 @@
 213,
 213
 ],
-"fitted": false,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/light@1440x900.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2659,13 +2695,13 @@
 213,
 213
 ],
-"fitted": false,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2677,13 +2713,13 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2695,13 +2731,13 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1280x832.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2713,13 +2749,13 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1440x900.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2731,13 +2767,13 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/dark@1280x832.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2749,13 +2785,13 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/dark@1440x900.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2767,13 +2803,13 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1280x832.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2785,13 +2821,13 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1440x900.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2803,13 +2839,13 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2821,13 +2857,13 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2839,13 +2875,13 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1280x832.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2857,13 +2893,13 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1440x900.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2875,13 +2911,13 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/dark@1280x832.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2893,13 +2929,13 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/dark@1440x900.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2911,13 +2947,13 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2929,13 +2965,13 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2947,13 +2983,13 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/dark@1280x832.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2965,13 +3001,13 @@
 31,
 31
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/dark@1440x900.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -2983,13 +3019,13 @@
 31,
 31
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -3001,13 +3037,13 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -3019,13 +3055,13 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -3037,13 +3073,13 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
-"name": null,
+"name": "rail-code-review",
 "flip": false,
 "w": 20,
 "h": 20,
@@ -3055,9 +3091,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -3073,9 +3109,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "2858a4ff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -3091,9 +3127,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "2858a4ff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -3109,9 +3145,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "2858a4ff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -3127,9 +3163,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "2858a4ff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1280x832.png",
@@ -3145,9 +3181,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "2858a4ff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1440x900.png",
@@ -3163,9 +3199,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "2858a4ff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -3181,9 +3217,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "5685d1ff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -3199,9 +3235,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "5685d1ff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -3217,9 +3253,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "5685d1ff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -3235,9 +3271,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "5685d1ff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
@@ -3253,9 +3289,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "5685d1ff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
@@ -3271,9 +3307,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "5685d1ff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -3289,9 +3325,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -3307,9 +3343,9 @@
 45,
 45
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -3325,9 +3361,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -3343,9 +3379,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -3361,9 +3397,9 @@
 53,
 53
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -3379,9 +3415,9 @@
 53,
 53
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -3397,9 +3433,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -3415,9 +3451,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -3433,9 +3469,9 @@
 45,
 45
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -3451,9 +3487,9 @@
 45,
 45
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -3469,9 +3505,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "000000ff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -3487,9 +3523,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "000000ff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1280x832.png",
@@ -3505,9 +3541,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "000000ff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1440x900.png",
@@ -3523,9 +3559,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "000000ff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/dark@1280x832.png",
@@ -3541,9 +3577,9 @@
 221,
 221
 ],
-"fitted": true,
 "css_color": "000000ff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/dark@1440x900.png",
@@ -3559,9 +3595,9 @@
 221,
 221
 ],
-"fitted": true,
 "css_color": "000000ff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -3577,9 +3613,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "000000ff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -3595,9 +3631,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "000000ff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
@@ -3613,9 +3649,9 @@
 255,
 255
 ],
-"fitted": false,
 "css_color": "000000ff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
@@ -3631,9 +3667,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "000000ff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -3649,9 +3685,9 @@
 0,
 0
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -3667,9 +3703,9 @@
 0,
 0
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1280x832.png",
@@ -3685,9 +3721,9 @@
 0,
 0
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1440x900.png",
@@ -3703,9 +3739,9 @@
 0,
 0
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/light@1280x832.png",
@@ -3721,9 +3757,9 @@
 0,
 0
 ],
-"fitted": false,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/light@1440x900.png",
@@ -3739,9 +3775,9 @@
 0,
 0
 ],
-"fitted": false,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -3757,9 +3793,9 @@
 0,
 0
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -3775,9 +3811,9 @@
 0,
 0
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1280x832.png",
@@ -3793,9 +3829,9 @@
 0,
 0
 ],
-"fitted": false,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/thread/light@1440x900.png",
@@ -3811,9 +3847,9 @@
 0,
 0
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/light@1280x832.png",
@@ -3829,9 +3865,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/light@1440x900.png",
@@ -3847,9 +3883,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/dark@1280x832.png",
@@ -3865,9 +3901,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/dark@1440x900.png",
@@ -3883,9 +3919,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1280x832.png",
@@ -3901,9 +3937,9 @@
 40,
 40
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1440x900.png",
@@ -3919,9 +3955,9 @@
 40,
 40
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1280x832.png",
@@ -3937,9 +3973,9 @@
 40,
 40
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1440x900.png",
@@ -3955,9 +3991,9 @@
 40,
 40
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/dark@1280x832.png",
@@ -3973,9 +4009,9 @@
 35,
 35
 ],
-"fitted": false,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/dark@1440x900.png",
@@ -3991,9 +4027,9 @@
 35,
 35
 ],
-"fitted": false,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/composer/light@1280x832.png",
@@ -4009,9 +4045,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1440x900.png",
@@ -4027,9 +4063,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -4045,9 +4081,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -4063,9 +4099,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1280x832.png",
@@ -4081,9 +4117,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1440x900.png",
@@ -4099,9 +4135,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/light@1280x832.png",
@@ -4117,9 +4153,9 @@
 221,
 221
 ],
-"fitted": false,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/light@1440x900.png",
@@ -4135,9 +4171,9 @@
 221,
 221
 ],
-"fitted": false,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -4153,9 +4189,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -4171,9 +4207,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1280x832.png",
@@ -4189,9 +4225,9 @@
 255,
 255
 ],
-"fitted": false,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/thread/light@1440x900.png",
@@ -4207,9 +4243,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1280x832.png",
@@ -4225,9 +4261,9 @@
 54,
 54
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1440x900.png",
@@ -4243,9 +4279,9 @@
 54,
 54
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -4261,9 +4297,9 @@
 54,
 54
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -4279,9 +4315,9 @@
 54,
 54
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1280x832.png",
@@ -4297,9 +4333,9 @@
 54,
 54
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1440x900.png",
@@ -4315,9 +4351,9 @@
 54,
 54
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/dark@1280x832.png",
@@ -4333,9 +4369,9 @@
 47,
 47
 ],
-"fitted": false,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/dark@1440x900.png",
@@ -4351,9 +4387,9 @@
 47,
 47
 ],
-"fitted": false,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -4369,9 +4405,9 @@
 54,
 54
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -4387,9 +4423,9 @@
 54,
 54
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
@@ -4405,9 +4441,9 @@
 54,
 54
 ],
-"fitted": false,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
@@ -4423,9 +4459,9 @@
 54,
 54
 ],
-"fitted": false,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -4441,9 +4477,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -4459,9 +4495,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -4477,9 +4513,9 @@
 45,
 45
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -4495,9 +4531,9 @@
 45,
 45
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/light@1280x832.png",
@@ -4513,9 +4549,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/light@1440x900.png",
@@ -4531,9 +4567,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1280x832.png",
@@ -4549,9 +4585,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1440x900.png",
@@ -4567,9 +4603,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -4585,9 +4621,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -4603,9 +4639,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1280x832.png",
@@ -4621,9 +4657,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1440x900.png",
@@ -4639,9 +4675,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/light@1280x832.png",
@@ -4657,9 +4693,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/light@1440x900.png",
@@ -4675,9 +4711,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -4693,9 +4729,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -4711,9 +4747,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/light@1280x832.png",
@@ -4729,9 +4765,9 @@
 213,
 213
 ],
-"fitted": false,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/light@1440x900.png",
@@ -4747,9 +4783,9 @@
 213,
 213
 ],
-"fitted": false,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -4765,9 +4801,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -4783,9 +4819,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1280x832.png",
@@ -4801,9 +4837,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1440x900.png",
@@ -4819,9 +4855,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/dark@1280x832.png",
@@ -4837,9 +4873,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/dark@1440x900.png",
@@ -4855,9 +4891,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1280x832.png",
@@ -4873,9 +4909,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1440x900.png",
@@ -4891,9 +4927,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -4909,9 +4945,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -4927,9 +4963,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1280x832.png",
@@ -4945,9 +4981,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1440x900.png",
@@ -4963,9 +4999,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/dark@1280x832.png",
@@ -4981,9 +5017,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/dark@1440x900.png",
@@ -4999,9 +5035,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -5017,9 +5053,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -5035,9 +5071,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/dark@1280x832.png",
@@ -5053,9 +5089,9 @@
 31,
 31
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/dark@1440x900.png",
@@ -5071,9 +5107,9 @@
 31,
 31
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -5089,9 +5125,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -5107,9 +5143,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
@@ -5125,9 +5161,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
@@ -5143,9 +5179,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1280x832.png",
@@ -5161,9 +5197,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1440x900.png",
@@ -5179,9 +5215,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -5197,9 +5233,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -5215,9 +5251,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1280x832.png",
@@ -5233,9 +5269,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1440x900.png",
@@ -5251,9 +5287,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/light@1280x832.png",
@@ -5269,9 +5305,9 @@
 218,
 218
 ],
-"fitted": false,
 "css_color": "1a1c1fd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/light@1440x900.png",
@@ -5287,9 +5323,9 @@
 218,
 218
 ],
-"fitted": false,
 "css_color": "1a1c1fd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -5305,9 +5341,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -5323,9 +5359,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1280x832.png",
@@ -5341,9 +5377,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1440x900.png",
@@ -5359,9 +5395,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1280x832.png",
@@ -5377,9 +5413,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1440x900.png",
@@ -5395,9 +5431,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -5413,9 +5449,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -5431,9 +5467,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1280x832.png",
@@ -5449,9 +5485,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1440x900.png",
@@ -5467,9 +5503,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/dark@1280x832.png",
@@ -5485,9 +5521,9 @@
 25,
 25
 ],
-"fitted": false,
 "css_color": "ffffffd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/dark@1440x900.png",
@@ -5503,9 +5539,9 @@
 25,
 25
 ],
-"fitted": false,
 "css_color": "ffffffd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -5521,9 +5557,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -5539,9 +5575,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
@@ -5557,9 +5593,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
@@ -5575,9 +5611,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/light@1280x832.png",
@@ -5593,9 +5629,9 @@
 234,
 234
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/light@1440x900.png",
@@ -5611,9 +5647,9 @@
 234,
 234
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/dark@1280x832.png",
@@ -5629,9 +5665,9 @@
 53,
 53
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/dark@1440x900.png",
@@ -5647,9 +5683,9 @@
 53,
 53
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -5665,9 +5701,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -5683,9 +5719,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -5701,9 +5737,9 @@
 45,
 45
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -5719,9 +5755,9 @@
 45,
 45
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -5737,9 +5773,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -5755,9 +5791,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1280x832.png",
@@ -5773,9 +5809,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1440x900.png",
@@ -5791,9 +5827,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -5809,9 +5845,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -5827,9 +5863,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
@@ -5845,9 +5881,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
@@ -5863,9 +5899,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -5881,9 +5917,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -5899,9 +5935,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1280x832.png",
@@ -5917,9 +5953,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1440x900.png",
@@ -5935,9 +5971,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -5953,9 +5989,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -5971,9 +6007,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
@@ -5989,9 +6025,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
@@ -6007,9 +6043,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -6025,9 +6061,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -6043,9 +6079,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -6061,9 +6097,9 @@
 45,
 45
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -6079,9 +6115,9 @@
 45,
 45
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -6097,9 +6133,9 @@
 254,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -6115,9 +6151,9 @@
 254,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -6133,9 +6169,9 @@
 254,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -6151,9 +6187,9 @@
 254,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1280x832.png",
@@ -6169,9 +6205,9 @@
 254,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1440x900.png",
@@ -6187,9 +6223,9 @@
 254,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -6205,9 +6241,9 @@
 35,
 35
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -6223,9 +6259,9 @@
 35,
 35
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -6241,9 +6277,9 @@
 35,
 35
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -6259,9 +6295,9 @@
 35,
 35
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
@@ -6277,9 +6313,9 @@
 35,
 35
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
@@ -6295,9 +6331,9 @@
 35,
 35
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1280x832.png",
@@ -6313,9 +6349,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 0.3
+"opacity": 0.3,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1440x900.png",
@@ -6331,9 +6367,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 0.3
+"opacity": 0.3,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1280x832.png",
@@ -6349,9 +6385,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 0.3
+"opacity": 0.3,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1440x900.png",
@@ -6367,9 +6403,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 0.3
+"opacity": 0.3,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1280x832.png",
@@ -6385,9 +6421,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 0.3
+"opacity": 0.3,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1440x900.png",
@@ -6403,9 +6439,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 0.3
+"opacity": 0.3,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1280x832.png",
@@ -6421,9 +6457,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 0.3
+"opacity": 0.3,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1440x900.png",
@@ -6439,9 +6475,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 0.3
+"opacity": 0.3,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1280x832.png",
@@ -6457,9 +6493,9 @@
 253,
 254
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1440x900.png",
@@ -6475,9 +6511,9 @@
 253,
 254
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -6493,9 +6529,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a85d4ff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -6511,9 +6547,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a85d4ff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -6529,9 +6565,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "69b1ffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -6547,9 +6583,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "69b1ffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -6565,9 +6601,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -6583,9 +6619,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -6601,9 +6637,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -6619,9 +6655,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -6637,9 +6673,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -6655,9 +6691,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -6673,9 +6709,9 @@
 42,
 42
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -6691,9 +6727,9 @@
 42,
 42
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -6709,9 +6745,9 @@
 42,
 42
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -6727,9 +6763,9 @@
 42,
 42
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -6745,9 +6781,9 @@
 42,
 42
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -6763,9 +6799,9 @@
 42,
 42
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -6781,9 +6817,9 @@
 234,
 235
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -6799,9 +6835,9 @@
 234,
 235
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -6817,9 +6853,9 @@
 234,
 235
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -6835,9 +6871,9 @@
 234,
 235
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -6853,9 +6889,9 @@
 47,
 47
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -6871,9 +6907,9 @@
 47,
 47
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -6889,9 +6925,9 @@
 47,
 47
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -6907,9 +6943,9 @@
 47,
 47
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -6925,9 +6961,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -6943,9 +6979,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -6961,9 +6997,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -6979,9 +7015,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -6997,9 +7033,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -7015,9 +7051,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -7033,9 +7069,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -7051,9 +7087,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1280x832.png",
@@ -7069,9 +7105,9 @@
 40,
 40
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1440x900.png",
@@ -7087,9 +7123,9 @@
 40,
 40
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1280x832.png",
@@ -7105,9 +7141,9 @@
 40,
 40
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1440x900.png",
@@ -7123,9 +7159,9 @@
 40,
 40
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/dark@1280x832.png",
@@ -7141,9 +7177,9 @@
 35,
 35
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/dark@1440x900.png",
@@ -7159,9 +7195,9 @@
 35,
 35
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -7177,9 +7213,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -7195,9 +7231,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -7213,9 +7249,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -7231,9 +7267,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -7249,9 +7285,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -7267,9 +7303,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -7285,9 +7321,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -7303,9 +7339,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -7321,9 +7357,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -7339,9 +7375,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -7357,9 +7393,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -7375,9 +7411,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -7393,9 +7429,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -7411,9 +7447,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -7429,9 +7465,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -7447,9 +7483,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -7465,9 +7501,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -7483,9 +7519,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -7501,9 +7537,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -7519,9 +7555,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -7537,9 +7573,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -7555,9 +7591,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -7573,9 +7609,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -7591,9 +7627,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -7609,9 +7645,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -7627,9 +7663,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1280x832.png",
@@ -7645,9 +7681,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1440x900.png",
@@ -7663,9 +7699,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -7681,9 +7717,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -7699,9 +7735,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
@@ -7717,9 +7753,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
@@ -7735,9 +7771,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/light@1280x832.png",
@@ -7753,9 +7789,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/light@1440x900.png",
@@ -7771,9 +7807,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/light@1280x832.png",
@@ -7789,9 +7825,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/light@1440x900.png",
@@ -7807,9 +7843,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -7825,9 +7861,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -7843,9 +7879,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/dark@1280x832.png",
@@ -7861,9 +7897,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/dark@1440x900.png",
@@ -7879,9 +7915,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/dark@1280x832.png",
@@ -7897,9 +7933,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/dark@1440x900.png",
@@ -7915,9 +7951,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -7933,9 +7969,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -7951,9 +7987,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -7969,9 +8005,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -7987,9 +8023,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -8005,9 +8041,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -8023,9 +8059,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1280x832.png",
@@ -8041,9 +8077,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1440x900.png",
@@ -8059,9 +8095,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/light@1280x832.png",
@@ -8077,9 +8113,9 @@
 221,
 221
 ],
-"fitted": false,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/light@1440x900.png",
@@ -8095,9 +8131,9 @@
 221,
 221
 ],
-"fitted": false,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -8113,9 +8149,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -8131,9 +8167,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1280x832.png",
@@ -8149,9 +8185,9 @@
 255,
 255
 ],
-"fitted": false,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/thread/light@1440x900.png",
@@ -8167,9 +8203,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1280x832.png",
@@ -8185,9 +8221,9 @@
 54,
 54
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1440x900.png",
@@ -8203,9 +8239,9 @@
 54,
 54
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -8221,9 +8257,9 @@
 54,
 54
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -8239,9 +8275,9 @@
 54,
 54
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1280x832.png",
@@ -8257,9 +8293,9 @@
 54,
 54
 ],
-"fitted": false,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/home/dark@1440x900.png",
@@ -8275,9 +8311,9 @@
 54,
 54
 ],
-"fitted": false,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/dark@1280x832.png",
@@ -8293,9 +8329,9 @@
 47,
 47
 ],
-"fitted": false,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/dark@1440x900.png",
@@ -8311,9 +8347,9 @@
 47,
 47
 ],
-"fitted": false,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -8329,9 +8365,9 @@
 54,
 54
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -8347,9 +8383,9 @@
 54,
 54
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
@@ -8365,9 +8401,9 @@
 54,
 54
 ],
-"fitted": false,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
@@ -8383,9 +8419,9 @@
 54,
 54
 ],
-"fitted": false,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/composer/light@1280x832.png",
@@ -8401,9 +8437,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1440x900.png",
@@ -8419,9 +8455,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -8437,9 +8473,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -8455,9 +8491,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1280x832.png",
@@ -8473,9 +8509,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1440x900.png",
@@ -8491,9 +8527,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/light@1280x832.png",
@@ -8509,9 +8545,9 @@
 218,
 218
 ],
-"fitted": false,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/light@1440x900.png",
@@ -8527,9 +8563,9 @@
 218,
 218
 ],
-"fitted": false,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/thread/light@1280x832.png",
@@ -8545,9 +8581,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1440x900.png",
@@ -8563,9 +8599,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -8581,9 +8617,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -8599,9 +8635,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1280x832.png",
@@ -8617,9 +8653,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1440x900.png",
@@ -8635,9 +8671,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -8653,9 +8689,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -8671,9 +8707,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1280x832.png",
@@ -8689,9 +8725,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1440x900.png",
@@ -8707,9 +8743,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/dark@1280x832.png",
@@ -8725,9 +8761,9 @@
 25,
 25
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/dark@1440x900.png",
@@ -8743,9 +8779,9 @@
 25,
 25
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
@@ -8761,9 +8797,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
@@ -8779,9 +8815,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -8797,9 +8833,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -8815,9 +8851,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -8833,9 +8869,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -8851,9 +8887,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -8869,9 +8905,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -8887,9 +8923,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/light@1280x832.png",
@@ -8905,9 +8941,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/light@1440x900.png",
@@ -8923,9 +8959,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -8941,9 +8977,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -8959,9 +8995,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -8977,9 +9013,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -8995,9 +9031,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/dark@1280x832.png",
@@ -9013,9 +9049,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/dark@1440x900.png",
@@ -9031,9 +9067,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/light@1280x832.png",
@@ -9049,9 +9085,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/light@1440x900.png",
@@ -9067,9 +9103,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/dark@1280x832.png",
@@ -9085,9 +9121,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/dark@1440x900.png",
@@ -9103,9 +9139,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1280x832.png",
@@ -9121,9 +9157,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1440x900.png",
@@ -9139,9 +9175,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1280x832.png",
@@ -9157,9 +9193,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1440x900.png",
@@ -9175,9 +9211,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/light@1280x832.png",
@@ -9193,9 +9229,9 @@
 213,
 213
 ],
-"fitted": false,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/light@1440x900.png",
@@ -9211,9 +9247,9 @@
 213,
 213
 ],
-"fitted": false,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/thread/light@1280x832.png",
@@ -9229,9 +9265,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1440x900.png",
@@ -9247,9 +9283,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1280x832.png",
@@ -9265,9 +9301,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1440x900.png",
@@ -9283,9 +9319,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1280x832.png",
@@ -9301,9 +9337,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1440x900.png",
@@ -9319,9 +9355,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/dark@1280x832.png",
@@ -9337,9 +9373,9 @@
 31,
 31
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/dark@1440x900.png",
@@ -9355,9 +9391,9 @@
 31,
 31
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
@@ -9373,9 +9409,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
@@ -9391,9 +9427,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -9409,9 +9445,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -9427,9 +9463,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -9445,9 +9481,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -9463,9 +9499,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -9481,9 +9517,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -9499,9 +9535,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -9517,9 +9553,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -9535,9 +9571,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1280x832.png",
@@ -9553,9 +9589,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1440x900.png",
@@ -9571,9 +9607,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -9589,9 +9625,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -9607,9 +9643,9 @@
 45,
 45
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -9625,9 +9661,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -9643,9 +9679,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -9661,9 +9697,9 @@
 45,
 45
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -9679,9 +9715,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -9697,9 +9733,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -9715,9 +9751,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
@@ -9733,9 +9769,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
@@ -9751,9 +9787,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1280x832.png",
@@ -9769,9 +9805,9 @@
 253,
 254
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1440x900.png",
@@ -9787,9 +9823,9 @@
 253,
 254
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1280x832.png",
@@ -9805,9 +9841,9 @@
 45,
 45
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1440x900.png",
@@ -9823,9 +9859,9 @@
 45,
 45
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -9841,9 +9877,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -9859,9 +9895,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -9877,9 +9913,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -9895,9 +9931,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1280x832.png",
@@ -9913,9 +9949,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1440x900.png",
@@ -9931,9 +9967,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -9949,9 +9985,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -9967,9 +10003,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -9985,9 +10021,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -10003,9 +10039,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
@@ -10021,9 +10057,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
@@ -10039,9 +10075,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -10057,9 +10093,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -10075,9 +10111,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -10093,9 +10129,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -10111,9 +10147,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -10129,9 +10165,9 @@
 53,
 53
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -10147,9 +10183,9 @@
 53,
 53
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -10165,9 +10201,9 @@
 53,
 53
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -10183,9 +10219,9 @@
 53,
 53
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -10201,9 +10237,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -10219,9 +10255,9 @@
 45,
 45
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/light@1280x832.png",
@@ -10237,9 +10273,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/light@1440x900.png",
@@ -10255,9 +10291,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1280x832.png",
@@ -10273,9 +10309,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1440x900.png",
@@ -10291,9 +10327,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -10309,9 +10345,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -10327,9 +10363,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1280x832.png",
@@ -10345,9 +10381,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1440x900.png",
@@ -10363,9 +10399,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/light@1280x832.png",
@@ -10381,9 +10417,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/light@1440x900.png",
@@ -10399,9 +10435,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -10417,9 +10453,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -10435,9 +10471,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/light@1280x832.png",
@@ -10453,9 +10489,9 @@
 213,
 213
 ],
-"fitted": false,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/light@1440x900.png",
@@ -10471,9 +10507,9 @@
 213,
 213
 ],
-"fitted": false,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -10489,9 +10525,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -10507,9 +10543,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1280x832.png",
@@ -10525,9 +10561,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1440x900.png",
@@ -10543,9 +10579,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/dark@1280x832.png",
@@ -10561,9 +10597,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/dark@1440x900.png",
@@ -10579,9 +10615,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1280x832.png",
@@ -10597,9 +10633,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1440x900.png",
@@ -10615,9 +10651,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -10633,9 +10669,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -10651,9 +10687,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1280x832.png",
@@ -10669,9 +10705,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1440x900.png",
@@ -10687,9 +10723,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/dark@1280x832.png",
@@ -10705,9 +10741,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/dark@1440x900.png",
@@ -10723,9 +10759,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -10741,9 +10777,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -10759,9 +10795,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/dark@1280x832.png",
@@ -10777,9 +10813,9 @@
 31,
 31
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/dark@1440x900.png",
@@ -10795,9 +10831,9 @@
 31,
 31
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -10813,9 +10849,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -10831,9 +10867,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
@@ -10849,9 +10885,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
@@ -10867,9 +10903,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -10885,9 +10921,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1280x832.png",
@@ -10903,9 +10939,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1440x900.png",
@@ -10921,9 +10957,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/light@1280x832.png",
@@ -10939,9 +10975,9 @@
 221,
 221
 ],
-"fitted": false,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/light@1440x900.png",
@@ -10957,9 +10993,9 @@
 221,
 221
 ],
-"fitted": false,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -10975,9 +11011,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1280x832.png",
@@ -10993,9 +11029,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1440x900.png",
@@ -11011,9 +11047,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -11029,9 +11065,9 @@
 54,
 54
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1280x832.png",
@@ -11047,9 +11083,9 @@
 54,
 54
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1440x900.png",
@@ -11065,9 +11101,9 @@
 54,
 54
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/dark@1280x832.png",
@@ -11083,9 +11119,9 @@
 47,
 47
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/dark@1440x900.png",
@@ -11101,9 +11137,9 @@
 47,
 47
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -11119,9 +11155,9 @@
 54,
 54
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
@@ -11137,9 +11173,9 @@
 54,
 54
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
@@ -11155,9 +11191,9 @@
 54,
 54
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -11173,9 +11209,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -11191,9 +11227,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -11209,9 +11245,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -11227,9 +11263,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -11245,9 +11281,9 @@
 247,
 247
 ],
-"fitted": true,
 "css_color": "1a1c1fa6",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -11263,9 +11299,9 @@
 247,
 247
 ],
-"fitted": true,
 "css_color": "1a1c1fa6",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -11281,9 +11317,9 @@
 247,
 247
 ],
-"fitted": true,
 "css_color": "1a1c1fa6",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -11299,9 +11335,9 @@
 247,
 247
 ],
-"fitted": true,
 "css_color": "1a1c1fa6",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1280x832.png",
@@ -11317,9 +11353,9 @@
 247,
 247
 ],
-"fitted": true,
 "css_color": "1a1c1fa6",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1440x900.png",
@@ -11335,9 +11371,9 @@
 247,
 247
 ],
-"fitted": true,
 "css_color": "1a1c1fa6",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -11353,9 +11389,9 @@
 20,
 20
 ],
-"fitted": true,
 "css_color": "ffffffa6",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -11371,9 +11407,9 @@
 20,
 20
 ],
-"fitted": true,
 "css_color": "ffffffa6",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -11389,9 +11425,9 @@
 20,
 20
 ],
-"fitted": true,
 "css_color": "ffffffa6",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -11407,9 +11443,9 @@
 20,
 20
 ],
-"fitted": true,
 "css_color": "ffffffa6",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
@@ -11425,9 +11461,9 @@
 20,
 20
 ],
-"fitted": true,
 "css_color": "ffffffa6",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
@@ -11443,9 +11479,9 @@
 20,
 20
 ],
-"fitted": true,
 "css_color": "ffffffa6",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -11461,9 +11497,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -11479,9 +11515,9 @@
 45,
 45
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -11497,9 +11533,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -11515,9 +11551,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -11533,9 +11569,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -11551,9 +11587,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -11569,9 +11605,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -11587,9 +11623,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1280x832.png",
@@ -11605,9 +11641,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1440x900.png",
@@ -11623,9 +11659,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -11641,9 +11677,9 @@
 224,
 224
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -11659,9 +11695,9 @@
 224,
 224
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -11677,9 +11713,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -11695,9 +11731,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
@@ -11713,9 +11749,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
@@ -11731,9 +11767,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -11749,9 +11785,9 @@
 58,
 58
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -11767,9 +11803,9 @@
 58,
 58
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -11785,9 +11821,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fa6",
-"opacity": 0.5
+"opacity": 0.5,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -11803,9 +11839,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fa6",
-"opacity": 0.5
+"opacity": 0.5,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -11821,9 +11857,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffa6",
-"opacity": 0.5
+"opacity": 0.5,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -11839,9 +11875,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffa6",
-"opacity": 0.5
+"opacity": 0.5,
+"fitted": true
 },
 {
 "ref": "refs/automations/light@1280x832.png",
@@ -11857,9 +11893,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/light@1440x900.png",
@@ -11875,9 +11911,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/dark@1280x832.png",
@@ -11893,9 +11929,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/dark@1440x900.png",
@@ -11911,9 +11947,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1280x832.png",
@@ -11929,9 +11965,9 @@
 253,
 254
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1440x900.png",
@@ -11947,9 +11983,9 @@
 253,
 254
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1280x832.png",
@@ -11965,9 +12001,9 @@
 45,
 45
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1440x900.png",
@@ -11983,9 +12019,9 @@
 45,
 45
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/light@1280x832.png",
@@ -12001,9 +12037,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/light@1440x900.png",
@@ -12019,9 +12055,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1280x832.png",
@@ -12037,9 +12073,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1440x900.png",
@@ -12055,9 +12091,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -12073,9 +12109,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -12091,9 +12127,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1280x832.png",
@@ -12109,9 +12145,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1440x900.png",
@@ -12127,9 +12163,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/light@1280x832.png",
@@ -12145,9 +12181,9 @@
 213,
 213
 ],
-"fitted": false,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/light@1440x900.png",
@@ -12163,9 +12199,9 @@
 213,
 213
 ],
-"fitted": false,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -12181,9 +12217,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -12199,9 +12235,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1280x832.png",
@@ -12217,9 +12253,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1440x900.png",
@@ -12235,9 +12271,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/dark@1280x832.png",
@@ -12253,9 +12289,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/dark@1440x900.png",
@@ -12271,9 +12307,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1280x832.png",
@@ -12289,9 +12325,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1440x900.png",
@@ -12307,9 +12343,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -12325,9 +12361,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -12343,9 +12379,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1280x832.png",
@@ -12361,9 +12397,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1440x900.png",
@@ -12379,9 +12415,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/dark@1280x832.png",
@@ -12397,9 +12433,9 @@
 31,
 31
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/dark@1440x900.png",
@@ -12415,9 +12451,9 @@
 31,
 31
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -12433,9 +12469,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -12451,9 +12487,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
@@ -12469,9 +12505,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
@@ -12487,9 +12523,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -12505,9 +12541,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -12523,9 +12559,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -12541,9 +12577,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -12559,9 +12595,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/light@1280x832.png",
@@ -12577,9 +12613,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 0.75
+"opacity": 0.75,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/light@1440x900.png",
@@ -12595,9 +12631,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 0.75
+"opacity": 0.75,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/dark@1280x832.png",
@@ -12613,9 +12649,9 @@
 45,
 45
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 0.75
+"opacity": 0.75,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/dark@1440x900.png",
@@ -12631,9 +12667,9 @@
 45,
 45
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 0.75
+"opacity": 0.75,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -12649,9 +12685,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -12667,9 +12703,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -12685,9 +12721,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -12703,9 +12739,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -12721,9 +12757,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -12739,9 +12775,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1280x832.png",
@@ -12757,9 +12793,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1440x900.png",
@@ -12775,9 +12811,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -12793,9 +12829,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -12811,9 +12847,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
@@ -12829,9 +12865,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
@@ -12847,9 +12883,9 @@
 24,
 24
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1280x832.png",
@@ -12865,9 +12901,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1440x900.png",
@@ -12883,9 +12919,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -12901,9 +12937,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -12919,9 +12955,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1280x832.png",
@@ -12937,9 +12973,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1440x900.png",
@@ -12955,9 +12991,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/light@1280x832.png",
@@ -12973,9 +13009,9 @@
 218,
 218
 ],
-"fitted": false,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/light@1440x900.png",
@@ -12991,9 +13027,9 @@
 218,
 218
 ],
-"fitted": false,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -13009,9 +13045,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -13027,9 +13063,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1280x832.png",
@@ -13045,9 +13081,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1440x900.png",
@@ -13063,9 +13099,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1280x832.png",
@@ -13081,9 +13117,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1440x900.png",
@@ -13099,9 +13135,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -13117,9 +13153,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -13135,9 +13171,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1280x832.png",
@@ -13153,9 +13189,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1440x900.png",
@@ -13171,9 +13207,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/dark@1280x832.png",
@@ -13189,9 +13225,9 @@
 25,
 25
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/dark@1440x900.png",
@@ -13207,9 +13243,9 @@
 25,
 25
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -13225,9 +13261,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -13243,9 +13279,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
@@ -13261,9 +13297,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
@@ -13279,9 +13315,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -13297,9 +13333,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -13315,9 +13351,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -13333,9 +13369,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -13351,9 +13387,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -13369,9 +13405,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -13387,9 +13423,9 @@
 255,
 255
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -13405,9 +13441,9 @@
 240,
 240
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -13423,9 +13459,9 @@
 240,
 240
 ],
-"fitted": true,
 "css_color": "1a1c1fff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -13441,9 +13477,9 @@
 47,
 47
 ],
-"fitted": true,
 "css_color": "ffffffe7",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -13459,9 +13495,9 @@
 47,
 47
 ],
-"fitted": true,
 "css_color": "ffffffe7",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1280x832.png",
@@ -13477,9 +13513,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1440x900.png",
@@ -13495,9 +13531,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -13513,9 +13549,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -13531,9 +13567,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1280x832.png",
@@ -13549,9 +13585,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1440x900.png",
@@ -13567,9 +13603,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/light@1280x832.png",
@@ -13585,9 +13621,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/light@1440x900.png",
@@ -13603,9 +13639,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -13621,9 +13657,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -13639,9 +13675,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/light@1280x832.png",
@@ -13657,9 +13693,9 @@
 213,
 213
 ],
-"fitted": false,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/light@1440x900.png",
@@ -13675,9 +13711,9 @@
 213,
 213
 ],
-"fitted": false,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -13693,9 +13729,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -13711,9 +13747,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1280x832.png",
@@ -13729,9 +13765,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1440x900.png",
@@ -13747,9 +13783,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1280x832.png",
@@ -13765,9 +13801,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1440x900.png",
@@ -13783,9 +13819,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -13801,9 +13837,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -13819,9 +13855,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1280x832.png",
@@ -13837,9 +13873,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1440x900.png",
@@ -13855,9 +13891,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/dark@1280x832.png",
@@ -13873,9 +13909,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/dark@1440x900.png",
@@ -13891,9 +13927,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -13909,9 +13945,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -13927,9 +13963,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/dark@1280x832.png",
@@ -13945,9 +13981,9 @@
 31,
 31
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/dark@1440x900.png",
@@ -13963,9 +13999,9 @@
 31,
 31
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -13981,9 +14017,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -13999,9 +14035,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
@@ -14017,9 +14053,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
@@ -14035,9 +14071,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1280x832.png",
@@ -14053,9 +14089,9 @@
 0,
 0
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1440x900.png",
@@ -14071,9 +14107,9 @@
 0,
 0
 ],
-"fitted": true,
 "css_color": "ffffffff",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1280x832.png",
@@ -14089,9 +14125,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1440x900.png",
@@ -14107,9 +14143,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1280x832.png",
@@ -14125,9 +14161,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1440x900.png",
@@ -14143,9 +14179,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/light@1280x832.png",
@@ -14161,9 +14197,9 @@
 213,
 213
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/light@1440x900.png",
@@ -14179,9 +14215,9 @@
 213,
 213
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/automations/light@1280x832.png",
@@ -14197,9 +14233,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/light@1440x900.png",
@@ -14215,9 +14251,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -14233,9 +14269,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -14251,9 +14287,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/light@1280x832.png",
@@ -14269,9 +14305,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/light@1440x900.png",
@@ -14287,9 +14323,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -14305,9 +14341,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -14323,9 +14359,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -14341,9 +14377,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -14359,9 +14395,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1280x832.png",
@@ -14377,9 +14413,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1440x900.png",
@@ -14395,9 +14431,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1280x832.png",
@@ -14413,9 +14449,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1440x900.png",
@@ -14431,9 +14467,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1280x832.png",
@@ -14449,9 +14485,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1440x900.png",
@@ -14467,9 +14503,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/dark@1280x832.png",
@@ -14485,9 +14521,9 @@
 31,
 31
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/dark@1440x900.png",
@@ -14503,9 +14539,9 @@
 31,
 31
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": false
 },
 {
 "ref": "refs/automations/dark@1280x832.png",
@@ -14521,9 +14557,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/dark@1440x900.png",
@@ -14539,9 +14575,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -14557,9 +14593,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -14575,9 +14611,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/dark@1280x832.png",
@@ -14593,9 +14629,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/mobile/dark@1440x900.png",
@@ -14611,9 +14647,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -14629,9 +14665,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -14647,9 +14683,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -14665,9 +14701,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -14683,9 +14719,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
@@ -14701,9 +14737,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
@@ -14719,9 +14755,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/automations/light@1280x832.png",
@@ -14737,9 +14773,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/automations/light@1440x900.png",
@@ -14755,9 +14791,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1280x832.png",
@@ -14773,9 +14809,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1440x900.png",
@@ -14791,9 +14827,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -14809,9 +14845,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -14827,9 +14863,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1280x832.png",
@@ -14845,9 +14881,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1440x900.png",
@@ -14863,9 +14899,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/mobile/light@1280x832.png",
@@ -14881,9 +14917,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/mobile/light@1440x900.png",
@@ -14899,9 +14935,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1280x832.png",
@@ -14917,9 +14953,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/settings/light@1440x900.png",
@@ -14935,9 +14971,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/light@1280x832.png",
@@ -14953,9 +14989,9 @@
 213,
 213
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/light@1440x900.png",
@@ -14971,9 +15007,9 @@
 213,
 213
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -14989,9 +15025,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -15007,9 +15043,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1280x832.png",
@@ -15025,9 +15061,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1440x900.png",
@@ -15043,9 +15079,9 @@
 246,
 246
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/automations/dark@1280x832.png",
@@ -15061,9 +15097,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/automations/dark@1440x900.png",
@@ -15079,9 +15115,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1280x832.png",
@@ -15097,9 +15133,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1440x900.png",
@@ -15115,9 +15151,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -15133,9 +15169,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -15151,9 +15187,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1280x832.png",
@@ -15169,9 +15205,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1440x900.png",
@@ -15187,9 +15223,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/mobile/dark@1280x832.png",
@@ -15205,9 +15241,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/mobile/dark@1440x900.png",
@@ -15223,9 +15259,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1280x832.png",
@@ -15241,9 +15277,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/settings/dark@1440x900.png",
@@ -15259,9 +15295,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/dark@1280x832.png",
@@ -15277,9 +15313,9 @@
 31,
 31
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/dark@1440x900.png",
@@ -15295,9 +15331,9 @@
 31,
 31
 ],
-"fitted": false,
 "css_color": "ffffff7f",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": false
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -15313,9 +15349,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -15331,9 +15367,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
@@ -15349,9 +15385,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
@@ -15367,9 +15403,9 @@
 36,
 36
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 0.4
+"opacity": 0.4,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1280x832.png",
@@ -15385,9 +15421,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/light@1440x900.png",
@@ -15403,9 +15439,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1280x832.png",
@@ -15421,9 +15457,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/light@1440x900.png",
@@ -15439,9 +15475,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1280x832.png",
@@ -15457,9 +15493,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/light@1440x900.png",
@@ -15475,9 +15511,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/light@1280x832.png",
@@ -15493,9 +15529,9 @@
 218,
 218
 ],
-"fitted": false,
 "css_color": "1a1c1fd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/light@1440x900.png",
@@ -15511,9 +15547,9 @@
 218,
 218
 ],
-"fitted": false,
 "css_color": "1a1c1fd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
@@ -15529,9 +15565,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
@@ -15547,9 +15583,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1280x832.png",
@@ -15565,9 +15601,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/light@1440x900.png",
@@ -15583,9 +15619,9 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1fd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1280x832.png",
@@ -15601,9 +15637,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/composer/dark@1440x900.png",
@@ -15619,9 +15655,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -15637,9 +15673,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/diff/dark@1440x900.png",
@@ -15655,9 +15691,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1280x832.png",
@@ -15673,9 +15709,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1440x900.png",
@@ -15691,9 +15727,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/sidebar/dark@1280x832.png",
@@ -15709,9 +15745,9 @@
 25,
 25
 ],
-"fitted": false,
 "css_color": "ffffffd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/sidebar/dark@1440x900.png",
@@ -15727,9 +15763,9 @@
 25,
 25
 ],
-"fitted": false,
 "css_color": "ffffffd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": false
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
@@ -15745,9 +15781,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
@@ -15763,9 +15799,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1280x832.png",
@@ -15781,9 +15817,9 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/thread/dark@1440x900.png",
@@ -15799,13 +15835,13 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffffd9",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1280x832.png",
-"name": null,
+"name": "bell-unread",
 "flip": false,
 "w": 16,
 "h": 16,
@@ -15817,13 +15853,13 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/light@1440x900.png",
-"name": null,
+"name": "bell-unread",
 "flip": false,
 "w": 16,
 "h": 16,
@@ -15835,13 +15871,13 @@
 252,
 252
 ],
-"fitted": true,
 "css_color": "1a1c1f7e",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1280x832.png",
-"name": null,
+"name": "bell-unread",
 "flip": false,
 "w": 16,
 "h": 16,
@@ -15853,13 +15889,13 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 },
 {
 "ref": "refs/terminal/dark@1440x900.png",
-"name": null,
+"name": "bell-unread",
 "flip": false,
 "w": 16,
 "h": 16,
@@ -15871,8 +15907,8 @@
 29,
 29
 ],
-"fitted": true,
 "css_color": "ffffff7f",
-"opacity": 1.0
+"opacity": 1.0,
+"fitted": true
 }
 ]
