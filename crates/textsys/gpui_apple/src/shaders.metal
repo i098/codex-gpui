@@ -654,8 +654,9 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
   // crates/shapes picks Skia's other 8-bit blends by adding 2 * mode to the hue (real hues
   // are in [0, 1)): 1 = `SkBlendARGB32` (AAA `blitAntiH2`), 2 = raster pipeline lowp srcover,
   // 3 = blit into a transparent composited layer, then the layer's srcover onto the target,
-  // 5 = scale the innermost layer's pixel by the coverage (a `mask` layer's DstIn). The
-  // fragment picks 4 = raster pipeline highp srcover for a mode 0 color outside [0, 1].
+  // 5 = scale the innermost layer's pixel by the coverage (a `mask` layer's DstIn). For a
+  // color outside [0, 1] the fragment picks the float pipeline's blends: 4 = raster pipeline
+  // highp srcover (for modes 0 and 2), 6 = highp blit into a composited layer (for mode 3).
   Hsla hsla = sprite.color;
   uint skia_mode = uint(clamp(floor(hsla.h / 2.0), 0.0, 5.0));
   hsla.h -= 2.0 * skia_mode;
@@ -699,10 +700,12 @@ uint4 skia_blit(uint mode, uint m, uint4 src, uint ca, uint4 d, float4 fsrc) {
     float4 o = fma(float4(d) * (1.0 / 255.0), 1.0 - s.a, s);
     return uint4(rint(saturate(o) * 255.0));
   }
-  if (mode == 3) {
-    // `blitAntiH` into the transparent tile of a composited layer, then the compositor's
-    // srcover (lowp, rounding div255) of that layer pixel.
-    uint4 layer = (src * scale) >> 8;
+  if (mode == 3 || mode == 6) {
+    // `blitAntiH` into the transparent tile of a composited layer (6: the highp pipeline's
+    // blit of a float color), then the compositor's srcover (lowp, rounding div255) of that
+    // layer pixel.
+    uint4 layer = mode == 3 ? (src * scale) >> 8
+                            : uint4(rint(saturate(fsrc * (float(m) * (1.0 / 255.0))) * 255.0));
     uint4 t = d * (255 - layer.a);
     return layer + ((t + ((t + 128) >> 8) + 128) >> 8);
   }
@@ -763,10 +766,11 @@ fragment MonochromeSpriteTargets monochrome_sprite_fragment(
   uint3 prod = c.rgb * c.a + 128;
   uint4 src = uint4((prod + (prod >> 8)) >> 8, c.a);
   // A color outside [0, 1] (an out-of-gamut CSS oklab/color-mix result) does not fit Skia's
-  // 8-bit legacy blitter, so Skia blits it with its float raster pipeline.
+  // 8-bit legacy blitter, so Skia blits it with its float raster pipeline: highp in place of
+  // the legacy mask blit and the lowp pipeline, and into a composited layer's tile.
   float4 fsrc = float4(input.color.rgb * input.color.a, input.color.a);
-  if (mode == 0 && any(input.color.rgb > 1.0)) {
-    mode = 4;
+  if (any(input.color.rgb > 1.0)) {
+    mode = mode == 0 || mode == 2 ? 4 : mode == 3 ? 6 : mode;
   }
   uint4 d = uint4(round(target * 255.0));
   uint4 l1 = uint4(round(outer * 255.0));

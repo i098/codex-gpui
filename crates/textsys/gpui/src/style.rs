@@ -305,6 +305,11 @@ pub struct Style {
     /// onto what is below it, as Chromium does for a composited layer
     pub layer: bool,
 
+    /// With `layer`: a composited layer of its own that is not nested in the enclosing ones
+    /// (cc layers are flat; a squashing layer over the layers it overlaps): its tile blends
+    /// onto the window's pixels as painted so far.
+    pub top_layer: bool,
+
     /// The grid columns of this element
     /// Roughly equivalent to the Tailwind `grid-cols-<number>`
     pub grid_cols: Option<GridTemplate>,
@@ -814,6 +819,7 @@ impl Default for Style {
             mouse_cursor: None,
             opacity: None,
             layer: false,
+            top_layer: false,
             grid_rows: None,
             grid_cols: None,
             grid_location: None,

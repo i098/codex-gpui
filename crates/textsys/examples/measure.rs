@@ -87,7 +87,7 @@ const MASK_W: f32 = 272.;
 /// is just above 1.
 const OKLAB_TEXT: &str = "color-mix(in oklab, #fff 85%, transparent)";
 
-fn layer_runs() -> [LayerRun; 13] {
+fn layer_runs() -> [LayerRun; 14] {
     let white = |a| rgb(255, 255, 255, a);
     let no_projects = Some(("No projects", 14., 430., 0.498));
     let recents = Some(("Recents", 14., 500., 0.498));
@@ -188,6 +188,15 @@ fn layer_runs() -> [LayerRun; 13] {
             bg: 36,
             boxed: Some(true),
             text: new_chat,
+            color: Some(OKLAB_TEXT),
+            ..Default::default()
+        },
+        LayerRun {
+            name: "composited translucent box, fade-truncate oklab --color-text, layer",
+            bg: 36,
+            boxed: Some(true),
+            text: new_chat,
+            mask: Some((FADE_TRUNCATE, true)),
             color: Some(OKLAB_TEXT),
             ..Default::default()
         },
@@ -382,6 +391,24 @@ fn runs() -> Vec<Run> {
             features: &[],
         });
     }
+    // Screen strings: the thread timestamp (`Yesterday ` 500 + `9:54 PM` 400) and the composer
+    // model name in its `tabular-nums` span.
+    for (weight, text, features) in [
+        (500., "Yesterday 9:54 PM", &[][..]),
+        (400., "Yesterday 9:54 PM", &[]),
+        (400., "GPT-6 Astra", &[("tnum", 1)]),
+    ] {
+        out.push(Run {
+            mono: false,
+            size: 13.,
+            weight,
+            color: rgb(255, 255, 255, 1.),
+            bg: [24, 24, 24],
+            text,
+            spacing: 0.,
+            features,
+        });
+    }
     out
 }
 
@@ -568,8 +595,9 @@ fn gpui_font(run: &Run) -> Font {
     }
 }
 
-/// Per run: max |GPUI glyph x - Chromium char x| (CSS px) and the GPUI text box.
-type RunOut = (f32, [f32; 4]);
+/// Per run: max |GPUI glyph x - Chromium char x| (CSS px), the GPUI text box and
+/// |GPUI line width - Chromium box width| (CSS px).
+type RunOut = (f32, [f32; 4], f32);
 
 struct Lab {
     measured: Arc<Vec<Measured>>,
@@ -634,7 +662,8 @@ impl Render for Lab {
                             err = err.max((f32::from(glyph.position.x) + row.2 - x).abs());
                         }
                     }
-                    measured_out.borrow_mut().push((err, rect));
+                    let width_err = (f32::from(line.width) - m.rect[2]).abs();
+                    measured_out.borrow_mut().push((err, rect, width_err));
                     line.paint(origin, lh, TextAlign::Left, None, window, cx)
                         .unwrap();
                 }
@@ -784,18 +813,18 @@ fn compare(dir: &Path) -> Result<()> {
     let mut diff_img = chrome.clone();
     let mut scratch = chrome.clone();
     let mut table = String::from(
-        "| # | font | color | bg | before | after | max adv err px |\n|---|---|---|---|---|---|---|\n",
+        "| # | font | color | bg | before | after | max adv err px | width err px |\n|---|---|---|---|---|---|---|---|\n",
     );
     let (mut tb, mut ta, mut tt) = (0, 0, 0);
     for (i, run) in runs.iter().enumerate() {
-        let (err, rect) = out[i];
+        let (err, rect, width_err) = out[i];
         let (nb, total) = diff(&chrome, &before, rect, &mut scratch);
         let (na, _) = diff(&chrome, &after, rect, &mut diff_img);
         (tb, ta, tt) = (tb + nb, ta + na, tt + total);
         let pct = |n: u32| 100. * n as f64 / total as f64;
         writeln!(
             table,
-            "| {i} | {}{} {} | {} | {:?} | {:.2}% | {:.2}% | {:.3} |",
+            "| {i} | {}{} {} | {} | {:?} | {:.2}% | {:.2}% | {:.3} | {:.3} |",
             if run.mono { "mono " } else { "" },
             run.weight,
             run.size,
@@ -803,7 +832,8 @@ fn compare(dir: &Path) -> Result<()> {
             run.bg,
             pct(nb),
             pct(na),
-            err
+            err,
+            width_err
         )?;
     }
     let rect = measured

@@ -4236,13 +4236,13 @@ impl Window {
     }
 
     /// Paints `f` at `opacity`. Like Chromium, text inside an opacity below 1 or a composited
-    /// `layer` (whose origin is given) is blitted into that transparent layer, which is then
-    /// blended onto what is below it; other primitives fold the opacity into their color (see
-    /// `sprite_color_and_layers`).
+    /// `layer` (its origin, and whether it is a `Styled::top_layer`) is blitted into that
+    /// transparent layer, which is then blended onto what is below it; other primitives fold
+    /// the opacity into their color (see `sprite_color_and_layers`).
     pub(crate) fn with_element_opacity<R>(
         &mut self,
         opacity: Option<f32>,
-        layer: Option<Point<Pixels>>,
+        layer: Option<(Point<Pixels>, bool)>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         self.invalidator.debug_assert_paint_or_prepaint();
@@ -4254,10 +4254,17 @@ impl Window {
         let previous_opacity = self.element_opacity;
         let previous_origin = self.composited_layer_origin;
         self.element_opacity = previous_opacity * opacity;
-        self.composited_layer_origin = layer.or(previous_origin);
+        self.composited_layer_origin = layer.map(|(o, _)| o).or(previous_origin);
+        // A top layer blends onto the window's pixels as painted so far.
+        let outer = layer
+            .is_some_and(|(_, top)| top)
+            .then(|| std::mem::take(&mut self.element_layers));
         // Skia's `SkPaint::setAlphaf`: rounded to a byte.
         let alpha = (opacity.clamp(0., 1.) * 255.).round() as u8;
         let result = self.push_layer(alpha, alpha == 255, f);
+        if let Some(outer) = outer {
+            self.element_layers = outer;
+        }
         self.element_opacity = previous_opacity;
         self.composited_layer_origin = previous_origin;
         result
