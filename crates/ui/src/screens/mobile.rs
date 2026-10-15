@@ -24,10 +24,38 @@ actions!(
     ]
 );
 
-pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
+pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
     let shell = shell(cx);
-    shell.update(cx, |shell, _| shell.can_go_back = true);
+    let playback = frame_playback(window, cx.theme().appearance);
+    shell.update(cx, |shell, _| {
+        shell.can_go_back = true;
+        shell.playback = playback;
+    });
     shell.into()
+}
+
+/// The ref captures' partial rasters of the page frame's corner tiles
+/// (`shapes::Decoration::playback`): after the svg `<img>` reload, cc re-rastered these root
+/// tiles through the main surface's rect (device px), found by replaying Chromium's command log.
+fn frame_playback(window: &Window, appearance: Appearance) -> &'static [([i32; 2], [i32; 4])] {
+    const M1280: [i32; 4] = [104, 88, 2552, 1656];
+    const M1440: [i32; 4] = [104, 88, 2872, 1792];
+    if window.viewport_size().width >= px(1440.) {
+        &[([2550, 0], M1440), ([0, 1530], M1440)]
+    } else if matches!(appearance, Appearance::Dark) {
+        &[
+            ([2040, 0], M1280),
+            ([2550, 0], M1280),
+            ([2550, 1530], M1280),
+            ([0, 1530], M1280),
+        ]
+    } else {
+        &[
+            ([2550, 0], M1280),
+            ([2550, 1530], M1280),
+            ([0, 1530], M1280),
+        ]
+    }
 }
 
 /// `/codex-mobile`: sidebar closed, no rail item current.

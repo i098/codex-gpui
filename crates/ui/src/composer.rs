@@ -1131,12 +1131,13 @@ pub(crate) fn card_decoration(t: &Theme) -> shapes::Decoration {
 /// CDP `LayerTree`).
 pub(crate) fn popover(t: &Theme, width: f32, content: impl FnOnce(Div) -> Div) -> Div {
     // `bg-surface-elevated-secondary/90` mixes in oklab: white's sRGB lands just outside
-    // [0, 1], so Skia blits it with its float pipeline (theme `white_mix`).
+    // [0, 1] (red and blue above 1: the popup's edge px keep blue at red), so Skia blits it
+    // with its float pipeline (theme `white_mix`).
     let fill = match t.appearance {
         Appearance::Light => gpui::Rgba {
             r: 1.00003,
             g: 0.99999,
-            b: 1.,
+            b: 1.00003,
             a: 0.9,
         }
         .into(),
@@ -1154,12 +1155,13 @@ pub(crate) fn popover(t: &Theme, width: f32, content: impl FnOnce(Div) -> Div) -
             shadow(gpui::rgba(0x0000001f).into(), 8., 16., -4., false),
         ],
     );
+    // Chromium draws the content under the box's anti-aliased overflow clip, which forces
+    // AAA's run blitter (the tip px of the effort menu's model chevron).
     let surface = div()
         .relative()
         .w(px(width))
         .flex()
         .flex_col()
-        .p(px(4.))
         .child(shapes::backdrop_blur(
             px(8.),
             shapes::Fill::Color,
@@ -1172,14 +1174,19 @@ pub(crate) fn popover(t: &Theme, width: f32, content: impl FnOnce(Div) -> Div) -
         .child(shapes::decoration(shapes::Decoration {
             corner: shapes::Corner::Squircle,
             ..d
-        }));
+        }))
+        .child(crate::rounded_clip(
+            d.radius.top_left,
+            shapes::Corner::Squircle,
+            content(div().flex().flex_col().p(px(4.))),
+        ));
     div()
         .ml(px(-20.))
         .mt(px(-12.))
         .pl(px(20.))
         .pt(px(12.))
         .layer()
-        .child(content(surface))
+        .child(surface)
 }
 
 impl Composer {
