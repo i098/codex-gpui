@@ -293,6 +293,8 @@ impl SettingsNav {
             .child(text(s, 14., 18., 430., color))
     }
 
+    /// A nav row: `overflow: hidden`, so Skia draws a runtime icon (the viewport cuts the last
+    /// one at 1440: no fitted image) under the row's AA clip; its own fill is outside it.
     fn item(
         &self,
         label: &'static str,
@@ -300,20 +302,16 @@ impl SettingsNav {
         selected: bool,
         t: &Theme,
         cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
+    ) -> Div {
         let fill = over(t.list_hover, sidebar_color(t));
-        div()
+        let row = div()
             .id(label)
             .h(px(30.))
             .flex()
             .items_center()
             .gap(px(8.))
             .px(px(8.))
-            .relative()
             .rounded(Theme::RADIUS_LG)
-            .when(selected, |d| {
-                d.child(deco(&self.list, 12.5, Squircle, t.list_hover, None))
-            })
             .hover(move |s| s.bg(fill))
             .child(
                 div()
@@ -339,7 +337,15 @@ impl SettingsNav {
                         cx.notify();
                     })
                 }))
+            });
+        div()
+            .relative()
+            .flex()
+            .flex_col()
+            .when(selected, |d| {
+                d.child(deco(&self.list, 12.5, Squircle, t.list_hover, None))
             })
+            .child(rounded_clip(Theme::RADIUS_LG, Squircle, row))
     }
 }
 
@@ -1114,7 +1120,7 @@ fn switch(id: &'static str, on: bool, disabled: bool, t: &Theme) -> Stateful<Div
                     shapes::paint(&thumb, None, at, window, cx);
                 };
                 if disabled {
-                    window.with_skia_layer(153, paint)
+                    shapes::with_layer(153, b, window, paint)
                 } else {
                     paint(window)
                 }
@@ -1203,6 +1209,8 @@ fn select(label: &'static str, leading: Option<AnyElement>, disabled: bool, t: &
 /// The `Zed` app icon `<img>` (the app's 64 px `apps/zed.png` in an 18 px box) over the
 /// opaque `page`. Chromium draws it at its unsnapped position with bilinear filtering; on
 /// macOS Skia does the same (`shapes::raster_images`), drawn 1:1. Elsewhere GPUI scales it.
+/// Rasterized at paint, inside the scroller's `.layer()`: its tile origin sets the bilinear
+/// sample positions' float error (every 9th column at 1440 otherwise).
 fn app_icon(page: Hsla) -> AnyElement {
     const PATH: &str = "icons/settings-zed.png";
     if !cfg!(target_os = "macos") {
@@ -1213,36 +1221,37 @@ fn app_icon(page: Hsla) -> AnyElement {
     thread_local! {
         static CACHE: RefCell<Option<Cached>> = const { RefCell::new(None) };
     }
+    let raster = move |bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App| {
+        if let Some((b, p, at, image)) = CACHE.with_borrow(|c| c.clone())
+            && b == bounds
+            && p == page
+        {
+            return Some((at, image));
+        }
+        let src = image::load_from_memory(&cx.asset_source().load(PATH).ok()??).ok()?;
+        let mut src = src.to_rgba8();
+        shapes::premultiply(&mut src);
+        let image = Arc::new(shapes::raster_images(
+            &[(&src, bounds)],
+            bounds,
+            Corners::default(),
+            Round,
+            page,
+            window,
+        )?);
+        // The box's snapped device px rect, which `raster_images` fills.
+        let s = window.scale_factor();
+        let dev = |v: Pixels| (f32::from(v) * s).round();
+        let (x, y) = (dev(bounds.left()), dev(bounds.top()));
+        let (w, h) = (dev(bounds.right()) - x, dev(bounds.bottom()) - y);
+        let at = Bounds::new(point(px(x / s), px(y / s)), size(px(w / s), px(h / s)));
+        CACHE.set(Some((bounds, page, at, image.clone())));
+        Some((at, image))
+    };
     canvas(
-        move |bounds, window, cx| {
-            if let Some((b, p, at, image)) = CACHE.with_borrow(|c| c.clone())
-                && b == bounds
-                && p == page
-            {
-                return Some((at, image));
-            }
-            let src = image::load_from_memory(&cx.asset_source().load(PATH).ok()??).ok()?;
-            let mut src = src.to_rgba8();
-            shapes::premultiply(&mut src);
-            let image = Arc::new(shapes::raster_images(
-                &[(&src, bounds)],
-                bounds,
-                Corners::default(),
-                Round,
-                page,
-                window,
-            )?);
-            // The box's snapped device px rect, which `raster_images` fills.
-            let s = window.scale_factor();
-            let dev = |v: Pixels| (f32::from(v) * s).round();
-            let (x, y) = (dev(bounds.left()), dev(bounds.top()));
-            let (w, h) = (dev(bounds.right()) - x, dev(bounds.bottom()) - y);
-            let at = Bounds::new(point(px(x / s), px(y / s)), size(px(w / s), px(h / s)));
-            CACHE.set(Some((bounds, page, at, image.clone())));
-            Some((at, image))
-        },
-        |_, image, window, _| {
-            if let Some((at, image)) = image {
+        |_, _, _| {},
+        move |bounds, (), window, cx| {
+            if let Some((at, image)) = raster(bounds, window, cx) {
                 window
                     .paint_image(at, at, Corners::default(), image, 0, false)
                     .ok();

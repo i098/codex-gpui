@@ -237,21 +237,46 @@ pub fn x_fade(left: Pixels, right: Pixels) -> impl IntoElement {
 }
 
 /// A rounded `clip-path` (or `border-radius` with `overflow: clip`) on a composited element:
-/// Chromium renders the element into one surface and viz draws it through the clip's coverage
-/// `m` (the anti-aliased fill of the rounded rect `bounds` with `radius`) over what lies below
-/// (a lerp). Paint what lies below in the enclosing GPUI layer (`Window::with_skia_layer`),
-/// over the element: in the rounded corners this lerps the element (what is under the layer)
-/// to the layer by `1 - m`. Other px are left as they are. macOS only, like [`top_fade`].
+/// viz draws the element's px through the clip's coverage `m` (the anti-aliased fill of the
+/// rounded rect `bounds` with `radius`) over what lies below, partial coverage with Skia's
+/// `SkBlendARGB32`. Paint what lies below in the enclosing GPUI layer
+/// (`Window::with_skia_layer`), over the element: in the rounded corners the element (what is
+/// under the layer) is drawn onto the layer that way, except at the `own` corners, whose
+/// element draws its px there itself ([`paint_clipped_tile`]): there the layer's pixel stays
+/// wherever the clip does not cover the px in full. With `lerp` the element is lerped to the
+/// layer by `1 - m` instead (a stand-in where no model of viz's blits fits). Other px are left
+/// as they are. macOS only, like [`top_fade`].
 pub fn paint_rounded_clip(
+    radius: Corners<Pixels>,
+    own: Corners<bool>,
+    lerp: bool,
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    cx: &App,
+) {
+    #[cfg(target_os = "macos")]
+    mask::paint_rounded_clip(radius, own, lerp, bounds, window, cx);
+    #[cfg(not(target_os = "macos"))]
+    let _ = (radius, own, lerp, bounds, window, cx);
+}
+
+/// A composited raster tile's premultiplied device px `px(x, y)` as viz draws them through
+/// the rounded clip of [`paint_rounded_clip`]: only the px the clip covers in part at the
+/// corners rounded in `radius`, each blitted at that coverage (`SkBlendARGB32`; a `solid`
+/// tile, which cc draws as a color quad, with the color blitter's mask blit). Paint it over
+/// what lies below the element there (an `own` corner of [`paint_rounded_clip`]). macOS only.
+pub fn paint_clipped_tile(
+    px: &dyn Fn(i32, i32) -> [u8; 4],
+    solid: bool,
     radius: Corners<Pixels>,
     bounds: Bounds<Pixels>,
     window: &mut Window,
     cx: &App,
 ) {
     #[cfg(target_os = "macos")]
-    mask::paint_rounded_clip(radius, bounds, window, cx);
+    mask::paint_clipped_tile(px, solid, radius, bounds, window, cx);
     #[cfg(not(target_os = "macos"))]
-    let _ = (radius, bounds, window, cx);
+    let _ = (px, solid, radius, bounds, window, cx);
 }
 
 /// Runs `paint` with an ancestor's anti-aliased rounded clip active for the shapes and icons
@@ -272,6 +297,25 @@ pub fn with_rounded_clip<R>(
     {
         let _ = (radius, corner, bounds);
         paint(window)
+    }
+}
+
+/// `Window::with_skia_layer(alpha, paint)` for a Blink `saveLayerAlpha` with `bounds` (window
+/// px; a CSS `opacity` on a box): Skia draws into the layer's own device, where an ancestor's
+/// anti-aliased clip ([`with_rounded_clip`]) that covers `bounds` is a plain rect clip, so the
+/// shapes painted in it raster without that clip.
+pub fn with_layer<R>(
+    alpha: u8,
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    paint: impl FnOnce(&mut Window) -> R,
+) -> R {
+    #[cfg(target_os = "macos")]
+    return skia::with_layer(alpha, bounds, window, paint);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = bounds;
+        window.with_skia_layer(alpha, paint)
     }
 }
 

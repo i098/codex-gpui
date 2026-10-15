@@ -93,6 +93,9 @@ pub struct Shell {
     /// With `main_composited`: the main surface itself (fill and hairline) is one more
     /// composited layer (Chromium's layer tree of refs/diff), not part of the page's.
     pub main_layer: bool,
+    /// With `main_composited`: the main view draws its right corners' px of partial clip
+    /// coverage itself, after the shell (a lone thread: `shapes::paint_clipped_tile`).
+    pub main_clips_right: bool,
     /// A chat needs attention (unread): the rail's Home item carries the unread dot.
     pub attention: bool,
     /// The profile avatar's menu is open.
@@ -136,6 +139,7 @@ impl Shell {
             main_backgrounds: 0,
             main_composited: false,
             main_layer: false,
+            main_clips_right: false,
             attention: false,
             profile_menu: false,
             avatar_hovered: false,
@@ -522,21 +526,29 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
                 .gap(px(1.))
                 .px(px(8.))
                 .mb(px(8.))
-                .child(
+                // The rows are `overflow: hidden`: Skia draws the Your dot `<img>` under the
+                // row's AA clip, whose run blitter snaps its edge coverage.
+                .child(rounded_clip(
+                    RADIUS_BUTTON_XL,
+                    shapes::Corner::Squircle,
                     row(
                         "new-chat",
                         icon::icon("new-chat", 16., t.text_default_nav).into_any_element(),
                         "New chat",
                     )
                     .on_click(dispatch::<NewChat>),
-                )
-                .child(row(
-                    "your-dot",
-                    // An `<img>`: its svg (with its own fill) draws into the overlap layer.
-                    icon::icon("your-dot", 16., gpui::rgb(0xbac1d3).into())
-                        .own_layer(Some(overlap))
-                        .into_any_element(),
-                    "Your dot",
+                ))
+                .child(rounded_clip(
+                    RADIUS_BUTTON_XL,
+                    shapes::Corner::Squircle,
+                    row(
+                        "your-dot",
+                        // An `<img>`: its svg (with its own fill) draws into the overlap layer.
+                        icon::icon("your-dot", 16., gpui::rgb(0xbac1d3).into())
+                            .own_layer(Some(overlap))
+                            .into_any_element(),
+                        "Your dot",
+                    ),
                 )),
         )
 }
@@ -869,6 +881,7 @@ impl Render for Shell {
         let composited = self.main_composited;
         let main_layer = composited && self.main_layer;
         let clip_twice = main_layer && screens::diff::panel::panel_clamped(window);
+        let clips_right = composited && self.main_clips_right;
         let fills = if composited {
             1
         } else {
@@ -971,15 +984,17 @@ impl Render for Shell {
                 }
                 for (x, y, dx, dy) in corners {
                     if composited {
-                        // viz composites each layer of the clipped surface through the clip's
-                        // coverage `m`: its own fill F over the page U, then the content C
-                        // (painted over the square F): C m + (F m + U (1 - m)) (1 - m). That is
-                        // the page with the rounded F (the frame), in a layer cut to 1 - m,
-                        // composited over C. A `main_layer` surface stacks the same way; with
-                        // a clamped side panel (`panel_clamped`) only C shows, clipped twice:
-                        // C m m + U (1 - m m), the page alone cut to 1 - m, composited twice.
-                        // ponytail: F m + U (1 - m) takes the raster blit's rounding, not the
-                        // compositor's (1 level off on a few px; the compositor's was worse).
+                        // viz draws each layer of the clipped surface through the clip's
+                        // coverage `m`, partial px with `SkBlendARGB32`: its own fill F onto the
+                        // page, then the content C (painted over the square F). In a layer of
+                        // the page with the rounded F (the frame), C is drawn that way onto it.
+                        // A `main_layer` surface stacks the same way; with a clamped side panel
+                        // (`panel_clamped`) only C shows, clipped twice: drawn onto the page
+                        // alone, twice. At `main_clips_right` the layer's pixel stays and the
+                        // view draws its content onto it.
+                        // ponytail: the Changes panel's corners (`main_layer`) fit no model of
+                        // viz's blits tried (stacked, twice, render surface); a lowp lerp
+                        // misses the fewest px there (1 level).
                         let x0 = if dx < 0. { x - rd } else { x };
                         let y0 = if dy > 0. { y } else { y - rd };
                         let square = Bounds::new(
@@ -999,7 +1014,14 @@ impl Render for Shell {
                                     shapes::paint(&fill, None, bounds, window, cx);
                                     let fills = u8::from(!clip_twice);
                                     let main = frame(bounds, fills, false, window, cx);
-                                    shapes::paint_rounded_clip(radius, main, window, cx);
+                                    let own = Corners {
+                                        top_right: clips_right,
+                                        bottom_right: clips_right,
+                                        ..Default::default()
+                                    };
+                                    shapes::paint_rounded_clip(
+                                        radius, own, main_layer, main, window, cx,
+                                    );
                                 })
                             });
                         }
