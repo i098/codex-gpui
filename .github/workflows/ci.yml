@@ -7,6 +7,12 @@ jobs:
   rust:
     runs-on: [self-hosted, codex-gpui]
     steps:
+      - run: >
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends
+          build-essential pkg-config clang cmake libssl-dev libzstd-dev
+          libfontconfig-dev libfreetype-dev libasound2-dev libxkbcommon-dev
+          libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libxcb1-dev
+          libvulkan-dev
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
