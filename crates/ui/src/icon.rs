@@ -37,6 +37,7 @@ pub fn icon_sized(name: &str, width: f32, height: f32, color: Hsla) -> Icon {
         flip_x: false,
         composited: None,
         own_layer: false,
+        runtime: false,
         interactivity: Interactivity::new(),
     }
     .w(px(width))
@@ -53,6 +54,7 @@ pub struct Icon {
     flip_x: bool,
     composited: Option<Point<Pixels>>,
     own_layer: bool,
+    runtime: bool,
     interactivity: Interactivity,
 }
 
@@ -79,6 +81,14 @@ impl Icon {
         self.composited = layer;
         self.own_layer = true;
         self.top_layer()
+    }
+
+    /// Rasterized at runtime where it paints, not from a fitted image: those hold the blit at
+    /// their position under the page's clips, which a layer there (the docked composer's
+    /// body) does not have.
+    pub fn runtime(mut self) -> Self {
+        self.runtime = true;
+        self
     }
 }
 
@@ -170,7 +180,7 @@ impl Element for Icon {
         // The icon's own opacity goes into the color (and the fitted images' key).
         let opacity = self.interactivity.base_style.opacity.take().unwrap_or(1.);
         let (name, flip_x, own_layer) = (self.name.clone(), self.flip_x, self.own_layer);
-        let composited = self.composited;
+        let (composited, runtime) = (self.composited, self.runtime);
         let css = size(px(self.width), px(self.height));
         self.interactivity.paint(
             global_id,
@@ -197,7 +207,7 @@ impl Element for Icon {
                     load(format!("{dir}@{x}_{y}.png"), cx)
                         .or_else(|| load(format!("{dir}.png"), cx))
                 };
-                if let Some(image) = (!own_layer).then(fitted).flatten() {
+                if let Some(image) = (!own_layer && !runtime).then(fitted).flatten() {
                     let device = Bounds {
                         origin: point(px(x / scale), px(y / scale)),
                         size: size(px(w / scale), px(h / scale)),
@@ -216,6 +226,7 @@ impl Element for Icon {
                         flip_x,
                         color,
                         composited.or(own_layer.then_some(bounds.origin)),
+                        false,
                         window,
                         cx,
                     )

@@ -479,7 +479,7 @@ impl ThreadView {
                                     radius: Corners::all(px(12.5)),
                                     corner: shapes::Corner::Squircle,
                                     // Translucent in the titlebar's transparent layer.
-                                    fill: Some(Hsla { a: 0.1, ..t.text }),
+                                    fill: Some(t.text_alpha_10),
                                     ..Default::default()
                                 }))
                                 .child(icon("thread-summary", 16., t.text))
@@ -640,7 +640,7 @@ impl Render for ThreadView {
                 let dev = |v: Pixels| (f32::from(v) * s).round() as i32;
                 let (x0, y0) = (dev(bounds.left()), dev(bounds.top()));
                 let h = (40. * s).round() as u32;
-                let fade = |x: i32, y: i32| {
+                let fade = |x: i32, y: i32, _: u8| {
                     let (i, j) = ((x - x0) as u32, (y - y0) as u32);
                     gradient_px(&stops, h, (0, 0), false, i, j)
                 };
@@ -657,7 +657,7 @@ impl Render for ThreadView {
                     bottom_right: Theme::RADIUS_XL_BASE,
                     ..Default::default()
                 };
-                shapes::paint_clipped_tile(&|_, _| surface, solid, bottom, bounds, window, cx);
+                shapes::paint_clipped_tile(&|_, _, _| surface, solid, bottom, bounds, window, cx);
             },
         )
         .absolute()

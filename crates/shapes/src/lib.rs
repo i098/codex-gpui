@@ -108,7 +108,7 @@ fn cover(paint: impl FnOnce(Bounds<Pixels>, &mut Window, &mut App) + 'static) ->
 /// composited layer (a scroll container's contents), that layer's origin in window
 /// coordinates: the layer's tiles start there and are transparent, and the compositor
 /// blends them onto the page. `None` takes the innermost GPUI `.layer()` div being painted
-/// (`Window::composited_layer_origin`), else the root layer.
+/// (`Window::composited_layer`), else the root layer.
 pub fn paint(
     d: &Decoration,
     layer: Option<Point<Pixels>>,
@@ -157,28 +157,6 @@ pub fn premultiply(img: &mut image::RgbaImage) {
             *c = ((u32::from(*c) * a + 127) / 255) as u8;
         }
     }
-}
-
-/// An element covering its parent's box that paints `fill` as a square background under
-/// `clip-path: inset(... round radius)` (the clip's corners on this box): Skia draws the rect
-/// inside an anti-aliased clip, whose edge differs from a rounded [`decoration`] fill.
-pub fn clip_path_fill(radius: Corners<Pixels>, fill: Hsla) -> impl IntoElement {
-    cover(move |bounds, window, cx| {
-        #[cfg(target_os = "macos")]
-        skia::paint_clip_path_fill(radius, fill, bounds, window, cx);
-        #[cfg(not(target_os = "macos"))]
-        paint(
-            &Decoration {
-                radius,
-                fill: Some(fill),
-                ..Default::default()
-            },
-            None,
-            bounds,
-            window,
-            cx,
-        );
-    })
 }
 
 /// How a [`backdrop_blur`] box paints `Decoration::fill`.
@@ -243,30 +221,29 @@ pub fn x_fade(left: Pixels, right: Pixels) -> impl IntoElement {
 /// (`Window::with_skia_layer`), over the element: in the rounded corners the element (what is
 /// under the layer) is drawn onto the layer that way, except at the `own` corners, whose
 /// element draws its px there itself ([`paint_clipped_tile`]): there the layer's pixel stays
-/// wherever the clip does not cover the px in full. With `lerp` the element is lerped to the
-/// layer by `1 - m` instead (a stand-in where no model of viz's blits fits). Other px are left
-/// as they are. macOS only, like [`top_fade`].
+/// wherever the clip does not cover the px in full. Other px are left as they are. macOS only,
+/// like [`top_fade`].
 pub fn paint_rounded_clip(
     radius: Corners<Pixels>,
     own: Corners<bool>,
-    lerp: bool,
     bounds: Bounds<Pixels>,
     window: &mut Window,
     cx: &App,
 ) {
     #[cfg(target_os = "macos")]
-    mask::paint_rounded_clip(radius, own, lerp, bounds, window, cx);
+    mask::paint_rounded_clip(radius, own, bounds, window, cx);
     #[cfg(not(target_os = "macos"))]
-    let _ = (radius, own, lerp, bounds, window, cx);
+    let _ = (radius, own, bounds, window, cx);
 }
 
-/// A composited raster tile's premultiplied device px `px(x, y)` as viz draws them through
-/// the rounded clip of [`paint_rounded_clip`]: only the px the clip covers in part at the
-/// corners rounded in `radius`, each blitted at that coverage (`SkBlendARGB32`; a `solid`
-/// tile, which cc draws as a color quad, with the color blitter's mask blit). Paint it over
-/// what lies below the element there (an `own` corner of [`paint_rounded_clip`]). macOS only.
+/// A composited raster tile's premultiplied device px `px(x, y, m)` (`m`: the clip's coverage
+/// there) as viz draws them through the rounded clip of [`paint_rounded_clip`]: only the px
+/// the clip covers in part at the corners rounded in `radius`, each blitted at that coverage
+/// (`SkBlendARGB32`; a `solid` tile, which cc draws as a color quad, with the color blitter's
+/// mask blit). Paint it over what lies below the element there (an `own` corner of
+/// [`paint_rounded_clip`]). macOS only.
 pub fn paint_clipped_tile(
-    px: &dyn Fn(i32, i32) -> [u8; 4],
+    px: &dyn Fn(i32, i32, u8) -> [u8; 4],
     solid: bool,
     radius: Corners<Pixels>,
     bounds: Bounds<Pixels>,
@@ -283,19 +260,22 @@ pub fn paint_clipped_tile(
 /// it paints: `bounds`, `radius` and `corner` are the clipping box's padding box (`overflow:
 /// hidden` with `border-radius`). Skia draws them inside that clip, and in every raster tile
 /// its curves reach the AA clip makes AAA blit edge px as runs (other values than without a
-/// clip). macOS only; elsewhere `paint` just runs.
+/// clip). `layers: false`: the clip skips what `paint` paints in nested layers (`.layer()`,
+/// own-layer icons), which Chromium rasters without it. macOS only; elsewhere `paint` just
+/// runs.
 pub fn with_rounded_clip<R>(
     radius: Corners<Pixels>,
     corner: Corner,
     bounds: Bounds<Pixels>,
+    layers: bool,
     window: &mut Window,
     paint: impl FnOnce(&mut Window) -> R,
 ) -> R {
     #[cfg(target_os = "macos")]
-    return skia::with_rounded_clip(radius, corner, bounds, window, paint);
+    return skia::with_rounded_clip(radius, corner, bounds, layers, window, paint);
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (radius, corner, bounds);
+        let _ = (radius, corner, bounds, layers);
         paint(window)
     }
 }
@@ -320,7 +300,9 @@ pub fn with_layer<R>(
 }
 
 /// Paints the svg icon `src` (asset bytes; `key` names it for the cache) into `bounds`,
-/// mirrored horizontally if `flip_x`, in `color`; `layer` as in [`paint`].
+/// mirrored horizontally if `flip_x`, in `color`; `layer` as in [`paint`]. `partial`: cc
+/// re-rasters only the icon's box (partial raster of an invalidated tile), so the
+/// [`with_rounded_clip`] clips start on that box and stay anti-aliased in every tile.
 /// False if this platform or svg is not supported: paint it another way then.
 #[allow(clippy::too_many_arguments)]
 pub fn paint_icon(
@@ -330,14 +312,15 @@ pub fn paint_icon(
     flip_x: bool,
     color: Hsla,
     layer: Option<Point<Pixels>>,
+    partial: bool,
     window: &mut Window,
     cx: &App,
 ) -> bool {
     #[cfg(target_os = "macos")]
-    return skia::paint_icon(src, key, bounds, flip_x, color, layer, window, cx);
+    return skia::paint_icon(src, key, bounds, flip_x, color, layer, partial, window, cx);
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (src, key, bounds, flip_x, color, layer, window, cx);
+        let _ = (src, key, bounds, flip_x, color, layer, partial, window, cx);
         false
     }
 }

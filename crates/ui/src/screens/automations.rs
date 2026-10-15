@@ -261,9 +261,19 @@ impl AutomationsPage {
                     canvas(
                         |_, _, _| {},
                         move |b, (), window, cx| {
+                            // ponytail: the ref capture reloads svg `<img>`s
+                            // (RELOAD_SVG_IMAGES) and cc re-rasters each one's tile; the tiles
+                            // rastered before the next draw reuse their resource (partial
+                            // raster of the img box), the others raster in full. That is timing,
+                            // fitted to the refs: card 0, and card 2 at 1440. Drop it with a
+                            // deterministic capture.
+                            let partial =
+                                i == 0 || i == 2 && window.viewport_size().width >= px(1440.);
                             if let Ok(Some(src)) = cx.asset_source().load(&path) {
                                 let white = gpui::white();
-                                shapes::paint_icon(&src, &path, b, false, white, None, window, cx);
+                                shapes::paint_icon(
+                                    &src, &path, b, false, white, None, partial, window, cx,
+                                );
                             }
                         },
                     )

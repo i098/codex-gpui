@@ -2543,7 +2543,7 @@ impl Interactivity {
 
                 window.with_element_opacity(
                     style.opacity,
-                    style.layer.then_some((bounds.origin, style.top_layer)),
+                    style.layer.then_some((bounds, &style)),
                     |window| {
                             style.paint(bounds, window, cx, |window: &mut Window, cx: &mut App| {
                                 window.with_text_style(style.text_style().cloned(), |window| {

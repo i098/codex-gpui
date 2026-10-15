@@ -1659,8 +1659,20 @@ impl Composer {
         };
         let model_button = div()
             .relative()
+            // Chromium clips the open pill's fill to its 14 px rounded box: a rect under that
+            // anti-aliased clip.
             .when(open, |d| {
-                d.child(shapes::decoration(deco(9999., t.ghost_hover, vec![])))
+                d.child(crate::rounded_clip(
+                    px(14.),
+                    shapes::Corner::Round,
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .child(shapes::decoration(shapes::Decoration {
+                            fill: Some(t.ghost_hover),
+                            ..Default::default()
+                        })),
+                ))
             })
             .child(
                 trigger.on_click(cx.listener(|this, _, _, cx| this.toggle_menu(Menu::Effort, cx))),
@@ -1736,15 +1748,19 @@ impl Composer {
                     .justify_center()
                     .relative()
                     .child(shapes::decoration(deco(9999., t.composer_primary, vec![])))
-                    .child(icon(
-                        if has_input {
-                            "composer-arrow-up"
-                        } else {
-                            "voice"
-                        },
-                        16.,
-                        t.text_composer_primary,
-                    ))
+                    // Over the disc in the docked body's layer, without the page's clips.
+                    .child(
+                        icon(
+                            if has_input {
+                                "composer-arrow-up"
+                            } else {
+                                "voice"
+                            },
+                            16.,
+                            t.text_composer_primary,
+                        )
+                        .when(docked, |i| i.runtime()),
+                    )
                     .on_click(cx.listener(|this, _, window, cx| this.submit(&Submit, window, cx))),
             );
         div()

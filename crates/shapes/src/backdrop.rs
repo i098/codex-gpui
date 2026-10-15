@@ -307,8 +307,12 @@ fn blur_backdrop(target: &mut Pixmap, contour: &Contour, sigma: f32) {
         let blurred = Pixmap::draw(rect, Color::TRANSPARENT, |c| {
             c.draw_image(&source, (rect[0] as f32, rect[1] as f32), Some(&paint));
         });
+        // Chromium's mask layer clips with the path in the box's own space: Skia's convexity
+        // test on those coordinates (a squircle can come out concave) picks AAA's walker.
         let coverage = Pixmap::draw(rect, Color::BLACK, |c| {
-            contour.clip(c, ClipOp::Intersect);
+            let [x, y, ..] = contour.rr.r;
+            c.translate((x, y));
+            contour.moved([-x, -y]).clip(c, ClipOp::Intersect);
             c.draw_paint(&Paint::new(Color4f::new(1., 1., 1., 1.), None));
         });
         for y in rect[1]..rect[3] {
@@ -386,7 +390,7 @@ fn compose(
 ) -> RenderImage {
     // The backdrop: the painted ops, rasterized per root cc tile like Chromium.
     let mut root = Pixmap::new(region);
-    for (o, _, area) in skia::tiles(region, window) {
+    for (o, _, area) in skia::tiles(region, window, [skia::TILE; 2]) {
         if area[0] >= area[2] || area[1] >= area[3] {
             continue;
         }

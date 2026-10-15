@@ -751,8 +751,8 @@ pub trait Styled: Sized {
     /// Paints this element and its children into a transparent layer that is then blended onto
     /// what is below it, as Chromium does for a composited layer (`will-change`, a scroller's
     /// contents). Monochrome sprites (text, svgs, masks) blend exactly through it. The layer's
-    /// tiles start at this element's origin (`Window::composited_layer_origin`): give it
-    /// Chromium's layer rect, ink overflow such as shadows included.
+    /// tiles start at this element's origin (`Window::composited_layer`): give it Chromium's
+    /// layer rect, ink overflow such as shadows included.
     fn layer(mut self) -> Self {
         self.style().layer = Some(true);
         self
@@ -764,6 +764,22 @@ pub trait Styled: Sized {
     fn top_layer(mut self) -> Self {
         self.style().layer = Some(true);
         self.style().top_layer = Some(true);
+        self
+    }
+
+    /// [`Styled::layer`] that Chromium paints as a `saveLayer` (a `mask-image`) in the
+    /// enclosing composited layer: its content rasterizes on that layer's tiles.
+    fn saved_layer(mut self) -> Self {
+        self.style().layer = Some(true);
+        self.style().saved_layer = Some(true);
+        self
+    }
+
+    /// [`Styled::layer`] whose bounds are exactly Chromium's layer rect: its tiles take cc's
+    /// tile size for that rect (a thin layer gets long tiles).
+    fn cc_tiles(mut self) -> Self {
+        self.style().layer = Some(true);
+        self.style().cc_tiles = Some(true);
         self
     }
 

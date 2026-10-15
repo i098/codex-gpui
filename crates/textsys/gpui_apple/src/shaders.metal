@@ -656,12 +656,11 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
   // 3 = blit into a transparent composited layer, then the layer's srcover onto the target,
   // 5 = scale the innermost layer's pixel by the coverage (a `mask` layer's DstIn), 7 = draw
   // what is under the outer layer onto its pixel through a clip whose coverage is 255 minus
-  // the sprite's (viz drawing a clipped layer's content over the layer), 8 = lerp from what is
-  // under the outer layer to its pixel by the coverage. For a color outside [0, 1] the
-  // fragment picks the float pipeline's blends: 4 = raster pipeline highp srcover (for modes 0
-  // and 2), 6 = highp blit into a composited layer (for mode 3).
+  // the sprite's (viz drawing a clipped layer's content over the layer). For a color outside
+  // [0, 1] the fragment picks the float pipeline's blends: 4 = raster pipeline highp srcover
+  // (for modes 0 and 2), 6 = highp blit into a composited layer (for mode 3).
   Hsla hsla = sprite.color;
-  uint skia_mode = uint(clamp(floor(hsla.h / 2.0), 0.0, 8.0));
+  uint skia_mode = uint(clamp(floor(hsla.h / 2.0), 0.0, 7.0));
   hsla.h -= 2.0 * skia_mode;
   float4 color = hsla_to_rgba(hsla);
   return MonochromeSpriteVertexOutput{
@@ -760,9 +759,9 @@ fragment MonochromeSpriteTargets monochrome_sprite_fragment(
   // Reads the targets by framebuffer fetch; blending is off for this pipeline.
   uint m = uint(round(sample.a * 255.0));
   uint mode = input.skia_mode, layers = input.layers;
-  bool scales = mode >= 7 || mode == 5;
+  bool scales = mode == 7 || mode == 5;
   if ((m == 0 && !scales) || (scales && layers == 0)) {
-    // Every blit at coverage 0 leaves the pixel as it is; modes 5, 7 and 8 need a layer.
+    // Every blit at coverage 0 leaves the pixel as it is; modes 5 and 7 need a layer.
     discard_fragment();
   }
   uint4 c = uint4(round(saturate(input.color) * 255.0));
@@ -807,10 +806,6 @@ fragment MonochromeSpriteTargets monochrome_sprite_fragment(
       // `SkBlendARGB32` (`blitAntiH`); at 0 the layer's pixel stays. The layer is kept.
       uint cov = 255 - m;
       d = cov == 0 ? l1 : skia_blit(1, cov, b, b.a, l1, float4(0.0));
-    } else if (id2 == 0 && mode == 8) {
-      // Raster pipeline lowp `lerp_u8` (NEON `div255` rounds exactly); the layer is kept.
-      uint4 t = b * (255 - m) + l1 * m;
-      d = (t + ((t + 128) >> 8) + 128) >> 8;
     } else if (id2 == 0) {
       l1 = skia_blit(mode, m, src, c.a, l1, fsrc);
       d = skia_layer(l1, b, a1);

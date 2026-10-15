@@ -2,7 +2,7 @@
 //! mask layer's alpha (`DstIn`) before it composites the layer, which the shader does to the
 //! GPUI layer's pixel with [`DST_IN`] sprites.
 
-use crate::skia::{ARGB32, Blits, CLIP, DST_IN, LERP, MASK, paint_sprites, sprites, tile_pixels};
+use crate::skia::{ARGB32, Blits, CLIP, DST_IN, MASK, paint_sprites, sprites, tile_pixels};
 use gpui::{App, Bounds, Corners, Hsla, Pixels, Rgba, Window};
 use skia_safe::{Color4f, Paint, RRect, Rect, Vector};
 use std::collections::BTreeMap;
@@ -113,18 +113,17 @@ fn corner_coverage(
 
 /// `crate::paint_rounded_clip` on macOS: in each rounded corner's square of device px, what is
 /// under the layer is drawn onto the layer through Skia's anti-aliased coverage of the rounded
-/// rect (the sprites carry 255 minus it), or lerped to it (`lerp`); at the `own` corners the
-/// layer's pixel stays wherever the clip does not cover the px in full.
+/// rect (the sprites carry 255 minus it); at the `own` corners the layer's pixel stays wherever
+/// the clip does not cover the px in full.
 pub(crate) fn paint_rounded_clip(
     radius: Corners<Pixels>,
     own: Corners<bool>,
-    lerp: bool,
     bounds: Bounds<Pixels>,
     window: &mut Window,
     cx: &App,
 ) {
     let s = window.scale_factor();
-    let key = format!("rounded_clip {radius:?} {own:?} {lerp} {bounds:?} {s}");
+    let key = format!("rounded_clip {radius:?} {own:?} {bounds:?} {s}");
     let sprites = crate::skia::cached(key, || {
         let mut out = Vec::new();
         for (i, rect, m) in corner_coverage(radius, bounds, s) {
@@ -139,8 +138,7 @@ pub(crate) fn paint_rounded_clip(
                 (true, _) => 255,
                 (false, m) => 255 - m,
             };
-            let mode = if lerp { LERP } else { CLIP };
-            crate::skia::chunks(&mut out, rect, &value, mode, None, false);
+            crate::skia::chunks(&mut out, rect, &value, CLIP, None, false);
         }
         out
     });
@@ -149,7 +147,7 @@ pub(crate) fn paint_rounded_clip(
 
 /// `crate::paint_clipped_tile` on macOS.
 pub(crate) fn paint_clipped_tile(
-    px: &dyn Fn(i32, i32) -> [u8; 4],
+    px: &dyn Fn(i32, i32, u8) -> [u8; 4],
     solid: bool,
     radius: Corners<Pixels>,
     bounds: Bounds<Pixels>,
@@ -163,7 +161,7 @@ pub(crate) fn paint_clipped_tile(
         let mut by_color: BTreeMap<[u8; 4], Vec<u8>> = BTreeMap::new();
         for (k, &c) in m.iter().enumerate() {
             let (x, y) = (x0 + k as i32 % w, y0 + k as i32 / w);
-            let p = px(x, y);
+            let p = px(x, y, c);
             if c == 0 || c == 255 || p[3] == 0 {
                 continue;
             }

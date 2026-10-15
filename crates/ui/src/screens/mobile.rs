@@ -40,6 +40,8 @@ pub fn shell(cx: &mut App) -> Entity<Shell> {
         shell.selected_rail = None;
         shell.chat_chrome = false;
         shell.new_tab = false;
+        // The page's own `bg-token-main-surface-primary` under `<main>`'s rounded clip.
+        shell.main_backgrounds = 1;
         shell
     })
 }
@@ -274,12 +276,9 @@ impl Render for MobileSetupPage {
             .size_full()
             .relative()
             .flex()
-            // The page's own `bg-token-main-surface-primary`: a second fill of the main
-            // surface color, a rect under `<main>`'s 12 px rounded clip.
-            .child(shapes::clip_path_fill(
-                Corners::all(Theme::RADIUS_XL_BASE),
-                t.surface,
-            ))
+            // `bg-token-main-surface-primary`; the shell paints its corners
+            // (`Shell::main_backgrounds`).
+            .bg(t.surface)
             .child(
                 div()
                     .flex_1()
