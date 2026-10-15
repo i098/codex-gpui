@@ -31,6 +31,9 @@ pub struct TaffyLayoutEngine {
     /// Unrounded absolute border-box top-left per-node coordinate in device pixels.
     absolute_outer_origins: FxHashMap<LayoutId, Point<f32>>,
     computed_layouts: FxHashSet<LayoutId>,
+    /// `Style::snap_origin` nodes: their origin, and so their content's subpixel origins,
+    /// rounded to device pixels.
+    snap_origin: FxHashSet<LayoutId>,
     layout_bounds_scratch_space: Vec<LayoutId>,
 }
 
@@ -45,6 +48,7 @@ impl TaffyLayoutEngine {
             absolute_layout_bounds: FxHashMap::default(),
             absolute_outer_origins: FxHashMap::default(),
             computed_layouts: FxHashSet::default(),
+            snap_origin: FxHashSet::default(),
             layout_bounds_scratch_space: Vec::new(),
         }
     }
@@ -54,6 +58,7 @@ impl TaffyLayoutEngine {
         self.absolute_layout_bounds.clear();
         self.absolute_outer_origins.clear();
         self.computed_layouts.clear();
+        self.snap_origin.clear();
     }
 
     pub fn request_layout(
@@ -65,7 +70,7 @@ impl TaffyLayoutEngine {
     ) -> LayoutId {
         let taffy_style = style.to_taffy(rem_size, scale_factor);
 
-        if children.is_empty() {
+        let id: LayoutId = if children.is_empty() {
             self.taffy
                 .new_leaf(taffy_style)
                 .expect(EXPECT_MESSAGE)
@@ -76,7 +81,11 @@ impl TaffyLayoutEngine {
                 .new_with_children(taffy_style, LayoutId::to_taffy_slice(children))
                 .expect(EXPECT_MESSAGE)
                 .into()
+        };
+        if style.snap_origin {
+            self.snap_origin.insert(id);
         }
+        id
     }
 
     pub fn request_measured_layout(
@@ -349,7 +358,7 @@ impl TaffyLayoutEngine {
         let layout_size = layout.size;
         let parent = self.taffy.parent(id.0);
 
-        let absolute_outer_origin = match parent {
+        let mut absolute_outer_origin = match parent {
             Some(parent_id) => {
                 let parent_id = LayoutId::from(parent_id);
                 self.layout_bounds(parent_id, scale_factor);
@@ -361,6 +370,11 @@ impl TaffyLayoutEngine {
             }
             None => Point::from(layout_location),
         };
+        // Blink paints a `contain: paint` box at its paint offset rounded to device pixels and
+        // drops the fraction for its content (`NeedsIsolationNodes`).
+        if self.snap_origin.contains(&id) {
+            absolute_outer_origin = absolute_outer_origin.map(round_half_up);
+        }
         self.absolute_outer_origins
             .insert(id, absolute_outer_origin);
 

@@ -310,6 +310,10 @@ pub struct Style {
     /// onto the window's pixels as painted so far.
     pub top_layer: bool,
 
+    /// The element and its content start at its origin rounded to device pixels
+    /// (`Styled::snap_origin`).
+    pub snap_origin: bool,
+
     /// The grid columns of this element
     /// Roughly equivalent to the Tailwind `grid-cols-<number>`
     pub grid_cols: Option<GridTemplate>,
@@ -820,6 +824,7 @@ impl Default for Style {
             opacity: None,
             layer: false,
             top_layer: false,
+            snap_origin: false,
             grid_rows: None,
             grid_cols: None,
             grid_location: None,
