@@ -91,7 +91,8 @@ pub struct Shell {
     /// or composer band, or the side panel) at the clip's coverage.
     pub main_composited: bool,
     /// With `main_composited`: the main surface itself (fill and hairline) is one more
-    /// composited layer (Chromium's layer tree of refs/diff), not part of the page's.
+    /// composited layer (Chromium's layer tree of refs/diff), not part of the page's; the shell
+    /// draws its right corners' px of partial clip coverage.
     pub main_layer: bool,
     /// With `main_composited`: the main view draws its right corners' px of partial clip
     /// coverage itself, after the shell (a lone thread: `shapes::paint_clipped_tile`).
@@ -258,6 +259,7 @@ pub fn rounded_clip(
         radius,
         corner,
         child: child.into_any_element(),
+        layers: true,
     }
 }
 
@@ -265,6 +267,8 @@ pub struct RoundedClip {
     radius: Pixels,
     corner: shapes::Corner,
     child: AnyElement,
+    /// See `shapes::with_rounded_clip`.
+    layers: bool,
 }
 
 impl gpui::Element for RoundedClip {
@@ -316,6 +320,7 @@ impl gpui::Element for RoundedClip {
             Corners::all(self.radius),
             self.corner,
             bounds,
+            self.layers,
             window,
             |window| child.paint(window, cx),
         );
@@ -756,18 +761,44 @@ impl Shell {
     /// closed it is a plain 12 px rounded box.
     fn main_panel(&self) -> Div {
         let open = self.sidebar_open;
-        div()
+        let r = Theme::RADIUS_XL_BASE;
+        let panel = div()
             .absolute()
-            .left(if open {
-                Theme::SIDEBAR_WIDTH + MAIN_HAIRLINE
-            } else {
-                RAIL_WIDTH
-            })
             .top(Theme::TITLEBAR_HEIGHT)
             .right(PAGE_INSET)
             .bottom(PAGE_INSET)
             .overflow_hidden()
-            .child(self.main.clone())
+            .child(self.main.clone());
+        if self.main_composited {
+            return panel.left(if open {
+                Theme::SIDEBAR_WIDTH + MAIN_HAIRLINE
+            } else {
+                RAIL_WIDTH
+            });
+        }
+        // The `clip-path` box (its left corners under the open sidebar): Skia rasters main's
+        // draws under that anti-aliased clip, but not its composited layers.
+        let (left, inset) = if open {
+            (Theme::SIDEBAR_WIDTH - r, r + MAIN_HAIRLINE)
+        } else {
+            (RAIL_WIDTH, px(0.))
+        };
+        div()
+            .absolute()
+            .left(left)
+            .top(Theme::TITLEBAR_HEIGHT)
+            .right(PAGE_INSET)
+            .bottom(PAGE_INSET)
+            .child(RoundedClip {
+                radius: r,
+                corner: shapes::Corner::Round,
+                child: div()
+                    .size_full()
+                    .relative()
+                    .child(panel.left(inset).top_0().right_0().bottom_0())
+                    .into_any_element(),
+                layers: false,
+            })
     }
 
     fn titlebar(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
@@ -912,6 +943,10 @@ impl Render for Shell {
             ..Default::default()
         };
         let under = t.background_surface_under;
+        let surface_px = {
+            let c = gpui::Rgba::from(t.surface);
+            [c.r, c.g, c.b, 1.].map(|v| (v * 255.).round() as u8)
+        };
         // The page frame over the root `bounds`.
         let frame = move |bounds: Bounds<Pixels>,
                           fills: u8,
@@ -982,19 +1017,15 @@ impl Render for Shell {
                 if !open {
                     corners.extend([(left, top, 1., 1.), (left, bottom, 1., -1.)]);
                 }
+                let mut main = bounds;
                 for (x, y, dx, dy) in corners {
                     if composited {
                         // viz draws each layer of the clipped surface through the clip's
                         // coverage `m`, partial px with `SkBlendARGB32`: its own fill F onto the
                         // page, then the content C (painted over the square F). In a layer of
                         // the page with the rounded F (the frame), C is drawn that way onto it.
-                        // A `main_layer` surface stacks the same way; with a clamped side panel
-                        // (`panel_clamped`) only C shows, clipped twice: drawn onto the page
-                        // alone, twice. At `main_clips_right` the layer's pixel stays and the
-                        // view draws its content onto it.
-                        // ponytail: the Changes panel's corners (`main_layer`) fit no model of
-                        // viz's blits tried (stacked, twice, render surface); a lowp lerp
-                        // misses the fewest px there (1 level).
+                        // At `main_clips_right` and `main_layer` the layer's pixel stays: the
+                        // view (or the shell, below) draws the content onto it.
                         let x0 = if dx < 0. { x - rd } else { x };
                         let y0 = if dy > 0. { y } else { y - rd };
                         let square = Bounds::new(
@@ -1004,27 +1035,23 @@ impl Render for Shell {
                         let mask = ContentMask {
                             bounds: square + bounds.origin,
                         };
-                        for _ in 0..=u8::from(clip_twice) {
-                            window.with_content_mask(Some(mask), |window| {
-                                window.with_skia_layer(255, |window| {
-                                    let fill = shapes::Decoration {
-                                        fill: Some(under),
-                                        ..Default::default()
-                                    };
-                                    shapes::paint(&fill, None, bounds, window, cx);
-                                    let fills = u8::from(!clip_twice);
-                                    let main = frame(bounds, fills, false, window, cx);
-                                    let own = Corners {
-                                        top_right: clips_right,
-                                        bottom_right: clips_right,
-                                        ..Default::default()
-                                    };
-                                    shapes::paint_rounded_clip(
-                                        radius, own, main_layer, main, window, cx,
-                                    );
-                                })
-                            });
-                        }
+                        window.with_content_mask(Some(mask), |window| {
+                            window.with_skia_layer(255, |window| {
+                                let fill = shapes::Decoration {
+                                    fill: Some(under),
+                                    ..Default::default()
+                                };
+                                shapes::paint(&fill, None, bounds, window, cx);
+                                main = frame(bounds, u8::from(!main_layer), false, window, cx);
+                                let own = clips_right || main_layer;
+                                let own = Corners {
+                                    top_right: own,
+                                    bottom_right: own,
+                                    ..Default::default()
+                                };
+                                shapes::paint_rounded_clip(radius, own, main, window, cx);
+                            })
+                        });
                         continue;
                     }
                     // Each opaque box under a raster clip blends its edge once: the frame is
@@ -1044,6 +1071,39 @@ impl Render for Shell {
                         window.with_content_mask(Some(mask), |window| {
                             window.paint_quad(fill(bounds, under));
                             frame(bounds, fills, false, window, cx);
+                        });
+                    }
+                }
+                if main_layer {
+                    // cc's frame (`disabled-by-default-viz.quads`) clips the surface's fill F
+                    // and the side panel's (F too) in a render surface. With a clamped panel
+                    // (`panel_clamped`) it is the clip's own: F reaches it at `m` (onto
+                    // transparent), and it is drawn onto the page at `m` again. Else it is an
+                    // ancestor's: F is drawn into it twice at `m`, and it is composited onto
+                    // the page.
+                    // ponytail: takes the panel's px at the corners as F.
+                    let right = Corners {
+                        top_right: radius.top_right,
+                        bottom_right: radius.bottom_right,
+                        ..Default::default()
+                    };
+                    if clip_twice {
+                        let once = |_, _, m: u8| {
+                            surface_px.map(|c| ((u32::from(c) * (u32::from(m) + 1)) >> 8) as u8)
+                        };
+                        shapes::paint_clipped_tile(&once, false, right, main, window, cx);
+                    } else {
+                        window.with_skia_layer(255, |window| {
+                            for _ in 0..2 {
+                                shapes::paint_clipped_tile(
+                                    &|_, _, _| surface_px,
+                                    false,
+                                    right,
+                                    main,
+                                    window,
+                                    cx,
+                                );
+                            }
                         });
                     }
                 }

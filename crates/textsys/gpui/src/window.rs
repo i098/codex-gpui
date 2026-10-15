@@ -1250,8 +1250,11 @@ pub struct Window {
     /// The Chromium layers enclosing the element being painted, outermost first: (id, alpha,
     /// whether non-text sprites blend through it too).
     element_layers: Vec<(u8, u8, bool)>,
-    /// The origin of the innermost `Styled::layer` element being painted.
-    composited_layer_origin: Option<Point<Pixels>>,
+    /// The bounds of the innermost `Styled::layer` element being painted, and whether they
+    /// set its cc tile size (`Styled::cc_tiles`).
+    composited_layer: Option<(Bounds<Pixels>, bool)>,
+    /// The bounds of the innermost `Styled::saved_layer` element being painted.
+    saved_layer: Option<Bounds<Pixels>>,
     next_layer_id: u8,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
@@ -2160,7 +2163,8 @@ impl Window {
             content_mask_stack: Vec::new(),
             element_opacity: 1.0,
             element_layers: Vec::new(),
-            composited_layer_origin: None,
+            composited_layer: None,
+            saved_layer: None,
             next_layer_id: 0,
             requested_autoscroll: None,
             last_text_input_configuration: None,
@@ -4236,13 +4240,13 @@ impl Window {
     }
 
     /// Paints `f` at `opacity`. Like Chromium, text inside an opacity below 1 or a composited
-    /// `layer` (its origin, and whether it is a `Styled::top_layer`) is blitted into that
+    /// `layer` (a `Styled::layer` element's bounds and style) is blitted into that
     /// transparent layer, which is then blended onto what is below it; other primitives fold
     /// the opacity into their color (see `sprite_color_and_layers`).
     pub(crate) fn with_element_opacity<R>(
         &mut self,
         opacity: Option<f32>,
-        layer: Option<(Point<Pixels>, bool)>,
+        layer: Option<(Bounds<Pixels>, &Style)>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         self.invalidator.debug_assert_paint_or_prepaint();
@@ -4252,12 +4256,21 @@ impl Window {
             return f(self);
         }
         let previous_opacity = self.element_opacity;
-        let previous_origin = self.composited_layer_origin;
+        let (previous_layer, previous_saved) = (self.composited_layer, self.saved_layer);
         self.element_opacity = previous_opacity * opacity;
-        self.composited_layer_origin = layer.map(|(o, _)| o).or(previous_origin);
+        match layer {
+            Some((b, s)) if s.saved_layer => self.saved_layer = Some(b),
+            Some((b, s)) => {
+                self.composited_layer = Some((b, s.cc_tiles));
+                // A composited layer's content draws on its own tiles, not in an outer saved
+                // layer.
+                self.saved_layer = None;
+            }
+            None => {}
+        }
         // A top layer blends onto the window's pixels as painted so far.
         let outer = layer
-            .is_some_and(|(_, top)| top)
+            .is_some_and(|(_, s)| s.top_layer)
             .then(|| std::mem::take(&mut self.element_layers));
         // Skia's `SkPaint::setAlphaf`: rounded to a byte.
         let alpha = (opacity.clamp(0., 1.) * 255.).round() as u8;
@@ -4266,7 +4279,8 @@ impl Window {
             self.element_layers = outer;
         }
         self.element_opacity = previous_opacity;
-        self.composited_layer_origin = previous_origin;
+        self.composited_layer = previous_layer;
+        self.saved_layer = previous_saved;
         result
     }
 
@@ -4276,10 +4290,17 @@ impl Window {
         self.draw_count
     }
 
-    /// The window origin of the innermost `Styled::layer` element being painted: where
-    /// Chromium's tiles of that composited layer start (crates/shapes rasterizes per tile).
-    pub fn composited_layer_origin(&self) -> Option<Point<Pixels>> {
-        self.composited_layer_origin
+    /// The window bounds of the innermost `Styled::layer` element being painted, where
+    /// Chromium's tiles of that composited layer start (crates/shapes rasterizes per tile),
+    /// and whether they are Chromium's layer rect, whose size sets the tile size.
+    pub fn composited_layer(&self) -> Option<(Bounds<Pixels>, bool)> {
+        self.composited_layer
+    }
+
+    /// The window bounds of the innermost `Styled::saved_layer` element being painted: Skia
+    /// draws its content on a device that starts at its top-left px within each tile.
+    pub fn saved_layer(&self) -> Option<Bounds<Pixels>> {
+        self.saved_layer
     }
 
     /// Paints `f` into a Chromium `saveLayerAlpha(alpha)` that every monochrome sprite (svgs

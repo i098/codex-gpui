@@ -418,7 +418,17 @@ pub fn tab_strip(t: &Theme, tab_icon: &str, label: SharedString, window: &Window
                 .h(px(20.))
                 .bg(over(t.border, layout)),
         )
-        .child(div().w(px(240.)).pr(px(2.)).child(tab))
+        .child(
+            // The tab's box clips its shadow (`overflow` on the 240 px tab slot).
+            div()
+                .h_full()
+                .flex()
+                .items_center()
+                .w(px(240.))
+                .pr(px(2.))
+                .overflow_hidden()
+                .child(tab),
+        )
         .child(
             div()
                 .pl(px(6.))
@@ -510,14 +520,15 @@ impl Render for SplitScreen {
             .when_some(self.tab.clone().zip(left), |d, ((icon, label), left)| {
                 d.child(
                     // In the composited `group/titlebar`, like the thread's header: the
-                    // layer (and its tile grid) starts at its left edge.
+                    // layer (and its tile grid) starts at its left edge. Its rect is
+                    // Chromium's (2112 x 88 device px at 1280), so cc gives it long tiles.
                     div()
                         .absolute()
                         .top_0()
                         .left(TITLEBAR_LAYER_X)
                         .right_0()
                         .h(Theme::TITLEBAR_HEIGHT)
-                        .layer()
+                        .cc_tiles()
                         .child(
                             tab_strip(cx.theme(), icon, label, window)
                                 .absolute()

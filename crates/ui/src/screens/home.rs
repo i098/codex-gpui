@@ -77,7 +77,8 @@ fn utility_bar(t: &Theme) -> Div {
                 ..Default::default()
             }))
             // `horizontal-scroll-fade-mask` scroller (`-m-0.5`, `p-0.5`): its contents fade over
-            // 1rem at both ends (the scroll timeline is inactive) in their own layer.
+            // 1rem at both ends (the scroll timeline is inactive) in a `saveLayer` of the page
+            // layer, so they rasterize on the page's tiles.
             .child(
                 div().py(px(3.)).child(
                     div()
@@ -86,7 +87,7 @@ fn utility_bar(t: &Theme) -> Div {
                         .flex()
                         .items_center()
                         .gap(px(8.))
-                        .layer()
+                        .saved_layer()
                         .child(chip(
                             "choose-project",
                             "folder",

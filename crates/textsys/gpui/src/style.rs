@@ -310,6 +310,14 @@ pub struct Style {
     /// onto the window's pixels as painted so far.
     pub top_layer: bool,
 
+    /// With `layer`: a Skia `saveLayer` inside the enclosing composited layer, whose tiles
+    /// it keeps (`Window::composited_layer`).
+    pub saved_layer: bool,
+
+    /// With `layer`: its bounds are Chromium's layer rect, whose size sets cc's tile size
+    /// (`Window::composited_layer`).
+    pub cc_tiles: bool,
+
     /// The element and its content start at its origin rounded to device pixels
     /// (`Styled::snap_origin`).
     pub snap_origin: bool,
@@ -824,6 +832,8 @@ impl Default for Style {
             opacity: None,
             layer: false,
             top_layer: false,
+            saved_layer: false,
+            cc_tiles: false,
             snap_origin: false,
             grid_rows: None,
             grid_cols: None,

@@ -172,6 +172,19 @@ fn white_mix(a: f32) -> Hsla {
     .into()
 }
 
+/// [`white_mix`] as a fill: Blink mixes its alpha as `1 - (1 - a)` in f32, a hair above `a`,
+/// and its green is not below 1 (ties of a fill blitted into a transparent layer round up in
+/// every channel). ponytail: text keeps [`white_mix`], which the glyph model fits.
+fn white_mix_fill(a: f32) -> Hsla {
+    Rgba {
+        r: 1.00003,
+        g: 1.,
+        b: 1.,
+        a: 1. - (1. - a),
+    }
+    .into()
+}
+
 impl Theme {
     pub fn dark() -> Self {
         Self {
@@ -199,8 +212,8 @@ impl Theme {
             ghost_hover: rgba(0xffffff14).into(),
             list_hover: rgba(0xffffff14).into(),
             primary_soft_alpha: rgba(0xffffff08).into(),
-            text_alpha_5: white_mix(0.05),
-            text_alpha_10: white_mix(0.1),
+            text_alpha_5: white_mix_fill(0.05),
+            text_alpha_10: white_mix_fill(0.1),
             text_alpha_60: white_mix(0.6),
             background_panel: rgba(0x232323ff).into(),
             composer_primary: rgba(0xffffffff).into(),
