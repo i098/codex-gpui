@@ -14076,6 +14076,42 @@
 "fitted": true
 },
 {
+"ref": "refs/composer/dark@1280x832.png",
+"name": "composer-arrow-up",
+"flip": false,
+"w": 16,
+"h": 16,
+"x": 2293,
+"y": 1564,
+"color": "000000ff",
+"bg": [
+255,
+255,
+255
+],
+"css_color": "000000ff",
+"opacity": 1.0,
+"fitted": true
+},
+{
+"ref": "refs/composer/dark@1440x900.png",
+"name": "composer-arrow-up",
+"flip": false,
+"w": 16,
+"h": 16,
+"x": 2453,
+"y": 1700,
+"color": "000000ff",
+"bg": [
+255,
+255,
+255
+],
+"css_color": "000000ff",
+"opacity": 1.0,
+"fitted": true
+},
+{
 "ref": "refs/composer/light@1280x832.png",
 "name": "composer-arrow-up",
 "flip": false,

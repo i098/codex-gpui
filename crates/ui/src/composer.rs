@@ -1127,7 +1127,8 @@ fn card_decoration(t: &Theme) -> shapes::Decoration {
 /// over the `backdrop-filter: blur(8px)` backdrop, `--menu-corner-shape`. Chromium composites
 /// it as its own layer: the blurred backdrop, then the layer (shadows, fill and content
 /// rasterized into transparent tiles) over it. The layer's tile grid starts at its shadow's
-/// ink (`0 8px 16px -4px`: 12 px left of the box, 4 px above).
+/// ink as cc bounds it, 3 sigma (`0 8px 16px -4px`: 20 px left of the box, 12 px above;
+/// CDP `LayerTree`).
 pub(crate) fn popover(t: &Theme, width: f32, content: impl FnOnce(Div) -> Div) -> Div {
     // `bg-surface-elevated-secondary/90` mixes in oklab: Chromium's round trip of white lands
     // 1 below 255 in green (as in thread.rs `Tones::card`).
@@ -1167,10 +1168,10 @@ pub(crate) fn popover(t: &Theme, width: f32, content: impl FnOnce(Div) -> Div) -
             ..d
         }));
     div()
-        .ml(px(-12.))
-        .mt(px(-4.))
-        .pl(px(12.))
-        .pt(px(4.))
+        .ml(px(-20.))
+        .mt(px(-12.))
+        .pl(px(20.))
+        .pt(px(12.))
         .layer()
         .child(content(surface))
 }
@@ -1225,10 +1226,13 @@ impl Composer {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
-            // `--opacity-composer-placeholder: .5` on the placeholder.
+            // `--opacity-composer-placeholder: .5` on the placeholder. The text blends like
+            // Chromium's: blitted into a transparent layer (`_ComposerLayoutInput`'s
+            // `overflow-y: auto` contents), then composited onto the card.
             .child(
                 div()
                     .when(self.content.is_empty(), |d| d.opacity(0.5))
+                    .layer()
                     .child(Editor(cx.entity())),
             )
     }
@@ -1382,19 +1386,21 @@ impl Composer {
                                 .child(shapes::decoration(deco(9999., color, vec![])))
                         }))
                         // `_ThumbSpring` (a transform) is its own composited layer over the
-                        // track: its ink (the `0 0 2px` shadow) starts 4 px out.
+                        // track, drawn into the popup's render surface (its backdrop-filter):
+                        // a layer nested in the popover's. cc bounds its ink (the `0 0 2px`
+                        // shadow) at 3 sigma, 3 px out.
                         .child(
                             div()
                                 .absolute()
-                                .left(px(dot_x(selected) - 18.))
-                                .top(px(-6.))
-                                .size(px(36.))
-                                .top_layer()
+                                .left(px(dot_x(selected) - 17.))
+                                .top(px(-5.))
+                                .size(px(34.))
+                                .layer()
                                 .child(
                                     div()
                                         .absolute()
-                                        .left(px(4.))
-                                        .top(px(4.))
+                                        .left(px(3.))
+                                        .top(px(3.))
                                         .size(px(28.))
                                         .child(shapes::decoration(shapes::Decoration {
                                             border: Some((px(0.5), t.border_strong)),

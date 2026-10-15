@@ -97,12 +97,7 @@ static ARTWORK: LazyLock<(RgbaImage, RgbaImage)> = LazyLock::new(|| {
     let mut overlay = decode(include_bytes!(
         "../../../../assets/ui/mobile/page-artwork-shared.png"
     ));
-    for p in overlay.pixels_mut() {
-        let a = u32::from(p[3]);
-        for c in &mut p.0[..3] {
-            *c = ((u32::from(*c) * a + 127) / 255) as u8;
-        }
-    }
+    shapes::premultiply(&mut overlay);
     (background, overlay)
 });
 
@@ -140,16 +135,9 @@ fn artwork(cache: ArtworkCache, page: Hsla) -> impl IntoElement {
                 Squircle,
                 page,
                 window,
-            )
-            .and_then(|rgba| RgbaImage::from_raw(w, h, rgba));
+            );
             let rounded = skia.is_none();
-            let image = Arc::new(match skia {
-                Some(mut rgba) => {
-                    rgba.pixels_mut().for_each(|p| p.0.swap(0, 2));
-                    RenderImage::new([Frame::new(rgba)])
-                }
-                None => compose(w, h),
-            });
+            let image = Arc::new(skia.unwrap_or_else(|| compose(w, h)));
             *cache = Some((bounds, page, image.clone(), rounded));
             (image, rounded)
         },

@@ -126,11 +126,11 @@ pub fn paint(
     }
 }
 
-/// `images` (premultiplied RGBA, each drawn into its `dst` rect in window px) over `page`,
-/// inside the anti-aliased clip of the border box `clip` with `radius` and `corner`: an
-/// `<img>` or `background-image` in an `overflow: hidden` rounded box, rasterized by Skia
-/// (bilinear, Chromium's span and tile restarts included) once per cc tile. RGBA,
-/// row-major over the box's snapped device px rect; `None` off macOS.
+/// `images` (premultiplied RGBA, see [`premultiply`], each drawn into its `dst` rect in
+/// window px) over `page`, inside the anti-aliased clip of the border box `clip` with `radius`
+/// and `corner`: an `<img>` or `background-image` in an `overflow: hidden` rounded box,
+/// rasterized by Skia (bilinear, Chromium's span and tile restarts included) once per cc
+/// tile. Over the box's snapped device px rect; `None` off macOS.
 pub fn raster_images(
     images: &[(&image::RgbaImage, Bounds<Pixels>)],
     clip: Bounds<Pixels>,
@@ -138,7 +138,7 @@ pub fn raster_images(
     corner: Corner,
     page: Hsla,
     window: &Window,
-) -> Option<Vec<u8>> {
+) -> Option<gpui::RenderImage> {
     #[cfg(target_os = "macos")]
     return Some(skia::raster_images(
         images, clip, radius, corner, page, window,
@@ -147,6 +147,16 @@ pub fn raster_images(
     {
         let _ = (images, clip, radius, corner, page, window);
         None
+    }
+}
+
+/// Premultiplies `img` in place as Skia's N32 premul does: `round(c * a / 255)`.
+pub fn premultiply(img: &mut image::RgbaImage) {
+    for p in img.pixels_mut() {
+        let a = u32::from(p[3]);
+        for c in &mut p.0[..3] {
+            *c = ((u32::from(*c) * a + 127) / 255) as u8;
+        }
     }
 }
 
@@ -243,6 +253,27 @@ pub fn paint_rounded_clip(
     mask::paint_rounded_clip(radius, bounds, window, cx);
     #[cfg(not(target_os = "macos"))]
     let _ = (radius, bounds, window, cx);
+}
+
+/// Runs `paint` with an ancestor's anti-aliased rounded clip active for the shapes and icons
+/// it paints: `bounds`, `radius` and `corner` are the clipping box's padding box (`overflow:
+/// hidden` with `border-radius`). Skia draws them inside that clip, and in every raster tile
+/// its curves reach the AA clip makes AAA blit edge px as runs (other values than without a
+/// clip). macOS only; elsewhere `paint` just runs.
+pub fn with_rounded_clip<R>(
+    radius: Corners<Pixels>,
+    corner: Corner,
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    paint: impl FnOnce(&mut Window) -> R,
+) -> R {
+    #[cfg(target_os = "macos")]
+    return skia::with_rounded_clip(radius, corner, bounds, window, paint);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (radius, corner, bounds);
+        paint(window)
+    }
 }
 
 /// Paints the svg icon `src` (asset bytes; `key` names it for the cache) into `bounds`,

@@ -90,6 +90,9 @@ pub struct Shell {
     /// it, so its rounded corners show its own fill and then the content (the thread's top fade
     /// or composer band, or the side panel) at the clip's coverage.
     pub main_composited: bool,
+    /// With `main_composited`: the main surface itself (fill and hairline) is one more
+    /// composited layer (Chromium's layer tree of refs/diff), not part of the page's.
+    pub main_layer: bool,
     /// A chat needs attention (unread): the rail's Home item carries the unread dot.
     pub attention: bool,
     /// The profile avatar's menu is open.
@@ -132,6 +135,7 @@ impl Shell {
             new_tab: true,
             main_backgrounds: 0,
             main_composited: false,
+            main_layer: false,
             attention: false,
             profile_menu: false,
             avatar_hovered: false,
@@ -236,6 +240,90 @@ pub(crate) fn in_layer(
     .top_0()
     .left_0()
     .size_full()
+}
+
+/// `child` inside its own `overflow: hidden` rounded clip (`shapes::with_rounded_clip`): Skia
+/// draws the shapes and icons in it under that anti-aliased clip, whose padding box is the
+/// child's bounds, with `radius` and `corner`.
+pub fn rounded_clip(
+    radius: Pixels,
+    corner: shapes::Corner,
+    child: impl IntoElement,
+) -> RoundedClip {
+    RoundedClip {
+        radius,
+        corner,
+        child: child.into_any_element(),
+    }
+}
+
+pub struct RoundedClip {
+    radius: Pixels,
+    corner: shapes::Corner,
+    child: AnyElement,
+}
+
+impl gpui::Element for RoundedClip {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<gpui::ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (gpui::LayoutId, ()) {
+        (self.child.request_layout(window, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.child.prepaint(window, cx);
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let child = &mut self.child;
+        shapes::with_rounded_clip(
+            Corners::all(self.radius),
+            self.corner,
+            bounds,
+            window,
+            |window| child.paint(window, cx),
+        );
+    }
+}
+
+impl IntoElement for RoundedClip {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
 }
 
 /// 28 px secondary ghost `_Button`: tertiary icon; on hover a `ghost_hover` fill and white icon.
@@ -354,6 +442,9 @@ pub fn home_shell(_: &mut Window, cx: &mut App) -> AnyView {
 /// `New chat` and `Your dot` rows. With `unread` chats the bell carries the blue dot.
 pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
     let t = cx.theme();
+    // Chromium squashes the search button's `_ButtonInner` and the rows below into one
+    // transparent overlap layer, from the rows' left edge and the button's top.
+    let overlap = point(RAIL_WIDTH + px(8.), Theme::TITLEBAR_HEIGHT + px(12.));
     let row = |id: &'static str, leading: AnyElement, label: &'static str| {
         let hover_bg = t.list_hover;
         div()
@@ -416,8 +507,12 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
                 ))
                 .child(div().w(px(4.)))
                 .child(
-                    icon_button("search", icon::icon("search", 16., t.text_tertiary), t)
-                        .on_click(dispatch::<OpenCommandMenu>),
+                    icon_button(
+                        "search",
+                        icon::icon("search", 16., t.text_tertiary).own_layer(overlap),
+                        t,
+                    )
+                    .on_click(dispatch::<OpenCommandMenu>),
                 ),
         )
         .child(
@@ -437,8 +532,10 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
                 )
                 .child(row(
                     "your-dot",
-                    // An `<img>`: its svg carries its own fill.
-                    icon::icon("your-dot", 16., gpui::rgb(0xbac1d3).into()).into_any_element(),
+                    // An `<img>`: its svg (with its own fill) draws into the overlap layer.
+                    icon::icon("your-dot", 16., gpui::rgb(0xbac1d3).into())
+                        .own_layer(overlap)
+                        .into_any_element(),
                     "Your dot",
                 )),
         )
@@ -735,7 +832,7 @@ impl Shell {
 }
 
 impl Render for Shell {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         // Chromium paints the page (everything over the body background) into one composited
         // layer: its tile holds `_PageSurfaceLayout`'s translucent color, the page surface's
@@ -770,6 +867,8 @@ impl Render for Shell {
         // the layer's translucent pixels too.
         let open = self.sidebar_open;
         let composited = self.main_composited;
+        let main_layer = composited && self.main_layer;
+        let clip_twice = main_layer && screens::diff::panel::panel_clamped(window);
         let fills = if composited {
             1
         } else {
@@ -801,7 +900,11 @@ impl Render for Shell {
         };
         let under = t.background_surface_under;
         // The page frame over the root `bounds`.
-        let frame = move |bounds: Bounds<Pixels>, square, window: &mut Window, cx: &mut App| {
+        let frame = move |bounds: Bounds<Pixels>,
+                          fills: u8,
+                          square: bool,
+                          window: &mut Window,
+                          cx: &mut App| {
             let fill = if square { &square_fill } else { &main_fill };
             let page_surface = Bounds::from_corners(
                 bounds.origin + point(RAIL_WIDTH, Theme::TITLEBAR_HEIGHT),
@@ -816,25 +919,37 @@ impl Render for Shell {
                 bounds.origin + point(main_left, Theme::TITLEBAR_HEIGHT),
                 page_surface.bottom_right(),
             );
-            window.with_skia_layer(255, |window| {
-                shapes::paint(&layout, None, bounds, window, cx);
-                shapes::paint(&surface, None, page_surface, window, cx);
-                if open {
-                    let line = Bounds::new(main.origin, size(MAIN_HAIRLINE, main.size.height));
+            let line = open.then(|| {
+                let line = Bounds::new(main.origin, size(MAIN_HAIRLINE, main.size.height));
+                main.origin.x += MAIN_HAIRLINE;
+                main.size.width -= MAIN_HAIRLINE;
+                line
+            });
+            let main_surface = |window: &mut Window, cx: &mut App| {
+                if let Some(line) = line {
                     shapes::paint(&hairline, None, line, window, cx);
-                    main.origin.x += MAIN_HAIRLINE;
-                    main.size.width -= MAIN_HAIRLINE;
                 }
                 for _ in 0..fills {
                     shapes::paint(fill, None, main, window, cx);
                 }
+            };
+            window.with_skia_layer(255, |window| {
+                shapes::paint(&layout, None, bounds, window, cx);
+                shapes::paint(&surface, None, page_surface, window, cx);
+                if !main_layer {
+                    main_surface(window, cx);
+                }
             });
+            // Its own layer: the hairline blends onto transparent, then onto the page.
+            if main_layer {
+                window.with_skia_layer(255, |window| main_surface(window, cx));
+            }
             main
         };
         let page = canvas(|_, _, _| {}, {
             let frame = frame.clone();
             move |bounds, (), window, cx| {
-                frame(bounds, composited, window, cx);
+                frame(bounds, fills, composited, window, cx);
             }
         })
         .absolute()
@@ -860,10 +975,11 @@ impl Render for Shell {
                         // coverage `m`: its own fill F over the page U, then the content C
                         // (painted over the square F): C m + (F m + U (1 - m)) (1 - m). That is
                         // the page with the rounded F (the frame), in a layer cut to 1 - m,
-                        // composited over C.
+                        // composited over C. A `main_layer` surface stacks the same way; with
+                        // a clamped side panel (`panel_clamped`) only C shows, clipped twice:
+                        // C m m + U (1 - m m), the page alone cut to 1 - m, composited twice.
                         // ponytail: F m + U (1 - m) takes the raster blit's rounding, not the
                         // compositor's (1 level off on a few px; the compositor's was worse).
-                        // The diff panel's corners come out up to 4 levels lighter in the refs.
                         let x0 = if dx < 0. { x - rd } else { x };
                         let y0 = if dy > 0. { y } else { y - rd };
                         let square = Bounds::new(
@@ -873,17 +989,20 @@ impl Render for Shell {
                         let mask = ContentMask {
                             bounds: square + bounds.origin,
                         };
-                        window.with_content_mask(Some(mask), |window| {
-                            window.with_skia_layer(255, |window| {
-                                let fill = shapes::Decoration {
-                                    fill: Some(under),
-                                    ..Default::default()
-                                };
-                                shapes::paint(&fill, None, bounds, window, cx);
-                                let main = frame(bounds, false, window, cx);
-                                shapes::paint_rounded_clip(radius, main, window, cx);
-                            })
-                        });
+                        for _ in 0..=u8::from(clip_twice) {
+                            window.with_content_mask(Some(mask), |window| {
+                                window.with_skia_layer(255, |window| {
+                                    let fill = shapes::Decoration {
+                                        fill: Some(under),
+                                        ..Default::default()
+                                    };
+                                    shapes::paint(&fill, None, bounds, window, cx);
+                                    let fills = u8::from(!clip_twice);
+                                    let main = frame(bounds, fills, false, window, cx);
+                                    shapes::paint_rounded_clip(radius, main, window, cx);
+                                })
+                            });
+                        }
                         continue;
                     }
                     // Each opaque box under a raster clip blends its edge once: the frame is
@@ -902,7 +1021,7 @@ impl Render for Shell {
                         };
                         window.with_content_mask(Some(mask), |window| {
                             window.paint_quad(fill(bounds, under));
-                            frame(bounds, false, window, cx);
+                            frame(bounds, fills, false, window, cx);
                         });
                     }
                 }

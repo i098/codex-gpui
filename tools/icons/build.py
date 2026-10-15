@@ -49,6 +49,10 @@ RUNTIME = {"chevron-down-small", "composer-model", "diff-file-python", "diff-jum
            "diff-more", "diff-open-in", "diff-show-files", "scheduled-filled",
            "sidebar-cmd-spinner", "thread-chevron-right", "thread-copy", "thread-fork",
            "thread-lang-python", "thread-project", "thread-rate", "thread-read-aloud"}
+# Glyphs fitted over a background that varies by 1 level under the box (the send button's
+# circle): its uncovered pixels count as background. Elsewhere such a variation is a layer
+# effect (a fade mask) that a plain blend does not reproduce, so those uses are skipped.
+UNEVEN_BG = {"composer-arrow-up"}
 
 _spec = importlib.util.spec_from_file_location("icons", ROOT / "tools/extract/icons.py")
 icons = importlib.util.module_from_spec(_spec)
@@ -152,10 +156,11 @@ def coverage(uses):
     return out
 
 
-def align(u, cov, refs):
+def align(u, cov, refs, tol):
     """Finds the icon in the ref within +-1 px, plain or mirrored: every uncovered pixel of the
-    box (and its ring) must show one background color.
-    Returns (x, y, flip, crop with ring, background) or None."""
+    box (and its ring) must show one background color, give or take `tol` levels.
+    Returns (x, y, flip, crop with ring, background, per-pixel background) or None; the
+    per-pixel background is the crop where uncovered, else the most common background."""
     im = refs[u["ref"]]
     for flip in (False, True):
         c = cov[(u["glyph"], u["W"], u["H"], flip)]
@@ -163,9 +168,14 @@ def align(u, cov, refs):
             for dx in (0, -1, 1):
                 x, y = u["x0"] + dx, u["y0"] + dy
                 crop = im[y - 1:y + u["H"] + 1, x - 1:x + u["W"] + 1]
+                if crop.shape[:2] != c.shape:
+                    continue
                 under = crop[c == 0]
-                if crop.shape[:2] == c.shape and (under == under[0]).all():
-                    return x, y, flip, crop, tuple(int(v) for v in under[0])
+                colors, counts = np.unique(under, axis=0, return_counts=True)
+                bg = colors[counts.argmax()]
+                if (np.abs(under - bg) <= tol).all():
+                    bgpx = np.where((c == 0)[..., None], crop, bg)
+                    return x, y, flip, crop, tuple(int(v) for v in bg), bgpx
     return None
 
 
@@ -173,7 +183,7 @@ def fit(occs, cov, alpha):
     """Per pixel (A, R, margin) such that round(R * A/255 + D * (1 - A/255)) equals every
     occurrence's ref pixel; margin <= 0 marks pixels no image can reproduce."""
     T = np.stack([o["crop"][1:-1, 1:-1] for o in occs]).astype(np.float64)
-    D = np.array([o["bg"] for o in occs], np.float64)[:, None, None, :]
+    D = np.stack([o["bgpx"][1:-1, 1:-1] for o in occs]).astype(np.float64)
     expect = alpha * cov[1:-1, 1:-1]
     shape = T.shape[1:3]
     best = np.full(shape, -1e9)
@@ -197,7 +207,7 @@ def fit(occs, cov, alpha):
 def reproduces(f, o):
     A, R, _ = f
     a = (A / 255)[..., None]
-    out = np.floor(R * a + np.array(o["bg"]) * (1 - a) + 0.5)
+    out = np.floor(R * a + o["bgpx"][1:-1, 1:-1] * (1 - a) + 0.5)
     return (out == o["crop"][1:-1, 1:-1]).all()
 
 
@@ -239,11 +249,11 @@ def main():
     groups = collections.defaultdict(list)
     skipped = collections.Counter()
     for u in uses:
-        hit = align(u, cov, refs)
+        hit = align(u, cov, refs, 1 if UNEVEN_BG & set(names.get(u["glyph"], [])) else 0)
         if hit is None:
             skipped[u["ref"].parent.name] += 1
             continue
-        u["x"], u["y"], u["flip"], u["crop"], u["bg"] = hit
+        u["x"], u["y"], u["flip"], u["crop"], u["bg"], u["bgpx"] = hit
         u["color"] = "%02x%02x%02x%02x" % (*u["rgb"], round_half_up(u["alpha"] * 255))
         groups[(u["glyph"], u["W"], u["H"], u["flip"], u["color"])].append(u)
 
