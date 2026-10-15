@@ -540,6 +540,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "bridge"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-channel",
+ "futures-lite",
+ "parking_lot",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "built"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
