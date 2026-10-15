@@ -1,6 +1,9 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+# Vendored gpui (Blink pixel snapping) and gpui_apple (Skia glyph blend); used through
+# [patch], not members.
+exclude = ["crates/textsys/gpui", "crates/textsys/gpui_apple"]
 
 [workspace.package]
 edition = "2024"
@@ -19,6 +22,11 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "3e145061
 async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
 async-task = { git = "https://github.com/zed-industries/async-task.git", rev = "015845a19fc31752c02367567d3b8900a406f9da" }
 calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
+
+# Chromium-exact layout snapping and glyph blending (see crates/textsys).
+[patch."https://github.com/zed-industries/zed"]
+gpui = { path = "crates/textsys/gpui" }
+gpui_apple = { path = "crates/textsys/gpui_apple" }
 
 [profile.dev]
 debug = "limited"
