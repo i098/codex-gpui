@@ -279,7 +279,10 @@ pub type ScreenBuilder = fn(&mut Window, &mut App) -> AnyView;
 pub static SCREENS: &[(&str, ScreenBuilder)] = &[
     ("home", screens::home::build),
     ("sidebar", screens::sidebar::build),
+    ("thread", screens::thread::build),
     ("composer", screens::composer::build),
+    ("diff", screens::diff::build),
+    ("terminal", screens::terminal::build),
 ];
 
 /// The shell as refs/home shows it: sidebar open, Home selected, empty lists and main panel.
