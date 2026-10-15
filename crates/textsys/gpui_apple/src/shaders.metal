@@ -623,6 +623,7 @@ struct MonochromeSpriteVertexOutput {
   float2 tile_position;
   float4 color [[flat]];
   float4 clip_distance;
+  uint skia_mode [[flat]];
 };
 
 struct MonochromeSpriteFragmentInput {
@@ -630,6 +631,7 @@ struct MonochromeSpriteFragmentInput {
   float2 tile_position;
   float4 color [[flat]];
   float4 clip_distance;
+  uint skia_mode [[flat]];
 };
 
 vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
@@ -647,12 +649,19 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
   float4 clip_distance = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds,
                                                  sprite.content_mask.bounds, sprite.transformation);
   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
-  float4 color = hsla_to_rgba(sprite.color);
+  // crates/shapes picks Skia's other 8-bit blends by adding 2 * mode to the hue (real hues
+  // are in [0, 1)): 1 = `SkBlendARGB32` (AAA `blitAntiH2`), 2 = raster pipeline lowp srcover,
+  // 3 = blit into a transparent composited layer, then the layer's srcover onto the target.
+  Hsla hsla = sprite.color;
+  uint skia_mode = uint(clamp(floor(hsla.h / 2.0), 0.0, 3.0));
+  hsla.h -= 2.0 * skia_mode;
+  float4 color = hsla_to_rgba(hsla);
   return MonochromeSpriteVertexOutput{
       device_position,
       tile_position,
       color,
-      {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
+      {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w},
+      skia_mode};
 }
 
 fragment float4 monochrome_sprite_fragment(
@@ -677,6 +686,30 @@ fragment float4 monochrome_sprite_fragment(
   uint scale = m + 1;
   uint3 prod = c.rgb * c.a + 128;
   uint4 src = uint4((prod + (prod >> 8)) >> 8, c.a);
+  if (input.skia_mode == 1) {
+    // `SkBlendARGB32`: one floor over the summed terms, dst scale `SkAlphaMulInv256`.
+    // ponytail: ignores the packed-lane carry of the C++ (only when a channel sum >= 65536).
+    if (m == 0) {
+      return float4(d) / 255.0;
+    }
+    uint inv = 0xFFFF - c.a * scale;
+    uint dst_scale = (inv + (inv >> 8)) >> 8;
+    return float4(((src * scale + d * dst_scale) >> 8) & 0xFF) / 255.0;
+  }
+  if (input.skia_mode == 2) {
+    // SkRasterPipeline lowp (NEON `div255` rounds exactly): scale_u8, then srcover.
+    uint4 s = src * m;
+    s = (s + ((s + 128) >> 8) + 128) >> 8;
+    uint4 t = d * (255 - s.a);
+    return float4(s + ((t + ((t + 128) >> 8) + 128) >> 8)) / 255.0;
+  }
+  if (input.skia_mode == 3) {
+    // `blitAntiH` into the transparent tile of a composited layer, then the compositor's
+    // srcover (lowp, rounding div255) of that layer pixel.
+    uint4 layer = (src * scale) >> 8;
+    uint4 t = d * (255 - layer.a);
+    return float4(layer + ((t + ((t + 128) >> 8) + 128) >> 8)) / 255.0;
+  }
   uint dst_scale = 256 - ((c.a * scale) >> 8);
   return float4(((src * scale) >> 8) + ((d * dst_scale) >> 8)) / 255.0;
 }
