@@ -262,8 +262,16 @@ fn html(report: &[Metrics]) -> String {
         "<!doctype html><meta charset=utf-8><title>codex-gpui parity</title><style>\
          body{font:13px system-ui;background:#1b1b1b;color:#ddd;margin:16px}\
          td{padding:1px 10px 1px 0}.PASS{color:#4c4}.FAIL{color:#e55}\
-         .imgs{display:flex;gap:8px}.imgs figure{flex:1;margin:0}img{width:100%}</style>\
-         <h1>codex-gpui parity</h1>",
+         .imgs{display:flex;gap:8px}.imgs figure{flex:1;margin:0}img{width:100%;display:block}\
+         .cmp{position:relative;touch-action:none;user-select:none;cursor:ew-resize;outline-offset:2px}\
+         .cmp .top{position:absolute;inset:0;clip-path:inset(0 0 0 var(--x,50%))}\
+         .cmp .div{position:absolute;top:0;bottom:0;left:var(--x,50%);width:2px;margin-left:-1px;background:#fff;box-shadow:0 0 2px #000;pointer-events:none}\
+         body:not([data-mode=slider]) .cmp .div{display:none}body[data-mode=ba] .cmp{cursor:pointer}\
+         body[data-mode=side] .cmp,body:not([data-mode=side]) .imgs,body[data-mode=side] .dl{display:none}\
+         button{font:inherit;margin-right:6px}button.on{background:#4c4}</style>\
+         <h1>codex-gpui parity</h1>\
+         <div id=modes><button data-m=slider class=on>Slider</button>\
+         <button data-m=side>Side by side</button><button data-m=ba>Before/after</button></div>",
     );
     for m in report {
         let c = &m.counts;
@@ -275,6 +283,8 @@ fn html(report: &[Metrics]) -> String {
              <tr><td>text_px<td>{}<tr><td>diff_px_inside_text<td>{}\
              <tr><td>text_diff_ratio (gate &le; {MAX_TEXT_DIFF_RATIO})<td>{:.5}\
              <tr><td>diff_px_tol2_outside_text<td>{}<tr><td>max_channel_delta<td>{}</table>\
+             <div class=cmp tabindex=0><img src=\"{r}\"><div class=top><img src=\"{p}\"></div><div class=div></div></div>\
+             <div class=dl><a href=\"{d}\">diff</a></div>\
              <div class=imgs><figure><figcaption>ref</figcaption><a href=\"{r}\"><img src=\"{r}\"></a></figure>\
              <figure><figcaption>port</figcaption><a href=\"{p}\"><img src=\"{p}\"></a></figure>\
              <figure><figcaption>diff</figcaption><a href=\"{d}\"><img src=\"{d}\"></a></figure></div></section>",
@@ -294,5 +304,23 @@ fn html(report: &[Metrics]) -> String {
             d = m.diff_png,
         );
     }
+    s.push_str(SCRIPT);
     s
 }
+
+const SCRIPT: &str = "<script>\
+const B=document.body;B.dataset.mode='slider';\
+document.querySelectorAll('#modes button').forEach(b=>b.onclick=()=>{B.dataset.mode=b.dataset.m;\
+document.querySelectorAll('#modes button').forEach(x=>x.classList.toggle('on',x==b));\
+document.querySelectorAll('.cmp').forEach(c=>c.style.setProperty('--x',B.dataset.mode=='ba'?'100%':'50%'))});\
+document.querySelectorAll('.cmp').forEach(c=>{\
+const set=x=>c.style.setProperty('--x',Math.max(0,Math.min(100,x))+'%');\
+const at=e=>(e.clientX-c.getBoundingClientRect().left)/c.clientWidth*100;\
+const cur=()=>{const v=parseFloat(c.style.getPropertyValue('--x'));return isNaN(v)?50:v};\
+c.onpointerdown=e=>{e.preventDefault();if(B.dataset.mode=='ba'){set(cur()>50?0:100);return}\
+c.setPointerCapture(e.pointerId);set(at(e))};\
+c.onpointermove=e=>{if(c.hasPointerCapture(e.pointerId))set(at(e))};\
+c.onpointerup=c.onpointercancel=e=>{if(c.hasPointerCapture(e.pointerId))c.releasePointerCapture(e.pointerId)};\
+c.onkeydown=e=>{if(B.dataset.mode=='slider'&&(e.key=='ArrowLeft'||e.key=='ArrowRight')){\
+set(cur()+(e.key=='ArrowLeft'?-5:5));e.preventDefault()}}});\
+</script>";
