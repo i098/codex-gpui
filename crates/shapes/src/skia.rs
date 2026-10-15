@@ -34,15 +34,17 @@ const CHUNK: i32 = 128;
 /// Blend modes of the shader (`hue + 2 * mode`): legacy `blitMask`/`blitV`, legacy
 /// `blitAntiH2`/`blitAntiV2` (`SkBlendARGB32`), raster pipeline lowp srcover.
 pub(crate) const MASK: u8 = 0;
-const ARGB32: u8 = 1;
+pub(crate) const ARGB32: u8 = 1;
 const PIPELINE: u8 = 2;
 /// Blit into the transparent tile of a composited layer, then the compositor's srcover.
 const LAYER: u8 = 3;
 /// A mask layer's alpha applied to the layer pixel (`DstIn` at the sprite's coverage).
 pub(crate) const DST_IN: u8 = 5;
-/// What is under the enclosing GPUI layer lerped to the layer's pixel by the coverage (viz
-/// drawing a clipped render pass's content over that layer).
-pub(crate) const LERP: u8 = 7;
+/// What is under the enclosing GPUI layer drawn onto the layer's pixel through a clip whose
+/// coverage is 255 minus the sprite's (viz drawing a clipped layer's content over that layer).
+pub(crate) const CLIP: u8 = 7;
+/// What is under the enclosing GPUI layer lerped to the layer's pixel by the coverage.
+pub(crate) const LERP: u8 = 8;
 
 /// gfx::SizeF's clamp: dimensions at or below 8 epsilon are 0.
 fn clamp(v: f32) -> f32 {
@@ -709,9 +711,10 @@ fn ring_content(c: &Canvas, outer: &Contour, inner: &Contour, dashed: bool, col:
         return;
     }
     // DrawCurvedDashedDottedBoxSide: the centerline rrect (from its top-left end) stroked 2.2x
-    // the width with Blink's dash.
-    // ponytail: Blink strokes it once per side in that side's clip; one stroke matches the
-    // refs. Paths too short for two dashes are not special-cased.
+    // the width with Blink's dash, once per side inside that side's non-AA quad
+    // (`ClipBorderSidePolygon`: outer corner to the inner corner's diagonal). Where the quads
+    // share a diagonal, a px is stroked twice or not at all.
+    // ponytail: paths too short for two dashes, and pentagon quads, are not special-cased.
     let width = inner.rr.r[0] - outer.rr.r[0];
     let mut center = outer.rr;
     center.outset(-width / 2.);
@@ -737,7 +740,31 @@ fn ring_content(c: &Canvas, outer: &Contour, inner: &Contour, dashed: bool, col:
         .set_style(PaintStyle::Stroke)
         .set_stroke_width(2.2 * width)
         .set_path_effect(PathEffect::dash(&[dash, gap], 0.));
-    c.draw_path(&path, &paint);
+    let ([x0, y0, w, h], [ix0, iy0, iw, ih]) = (outer.rr.r, inner.rr.r);
+    let (x1, y1, ix1, iy1) = (x0 + w, y0 + h, ix0 + iw, iy0 + ih);
+    // FindIntersection of the outer-to-inner corner line with the inner corner's diagonal.
+    let quad = |o: Pt, i: Pt, [rw, rh]: [f32; 2], [sx, sy]: [f32; 2]| -> Pt {
+        intersect(o, i, [i[0] + sx * rw, i[1]], [i[0], i[1] + sy * rh]).unwrap_or(i)
+    };
+    let [tl, tr, br, bl] = inner.rr.radii;
+    let (otl, otr, obr, obl) = ([x0, y0], [x1, y0], [x1, y1], [x0, y1]);
+    let itl = quad(otl, [ix0, iy0], tl, [1., 1.]);
+    let itr = quad(otr, [ix1, iy0], tr, [-1., 1.]);
+    let ibr = quad(obr, [ix1, iy1], br, [-1., -1.]);
+    let ibl = quad(obl, [ix0, iy1], bl, [1., -1.]);
+    // Blink's side order: top, bottom, right, left.
+    for side in [
+        [otl, itl, itr, otr],
+        [obr, ibr, ibl, obl],
+        [otr, itr, ibr, obr],
+        [obl, ibl, itl, otl],
+    ] {
+        let clip = Path::polygon(&side.map(sk_point), false, None, None);
+        c.save();
+        c.clip_path(&clip, ClipOp::Intersect, false);
+        c.draw_path(&path, &paint);
+        c.restore();
+    }
 }
 
 fn rect(r: [f32; 4]) -> Rect {
@@ -1209,7 +1236,7 @@ pub(crate) struct Sprite {
 static CACHE: LazyLock<Mutex<HashMap<String, Arc<Vec<Sprite>>>>> = LazyLock::new(Default::default);
 const CACHE_MAX: usize = 4096;
 
-fn cached(key: String, make: impl FnOnce() -> Vec<Sprite>) -> Arc<Vec<Sprite>> {
+pub(crate) fn cached(key: String, make: impl FnOnce() -> Vec<Sprite>) -> Arc<Vec<Sprite>> {
     if let Some(s) = CACHE.lock().get(&key) {
         return s.clone();
     }
@@ -1244,7 +1271,7 @@ pub(crate) fn sprites(
 }
 
 /// Cuts the coverage `value` of each px of `[x0, y0, w, h]` (row-major) into sprites.
-fn chunks(
+pub(crate) fn chunks(
     out: &mut Vec<Sprite>,
     [x0, y0, w, h]: [i32; 4],
     value: &dyn Fn(usize) -> u8,
@@ -1360,6 +1387,33 @@ pub(crate) fn with_rounded_clip<R>(
     CLIPS.with_borrow_mut(|c| c.push(clip));
     let out = paint(window);
     CLIPS.with_borrow_mut(|c| c.pop());
+    out
+}
+
+/// `crate::with_layer` on macOS: the [`CLIPS`] that cover the layer's device px leave it.
+pub(crate) fn with_layer<R>(
+    alpha: u8,
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    paint: impl FnOnce(&mut Window) -> R,
+) -> R {
+    let s = window.scale_factor();
+    let [l, t, r, b] =
+        [bounds.left(), bounds.top(), bounds.right(), bounds.bottom()].map(|v| f32::from(v) * s);
+    // The device px around the layer, so no anti-aliased clip edge reaches them.
+    let corners = [
+        (l - 1., t - 1.),
+        (r + 1., t - 1.),
+        (r + 1., b + 1.),
+        (l - 1., b + 1.),
+    ];
+    let outer = CLIPS.with_borrow_mut(|c| {
+        let outer = c.clone();
+        c.retain(|clip| !corners.iter().all(|&p| clip.path().contains(p)));
+        outer
+    });
+    let out = window.with_skia_layer(alpha, paint);
+    CLIPS.with_borrow_mut(|c| *c = outer);
     out
 }
 
@@ -1845,9 +1899,18 @@ pub(crate) fn paint_icon(
         0.,
         1.,
     );
+    // Blink clips the svg (or `<img>`) to its pixel-snapped box; at a path extreme on the
+    // box edge that clip changes AAA's edge px.
+    let clip = Rect::new(
+        origin[0],
+        origin[1],
+        snap(b.origin.x + bounds.size.width),
+        snap(b.origin.y + bounds.size.height),
+    );
     let rgba = Rgba::from(color);
     for (n, p) in icon.paths.iter().enumerate() {
         let draw = |c: &Canvas, col: Color4f| {
+            c.clip_rect(clip, ClipOp::Intersect, true);
             c.translate((origin[0], origin[1]));
             if flip_x {
                 c.translate(((w / 2.) as f32, 0.));
@@ -1880,7 +1943,7 @@ pub(crate) fn paint_icon(
         let clips = clips(layer);
         let black = is_black(color.into(), a);
         let sprites = sprites(
-            format!("{key}#{n}{flip_x}{origin:?}{w}x{h}{layer:?}{a}{black}{clips:?}"),
+            format!("{key}#{n}{flip_x}{clip:?}{w}x{h}{layer:?}{a}{black}{clips:?}"),
             || raster(bbox, layer, a, black, &clips, &draw),
         );
         paint_sprites(&sprites, color.into(), window, cx);

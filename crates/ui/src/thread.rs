@@ -60,6 +60,9 @@ pub struct ThreadView {
     cwd: String,
     /// The `Toggle summary` panel is open.
     pub summary_open: bool,
+    /// The view fills the main surface (no side panel): it draws its px at the surface's
+    /// rounded right corners through the clip (`Shell::main_clips_right`).
+    pub clip_right: bool,
     title: SharedString,
     turns: Vec<Turn>,
     clock: Clock,
@@ -77,6 +80,7 @@ impl ThreadView {
             thread_id: thread.id,
             cwd: thread.cwd,
             summary_open: false,
+            clip_right: false,
             turns: thread.turns,
             clock,
             composer,
@@ -123,8 +127,21 @@ impl ThreadView {
     /// `Toggle summary` panel: project changes and background processes.
     fn summary(&self, window: &Window, t: &Theme) -> Div {
         let project = self.cwd.rsplit('/').next().unwrap_or(&self.cwd).to_owned();
+        // `sticky` headers: their background (and their `before:` 8 px above) paints again in
+        // the panel's rounded `overflow: hidden` clip, over the panel's corner.
         let header = |label: String| {
             div()
+                .relative()
+                .child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .top(px(-8.))
+                        .child(shapes::decoration(shapes::Decoration {
+                            fill: Some(t.surface_elevated_secondary),
+                            ..Default::default()
+                        })),
+                )
                 .h(px(28.))
                 .pb(px(2.))
                 .pl(px(20.))
@@ -216,8 +233,8 @@ impl ThreadView {
         }
         let n = sections.len();
         // A fixed popover: its own composited layer, whose rect (and tile grid) starts at the
-        // widest shadow's ink, `blur + spread` = 20 px out.
-        let ink = px(20.);
+        // widest shadow's ink, 1.5 blur = 30 px out.
+        let ink = px(30.);
         div()
             .absolute()
             // Anchored under `Toggle summary`, 8 px from the thread's right edge.
@@ -243,7 +260,9 @@ impl ThreadView {
                         ],
                         ..Default::default()
                     }))
-                    .child(
+                    .child(crate::rounded_clip(
+                        Theme::RADIUS_2XL,
+                        shapes::Corner::Squircle,
                         div()
                             .relative()
                             .flex()
@@ -264,7 +283,7 @@ impl ThreadView {
                                     )
                                 })
                             })),
-                    ),
+                    )),
             )
     }
 
@@ -592,20 +611,59 @@ impl Render for ThreadView {
         let fade = |a: f32| Hsla { a, ..t.surface };
         let clear = gpui::transparent_black();
         // `_MainContentTopFade`
-        let top_fade = skia_gradient(
-            &[
-                (t.surface, 0.),
-                (fade(0.82), 0.1),
-                (fade(0.48), 0.3),
-                (fade(0.12), 0.6),
-                (clear, 1.),
-            ],
-            t.surface,
-            (width, 40.),
-            (0., 0.),
-            false,
-            scale,
-        );
+        let fade_stops = [
+            (t.surface, 0.),
+            (fade(0.82), 0.1),
+            (fade(0.48), 0.3),
+            (fade(0.12), 0.6),
+            (clear, 1.),
+        ];
+        let top_fade = skia_gradient(&fade_stops, t.surface, (width, 40.), (0., 0.), false, scale);
+        // The px the main surface's rounded clip covers in part at its right corners: the top
+        // fade's and the composer band's surface fill, drawn onto the page after the shell's
+        // corners (`Shell::main_clips_right`), in a deferred draw. cc draws a band tile that
+        // holds only the fill (no ink of the composer card, which is centered) as a color quad.
+        // ponytail: the bottom corner's px all in the band's last tile (510 px stride).
+        let card_ink = crate::composer::card_decoration(&t)
+            .shadows
+            .iter()
+            .filter(|s| !s.inset)
+            .map(|s| f32::from(s.offset.x + s.spread) + 1.5 * f32::from(s.blur))
+            .fold(1., f32::max);
+        let surface = Rgba::from(t.surface);
+        let surface = [surface.r, surface.g, surface.b, 1.].map(|v| (v * 255.).round() as u8);
+        let corners = gpui::canvas(
+            |_, _, _| {},
+            move |bounds, (), window, cx| {
+                let s = window.scale_factor();
+                let stops = premul_stops(&fade_stops);
+                let dev = |v: Pixels| (f32::from(v) * s).round() as i32;
+                let (x0, y0) = (dev(bounds.left()), dev(bounds.top()));
+                let h = (40. * s).round() as u32;
+                let fade = |x: i32, y: i32| {
+                    let (i, j) = ((x - x0) as u32, (y - y0) as u32);
+                    gradient_px(&stops, h, (0, 0), false, i, j)
+                };
+                let top = Corners {
+                    top_right: Theme::RADIUS_XL_BASE,
+                    ..Default::default()
+                };
+                shapes::paint_clipped_tile(&fade, false, top, bounds, window, cx);
+                let width = bounds.size.width;
+                let card_right = (width + width.min(CONTENT_MAX_WIDTH)) / 2. - px(16.);
+                let w = dev(width);
+                let solid = dev(card_right + px(card_ink)) < 510 * ((w - 1) / 510) - 1;
+                let bottom = Corners {
+                    bottom_right: Theme::RADIUS_XL_BASE,
+                    ..Default::default()
+                };
+                shapes::paint_clipped_tile(&|_, _| surface, solid, bottom, bounds, window, cx);
+            },
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full();
         // Fade above the composer's surface band (`-top-8`, `to top`).
         let bottom_fade = skia_gradient(
             &[(t.surface, 0.), (clear, 1.)],
@@ -644,6 +702,7 @@ impl Render for ThreadView {
                     .child(div().h(px(114.))),
             )
             .child(top_fade.absolute().top_0().left_0())
+            .when(self.clip_right, |d| d.child(gpui::deferred(corners)))
             // A portal in the original: its shadow spills over the titlebar and the sidebar.
             .when(self.summary_open, |d| {
                 d.child(gpui::deferred(self.summary(window, &t)))
@@ -1119,7 +1178,8 @@ fn diff_card(turn_id: &str, items: &[ThreadItem], window: &Window, t: &Theme) ->
                                     })
                             })
                             // Blink's background bleed avoidance paints the fill and the
-                            // translucent border into one transparency layer.
+                            // translucent border into one transparency layer (shapes' clip
+                            // layer op), rasterized in the scroller's layer like the card.
                             .child(
                                 button(
                                     "View changes",
@@ -1127,7 +1187,6 @@ fn diff_card(turn_id: &str, items: &[ThreadItem], window: &Window, t: &Theme) ->
                                         div()
                                             .absolute()
                                             .inset_0()
-                                            .layer()
                                             .child(shapes::decoration(shapes::Decoration {
                                                 radius: Corners::all(Theme::RADIUS_LG),
                                                 corner: shapes::Corner::Squircle,
@@ -1293,36 +1352,54 @@ fn gradient_ppm(
     (ox, oy): (u32, u32),
     to_top: bool,
 ) -> Vec<u8> {
-    let stops: Vec<([f32; 3], f32, f32)> = stops
+    let stops = premul_stops(stops);
+    let u = Rgba::from(under);
+    let under = [u.r, u.g, u.b].map(|v| (v * 255.).round() as u32);
+    let mut out = format!("P6\n{w} {h}\n255\n").into_bytes();
+    out.reserve((w * h * 3) as usize);
+    for j in 0..h {
+        for i in 0..w {
+            let [r, g, b, a] = gradient_px(&stops, h, (ox, oy), to_top, i, j);
+            for (c, under) in [r, g, b].into_iter().zip(under) {
+                let c = u32::from(c) + (under * (255 - u32::from(a)) + 127) / 255;
+                out.push(c.min(255) as u8);
+            }
+        }
+    }
+    out
+}
+
+/// `stops` of [`skia_gradient`] as `(premultiplied color, alpha, position)`.
+fn premul_stops(stops: &[(Hsla, f32)]) -> Vec<([f32; 3], f32, f32)> {
+    stops
         .iter()
         .map(|(c, pos)| {
             let c = Rgba::from(*c);
             ([c.r * c.a, c.g * c.a, c.b * c.a], c.a, *pos)
         })
-        .collect();
-    let u = Rgba::from(under);
-    let under = [u.r, u.g, u.b].map(|v| (v * 255.).round() as u32);
+        .collect()
+}
+
+/// The premultiplied 8-bit RGBA Skia stores for px `(i, j)` of a [`skia_gradient`] `h` px
+/// tall at `(ox, oy)` in its layer.
+fn gradient_px(
+    stops: &[([f32; 3], f32, f32)],
+    h: u32,
+    (ox, oy): (u32, u32),
+    to_top: bool,
+    i: u32,
+    j: u32,
+) -> [u8; 4] {
+    let mut t = (j as f32 + 0.5) / h as f32;
+    if to_top {
+        t = 1. - t;
+    }
+    let (color, alpha) = gradient_at(stops, t);
     // Position inside the layer's tile; only the low 3 bits reach the dither.
     let tile = |v: u32| if v == 0 { 0 } else { (v - 1) % 510 + 1 };
-    let mut out = format!("P6\n{w} {h}\n255\n").into_bytes();
-    out.reserve((w * h * 3) as usize);
-    for j in 0..h {
-        let mut t = (j as f32 + 0.5) / h as f32;
-        if to_top {
-            t = 1. - t;
-        }
-        let (color, alpha) = gradient_at(&stops, t);
-        let stored_alpha = (alpha * 255.).round_ties_even() as u32;
-        let dy = tile(j + oy);
-        for i in 0..w {
-            let d = dither(tile(i + ox), dy) / 255.;
-            for (c, under) in color.iter().zip(under) {
-                let stored = ((c + d).clamp(0., alpha) * 255.).round_ties_even() as u32;
-                out.push((stored + (under * (255 - stored_alpha) + 127) / 255).min(255) as u8);
-            }
-        }
-    }
-    out
+    let d = dither(tile(i + ox), tile(j + oy)) / 255.;
+    let [r, g, b] = color.map(|c| ((c + d).clamp(0., alpha) * 255.).round_ties_even() as u8);
+    [r, g, b, (alpha * 255.).round_ties_even() as u8]
 }
 
 /// Premultiplied color and alpha of `stops` at `t`.

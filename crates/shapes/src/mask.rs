@@ -2,9 +2,10 @@
 //! mask layer's alpha (`DstIn`) before it composites the layer, which the shader does to the
 //! GPUI layer's pixel with [`DST_IN`] sprites.
 
-use crate::skia::{Blits, DST_IN, LERP, MASK, paint_sprites, sprites, tile_pixels};
-use gpui::{App, Bounds, Corners, Hsla, Pixels, Window};
+use crate::skia::{ARGB32, Blits, CLIP, DST_IN, LERP, MASK, paint_sprites, sprites, tile_pixels};
+use gpui::{App, Bounds, Corners, Hsla, Pixels, Rgba, Window};
 use skia_safe::{Color4f, Paint, RRect, Rect, Vector};
+use std::collections::BTreeMap;
 
 /// `crate::top_fade` on macOS.
 pub(crate) fn paint_top_fade(fade: Pixels, bounds: Bounds<Pixels>, window: &mut Window, cx: &App) {
@@ -61,16 +62,14 @@ pub(crate) fn paint_x_fade(
     paint_sprites(&sprites, Hsla::default(), window, cx);
 }
 
-/// `crate::paint_rounded_clip` on macOS: in each rounded corner's square of device px, what is
-/// under the layer is lerped to the layer by Skia's anti-aliased coverage of the outside of the
-/// rounded rect.
-pub(crate) fn paint_rounded_clip(
+/// Skia's anti-aliased coverage of the rounded rect `bounds` with `radius` in each rounded
+/// corner's square of device px: (corner index top-left, top-right, bottom-right, bottom-left,
+/// the square `[x0, y0, n, n]`, row-major coverage).
+fn corner_coverage(
     radius: Corners<Pixels>,
     bounds: Bounds<Pixels>,
-    window: &mut Window,
-    cx: &App,
-) {
-    let s = window.scale_factor();
+    s: f32,
+) -> Vec<(usize, [i32; 4], Vec<u8>)> {
     let dev = |v: Pixels| (f32::from(v) * s).round();
     let (l, t, r, b) = (
         dev(bounds.left()),
@@ -89,28 +88,110 @@ pub(crate) fn paint_rounded_clip(
     let mut paint = Paint::new(Color4f::new(1., 1., 1., 1.), None);
     paint.set_anti_alias(true);
     // Each corner's square: its top-left device px.
-    let squares = [(l, t), (r, t), (r, b), (l, b)]
+    [(l, t), (r, t), (r, b), (l, b)]
         .into_iter()
         .zip(radii)
-        .zip([(0., 0.), (-1., 0.), (-1., -1.), (0., -1.)]);
-    for (((x, y), rd), (dx, dy)) in squares {
-        let n = rd.ceil() as i32;
-        if n == 0 {
-            continue;
-        }
-        let (x0, y0) = ((x + dx * n as f32) as i32, (y + dy * n as f32) as i32);
-        let key = format!("rounded_clip {x0} {y0} {n} {l} {t} {r} {b} {rd}");
-        let sprites = sprites(key, || {
+        .zip([(0., 0.), (-1., 0.), (-1., -1.), (0., -1.)])
+        .enumerate()
+        .filter_map(|(i, (((x, y), rd), (dx, dy)))| {
+            let n = rd.ceil() as i32;
+            if n == 0 {
+                return None;
+            }
+            let (x0, y0) = ((x + dx * n as f32) as i32, (y + dy * n as f32) as i32);
             let (px, row) = tile_pixels([x0, y0], (n, n), Color4f::new(0., 0., 0., 1.), |c| {
                 c.draw_rrect(rrect, &paint);
             });
-            let blits = px
+            let m = px
                 .chunks(row)
-                .flat_map(|line| line.iter().skip(1).step_by(4).take(n as usize))
-                .map(|&m| [255 - m, LERP, 0, MASK] as Blits)
+                .flat_map(|line| line.iter().skip(1).step_by(4).take(n as usize).copied())
                 .collect();
-            ([x0, y0, n, n], blits)
-        });
-        paint_sprites(&sprites, Hsla::default(), window, cx);
+            Some((i, [x0, y0, n, n], m))
+        })
+        .collect()
+}
+
+/// `crate::paint_rounded_clip` on macOS: in each rounded corner's square of device px, what is
+/// under the layer is drawn onto the layer through Skia's anti-aliased coverage of the rounded
+/// rect (the sprites carry 255 minus it), or lerped to it (`lerp`); at the `own` corners the
+/// layer's pixel stays wherever the clip does not cover the px in full.
+pub(crate) fn paint_rounded_clip(
+    radius: Corners<Pixels>,
+    own: Corners<bool>,
+    lerp: bool,
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    cx: &App,
+) {
+    let s = window.scale_factor();
+    let key = format!("rounded_clip {radius:?} {own:?} {lerp} {bounds:?} {s}");
+    let sprites = crate::skia::cached(key, || {
+        let mut out = Vec::new();
+        for (i, rect, m) in corner_coverage(radius, bounds, s) {
+            let own = [
+                own.top_left,
+                own.top_right,
+                own.bottom_right,
+                own.bottom_left,
+            ][i];
+            let value = |i: usize| match (own, m[i]) {
+                (true, 255) => 0,
+                (true, _) => 255,
+                (false, m) => 255 - m,
+            };
+            let mode = if lerp { LERP } else { CLIP };
+            crate::skia::chunks(&mut out, rect, &value, mode, None, false);
+        }
+        out
+    });
+    paint_sprites(&sprites, Hsla::default(), window, cx);
+}
+
+/// `crate::paint_clipped_tile` on macOS.
+pub(crate) fn paint_clipped_tile(
+    px: &dyn Fn(i32, i32) -> [u8; 4],
+    solid: bool,
+    radius: Corners<Pixels>,
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    cx: &App,
+) {
+    let s = window.scale_factor();
+    for (_, [x0, y0, w, h], m) in corner_coverage(radius, bounds, s) {
+        // The px of partial coverage by their straight 8-bit color: the shader premultiplies
+        // it back (`div255(c * a)`) to the tile's px.
+        let mut by_color: BTreeMap<[u8; 4], Vec<u8>> = BTreeMap::new();
+        for (k, &c) in m.iter().enumerate() {
+            let (x, y) = (x0 + k as i32 % w, y0 + k as i32 / w);
+            let p = px(x, y);
+            if c == 0 || c == 255 || p[3] == 0 {
+                continue;
+            }
+            let a = u32::from(p[3]);
+            let straight = p.map(|v| {
+                (0..=255u32)
+                    .find(|c| crate::skia::div255(c * a) == u32::from(v))
+                    .unwrap_or(255) as u8
+            });
+            let plane = by_color
+                .entry([straight[0], straight[1], straight[2], p[3]])
+                .or_insert_with(|| vec![0; m.len()]);
+            plane[k] = c;
+        }
+        for (color, plane) in by_color {
+            let mut hash = std::hash::DefaultHasher::new();
+            std::hash::Hash::hash(&plane, &mut hash);
+            let key = format!(
+                "clipped_tile {x0} {y0} {w} {solid} {color:?} {:016x}",
+                std::hash::Hasher::finish(&hash)
+            );
+            let mode = if solid { MASK } else { ARGB32 };
+            let sprites = sprites(key, || {
+                let blits = plane.iter().map(|&m| [m, mode, 0, MASK] as Blits);
+                ([x0, y0, w, h], blits.collect())
+            });
+            let [r, g, b, a] = color.map(|v| f32::from(v) / 255.);
+            paint_sprites(&sprites, Rgba { r, g, b, a }.into(), window, cx);
+        }
     }
 }

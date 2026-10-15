@@ -3,7 +3,7 @@
 
 use super::composer::fixture_composer;
 use crate::composer::{Composer, label, pill};
-use crate::{Shell, icon::icon, text};
+use crate::{Shell, icon::icon, rounded_clip, text};
 use gpui::{
     AnyView, App, AppContext as _, Context, Corners, Div, Entity, Hsla, IntoElement, ParentElement,
     Render, Styled, Window, div, px,
@@ -38,14 +38,22 @@ pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
     shell(main, cx)
 }
 
-/// `Choose project` / `This computer` chip of the utility bar.
+/// `Choose project` / `This computer` chip of the utility bar. The pill is `overflow: hidden`:
+/// Skia draws its icon under that AA clip (its padding box; light has no fitted images).
 fn chip(id: &'static str, glyph: &str, s: &'static str, fg: Hsla, t: &Theme) -> Div {
     div().child(
-        pill(id, t)
-            .px(px(8.))
-            .gap(px(6.))
-            .child(icon(glyph, 16., fg))
-            .child(label(s, fg)),
+        pill(id, t).child(rounded_clip(
+            px(13.),
+            shapes::Corner::Round,
+            div()
+                .h_full()
+                .flex()
+                .items_center()
+                .px(px(8.))
+                .gap(px(6.))
+                .child(icon(glyph, 16., fg))
+                .child(label(s, fg)),
+        )),
     )
 }
 

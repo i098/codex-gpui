@@ -45,8 +45,10 @@ pub fn panel_width(window: &Window) -> Pixels {
 /// ponytail: the trigger is measured, not derived. Blink gives that effect its surface at
 /// 1280 and 1300 px wide, not at 1400 and 1440. Panel geometry is not the cause (1440 with a
 /// clamped-width layout still stacks), and neither are the effort labels or the word-wrap
-/// button. Hiding the chat's scroller at 1280 clips once. Probe Blink's
-/// `PropertyTreeManager` clip synthesis if another window size disagrees.
+/// button. Hiding the chat's scroller at 1280 clips once. Blink forces that surface
+/// (`kRoundedCorner`) when a nested shader-based rounded clip sits under the surface's clip
+/// with no non-conditional render surface between (`SynthesizeCcEffectsForClipsIfNeeded` in
+/// property_tree_manager.cc), so some rounded clip in the chat is composited only at 1280.
 pub fn panel_clamped(window: &Window) -> bool {
     panel_width(window) < px(STORED_WIDTH)
 }
@@ -507,17 +509,29 @@ impl Render for SplitScreen {
             })
             .when_some(self.tab.clone().zip(left), |d, ((icon, label), left)| {
                 d.child(
-                    tab_strip(cx.theme(), icon, label, window)
+                    // In the composited `group/titlebar`, like the thread's header: the
+                    // layer (and its tile grid) starts at its left edge.
+                    div()
                         .absolute()
                         .top_0()
-                        .left(left)
+                        .left(TITLEBAR_LAYER_X)
                         .right_0()
-                        // In the composited `group/titlebar`, like the thread's header.
-                        .layer(),
+                        .h(Theme::TITLEBAR_HEIGHT)
+                        .layer()
+                        .child(
+                            tab_strip(cx.theme(), icon, label, window)
+                                .absolute()
+                                .top_0()
+                                .left(left - TITLEBAR_LAYER_X)
+                                .right_0(),
+                        ),
                 )
             })
     }
 }
+
+/// Left edge of Chromium's composited `group/titlebar` layer.
+const TITLEBAR_LAYER_X: Pixels = px(224.);
 
 /// A thread route (refs/thread): `thread` beside the sidebar; with `panel` (refs/diff,
 /// refs/terminal) the panel view on the right under a titlebar tab `(view, icon, label)`.
@@ -561,8 +575,11 @@ pub fn with_side_panel(
         shell.main_layer = panel
             .as_ref()
             .is_some_and(|(view, ..)| view.clone().downcast::<DiffPanel>().is_ok());
+        // A lone thread draws its own px at the surface's right corners.
+        shell.main_clips_right = panel.is_none();
         shell.set_main(main, cx);
     });
+    thread.update(cx, |thread, _| thread.clip_right = panel.is_none());
     let tab = panel.map(|(_, icon, label)| (icon, label));
     cx.new(|cx: &mut Context<SplitScreen>| {
         cx.observe(&thread, |_, _, cx| cx.notify()).detach();

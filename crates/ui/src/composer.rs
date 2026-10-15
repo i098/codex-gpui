@@ -1110,7 +1110,7 @@ fn deco(radius: f32, fill: Hsla, shadows: Vec<shapes::Shadow>) -> shapes::Decora
 }
 
 /// `_ComposerLayoutBody`: 22 px radius, composer surface, `--elevation-composer-*`.
-fn card_decoration(t: &Theme) -> shapes::Decoration {
+pub(crate) fn card_decoration(t: &Theme) -> shapes::Decoration {
     let black = |a: u32| -> Hsla { gpui::rgba(a).into() };
     let shadows = match t.appearance {
         Appearance::Dark => vec![shadow(t.composer_inset_highlight, 0., 1., 0., true)],
@@ -1130,10 +1130,16 @@ fn card_decoration(t: &Theme) -> shapes::Decoration {
 /// ink as cc bounds it, 3 sigma (`0 8px 16px -4px`: 20 px left of the box, 12 px above;
 /// CDP `LayerTree`).
 pub(crate) fn popover(t: &Theme, width: f32, content: impl FnOnce(Div) -> Div) -> Div {
-    // `bg-surface-elevated-secondary/90` mixes in oklab: Chromium's round trip of white lands
-    // 1 below 255 in green (as in thread.rs `Tones::card`).
+    // `bg-surface-elevated-secondary/90` mixes in oklab: white's sRGB lands just outside
+    // [0, 1], so Skia blits it with its float pipeline (theme `white_mix`).
     let fill = match t.appearance {
-        Appearance::Light => gpui::rgba(0xfffeffe6).into(),
+        Appearance::Light => gpui::Rgba {
+            r: 1.00003,
+            g: 0.99999,
+            b: 1.,
+            a: 0.9,
+        }
+        .into(),
         Appearance::Dark => Hsla {
             a: 0.9,
             ..t.menu_background
