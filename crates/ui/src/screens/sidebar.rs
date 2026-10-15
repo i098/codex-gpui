@@ -3,8 +3,8 @@
 //! refs/home and refs/sidebar.
 
 use crate::{
-    Shell, blit, fixture, home_sidebar_header, icon::icon, in_layer, layout_color, over,
-    sidebar_empty, sidebar_section, text,
+    Shell, blit, fixture, home_sidebar_header, icon::icon, layout_color, over, sidebar_empty,
+    sidebar_section, text,
 };
 use bridge::types::{Thread, ThreadListResponse};
 use gpui::{
@@ -188,6 +188,8 @@ fn thread_row(id: &str, label: SharedString, selected: bool, t: &Theme) -> State
                 .w(px(256.))
                 .h(px(20.))
                 .overflow_hidden()
+                // The marquee's CSS mask: Chromium paints the label in its own layer.
+                .layer()
                 .child(text(label, 14., 20., 430., t.text_default_nav)),
         )
         .child(
@@ -540,13 +542,20 @@ impl Render for CommandMenu {
         let width = 520f32.min(0.92 * w);
         let top = ((h - list_height - 64.) / 2.).max(16.);
         let surface = t.surface_elevated_secondary;
-        // `border-color: var(--color-border)` in dark, transparent in light.
-        let border = (t.appearance == Appearance::Dark).then_some((px(1.), t.border));
+        // `border-color: var(--color-border)` in dark, transparent in light (still a 1 px
+        // border: Blink paints the fill in its bleed-avoidance clip layer).
+        let border_color = if t.appearance == Appearance::Dark {
+            t.border
+        } else {
+            gpui::transparent_black()
+        };
+        let border = Some((px(1.), border_color));
         let query = self.query.trim();
         // The open dialog is its own composited layer (Radix's enter animation): it rasterizes
         // into transparent tiles that start at its ink overflow, i.e. the shadow's (3σ of the
-        // 32 px blur, less the 8 px spread, minus the 16 px offset on top).
-        let layer = point(px((w - width) / 2. - 40.), px(top - 24.));
+        // 32 px blur, less the 8 px spread, minus the 16 px offset on top). Its ops blend in the
+        // layer, which then composites once.
+        let (ink_x, ink_y) = (40., 24.);
         // A row's text column: the dialog less its 1 px border and `p-1`, the row's `px-2`, and
         // the 16 px icon slot with its 8 px gap.
         let text_width = width - 2. * 5. - 2. * 8. - 16. - 8.;
@@ -598,46 +607,51 @@ impl Render for CommandMenu {
                 .track_focus(&self.focus)
                 .on_key_down(cx.listener(Self::on_key))
                 .absolute()
-                .left(px((w - width) / 2.))
-                .top(px(top))
-                .w(px(width))
-                .child(in_layer(
-                    shapes::Decoration {
-                        radius: Corners::all(px(20.)),
-                        fill: Some(surface),
-                        border,
-                        shadows: vec![shapes::Shadow {
-                            color: rgba(0x00000030).into(),
-                            offset: point(px(0.), px(16.)),
-                            blur: px(32.),
-                            spread: px(-8.),
-                            inset: false,
-                        }],
-                        ..Default::default()
-                    },
-                    move || layer,
-                ))
-                // 1 px border + `p-1`.
+                .left(px((w - width) / 2. - ink_x))
+                .top(px(top - ink_y))
+                .pl(px(ink_x))
+                .pt(px(ink_y))
+                .layer()
                 .child(
                     div()
                         .relative()
-                        .p(px(5.))
-                        .flex()
-                        .flex_col()
-                        .gap(px(4.))
-                        .overflow_hidden()
-                        .child(div().h(px(33.)).px(px(10.)).py(px(6.)).child(input))
+                        .w(px(width))
+                        .child(shapes::decoration(shapes::Decoration {
+                            radius: Corners::all(px(20.)),
+                            fill: Some(surface),
+                            border,
+                            shadows: vec![shapes::Shadow {
+                                color: rgba(0x00000030).into(),
+                                offset: point(px(0.), px(16.)),
+                                blur: px(32.),
+                                spread: px(-8.),
+                                inset: false,
+                            }],
+                            ..Default::default()
+                        }))
+                        // 1 px border + `p-1`.
                         .child(
                             div()
-                                .id("command-menu-list")
-                                .max_h(px(list_height))
-                                .overflow_y_scroll()
-                                // Its contents end 0.1 px past the box, so Chromium scrolls and
-                                // composites them in their own transparent layer.
-                                .layer()
+                                .relative()
+                                .p(px(5.))
                                 .flex()
                                 .flex_col()
-                                .children(groups),
+                                .gap(px(4.))
+                                .overflow_hidden()
+                                .child(div().h(px(33.)).px(px(10.)).py(px(6.)).child(input))
+                                .child(
+                                    div()
+                                        .id("command-menu-list")
+                                        .max_h(px(list_height))
+                                        .overflow_y_scroll()
+                                        // Its contents end 0.1 px past the box, so Chromium
+                                        // scrolls and composites them in their own
+                                        // transparent layer.
+                                        .layer()
+                                        .flex()
+                                        .flex_col()
+                                        .children(groups),
+                                ),
                         ),
                 ),
         )

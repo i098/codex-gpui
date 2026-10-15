@@ -1,13 +1,14 @@
 //! `mobile` parity screen: `/codex-mobile` (`CodexMobilePage`), initial setup step, from
 //! `refs/mobile/*.spec.json`. Sidebar closed, no rail item current.
 
-use crate::{EmptySidebar, Shell, text};
+use crate::{EmptySidebar, Shell, icon, text};
 use gpui::{
-    AnyView, App, AppContext as _, Context, DevicePixels, Div, InteractiveElement as _,
-    IntoElement, ParentElement, Render, RenderImage, SharedString, Size,
-    StatefulInteractiveElement as _, Styled, Window, actions, canvas, div, px, rgb, size, svg,
+    AnyView, App, AppContext as _, Bounds, Context, Corners, Div, Hsla, InteractiveElement as _,
+    IntoElement, ParentElement, Pixels, Render, RenderImage, StatefulInteractiveElement as _,
+    Styled, Window, actions, canvas, div, point, px, rgb, size,
 };
 use image::{Frame, Rgba, RgbaImage};
+use shapes::Corner::Squircle;
 use std::{
     cell::RefCell,
     rc::Rc,
@@ -39,14 +40,7 @@ pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
 }
 
 /// One `codexMobile.setupDialog.initial` feature row: 32 px icon slot, title and description.
-/// `(w, h)` is the glyph's box: the SVG viewBox fitted into 20 px.
-fn feature(
-    glyph: &'static str,
-    (w, h): (f32, f32),
-    title: &'static str,
-    body: &'static str,
-    t: &Theme,
-) -> Div {
+fn feature(glyph: &'static str, title: &'static str, body: &'static str, t: &Theme) -> Div {
     div()
         .flex()
         .items_center()
@@ -60,13 +54,7 @@ fn feature(
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(
-                    svg()
-                        .path(SharedString::from(format!("icons/{glyph}.svg")))
-                        .w(px(w))
-                        .h(px(h))
-                        .text_color(t.text),
-                ),
+                .child(icon::icon(glyph, 20., t.text)),
         )
         .child(
             div()
@@ -82,11 +70,13 @@ fn feature(
 
 #[derive(Default)]
 pub struct MobileSetupPage {
-    /// The composed artwork for the last device size it was drawn at.
+    /// The artwork as last drawn: its box (the tile grid matters) and page color.
     artwork: ArtworkCache,
+    /// Pointer over `Get started`.
+    hovered: bool,
 }
 
-type ArtworkCache = Rc<RefCell<Option<(Size<DevicePixels>, Arc<RenderImage>)>>>;
+type ArtworkCache = Rc<RefCell<Option<(Bounds<Pixels>, Hsla, Arc<RenderImage>, bool)>>>;
 
 /// The two artwork PNGs as RGBA; the overlay premultiplied (Skia's N32 premul,
 /// `round(c * a / 255)`).
@@ -111,29 +101,57 @@ static ARTWORK: LazyLock<(RgbaImage, RgbaImage)> = LazyLock::new(|| {
     (background, overlay)
 });
 
-/// Fills its box with the artwork exactly as Chrome's software raster paints the two layers:
-/// both are resampled on the CPU at device resolution (see [`skia_axis`]) and drawn 1:1, since
-/// GPU texture filtering rounds differently.
-fn artwork(cache: ArtworkCache) -> impl IntoElement {
+/// The `rounded-xl` artwork box: `page-artwork-background` (cover) under `page-artwork-shared`
+/// (contain). On macOS Skia rasterizes both inside the anti-aliased clip over `page` like
+/// Chrome's software raster, drawn 1:1 since GPU texture filtering rounds differently;
+/// elsewhere [`compose`] resamples them on the CPU and GPUI rounds the corners.
+fn artwork(cache: ArtworkCache, page: Hsla) -> impl IntoElement {
+    let radius = Corners::all(Theme::RADIUS_XL);
     canvas(
         move |bounds, window, _| {
-            let scale = window.scale_factor();
-            let size = size(
-                DevicePixels((f32::from(bounds.size.width) * scale).round() as i32),
-                DevicePixels((f32::from(bounds.size.height) * scale).round() as i32),
-            );
             let mut cache = cache.borrow_mut();
-            match &*cache {
-                Some((s, image)) if *s == size => image.clone(),
-                _ => {
-                    let image = Arc::new(compose(size.width.0 as u32, size.height.0 as u32));
-                    cache.insert((size, image)).1.clone()
-                }
+            if let Some((b, p, image, rounded)) = &*cache
+                && *b == bounds
+                && *p == page
+            {
+                return (image.clone(), *rounded);
             }
+            let scale = window.scale_factor();
+            let dev = |v: Pixels| (f32::from(v) * scale).round() as u32;
+            let (w, h) = (dev(bounds.size.width), dev(bounds.size.height));
+            let (background, overlay) = &*ARTWORK;
+            let dst = |src: &RgbaImage, cover: bool| {
+                let [(x, iw), (y, ih)] = fit(w, h, src, cover);
+                let at = |v: f32| px(v / scale);
+                Bounds::new(bounds.origin + point(at(x), at(y)), size(at(iw), at(ih)))
+            };
+            let skia = shapes::raster_images(
+                &[
+                    (background, dst(background, true)),
+                    (overlay, dst(overlay, false)),
+                ],
+                bounds,
+                radius,
+                Squircle,
+                page,
+                window,
+            )
+            .and_then(|rgba| RgbaImage::from_raw(w, h, rgba));
+            let rounded = skia.is_none();
+            let image = Arc::new(match skia {
+                Some(mut rgba) => {
+                    rgba.pixels_mut().for_each(|p| p.0.swap(0, 2));
+                    RenderImage::new([Frame::new(rgba)])
+                }
+                None => compose(w, h),
+            });
+            *cache = Some((bounds, page, image.clone(), rounded));
+            (image, rounded)
         },
-        |bounds, image, window, _| {
+        move |bounds, (image, rounded), window, _| {
+            let radius = if rounded { radius } else { Corners::default() };
             window
-                .paint_image(bounds, bounds, Theme::RADIUS_XL.into(), image, 0, false)
+                .paint_image(bounds, bounds, radius, image, 0, false)
                 .ok();
         },
     )
@@ -206,7 +224,8 @@ fn bilerp(
     })
 }
 
-/// Background (cover) with the premultiplied overlay (contain) composited src-over, as BGRA.
+/// Background (cover) with the premultiplied overlay (contain) composited src-over, as BGRA:
+/// Chrome's software raster on the CPU, without its span restarts (the fallback off macOS).
 fn compose(w: u32, h: u32) -> RenderImage {
     let (background, overlay) = &*ARTWORK;
     let span = |(start, len): (f32, f32)| (start as i32).max(0)..((start + len) as i32);
@@ -251,12 +270,23 @@ impl Render for MobileSetupPage {
         } else {
             t.text_inverse
         };
-        let hover_bg = t.button_primary_solid_hover;
+        let button_bg = if self.hovered {
+            t.button_primary_solid_hover
+        } else {
+            t.button_primary_solid
+        };
         // `divide-y-[0.5px] divide-border`
         let divider = |row: Div| row.border_b(px(0.5)).border_color(t.border);
         div()
             .size_full()
+            .relative()
             .flex()
+            // The page's own `bg-token-main-surface-primary`: a second fill of the main
+            // surface color, a rect under `<main>`'s 12 px rounded clip.
+            .child(shapes::clip_path_fill(
+                Corners::all(Theme::RADIUS_XL_BASE),
+                t.surface,
+            ))
             .child(
                 div()
                     .flex_1()
@@ -306,30 +336,31 @@ impl Render for MobileSetupPage {
                                 div()
                                     .w_full()
                                     .max_w(px(400.))
+                                    .relative()
                                     .flex()
                                     .flex_col()
-                                    .overflow_hidden()
-                                    .border_1()
-                                    .border_color(t.border)
-                                    .rounded(px(20.))
+                                    .child(shapes::decoration(shapes::Decoration {
+                                        radius: Corners::all(px(20.)),
+                                        corner: Squircle,
+                                        border: Some((px(1.), t.border)),
+                                        ..Default::default()
+                                    }))
+                                    .p(px(1.))
                                     .text_left()
                                     .child(divider(feature(
                                         "mobile-phone",
-                                        (20., 20.),
                                         "Pick up where you left off",
                                         "Continue any chat or project from the ChatGPT desktop app",
                                         t,
                                     )))
                                     .child(divider(feature(
                                         "mobile-chat",
-                                        (20., 20. * 12. / 14.),
                                         "Stay in the loop",
                                         "Get notified when ChatGPT finishes a task or needs your attention",
                                         t,
                                     )))
                                     .child(feature(
                                         "mobile-start",
-                                        (20., 20. * 20. / 21.),
                                         "Start something new",
                                         "Just send a message to start a task on your desktop",
                                         t,
@@ -341,14 +372,20 @@ impl Render for MobileSetupPage {
                                     .w_full()
                                     .max_w(px(400.))
                                     .h(px(36.))
+                                    .relative()
                                     .flex()
                                     .items_center()
                                     .justify_center()
-                                    .border_1()
-                                    .border_color(t.border)
-                                    .rounded_full()
-                                    .bg(t.button_primary_solid)
-                                    .hover(move |s| s.bg(hover_bg))
+                                    .child(shapes::decoration(shapes::Decoration {
+                                        radius: Corners::all(px(9999.)),
+                                        fill: Some(button_bg),
+                                        border: Some((px(1.), t.border)),
+                                        ..Default::default()
+                                    }))
+                                    .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                                        this.hovered = *hovered;
+                                        cx.notify();
+                                    }))
                                     .on_click(crate::dispatch::<GetStarted>)
                                     .child(text("Get started", 14., 18., 430., button_fg)),
                             )
@@ -373,7 +410,7 @@ impl Render for MobileSetupPage {
                     .flex_1()
                     .min_w_0()
                     .p(px(12.))
-                    .child(artwork(self.artwork.clone())),
+                    .child(artwork(self.artwork.clone(), t.surface)),
             )
     }
 }
