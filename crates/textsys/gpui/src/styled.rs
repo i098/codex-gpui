@@ -758,6 +758,15 @@ pub trait Styled: Sized {
         self
     }
 
+    /// [`Styled::layer`] outside the enclosing layers: Chromium squashes content that overlaps a
+    /// composited layer into a layer of its own, and the compositor blends that layer's
+    /// transparent tile onto the composited pixels below it (cc layers do not nest).
+    fn top_layer(mut self) -> Self {
+        self.style().layer = Some(true);
+        self.style().top_layer = Some(true);
+        self
+    }
+
     /// Sets the grid columns of this element.
     fn grid_cols(mut self, cols: u16) -> Self {
         self.style().grid_cols = Some(GridTemplate {

@@ -578,14 +578,17 @@ fn paint_line(
             ),
             origin.y,
         );
-        let mut prev_glyph_position = Point::default();
+        // Each glyph sits at its row's origin plus its offset in the row, as Skia adds a text
+        // blob's origin to every glyph offset: summing deltas instead drifts by f32 rounding
+        // at large x and flips glyphs that sit on a 1/4 device px subpixel tie.
+        let (mut row_x, mut row_start) = (glyph_origin.x, px(0.));
         let mut max_glyph_size = size(px(0.), px(0.));
         let mut first_glyph_x = origin.x;
         for (run_ix, run) in layout.runs.iter().enumerate() {
             max_glyph_size = text_system.bounding_box(run.font_id, layout.font_size).size;
 
             for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
-                glyph_origin.x += glyph.position.x - prev_glyph_position.x;
+                glyph_origin.x = row_x + (glyph.position.x - row_start);
                 if glyph_ix == 0 && run_ix == 0 {
                     first_glyph_x = glyph_origin.x;
                 }
@@ -631,7 +634,7 @@ fn paint_line(
                         }
                     }
 
-                    glyph_origin.x = aligned_origin_x(
+                    row_x = aligned_origin_x(
                         origin,
                         align_width.unwrap_or(layout.width),
                         glyph.position.x,
@@ -640,9 +643,10 @@ fn paint_line(
                         text,
                         wraps.peek(),
                     );
+                    row_start = glyph.position.x;
+                    glyph_origin.x = row_x;
                     glyph_origin.y += line_height;
                 }
-                prev_glyph_position = glyph.position;
 
                 let mut finished_underline: Option<(Point<Pixels>, UnderlineStyle, Range<usize>)> =
                     None;

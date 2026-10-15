@@ -196,15 +196,14 @@ impl LineWrapper {
         truncation_affix: &str,
         truncate_from: TruncateFrom,
     ) -> Option<usize> {
-        let mut width = px(0.);
-        let suffix_width = truncation_affix
-            .chars()
-            .map(|c| self.width_for_char(c))
-            .fold(px(0.0), |a, x| a + x);
-        let mut truncate_ix = 0;
-
         match truncate_from {
             TruncateFrom::Start => {
+                let mut width = px(0.);
+                let suffix_width = truncation_affix
+                    .chars()
+                    .map(|c| self.width_for_char(c))
+                    .fold(px(0.0), |a, x| a + x);
+                let mut truncate_ix = 0;
                 for (ix, c) in line.char_indices().rev() {
                     if width + suffix_width < truncate_width {
                         truncate_ix = ix;
@@ -219,18 +218,29 @@ impl LineWrapper {
                 }
             }
             TruncateFrom::End => {
-                for (ix, c) in line.char_indices() {
-                    if width + suffix_width < truncate_width {
-                        truncate_ix = ix;
-                    }
-
-                    let char_width = self.width_for_char(c);
-                    width += char_width;
-
-                    if width.floor() > truncate_width {
-                        return Some(truncate_ix);
-                    }
+                // Blink: the ellipsis follows the longest run of whole shaped glyphs that fits
+                // beside it (kerning included).
+                let layout = |s: &str| {
+                    self.text_system.platform_text_system.layout_line(
+                        s,
+                        self.font_size,
+                        &[crate::FontRun {
+                            len: s.len(),
+                            font_id: self.font_id,
+                        }],
+                    )
+                };
+                let line_layout = layout(line);
+                if line_layout.width <= truncate_width {
+                    return None;
                 }
+                let available = truncate_width - layout(truncation_affix).width;
+                let glyphs = line_layout.runs.iter().flat_map(|r| &r.glyphs);
+                let ends = glyphs.clone().skip(1).map(|g| g.position.x);
+                return glyphs
+                    .zip(ends.chain([line_layout.width]))
+                    .find(|(_, end)| *end > available)
+                    .map(|(g, _)| g.index);
             }
             TruncateFrom::Middle => {}
         }
@@ -334,11 +344,10 @@ impl LineWrapper {
                     "{truncation_affix}{}",
                     &line[line.ceil_char_boundary(truncate_ix + 1)..]
                 )),
-                TruncateFrom::End => SharedString::from(format!(
-                    "{}{truncation_affix}",
-                    line[..truncate_ix]
-                        .trim_end_matches(|c: char| c.is_whitespace() || c.is_ascii_punctuation())
-                )),
+                // Blink's `text-overflow: ellipsis` keeps whatever fits, spaces included.
+                TruncateFrom::End => {
+                    SharedString::from(format!("{}{truncation_affix}", &line[..truncate_ix]))
+                }
                 TruncateFrom::Middle => unreachable!("Middle truncation is handled above"),
             };
             let mut runs = runs.to_vec();
