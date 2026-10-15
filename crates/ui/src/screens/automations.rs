@@ -241,13 +241,37 @@ impl Render for ScheduledSidebar {
     }
 }
 
+/// The ref captures' partial rasters of the card tiles (`shapes::Decoration::playback`), by
+/// viewport: after the svg `<img>` reload, cc re-rastered these root tiles through these rects
+/// (device px), found by replaying Chromium's command log per tile. Both themes alike.
+fn card_playback(window: &Window) -> &'static [([i32; 2], [i32; 4])] {
+    if window.viewport_size().width >= px(1440.) {
+        &[
+            ([1020, 510], [1085, 748, 1532, 880]),
+            ([1020, 1020], [1075, 1140, 1532, 1368]),
+            ([1530, 510], [1532, 900, 2042, 922]),
+        ]
+    } else {
+        &[
+            ([510, 510], [924, 770, 1022, 1022]),
+            ([510, 1020], [915, 1070, 1022, 1300]),
+        ]
+    }
+}
+
 /// Main column of the empty page: hero and the suggested-task grid.
 pub struct AutomationsPage {
     cards: Vec<Suggestion>,
 }
 
 impl AutomationsPage {
-    fn card(&self, i: usize, s: &Suggestion, cx: &App) -> impl IntoElement {
+    fn card(
+        &self,
+        i: usize,
+        s: &Suggestion,
+        playback: &'static [([i32; 2], [i32; 4])],
+        cx: &App,
+    ) -> impl IntoElement {
         let t: &Theme = cx.theme();
         let hover_bg = t.ghost_hover;
         // `icon_url` is shown from its bundled copy under assets/ui/automations, its paths
@@ -303,6 +327,7 @@ impl AutomationsPage {
                 radius: Corners::all(px(24.)),
                 border: Some((px(1.), t.border)),
                 dashed: true,
+                playback,
                 ..Default::default()
             }))
             .hover(move |st| st.bg(hover_bg))
@@ -346,13 +371,14 @@ impl AutomationsPage {
 }
 
 impl Render for AutomationsPage {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let playback = card_playback(window);
         let t = cx.theme();
         let rows = self.cards.chunks(2).enumerate().map(|(r, pair)| {
             div().flex().gap(px(20.)).children(
                 pair.iter()
                     .enumerate()
-                    .map(|(c, s)| self.card(r * 2 + c, s, cx)),
+                    .map(|(c, s)| self.card(r * 2 + c, s, playback, cx)),
             )
         });
         div()

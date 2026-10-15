@@ -85,6 +85,12 @@ pub struct Decoration {
     pub dashed: bool,
     /// CSS order: the first shadow is the top layer.
     pub shadows: Vec<Shadow>,
+    /// cc partial raster, fitted to a capture: per root-layer tile origin (device px), the
+    /// playback rect (device px) Chromium last rastered that tile through. Skia then starts
+    /// the AA clips and saveLayer devices on that rect, which moves edge px by one or two.
+    /// ponytail: the rects are capture timing (svg reloads invalidate tiles); drop them with a
+    /// deterministic capture.
+    pub playback: &'static [([i32; 2], [i32; 4])],
 }
 
 /// An element covering its parent's box that paints `d`.

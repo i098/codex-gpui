@@ -833,6 +833,9 @@ pub(crate) struct Layer {
     pub(crate) composited: bool,
     /// The device origin (layer px) of the enclosing [`with_layer`].
     pub(crate) device: Option<[i32; 2]>,
+    /// cc partial raster ([`crate::Decoration::playback`]): tile origins and the playback
+    /// rect (layer px) each was last rastered through.
+    pub(crate) playback: &'static [([i32; 2], [i32; 4])],
 }
 
 impl Layer {
@@ -869,6 +872,7 @@ impl Layer {
             tile: size.map_or([TILE; 2], cc_tile),
             composited: composited.is_some(),
             device,
+            playback: &[],
         }
     }
 
@@ -885,6 +889,26 @@ impl Layer {
             self.window[0] - self.origin[0],
             self.window[1] - self.origin[1],
         ]
+    }
+
+    /// The playback rect of the tile at `o` of size `ts`, within the tile.
+    fn playback(&self, o: [i32; 2], ts: (i32, i32)) -> Option<[i32; 4]> {
+        let &(_, r) = self.playback.iter().find(|(t, _)| *t == o)?;
+        let r = [
+            r[0].max(o[0]),
+            r[1].max(o[1]),
+            r[2].min(o[0] + ts.0),
+            r[3].min(o[1] + ts.1),
+        ];
+        (r[0] < r[2] && r[1] < r[3]).then_some(r)
+    }
+}
+
+/// cc's playback rect clip, a plain rect: the AA clips then start on it.
+fn clip_playback(c: &Canvas, r: Option<[i32; 4]>) {
+    if let Some([x0, y0, x1, y1]) = r {
+        let r = Rect::new(x0 as f32, y0 as f32, x1 as f32, y1 as f32);
+        c.clip_rect(r, ClipOp::Intersect, false);
     }
 }
 
@@ -1006,8 +1030,9 @@ fn raster(
         let f = |v: u8| f32::from(v) / 255.;
         Color4f::new(f(r), f(g), f(b), f(a))
     };
-    let tile = |o: [i32; 2], size: (i32, i32), p: Probe| {
+    let tile = |o: [i32; 2], size: (i32, i32), p: Probe, pb: Option<[i32; 4]>| {
         tile_pixels(o, size, color(p.bg, 255), |c| {
+            clip_playback(c, pb);
             for clip in clips {
                 clip.clip(c, ClipOp::Intersect);
             }
@@ -1036,9 +1061,18 @@ fn raster(
         if ls.0 <= 0 || ls.1 <= 0 {
             continue;
         }
-        let seen: Vec<_> = probes.iter().map(|&p| tile(lo, ls, p)).collect();
+        let full: Vec<_> = probes.iter().map(|&p| tile(lo, ls, p, None)).collect();
+        // A partial raster: the px in the playback rect take that pass.
+        let part = layer.playback(o, ts).map(|r| {
+            let s: Vec<_> = probes.iter().map(|&p| tile(lo, ls, p, Some(r))).collect();
+            (r, s)
+        });
         for y in oy0.max(lo[1])..oy1 {
             for x in ox0.max(lo[0])..ox1 {
+                let seen = match &part {
+                    Some((r, s)) if x >= r[0] && y >= r[1] && x < r[2] && y < r[3] => s,
+                    _ => &full,
+                };
                 // RGBA bytes (macOS N32).
                 let i = (y - lo[1]) as usize * seen[0].1 + (x - lo[0]) as usize * 4;
                 let px: Vec<[u8; 3]> = seen
@@ -1143,63 +1177,81 @@ fn restore_sprites(op: &Op, col: Color4f, layer: Layer) -> Vec<Sprite> {
     let mut index = HashMap::new();
     let mut px = vec![(usize::MAX, 0u8); (w * h) as usize];
     for (o, ts, [ox0, oy0, ox1, oy1]) in tiles([x0, y0, x1, y1], size, layer.tile) {
-        // The restore's clip coverage, and whether Skia made it a plain rect.
-        let mut rect = false;
-        let clip = tile_pixels(o, ts, black, |c| {
-            match op {
-                Op::ClipLayer { outer, .. } => outer.clip(c, ClipOp::Intersect),
+        // A partial raster then redraws the px in its playback rect: Skia's layer device is
+        // the clip bounds within that rect, whose origin moves the float geometry.
+        let part = layer.playback(o, ts);
+        for pb in std::iter::once(None).chain(part.map(Some)) {
+            // The restore's clip coverage, and whether Skia made it a plain rect.
+            let mut rect = false;
+            let clip = tile_pixels(o, ts, black, |c| {
+                clip_playback(c, pb);
+                match op {
+                    Op::ClipLayer { outer, .. } => outer.clip(c, ClipOp::Intersect),
+                    Op::Border {
+                        outer,
+                        inner,
+                        dashed,
+                    } => ring_clip(c, outer, inner, *dashed),
+                    _ => {}
+                }
+                rect = c.is_clip_rect();
+                c.draw_paint(&fill_paint(white));
+            });
+            let [bx0, by0, bx1, by1] = pb.unwrap_or([o[0], o[1], o[0] + ts.0, o[1] + ts.1]);
+            let (lo, ls) = match op {
+                // The clip layer's device: the outer clip's bounds within the tile.
+                Op::ClipLayer { outer, .. } | Op::Border { outer, .. }
+                    if pb.is_some() || matches!(op, Op::ClipLayer { .. }) =>
+                {
+                    let r = outer.rr.r;
+                    let lo = [bx0.max(r[0].floor() as i32), by0.max(r[1].floor() as i32)];
+                    let x1 = bx1.min((r[0] + r[2]).ceil() as i32);
+                    let y1 = by1.min((r[1] + r[3]).ceil() as i32);
+                    (lo, (x1 - lo[0], y1 - lo[1]))
+                }
+                _ => (o, ts),
+            };
+            if ls.0 <= 0 || ls.1 <= 0 {
+                continue;
+            }
+            let content = tile_pixels(lo, ls, clear, |c| match op {
+                Op::ClipLayer { outer, inner, fill } => {
+                    Op::layer_content(c, outer, inner, *fill, col)
+                }
                 Op::Border {
                     outer,
                     inner,
                     dashed,
-                } => ring_clip(c, outer, inner, *dashed),
+                } => ring_content(c, outer, inner, *dashed, opaque),
                 _ => {}
-            }
-            rect = c.is_clip_rect();
-            c.draw_paint(&fill_paint(white));
-        });
-        let (lo, ls) = match op {
-            // The clip layer's device: the outer clip's bounds within the tile.
-            Op::ClipLayer { outer, .. } => {
-                let r = outer.rr.r;
-                let lo = [o[0].max(r[0].floor() as i32), o[1].max(r[1].floor() as i32)];
-                let x1 = (o[0] + ts.0).min((r[0] + r[2]).ceil() as i32);
-                let y1 = (o[1] + ts.1).min((r[1] + r[3]).ceil() as i32);
-                (lo, (x1 - lo[0], y1 - lo[1]))
-            }
-            _ => (o, ts),
-        };
-        if ls.0 <= 0 || ls.1 <= 0 {
-            continue;
-        }
-        let content = tile_pixels(lo, ls, clear, |c| match op {
-            Op::ClipLayer { outer, inner, fill } => Op::layer_content(c, outer, inner, *fill, col),
-            Op::Border {
-                outer,
-                inner,
-                dashed,
-            } => ring_content(c, outer, inner, *dashed, opaque),
-            _ => {}
-        });
-        let sprite = rect && alpha < 255;
-        for y in oy0.max(lo[1])..oy1.min(lo[1] + ls.1) {
-            for x in ox0.max(lo[0])..ox1.min(lo[0] + ls.0) {
-                let i = (y - o[1]) as usize * clip.1 + (x - o[0]) as usize * 4;
-                let m = clip.0[i + 1];
-                let j = (y - lo[1]) as usize * content.1 + (x - lo[0]) as usize * 4;
-                let mut l: [u8; 4] = content.0[j..j + 4].try_into().expect("rgba");
-                if !sprite {
-                    l = l.map(|v| ((u32::from(v) * (u32::from(alpha) + 1)) >> 8) as u8);
+            });
+            let sprite = rect && alpha < 255;
+            for y in oy0.max(lo[1])..oy1.min(lo[1] + ls.1) {
+                for x in ox0.max(lo[0])..ox1.min(lo[0] + ls.0) {
+                    let at = ((y - y0) * w + x - x0) as usize;
+                    if let Some(r) = pb {
+                        if x < r[0] || y < r[1] || x >= r[2] || y >= r[3] {
+                            continue;
+                        }
+                        px[at] = (usize::MAX, 0);
+                    }
+                    let i = (y - o[1]) as usize * clip.1 + (x - o[0]) as usize * 4;
+                    let m = clip.0[i + 1];
+                    let j = (y - lo[1]) as usize * content.1 + (x - lo[0]) as usize * 4;
+                    let mut l: [u8; 4] = content.0[j..j + 4].try_into().expect("rgba");
+                    if !sprite {
+                        l = l.map(|v| ((u32::from(v) * (u32::from(alpha) + 1)) >> 8) as u8);
+                    }
+                    if m == 0 || l[3] == 0 {
+                        continue;
+                    }
+                    let key = (l, sprite || m < 255);
+                    let g = *index.entry(key).or_insert_with(|| {
+                        groups.push(key);
+                        groups.len() - 1
+                    });
+                    px[at] = (g, if sprite { alpha } else { m });
                 }
-                if m == 0 || l[3] == 0 {
-                    continue;
-                }
-                let key = (l, sprite || m < 255);
-                let g = *index.entry(key).or_insert_with(|| {
-                    groups.push(key);
-                    groups.len() - 1
-                });
-                px[((y - y0) * w + x - x0) as usize] = (g, if sprite { alpha } else { m });
             }
         }
     }
@@ -1401,8 +1453,18 @@ fn svg(plane: &[u8], w: i32, h: i32) -> Arc<str> {
 }
 
 pub(crate) fn paint_sprites(sprites: &[Sprite], color: Hsla, window: &mut Window, cx: &App) {
+    // An op's opaque-layer sprites cover disjoint px: one GPUI layer holds them all. A layer
+    // per sprite burns layer ids, which wrap at 255, and a px whose last layer had the same id
+    // would resume that unrelated layer.
+    paint_each(sprites, false, color, window, cx);
+    if sprites.iter().any(|s| s.opaque_layer) {
+        window.with_skia_layer(255, |window| paint_each(sprites, true, color, window, cx));
+    }
+}
+
+fn paint_each(sprites: &[Sprite], layered: bool, color: Hsla, window: &mut Window, cx: &App) {
     let s = window.scale_factor();
-    for sp in sprites {
+    for sp in sprites.iter().filter(|sp| sp.opaque_layer == layered) {
         let color: Hsla = sp.color.map_or(color, |[r, g, b, a]| {
             let f = |v: u8| f32::from(v) / 255.;
             Rgba {
@@ -1421,23 +1483,16 @@ pub(crate) fn paint_sprites(sprites: &[Sprite], color: Hsla, window: &mut Window
             h: color.h + 2. * f32::from(sp.mode),
             ..color
         };
-        let paint = |window: &mut Window| {
-            window
-                .paint_svg(
-                    bounds,
-                    sp.path.clone(),
-                    Some(sp.svg.as_bytes()),
-                    TransformationMatrix::unit(),
-                    color,
-                    cx,
-                )
-                .expect("shapes: paint mask sprite");
-        };
-        if sp.opaque_layer {
-            window.with_skia_layer(255, paint)
-        } else {
-            paint(window)
-        }
+        window
+            .paint_svg(
+                bounds,
+                sp.path.clone(),
+                Some(sp.svg.as_bytes()),
+                TransformationMatrix::unit(),
+                color,
+                cx,
+            )
+            .expect("shapes: paint mask sprite");
     }
 }
 
@@ -1556,7 +1611,11 @@ pub(crate) fn paint(
     window: &mut Window,
     cx: &App,
 ) {
-    let (layer, s) = (Layer::new(window, composited), window.scale_factor());
+    let layer = Layer {
+        playback: d.playback,
+        ..Layer::new(window, composited)
+    };
+    let s = window.scale_factor();
     // Backdrop blurs read the window-space ops; the raster is in layer space.
     crate::backdrop::record(&ops(d, bounds, s).1, window);
     for (op, color) in ops(d, layer.local(bounds, s), s).1 {

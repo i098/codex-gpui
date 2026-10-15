@@ -230,21 +230,22 @@ impl Pixmap {
     /// reads it.
     fn draw(r: [i32; 4], clear: Color, draw: impl FnOnce(&Canvas)) -> Self {
         let mut out = Self::new(r);
-        out.blit(r, clear, [r[0], r[1]], None, draw);
+        out.blit(r, clear, [r[0], r[1]], None, None, draw);
         out
     }
 
-    /// Renders `draw` on a surface of color space `cs` at `origin` (window device px) covering
-    /// `area`, and copies the pixels of `area` into `self`.
+    /// Renders `draw` on a surface of color space `cs` at `origin` (window device px) of `size`
+    /// (`None`: to `area`'s end), and copies the pixels of `area` into `self`.
     fn blit(
         &mut self,
         area: [i32; 4],
         clear: Color,
         origin: [i32; 2],
+        size: Option<(i32, i32)>,
         cs: impl Into<Option<ColorSpace>>,
         draw: impl FnOnce(&Canvas),
     ) {
-        let size = (area[2] - origin[0], area[3] - origin[1]);
+        let size = size.unwrap_or((area[2] - origin[0], area[3] - origin[1]));
         let (bytes, rb) = skia::surface_pixels(origin, size, clear.into(), cs, draw);
         for y in area[1]..area[3] {
             for x in area[0]..area[2] {
@@ -342,6 +343,7 @@ fn draw_layer(target: &mut Pixmap, f: &Filtered) {
         target.r,
         Color::TRANSPARENT,
         o,
+        None,
         ColorSpace::new_srgb(),
         |c| {
             for &(op, color) in &f.ops {
@@ -388,19 +390,28 @@ fn compose(
     out: [i32; 4],
     window: [i32; 2],
 ) -> RenderImage {
-    // The backdrop: the painted ops, rasterized per root cc tile like Chromium.
+    // The backdrop: the painted ops, rasterized per root cc tile like Chromium. The whole tile:
+    // Skia's mask blur reads the path's mask only within 128 px of the clip, so a large
+    // shadow blur (the light composer card's) depends on the tile's extent.
     let mut root = Pixmap::new(region);
-    for (o, _, area) in skia::tiles(region, window, [skia::TILE; 2]) {
+    for (o, size, area) in skia::tiles(region, window, [skia::TILE; 2]) {
         if area[0] >= area[2] || area[1] >= area[3] {
             continue;
         }
-        root.blit(area, Color::BLACK, o, ColorSpace::new_srgb(), |c| {
-            for &(op, color) in painted {
-                c.save();
-                op.draw(c, color);
-                c.restore();
-            }
-        });
+        root.blit(
+            area,
+            Color::BLACK,
+            o,
+            Some(size),
+            ColorSpace::new_srgb(),
+            |c| {
+                for &(op, color) in painted {
+                    c.save();
+                    op.draw(c, color);
+                    c.restore();
+                }
+            },
+        );
     }
     let before = root.clone();
     // The surface's layer, with its nested backdrop-filtered boxes.

@@ -270,7 +270,15 @@ impl Theme {
             background_surface_under: rgba(0xf6f6f6ff).into(),
             surface: rgba(0xffffffff).into(),
             page_surface_layout: rgba(0xf6f6f6d9).into(),
-            sidebar_background: rgba(0xffffffa6).into(),
+            // oklab(0.999994 0.0000455678 0.0000200868 / 0.65): the float pipeline's ties
+            // round up in red and blue, down in green (lab: corner coverage 50, 130, 250).
+            sidebar_background: Rgba {
+                r: 1.00003,
+                g: 0.99999,
+                b: 1.00003,
+                a: 0.65,
+            }
+            .into(),
             surface_secondary: rgba(0xf6f6f6ff).into(),
             surface_tertiary: rgba(0xffffffff).into(),
             surface_elevated: rgba(0xfffffff5).into(),
