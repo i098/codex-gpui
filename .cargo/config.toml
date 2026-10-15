@@ -1,4 +1,4 @@
 # Skia for crates/shapes (macOS): built with Chromium's SkUserConfig legacy defines so its
 # rasterization matches the reference renderer bit for bit. Rebuild: tools/shapes/skia.sh.
 [env]
-SKIA_BINARIES_URL = "https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/skia-chromium-3af4b5de8597961967e192d47058e03f8aabc56754cb15b6/{tag}/skia-binaries-{key}.tar.gz"
+SKIA_BINARIES_URL = "https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/skia-chromium-bf51045792b42afcba4ded9cccf2b885d7b2a9ad35c9cb0a/{tag}/skia-binaries-{key}.tar.gz?skia-chromium-bf51045792b42afcba4ded9cccf2b885d7b2a9ad35c9cb0a"

@@ -5,7 +5,7 @@
 # Results: /tmp/cgx/pshapes/{table.md,verify,before,after,before-diff,after-diff}.png
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-lane=pskia remote=/tmp/cgx-mac dir=target/shapes out=/tmp/cgx/pshapes
+lane=${LANE:-pskia} remote=/tmp/cgx-mac dir=target/shapes out=/tmp/cgx/${LANE:-pshapes}
 lab="cargo run -q -p shapes --features lab --example lab --"
 chs="$remote/chrome-headless-shell-mac-arm64/chrome-headless-shell --headless --user-data-dir=$remote/chs-$lane --hide-scrollbars --force-device-scale-factor=2 --virtual-time-budget=2000"
 # The Mac drops SSH handshakes under load (exit 255): retry those.

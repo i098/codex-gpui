@@ -34,14 +34,19 @@
 //! gpui_apple shader blends each with Skia's integer formula for that mode. Elsewhere it
 //! falls back to GPUI's quad and shadow primitives, which are not Skia-exact.
 //!
-//! Limits: content Chromium paints into a composited layer (a scroll container's contents)
-//! needs that layer's origin ([`paint`]'s `layer`), and is exact only where the layer
-//! is transparent under it; there a fill under a translucent rounded border paints as two
-//! layers, not Blink's clip layer, and so it does with inset shadows anywhere. A
-//! translucent `superellipse` border (alone or in the clip layer) comes back from its
-//! transparency layer as `SkBlendARGB32` at the clip coverage; in some cc tiles whose clip
-//! is a plain rect Chromium restores it with the sprite blitter, 1 level apart. A
-//! `superellipse` shadow with a large blur and spread is 1 level off in its far tail.
+//! Composited layers: put the content in a GPUI `.layer()` div whose origin is Chromium's
+//! layer origin (its ink start: shadows included) and paint with `layer: None`. Every op is
+//! rasterized in that layer's space (Blink's float geometry depends on it) and blitted into
+//! the layer, which is composited once, as cc does. Keep GPUI quads (`.bg()`) out of such a
+//! layer: they bypass it. Without a GPUI layer, [`paint`]'s `layer` gives the origin and each
+//! op is composited on its own.
+//!
+//! Limits: inset shadows paint apart from Blink's clip layer. A translucent `superellipse`
+//! border (alone or in the clip layer) comes back from its transparency layer as
+//! `SkBlendARGB32` at the clip coverage; Blink paints its sides one by one, and some
+//! horizontal sides (in some cc tiles) come back 1 level brighter. A `superellipse` shadow
+//! with a large blur and spread is 1 level off in its far tail. A fill under a CSS `opacity`
+//! rounds 1 level darker on its anti-aliased edge.
 
 use gpui::{App, Bounds, Corners, Hsla, IntoElement, Pixels, Point, Styled as _, Window, canvas};
 
@@ -85,9 +90,14 @@ pub struct Decoration {
 
 /// An element covering its parent's box that paints `d`.
 pub fn decoration(d: Decoration) -> impl IntoElement {
+    cover(move |bounds, window, cx| paint(&d, None, bounds, window, cx))
+}
+
+/// An element covering its parent's box, painted by `paint`.
+fn cover(paint: impl FnOnce(Bounds<Pixels>, &mut Window, &mut App) + 'static) -> impl IntoElement {
     canvas(
         |_, _, _| {},
-        move |bounds, (), window, cx| paint(&d, None, bounds, window, cx),
+        move |bounds, (), window, cx| paint(bounds, window, cx),
     )
     .absolute()
     .top_0()
@@ -116,6 +126,52 @@ pub fn paint(
     }
 }
 
+/// `images` (premultiplied RGBA, each drawn into its `dst` rect in window px) over `page`,
+/// inside the anti-aliased clip of the border box `clip` with `radius` and `corner`: an
+/// `<img>` or `background-image` in an `overflow: hidden` rounded box, rasterized by Skia
+/// (bilinear, Chromium's span and tile restarts included) once per cc tile. RGBA,
+/// row-major over the box's snapped device px rect; `None` off macOS.
+pub fn raster_images(
+    images: &[(&image::RgbaImage, Bounds<Pixels>)],
+    clip: Bounds<Pixels>,
+    radius: Corners<Pixels>,
+    corner: Corner,
+    page: Hsla,
+    window: &Window,
+) -> Option<Vec<u8>> {
+    #[cfg(target_os = "macos")]
+    return Some(skia::raster_images(
+        images, clip, radius, corner, page, window,
+    ));
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (images, clip, radius, corner, page, window);
+        None
+    }
+}
+
+/// An element covering its parent's box that paints `fill` as a square background under
+/// `clip-path: inset(... round radius)` (the clip's corners on this box): Skia draws the rect
+/// inside an anti-aliased clip, whose edge differs from a rounded [`decoration`] fill.
+pub fn clip_path_fill(radius: Corners<Pixels>, fill: Hsla) -> impl IntoElement {
+    cover(move |bounds, window, cx| {
+        #[cfg(target_os = "macos")]
+        skia::paint_clip_path_fill(radius, fill, bounds, window, cx);
+        #[cfg(not(target_os = "macos"))]
+        paint(
+            &Decoration {
+                radius,
+                fill: Some(fill),
+                ..Default::default()
+            },
+            None,
+            bounds,
+            window,
+            cx,
+        );
+    })
+}
+
 /// How a [`backdrop_blur`] box paints `Decoration::fill`.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum Fill {
@@ -134,22 +190,15 @@ pub enum Fill {
 /// box's layer instead. Paint it where the box's decoration goes (first child); its text and
 /// children paint on top as usual.
 pub fn backdrop_blur(blur: Pixels, fill: Fill, d: Decoration) -> impl IntoElement {
-    canvas(
-        |_, _, _| {},
-        move |bounds, (), window, _| {
-            #[cfg(target_os = "macos")]
-            backdrop::paint(blur, fill, &d, bounds, window);
-            #[cfg(not(target_os = "macos"))]
-            {
-                let _ = (blur, fill);
-                quads(&d, bounds, window);
-            }
-        },
-    )
-    .absolute()
-    .top_0()
-    .left_0()
-    .size_full()
+    cover(move |bounds, window, _| {
+        #[cfg(target_os = "macos")]
+        backdrop::paint(blur, fill, &d, bounds, window);
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (blur, fill);
+            quads(&d, bounds, window);
+        }
+    })
 }
 
 /// CSS `mask-image: linear-gradient(to bottom, transparent, black <fade>)` over its parent,
@@ -158,19 +207,12 @@ pub fn backdrop_blur(blur: Pixels, fill: Fill, d: Decoration) -> impl IntoElemen
 /// layer is composited. The rows past `fade` are left as they are. macOS only: elsewhere GPUI
 /// has no layer pixels to mask and nothing is painted.
 pub fn top_fade(fade: Pixels) -> impl IntoElement {
-    canvas(
-        |_, _, _| {},
-        move |bounds, (), window, cx| {
-            #[cfg(target_os = "macos")]
-            mask::paint_top_fade(fade, bounds, window, cx);
-            #[cfg(not(target_os = "macos"))]
-            let _ = (fade, bounds, window, cx);
-        },
-    )
-    .absolute()
-    .top_0()
-    .left_0()
-    .size_full()
+    cover(move |bounds, window, cx| {
+        #[cfg(target_os = "macos")]
+        mask::paint_top_fade(fade, bounds, window, cx);
+        #[cfg(not(target_os = "macos"))]
+        let _ = (fade, bounds, window, cx);
+    })
 }
 
 /// Paints the svg icon `src` (asset bytes; `key` names it for the cache) into `bounds`,

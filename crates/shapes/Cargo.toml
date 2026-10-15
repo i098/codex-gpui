@@ -7,11 +7,11 @@ publish.workspace = true
 
 [dependencies]
 gpui.workspace = true
+image.workspace = true
 
 # Chromium's Skia (tools/shapes/skia.sh builds the archive .cargo/config.toml points at).
 [target.'cfg(target_os = "macos")'.dependencies]
 base64 = "0.22"
-image.workspace = true
 parking_lot = "0.12"
 skia-safe = { version = "=0.153.3", default-features = false, features = ["binary-cache"] }
 

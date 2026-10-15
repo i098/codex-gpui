@@ -10,7 +10,7 @@
 
 use crate::{
     Decoration, Fill,
-    skia::{self, Contour, Layer, Op, STRIDE, TILE, color4f},
+    skia::{self, Contour, Layer, Op, color4f},
 };
 use gpui::{Bounds, Corners, Hsla, Pixels, RenderImage, Rgba, Window, WindowId, point, px};
 use image::{Frame, RgbaImage};
@@ -38,13 +38,15 @@ struct Surface {
 
 #[derive(Default)]
 struct FrameState {
+    /// `Window::draw_count` of the draw this state belongs to.
+    draw: u64,
     /// Decoration ops painted at the root, device px.
     painted: Vec<(Op, Color4f)>,
     surfaces: Vec<Surface>,
 }
 
 thread_local! {
-    /// What each window painted this frame; dropped after the frame.
+    /// What each window painted in its current draw.
     static FRAMES: RefCell<HashMap<WindowId, FrameState>> = Default::default();
     /// Composed images by their inputs.
     /// ponytail: cleared wholesale when full; an LRU only if animation ever thrashes it.
@@ -52,14 +54,18 @@ thread_local! {
 }
 
 fn with_frame<R>(window: &Window, f: impl FnOnce(&mut FrameState) -> R) -> R {
-    let id = window.window_handle().window_id();
+    let draw = window.draw_count();
     FRAMES.with_borrow_mut(|frames| {
-        if !frames.contains_key(&id) {
-            window.on_next_frame(move |_, _| {
-                FRAMES.with_borrow_mut(|frames| frames.remove(&id));
-            });
+        let state = frames
+            .entry(window.window_handle().window_id())
+            .or_default();
+        if state.draw != draw {
+            *state = FrameState {
+                draw,
+                ..Default::default()
+            };
         }
-        f(frames.entry(id).or_default())
+        f(state)
     })
 }
 
@@ -102,38 +108,40 @@ pub(crate) fn paint(
         gradient,
     };
     let size = Layer::new(window, None).window;
-    let (surface, painted) = with_frame(window, |f| {
+    // A nested box paints only its own rect: its outer box's children painted since must stay.
+    let own = snapped(&filtered.contour);
+    let (surface, painted, nested) = with_frame(window, |f| {
         let r = contour.rr.r;
         let inside = |o: &Surface| {
             let q = o.filtered.contour.rr.r;
             r[0] >= q[0] && r[1] >= q[1] && r[0] + r[2] <= q[0] + q[2] && r[1] + r[3] <= q[1] + q[3]
         };
-        let i = match f.surfaces.iter().rposition(inside) {
-            Some(i) => {
-                f.surfaces[i].nested.push(filtered);
-                i
-            }
-            None => {
-                f.surfaces.push(Surface {
-                    filtered,
-                    below: f.painted.len(),
-                    nested: Vec::new(),
-                });
-                f.surfaces.len() - 1
-            }
-        };
-        let s = &f.surfaces[i];
-        (s.clone(), f.painted[..s.below].to_vec())
+        let i = f.surfaces.iter().rposition(inside);
+        match i {
+            Some(i) => f.surfaces[i].nested.push(filtered),
+            None => f.surfaces.push(Surface {
+                filtered,
+                below: f.painted.len(),
+                nested: Vec::new(),
+            }),
+        }
+        let s = &f.surfaces[i.unwrap_or(f.surfaces.len() - 1)];
+        (s.clone(), f.painted[..s.below].to_vec(), i.is_some())
     });
     let region = region(&surface, size);
-    if region[0] >= region[2] || region[1] >= region[3] {
+    let out = if nested {
+        intersect(own, region)
+    } else {
+        region
+    };
+    if out[0] >= out[2] || out[1] >= out[3] {
         return;
     }
     let painted: Vec<(Op, Color4f)> = painted
         .into_iter()
         .filter(|(op, _)| overlaps(op.bbox(), region))
         .collect();
-    let key = format!("{surface:?}{painted:?}{region:?}");
+    let key = format!("{surface:?}{painted:?}{region:?}{out:?}");
     let image = IMAGES.with_borrow_mut(|images| {
         if let Some(image) = images.get(&key) {
             return image.clone();
@@ -143,20 +151,30 @@ pub(crate) fn paint(
                 window.drop_image(image).ok();
             }
         }
-        let image = Arc::new(compose(&surface, &painted, region, size));
+        let image = Arc::new(compose(&surface, &painted, region, out, size));
         images.insert(key, image.clone());
         image
     });
     let at = Bounds::new(
-        point(px(region[0] as f32 / s), px(region[1] as f32 / s)),
+        point(px(out[0] as f32 / s), px(out[1] as f32 / s)),
         gpui::size(
-            px((region[2] - region[0]) as f32 / s),
-            px((region[3] - region[1]) as f32 / s),
+            px((out[2] - out[0]) as f32 / s),
+            px((out[3] - out[1]) as f32 / s),
         ),
     );
     window
         .paint_image(at, at, Corners::default(), image, 0, false)
         .ok();
+}
+
+/// The rect `[x0, y0, x1, y1]` both `a` and `b` cover (empty if none).
+fn intersect(a: [i32; 4], b: [i32; 4]) -> [i32; 4] {
+    [
+        a[0].max(b[0]),
+        a[1].max(b[1]),
+        a[2].min(b[2]),
+        a[3].min(b[3]),
+    ]
 }
 
 fn overlaps(a: [i32; 4], b: [i32; 4]) -> bool {
@@ -186,12 +204,7 @@ fn region(s: &Surface, window: [i32; 2]) -> [i32; 4] {
             r[3].max(b[3]),
         ];
     }
-    [
-        r[0].max(0),
-        r[1].max(0),
-        r[2].min(window[0]),
-        r[3].min(window[1]),
-    ]
+    intersect(r, [0, 0, window[0], window[1]])
 }
 
 /// Premultiplied RGBA pixels of a `[x0, y0, x1, y1]` region.
@@ -273,13 +286,7 @@ fn filter(target: &mut Pixmap, f: &Filtered) {
 /// The backdrop filter of a box with contour `contour`: `target` blurred in the box's rect
 /// (clamped to `target`'s region), masked by the contour and blended back onto `target`.
 fn blur_backdrop(target: &mut Pixmap, contour: &Contour, sigma: f32) {
-    let rect = snapped(contour);
-    let rect = [
-        rect[0].max(target.r[0]),
-        rect[1].max(target.r[1]),
-        rect[2].min(target.r[2]),
-        rect[3].min(target.r[3]),
-    ];
+    let rect = intersect(snapped(contour), target.r);
     if rect[0] < rect[2] && rect[1] < rect[3] {
         let (w, h) = (rect[2] - rect[0], rect[3] - rect[1]);
         // In the draw's local space: window device px.
@@ -354,44 +361,28 @@ fn draw_layer(target: &mut Pixmap, f: &Filtered) {
     }
 }
 
-/// The surface's final pixels over `region` as a BGRA image: transparent where the target is
-/// unchanged.
+/// The surface's final pixels over `out` (inside `region`) as a BGRA image: transparent where
+/// the target is unchanged.
 fn compose(
     s: &Surface,
     painted: &[(Op, Color4f)],
     region: [i32; 4],
+    out: [i32; 4],
     window: [i32; 2],
 ) -> RenderImage {
     // The backdrop: the painted ops, rasterized per root cc tile like Chromium.
     let mut root = Pixmap::new(region);
-    let owner = |v: i32| if v <= 0 { 0 } else { (v - 1) / STRIDE };
-    let own = |v: i32, t: i32| if t == 0 { 0 } else { v + 1 };
-    for ty in owner(region[1])..=owner(region[3] - 1) {
-        for tx in owner(region[0])..=owner(region[2] - 1) {
-            let o = [tx * STRIDE, ty * STRIDE];
-            let area = [
-                region[0].max(own(o[0], tx)),
-                region[1].max(own(o[1], ty)),
-                region[2]
-                    .min(o[0] + STRIDE + 1)
-                    .min(o[0] + TILE)
-                    .min(window[0]),
-                region[3]
-                    .min(o[1] + STRIDE + 1)
-                    .min(o[1] + TILE)
-                    .min(window[1]),
-            ];
-            if area[0] >= area[2] || area[1] >= area[3] {
-                continue;
-            }
-            root.blit(area, Color::BLACK, o, |c| {
-                for &(op, color) in painted {
-                    c.save();
-                    op.draw(c, color);
-                    c.restore();
-                }
-            });
+    for (o, _, area) in skia::tiles(region, window) {
+        if area[0] >= area[2] || area[1] >= area[3] {
+            continue;
         }
+        root.blit(area, Color::BLACK, o, |c| {
+            for &(op, color) in painted {
+                c.save();
+                op.draw(c, color);
+                c.restore();
+            }
+        });
     }
     let before = root.clone();
     // The surface's layer, with its nested backdrop-filtered boxes.
@@ -401,21 +392,15 @@ fn compose(
         filter(&mut layer, n);
     }
     blur_backdrop(&mut root, &s.filtered.contour, s.filtered.sigma);
-    let mut out = RgbaImage::new(
-        (region[2] - region[0]) as u32,
-        (region[3] - region[1]) as u32,
-    );
-    for (i, (p, (r, b))) in out
-        .pixels_mut()
-        .zip(root.px.iter().zip(&before.px))
-        .enumerate()
-    {
-        let l = layer.px[i];
-        let f = over(l, *r);
-        if l[3] > 0 || r != b {
+    let mut image = RgbaImage::new((out[2] - out[0]) as u32, (out[3] - out[1]) as u32);
+    for (x, y, p) in image.enumerate_pixels_mut() {
+        let i = root.index(out[0] + x as i32, out[1] + y as i32);
+        let (l, r) = (layer.px[i], root.px[i]);
+        if l[3] > 0 || r != before.px[i] {
+            let f = over(l, r);
             // BGRA for GPUI; opaque.
             *p = image::Rgba([f[2], f[1], f[0], 255]);
         }
     }
-    RenderImage::new(vec![Frame::new(out)])
+    RenderImage::new(vec![Frame::new(image)])
 }

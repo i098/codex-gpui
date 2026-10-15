@@ -8,7 +8,7 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 version=0.153.3 remote=/tmp/cgx-mac/skia-build
-defines='"-DSK_SUPPORT_LEGACY_CONIC_CHOP","-DSK_USE_PADDED_BLUR_UPSCALE","-DSK_LEGACY_INITWITHPREV_LAYER_SIZING","-DSK_AVOID_SLOW_RASTER_PIPELINE_BLURS","-DSK_SUPPORT_LEGACY_RRECT_TRANSFORM","-DSK_SUPPORT_LEGACY_ANISOTROPIC_MIPMAP_SCALE","-DSK_USE_SAFE_INSET_FOR_TEXTURE_SAMPLING"'
+defines='"-DSK_SUPPORT_LEGACY_CONIC_CHOP","-DSK_USE_PADDED_BLUR_UPSCALE","-DSK_LEGACY_INITWITHPREV_LAYER_SIZING","-DSK_AVOID_SLOW_RASTER_PIPELINE_BLURS","-DSK_SUPPORT_LEGACY_RRECT_TRANSFORM","-DSK_SUPPORT_LEGACY_ANISOTROPIC_MIPMAP_SCALE","-DSK_USE_SAFE_INSET_FOR_TEXTURE_SAMPLING","-DSK_ENABLE_LEGACY_SHADERCONTEXT"'
 ssh mac "set -e; mkdir -p $remote/src /tmp/cgx-mac/bin; cd $remote
   [ -x /tmp/cgx-mac/bin/ninja ] || (cd /tmp/cgx-mac/bin && curl -sfLO https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-mac.zip && unzip -oq ninja-mac.zip)
   printf '[package]\nname = \"skiabuild\"\nversion = \"0.0.0\"\nedition = \"2021\"\n[dependencies]\nskia-safe = { version = \"=$version\", default-features = false, features = [\"binary-cache\"] }\n[workspace]\n' > Cargo.toml
@@ -25,4 +25,6 @@ dir=skia-chromium-$(openssl rand -hex 24)
 scp -q "mac:$remote/skia-binaries.tar.gz" "/tmp/skia-binaries-$key.tar.gz"
 (. /tmp/cgx/r2env.sh; uvx -q --from awscli aws s3 cp "/tmp/skia-binaries-$key.tar.gz" \
   "s3://swarms-pr-evidence/$dir/$version/skia-binaries-$key.tar.gz" --endpoint-url "$R2_EP" >/dev/null)
-echo "SKIA_BINARIES_URL = \"https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/$dir/{tag}/skia-binaries-{key}.tar.gz\""
+# skia-bindings caches the archive in OUT_DIR by its file name (the URL's last segment) and
+# resumes onto it, so a new archive under the same key needs a new name: the query does it.
+echo "SKIA_BINARIES_URL = \"https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/$dir/{tag}/skia-binaries-{key}.tar.gz?$dir\""
