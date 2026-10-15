@@ -138,6 +138,17 @@ impl DiffPanel {
         let added = self.files.iter().map(|f| f.added).sum();
         let removed = self.files.iter().map(|f| f.removed).sum();
         let tool = |name| round_icon(name, 28., t);
+        // A button with its own `backdrop-filter: blur(24px)`, nested in the capsule's.
+        let lens = || {
+            shapes::backdrop_blur(
+                px(24.),
+                shapes::Fill::Color,
+                Decoration {
+                    radius: Corners::all(px(14.)),
+                    ..Default::default()
+                },
+            )
+        };
         div()
             .h(px(48.))
             .flex_none()
@@ -149,16 +160,18 @@ impl DiffPanel {
                 capsule(t)
                     .child(
                         div()
+                            .relative()
                             .h(px(28.))
                             .flex()
                             .items_center()
                             .gap(px(4.))
                             .pl(px(12.))
                             .pr(px(6.))
+                            .child(lens())
                             .child(text("Last Turn", 13., 20., 430., t.text))
                             .child(icon("diff-chevron-down", 12., t.text)),
                     )
-                    .child(stats(added, removed, t).mr(px(4.))),
+                    .child(stats(added, removed, 14., t).mr(px(4.))),
             )
             .child(
                 capsule(t)
@@ -183,7 +196,16 @@ impl DiffPanel {
                                 ),
                         )
                     })
-                    .child(tool("diff-show-files")),
+                    .child(
+                        div()
+                            .relative()
+                            .size(px(28.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(lens())
+                            .child(icon("diff-show-files", 16., t.text_tertiary)),
+                    ),
             )
     }
 }
@@ -437,6 +459,19 @@ impl Render for SplitScreen {
                         .when_some(left, |h, left| h.w(left - Theme::SIDEBAR_WIDTH)),
                 )
             })
+            // Without a panel the shell's `New tab` group follows the header behind a divider.
+            .when(open && left.is_none(), |d| {
+                let t = cx.theme();
+                d.child(
+                    div()
+                        .absolute()
+                        .top(px(14.))
+                        .right(px(42.))
+                        .w(px(1.))
+                        .h(px(16.))
+                        .bg(over(t.border, layout_color(t))),
+                )
+            })
             .when_some(self.tab.clone().zip(left), |d, ((icon, label), left)| {
                 d.child(
                     tab_strip(cx.theme(), icon, label, window)
@@ -505,8 +540,7 @@ fn capsule(t: &Theme) -> Div {
             shadow(black().opacity(0.05), 4., 16., 0., false),
         ],
     };
-    // ponytail: the fill is the plain gradient color; the original's `backdrop-filter: blur`
-    // dither inside it has no GPUI counterpart yet.
+    // `backdrop-filter: blur(24px)` under a one-color `linear-gradient` fill.
     div()
         .relative()
         .h(px(32.))
@@ -514,23 +548,27 @@ fn capsule(t: &Theme) -> Div {
         .items_center()
         .gap(px(2.))
         .p(px(2.))
-        .child(shapes::decoration(Decoration {
-            // `rounded-full`, constrained to the 32 px box's half height.
-            radius: Corners::all(px(16.)),
-            fill: Some(t.control_background),
-            shadows,
-            ..Default::default()
-        }))
+        .child(shapes::backdrop_blur(
+            px(24.),
+            shapes::Fill::Gradient,
+            Decoration {
+                // `rounded-full`, constrained to the 32 px box's half height.
+                radius: Corners::all(px(16.)),
+                fill: Some(t.control_background),
+                shadows,
+                ..Default::default()
+            },
+        ))
 }
 
-/// `+N -M` in git colors, 14 px with `tracking-tight` (-0.35 px letter spacing),
+/// `+N -M` in git colors, `size` px with `tracking-tight` (-0.025em letter spacing),
 /// `tabular-nums` and `disambiguated-digits` (`cv01`, `cv02`).
-fn stats(added: usize, removed: usize, t: &Theme) -> Div {
+pub fn stats(added: usize, removed: usize, size: f32, t: &Theme) -> Div {
     let mut features = vec![("tnum".into(), 1), ("cv01".into(), 1), ("cv02".into(), 1)];
-    features.extend(textsys::letter_spacing(-0.35).0.iter().cloned());
+    features.extend(textsys::letter_spacing(-0.025 * size).0.iter().cloned());
     let features = FontFeatures(Arc::new(features));
     let tracked =
-        |s: String, color: Hsla| text(s, 14., 14., 430., color).font_features(features.clone());
+        |s: String, color: Hsla| text(s, size, size, 430., color).font_features(features.clone());
     div()
         .flex()
         .items_center()
@@ -604,7 +642,7 @@ fn file_header(i: usize, file: &FileDiff, t: &Theme) -> Stateful<Div> {
                 .flex()
                 .items_center()
                 .gap(px(4.))
-                .child(stats(file.added, file.removed, t).mx(px(4.)))
+                .child(stats(file.added, file.removed, 14., t).mx(px(4.)))
                 .child(small("diff-open-in"))
                 .child(small("diff-more")),
         )

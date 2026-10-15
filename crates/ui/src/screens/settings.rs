@@ -2,17 +2,22 @@
 //! general-settings chunks) as refs/settings shows it, and the signed-out `/login` view
 //! (login-route chunk) that replaces the app when `account/read` reports no account.
 
-use crate::{MONO, SANS, Shell, fixture, icon, layout_color, over, sidebar_section, text};
+use crate::{
+    MONO, SANS, Shell, composer::shadow, fixture, icon::icon, in_layer, layout_color, over,
+    sidebar_section, text,
+};
 use bridge::Bridge;
 use bridge::types::{AccountReadResponse, ConfigReadResponse};
 use gpui::{
-    AnyElement, AnyView, App, AppContext as _, BoxShadow, ClipboardItem, Context, Div, Entity,
+    AnyElement, AnyView, App, AppContext as _, ClipboardItem, Context, Corners, Div, Entity,
     FocusHandle, Font, FontWeight, Global, HighlightStyle, Hsla, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, Render, Rgba, SharedString, Stateful, StatefulInteractiveElement,
-    Styled, StyledText, TextRun, Window, div, font, img, point, prelude::FluentBuilder as _, px,
+    KeyDownEvent, ParentElement, Pixels, Point, Render, Rgba, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, StyledText, TextRun, Window, canvas, div, font, img,
+    prelude::FluentBuilder as _, px,
 };
 use serde_json::{Value, json};
-use std::sync::Arc;
+use shapes::Corner::{self, Round, Squircle};
+use std::{cell::Cell, rc::Rc, sync::Arc};
 use theme::{ActiveTheme as _, Theme};
 
 /// The live app-server connection. Settings and sign-in send their writes through it when
@@ -197,27 +202,12 @@ fn sidebar_color(t: &Theme) -> Hsla {
     over(t.sidebar_background, layout_color(t))
 }
 
-/// `top` over opaque `bottom` as Chromium composites a separate layer (the `z-10` sidebar
-/// header): the premultiplied source rounds, the destination term truncates.
-fn layer_over(top: Hsla, bottom: Hsla) -> Hsla {
-    let (t, b) = (Rgba::from(top), Rgba::from(bottom));
-    let a = (t.a * 255.).round();
-    let blend = |t: f32, b: f32| {
-        ((t * 255. * a / 255.).round() + (b * 255. * (255. - a) / 255.).floor()) / 255.
-    };
-    Rgba {
-        r: blend(t.r, b.r),
-        g: blend(t.g, b.g),
-        b: blend(t.b, b.b),
-        a: 1.,
-    }
-    .into()
-}
-
 /// The settings sidebar: title, search field and the section list.
 pub struct SettingsNav {
     page: Entity<SettingsPage>,
     focus: FocusHandle,
+    /// Chromium's composited layer of the scrolling section list.
+    list: Layer,
 }
 
 impl SettingsNav {
@@ -226,6 +216,7 @@ impl SettingsNav {
         Self {
             page,
             focus: cx.focus_handle(),
+            list: Layer::default(),
         }
     }
 
@@ -264,8 +255,12 @@ impl SettingsNav {
             .items_center()
             .gap(px(8.))
             .px(px(12.))
-            .rounded_full()
-            .bg(layer_over(t.list_hover, sidebar_color(t)))
+            .relative()
+            .child(shapes::decoration(shapes::Decoration {
+                radius: Corners::all(px(9999.)),
+                fill: Some(t.list_hover),
+                ..Default::default()
+            }))
             .child(icon("search", 16., t.text_secondary))
             .child(text(s, 14., 18., 430., color))
     }
@@ -286,8 +281,11 @@ impl SettingsNav {
             .items_center()
             .gap(px(8.))
             .px(px(8.))
+            .relative()
             .rounded(Theme::RADIUS_LG)
-            .when(selected, |d| d.bg(fill))
+            .when(selected, |d| {
+                d.child(deco(&self.list, 12.5, Squircle, t.list_hover, None))
+            })
             .hover(move |s| s.bg(fill))
             .child(
                 div()
@@ -369,11 +367,13 @@ impl Render for SettingsNav {
                     .id("settings-nav")
                     .flex_1()
                     .overflow_y_scroll()
+                    .layer()
                     .flex()
                     .flex_col()
                     .gap(px(16.))
                     .pt(px(4.))
                     .pb(px(8.))
+                    .child(probe(&self.list))
                     .children(sections)
                     .when(empty, |d| {
                         d.child(div().px(px(16.)).py(px(8.)).child(text(
@@ -391,12 +391,17 @@ impl Render for SettingsNav {
 /// The open settings page in the main panel.
 pub struct SettingsPane {
     page: Entity<SettingsPage>,
+    /// The composited contents layer of the page's scroll container.
+    layer: Layer,
 }
 
 impl SettingsPane {
     fn new(page: Entity<SettingsPage>, cx: &mut Context<Self>) -> Self {
         cx.observe(&page, |_, _, cx| cx.notify()).detach();
-        Self { page }
+        Self {
+            page,
+            layer: Layer::default(),
+        }
     }
 
     fn toggle(
@@ -407,7 +412,7 @@ impl SettingsPane {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let on = self.page.read(cx).flag(key, default);
-        switch(key, on, false, t)
+        switch(&self.layer, key, on, false, t)
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.page
                     .update(cx, |p, cx| p.set(key, Value::Bool(!on), cx))
@@ -461,6 +466,7 @@ impl SettingsPane {
         cx: &mut Context<Self>,
     ) -> Vec<(&'static str, Vec<Div>)> {
         let page = self.page.read(cx);
+        let l = &self.layer;
         // The `w-48` path span middle-truncates to the width it has (`zLi`).
         let mono = Font {
             weight: FontWeight(430.),
@@ -500,7 +506,7 @@ impl SettingsPane {
                     .overflow_hidden()
                     .child(text(root, 12., 16., 430., t.text_secondary).font_family(MONO)),
             )
-            .child(button("Change", t))
+            .child(button(l, "Change", t.text_alpha_5, None, t))
             .into_any_element();
         let hotkey = div()
             .flex()
@@ -527,7 +533,7 @@ impl SettingsPane {
                             "By default, ChatGPT can read and edit files in its workspace. It can ask for additional access when needed",
                         ),
                         // Default permissions are always shown.
-                        switch("default-permissions", true, true, t).into_any_element(),
+                        switch(l, "default-permissions", true, true, t).into_any_element(),
                     ),
                     row(
                         "Full access",
@@ -552,6 +558,7 @@ impl SettingsPane {
                         "Default file open destination",
                         Some("Where files and folders open by default"),
                         select(
+                            l,
                             "Zed",
                             Some(
                                 img("icons/settings-zed.png")
@@ -566,7 +573,7 @@ impl SettingsPane {
                     row(
                         "Language",
                         Some("Language for the app UI"),
-                        select("Auto detect", None, false, t),
+                        select(l, "Auto detect", None, false, t),
                     ),
                     row(
                         "Show in menu bar",
@@ -576,7 +583,7 @@ impl SettingsPane {
                     row(
                         "Confirm before closing a window",
                         Some("Warn when a tab-close shortcut would close the window"),
-                        select(close, None, false, t),
+                        select(l, close, None, false, t),
                     ),
                     row(
                         "Full view by default",
@@ -618,7 +625,7 @@ impl SettingsPane {
                         Some(
                             "Choose how quickly ChatGPT runs across chats, subagents, and compaction",
                         ),
-                        select("Standard", None, false, t),
+                        select(l, "Standard", None, false, t),
                     ),
                     row(
                         "Suggested prompts",
@@ -630,7 +637,7 @@ impl SettingsPane {
                     row(
                         "Open source licenses",
                         Some("Third-party notices for bundled dependencies"),
-                        button("View", t).into_any_element(),
+                        button(l, "View", t.text_alpha_5, None, t).into_any_element(),
                     ),
                     row(
                         "Plugins",
@@ -662,7 +669,7 @@ impl SettingsPane {
                     row(
                         "Send shortcut",
                         Some("Choose when Enter sends a prompt or inserts a new line"),
-                        select(send_shortcut, None, false, t),
+                        select(l, send_shortcut, None, false, t),
                     ),
                     row(
                         "Follow-up behavior",
@@ -707,32 +714,39 @@ impl SettingsPane {
                     row(
                         "Notifications are off",
                         Some("Turn on notifications in System Settings to use the options below"),
-                        outline_button("Open System Settings", t),
+                        button(
+                            l,
+                            "Open System Settings",
+                            t.primary_soft_alpha,
+                            Some(t.border),
+                            t,
+                        )
+                        .into_any_element(),
                     ),
                     row(
                         "Turn completion notifications",
                         Some("Set when ChatGPT alerts you that it's finished"),
-                        select("Only when unfocused", None, true, t),
+                        select(l, "Only when unfocused", None, true, t),
                     ),
                     row(
                         "Enable permission notifications",
                         Some("Show alerts when notification permissions are required"),
-                        switch("permissions-notifications", true, true, t).into_any_element(),
+                        switch(l, "permissions-notifications", true, true, t).into_any_element(),
                     ),
                     row(
                         "Enable question notifications",
                         Some("Show alerts when input is needed to continue"),
-                        switch("question-notifications", true, true, t).into_any_element(),
+                        switch(l, "question-notifications", true, true, t).into_any_element(),
                     ),
                     row(
                         "Enable dot notifications",
                         Some("Show alerts when your dot sends you a message"),
-                        switch("dot-notifications", true, true, t).into_any_element(),
+                        switch(l, "dot-notifications", true, true, t).into_any_element(),
                     ),
                     row(
                         "Notification sound",
                         Some("Sound for task completion, permission requests, and questions"),
-                        select("Default", None, true, t),
+                        select(l, "Default", None, true, t),
                     ),
                 ],
             ),
@@ -785,11 +799,16 @@ impl Render for SettingsPane {
                     div()
                         .flex()
                         .flex_col()
-                        .overflow_hidden()
-                        .rounded(Theme::RADIUS_2XL)
-                        .border_1()
-                        .border_color(card_border)
-                        .bg(t.background_panel)
+                        .relative()
+                        // The 1 px border's box (the border itself is in the decoration).
+                        .p(px(1.))
+                        .child(deco(
+                            &self.layer,
+                            20.,
+                            Squircle,
+                            t.background_panel,
+                            Some(t.border),
+                        ))
                         .children(rows.into_iter().enumerate().map(|(i, r)| {
                             r.when(i < last, |d| {
                                 // `after:inset-x-4 after:bottom-0 after:h-px after:bg-border`
@@ -818,6 +837,8 @@ impl Render for SettingsPane {
                     .id("settings-page")
                     .flex_1()
                     .overflow_y_scroll()
+                    .layer()
+                    .child(probe(&self.layer))
                     .child(
                         div()
                             .pt(px(16.))
@@ -944,7 +965,7 @@ fn description(s: &'static str, t: &Theme) -> Div {
 
 /// `Switch`: 32×20 track, 16 px thumb. `disabled` is the control's `opacity: .6`, folded
 /// into opaque colors so the thumb composites over the row like the CSS group does.
-fn switch(id: &'static str, on: bool, disabled: bool, t: &Theme) -> Stateful<Div> {
+fn switch(l: &Layer, id: &'static str, on: bool, disabled: bool, t: &Theme) -> Stateful<Div> {
     let bg = t.background_panel;
     let track = over(
         if on {
@@ -959,29 +980,30 @@ fn switch(id: &'static str, on: bool, disabled: bool, t: &Theme) -> Stateful<Div
     } else {
         (track, t.control_thumb)
     };
+    let at = l.clone();
     div()
         .id(id)
         .relative()
         .flex_none()
         .w(px(32.))
         .h(px(20.))
-        .rounded_full()
-        .bg(track)
+        .child(deco(l, 9999., Round, track, None))
         .child(
             div()
                 .absolute()
                 .top(px(2.))
                 .left(px(if on { 14. } else { 2. }))
                 .size(px(16.))
-                .rounded_full()
-                .bg(thumb)
-                .shadow(vec![BoxShadow {
-                    color: t.shadow_sm,
-                    offset: point(px(0.), px(1.)),
-                    blur_radius: px(2.),
-                    spread_radius: px(-1.),
-                    inset: false,
-                }]),
+                .child(in_layer(
+                    shapes::Decoration {
+                        radius: Corners::all(px(9999.)),
+                        fill: Some(thumb),
+                        border: Some((px(1.), thumb)),
+                        shadows: vec![shadow(t.shadow_sm, 1., 2., -1., false)],
+                        ..Default::default()
+                    },
+                    move || at.get(),
+                )),
         )
 }
 
@@ -999,53 +1021,70 @@ fn fade(top: Hsla, bottom: Hsla) -> Hsla {
     .into()
 }
 
-/// Secondary toolbar `_Button` (`Change`, `View`): `bg-text/5`, transparent 1 px border.
-fn button(label: &'static str, t: &Theme) -> Div {
+/// A settings surface through `shapes`: CSS `radius`, corner shape, fill and 1 px border.
+fn deco(l: &Layer, radius: f32, corner: Corner, fill: Hsla, border: Option<Hsla>) -> AnyElement {
+    let l = l.clone();
+    in_layer(
+        shapes::Decoration {
+            radius: Corners::all(px(radius)),
+            corner,
+            fill: Some(fill),
+            border: border.map(|c| (px(1.), c)),
+            shadows: Vec::new(),
+        },
+        move || l.get(),
+    )
+    .into_any_element()
+}
+
+/// The origin (window px) of the composited layer Chromium paints a scroll container's
+/// contents into (the scroller is `.layer()` for text). [`probe`] records it at prepaint.
+type Layer = Rc<Cell<Point<Pixels>>>;
+
+/// An empty first child of the layer's root that records the root's origin.
+fn probe(l: &Layer) -> impl IntoElement {
+    let l = l.clone();
+    canvas(move |b, _, _| l.set(b.origin), |_, _, _, _| {})
+        .absolute()
+        .top_0()
+        .left_0()
+}
+
+/// Toolbar `_Button` (`Change`, `View`: `bg-text/5`, transparent 1 px border; `Open System
+/// Settings`: outlined).
+fn button(l: &Layer, label: &'static str, fill: Hsla, border: Option<Hsla>, t: &Theme) -> Div {
     div()
         .h(px(28.))
         .px(px(9.))
         .flex()
         .items_center()
-        .rounded(Theme::RADIUS_LG)
-        .bg(over(t.text_alpha_5, t.background_panel))
+        .relative()
+        .child(deco(l, 12.5, Squircle, fill, border))
         .child(text(label, 13., 18., 430., t.text))
 }
-
-/// Outlined `_Button` (`Open System Settings`).
-fn outline_button(label: &'static str, t: &Theme) -> AnyElement {
-    let bg = over(t.primary_soft_alpha, t.background_panel);
-    div()
-        .h(px(28.))
-        .px(px(8.))
-        .flex()
-        .items_center()
-        .rounded(Theme::RADIUS_LG)
-        .border_1()
-        .border_color(over(t.border, bg))
-        .bg(bg)
-        .child(text(label, 13., 18., 430., t.text))
-        .into_any_element()
-}
-
 /// Dropdown trigger: value (with an optional leading app icon) and a chevron.
 fn select(
+    l: &Layer,
     label: &'static str,
     leading: Option<AnyElement>,
     disabled: bool,
     t: &Theme,
 ) -> AnyElement {
-    let bg = over(t.primary_soft_alpha, t.background_panel);
     div()
         .h(px(28.))
-        .px(px(12.))
+        .px(px(13.))
         .flex()
         .items_center()
         .justify_between()
         .gap(px(4.))
-        .rounded(Theme::RADIUS_LG)
-        .border_1()
-        .border_color(over(t.border, bg))
-        .bg(bg)
+        .relative()
+        .child(deco(
+            l,
+            12.5,
+            Squircle,
+            t.primary_soft_alpha,
+            Some(t.border),
+        ))
         .when(disabled, |d| d.opacity(0.4))
         .child(
             div()

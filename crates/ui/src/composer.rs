@@ -2,7 +2,7 @@
 //! permissions and model menus, and approval prompts for server approval requests. All
 //! numbers are the CSS px of refs/home and refs/composer.
 
-use crate::{MONO, icon::icon, over, text};
+use crate::{MONO, icon::icon, text};
 use bridge::types::{ApprovalDecision, CommandApprovalRequest, FileChangeApprovalRequest, Model};
 use gpui::{
     AnyElement, App, AvailableSpace, Bounds, ClipboardItem, Context, Corners, CursorStyle, Div,
@@ -910,7 +910,7 @@ fn shape(
 }
 
 impl gpui::Element for Editor {
-    type RequestLayoutState = ();
+    type RequestLayoutState = LayoutId;
     type PrepaintState = ();
 
     fn id(&self) -> Option<ElementId> {
@@ -927,7 +927,7 @@ impl gpui::Element for Editor {
         _: Option<&InspectorElementId>,
         window: &mut Window,
         _: &mut App,
-    ) -> (LayoutId, ()) {
+    ) -> (LayoutId, LayoutId) {
         let mut style = Style::default();
         style.size.width = relative(1.).into();
         let input = self.0.clone();
@@ -943,7 +943,7 @@ impl gpui::Element for Editor {
                 height,
             }
         });
-        (id, ())
+        (id, id)
     }
 
     fn prepaint(
@@ -951,7 +951,7 @@ impl gpui::Element for Editor {
         _: Option<&GlobalElementId>,
         _: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
-        _: &mut (),
+        _: &mut LayoutId,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -981,7 +981,7 @@ impl gpui::Element for Editor {
         _: Option<&GlobalElementId>,
         _: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
-        _: &mut (),
+        id: &mut LayoutId,
         _: &mut (),
         window: &mut Window,
         cx: &mut App,
@@ -1014,9 +1014,11 @@ impl gpui::Element for Editor {
             .then(|| c.point_for_index(c.cursor()))
             .flatten();
         let lines = self.0.update(cx, |c, _| std::mem::take(&mut c.lines));
+        // Glyphs land on the unsnapped LayoutUnit x, as Blink paints text.
+        let x = window.layout_origin_residual_x(*id);
         let mut y = px(0.);
         for line in &lines {
-            let origin = bounds.origin + point(px(0.), y + TEXT_NUDGE);
+            let origin = bounds.origin + point(x, y);
             line.paint(origin, LINE_HEIGHT, TextAlign::Left, None, window, cx)
                 .ok();
             y += line.size(LINE_HEIGHT).height;
@@ -1031,9 +1033,6 @@ impl gpui::Element for Editor {
         }
     }
 }
-
-/// Chromium rounds the font's ascent and descent before centering a line; GPUI does not.
-const TEXT_NUDGE: Pixels = px(-0.5);
 
 /// `_Button` pill (28 px, `rounded-full`, 1 px transparent border).
 pub fn pill(id: impl Into<ElementId>, t: &Theme) -> Stateful<Div> {
@@ -1089,30 +1088,33 @@ fn card_decoration(t: &Theme) -> shapes::Decoration {
     deco(22., t.composer_surface, shadows)
 }
 
-/// Popover surface: `--menu-background-color` at 90% (over the `backdrop-filter: blur(8px)`
-/// backdrop, painted here as the opaque composer surface), `--menu-corner-shape`.
-fn popover(t: &Theme, backdrop: Hsla) -> Div {
-    let bg = Hsla {
-        a: 0.9,
-        ..t.menu_background
-    };
+/// Popover surface: `--menu-background-color` at 90% over the `backdrop-filter: blur(8px)`
+/// backdrop, `--menu-corner-shape`.
+fn popover(t: &Theme) -> Div {
     div()
         .relative()
         .flex()
         .flex_col()
         .p(px(4.))
-        .child(shapes::decoration(shapes::Decoration {
-            corner: shapes::Corner::Squircle,
-            ..deco(
-                20.,
-                over(bg, backdrop),
-                vec![
-                    shadow(t.border, 0., 0., 0.5, false),
-                    shadow(t.border, 0., 0., 0.5, false),
-                    shadow(gpui::rgba(0x0000001f).into(), 8., 16., -4., false),
-                ],
-            )
-        }))
+        .child(shapes::backdrop_blur(
+            px(8.),
+            shapes::Fill::Color,
+            shapes::Decoration {
+                corner: shapes::Corner::Squircle,
+                ..deco(
+                    20.,
+                    Hsla {
+                        a: 0.9,
+                        ..t.menu_background
+                    },
+                    vec![
+                        shadow(t.border, 0., 0., 0.5, false),
+                        shadow(t.border, 0., 0., 0.5, false),
+                        shadow(gpui::rgba(0x0000001f).into(), 8., 16., -4., false),
+                    ],
+                )
+            },
+        ))
 }
 
 impl Composer {
@@ -1165,7 +1167,12 @@ impl Composer {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
-            .child(Editor(cx.entity()))
+            // `--opacity-composer-placeholder: .5` on the placeholder.
+            .child(
+                div()
+                    .when(self.content.is_empty(), |d| d.opacity(0.5))
+                    .child(Editor(cx.entity())),
+            )
     }
 
     /// `Select effort` popover: effort title, model row, slider of the model's efforts.
@@ -1351,10 +1358,7 @@ impl Composer {
                         })),
                 ),
         );
-        popover(t, t.composer_surface)
-            .w(px(254.))
-            .child(header)
-            .child(slider)
+        popover(t).w(px(254.)).child(header).child(slider)
     }
 }
 
@@ -1362,7 +1366,7 @@ impl Composer {
     /// `Select model` list.
     fn models_menu(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
         let hover = t.menu_item_hover;
-        popover(t, t.composer_surface)
+        popover(t)
             .w(px(254.))
             .child(div().px(px(8.)).py(px(6.)).child(text(
                 "Select model",
@@ -1399,7 +1403,7 @@ impl Composer {
     /// `How should ChatGPT actions be approved?`
     fn permissions_menu(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
         let hover = t.menu_item_hover;
-        popover(t, t.composer_surface)
+        popover(t)
             .w(px(320.))
             .child(div().px(px(8.)).py(px(6.)).child(text(
                 "How should ChatGPT actions be approved?",
@@ -1661,9 +1665,10 @@ impl Composer {
     }
 }
 
-/// Width the original's popper positions the effort menu with (its 256 px box plus the
-/// model list view), centered on the model button.
-const EFFORT_MENU_SLOT: f32 = 257.66;
+/// Width the original's popper positions the effort menu with, centered on the model button:
+/// in refs/composer its 256 px box sits 1.19 px left of the button's center, snapped to
+/// device px.
+const EFFORT_MENU_SLOT: f32 = 258.5;
 
 impl Render for Composer {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
