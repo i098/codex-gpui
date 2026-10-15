@@ -71,11 +71,12 @@ impl Icon {
         self
     }
 
-    /// Chromium blits this icon into the transparent overlap layer at `layer` that squashes
-    /// it, which it then composites. Rasterized at runtime in that layer (whose origin sets
+    /// Chromium blits this icon into a transparent layer of its own, which it then composites:
+    /// the overlap layer at `layer` that squashes it, or with `None` the bitmap an svg `<img>`
+    /// is rasterized into (its own box). Rasterized at runtime in that layer (whose origin sets
     /// the raster's float geometry), as the fitted images hold the page blit.
-    pub fn own_layer(mut self, layer: Point<Pixels>) -> Self {
-        self.composited = Some(layer);
+    pub fn own_layer(mut self, layer: Option<Point<Pixels>>) -> Self {
+        self.composited = layer;
         self.own_layer = true;
         self.top_layer()
     }
@@ -214,7 +215,7 @@ impl Element for Icon {
                         Bounds::new(bounds.origin, css),
                         flip_x,
                         color,
-                        composited,
+                        composited.or(own_layer.then_some(bounds.origin)),
                         window,
                         cx,
                     )

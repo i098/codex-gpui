@@ -43,8 +43,7 @@
 //!
 //! Colors outside [0, 1] (out-of-gamut oklab/color-mix results) are drawn as Skia draws them,
 //! with its float raster pipeline. Limits: inset shadows paint apart from Blink's clip layer.
-//! A `superellipse` shadow with a large blur and spread is 1 level off in its far tail. A
-//! fill under a CSS `opacity` rounds 1 level darker on its anti-aliased edge.
+//! A fill under a CSS `opacity` rounds 1 level darker on its anti-aliased edge.
 
 use gpui::{App, Bounds, Corners, Hsla, IntoElement, Pixels, Point, Styled as _, Window, canvas};
 
@@ -238,11 +237,11 @@ pub fn x_fade(left: Pixels, right: Pixels) -> impl IntoElement {
 }
 
 /// A rounded `clip-path` (or `border-radius` with `overflow: clip`) on a composited element:
-/// Chromium renders the element into one surface, multiplies it by the clip's coverage (the
-/// anti-aliased fill of the rounded rect `bounds` with `radius`) and composites it. This
-/// multiplies the px of the enclosing GPUI layer (`Window::with_skia_layer`) in the rounded
-/// corners by the coverage of what lies outside the rounded rect. Other px are left as they
-/// are. macOS only, like [`top_fade`].
+/// Chromium renders the element into one surface and viz draws it through the clip's coverage
+/// `m` (the anti-aliased fill of the rounded rect `bounds` with `radius`) over what lies below
+/// (a lerp). Paint what lies below in the enclosing GPUI layer (`Window::with_skia_layer`),
+/// over the element: in the rounded corners this lerps the element (what is under the layer)
+/// to the layer by `1 - m`. Other px are left as they are. macOS only, like [`top_fade`].
 pub fn paint_rounded_clip(
     radius: Corners<Pixels>,
     bounds: Bounds<Pixels>,

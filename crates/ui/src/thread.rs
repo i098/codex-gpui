@@ -1080,15 +1080,11 @@ fn diff_card(turn_id: &str, items: &[ThreadItem], window: &Window, t: &Theme) ->
                             .child(shapes::decoration(shapes::Decoration {
                                 radius: Corners::all(Theme::RADIUS_LG),
                                 corner: shapes::Corner::Squircle,
-                                // The refs show the icon well over the page surface, not the
-                                // card.
-                                fill: Some(over(
-                                    Hsla {
-                                        a: 0.92,
-                                        ..t.surface_secondary
-                                    },
-                                    t.surface,
-                                )),
+                                // Translucent, onto the card's fill in the scroller's layer.
+                                fill: Some(Hsla {
+                                    a: 0.92,
+                                    ..t.surface_secondary
+                                }),
                                 ..Default::default()
                             }))
                             .child(icon("thread-file-diff", 24., t.text_secondary)),

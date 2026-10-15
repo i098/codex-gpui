@@ -1,3 +1,5 @@
 /target
 /probe*.png
 __pycache__/
+*.orig
+*.rej

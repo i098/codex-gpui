@@ -38,10 +38,15 @@ pub fn panel_width(window: &Window) -> Pixels {
 
 /// The panel at its clamped width (the chat at `MIN_CHAT`): with `Shell::main_layer`,
 /// Chromium hides the surface's own fill under the content's at the corners and clips that
-/// content twice (coverage m m) instead of stacking both (each m).
-/// ponytail: measured, not derived: refs/diff at 1280 and 1300 px wide (side panel at its
-/// clamped width) clip twice, at 1400 and 1440 (stored width) they stack. Find cc's rule
-/// if another window size disagrees.
+/// content twice (coverage m m) instead of stacking both (each m). cc does that when the
+/// synthetic effect of the main surface's rounded clip owns a render surface: it applies the
+/// clip's rrect to that surface and again to the quads of its descendant effects that have
+/// none (`GetMaskFilterInfoPair` in cc/trees/draw_property_utils.cc).
+/// ponytail: the trigger is measured, not derived. Blink gives that effect its surface at
+/// 1280 and 1300 px wide, not at 1400 and 1440. Panel geometry is not the cause (1440 with a
+/// clamped-width layout still stacks), and neither are the effort labels or the word-wrap
+/// button. Hiding the chat's scroller at 1280 clips once. Probe Blink's
+/// `PropertyTreeManager` clip synthesis if another window size disagrees.
 pub fn panel_clamped(window: &Window) -> bool {
     panel_width(window) < px(STORED_WIDTH)
 }
