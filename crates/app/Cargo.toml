@@ -9,6 +9,11 @@ publish.workspace = true
 name = "codex-gpui"
 path = "src/main.rs"
 
+# Flow harness (docs/flows.md): runs every flow, then fails if any did.
+[[test]]
+name = "flows"
+harness = false
+
 [dependencies]
 anyhow.workspace = true
 async-channel = "2"
@@ -24,4 +29,6 @@ ui = { path = "../ui" }
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 gpui_platform = { workspace = true, features = ["test-support"] }
+image.workspace = true
+parity = { path = "../parity" }
 textsys = { path = "../textsys" }

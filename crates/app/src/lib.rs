@@ -1,6 +1,7 @@
 //! The app's root view: routes, persisted window state, and the live `codex app-server`
-//! connection that feeds the screens (Recents, model picker, threads, approvals, sign-in).
-//! `main.rs` only opens the window; `examples/live_turn.rs` drives the same view headless.
+//! connection that feeds the screens (Recents, model picker, threads, approvals, sign-in),
+//! plus the key bindings and menu bar. `main.rs` only opens the window;
+//! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
 use anyhow::Result;
 use async_channel::Receiver;
@@ -10,9 +11,10 @@ use bridge::types::{
 };
 use bridge::{Bridge, Event};
 use gpui::{
-    AnyElement, AnyView, App, AppContext as _, Context, Entity, Focusable as _,
-    InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _, Task, Window,
-    WindowAppearance, actions, div,
+    Action, AnyElement, AnyView, App, AppContext as _, Context, Entity, FocusHandle,
+    Focusable as _, InteractiveElement as _, IntoElement, KeyBinding, Menu, MenuItem, OsAction,
+    ParentElement as _, Pixels, Render, Styled as _, SystemMenuType, Task, Window,
+    WindowAppearance, actions, div, px,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -24,9 +26,117 @@ use ui::screens::home::HomeMain;
 use ui::screens::settings::{self, AppServer, Login};
 use ui::screens::sidebar::{HomeSidebar, OpenThread};
 use ui::screens::thread::view::{Clock, ThreadView};
-use ui::{GoBack, GoForward, NewChat, OpenSettings, Shell, ToggleSidebar};
+use ui::{
+    Copy, Cut, GoBack, GoForward, NewChat, OpenSettings, Paste, Redo, SelectAll, Shell,
+    ToggleSidebar, Undo,
+};
 
-actions!(app, [CloseWindow, Minimize, Zoom]);
+actions!(
+    app,
+    [
+        CloseWindow,
+        Minimize,
+        Zoom,
+        Quit,
+        Hide,
+        HideOthers,
+        ShowAll,
+        OpenDocumentation,
+        /// The Recents row above the open thread (`previousThread`).
+        PreviousChat,
+        /// The Recents row below the open thread (`nextThread`).
+        NextChat,
+    ]
+);
+
+/// `thread1..9`: open the Nth Recents row (0-based).
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = app, no_json)]
+pub struct GoToChat(pub usize);
+
+/// `(min-width: 768px)`: below it the original hides the sidebar panel.
+const SIDEBAR_BREAKPOINT: Pixels = px(768.);
+
+/// Key bindings (docs/inventory.md §12) and the app-level commands.
+pub fn init(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("cmd-,", OpenSettings, None),
+        KeyBinding::new("cmd-h", Hide, None),
+        KeyBinding::new("alt-cmd-h", HideOthers, None),
+        KeyBinding::new("cmd-q", Quit, None),
+        KeyBinding::new("cmd-n", NewChat, None),
+        KeyBinding::new("cmd-shift-o", NewChat, None),
+        KeyBinding::new("cmd-w", CloseWindow, None),
+        KeyBinding::new("cmd-z", Undo, None),
+        KeyBinding::new("cmd-shift-z", Redo, None),
+        KeyBinding::new("cmd-x", Cut, None),
+        KeyBinding::new("cmd-c", Copy, None),
+        KeyBinding::new("cmd-v", Paste, None),
+        KeyBinding::new("cmd-a", SelectAll, None),
+        KeyBinding::new("cmd-shift-s", ToggleSidebar, None),
+        KeyBinding::new("cmd-b", ToggleSidebar, None),
+        KeyBinding::new("cmd-[", GoBack, None),
+        KeyBinding::new("cmd-]", GoForward, None),
+        KeyBinding::new("cmd-shift-[", PreviousChat, None),
+        KeyBinding::new("cmd-alt-left", PreviousChat, None),
+        KeyBinding::new("cmd-shift-]", NextChat, None),
+        KeyBinding::new("cmd-alt-right", NextChat, None),
+        KeyBinding::new("cmd-m", Minimize, None),
+    ]);
+    cx.bind_keys((1..=9).map(|n| KeyBinding::new(&format!("cmd-{n}"), GoToChat(n - 1), None)));
+    ui::composer::bind_keys(cx);
+    cx.on_action(|_: &Quit, cx| cx.quit());
+    cx.on_action(|_: &Hide, cx| cx.hide());
+    cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
+    cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
+    cx.on_action(|_: &OpenDocumentation, cx| {
+        cx.open_url("https://developers.openai.com/codex/app")
+    });
+}
+
+/// Menu bar of the original (docs/inventory.md §13), limited to commands with a handler.
+pub fn menus() -> Vec<Menu> {
+    vec![
+        Menu::new("Codex").items([
+            MenuItem::action("Settings…", OpenSettings),
+            MenuItem::separator(),
+            MenuItem::os_submenu("Services", SystemMenuType::Services),
+            MenuItem::separator(),
+            MenuItem::action("Hide Codex", Hide),
+            MenuItem::action("Hide Others", HideOthers),
+            MenuItem::action("Show All", ShowAll),
+            MenuItem::separator(),
+            MenuItem::action("Quit Codex", Quit),
+        ]),
+        Menu::new("File").items([
+            MenuItem::action("New Chat", NewChat),
+            MenuItem::separator(),
+            MenuItem::action("Close", CloseWindow),
+        ]),
+        Menu::new("Edit").items([
+            MenuItem::os_action("Undo", Undo, OsAction::Undo),
+            MenuItem::os_action("Redo", Redo, OsAction::Redo),
+            MenuItem::separator(),
+            MenuItem::os_action("Cut", Cut, OsAction::Cut),
+            MenuItem::os_action("Copy", Copy, OsAction::Copy),
+            MenuItem::os_action("Paste", Paste, OsAction::Paste),
+            MenuItem::os_action("Select All", SelectAll, OsAction::SelectAll),
+        ]),
+        Menu::new("View").items([
+            MenuItem::action("Toggle Sidebar", ToggleSidebar),
+            MenuItem::separator(),
+            MenuItem::action("Previous Chat", PreviousChat),
+            MenuItem::action("Next Chat", NextChat),
+            MenuItem::action("Back", GoBack),
+            MenuItem::action("Forward", GoForward),
+        ]),
+        Menu::new("Window").items([
+            MenuItem::action("Minimize", Minimize),
+            MenuItem::action("Zoom", Zoom),
+        ]),
+        Menu::new("Help").items([MenuItem::action("Documentation", OpenDocumentation)]),
+    ]
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum Route {
@@ -36,7 +146,29 @@ pub enum Route {
     Settings,
 }
 
-/// Window size, sidebar and route, persisted to `path` (none: not persisted).
+/// Settings ▸ Appearance ▸ Theme (the original's `appearanceTheme`): follow the system, or
+/// force light or dark.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeSetting {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl ThemeSetting {
+    /// The theme of a window whose system appearance is `appearance`.
+    pub fn theme(self, appearance: WindowAppearance) -> Theme {
+        match self {
+            Self::System => theme_for(appearance),
+            Self::Light => Theme::light(),
+            Self::Dark => Theme::dark(),
+        }
+    }
+}
+
+/// Window size, sidebar, route and theme, persisted to `path` (none: not persisted).
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
 pub struct State {
@@ -44,6 +176,7 @@ pub struct State {
     pub height: f32,
     pub sidebar_open: bool,
     pub route: Route,
+    pub theme: ThemeSetting,
     #[serde(skip)]
     pub path: Option<PathBuf>,
 }
@@ -55,6 +188,7 @@ impl Default for State {
             height: 832.,
             sidebar_open: true,
             route: Route::Home,
+            theme: ThemeSetting::System,
             path: None,
         }
     }
@@ -110,6 +244,13 @@ pub struct Root {
     forward: Vec<Route>,
     shell: Entity<Shell>,
     sidebar: Entity<HomeSidebar>,
+    /// Recents thread ids in sidebar order, for `⌘1`…`⌘9` and Previous/Next Chat.
+    recents: Vec<String>,
+    /// The window is at least [`SIDEBAR_BREAKPOINT`] wide; narrower hides the sidebar.
+    wide: bool,
+    /// Holds key focus when no composer shows (Settings, a loading thread, sign-in), so
+    /// shortcuts still reach the root's actions.
+    focus: FocusHandle,
     home: Entity<HomeMain>,
     /// Docked under every open thread.
     thread_composer: Entity<Composer>,
@@ -174,7 +315,8 @@ impl Root {
         )
         .detach();
         let main = cx.new(|_| ui::EmptyMain).into();
-        let sidebar_open = state.sidebar_open;
+        let wide = window.viewport_size().width >= SIDEBAR_BREAKPOINT;
+        let sidebar_open = state.sidebar_open && wide;
         let shell = cx.new(|_| {
             let mut shell = Shell::new(sidebar.clone().into(), main);
             shell.sidebar_open = sidebar_open;
@@ -185,13 +327,13 @@ impl Root {
             cx.notify();
         })
         .detach();
-        cx.observe_window_bounds(window, |this, window, cx| this.save(window, cx))
-            .detach();
-        cx.observe_window_appearance(window, |_, window, cx| {
-            cx.set_global(theme_for(window.appearance()));
-            cx.notify();
+        cx.observe_window_bounds(window, |this, window, cx| {
+            this.fit(window, cx);
+            this.save(window, cx);
         })
         .detach();
+        cx.observe_window_appearance(window, |this, window, cx| this.apply_theme(window, cx))
+            .detach();
         let _events = cx.spawn(async move |this, cx| {
             while let Ok(event) = events.recv().await {
                 if this
@@ -207,6 +349,9 @@ impl Root {
             forward: Vec::new(),
             shell,
             sidebar,
+            recents: Vec::new(),
+            wide,
+            focus: cx.focus_handle(),
             home: cx.new(|_| HomeMain {
                 composer: home_composer,
             }),
@@ -224,6 +369,7 @@ impl Root {
             _events,
             state,
         };
+        window.focus(&root.focus, cx);
         root.connect(window, cx);
         root
     }
@@ -250,8 +396,7 @@ impl Root {
                 if account.account.is_none() && account.requires_openai_auth {
                     this.login = Some(cx.new(Login::new));
                 }
-                this.sidebar
-                    .update(cx, |s, cx| s.set_threads(&threads.data, cx));
+                this.set_threads(&threads.data, cx);
                 let composers = [
                     this.home.read(cx).composer.clone(),
                     this.thread_composer.clone(),
@@ -276,6 +421,83 @@ impl Root {
     /// The open thread's view.
     pub fn thread(&self) -> Option<&Entity<ThreadView>> {
         self.thread.as_ref()
+    }
+
+    /// No account: the sign-in view replaces the window.
+    pub fn signed_out(&self) -> bool {
+        self.login.is_some()
+    }
+
+    pub fn route(&self) -> &Route {
+        &self.state.route
+    }
+
+    /// The shell on screen: the Settings route's own, else the main one.
+    pub fn shell(&self) -> &Entity<Shell> {
+        self.settings.as_ref().unwrap_or(&self.shell)
+    }
+
+    /// The composer of the route: Home's, or the one docked under the open thread.
+    pub fn composer(&self, cx: &App) -> Entity<Composer> {
+        match self.state.route {
+            Route::Thread(_) => self.thread_composer.clone(),
+            _ => self.home.read(cx).composer.clone(),
+        }
+    }
+
+    pub fn recents(&self) -> &[String] {
+        &self.recents
+    }
+
+    fn set_threads(&mut self, threads: &[Thread], cx: &mut Context<Self>) {
+        self.recents = threads.iter().map(|t| t.id.clone()).collect();
+        self.sidebar.update(cx, |s, cx| s.set_threads(threads, cx));
+    }
+
+    /// Puts `thread` at the top of Recents.
+    fn add_thread(&mut self, thread: &Thread, cx: &mut Context<Self>) {
+        self.recents.retain(|id| *id != thread.id);
+        self.recents.insert(0, thread.id.clone());
+        self.sidebar.update(cx, |s, cx| s.add_thread(thread, cx));
+    }
+
+    /// `⌘N`, the `New chat` row and rail Home: Home with an empty, focused composer.
+    fn new_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.navigate(Route::Home, window, cx);
+        let composer = self.home.read(cx).composer.clone();
+        composer.update(cx, |c, cx| c.set_text("", cx));
+        window.focus(&composer.focus_handle(cx), cx);
+    }
+
+    /// Opens the Recents row `delta` rows from the open thread; from any other route,
+    /// the first row.
+    fn step_chat(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let current = match &self.state.route {
+            Route::Thread(id) => self.recents.iter().position(|r| r == id),
+            _ => None,
+        };
+        let index = current.map_or(Some(0), |i| i.checked_add_signed(delta));
+        self.go_to_chat(index, window, cx);
+    }
+
+    fn go_to_chat(&mut self, index: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(id) = index.and_then(|i| self.recents.get(i)) {
+            self.navigate(Route::Thread(id.clone()), window, cx);
+        }
+    }
+
+    /// Below [`SIDEBAR_BREAKPOINT`] the sidebar hides; wider again it shows as the user
+    /// left it.
+    fn fit(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let wide = window.viewport_size().width >= SIDEBAR_BREAKPOINT;
+        if wide != self.wide {
+            self.wide = wide;
+            let open = wide && self.state.sidebar_open;
+            self.shell.update(cx, |shell, cx| {
+                shell.sidebar_open = open;
+                cx.notify();
+            });
+        }
     }
 
     fn navigate(&mut self, route: Route, window: &mut Window, cx: &mut Context<Self>) {
@@ -315,21 +537,30 @@ impl Root {
             Route::Thread(id) => Some(id.clone()),
             _ => None,
         };
-        let main: AnyView = match (&thread_id, &self.thread) {
+        // Keys need a focused element in the frame: the route's composer, else the root.
+        let (main, focus): (AnyView, _) = match (&thread_id, &self.thread) {
             (Some(id), Some(view)) if view.read(cx).id() == id => {
-                window.focus(&self.thread_composer.focus_handle(cx), cx);
-                view.clone().into()
+                (view.clone().into(), self.thread_composer.focus_handle(cx))
             }
             (Some(id), _) => {
                 self.load_thread(id.clone(), window, cx);
-                cx.new(|_| ui::EmptyMain).into()
+                (cx.new(|_| ui::EmptyMain).into(), self.focus.clone())
             }
-            (None, _) => {
-                let focus = self.home.read(cx).composer.focus_handle(cx);
-                window.focus(&focus, cx);
-                self.home.clone().into()
-            }
+            (None, _) if self.settings.is_some() => (self.home.clone().into(), self.focus.clone()),
+            (None, _) => (
+                self.home.clone().into(),
+                self.home.read(cx).composer.focus_handle(cx),
+            ),
         };
+        // The sign-in view takes no keys of its own.
+        window.focus(
+            if self.login.is_some() {
+                &self.focus
+            } else {
+                &focus
+            },
+            cx,
+        );
         self.sidebar
             .update(cx, |s, cx| s.select(thread_id.as_deref(), cx));
         let home = self.state.route == Route::Home;
@@ -404,7 +635,7 @@ impl Root {
             let id = thread.id.clone();
             this.update_in(cx, |this, window, cx| {
                 this.loaded.insert(id.clone());
-                this.sidebar.update(cx, |sb, cx| sb.add_thread(&thread, cx));
+                this.add_thread(&thread, cx);
                 this.show_thread(thread, window, cx);
             })?;
             turn_start(&bridge, &id, &s).await
@@ -451,7 +682,7 @@ impl Root {
             Event::Notification { method, params } => match method.as_str() {
                 "thread/started" => {
                     if let Ok(n) = serde_json::from_value::<ThreadStartedNotification>(params) {
-                        self.sidebar.update(cx, |s, cx| s.add_thread(&n.thread, cx));
+                        self.add_thread(&n.thread, cx);
                     }
                 }
                 // Recents rows show the thread preview, known once a turn ran.
@@ -508,20 +739,36 @@ impl Root {
     }
 
     fn refresh_threads(&self, cx: &mut Context<Self>) {
-        let (bridge, sidebar) = (self.bridge.clone(), self.sidebar.clone());
-        let task = cx.spawn(async move |_, cx| -> Result<()> {
+        let bridge = self.bridge.clone();
+        let task = cx.spawn(async move |this, cx| -> Result<()> {
             let list = bridge.thread_list().await?;
-            sidebar.update(cx, |s, cx| s.set_threads(&list.data, cx));
-            Ok(())
+            this.update(cx, |this, cx| this.set_threads(&list.data, cx))
         });
         log_err(task, cx);
+    }
+
+    /// Settings ▸ Appearance ▸ Theme: applies `theme` at once and persists it.
+    /// ponytail: the native window chrome keeps following the system; force it with
+    /// `cx.set_window_appearance` if a mismatched titlebar edge shows.
+    pub fn set_theme(&mut self, theme: ThemeSetting, window: &mut Window, cx: &mut Context<Self>) {
+        self.state.theme = theme;
+        self.apply_theme(window, cx);
+        self.save(window, cx);
+    }
+
+    fn apply_theme(&self, window: &mut Window, cx: &mut Context<Self>) {
+        cx.set_global(self.state.theme.theme(window.appearance()));
+        window.refresh();
     }
 
     fn save(&mut self, window: &Window, cx: &App) {
         let size = window.window_bounds().get_bounds().size;
         self.state.width = size.width.into();
         self.state.height = size.height.into();
-        self.state.sidebar_open = self.shell.read(cx).sidebar_open;
+        // A narrow window hides the sidebar without changing the user's choice.
+        if self.wide {
+            self.state.sidebar_open = self.shell.read(cx).sidebar_open;
+        }
         self.state.save();
     }
 }
@@ -582,14 +829,22 @@ impl Render for Root {
             .size_full()
             .relative()
             .font_family(ui::SANS)
-            .on_action(
-                cx.listener(|this, _: &NewChat, window, cx| this.navigate(Route::Home, window, cx)),
-            )
+            .track_focus(&self.focus)
+            .on_action(cx.listener(|this, _: &NewChat, window, cx| this.new_chat(window, cx)))
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
                 this.navigate(Route::Settings, window, cx)
             }))
             .on_action(cx.listener(|this, _: &GoBack, window, cx| this.step(true, window, cx)))
             .on_action(cx.listener(|this, _: &GoForward, window, cx| this.step(false, window, cx)))
+            .on_action(
+                cx.listener(|this, _: &PreviousChat, window, cx| this.step_chat(-1, window, cx)),
+            )
+            .on_action(cx.listener(|this, _: &NextChat, window, cx| this.step_chat(1, window, cx)))
+            .on_action(
+                cx.listener(|this, a: &GoToChat, window, cx| {
+                    this.go_to_chat(Some(a.0), window, cx)
+                }),
+            )
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
                 this.shell.update(cx, |shell, cx| shell.toggle_sidebar(cx))
             }))

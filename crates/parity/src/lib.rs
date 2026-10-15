@@ -189,52 +189,9 @@ pub fn run(
             .filter_map(|e| ref_size(e.ok()?.file_name().to_str()?, case.theme))
             .collect();
         sizes.sort();
-        fs::create_dir_all(out.join(case.screen))?;
         for (w, h) in sizes {
-            let stem = format!("{}/{}@{w}x{h}", case.screen, case.theme);
-            let ref_path = refs.join(format!("{stem}.png"));
-            let reference = image::open(&ref_path)
-                .with_context(|| format!("reading {}", ref_path.display()))?
-                .into_rgba8();
-            let spec_path = refs.join(format!("{stem}.spec.json"));
-            let spec: Spec = serde_json::from_slice(
-                &fs::read(&spec_path)
-                    .with_context(|| format!("reading {}", spec_path.display()))?,
-            )
-            .with_context(|| format!("parsing {}", spec_path.display()))?;
             let port = render_in(&mut cx, case, w, h)?;
-            ensure!(
-                port.dimensions() == reference.dimensions(),
-                "{stem}: port renders {:?} px, ref is {:?} px",
-                port.dimensions(),
-                reference.dimensions()
-            );
-            let (rw, rh) = reference.dimensions();
-            let (counts, diff) = compare(&reference, &port, &text_mask(&spec, rw, rh));
-            let m = Metrics {
-                screen: case.screen.into(),
-                theme: case.theme.into(),
-                width: w,
-                height: h,
-                pass: counts.diff_px_outside_text == 0
-                    && counts.text_diff_ratio <= MAX_TEXT_DIFF_RATIO,
-                counts,
-                ref_png: format!("{stem}.ref.png"),
-                port_png: format!("{stem}.port.png"),
-                diff_png: format!("{stem}.diff.png"),
-            };
-            fs::copy(&ref_path, out.join(&m.ref_png))?;
-            port.save(out.join(&m.port_png))?;
-            diff.save(out.join(&m.diff_png))?;
-            println!(
-                "{} {} {w}x{h} outside={} text={:.3}% {}",
-                m.screen,
-                m.theme,
-                m.counts.diff_px_outside_text,
-                m.counts.text_diff_ratio * 100.,
-                if m.pass { "PASS" } else { "FAIL" }
-            );
-            report.push(m);
+            report.push(diff_ref(refs, out, case.screen, case.theme, &port)?);
         }
     }
     fs::create_dir_all(out)?;
@@ -244,6 +201,60 @@ pub fn run(
     )?;
     fs::write(out.join("report.html"), html(&report))?;
     Ok(report)
+}
+
+/// Diffs `port` (2x device px) against `refs/<screen>/<theme>@<W>x<H>.png`, where `W`x`H`
+/// is half its size, and writes `<out>/<screen>/<theme>@<W>x<H>.{ref,port,diff}.png`.
+pub fn diff_ref(
+    refs: &Path,
+    out: &Path,
+    screen: &str,
+    theme: &str,
+    port: &RgbaImage,
+) -> Result<Metrics> {
+    let (w, h) = (port.width() / 2, port.height() / 2);
+    let stem = format!("{screen}/{theme}@{w}x{h}");
+    let ref_path = refs.join(format!("{stem}.png"));
+    let reference = image::open(&ref_path)
+        .with_context(|| format!("reading {}", ref_path.display()))?
+        .into_rgba8();
+    let spec_path = refs.join(format!("{stem}.spec.json"));
+    let spec: Spec = serde_json::from_slice(
+        &fs::read(&spec_path).with_context(|| format!("reading {}", spec_path.display()))?,
+    )
+    .with_context(|| format!("parsing {}", spec_path.display()))?;
+    ensure!(
+        port.dimensions() == reference.dimensions(),
+        "{stem}: port renders {:?} px, ref is {:?} px",
+        port.dimensions(),
+        reference.dimensions()
+    );
+    let (rw, rh) = reference.dimensions();
+    let (counts, diff) = compare(&reference, port, &text_mask(&spec, rw, rh));
+    let m = Metrics {
+        screen: screen.into(),
+        theme: theme.into(),
+        width: w,
+        height: h,
+        pass: counts.diff_px_outside_text == 0 && counts.text_diff_ratio <= MAX_TEXT_DIFF_RATIO,
+        counts,
+        ref_png: format!("{stem}.ref.png"),
+        port_png: format!("{stem}.port.png"),
+        diff_png: format!("{stem}.diff.png"),
+    };
+    fs::create_dir_all(out.join(screen))?;
+    fs::copy(&ref_path, out.join(&m.ref_png))?;
+    port.save(out.join(&m.port_png))?;
+    diff.save(out.join(&m.diff_png))?;
+    println!(
+        "{} {} {w}x{h} outside={} text={:.3}% {}",
+        m.screen,
+        m.theme,
+        m.counts.diff_px_outside_text,
+        m.counts.text_diff_ratio * 100.,
+        if m.pass { "PASS" } else { "FAIL" }
+    );
+    Ok(m)
 }
 
 fn html(report: &[Metrics]) -> String {
