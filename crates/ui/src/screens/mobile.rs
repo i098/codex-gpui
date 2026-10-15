@@ -3,9 +3,9 @@
 
 use crate::{EmptySidebar, Shell, icon, text};
 use gpui::{
-    AnyView, App, AppContext as _, Bounds, Context, Corners, Div, Hsla, InteractiveElement as _,
-    IntoElement, ParentElement, Pixels, Render, RenderImage, StatefulInteractiveElement as _,
-    Styled, Window, actions, canvas, div, point, px, rgb, size,
+    AnyView, App, AppContext as _, Bounds, Context, Corners, Div, Entity, Hsla,
+    InteractiveElement as _, IntoElement, ParentElement, Pixels, Render, RenderImage,
+    StatefulInteractiveElement as _, Styled, Window, actions, canvas, div, point, px, rgb, size,
 };
 use image::{Frame, Rgba, RgbaImage};
 use shapes::Corner::Squircle;
@@ -25,6 +25,13 @@ actions!(
 );
 
 pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
+    let shell = shell(cx);
+    shell.update(cx, |shell, _| shell.can_go_back = true);
+    shell.into()
+}
+
+/// `/codex-mobile`: sidebar closed, no rail item current.
+pub fn shell(cx: &mut App) -> Entity<Shell> {
     let sidebar = cx.new(|_| EmptySidebar).into();
     let main = cx.new(|_| MobileSetupPage::default()).into();
     cx.new(|_| {
@@ -33,10 +40,8 @@ pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
         shell.selected_rail = None;
         shell.chat_chrome = false;
         shell.new_tab = false;
-        shell.can_go_back = true;
         shell
     })
-    .into()
 }
 
 /// One `codexMobile.setupDialog.initial` feature row: 32 px icon slot, title and description.

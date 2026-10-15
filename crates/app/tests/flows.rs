@@ -8,7 +8,7 @@
 //! only the flows whose name contains `<filter>`.
 
 use anyhow::{Context as _, Result, ensure};
-use app::{Root, Route, State, ThemeSetting};
+use app::{Root, Route, SidePanel, State, ThemeSetting};
 use bridge::Bridge;
 use bridge::types::{ThreadItem, TurnStatus};
 use gpui::{
@@ -44,8 +44,13 @@ const FORWARD: (f32, f32) = (136., 22.);
 const TOGGLE_SIDEBAR: (f32, f32) = (170., 22.);
 const RAIL_HOME: (f32, f32) = (26., 70.);
 const RAIL_SPACE: (f32, f32) = (26., 114.);
+const RAIL_SCHEDULED: (f32, f32) = (26., 158.);
+/// Sidebar `Search`.
+const SEARCH: (f32, f32) = (314., 70.);
 /// The main panel at 1280x832 with the sidebar open.
 const MAIN_PANEL: [f32; 4] = [340., 44., 936., 784.];
+/// The sidebar panel.
+const SIDEBAR_PANEL: [f32; 4] = [52., 44., 288., 784.];
 
 type Flow = fn() -> Result<String>;
 
@@ -99,6 +104,40 @@ const FLOWS: &[(&str, Flow)] = &[
     ("menu_bar_actions", menu_bar_actions),
     ("cmd_w_closes_window", cmd_w_closes_window),
     ("theme_switch", theme_switch),
+    ("rail_scheduled", rail_scheduled),
+    ("scheduled_card_hover", scheduled_card_hover),
+    ("parity_automations", || {
+        parity_flow("automations", |fx| fx.click(RAIL_SCHEDULED))
+    }),
+    ("profile_menu_settings", profile_menu_settings),
+    ("profile_menu_dismiss", profile_menu_dismiss),
+    ("profile_menu_mobile", profile_menu_mobile),
+    ("mobile_button_hover", mobile_button_hover),
+    ("parity_mobile", || parity_flow("mobile", open_mobile)),
+    ("command_menu_keys", command_menu_keys),
+    ("command_menu_search_click", command_menu_search_click),
+    ("command_menu_settings_page", command_menu_settings_page),
+    ("sidebar_section_collapse", sidebar_section_collapse),
+    ("changes_panel_keys", changes_panel_keys),
+    ("view_changes_opens_panel", view_changes_opens_panel),
+    ("diff_file_header_toggle", diff_file_header_toggle),
+    ("parity_diff", || {
+        parity_flow("diff", |fx| {
+            open_changes(fx)?;
+            // The reference shows the file collapsed.
+            fx.click((panel_left(fx.size.0) + 100., 111.))
+        })
+    }),
+    ("background_terminal_tab", background_terminal_tab),
+    ("parity_terminal", || parity_flow("terminal", open_terminal)),
+    ("appearance_theme_control", appearance_theme_control),
+    ("settings_select_menu", settings_select_menu),
+    ("parity_sidebar", || {
+        parity_flow("sidebar", |fx| {
+            fx.click(SEARCH)?;
+            fx.keys("m a t h")
+        })
+    }),
 ];
 
 fn main() {
@@ -145,6 +184,8 @@ struct Fx {
     root: Entity<Root>,
     window: AnyWindowHandle,
     theme: &'static str,
+    /// Window size in CSS px.
+    size: (f32, f32),
 }
 
 impl Fx {
@@ -214,6 +255,7 @@ impl Fx {
             root,
             window: window.into(),
             theme,
+            size: (w, h),
         };
         fx.wait("startup", |fx| fx.read(|r, _| r.ready()))?;
         Ok(fx)
@@ -459,7 +501,7 @@ fn launch_home() -> Result<String> {
     ensure!(fx.sidebar_open());
     ensure!(fx.shell(|s| !s.can_go_back && !s.can_go_forward));
     ensure!(fx.composer_focused()?, "Home composer not focused");
-    let recents = fx.read(|r, _| r.recents().to_vec());
+    let recents = fx.read(|r, _| r.recents());
     ensure!(
         recents == [GREETING, SUBTRACT, EXPLAIN],
         "recents {recents:?}"
@@ -925,4 +967,326 @@ fn theme_switch() -> Result<String> {
         notes.push(format!("{setting:?}: {n} px"));
     }
     Ok(notes.join(", "))
+}
+
+// --- Rail Scheduled, profile menu, Mobile ---
+
+fn rail_scheduled() -> Result<String> {
+    let mut fx = Fx::new()?;
+    fx.click(RAIL_SCHEDULED)?;
+    ensure!(fx.route() == Route::Scheduled, "route {:?}", fx.route());
+    ensure!(fx.shell(|s| s.selected_rail == Some("scheduled") && s.can_go_back && !s.new_tab));
+    fx.click(BACK)?;
+    ensure!(fx.route() == Route::Home, "Back: {:?}", fx.route());
+    Ok(String::new())
+}
+
+fn scheduled_card_hover() -> Result<String> {
+    let mut fx = Fx::new()?;
+    fx.click(RAIL_SCHEDULED)?;
+    // The first suggestion card (the app shows the landing examples in the same grid).
+    let at = fx.at("automations", "AP Lang practice")?;
+    let n = assert_hover(&mut fx, at, MAIN_PANEL, 1000)?;
+    Ok(format!("{n} px"))
+}
+
+/// The profile avatar, at the rail's bottom.
+fn avatar(fx: &Fx) -> (f32, f32) {
+    (26., fx.size.1 - 26.)
+}
+
+/// Profile menu row `n`: `Settings`, then `Set up mobile` under the `Help` heading. The menu
+/// sits 48 px above the window's bottom edge.
+fn profile_item(fx: &Fx, n: usize) -> (f32, f32) {
+    (118., fx.size.1 - [128., 68.][n])
+}
+
+fn profile_menu_settings() -> Result<String> {
+    let mut fx = Fx::new()?;
+    fx.click(avatar(&fx))?;
+    ensure!(
+        fx.shell(|s| s.profile_menu),
+        "the avatar did not open the menu"
+    );
+    fx.click(profile_item(&fx, 0))?;
+    ensure!(fx.route() == Route::Settings, "route {:?}", fx.route());
+    // The Settings shell has the avatar too; a second click closes its menu.
+    fx.click(avatar(&fx))?;
+    ensure!(
+        fx.shell(|s| s.profile_menu),
+        "no menu on the Settings route"
+    );
+    fx.click(avatar(&fx))?;
+    ensure!(
+        fx.shell(|s| !s.profile_menu),
+        "a second avatar click left it open"
+    );
+    Ok(String::new())
+}
+
+fn profile_menu_dismiss() -> Result<String> {
+    let mut fx = Fx::new()?;
+    fx.click(avatar(&fx))?;
+    ensure!(fx.shell(|s| s.profile_menu));
+    fx.click((800., 400.))?;
+    ensure!(
+        fx.shell(|s| !s.profile_menu),
+        "a click outside left it open"
+    );
+    ensure!(fx.route() == Route::Home);
+    Ok(String::new())
+}
+
+/// Profile menu ▸ Help ▸ `Set up mobile`.
+fn open_mobile(fx: &mut Fx) -> Result<()> {
+    fx.click(avatar(fx))?;
+    fx.click(profile_item(fx, 1))
+}
+
+fn profile_menu_mobile() -> Result<String> {
+    let mut fx = Fx::new()?;
+    open_mobile(&mut fx)?;
+    ensure!(fx.route() == Route::Mobile, "route {:?}", fx.route());
+    ensure!(fx.shell(|s| s.selected_rail.is_none() && !s.sidebar_open && s.can_go_back));
+    fx.click(BACK)?;
+    ensure!(fx.route() == Route::Home, "Back: {:?}", fx.route());
+    Ok(String::new())
+}
+
+fn mobile_button_hover() -> Result<String> {
+    let mut fx = Fx::new()?;
+    open_mobile(&mut fx)?;
+    let at = fx.at("mobile", "Get started")?;
+    let n = assert_hover(&mut fx, at, [at.0 - 200., at.1 - 18., 400., 36.], 1000)?;
+    Ok(format!("{n} px"))
+}
+
+// --- Command menu, sidebar sections ---
+
+fn command_menu_open(fx: &Fx) -> bool {
+    fx.read(|r, _| r.command_menu().is_some())
+}
+
+fn command_menu_keys() -> Result<String> {
+    let mut fx = Fx::new()?;
+    fx.keys("cmd-k")?;
+    let menu = fx
+        .read(|r, _| r.command_menu().cloned())
+        .context("cmd-k: no command menu")?;
+    let focused = fx.cx.update_window(fx.window, |_, window, cx| {
+        menu.focus_handle(cx).is_focused(window)
+    })?;
+    ensure!(focused, "the command menu is not focused");
+    fx.keys("escape")?;
+    ensure!(!command_menu_open(&fx), "Escape left it open");
+    ensure!(fx.composer_focused()?, "Escape did not give the keys back");
+    fx.keys("cmd-shift-p")?;
+    ensure!(command_menu_open(&fx), "cmd-shift-p: no command menu");
+    fx.keys("s u b t r a c t enter")?;
+    fx.wait_thread(SUBTRACT)?;
+    ensure!(!command_menu_open(&fx), "selecting a chat left it open");
+    Ok(String::new())
+}
+
+fn command_menu_search_click() -> Result<String> {
+    let mut fx = Fx::new()?;
+    fx.click(SEARCH)?;
+    ensure!(command_menu_open(&fx), "Search: no command menu");
+    fx.click((100., 400.))?;
+    ensure!(!command_menu_open(&fx), "a click outside left it open");
+    // Live Recents: a chat row opens by click on the selected (first) match.
+    fx.click(SEARCH)?;
+    fx.keys("g r e e t enter")?;
+    fx.wait_thread(GREETING)?;
+    Ok(String::new())
+}
+
+/// A settings row opens Settings at that page: Appearance differs from `⌘,`'s General.
+fn command_menu_settings_page() -> Result<String> {
+    let mut fx = Fx::new()?;
+    fx.keys("cmd-k")?;
+    fx.keys("a p p e a r a n c e enter")?;
+    ensure!(fx.route() == Route::Settings, "route {:?}", fx.route());
+    fx.hover((640., 22.))?;
+    let appearance = fx.shot()?;
+    let mut general = Fx::new()?;
+    general.keys("cmd-,")?;
+    general.hover((640., 22.))?;
+    let n = changed(&appearance, &general.shot()?, MAIN_PANEL);
+    ensure!(n > 1000, "the page differs from General by {n} px");
+    Ok(format!("{n} px"))
+}
+
+fn sidebar_section_collapse() -> Result<String> {
+    let mut fx = Fx::new()?;
+    let row = fx.at("home", "Add a subtract")?;
+    let recents = fx.at("home", "Recents")?;
+    fx.click(recents)?;
+    fx.click(row)?;
+    ensure!(
+        fx.route() == Route::Home,
+        "a collapsed row opened {:?}",
+        fx.route()
+    );
+    fx.click(recents)?;
+    fx.click(row)?;
+    fx.wait_thread(SUBTRACT)?;
+    fx.hover((640., 22.))?;
+    let before = fx.shot()?;
+    fx.click(fx.at("home", "Projects")?)?;
+    fx.hover((640., 22.))?;
+    let n = changed(&before, &fx.shot()?, SIDEBAR_PANEL);
+    ensure!(n > 1000, "collapsing Projects repainted {n} px");
+    Ok(format!("Projects: {n} px"))
+}
+
+// --- Side panel: Changes, background terminal ---
+
+/// Left edge of the side panel in a `w` px window (`ui::screens::diff::panel::panel_width`).
+fn panel_left(w: f32) -> f32 {
+    let main = w - 340. - 4.5;
+    w - 4. - 664.17f32.min((main - 320.).max(320.))
+}
+
+/// The tab strip's close button.
+fn close_tab(fx: &Fx) -> (f32, f32) {
+    (panel_left(fx.size.0) + 229., 21.5)
+}
+
+fn side(fx: &Fx) -> Option<SidePanel> {
+    fx.read(|r, _| r.side_panel())
+}
+
+/// The subtract thread with `⌥⌘B`'s Changes panel.
+fn open_changes(fx: &mut Fx) -> Result<()> {
+    fx.click(fx.at("home", "Add a subtract")?)?;
+    fx.wait_thread(SUBTRACT)?;
+    fx.keys("alt-cmd-b")
+}
+
+fn changes_panel_keys() -> Result<String> {
+    let mut fx = Fx::new()?;
+    open_changes(&mut fx)?;
+    ensure!(
+        side(&fx) == Some(SidePanel::Changes),
+        "alt-cmd-b: {:?}",
+        side(&fx)
+    );
+    ensure!(
+        fx.shell(|s| !s.new_tab),
+        "the tab strip brings its own New tab"
+    );
+    fx.keys("alt-cmd-b")?;
+    ensure!(side(&fx).is_none(), "alt-cmd-b again: {:?}", side(&fx));
+    ensure!(fx.shell(|s| s.new_tab));
+    fx.menu("View", "Toggle Changes Panel")?;
+    ensure!(
+        side(&fx) == Some(SidePanel::Changes),
+        "menu: {:?}",
+        side(&fx)
+    );
+    fx.click(close_tab(&fx))?;
+    ensure!(side(&fx).is_none(), "tab close: {:?}", side(&fx));
+    Ok(String::new())
+}
+
+fn view_changes_opens_panel() -> Result<String> {
+    let mut fx = Fx::new()?;
+    fx.click(fx.at("home", "Add a subtract")?)?;
+    fx.wait_thread(SUBTRACT)?;
+    fx.click(fx.at("thread", "View changes")?)?;
+    ensure!(side(&fx) == Some(SidePanel::Changes), "{:?}", side(&fx));
+    Ok(String::new())
+}
+
+fn diff_file_header_toggle() -> Result<String> {
+    let mut fx = Fx::new()?;
+    open_changes(&mut fx)?;
+    let left = panel_left(fx.size.0);
+    let panel = [left, 44., fx.size.0 - left, 784.];
+    fx.hover((640., 22.))?;
+    let open = fx.shot()?;
+    fx.click((left + 100., 111.))?;
+    fx.hover((640., 22.))?;
+    let n = changed(&open, &fx.shot()?, panel);
+    ensure!(n > 1000, "the header click repainted {n} px");
+    Ok(format!("{n} px"))
+}
+
+/// The subtract thread with the reference's running background command replayed into it,
+/// then `Toggle summary` ▸ the command's row.
+fn open_terminal(fx: &mut Fx) -> Result<()> {
+    fx.click(fx.at("home", "Add a subtract")?)?;
+    fx.wait_thread(SUBTRACT)?;
+    let view = fx.read(|r, _| r.thread().cloned()).context("no thread")?;
+    fx.cx.update(|cx| {
+        view.update(cx, |v, cx| {
+            for event in ui::screens::terminal::running_command_replay() {
+                v.apply(&event, cx);
+            }
+        })
+    });
+    fx.cx.run_until_parked();
+    // refs/thread: `Toggle summary` 63 px from the window's right edge; the summary popover
+    // ends 12 px from it (refs/terminal, shifted to the full-width thread).
+    let w = fx.size.0;
+    fx.click((w - 63., 22.))?;
+    fx.click((w - 202., 179.7))
+}
+
+fn background_terminal_tab() -> Result<String> {
+    let mut fx = Fx::new()?;
+    open_terminal(&mut fx)?;
+    ensure!(side(&fx) == Some(SidePanel::Terminal), "{:?}", side(&fx));
+    fx.click(close_tab(&fx))?;
+    ensure!(side(&fx).is_none(), "tab close: {:?}", side(&fx));
+    // The summary stays open: its `Changes` row opens the Changes tab.
+    fx.click((fx.size.0 - 202., 105.7))?;
+    ensure!(side(&fx) == Some(SidePanel::Changes), "{:?}", side(&fx));
+    Ok(String::new())
+}
+
+// --- Settings ▸ Appearance ---
+
+/// Theme control on the Appearance page: Light, Dark, System (the headless window's system
+/// appearance is light). The segmented control ends at the 768 px column's right padding.
+fn appearance_theme_control() -> Result<String> {
+    use theme::{Appearance, Theme};
+    let mut fx = Fx::new()?;
+    fx.keys("cmd-,")?;
+    fx.click(fx.at("settings", "Appearance")?)?;
+    for (label, x, want) in [
+        ("Light", 1013., Appearance::Light),
+        ("Dark", 1064., Appearance::Dark),
+        ("System", 1122., Appearance::Light),
+    ] {
+        fx.click((x, 258.))?;
+        let got = fx.cx.update(|cx| cx.global::<Theme>().appearance);
+        ensure!(got == want, "{label}: theme {got:?}");
+    }
+    Ok(String::new())
+}
+
+/// `Confirm before closing a window` select: its menu opens, `Never` sets the value and closes
+/// it.
+fn settings_select_menu() -> Result<String> {
+    let mut fx = Fx::new()?;
+    fx.keys("cmd-,")?;
+    let at = fx.at("settings", "Close shortcut only")?;
+    fx.hover((640., 22.))?;
+    let before = fx.shot()?;
+    fx.click(at)?;
+    fx.hover((640., 22.))?;
+    let n = changed(&before, &fx.shot()?, MAIN_PANEL);
+    ensure!(n > 2000, "the menu repainted {n} px");
+    // The window's bottom edge is below the trigger, so the menu (3 rows of 32 px in 4 px
+    // padding) opens above it: `Never` is its last row.
+    fx.click((at.0, at.1 - 34.))?;
+    fx.hover((640., 22.))?;
+    let after = fx.shot()?;
+    let label = changed(&before, &after, [at.0 - 80., at.1 - 14., 160., 28.]);
+    ensure!(label > 50, "the trigger label repainted {label} px");
+    let left = changed(&before, &after, MAIN_PANEL);
+    ensure!(left < n / 2, "the menu stayed open ({left} px)");
+    Ok(format!("{n} px"))
 }

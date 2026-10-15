@@ -282,6 +282,9 @@ type ApprovalHandler = Rc<dyn Fn(ApprovalDecision, &mut Window, &mut App)>;
 pub struct Composer {
     focus_handle: FocusHandle,
     placeholder: SharedString,
+    /// Docked under a thread: `_ComposerLayoutRoot` paints the card and `_ComposerLayoutBody`
+    /// (the content) is a `will-change: opacity` layer. On Home the body paints the card.
+    docked: bool,
     content: String,
     selected_range: Range<usize>,
     selection_reversed: bool,
@@ -310,18 +313,19 @@ pub struct Composer {
 impl Composer {
     /// Home composer: placeholder `Do anything`.
     pub fn home(_: &mut Window, cx: &mut Context<Self>) -> Self {
-        Self::new("Do anything", cx)
+        Self::new("Do anything", false, cx)
     }
 
     /// Thread composer, docked at the bottom of a thread: placeholder `Work with Codex`.
     pub fn thread(_: &mut Window, cx: &mut Context<Self>) -> Self {
-        Self::new("Work with Codex", cx)
+        Self::new("Work with Codex", true, cx)
     }
 
-    fn new(placeholder: &'static str, cx: &mut Context<Self>) -> Self {
+    fn new(placeholder: &'static str, docked: bool, cx: &mut Context<Self>) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
             placeholder: placeholder.into(),
+            docked,
             content: String::new(),
             selected_range: 0..0,
             selection_reversed: false,
@@ -1055,6 +1059,14 @@ pub fn label(s: impl Into<SharedString>, color: Hsla) -> Div {
     text(s, 13., 18., 400., color)
 }
 
+/// The model name sits in a `tabular-nums` span (`GPT-6`'s digit takes its tabular advance).
+fn tabular(d: Div) -> Div {
+    d.font_features(gpui::FontFeatures(std::sync::Arc::new(vec![(
+        "tnum".into(),
+        1,
+    )])))
+}
+
 pub(crate) fn shadow(color: Hsla, y: f32, blur: f32, spread: f32, inset: bool) -> shapes::Shadow {
     shapes::Shadow {
         color,
@@ -1094,7 +1106,7 @@ fn card_decoration(t: &Theme) -> shapes::Decoration {
 /// it as its own layer: the blurred backdrop, then the layer (shadows, fill and content
 /// rasterized into transparent tiles) over it. The layer's tile grid starts at its shadow's
 /// ink (`0 8px 16px -4px`: 12 px left of the box, 4 px above).
-fn popover(t: &Theme, width: f32, content: impl FnOnce(Div) -> Div) -> Div {
+pub(crate) fn popover(t: &Theme, width: f32, content: impl FnOnce(Div) -> Div) -> Div {
     // `bg-surface-elevated-secondary/90` mixes in oklab: Chromium's round trip of white lands
     // 1 below 255 in green (as in thread.rs `Tones::card`).
     let fill = match t.appearance {
@@ -1265,13 +1277,13 @@ impl Composer {
                                 div()
                                     .relative()
                                     .px(px(16.))
-                                    .child(text(
+                                    .child(tabular(text(
                                         model.label.clone(),
                                         12.,
                                         16.,
                                         400.,
                                         t.text_secondary,
-                                    ))
+                                    )))
                                     .child(
                                         icon("composer-chevron-right-small", 12., t.text_tertiary)
                                             .absolute()
@@ -1310,7 +1322,8 @@ impl Composer {
                         .h(px(24.))
                         .child(shapes::decoration(deco(
                             12.,
-                            t.text_alpha_10,
+                            // `_Track`: `color(srgb 1 1 1 / 0.1)`, an sRGB mix (8-bit).
+                            t.text.opacity(0.1),
                             vec![shadow(t.border, 0., 0., 0.5, true)],
                         )))
                         .when(selected > 0, |d| {
@@ -1564,7 +1577,7 @@ impl Composer {
             .flex()
             .items_center()
             .gap(px(4.))
-            .child(label(model_label, t.text).when(open, |d| d.invisible()))
+            .child(tabular(label(model_label, t.text)).when(open, |d| d.invisible()))
             .when(model.is_some(), |d| {
                 d.child(
                     label(effort_label(&self.effort).to_string(), t.text_tertiary)
@@ -1729,9 +1742,16 @@ impl Render for Composer {
             .flex()
             .flex_col()
             .child(shapes::decoration(card_decoration(&t)))
-            .child(self.attachments_row(&t, cx))
-            .child(self.editor(cx))
-            .child(self.footer(&t, cx));
+            // See `docked`: the docked body is a transparent cc layer over the card.
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .when(self.docked, |d| d.layer())
+                    .child(self.attachments_row(&t, cx))
+                    .child(self.editor(cx))
+                    .child(self.footer(&t, cx)),
+            );
         div()
             .w_full()
             .flex()

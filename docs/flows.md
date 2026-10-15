@@ -21,20 +21,22 @@ The rows were not clicked again on the original through `tools/route1`: its `ser
 
 | Screen | Rows | PASS | FAIL | NOT WIRED |
 |---|---|---|---|---|
-| App shell: shortcuts, menu bar, window | 20 | 9 | 4 | 7 |
-| 14.1 Left rail | 12 | 2 | 1 | 9 |
-| 14.2 Sidebar | 23 | 8 | 2 | 13 |
+| App shell: shortcuts, menu bar, window | 20 | 11 | 4 | 5 |
+| 14.1 Left rail | 12 | 4 | 1 | 7 |
+| 14.2 Sidebar | 23 | 11 | 3 | 9 |
 | 14.3 Home | 21 | 10 | 3 | 8 |
-| 14.4 Thread view | 20 | 2 | 3 | 15 |
+| 14.4 Thread view | 20 | 2 | 4 | 14 |
 | 14.5 Composer | 20 | 5 | 4 | 11 |
-| 14.6 Diff view | 20 | 0 | 0 | 20 |
-| 14.7 Settings, login and onboarding | 20 | 6 | 8 | 6 |
-| 15.1 Automations | 16 | 0 | 0 | 16 |
-| 15.2 Background terminal | 10 | 0 | 0 | 10 |
-| 15.3 Mobile setup | 10 | 0 | 0 | 10 |
-| **All** | **192** | **42** | **25** | **125** |
+| 14.6 Diff view | 20 | 1 | 1 | 18 |
+| 14.7 Settings, login and onboarding | 20 | 7 | 8 | 5 |
+| 15.1 Automations | 16 | 2 | 2 | 12 |
+| 15.2 Background terminal | 10 | 2 | 2 | 6 |
+| 15.3 Mobile setup | 10 | 2 | 1 | 7 |
+| **All** | **192** | **57** | **33** | **102** |
 
-Last run: 37 flows, 37 passed.
+Before round 4 (F1Flows): 42 PASS, 25 FAIL, 125 NOT WIRED.
+
+Last run: 58 flows, 58 passed.
 
 ## Parity of the states the flows reach
 
@@ -43,29 +45,51 @@ The numbers are reported, not gated: the pixel lanes own them.
 The right column is the same ref diffed against the parity harness's own screen builder (`cargo run -p parity -- --screen <s>`), for comparison.
 `outside` is the count of differing device pixels outside text boxes; `text` is the ratio of differing pixels inside text boxes.
 
+Numbers from the round 4 run (F1Flows); the screen builder column is a run of the same source tree.
+
 | Flow | Ref | Root (flow) | Screen builder |
 |---|---|---|---|
-| `parity_home` (launch) | home dark 1280x832 | outside 304, text 3.166 % | outside 304, text 3.133 % |
-| | home dark 1440x900 | outside 294, text 3.166 % | outside 294, text 3.133 % |
-| | home light 1280x832 | outside 521, text 1.493 % | outside 521, text 1.460 % |
-| | home light 1440x900 | outside 517, text 1.493 % | outside 517, text 1.460 % |
-| `parity_composer` (type `Refactor src/math.py`, click the model pill) | composer dark 1280x832 | outside 73099, text 13.677 % | outside 66168, text 12.111 % |
-| | composer dark 1440x900 | outside 96547, text 16.239 % | outside 877, text 3.439 % |
-| | composer light 1280x832 | outside 102491, text 14.014 % | outside 69769, text 11.495 % |
-| | composer light 1440x900 | outside 102147, text 14.098 % | outside 69952, text 11.495 % |
-| `parity_thread` (click the subtract row) | thread dark 1280x832 | outside 5375, text 5.257 % | outside 1616, text 4.779 % |
-| | thread dark 1440x900 | outside 5291, text 5.196 % | outside 1532, text 4.724 % |
-| | thread light 1280x832 | outside 29802, text 2.652 % | outside 26040, text 2.182 % |
-| | thread light 1440x900 | outside 29693, text 2.621 % | outside 25931, text 2.157 % |
-| `parity_settings` (`⌘,`) | settings dark 1280x832 | outside 4591, text 1.661 % | outside 4591, text 1.661 % |
-| | settings dark 1440x900 | outside 4926, text 1.691 % | outside 4926, text 1.691 % |
-| | settings light 1280x832 | outside 7112, text 0.308 % | outside 7112, text 0.308 % |
-| | settings light 1440x900 | outside 7825, text 0.315 % | outside 7825, text 0.315 % |
+| `parity_home` (launch) | home dark 1280x832 | outside 292, text 1.465 % | outside 292, text 1.431 % |
+| | home dark 1440x900 | outside 282, text 1.465 % | outside 282, text 1.431 % |
+| | home light 1280x832 | outside 482, text 1.193 % | outside 482, text 1.159 % |
+| | home light 1440x900 | outside 478, text 1.193 % | outside 478, text 1.159 % |
+| `parity_sidebar` (`Search`, type `math`) | sidebar dark 1280x832 | outside 285, text 1.060 % | outside 285, text 1.060 % |
+| | sidebar dark 1440x900 | outside 278, text 1.048 % | outside 278, text 1.048 % |
+| | sidebar light 1280x832 | outside 549, text 1.274 % | outside 549, text 1.274 % |
+| | sidebar light 1440x900 | outside 554, text 1.255 % | outside 554, text 1.255 % |
+| `parity_composer` (type `Refactor src/math.py`, click the model pill) | composer dark 1280x832 | outside 12166, text 4.004 % | outside 1141, text 2.050 % |
+| | composer dark 1440x900 | outside 96535, text 14.792 % | outside 1107, text 2.050 % |
+| | composer light 1280x832 | outside 11989, text 3.464 % | outside 950, text 1.513 % |
+| | composer light 1440x900 | outside 102108, text 13.843 % | outside 955, text 1.513 % |
+| `parity_thread` (click the subtract row) | thread dark 1280x832 | outside 5122, text 2.869 % | outside 1400, text 3.758 % |
+| | thread dark 1440x900 | outside 5039, text 2.836 % | outside 1294, text 3.715 % |
+| | thread light 1280x832 | outside 5658, text 1.867 % | outside 1812, text 1.685 % |
+| | thread light 1440x900 | outside 5549, text 1.845 % | outside 1701, text 1.665 % |
+| `parity_diff` (subtract, `⌥⌘B`, collapse the file) | diff dark 1280x832 | outside 6809, text 2.275 % | outside 3275, text 2.954 % |
+| | diff dark 1440x900 | outside 7216, text 3.856 % | outside 3638, text 4.672 % |
+| | diff light 1280x832 | outside 9859, text 1.532 % | outside 6400, text 1.306 % |
+| | diff light 1440x900 | outside 9945, text 3.169 % | outside 6429, text 3.015 % |
+| `parity_settings` (`⌘,`) | settings dark 1280x832 | outside 626, text 1.661 % | outside 626, text 1.661 % |
+| | settings dark 1440x900 | outside 679, text 1.691 % | outside 679, text 1.691 % |
+| | settings light 1280x832 | outside 475, text 0.308 % | outside 475, text 0.308 % |
+| | settings light 1440x900 | outside 501, text 0.315 % | outside 501, text 0.315 % |
+| `parity_automations` (rail `Scheduled`) | automations dark 1280x832 | outside 40055, text 27.122 % | outside 161, text 0.282 % |
+| | automations dark 1440x900 | outside 40051, text 27.122 % | outside 220, text 0.282 % |
+| | automations light 1280x832 | outside 40095, text 27.179 % | outside 185, text 0.152 % |
+| | automations light 1440x900 | outside 40069, text 27.179 % | outside 259, text 0.152 % |
+| `parity_terminal` (subtract, replayed running command, summary ▸ the command) | terminal dark 1280x832 | outside 6441, text 2.351 % | outside 3135, text 3.214 % |
+| | terminal dark 1440x900 | outside 6467, text 3.946 % | outside 3150, text 4.891 % |
+| | terminal light 1280x832 | outside 5786, text 1.378 % | outside 2414, text 1.148 % |
+| | terminal light 1440x900 | outside 5772, text 3.435 % | outside 2400, text 3.272 % |
+| `parity_mobile` (avatar ▸ `Set up mobile`) | mobile dark 1280x832 | outside 66, text 0.472 % | outside 66, text 0.472 % |
+| | mobile dark 1440x900 | outside 65, text 0.472 % | outside 65, text 0.472 % |
+| | mobile light 1280x832 | outside 75, text 0.471 % | outside 75, text 0.471 % |
+| | mobile light 1440x900 | outside 74, text 0.471 % | outside 74, text 0.471 % |
 
-- Home and Settings: the app gives the same pixels as the screen builder outside text. [INFERENCE] The small text difference on Home comes from the focused composer (caret).
-- Thread: `Root` uses the local clock, and the screen builder pins the capture clock (`CAPTURE_CLOCK`). [INFERENCE] The extra difference is the relative times and the focused thread composer.
+- Home, Sidebar, Settings and Mobile: the app gives the same pixels as the screen builder outside text. [INFERENCE] The small text difference on Home comes from the focused composer (caret).
+- Thread, Diff, Terminal: `Root` uses the local clock, and the screen builder pins the capture clock (`CAPTURE_CLOCK`). [INFERENCE] The extra difference is the relative times and the focused thread composer.
 - Composer: the click on the model pill opens the effort menu (`Menu::Effort`), like the ref. [INFERENCE] The extra difference comes from the typed text and caret against `Composer::set_text`, and from the hover state that the click leaves on the pill.
-- The sidebar, diff, terminal, automations and mobile refs have no state that `Root` can reach (see the NOT WIRED rows below).
+- Automations: the app has no `/suggested_automations` backend, so its cards are the landing examples, not the ref's server suggestions.
 
 ## App shell: shortcuts, menu bar, window (§2.2, §12, §13)
 
@@ -78,15 +102,15 @@ The right column is the same ref diffed against the parity harness's own screen 
 | 5 | `⌘⇧[`, `⌘⇧]`, `⌘⌥←`, `⌘⌥→` | shortcut | Previous / next chat. | Previous / next Recents row; no wrap. | PASS (`previous_next_chat`) |
 | 6 | `⌘1`…`⌘9` | shortcut | Go to chat N (`thread1..9`). | Opens Recents row N. | PASS (`cmd_digit_goes_to_chat`) |
 | 7 | `⌘W` | shortcut | Close tab, else close window. | Closes the window (the port has no tabs). | PASS (`cmd_w_closes_window`) |
-| 8 | Menu bar: Codex ▸ Settings…, File ▸ New Chat, View ▸ Toggle Sidebar, Previous Chat, Next Chat, Back, Forward | click | Same commands as the keys. | `app::menus()` items dispatch their actions. | PASS (`menu_bar_actions`) |
+| 8 | Menu bar: Codex ▸ Settings…, File ▸ New Chat, View ▸ Toggle Sidebar, Toggle Changes Panel, Previous Chat, Next Chat, Back, Forward | click | Same commands as the keys. | `app::menus()` items dispatch their actions. | PASS (`menu_bar_actions`, `changes_panel_keys`) |
 | 9 | System appearance and Settings ▸ Appearance ▸ Theme | click | Light / Dark / System applies at once. | `State.theme` (`ThemeSetting`) is applied on each appearance change and by `Root::set_theme`. | PASS (`theme_switch`) |
 | 10 | `⌘M`, Window ▸ Minimize, Zoom | shortcut | Minimize, zoom. | Bound; `window.minimize_window()`, `zoom_window()`. | FAIL (no headless check: the test window ignores minimize and zoom) |
 | 11 | `⌘Q`, `⌘H`, `⌥⌘H`, Show All | shortcut | Quit, hide, hide others, show all. | Bound; app-level handlers in `app::init`. | FAIL (no headless check: quitting or hiding ends the test app) |
 | 12 | Window minimum size | resize | `getPrimaryMinimumSize()` 480x600. | `window_min_size` in `main.rs`. | FAIL (no headless check: the test window is not resizable) |
 | 13 | Live window resize across 768 px | resize | The sidebar hides below 768 px and comes back above it. | `Root::fit` on `observe_window_bounds`. | FAIL (no headless check: the test window has no resize callback; the 3 widths are checked at open in `resize_three_widths`) |
-| 14 | `⌘K`, `⌘⇧P` | shortcut | Command menu. | — | NOT WIRED (`crates/ui/src/screens/sidebar.rs` `CommandMenu`: needs `impl Focusable`, a dismiss event and a select event, and live chats; then `crates/app/src/lib.rs` binds the keys and shows it) |
+| 14 | `⌘K`, `⌘⇧P` | shortcut | Command menu. | `CommandMenu` over live Recents, focused; Escape or a click outside closes it; Enter or a click runs the row (chat, `New chat`, `Manage scheduled tasks`, settings pages). | PASS (`command_menu_keys`, `command_menu_settings_page`) |
 | 15 | `⌘F` | shortcut | Find in chat. | — | NOT WIRED (`crates/ui/src/thread.rs`: no find bar) |
-| 16 | `⌥⌘B` | shortcut | Toggle Changes panel. | — | NOT WIRED (`crates/ui/src/diff.rs` `split_screen` builds its own `Shell`; needs a side-panel slot in `Shell`, then `crates/app/src/lib.rs` keeps the panel state) |
+| 16 | `⌥⌘B` | shortcut | Toggle Changes panel. | The thread route's side panel (`ui::screens::diff::panel::with_side_panel`) shows the last turn's diff; the tab's close button closes it. | PASS (`changes_panel_keys`) |
 | 17 | `⌘J` | shortcut | Toggle bottom panel. | — | NOT WIRED (`crates/ui/src/lib.rs` `Shell`: no bottom panel) |
 | 18 | `⌘⇧N`, `⌘⌥O` | shortcut | Temporary chat, standalone chat. | — | NOT WIRED (`crates/app/src/lib.rs`: no projects or temporary chats) |
 | 19 | `⌘⌥1`…`⌘⌥6` | shortcut | Go to recently viewed chat N. | — | NOT WIRED (`crates/app/src/lib.rs`: no recently-viewed list) |
@@ -97,13 +121,13 @@ The right column is the same ref diffed against the parity harness's own screen 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Home | click | Navigates to `/`; reselect resets Home. | `NewChat`: route Home, draft cleared, composer focused. | PASS (`rail_home_from_thread`, `rail_home_reselect_resets`) |
-| 2 | Space | click | Navigates to `/space`. | No handler. | NOT WIRED (`crates/ui/src/lib.rs` `Shell::rail`: item has no `on_click`; needs a route action in `ui` and a `Route` in `crates/app/src/lib.rs`) |
-| 3 | Scheduled | click | Navigates to `/scheduled` (Automations); unread dot. | No handler; the page exists only as the `automations` screen builder. | NOT WIRED (`crates/ui/src/lib.rs` `Shell::rail`, then `Route::Scheduled` in `crates/app/src/lib.rs`) |
-| 4 | Plugins | click | Navigates to `/plugins`. | No handler. | NOT WIRED (`crates/ui/src/lib.rs` `Shell::rail`) |
-| 5 | Explore `…` | click | Opens the Explore menu; blue dot. | Dot shows; no menu. | NOT WIRED (`crates/ui/src/lib.rs` `Shell::rail`) |
-| 6 | Code Review | click | Navigates to `/pull-requests`. | No handler. | NOT WIRED (`crates/ui/src/lib.rs` `Shell::rail`) |
-| 7 | Sites | click | Navigates to `/sites`. | No handler. | NOT WIRED (`crates/ui/src/lib.rs` `Shell::rail`) |
-| 8 | Profile avatar | click | Opens the profile menu. | No handler. | NOT WIRED (`crates/ui/src/lib.rs` `Shell::rail`, `rail-profile`) |
+| 2 | Space | click | Navigates to `/space`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
+| 3 | Scheduled | click | Navigates to `/scheduled` (Automations); unread dot. | `OpenScheduled`: `Route::Scheduled`, rail Scheduled selected. No unread dot (no automation runs). | PASS (`rail_scheduled`, `parity_automations`) |
+| 4 | Plugins | click | Navigates to `/plugins`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
+| 5 | Explore `…` | click | Opens the Explore menu; blue dot. | Dot shows; no menu. | NOT WIRED (outside v1 scope (no screen): the menu holds the secondary destinations) |
+| 6 | Code Review | click | Navigates to `/pull-requests`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
+| 7 | Sites | click | Navigates to `/sites`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
+| 8 | Profile avatar | click | Opens the profile menu. | Menu above the avatar: `Settings`, `Help` ▸ `Set up mobile`; a click outside or on the avatar closes it. | PASS (`profile_menu_settings`, `profile_menu_dismiss`, `profile_menu_mobile`) |
 | 9 | Rail item hover | hover | Tooltip on the right side with label and shortcut. | Hover fill shows (4716 px repainted); no tooltip. | FAIL (no tooltip: `crates/ui/src/lib.rs` `Shell::rail`; hover fill checked by `rail_hover_fill`) |
 | 10 | Drag a rail item | click | Reorders pinned items. | — | NOT WIRED (`crates/ui/src/lib.rs` `Shell::rail`) |
 | 11 | Focus ring | focus ring | 2 px ring on the 36×36 button. | No tab stops. | NOT WIRED (`crates/ui/src/lib.rs` `Shell::rail`: no focus handles or `focus_visible` ring) |
@@ -118,11 +142,11 @@ The right column is the same ref diffed against the parity harness's own screen 
 | 3 | `⌃1` `⌃2` `⌃3` | shortcut | Switch mode. | — | NOT WIRED (`crates/ui/src/lib.rs`: no modes; then bind in `crates/app/src/lib.rs` `init`) |
 | 4 | Bell `View activity` | click | Toggles the activity view. | No handler. | NOT WIRED (`crates/ui/src/lib.rs` `home_sidebar_header`, `activity`) |
 | 5 | `⌘⌥U` | shortcut | Toggles the activity view. | — | NOT WIRED (`crates/ui/src/screens/sidebar.rs`: no activity view) |
-| 6 | Search | click | Opens the command menu in chat-search mode. | No handler. | NOT WIRED (`crates/ui/src/lib.rs` `home_sidebar_header`, `search`; `CommandMenu` as in shell row 14) |
-| 7 | `⌘K` | shortcut | Opens the command menu. | — | NOT WIRED (same as shell row 14) |
+| 6 | Search | click | Opens the command menu in chat-search mode. | `OpenCommandMenu`: the command menu over live Recents. | PASS (`command_menu_search_click`, `parity_sidebar`) |
+| 7 | `⌘K` | shortcut | Opens the command menu. | Same as shell row 14. | PASS (`command_menu_keys`) |
 | 8 | `Your dot` row | click | Opens the dot (orbit) thread. | No handler. | NOT WIRED (`crates/ui/src/lib.rs` `home_sidebar_header`, `your-dot`) |
-| 9 | `Projects` section toggle | click | Collapses or expands; chevron rotates. | Header not clickable. | NOT WIRED (`crates/ui/src/lib.rs` `sidebar_section`) |
-| 10 | `Recents` section toggle | click | Collapses or expands. | Header not clickable. | NOT WIRED (`crates/ui/src/lib.rs` `sidebar_section`) |
+| 9 | `Projects` section toggle | click | Collapses or expands; chevron rotates. | A header click collapses or expands the section; no chevron. | FAIL (no chevron: `crates/ui/src/lib.rs` `sidebar_section`; collapse checked by `sidebar_section_collapse`) |
+| 10 | `Recents` section toggle | click | Collapses or expands. | Same; a collapsed Recents row no longer opens. | PASS (`sidebar_section_collapse`) |
 | 11 | Thread row | click | Opens `/local/:conversationId`. | `OpenThread` → route Thread, `thread/read`, row selected. | PASS (`thread_row_opens_thread`) |
 | 12 | Thread row hover | hover | Row background; Archive / Pin actions appear. | Fill and actions show (31848 px repainted). | PASS (`thread_row_hover`) |
 | 13 | Thread row context menu | click | Pin, Rename, Archive, Mark as unread, Open in new window, Delete. | No menu; Pin and Archive buttons have no handler. | NOT WIRED (`crates/ui/src/screens/sidebar.rs` `thread_row`; then `thread/archive` etc. in `crates/app/src/lib.rs`) |
@@ -174,7 +198,7 @@ The right column is the same ref diffed against the parity harness's own screen 
 | 5 | Streaming agent message | loading | Text grows by deltas; `Working` shimmer. | The replayed turn streams into the view to `turn/completed`. Shimmer not checked. | PASS (`submit_enter_starts_thread`) |
 | 6 | Reasoning item | click | Toggles `Thought for {elapsed}`. | No handler. | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 7 | Command card | click | Expands output; copy buttons. | No handler. | NOT WIRED (`crates/ui/src/thread.rs`) |
-| 8 | File change card | click | `View changes` opens Changes; `Undo` / `Reapply`. | No handler. | NOT WIRED (`crates/ui/src/thread.rs`, card at `View changes`) |
+| 8 | File change card | click | `View changes` opens Changes; `Undo` / `Reapply`. | `View changes` opens the Changes side panel; `Undo` has no handler. | FAIL (`Undo`: the original reverts through the host git worker, which the port does not have; `View changes` checked by `view_changes_opens_panel`) |
 | 9 | Collapsed turn `Worked for {time}` | click | Expands hidden items. | No handler. | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 10 | User message hover | hover | Copy and Edit appear. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 11 | Assistant message hover | hover | Copy, Fork chat from here. | Actions show statically under the last turn. | NOT WIRED (`crates/ui/src/thread.rs`) |
@@ -186,7 +210,7 @@ The right column is the same ref diffed against the parity harness's own screen 
 | 17 | Stream error | error | `Reconnecting {progress}`. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 18 | Usage limit | error | Usage limit banner. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 19 | Focus ring on cards | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
-| 20 | Resize | resize | The side panel yields width before the chat column. | No side panel is routed; the sidebar part passes (14.2/23). | FAIL (side panel: shell row 16) |
+| 20 | Resize | resize | The side panel yields width before the chat column. | `panel_width` keeps 320 px for the chat; no flow checks the 3 widths with the panel open. | FAIL (no flow; `crates/ui/src/diff.rs` `panel_width` assumes the sidebar open) |
 
 ## 14.5 Composer
 
@@ -215,16 +239,16 @@ The right column is the same ref diffed against the parity harness's own screen 
 
 ## 14.6 Diff view
 
-The Changes panel exists only as the `diff` screen builder (`crates/ui/src/screens/diff.rs`, `split_screen`); `Root` cannot open it.
+`Root` opens the Changes panel beside the open thread (`⌥⌘B`, `View changes`, the summary's `Changes` row) through `ui::screens::diff::panel::with_side_panel`, which the `diff` screen builder also uses.
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
-| 1 | Open Changes panel | entry | `⌥⌘B` or `View changes`. | — | NOT WIRED (shell row 16; `crates/ui/src/thread.rs` `View changes`) |
+| 1 | Open Changes panel | entry | `⌥⌘B` or `View changes`. | Both open it; the last turn's diff (`Last Turn` source). | PASS (`changes_panel_keys`, `view_changes_opens_panel`, `parity_diff`) |
 | 2 | `/diff` window | entry | Single file diff. | — | NOT WIRED (`crates/app/src/main.rs`: one window only) |
 | 3 | Source selector | click | Uncommitted / Staged / … | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 4 | Show / Hide files | click | Toggles the file tree. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 5 | File tree filter | focus | `Filter files…`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Header click toggles the file in `DiffPanel`. | NOT WIRED (panel not routed: row 1) |
+| 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Header click collapses or expands the file; no Copy path or Open. | FAIL (Copy path, Open: `crates/ui/src/diff.rs` `file_header`; collapse checked by `diff_file_header_toggle`) |
 | 7 | Hunk revert / stage | click | Revert, Stage / Unstage hunk. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 8 | Revert all | click | `Revert changes?` dialog. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 9 | Split / unified toggle | click | Switch diff layout. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
@@ -244,11 +268,11 @@ The Changes panel exists only as the `diff` screen builder (`crates/ui/src/scree
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
-| 1 | Open settings | entry | `⌘,`, rail Settings or profile menu; `/settings/general-settings`. | `⌘,` and Codex ▸ Settings… open the General page; parity: see `parity_settings`. No rail Settings or profile menu. | PASS (`cmd_comma_opens_settings`, `menu_bar_actions`, `parity_settings`) |
+| 1 | Open settings | entry | `⌘,`, rail Settings or profile menu; `/settings/general-settings`. | `⌘,`, Codex ▸ Settings… and profile menu ▸ `Settings` open the General page; parity: see `parity_settings`. | PASS (`cmd_comma_opens_settings`, `menu_bar_actions`, `profile_menu_settings`, `parity_settings`) |
 | 2 | `Back to app` | click | Returns to the previous route. | The nav has no `Back to app` row; titlebar Back returns. | PASS (`settings_back`) |
 | 3 | Nav item | click | Navigates to `/settings/:section`. | The page changes (1488938 px repainted). | PASS (`settings_nav_click`) |
 | 4 | Search settings | focus | Filters; `No results found`. | Typing filters the nav to `No results found`; Escape clears. | PASS (`settings_search`) |
-| 5 | Theme Light/Dark/System | click | Applies the theme at once. | `Root::set_theme` applies and persists it (shell row 9), but the Appearance page has no Theme control. | NOT WIRED (`crates/ui/src/screens/settings.rs` `SettingsPane`: Appearance shows its title only; add a `SetTheme` action in `crates/ui/src/lib.rs` for `Root` to handle) |
+| 5 | Theme Light/Dark/System | click | Applies the theme at once. | Appearance ▸ Theme (`Light`, `Dark`, `System`) dispatches `SetTheme`; `Root::set_theme` applies and persists it. | PASS (`appearance_theme_control`) |
 | 6 | Collapse nav | click | `Collapse settings navigation`. | — | NOT WIRED (`crates/ui/src/screens/settings.rs` `SettingsNav`) |
 | 7 | Row hover | hover | Row highlight. | Highlight shows. | PASS (`settings_nav_hover`) |
 | 8 | Keyboard nav | focus ring | Ring on rows and controls. | — | NOT WIRED (`crates/ui/src/screens/settings.rs`) |
@@ -267,68 +291,66 @@ The Changes panel exists only as the `diff` screen builder (`crates/ui/src/scree
 
 ## 15.1 Automations ("Scheduled")
 
-The page and its sidebar exist only as the `automations` screen builder (`crates/ui/src/screens/automations.rs`); no route opens them, and `NewTask`, `SearchTasks`, `FilterTasks` and `StartSuggestedTask` have no handler.
+`Root` opens the page on rail `Scheduled` and on the command menu's `Manage scheduled tasks`. The page data comes from host fetches (`list-automations`, `inbox-items`, `automation-*`) that need the original's Electron host; the port has no host process, so the page shows the empty state with the landing examples.
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
-| 1 | Rail `Scheduled` | entry | Automations page, `ScheduledSidebar`. | — | NOT WIRED (rail row 3) |
-| 2 | Deep link `/scheduled?automationId=…` | entry | Page with the task selected. | — | NOT WIRED (`crates/app/src/lib.rs`: no `Route::Scheduled`) |
-| 3 | `New task` | click | Create flow. | Dispatches `NewTask`; no handler. | NOT WIRED (`crates/app/src/lib.rs`, after the route exists) |
-| 4 | `Create` menu | click | Create with Codex / ChatGPT / manually. | — | NOT WIRED (`crates/ui/src/screens/automations.rs`) |
-| 5 | Search | focus | Filters; `No matching tasks`. | Dispatches `SearchTasks`; no handler. | NOT WIRED (`crates/ui/src/screens/automations.rs`) |
-| 6 | Status filter | click | All / Active / Paused. | — | NOT WIRED (`crates/ui/src/screens/automations.rs`) |
-| 7 | Task row | click | Detail panel. | — | NOT WIRED (`crates/ui/src/screens/automations.rs`) |
-| 8 | Row actions | click | Edit, Run now, Pause, Delete. | — | NOT WIRED (`crates/ui/src/screens/automations.rs`) |
-| 9 | Editor fields | focus | Name, Prompt, schedule. | — | NOT WIRED (`crates/ui/src/screens/automations.rs`) |
-| 10 | Previous runs | click | Run chat, mark read, archive. | — | NOT WIRED (`crates/ui/src/screens/automations.rs`) |
-| 11 | Row hover | hover | Row highlight. | Suggestion cards have a hover fill; not routed. | NOT WIRED (row 1) |
+| 1 | Rail `Scheduled` | entry | Automations page, `ScheduledSidebar`. | `Route::Scheduled` with `ScheduledSidebar` and the page. | PASS (`rail_scheduled`, `parity_automations`) |
+| 2 | Deep link `/scheduled?automationId=…` | entry | Page with the task selected. | — | NOT WIRED (`crates/app/src/lib.rs`: no URL routing; no tasks without the host) |
+| 3 | `New task` | click | Create flow. | Dispatches `NewTask`; no handler. | NOT WIRED (no host: `automation-create` is a host fetch) |
+| 4 | `Create` menu | click | Create with Codex / ChatGPT / manually. | — | NOT WIRED (no host: `automation-create`) |
+| 5 | Search | focus | Filters; `No matching tasks`. | Dispatches `SearchTasks`; no handler. | NOT WIRED (no host: `list-automations`) |
+| 6 | Status filter | click | All / Active / Paused. | — | NOT WIRED (no host: `list-automations`) |
+| 7 | Task row | click | Detail panel. | — | NOT WIRED (no host: `list-automations`) |
+| 8 | Row actions | click | Edit, Run now, Pause, Delete. | — | NOT WIRED (no host: `automation-update`, `automation-delete`) |
+| 9 | Editor fields | focus | Name, Prompt, schedule. | — | NOT WIRED (no host: `automation-create`) |
+| 10 | Previous runs | click | Run chat, mark read, archive. | — | NOT WIRED (no host: `inbox-items`, `automation-run-archive`) |
+| 11 | Row hover | hover | Row highlight. | No task rows; the suggestion cards' hover fill shows (152887 px repainted). | FAIL (no task rows without the host; card hover checked by `scheduled_card_hover`) |
 | 12 | Focus ring | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/screens/automations.rs`) |
-| 13 | No tasks | empty | `No scheduled tasks`, suggestions. | Built in the screen; not routed. | NOT WIRED (row 1) |
-| 14 | Loading | loading | `Loading scheduled tasks…`. | — | NOT WIRED (`crates/ui/src/screens/automations.rs`) |
-| 15 | Error | error | `Scheduled tasks could not be loaded`. | — | NOT WIRED (`crates/ui/src/screens/automations.rs`) |
-| 16 | Resize | resize | List and detail share the main column. | — | NOT WIRED (row 1) |
+| 13 | No tasks | empty | `No scheduled tasks`, suggestions. | `No scheduled tasks` and the landing examples (no `/suggested_automations` backend). | PASS (`rail_scheduled`, `parity_automations`) |
+| 14 | Loading | loading | `Loading scheduled tasks…`. | — | NOT WIRED (no host: `list-automations`) |
+| 15 | Error | error | `Scheduled tasks could not be loaded`. | — | NOT WIRED (no host: `list-automations`) |
+| 16 | Resize | resize | List and detail share the main column. | No list or detail panel. | FAIL (no task list without the host) |
 
 ## 15.2 Background terminal
 
-The tab exists only as the `terminal` screen builder (`crates/ui/src/screens/terminal.rs`); `ThreadView::background_terminals` lists the running commands, but no element opens the tab.
+`Root` opens the terminal tab beside the open thread from the thread summary's `Background processes` row, through the same side panel as Changes.
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
-| 1 | Thread with a running background command | entry | `Background terminal` entry in the thread. | — | NOT WIRED (`crates/ui/src/thread.rs`: no entry) |
-| 2 | Click the entry | click | Opens the side panel tab. | — | NOT WIRED (`crates/ui/src/thread.rs`; side panel as shell row 16) |
-| 3 | Output streaming | loading | Appends `outputDelta`; `No output yet`. | — | NOT WIRED (row 2) |
-| 4 | `Stop all background terminals` | click | `thread/backgroundTerminals/clean`. | — | NOT WIRED (`crates/ui/src/thread.rs`, then `crates/app/src/lib.rs`) |
+| 1 | Thread with a running background command | entry | `Background terminal` entry in the thread. | `Toggle summary` lists it under `Background processes`, as refs/terminal shows. | PASS (`background_terminal_tab`, `parity_terminal`) |
+| 2 | Click the entry | click | Opens the side panel tab. | `OpenBackgroundTerminal`: the command's tab (`Xterm`) in the side panel. | PASS (`background_terminal_tab`, `parity_terminal`) |
+| 3 | Output streaming | loading | Appends `outputDelta`; `No output yet`. | The tab shows the replayed `outputDelta`; no `No output yet`. | FAIL (no `No output yet`: `crates/ui/src/screens/terminal.rs` `Xterm`; output checked by `parity_terminal`) |
+| 4 | `Stop all background terminals` | click | `thread/backgroundTerminals/clean`. | — | NOT WIRED (`crates/ui/src/thread.rs`: no stop button; no recorded `thread/backgroundTerminals/clean`) |
 | 5 | Stop failure | error | Toast. | — | NOT WIRED (`crates/ui`) |
-| 6 | Tab close | click | Closes the tab; `⌘W`. | — | NOT WIRED (`crates/ui/src/diff.rs` `tab_strip`) |
+| 6 | Tab close | click | Closes the tab; `⌘W`. | The tab's close button closes the side panel; `⌘W` closes the window. | FAIL (`⌘W`: shell row 7; the close button checked by `background_terminal_tab`, `changes_panel_keys`) |
 | 7 | Tab thumbnail | hover | Thumbnail preview. | — | NOT WIRED (`crates/ui/src/diff.rs` `tab_strip`) |
-| 8 | Command finishes | empty | Leaves the running list; buffer kept. | — | NOT WIRED (row 2) |
+| 8 | Command finishes | empty | Leaves the running list; buffer kept. | The tab follows the running list only, so its buffer goes with the command. | NOT WIRED (`crates/ui/src/screens/terminal.rs` `Xterm`: no kept buffer) |
 | 9 | Focus ring | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/diff.rs` `tab_strip`) |
 | 10 | Resize | resize | xterm refits columns. | — | NOT WIRED (`crates/ui/src/screens/terminal.rs`) |
 
 ## 15.3 Mobile setup
 
-The page exists only as the `mobile` screen builder (`crates/ui/src/screens/mobile.rs`); no route opens it, and `GetStarted` has no handler.
+`Root` opens the page from the profile menu's `Help` ▸ `Set up mobile` (`Route::Mobile`).
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
-| 1 | Profile menu → Help → `Set up mobile` | entry | `/codex-mobile`. | — | NOT WIRED (rail row 8; then `Route::Mobile` in `crates/app/src/lib.rs`) |
-| 2 | Initial step | click | `Get started` / `Later`. | Dispatches `GetStarted`; no handler. | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
+| 1 | Profile menu → Help → `Set up mobile` | entry | `/codex-mobile`. | `Route::Mobile`: sidebar closed, no rail item selected. | PASS (`profile_menu_mobile`, `parity_mobile`) |
+| 2 | Initial step | click | `Get started` / `Later`. | Dispatches `GetStarted`; no handler, no `Later`. | NOT WIRED (`crates/ui/src/screens/mobile.rs`: no allow-host step view) |
 | 3 | Allow host step | click | `remoteControl/enable`. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`, then `crates/app/src/lib.rs`) |
 | 4 | MFA required | error | `Turn on Multi-Factor Authentication`. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
 | 5 | Waiting / pairing step | loading | QR code, pairing code. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
 | 6 | Pairing unavailable | error | `Pairing code unavailable`. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
 | 7 | Connected step | click | Toggles, `Done`, `Manage connections`. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
-| 8 | Button hover | hover | Ghost/solid hover. | — | NOT WIRED (row 1) |
+| 8 | Button hover | hover | Ghost/solid hover. | `Get started` hover fill (55250 px repainted). | PASS (`mobile_button_hover`) |
 | 9 | Focus ring | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
-| 10 | Resize | resize | Content stays centered. | — | NOT WIRED (row 1) |
+| 10 | Resize | resize | Content stays centered. | — | FAIL (no flow checks the 3 widths on this route) |
 
 ## Changes needed outside crates/app
 
 A row above that names a `crates/ui` owner needs that change first. The changes that unblock the most rows:
 
-1. `crates/ui/src/lib.rs` `Shell::rail`: give each rail item and the avatar an action (for example `OpenScheduled`, `OpenPlugins`, `OpenProfileMenu` in the `shell` actions). `Root` then adds the routes (`Route::Scheduled`, `Route::Mobile`) and handles the automations and mobile actions.
-2. `crates/ui/src/lib.rs` `Shell`: a side-panel slot (the panel and tab strip that `split_screen` builds today), so `Root` can open Changes (`⌥⌘B`, `View changes`) and the background terminal beside the open thread.
-3. `crates/ui/src/screens/sidebar.rs` `CommandMenu`: `impl Focusable`, dismiss and select events, and live chats instead of the fixture list; then `Root` binds `⌘K` / `⌘⇧P` and the sidebar `Search` button.
-4. `crates/ui/src/thread.rs`: click handlers on the cards (reasoning, command, file change, collapsed turn) and loading and error views.
-5. `crates/ui/src/screens/settings.rs`: an Appearance ▸ Theme control that dispatches a `ui` `SetTheme` action, which `Root::set_theme` handles.
-6. Tooltips and focus-visible rings on the shared buttons (`icon_button`, `pill`, rail items).
+1. `crates/ui/src/thread.rs`: click handlers on the cards (reasoning, command, collapsed turn, `Undo`), hover-only message actions, a find bar, and loading and error views.
+2. `crates/ui/src/diff.rs`: the Changes header controls (source selector, file tree, layout, wrap), empty, loading and error states.
+3. `crates/ui/src/screens/mobile.rs`: the allow-host, pairing and connected steps (`remoteControl/*`).
+4. Tooltips and focus-visible rings on the shared buttons (`icon_button`, `pill`, rail items).

@@ -3,22 +3,28 @@
 //! (login-route chunk) that replaces the app when `account/read` reports no account.
 
 use crate::{
-    MONO, SANS, Shell, composer::shadow, fixture, icon::icon, in_layer, layout_color, over,
-    sidebar_section, text,
+    MONO, SANS, SetTheme, Shell,
+    composer::{popover, shadow},
+    fixture,
+    icon::icon,
+    in_layer, layout_color, over, sidebar_section, text,
 };
 use bridge::Bridge;
 use bridge::types::{AccountReadResponse, ConfigReadResponse};
 use gpui::{
-    AnyElement, AnyView, App, AppContext as _, ClipboardItem, Context, Corners, Div, Entity,
-    FocusHandle, Font, FontWeight, Global, HighlightStyle, Hsla, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, Pixels, Point, Render, Rgba, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, StyledText, TextRun, Window, canvas, div, font, img,
-    prelude::FluentBuilder as _, px,
+    Anchor, AnyElement, AnyView, App, AppContext as _, ClipboardItem, Context, Corners, Div,
+    Entity, FocusHandle, Font, FontWeight, Global, HighlightStyle, Hsla, InteractiveElement,
+    IntoElement, KeyDownEvent, ParentElement, Pixels, Point, Render, Rgba, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, StyledText, TextRun, Window, anchored, canvas, deferred,
+    div, font, img, point, prelude::FluentBuilder as _, px,
 };
 use serde_json::{Value, json};
 use shapes::Corner::{self, Round, Squircle};
 use std::{cell::Cell, rc::Rc, sync::Arc};
 use theme::{ActiveTheme as _, Theme};
+
+/// The app's theme setting (`ThemeSetting`): `system`, `light` or `dark`.
+pub const THEME: &str = "host.appearance-theme";
 
 /// The live app-server connection. Settings and sign-in send their writes through it when
 /// the app sets this global; the parity fixture runs without one.
@@ -33,15 +39,33 @@ pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
     }
     let config: ConfigReadResponse = fixture::response("readback.jsonl", "config/read", 0);
     let skills: Value = fixture::response("readback.jsonl", "skills/list", 0);
-    let shell = shell(&config.config, &skills, cx);
+    let shell = shell(&config.config, &skills, None, cx);
     shell.update(cx, |shell, _| shell.can_go_back = true);
     shell.into()
 }
 
+/// The settings nav item `label` if it opens a page here (not in the browser).
+pub fn section(label: &str) -> Option<&'static str> {
+    NAV.iter()
+        .flat_map(|(_, items)| items.iter())
+        .map(|&(l, _)| l)
+        .find(|&l| l == label && l != EXTERNAL)
+}
+
 /// The Settings route's shell for a `config/read` config and `skills/list` result: settings
-/// nav in the sidebar panel, the page in the main panel.
-pub fn shell(config: &Value, skills: &Value, cx: &mut App) -> Entity<Shell> {
-    let page = cx.new(|_| SettingsPage::new(config, skills));
+/// nav in the sidebar panel, the page in the main panel, open at the nav item `section`
+/// (`General` if `None`).
+pub fn shell(
+    config: &Value,
+    skills: &Value,
+    section: Option<&'static str>,
+    cx: &mut App,
+) -> Entity<Shell> {
+    let mut page = SettingsPage::new(config, skills);
+    if let Some(label) = section {
+        page.section = label;
+    }
+    let page = cx.new(|_| page);
     let nav = cx.new(|cx| SettingsNav::new(page.clone(), cx)).into();
     let pane = cx.new(|cx| SettingsPane::new(page, cx)).into();
     cx.new(|_| {
@@ -394,7 +418,24 @@ pub struct SettingsPane {
     page: Entity<SettingsPage>,
     /// The composited contents layer of the page's scroll container.
     layer: Layer,
+    /// Key of the select whose options menu is open.
+    open_select: Option<&'static str>,
+    /// Pointer over that menu: a press there is not a click outside.
+    menu_hovered: bool,
 }
+
+/// `Confirm before closing a window` options, default first.
+const CLOSE_OPTIONS: &[(&str, &str)] = &[
+    ("keyboardOnly", "Close shortcut only"),
+    ("always", "Always"),
+    ("never", "Never"),
+];
+/// `Send shortcut` options (`settings.general.enterBehavior.*`), default first.
+const SEND_OPTIONS: &[(&str, &str)] = &[
+    ("enter", "Enter"),
+    ("cmdIfMultiline", "⌘ + Enter for multiline prompts"),
+    ("cmdEnter", "⌘ + Enter always"),
+];
 
 impl SettingsPane {
     fn new(page: Entity<SettingsPage>, cx: &mut Context<Self>) -> Self {
@@ -402,7 +443,75 @@ impl SettingsPane {
         Self {
             page,
             layer: Layer::default(),
+            open_select: None,
+            menu_hovered: false,
         }
+    }
+
+    /// A select for `key` with its options menu `(value, label)`; the first option is the
+    /// default. A click outside closes the menu.
+    fn select_menu(
+        &self,
+        key: &'static str,
+        options: &'static [(&'static str, &'static str)],
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let current = self.page.read(cx).choice(key, options[0].0).to_string();
+        let label = options
+            .iter()
+            .find(|(value, _)| *value == current)
+            .map_or(options[0].1, |(_, label)| label);
+        let open = self.open_select == Some(key);
+        let hover = t.menu_item_hover;
+        let menu = open.then(|| {
+            let rows = options.iter().map(|&(value, label)| {
+                div()
+                    .id(value)
+                    .px(px(8.))
+                    .py(px(6.))
+                    .rounded(px(12.))
+                    .when(value == current, |d| d.bg(hover))
+                    .hover(move |s| s.bg(hover))
+                    .child(text(label, 14., 20., 430., t.text))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.page.update(cx, |p, cx| p.set(key, json!(value), cx));
+                        this.open_select = None;
+                        this.menu_hovered = false;
+                        cx.notify();
+                    }))
+            });
+            // Below the trigger, or above it when the window's bottom edge is in the way.
+            deferred(
+                div().absolute().top_0().right_0().child(
+                    anchored()
+                        .anchor(Anchor::TopRight)
+                        .offset(point(px(0.), px(32.)))
+                        .child(
+                            div()
+                                .id("select-menu")
+                                .on_hover(cx.listener(|this, hovered: &bool, _, _| {
+                                    this.menu_hovered = *hovered
+                                }))
+                                .child(popover(t, 280., |d| d.children(rows))),
+                        ),
+                ),
+            )
+        });
+        select(label, None, false, t)
+            .id(key)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.open_select = (!open).then_some(key);
+                cx.notify();
+            }))
+            .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
+                if open && !this.menu_hovered {
+                    this.open_select = None;
+                    cx.notify();
+                }
+            }))
+            .children(menu)
+            .into_any_element()
     }
 
     fn toggle(
@@ -453,11 +562,23 @@ impl SettingsPane {
                         430.,
                         if selected { t.text } else { t.text_tertiary },
                     ))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.page.update(cx, |p, cx| p.set(key, json!(value), cx))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.page.update(cx, |p, cx| p.set(key, json!(value), cx));
+                        if key == THEME {
+                            window.dispatch_action(Box::new(SetTheme(value)), cx);
+                        }
                     }))
             }))
             .into_any_element()
+    }
+
+    /// Appearance ▸ Theme: the app applies and keeps the choice (`SetTheme`).
+    /// ponytail: the chrome theme, font size and motion rows are not here; add them with the
+    /// settings they drive.
+    fn appearance(&self, t: &Theme, cx: &mut Context<Self>) -> Vec<(&'static str, Vec<Div>)> {
+        let options = &[("light", "Light"), ("dark", "Dark"), ("system", "System")];
+        let theme = self.segmented(THEME, "system", options, t, cx);
+        vec![("Theme", vec![settings_row("Theme", None, theme, t)])]
     }
 
     fn general(
@@ -486,16 +607,6 @@ impl SettingsPane {
                 .shape_line(s.to_string().into(), px(12.), &[run], None);
             line.width <= px(192.)
         });
-        let close = match page.choice("host.confirm-before-close", "keyboardOnly") {
-            "always" => "Always",
-            "never" => "Never",
-            _ => "Close shortcut only",
-        };
-        let send_shortcut = match page.choice("desktop.composerEnterBehavior", "enter") {
-            "cmdIfMultiline" => "⌘ + Enter for multiline prompts",
-            "cmdEnter" => "⌘ + Enter always",
-            _ => "Enter",
-        };
         let path = div()
             .flex()
             .items_center()
@@ -567,12 +678,13 @@ impl SettingsPane {
                             ),
                             false,
                             t,
-                        ),
+                        )
+                        .into_any_element(),
                     ),
                     row(
                         "Language",
                         Some("Language for the app UI"),
-                        select("Auto detect", None, false, t),
+                        select("Auto detect", None, false, t).into_any_element(),
                     ),
                     row(
                         "Show in menu bar",
@@ -582,7 +694,7 @@ impl SettingsPane {
                     row(
                         "Confirm before closing a window",
                         Some("Warn when a tab-close shortcut would close the window"),
-                        select(close, None, false, t),
+                        self.select_menu("host.confirm-before-close", CLOSE_OPTIONS, t, cx),
                     ),
                     row(
                         "Full view by default",
@@ -624,7 +736,7 @@ impl SettingsPane {
                         Some(
                             "Choose how quickly ChatGPT runs across chats, subagents, and compaction",
                         ),
-                        select("Standard", None, false, t),
+                        select("Standard", None, false, t).into_any_element(),
                     ),
                     row(
                         "Suggested prompts",
@@ -668,7 +780,7 @@ impl SettingsPane {
                     row(
                         "Send shortcut",
                         Some("Choose when Enter sends a prompt or inserts a new line"),
-                        select(send_shortcut, None, false, t),
+                        self.select_menu("desktop.composerEnterBehavior", SEND_OPTIONS, t, cx),
                     ),
                     row(
                         "Follow-up behavior",
@@ -724,7 +836,7 @@ impl SettingsPane {
                     row(
                         "Turn completion notifications",
                         Some("Set when ChatGPT alerts you that it's finished"),
-                        select("Only when unfocused", None, true, t),
+                        select("Only when unfocused", None, true, t).into_any_element(),
                     ),
                     row(
                         "Enable permission notifications",
@@ -744,7 +856,7 @@ impl SettingsPane {
                     row(
                         "Notification sound",
                         Some("Sound for task completion, permission requests, and questions"),
-                        select("Default", None, true, t),
+                        select("Default", None, true, t).into_any_element(),
                     ),
                 ],
             ),
@@ -773,11 +885,12 @@ impl Render for SettingsPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let section = self.page.read(cx).section;
-        // Pages other than General have no reference capture yet: title only.
-        let groups = if section == "General" {
-            self.general(&t, window, cx)
-        } else {
-            Vec::new()
+        // Pages other than General have no reference capture yet: title only, plus the Theme
+        // control on Appearance.
+        let groups = match section {
+            "General" => self.general(&t, window, cx),
+            "Appearance" => self.appearance(&t, cx),
+            _ => Vec::new(),
         };
         let card_border = over(t.border, t.background_panel);
         let groups = groups.into_iter().map(|(title, rows)| {
@@ -1061,12 +1174,7 @@ fn button(label: &'static str, fill: Hsla, border: Option<Hsla>, t: &Theme) -> D
         .child(text(label, 13., 18., 430., t.text))
 }
 /// Dropdown trigger: value (with an optional leading app icon) and a chevron.
-fn select(
-    label: &'static str,
-    leading: Option<AnyElement>,
-    disabled: bool,
-    t: &Theme,
-) -> AnyElement {
+fn select(label: &'static str, leading: Option<AnyElement>, disabled: bool, t: &Theme) -> Div {
     div()
         .h(px(28.))
         .px(px(13.))
@@ -1091,7 +1199,6 @@ fn select(
                 .child(text(label, 13., 18., 430., t.text)),
         )
         .child(icon("chevron-down", 14., t.text_tertiary))
-        .into_any_element()
 }
 
 /// Signed-out start (`LoginRoute`, welcome v2): ChatGPT sign-in, another way (API key), sign up.

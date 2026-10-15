@@ -8,11 +8,11 @@ use crate::{
 };
 use bridge::types::{Thread, ThreadListResponse};
 use gpui::{
-    AnyView, App, AppContext as _, Context, Corners, Div, EventEmitter, FocusHandle, FontWeight,
-    HighlightStyle, Hsla, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
-    ParentElement, Pixels, Render, Rgba, SharedString, Stateful, StatefulInteractiveElement,
-    Styled, StyledText, TextRun, Window, div, linear_color_stop, linear_gradient, point,
-    prelude::FluentBuilder as _, px, relative, rgba,
+    AnyElement, AnyView, App, AppContext as _, Context, Corners, Div, EventEmitter, FocusHandle,
+    Focusable, FontWeight, HighlightStyle, Hsla, InteractiveElement, IntoElement, KeyDownEvent,
+    MouseButton, ParentElement, Pixels, Render, Rgba, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, StyledText, TextRun, Window, div, linear_color_stop,
+    linear_gradient, point, prelude::FluentBuilder as _, px, relative, rgba,
 };
 use std::{ops::Range, path::Path};
 use theme::{ActiveTheme as _, Appearance, Theme};
@@ -37,6 +37,8 @@ pub struct HomeSidebar {
     /// `(thread id, row label)` in `thread/list` order.
     threads: Vec<(String, SharedString)>,
     selected: Option<String>,
+    /// `Projects`, `Recents` collapsed by a click on their header.
+    collapsed: [bool; 2],
 }
 
 /// Emitted when a Recents row is clicked, with the thread id.
@@ -50,6 +52,7 @@ impl HomeSidebar {
         Self {
             threads: threads.iter().map(|t| (t.id.clone(), title(t))).collect(),
             selected: selected.map(str::to_owned),
+            collapsed: [false; 2],
         }
     }
 
@@ -102,6 +105,34 @@ impl Render for HomeSidebar {
                 }))
                 .into_any_element()
         };
+        // A header click collapses or expands its section (`group/nav-section`).
+        let section = |i: usize, title: &'static str, body: AnyElement, cx: &mut Context<Self>| {
+            let body = if self.collapsed[i] {
+                div().into_any_element()
+            } else {
+                body
+            };
+            sidebar_section(title, body, cx).relative().child(
+                div()
+                    .id(title)
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .h(px(30.))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.collapsed[i] ^= true;
+                        cx.notify();
+                    })),
+            )
+        };
+        let projects = section(
+            0,
+            "Projects",
+            sidebar_empty("No projects", cx).into_any_element(),
+            cx,
+        );
+        let recents = section(1, "Recents", recents, cx);
         div()
             .size_full()
             .flex()
@@ -115,12 +146,8 @@ impl Render for HomeSidebar {
                     .flex_col()
                     .gap(px(16.))
                     .pt(px(4.))
-                    .child(sidebar_section(
-                        "Projects",
-                        sidebar_empty("No projects", cx),
-                        cx,
-                    ))
-                    .child(sidebar_section("Recents", recents, cx)),
+                    .child(projects)
+                    .child(recents),
             )
     }
 }
@@ -232,6 +259,8 @@ struct Item {
     /// Chat rows: workspace folder name; `Some` marks the row as a chat.
     project: Option<SharedString>,
     keys: Option<SharedString>,
+    /// Chat rows: the thread id.
+    thread: Option<String>,
     description: Option<&'static str>,
     external: bool,
 }
@@ -373,11 +402,34 @@ pub struct CommandMenu {
     focus: FocusHandle,
 }
 
+/// What the command menu asks its owner to do.
+pub enum CommandMenuEvent {
+    /// Escape or a click outside the dialog.
+    Dismiss,
+    /// A chat row: open the thread.
+    OpenThread(String),
+    /// A command row, by its label (`New chat`, `General`, `Manage scheduled tasks`, ...).
+    Command(SharedString),
+}
+
+impl EventEmitter<CommandMenuEvent> for CommandMenu {}
+
+impl Focusable for CommandMenu {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
 impl CommandMenu {
+    /// Over the fixture's `thread/list` (refs/sidebar).
     pub fn new(query: &str, cx: &mut Context<Self>) -> Self {
         let list: ThreadListResponse = fixture::response("readback.jsonl", "thread/list", 0);
-        let chats = list
-            .data
+        Self::with_threads(&list.data, query, cx)
+    }
+
+    /// `Chats` from `threads` (a live `thread/list`), in that order.
+    pub fn with_threads(threads: &[Thread], query: &str, cx: &mut Context<Self>) -> Self {
+        let chats = threads
             .iter()
             .map(|t| Item {
                 label: title(t),
@@ -388,6 +440,7 @@ impl CommandMenu {
                         .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
                         .into(),
                 ),
+                thread: Some(t.id.clone()),
                 ..Default::default()
             })
             .collect();
@@ -514,6 +567,8 @@ impl CommandMenu {
                 self.query.pop();
                 self.selected = 0;
             }
+            "escape" => return cx.emit(CommandMenuEvent::Dismiss),
+            "enter" => return self.confirm(cx),
             _ => match &k.key_char {
                 Some(c) if !k.modifiers.platform && !k.modifiers.control => {
                     self.query.push_str(c);
@@ -529,6 +584,22 @@ impl CommandMenu {
             .sum::<usize>();
         self.selected = self.selected.min(count.saturating_sub(1));
         cx.notify();
+    }
+
+    /// Runs the selected row.
+    fn confirm(&mut self, cx: &mut Context<Self>) {
+        let event = self
+            .visible()
+            .into_iter()
+            .flat_map(|(_, items)| items)
+            .nth(self.selected)
+            .map(|item| match &item.thread {
+                Some(id) => CommandMenuEvent::OpenThread(id.clone()),
+                None => CommandMenuEvent::Command(item.label.clone()),
+            });
+        if let Some(event) = event {
+            cx.emit(event);
+        }
     }
 }
 
@@ -592,7 +663,12 @@ impl Render for CommandMenu {
                             let selected = index == self.selected;
                             index += 1;
                             // `Chats` is the first group, so a chat's ordinal is `index`.
-                            menu_row(item, query, index, selected, text_width, t, window)
+                            menu_row(item, query, index, selected, text_width, t, window).on_click(
+                                cx.listener(move |this, _, _, cx| {
+                                    this.selected = index - 1;
+                                    this.confirm(cx);
+                                }),
+                            )
                         })),
                 )
         });
@@ -601,60 +677,69 @@ impl Render for CommandMenu {
         } else {
             text(self.query.clone(), 14., 21., 430., t.text)
         };
-        div().absolute().inset_0().bg(rgba(OVERLAY)).child(
-            div()
-                .id("command-menu")
-                .track_focus(&self.focus)
-                .on_key_down(cx.listener(Self::on_key))
-                .absolute()
-                .left(px((w - width) / 2. - ink_x))
-                .top(px(top - ink_y))
-                .pl(px(ink_x))
-                .pt(px(ink_y))
-                .layer()
-                .child(
-                    div()
-                        .relative()
-                        .w(px(width))
-                        .child(shapes::decoration(shapes::Decoration {
-                            radius: Corners::all(px(20.)),
-                            fill: Some(surface),
-                            border,
-                            shadows: vec![shapes::Shadow {
-                                color: rgba(0x00000030).into(),
-                                offset: point(px(0.), px(16.)),
-                                blur: px(32.),
-                                spread: px(-8.),
-                                inset: false,
-                            }],
-                            ..Default::default()
-                        }))
-                        // 1 px border + `p-1`.
-                        .child(
-                            div()
-                                .relative()
-                                .p(px(5.))
-                                .flex()
-                                .flex_col()
-                                .gap(px(4.))
-                                .overflow_hidden()
-                                .child(div().h(px(33.)).px(px(10.)).py(px(6.)).child(input))
-                                .child(
-                                    div()
-                                        .id("command-menu-list")
-                                        .max_h(px(list_height))
-                                        .overflow_y_scroll()
-                                        // Its contents end 0.1 px past the box, so Chromium
-                                        // scrolls and composites them in their own
-                                        // transparent layer.
-                                        .layer()
-                                        .flex()
-                                        .flex_col()
-                                        .children(groups),
-                                ),
-                        ),
-                ),
-        )
+        div()
+            .absolute()
+            .inset_0()
+            .bg(rgba(OVERLAY))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _, _, cx| cx.emit(CommandMenuEvent::Dismiss)),
+            )
+            .child(
+                div()
+                    .id("command-menu")
+                    .track_focus(&self.focus)
+                    .on_key_down(cx.listener(Self::on_key))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .absolute()
+                    .left(px((w - width) / 2. - ink_x))
+                    .top(px(top - ink_y))
+                    .pl(px(ink_x))
+                    .pt(px(ink_y))
+                    .layer()
+                    .child(
+                        div()
+                            .relative()
+                            .w(px(width))
+                            .child(shapes::decoration(shapes::Decoration {
+                                radius: Corners::all(px(20.)),
+                                fill: Some(surface),
+                                border,
+                                shadows: vec![shapes::Shadow {
+                                    color: rgba(0x00000030).into(),
+                                    offset: point(px(0.), px(16.)),
+                                    blur: px(32.),
+                                    spread: px(-8.),
+                                    inset: false,
+                                }],
+                                ..Default::default()
+                            }))
+                            // 1 px border + `p-1`.
+                            .child(
+                                div()
+                                    .relative()
+                                    .p(px(5.))
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(4.))
+                                    .overflow_hidden()
+                                    .child(div().h(px(33.)).px(px(10.)).py(px(6.)).child(input))
+                                    .child(
+                                        div()
+                                            .id("command-menu-list")
+                                            .max_h(px(list_height))
+                                            .overflow_y_scroll()
+                                            // Its contents end 0.1 px past the box, so Chromium
+                                            // scrolls and composites them in their own
+                                            // transparent layer.
+                                            .layer()
+                                            .flex()
+                                            .flex_col()
+                                            .children(groups),
+                                    ),
+                            ),
+                    ),
+            )
     }
 }
 
@@ -698,7 +783,7 @@ fn menu_row(
     text_width: f32,
     t: &Theme,
     window: &Window,
-) -> Div {
+) -> Stateful<Div> {
     let surface = t.surface_elevated_secondary;
     let (bottom, row_opacity) = if selected {
         (blit(t.ghost_hover, surface), 1.)
@@ -778,6 +863,7 @@ fn menu_row(
             d.child(icon("arrow-up-right", 16., fg.opacity(row_opacity)))
         });
     div()
+        .id(("command-row", ordinal))
         .relative()
         .py(px(5.))
         .px(px(8.))

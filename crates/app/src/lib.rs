@@ -13,7 +13,7 @@ use bridge::{Bridge, Event};
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, Context, Entity, FocusHandle,
     Focusable as _, InteractiveElement as _, IntoElement, KeyBinding, Menu, MenuItem, OsAction,
-    ParentElement as _, Pixels, Render, Styled as _, SystemMenuType, Task, Window,
+    ParentElement as _, Pixels, Render, SharedString, Styled as _, SystemMenuType, Task, Window,
     WindowAppearance, actions, div, px,
 };
 use serde::{Deserialize, Serialize};
@@ -22,13 +22,17 @@ use std::collections::HashSet;
 use std::{fs, path::PathBuf, sync::Arc};
 use theme::Theme;
 use ui::composer::{Approval, Composer, Permission, Submission};
+use ui::screens::diff::panel::{DiffPanel, SplitScreen, with_side_panel};
 use ui::screens::home::HomeMain;
 use ui::screens::settings::{self, AppServer, Login};
-use ui::screens::sidebar::{HomeSidebar, OpenThread};
+use ui::screens::sidebar::{CommandMenu, CommandMenuEvent, HomeSidebar, OpenThread};
+use ui::screens::terminal::Xterm;
 use ui::screens::thread::view::{Clock, ThreadView};
+use ui::screens::{automations, mobile};
 use ui::{
-    Copy, Cut, GoBack, GoForward, NewChat, OpenSettings, Paste, Redo, SelectAll, Shell,
-    ToggleSidebar, Undo,
+    CloseSidePanel, Copy, Cut, GoBack, GoForward, NewChat, OpenBackgroundTerminal,
+    OpenChangesPanel, OpenCommandMenu, OpenMobileSetup, OpenScheduled, OpenSettings, Paste, Redo,
+    SelectAll, SetTheme, Shell, ToggleChangesPanel, ToggleSidebar, Undo,
 };
 
 actions!(
@@ -82,6 +86,9 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-shift-]", NextChat, None),
         KeyBinding::new("cmd-alt-right", NextChat, None),
         KeyBinding::new("cmd-m", Minimize, None),
+        KeyBinding::new("cmd-k", OpenCommandMenu, None),
+        KeyBinding::new("cmd-shift-p", OpenCommandMenu, None),
+        KeyBinding::new("alt-cmd-b", ToggleChangesPanel, None),
     ]);
     cx.bind_keys((1..=9).map(|n| KeyBinding::new(&format!("cmd-{n}"), GoToChat(n - 1), None)));
     ui::composer::bind_keys(cx);
@@ -124,6 +131,7 @@ pub fn menus() -> Vec<Menu> {
         ]),
         Menu::new("View").items([
             MenuItem::action("Toggle Sidebar", ToggleSidebar),
+            MenuItem::action("Toggle Changes Panel", ToggleChangesPanel),
             MenuItem::separator(),
             MenuItem::action("Previous Chat", PreviousChat),
             MenuItem::action("Next Chat", NextChat),
@@ -144,6 +152,19 @@ pub enum Route {
     Home,
     Thread(String),
     Settings,
+    /// Rail `Scheduled` (`/scheduled`): the Automations page.
+    Scheduled,
+    /// Profile menu ▸ `Set up mobile` (`/codex-mobile`).
+    Mobile,
+}
+
+/// The thread route's side panel tab.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SidePanel {
+    /// `Changes`: the last turn's diff.
+    Changes,
+    /// The first background command's terminal.
+    Terminal,
 }
 
 /// Settings ▸ Appearance ▸ Theme (the original's `appearanceTheme`): follow the system, or
@@ -244,8 +265,8 @@ pub struct Root {
     forward: Vec<Route>,
     shell: Entity<Shell>,
     sidebar: Entity<HomeSidebar>,
-    /// Recents thread ids in sidebar order, for `⌘1`…`⌘9` and Previous/Next Chat.
-    recents: Vec<String>,
+    /// Recents in sidebar order, for `⌘1`…`⌘9`, Previous/Next Chat and the command menu.
+    threads: Vec<Thread>,
     /// The window is at least [`SIDEBAR_BREAKPOINT`] wide; narrower hides the sidebar.
     wide: bool,
     /// Holds key focus when no composer shows (Settings, a loading thread, sign-in), so
@@ -255,8 +276,16 @@ pub struct Root {
     /// Docked under every open thread.
     thread_composer: Entity<Composer>,
     thread: Option<Entity<ThreadView>>,
-    /// The Settings route's own shell: settings nav in the sidebar panel.
-    settings: Option<Entity<Shell>>,
+    /// The open thread in the main shell, with its side panel if any.
+    split: Option<Entity<SplitScreen>>,
+    /// Side panel tab of the thread route; kept across threads like the original's panel.
+    side: Option<SidePanel>,
+    /// The route's own shell (Settings, Scheduled, Mobile).
+    page: Option<Entity<Shell>>,
+    /// The Settings nav item the next Settings route opens at (`General` when `None`).
+    settings_section: Option<&'static str>,
+    /// `⌘K` command menu over the window.
+    command_menu: Option<Entity<CommandMenu>>,
     /// Signed out: replaces the whole window.
     login: Option<Entity<Login>>,
     bridge: Arc<Bridge>,
@@ -349,7 +378,7 @@ impl Root {
             forward: Vec::new(),
             shell,
             sidebar,
-            recents: Vec::new(),
+            threads: Vec::new(),
             wide,
             focus: cx.focus_handle(),
             home: cx.new(|_| HomeMain {
@@ -357,7 +386,11 @@ impl Root {
             }),
             thread_composer,
             thread: None,
-            settings: None,
+            split: None,
+            side: None,
+            page: None,
+            settings_section: None,
+            command_menu: None,
             login: None,
             bridge,
             cwd,
@@ -432,9 +465,19 @@ impl Root {
         &self.state.route
     }
 
-    /// The shell on screen: the Settings route's own, else the main one.
+    /// The shell on screen: the route's own (Settings, Scheduled, Mobile), else the main one.
     pub fn shell(&self) -> &Entity<Shell> {
-        self.settings.as_ref().unwrap_or(&self.shell)
+        self.page.as_ref().unwrap_or(&self.shell)
+    }
+
+    /// The thread route's side panel tab.
+    pub fn side_panel(&self) -> Option<SidePanel> {
+        self.side
+    }
+
+    /// The `⌘K` command menu, while open.
+    pub fn command_menu(&self) -> Option<&Entity<CommandMenu>> {
+        self.command_menu.as_ref()
     }
 
     /// The composer of the route: Home's, or the one docked under the open thread.
@@ -445,19 +488,20 @@ impl Root {
         }
     }
 
-    pub fn recents(&self) -> &[String] {
-        &self.recents
+    /// Recents thread ids in sidebar order.
+    pub fn recents(&self) -> Vec<String> {
+        self.threads.iter().map(|t| t.id.clone()).collect()
     }
 
     fn set_threads(&mut self, threads: &[Thread], cx: &mut Context<Self>) {
-        self.recents = threads.iter().map(|t| t.id.clone()).collect();
+        self.threads = threads.to_vec();
         self.sidebar.update(cx, |s, cx| s.set_threads(threads, cx));
     }
 
     /// Puts `thread` at the top of Recents.
     fn add_thread(&mut self, thread: &Thread, cx: &mut Context<Self>) {
-        self.recents.retain(|id| *id != thread.id);
-        self.recents.insert(0, thread.id.clone());
+        self.threads.retain(|t| t.id != thread.id);
+        self.threads.insert(0, thread.clone());
         self.sidebar.update(cx, |s, cx| s.add_thread(thread, cx));
     }
 
@@ -473,7 +517,7 @@ impl Root {
     /// the first row.
     fn step_chat(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
         let current = match &self.state.route {
-            Route::Thread(id) => self.recents.iter().position(|r| r == id),
+            Route::Thread(id) => self.threads.iter().position(|t| t.id == *id),
             _ => None,
         };
         let index = current.map_or(Some(0), |i| i.checked_add_signed(delta));
@@ -481,8 +525,11 @@ impl Root {
     }
 
     fn go_to_chat(&mut self, index: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(id) = index.and_then(|i| self.recents.get(i)) {
-            self.navigate(Route::Thread(id.clone()), window, cx);
+        if let Some(id) = index
+            .and_then(|i| self.threads.get(i))
+            .map(|t| t.id.clone())
+        {
+            self.navigate(Route::Thread(id), window, cx);
         }
     }
 
@@ -525,42 +572,42 @@ impl Root {
     /// persists the state.
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (can_back, can_forward) = (!self.back.is_empty(), !self.forward.is_empty());
-        self.settings = (self.state.route == Route::Settings).then(|| {
-            let shell = settings::shell(&self.config, &self.skills, cx);
-            shell.update(cx, |shell, _| {
+        self.page = match self.state.route {
+            Route::Settings => {
+                // The Appearance page shows the theme the app keeps.
+                let mut config = self.config.clone();
+                let (store, key) = settings::THEME.split_once('.').expect("store.key");
+                config[store][key] = json!(self.state.theme);
+                let section = self.settings_section.take();
+                Some(settings::shell(&config, &self.skills, section, cx))
+            }
+            Route::Scheduled => Some(automations::shell(cx)),
+            Route::Mobile => Some(mobile::shell(cx)),
+            Route::Home | Route::Thread(_) => None,
+        };
+        if let Some(page) = &self.page {
+            page.update(cx, |shell, _| {
                 shell.can_go_back = can_back;
                 shell.can_go_forward = can_forward;
             });
-            shell
-        });
+        }
         let thread_id = match &self.state.route {
             Route::Thread(id) => Some(id.clone()),
             _ => None,
         };
-        // Keys need a focused element in the frame: the route's composer, else the root.
-        let (main, focus): (AnyView, _) = match (&thread_id, &self.thread) {
-            (Some(id), Some(view)) if view.read(cx).id() == id => {
-                (view.clone().into(), self.thread_composer.focus_handle(cx))
-            }
-            (Some(id), _) => {
+        let view = self
+            .thread
+            .clone()
+            .filter(|v| Some(v.read(cx).id()) == thread_id.as_deref());
+        let main: AnyView = match (&thread_id, &view) {
+            (Some(_), Some(view)) => view.clone().into(),
+            (Some(id), None) => {
                 self.load_thread(id.clone(), window, cx);
-                (cx.new(|_| ui::EmptyMain).into(), self.focus.clone())
+                cx.new(|_| ui::EmptyMain).into()
             }
-            (None, _) if self.settings.is_some() => (self.home.clone().into(), self.focus.clone()),
-            (None, _) => (
-                self.home.clone().into(),
-                self.home.read(cx).composer.focus_handle(cx),
-            ),
+            (None, _) => self.home.clone().into(),
         };
-        // The sign-in view takes no keys of its own.
-        window.focus(
-            if self.login.is_some() {
-                &self.focus
-            } else {
-                &focus
-            },
-            cx,
-        );
+        window.focus(&self.route_focus(cx), cx);
         self.sidebar
             .update(cx, |s, cx| s.select(thread_id.as_deref(), cx));
         let home = self.state.route == Route::Home;
@@ -568,9 +615,110 @@ impl Root {
             shell.selected_rail = home.then_some("home");
             shell.can_go_back = can_back;
             shell.can_go_forward = can_forward;
+            // Thread routes: `with_side_panel` below sets its own.
+            shell.new_tab = true;
+            shell.main_backgrounds = 0;
             shell.set_main(main, cx);
         });
+        self.split = view.map(|view| {
+            let panel = self.side.and_then(|side| self.side_view(side, &view, cx));
+            with_side_panel(self.shell.clone(), view, panel, cx)
+        });
         self.save(window, cx);
+        cx.notify();
+    }
+
+    /// Keys need a focused element in the frame: the route's composer, else the root (the
+    /// route's own shell, a loading thread, the sign-in view, which take no keys of their own).
+    fn route_focus(&self, cx: &App) -> FocusHandle {
+        let open = |id: &str| self.thread.as_ref().is_some_and(|v| v.read(cx).id() == id);
+        match &self.state.route {
+            _ if self.login.is_some() || self.page.is_some() => self.focus.clone(),
+            Route::Thread(id) if open(id) => self.thread_composer.focus_handle(cx),
+            Route::Thread(_) => self.focus.clone(),
+            _ => self.home.read(cx).composer.focus_handle(cx),
+        }
+    }
+
+    /// The side panel tab `side` of the open thread `view`: `(view, tab icon, tab label)`.
+    /// No terminal tab without a background command.
+    fn side_view(
+        &self,
+        side: SidePanel,
+        view: &Entity<ThreadView>,
+        cx: &mut Context<Self>,
+    ) -> Option<(AnyView, &'static str, SharedString)> {
+        match side {
+            SidePanel::Changes => {
+                let v = view.read(cx);
+                let panel = DiffPanel::last_turn(&self.cwd, v.cwd(), v.turns());
+                Some((
+                    cx.new(|_| panel).into(),
+                    "diff-tab-changes",
+                    "Changes".into(),
+                ))
+            }
+            SidePanel::Terminal => {
+                let (command, _) = view.read(cx).background_terminals().into_iter().next()?;
+                let xterm = cx.new(|cx| Xterm::new(view.clone(), cx));
+                Some((xterm.into(), "thread-terminal", command.into()))
+            }
+        }
+    }
+
+    /// Opens, switches or (`None`) closes the thread route's side panel.
+    fn set_side(&mut self, side: Option<SidePanel>, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(self.state.route, Route::Thread(_)) {
+            self.side = side;
+            self.sync(window, cx);
+        }
+    }
+
+    /// `⌘K`, `⌘⇧P` and the sidebar `Search`: the command menu over live Recents, focused.
+    fn open_command_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let menu = cx.new(|cx| CommandMenu::with_threads(&self.threads, "", cx));
+        cx.subscribe_in(&menu, window, |this, _, event, window, cx| {
+            this.run_command(event, window, cx)
+        })
+        .detach();
+        window.focus(&menu.focus_handle(cx), cx);
+        self.command_menu = Some(menu);
+        cx.notify();
+    }
+
+    /// Closes the command menu and runs its row: a chat opens, `New chat`, `Manage scheduled
+    /// tasks` and the settings pages navigate.
+    /// ponytail: commands whose feature the port lacks (Open folder, Show Mini, Log out, ...)
+    /// only close the menu; run them when the features land.
+    fn run_command(
+        &mut self,
+        event: &CommandMenuEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.command_menu = None;
+        match event {
+            CommandMenuEvent::Dismiss => {}
+            CommandMenuEvent::OpenThread(id) => {
+                self.navigate(Route::Thread(id.clone()), window, cx)
+            }
+            CommandMenuEvent::Command(label) => match label.as_ref() {
+                "New chat" => self.new_chat(window, cx),
+                "Manage scheduled tasks" => self.navigate(Route::Scheduled, window, cx),
+                label => {
+                    if let Some(section) = settings::section(label) {
+                        self.settings_section = Some(section);
+                        if self.state.route == Route::Settings {
+                            self.sync(window, cx);
+                        } else {
+                            self.navigate(Route::Settings, window, cx);
+                        }
+                    }
+                }
+            },
+        }
+        // Give the keys back to the route (navigating already did).
+        window.focus(&self.route_focus(cx), cx);
         cx.notify();
     }
 
@@ -596,8 +744,6 @@ impl Root {
         };
         let composer = self.thread_composer.clone().into();
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
-        // The titlebar header reads the view.
-        cx.observe(&view, |_, _, cx| cx.notify()).detach();
         self.thread = Some(view);
         if self.state.route == route {
             self.sync(window, cx);
@@ -811,19 +957,11 @@ async fn turn_start(bridge: &Bridge, thread_id: &str, s: &Submission) -> Result<
 
 impl Render for Root {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let content: AnyElement = match (&self.login, &self.settings) {
-            (Some(login), _) => login.clone().into_any_element(),
-            (None, Some(settings)) => settings.clone().into_any_element(),
-            (None, None) => self.shell.clone().into_any_element(),
-        };
-        // The open thread's titlebar header (open-sidebar layout only).
-        let header = match (&self.state.route, &self.thread) {
-            (Route::Thread(_), Some(view))
-                if self.login.is_none() && self.shell.read(cx).sidebar_open =>
-            {
-                Some(view.read(cx).titlebar_header(cx))
-            }
-            _ => None,
+        let content: AnyElement = match (&self.login, &self.page, &self.split) {
+            (Some(login), ..) => login.clone().into_any_element(),
+            (None, Some(page), _) => page.clone().into_any_element(),
+            (None, None, Some(split)) => split.clone().into_any_element(),
+            (None, None, None) => self.shell.clone().into_any_element(),
         };
         div()
             .size_full()
@@ -833,6 +971,32 @@ impl Render for Root {
             .on_action(cx.listener(|this, _: &NewChat, window, cx| this.new_chat(window, cx)))
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
                 this.navigate(Route::Settings, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &OpenScheduled, window, cx| {
+                this.navigate(Route::Scheduled, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &OpenMobileSetup, window, cx| {
+                this.navigate(Route::Mobile, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ToggleChangesPanel, window, cx| {
+                let side = (this.side != Some(SidePanel::Changes)).then_some(SidePanel::Changes);
+                this.set_side(side, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &OpenChangesPanel, window, cx| {
+                this.set_side(Some(SidePanel::Changes), window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &OpenBackgroundTerminal, window, cx| {
+                this.set_side(Some(SidePanel::Terminal), window, cx)
+            }))
+            .on_action(
+                cx.listener(|this, _: &CloseSidePanel, window, cx| this.set_side(None, window, cx)),
+            )
+            .on_action(cx.listener(|this, _: &OpenCommandMenu, window, cx| {
+                this.open_command_menu(window, cx)
+            }))
+            .on_action(cx.listener(|this, a: &SetTheme, window, cx| {
+                let theme = serde_json::from_value(json!(a.0)).unwrap_or_default();
+                this.set_theme(theme, window, cx)
             }))
             .on_action(cx.listener(|this, _: &GoBack, window, cx| this.step(true, window, cx)))
             .on_action(cx.listener(|this, _: &GoForward, window, cx| this.step(false, window, cx)))
@@ -852,6 +1016,6 @@ impl Render for Root {
             .on_action(|_: &Minimize, window, _| window.minimize_window())
             .on_action(|_: &Zoom, window, _| window.zoom_window())
             .child(content)
-            .children(header)
+            .children(self.command_menu.clone())
     }
 }

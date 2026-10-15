@@ -253,6 +253,7 @@ fn decoration(n: &Node) -> shapes::Decoration {
         },
         fill: n.fill.map(hsla),
         border: None,
+        dashed: false,
         shadows: n
             .shadows
             .iter()

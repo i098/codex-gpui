@@ -14,7 +14,9 @@ use crate::{
 };
 use gpui::{Bounds, Corners, Hsla, Pixels, RenderImage, Rgba, Window, WindowId, point, px};
 use image::{Frame, RgbaImage};
-use skia_safe::{Canvas, ClipOp, Color, Color4f, Paint, Rect, TileMode, gradient, image_filters};
+use skia_safe::{
+    Canvas, ClipOp, Color, Color4f, ColorSpace, Paint, Rect, TileMode, gradient, image_filters,
+};
 use std::{cell::RefCell, collections::HashMap, sync::Arc};
 
 /// A box with a backdrop filter, device px: its contour, blur sigma and layer ops; `gradient`:
@@ -226,18 +228,26 @@ impl Pixmap {
         ((y - self.r[1]) * (self.r[2] - self.r[0]) + x - self.r[0]) as usize
     }
 
-    /// Renders `draw` (window device px) on a surface of `r` cleared to `clear` and reads it.
+    /// Renders `draw` (window device px) on a compositor surface of `r` cleared to `clear` and
+    /// reads it.
     fn draw(r: [i32; 4], clear: Color, draw: impl FnOnce(&Canvas)) -> Self {
         let mut out = Self::new(r);
-        out.blit(r, clear, [r[0], r[1]], draw);
+        out.blit(r, clear, [r[0], r[1]], None, draw);
         out
     }
 
-    /// Renders `draw` on a surface at `origin` (window device px) covering `area`, and copies
-    /// the pixels of `area` into `self`.
-    fn blit(&mut self, area: [i32; 4], clear: Color, origin: [i32; 2], draw: impl FnOnce(&Canvas)) {
+    /// Renders `draw` on a surface of color space `cs` at `origin` (window device px) covering
+    /// `area`, and copies the pixels of `area` into `self`.
+    fn blit(
+        &mut self,
+        area: [i32; 4],
+        clear: Color,
+        origin: [i32; 2],
+        cs: impl Into<Option<ColorSpace>>,
+        draw: impl FnOnce(&Canvas),
+    ) {
         let size = (area[2] - origin[0], area[3] - origin[1]);
-        let (bytes, rb) = skia::tile_pixels(origin, size, clear.into(), draw);
+        let (bytes, rb) = skia::surface_pixels(origin, size, clear.into(), cs, draw);
         for y in area[1]..area[3] {
             for x in area[0]..area[2] {
                 let o = (y - origin[1]) as usize * rb + (x - origin[0]) as usize * 4;
@@ -326,36 +336,42 @@ fn draw_layer(target: &mut Pixmap, f: &Filtered) {
     let align = |v: i32, min: i32| v - ((v - min).max(0) + 7) / 8 * 8;
     let o = [align(b[0], target.r[0]), align(b[1], target.r[1])];
     let mut layer = Pixmap::new(target.r);
-    layer.blit(target.r, Color::TRANSPARENT, o, |c| {
-        for &(op, color) in &f.ops {
-            c.save();
-            match (op, f.gradient) {
-                // A `background-image`: Blink clips to the shape and draws the image rect;
-                // Skia dithers gradients.
-                (Op::Fill(contour), Some(color)) => {
-                    let [x, y, w, h] = contour.rr.r;
-                    let rect = Rect::from_xywh(x, y, w, h);
-                    let colors = [color, color];
-                    let gradient = gradient::Gradient::new(
-                        gradient::Colors::new_evenly_spaced(&colors, TileMode::Clamp, None),
-                        gradient::Interpolation::default(),
-                    );
-                    let shader = gradient::shaders::linear_gradient(
-                        (rect.tl(), skia_safe::Point::new(x, y + h)),
-                        &gradient,
-                        None,
-                    )
-                    .expect("gradient shader");
-                    let mut paint = Paint::default();
-                    paint.set_shader(shader).set_dither(true);
-                    contour.clip(c, ClipOp::Intersect);
-                    c.draw_rect(rect, &paint);
+    layer.blit(
+        target.r,
+        Color::TRANSPARENT,
+        o,
+        ColorSpace::new_srgb(),
+        |c| {
+            for &(op, color) in &f.ops {
+                c.save();
+                match (op, f.gradient) {
+                    // A `background-image`: Blink clips to the shape and draws the image rect;
+                    // Skia dithers gradients.
+                    (Op::Fill(contour), Some(color)) => {
+                        let [x, y, w, h] = contour.rr.r;
+                        let rect = Rect::from_xywh(x, y, w, h);
+                        let colors = [color, color];
+                        let gradient = gradient::Gradient::new(
+                            gradient::Colors::new_evenly_spaced(&colors, TileMode::Clamp, None),
+                            gradient::Interpolation::default(),
+                        );
+                        let shader = gradient::shaders::linear_gradient(
+                            (rect.tl(), skia_safe::Point::new(x, y + h)),
+                            &gradient,
+                            None,
+                        )
+                        .expect("gradient shader");
+                        let mut paint = Paint::default();
+                        paint.set_shader(shader).set_dither(true);
+                        contour.clip(c, ClipOp::Intersect);
+                        c.draw_rect(rect, &paint);
+                    }
+                    _ => op.draw(c, color),
                 }
-                _ => op.draw(c, color),
+                c.restore();
             }
-            c.restore();
-        }
-    });
+        },
+    );
     for (d, s) in target.px.iter_mut().zip(&layer.px) {
         *d = over(*s, *d);
     }
@@ -376,7 +392,7 @@ fn compose(
         if area[0] >= area[2] || area[1] >= area[3] {
             continue;
         }
-        root.blit(area, Color::BLACK, o, |c| {
+        root.blit(area, Color::BLACK, o, ColorSpace::new_srgb(), |c| {
             for &(op, color) in painted {
                 c.save();
                 op.draw(c, color);

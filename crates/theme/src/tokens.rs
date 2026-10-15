@@ -157,6 +157,19 @@ pub enum Appearance {
     Light,
 }
 
+/// Dark `color-mix(in oklab, #ffffff <a>, transparent)`: oklab(0.999994 0.0000455678
+/// 0.0000200868 / a), whose sRGB is just outside [0, 1], so Skia keeps it in float and blits
+/// it with its float raster pipeline (crates/shapes, textsys shaders.metal modes 4 and 6).
+fn white_mix(a: f32) -> Hsla {
+    Rgba {
+        r: 1.00003,
+        g: 0.99999,
+        b: 1.,
+        a,
+    }
+    .into()
+}
+
 impl Theme {
     pub fn dark() -> Self {
         Self {
@@ -184,8 +197,8 @@ impl Theme {
             ghost_hover: rgba(0xffffff14).into(),
             list_hover: rgba(0xffffff14).into(),
             primary_soft_alpha: rgba(0xffffff08).into(),
-            text_alpha_5: rgba(0xffffff0d).into(),
-            text_alpha_10: rgba(0xffffff1a).into(),
+            text_alpha_5: white_mix(0.05),
+            text_alpha_10: white_mix(0.1),
             background_panel: rgba(0x232323ff).into(),
             composer_primary: rgba(0xffffffff).into(),
             user_message_background: rgba(0x323232d9).into(),
@@ -194,15 +207,7 @@ impl Theme {
             text_selection: rgba(0x78787866).into(),
             dialog_backdrop: rgba(0x00000080).into(),
             text: rgba(0xffffffff).into(),
-            // oklab(0.999994 0.0000455678 0.0000200868 / 0.85): its sRGB is just outside
-            // [0, 1], so Skia blits it in float (textsys shaders.metal mode 4).
-            text_default_nav: Rgba {
-                r: 1.00003,
-                g: 0.99999,
-                b: 1.,
-                a: 0.85,
-            }
-            .into(),
+            text_default_nav: white_mix(0.85),
             text_secondary: rgba(0xffffffa6).into(),
             text_description: rgba(0xffffffa6).into(),
             text_tertiary: rgba(0xffffff7f).into(),
@@ -238,7 +243,7 @@ impl Theme {
             git_modified: rgba(0xff8549ff).into(),
             scrollbar: rgba(0xffffff4c).into(),
             scrollbar_hover: rgba(0xffffff28).into(),
-            switch_track: rgba(0xffffff1a).into(),
+            switch_track: white_mix(0.1),
             switch_track_checked: rgba(0x3a83f7ff).into(),
         }
     }

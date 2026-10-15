@@ -5,17 +5,13 @@
 
 use crate::{Shell, icon::icon, icon_button, text};
 use gpui::{
-    Action, AnyView, App, AppContext as _, Bounds, Context, Hsla, InteractiveElement, IntoElement,
-    ParentElement, PathBuilder, Pixels, Render, SharedString, StatefulInteractiveElement, Styled,
-    Window, actions, canvas, div, img, point, px,
+    Action, AnyView, App, AppContext as _, Context, Corners, Entity, InteractiveElement,
+    IntoElement, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window,
+    actions, canvas, div, img, px,
 };
 use serde::Deserialize;
 use serde_json::Value;
-use std::{
-    f32::consts::{FRAC_1_SQRT_2, FRAC_PI_2},
-    fs,
-    path::Path,
-};
+use std::{fs, path::Path};
 use theme::{ActiveTheme as _, Theme};
 
 actions!(
@@ -128,6 +124,19 @@ fn cards(mut all: Vec<Suggestion>) -> Vec<Suggestion> {
 pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
     let server = serde_json::from_value(oracle("\"url\":\"/suggested_automations\""))
         .expect("suggested_automations shape");
+    let shell = shell_with(server, cx);
+    shell.update(cx, |shell, _| shell.can_go_back = true);
+    shell.into()
+}
+
+/// The app's `/scheduled` route: no automations yet. The port has no ChatGPT backend for
+/// `/suggested_automations`, so the cards are the landing examples, as the original shows
+/// them without server suggestions.
+pub fn shell(cx: &mut App) -> Entity<Shell> {
+    shell_with(Vec::new(), cx)
+}
+
+fn shell_with(server: Vec<Suggestion>, cx: &mut App) -> Entity<Shell> {
     let sidebar = cx.new(|_| ScheduledSidebar).into();
     let main = cx
         .new(|_| AutomationsPage {
@@ -138,164 +147,8 @@ pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
         let mut shell = Shell::new(sidebar, main);
         shell.selected_rail = Some("scheduled");
         shell.new_tab = false;
-        shell.can_go_back = true;
         shell
     })
-    .into()
-}
-
-/// `border: <width> dashed` on a rounded box, laid out as Chromium paints it
-/// (`BoxBorderPainter::DrawCurvedDashedDottedBoxSide`): one closed dash pattern along the
-/// border's centerline, starting at the end of the top-left corner and running clockwise;
-/// dash and base gap are 3x / 2x the device border width (2x / 1x from 3 device px), and the
-/// gap is stretched so whole periods fit the truncated device path length
-/// (`SelectBestDashGap`). The dashes are one stroked svg path rasterized by Chromium's Skia
-/// (`shapes::paint_icon`), a GPUI path where that is not available. GPUI's own
-/// `border_dashed` uses a fixed 2:1 pattern.
-fn dashed_border(width: Pixels, radius: Pixels, color: Hsla) -> impl IntoElement {
-    let dashes = canvas(
-        |_, _, _| {},
-        move |b: Bounds<Pixels>, _, window, cx| {
-            let (bw, r) = (f32::from(width), f32::from(radius));
-            let scale = window.scale_factor();
-            let rc = r - bw / 2.;
-            let (w, h) = (f32::from(b.size.width), f32::from(b.size.height));
-            // Centerline box, local CSS px.
-            let (l, t, rt, bt) = (bw / 2., bw / 2., w - bw / 2., h - bw / 2.);
-            // The corners' length as Skia measures the conics (chords), not the true arc.
-            let chords = quarter_chords(rc * scale);
-            let arc = chords.last().map_or(0., |c| c.1) / scale;
-            let (sw, sh) = (rt - l - 2. * rc, bt - t - 2. * rc);
-            let thick = bw * scale;
-            let (dash_ratio, gap_ratio) = if thick >= 3. { (2., 1.) } else { (3., 2.) };
-            let (dash, gap) = (thick * dash_ratio, thick * gap_ratio);
-            let len = ((2. * (sw + sh) + 4. * arc) * scale).trunc();
-            let n = (len / (dash + gap)).floor();
-            let (gap_lo, gap_hi) = ((len - n * dash) / n, (len - (n + 1.) * dash) / (n + 1.));
-            let gap = if gap_hi <= 0. || (gap_lo - gap).abs() < (gap_hi - gap).abs() {
-                gap_lo
-            } else {
-                gap_hi
-            };
-            let (dash, period) = (dash / scale, (dash + gap) / scale);
-            // Clockwise segments from the top edge: (start offset, length, kind).
-            let segs = [
-                (0., sw, 0),
-                (sw, arc, 1),
-                (sw + arc, sh, 2),
-                (sw + arc + sh, arc, 3),
-                (sw + 2. * arc + sh, sw, 4),
-                (2. * sw + 2. * arc + sh, arc, 5),
-                (2. * sw + 3. * arc + sh, sh, 6),
-                (2. * sw + 3. * arc + 2. * sh, arc, 7),
-            ];
-            // Each dash piece on the centerline: (is a quarter-circle arc, start, end).
-            let mut pieces = Vec::new();
-            let mut start = 0.;
-            while start < len / scale {
-                let end = start + dash;
-                for &(off, seg_len, kind) in &segs {
-                    let (s0, s1) = ((start - off).max(0.), (end - off).min(seg_len));
-                    if s0 >= s1 {
-                        continue;
-                    }
-                    pieces.push(match kind {
-                        0 => (false, (l + rc + s0, t), (l + rc + s1, t)),
-                        2 => (false, (rt, t + rc + s0), (rt, t + rc + s1)),
-                        4 => (false, (rt - rc - s0, bt), (rt - rc - s1, bt)),
-                        6 => (false, (l, bt - rc - s0), (l, bt - rc - s1)),
-                        _ => {
-                            let (cx, cy, a0) = match kind {
-                                1 => (rt - rc, t + rc, -FRAC_PI_2),
-                                3 => (rt - rc, bt - rc, 0.),
-                                5 => (l + rc, bt - rc, FRAC_PI_2),
-                                _ => (l + rc, t + rc, 2. * FRAC_PI_2),
-                            };
-                            let at = |s: f32| {
-                                let a = a0 + quarter_angle(&chords, s * scale);
-                                (cx + rc * a.cos(), cy + rc * a.sin())
-                            };
-                            (true, at(s0), at(s1))
-                        }
-                    });
-                }
-                start += period;
-            }
-            let d: String = pieces
-                .iter()
-                .map(|&(arc, (x0, y0), (x1, y1))| match arc {
-                    true => format!("M{x0} {y0}A{rc} {rc} 0 0 1 {x1} {y1}"),
-                    false => format!("M{x0} {y0}L{x1} {y1}"),
-                })
-                .collect();
-            let svg = format!(
-                r#"<svg viewBox="0 0 {w} {h}" fill="none"><path d="{d}" stroke="black" stroke-width="{bw}"/></svg>"#
-            );
-            let key = format!("dashed-border-{w}x{h}-{bw}-{r}");
-            if shapes::paint_icon(svg.as_bytes(), &key, b, false, color, None, window, cx) {
-                return;
-            }
-            let at = |(x, y): (f32, f32)| b.origin + point(px(x), px(y));
-            let mut path = PathBuilder::stroke(width);
-            for &(arc, p0, p1) in &pieces {
-                path.move_to(at(p0));
-                match arc {
-                    true => path.arc_to(point(px(rc), px(rc)), px(0.), false, true, at(p1)),
-                    false => path.line_to(at(p1)),
-                }
-            }
-            if let Ok(path) = path.build() {
-                window.paint_path(path, color);
-            }
-        },
-    )
-    .size_full();
-    // Blink paints the translucent sides as an opacity group: a layer composited onto the card.
-    div()
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full()
-        .layer()
-        .child(dashes)
-}
-
-/// A rounded corner's conic (`SkPath::addRRect`, radius `r` device px) as `SkContourMeasure`
-/// splits it: halved in t while the curve's midpoint is more than 0.5 px (larger axis) from
-/// the chord's. Returns `(t, length so far)` at each chord end.
-fn quarter_chords(r: f32) -> Vec<(f32, f32)> {
-    fn split(r: f32, t0: f32, t1: f32, out: &mut Vec<(f32, f32)>) {
-        let (p0, pm, p1) = (conic(r, t0), conic(r, (t0 + t1) / 2.), conic(r, t1));
-        let (dx, dy) = (pm.0 - (p0.0 + p1.0) / 2., pm.1 - (p0.1 + p1.1) / 2.);
-        if dx.abs().max(dy.abs()) > 0.5 {
-            split(r, t0, (t0 + t1) / 2., out);
-            split(r, (t0 + t1) / 2., t1, out);
-        } else {
-            let len = out.last().map_or(0., |c| c.1) + (p1.0 - p0.0).hypot(p1.1 - p0.1);
-            out.push((t1, len));
-        }
-    }
-    let mut out = vec![(0., 0.)];
-    split(r, 0., 1., &mut out);
-    out
-}
-
-/// Point `t` of the quarter circle conic (r, 0) → (0, r), weight √½.
-fn conic(r: f32, t: f32) -> (f32, f32) {
-    let (u, k) = (1. - t, 2. * FRAC_1_SQRT_2 * t * (1. - t));
-    let d = u * u + k + t * t;
-    ((u * u + k) * r / d, (k + t * t) * r / d)
-}
-
-/// The angle into the corner at measured length `s` (device px): Skia's dash maps length to t
-/// linearly within each chord.
-fn quarter_angle(chords: &[(f32, f32)], s: f32) -> f32 {
-    let i = chords
-        .partition_point(|c| c.1 < s)
-        .clamp(1, chords.len() - 1);
-    let ((t0, c0), (t1, c1)) = (chords[i - 1], chords[i]);
-    let (x, y) = conic(1., t0 + (t1 - t0) * ((s - c0) / (c1 - c0)).clamp(0., 1.));
-    y.atan2(x)
 }
 
 /// `ScheduledSidebar`: header `Scheduled` + search, `New task`, section `Upcoming`.
@@ -435,7 +288,13 @@ impl AutomationsPage {
             // 20 px padding inside a 1 px dashed border.
             .p(px(21.))
             .rounded(px(24.))
-            .child(dashed_border(px(1.), px(24.), t.border))
+            // `border: 1px dashed` (Blink's curved dashed side, `shapes`).
+            .child(shapes::decoration(shapes::Decoration {
+                radius: Corners::all(px(24.)),
+                border: Some((px(1.), t.border)),
+                dashed: true,
+                ..Default::default()
+            }))
             .hover(move |st| st.bg(hover_bg))
             .on_click(move |_, window, cx| {
                 window.dispatch_action(
