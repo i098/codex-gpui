@@ -3,7 +3,7 @@
 //! message actions, docked composer), kept live by `item/*` and `turn/*` notifications.
 //! Numbers are the spec's CSS px.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash as _, Hasher as _};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -14,9 +14,9 @@ use bridge::types::{
     TurnStatus, UserInput,
 };
 use gpui::{
-    AnyView, Context, Corners, Div, FontWeight, Hsla, Image, ImageFormat, IntoElement,
-    ParentElement, Pixels, Render, Rgba, SharedString, Styled, Task, TextRun, Window, div, font,
-    prelude::*, px, relative, rgb, rgba, white,
+    Action, AnyView, ClipboardItem, Context, Corners, Div, FontWeight, Hsla, Image, ImageFormat,
+    IntoElement, ParentElement, Pixels, Render, Rgba, SharedString, Styled, Task, TextRun, Window,
+    div, font, prelude::*, px, relative, rgb, rgba, white,
 };
 use theme::{ActiveTheme as _, Appearance, Theme};
 
@@ -26,6 +26,16 @@ use crate::{MONO, SANS, composer::shadow, icon_button, layout_color, over, text}
 
 /// `--thread-content-max-width`
 const CONTENT_MAX_WIDTH: Pixels = px(768.);
+
+/// `Fork chat from here` under a turn: a new chat with the thread up to that turn (its id).
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = thread, no_json)]
+pub struct ForkThread(pub String);
+
+/// A file change card's `Undo`: revert the thread to before that turn (its id).
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = thread, no_json)]
+pub struct RevertTurn(pub String);
 
 /// Wall clock for timestamps: the local UTC offset and, for fixture screens, a pinned "now".
 #[derive(Clone, Copy)]
@@ -55,6 +65,8 @@ pub struct ThreadView {
     clock: Clock,
     composer: AnyView,
     _tick: Option<Task<()>>,
+    /// Turns whose `Worked for` disclosure is expanded.
+    expanded: HashSet<String>,
 }
 
 impl ThreadView {
@@ -69,6 +81,7 @@ impl ThreadView {
             clock,
             composer,
             _tick: None,
+            expanded: HashSet::new(),
         }
     }
 
@@ -127,12 +140,13 @@ impl ThreadView {
                     t.text_secondary,
                 )))
         };
-        // `trailing`: the row's hover-only actions keep their space; a label that overflows its
-        // viewport gets the marquee's right fade (`_overflowingViewport`, 1.14286em).
+        // `trailing`: the row's hover-only actions keep their space. A label that overflows its
+        // viewport gets the marquee's mask (`_overflowingViewport`: 0.571429em left fade over
+        // the track's padding, 1.14286em right fade), a masked box in its own layer.
         let row = |name: &'static str, label: String, trailing: f32, ix: usize| {
             let clip = 260. - 30. - trailing;
             let overflows = f32::from(width(window, &label, 13., 430., None)) > clip;
-            let bg = t.surface_elevated_secondary;
+            let pad = 13. * 0.571429;
             div()
                 .id((name, ix))
                 .h(px(28.))
@@ -148,23 +162,13 @@ impl ThreadView {
                         .child(
                             div()
                                 .relative()
-                                .w(px(clip))
+                                .ml(px(-pad))
+                                .w(px(clip + pad))
+                                .pl(px(pad))
                                 .overflow_hidden()
                                 .child(text(label, 13., 18.5714, 430., t.text))
                                 .when(overflows, |d| {
-                                    d.child(
-                                        div()
-                                            .absolute()
-                                            .top_0()
-                                            .right_0()
-                                            .h_full()
-                                            .w(px(13. * 1.14286))
-                                            .bg(gpui::linear_gradient(
-                                                90.,
-                                                gpui::linear_color_stop(bg.opacity(0.), 0.),
-                                                gpui::linear_color_stop(bg, 1.),
-                                            )),
-                                    )
+                                    d.layer().child(shapes::x_fade(px(pad), px(13. * 1.14286)))
                                 }),
                         ),
                 )
@@ -221,6 +225,8 @@ impl ThreadView {
             .right(px(8.) - ink)
             .p(ink)
             .layer()
+            // Floating UI's `translate` is rounded to device pixels (`roundByDPR`).
+            .snap_origin()
             .child(
                 div()
                     .relative()
@@ -472,8 +478,9 @@ impl ThreadView {
             )
     }
 
-    fn turn(&self, turn: &Turn, last: bool, window: &Window, t: &Theme) -> Div {
-        let mut col = div().flex().flex_col();
+    fn turn(&self, turn: &Turn, last: bool, window: &Window, t: &Theme, cx: &Context<Self>) -> Div {
+        let group = SharedString::from(format!("turn-{}", turn.id));
+        let mut col = div().group(group.clone()).flex().flex_col();
         let user = turn.items.iter().find_map(|i| match i {
             ThreadItem::UserMessage { content, .. } => Some(
                 content
@@ -503,19 +510,32 @@ impl ThreadView {
         };
         if let Some(answer) = final_answer {
             let secs = turn.duration_ms.unwrap_or(0) / 1000;
+            let open = self.expanded.contains(&turn.id);
+            let id = turn.id.clone();
+            col = col.child(div().h(px(16.))).child(
+                disclosure(format!("Worked for {}", duration(secs)), open, window, t)
+                    .id(group.clone())
+                    .on_click(cx.listener(move |view, _, _, cx| {
+                        if !view.expanded.remove(&id) {
+                            view.expanded.insert(id.clone());
+                        }
+                        cx.notify();
+                    })),
+            );
+            if open {
+                // The work the disclosure hides: everything before the final answer.
+                let work = &turn.items[..turn.items.len() - 1];
+                col = col
+                    .child(div().h(px(16.)))
+                    .child(activity(work, false, window, t));
+            }
             col = col
                 .child(div().h(px(16.)))
-                .child(disclosure(
-                    format!("Worked for {}", duration(secs)),
-                    window,
-                    t,
-                ))
-                .child(div().h(px(16.)))
                 .child(markdown(answer, window, t));
-            if let Some(card) = diff_card(&turn.items, window, t) {
+            if let Some(card) = diff_card(&turn.id, &turn.items, window, t) {
                 col = col.child(div().mt(px(12.)).pb(px(8.)).child(card));
             }
-            return col.child(action_row(last, t));
+            return col.child(action_row(last, &group, &turn.id, answer, t));
         }
         if turn.status == TurnStatus::InProgress {
             let secs = self.clock.now() - turn.started_at.unwrap_or(self.clock.now());
@@ -523,6 +543,7 @@ impl ThreadView {
                 .child(div().h(px(16.)))
                 .child(disclosure(
                     format!("Working for {}", duration(secs)),
+                    false,
                     window,
                     t,
                 ))
@@ -562,7 +583,7 @@ impl Render for ThreadView {
             .turns
             .iter()
             .enumerate()
-            .map(|(i, turn)| self.turn(turn, i + 1 == n, window, &t));
+            .map(|(i, turn)| self.turn(turn, i + 1 == n, window, &t, cx));
         // The thread fills the main panel: window minus titlebar (44) and bottom inset (4).
         let viewport = window.viewport_size();
         let (width, height) = (f32::from(viewport.width), f32::from(viewport.height) - 48.);
@@ -785,8 +806,9 @@ fn words(s: &str, weight: f32, color: Hsla, window: &Window) -> Vec<Div> {
         .collect()
 }
 
-/// `Worked for 17s ›` over a hairline (collapsed turn disclosure).
-fn disclosure(label: String, window: &Window, t: &Theme) -> Div {
+/// `Worked for 17s ›` over a hairline (collapsed turn disclosure); `open`: the chevron points
+/// down.
+fn disclosure(label: String, open: bool, window: &Window, t: &Theme) -> Div {
     div()
         .flex()
         .flex_col()
@@ -805,7 +827,15 @@ fn disclosure(label: String, window: &Window, t: &Theme) -> Div {
                         t.text_tertiary,
                         None,
                     ))
-                    .child(icon("thread-chevron-right", 14., t.text_tertiary)),
+                    .child(icon(
+                        if open {
+                            "chevron-down"
+                        } else {
+                            "thread-chevron-right"
+                        },
+                        14.,
+                        t.text_tertiary,
+                    )),
             ),
         )
         .child(
@@ -943,10 +973,13 @@ fn markdown(source: &str, window: &Window, t: &Theme) -> Div {
                                 )),
                         ),
                     ),
+                    // A file link opens the Changes panel.
                     Inline::Link { label, target } => row.child(
                         div()
+                            .id(SharedString::from(format!("file-link-{target}")))
                             .relative()
                             .flex()
+                            .on_click(crate::dispatch::<crate::OpenChangesPanel>)
                             // ponytail: only the Python language icon is bundled; other files show
                             // the bare label until their icons are added.
                             .when(target.ends_with(".py"), |d| {
@@ -976,8 +1009,9 @@ fn markdown(source: &str, window: &Window, t: &Theme) -> Div {
     div().flex().flex_col().gap(px(12.)).children(paragraphs)
 }
 
-/// `Edited math.py +4 -0` card with `Undo` and `View changes` for the turn's file changes.
-fn diff_card(items: &[ThreadItem], window: &Window, t: &Theme) -> Option<Div> {
+/// `Edited math.py +4 -0` card with `Undo` and `View changes` for the file changes of turn
+/// `turn_id`.
+fn diff_card(turn_id: &str, items: &[ThreadItem], window: &Window, t: &Theme) -> Option<Div> {
     let changes: Vec<_> = items
         .iter()
         .flat_map(|i| match i {
@@ -1075,7 +1109,18 @@ fn diff_card(items: &[ThreadItem], window: &Window, t: &Theme) -> Option<Div> {
                             .flex_none()
                             .items_center()
                             .gap(px(8.))
-                            .child(button("Undo", None).child(icon("thread-undo", 14., t.text)))
+                            .child({
+                                let turn_id = turn_id.to_owned();
+                                button("Undo", None)
+                                    .child(icon("thread-undo", 14., t.text))
+                                    .id("undo-turn")
+                                    .on_click(move |_, window, cx| {
+                                        window.dispatch_action(
+                                            Box::new(RevertTurn(turn_id.clone())),
+                                            cx,
+                                        )
+                                    })
+                            })
                             // Blink's background bleed avoidance paints the fill and the
                             // translucent border into one transparency layer.
                             .child(
@@ -1104,36 +1149,57 @@ fn diff_card(items: &[ThreadItem], window: &Window, t: &Theme) -> Option<Div> {
     )
 }
 
-/// Copy, Read aloud, Rate response, Fork chat from here: only under the latest turn; earlier
-/// turns keep the row's space.
-fn action_row(last: bool, t: &Theme) -> Div {
+/// Copy, Read aloud, Rate response, Fork chat from here: shown under the latest turn; earlier
+/// turns (group `group`) show them on hover.
+/// ponytail: Read aloud (ChatGPT voice playback) and Rate response (feedback menu) have no
+/// handler; wire them with a voice backend and the feedback menu.
+fn action_row(last: bool, group: &SharedString, turn_id: &str, answer: &str, t: &Theme) -> Div {
     let action = |name: &'static str| {
+        let color = t.text_tertiary;
+        // `Icon` folds its own opacity into the color, so the hover sets the color.
+        let icon = if last {
+            icon(name, 16., color)
+        } else {
+            icon(name, 16., color.opacity(0.))
+                .group_hover(group.clone(), move |s| s.text_color(color))
+        };
         div()
             .size(px(26.))
             .flex()
             .items_center()
             .justify_center()
             .rounded(Theme::RADIUS_MD)
-            .child(icon(name, 16., t.text_tertiary))
+            .child(icon)
     };
+    let (answer, turn_id) = (answer.to_owned(), turn_id.to_owned());
     div()
         .mt(px(6.))
         .ml(px(-4.))
         .h(px(26.))
         .flex()
         .gap(px(2.))
-        .when(last, |d| {
-            d.child(action("thread-copy"))
-                .child(action("thread-read-aloud"))
-                .child(action("thread-rate"))
-                .child(action("thread-fork"))
-        })
+        .child(
+            action("thread-copy")
+                .id("copy-response")
+                .on_click(move |_, _, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(answer.clone()))
+                }),
+        )
+        .child(action("thread-read-aloud"))
+        .child(action("thread-rate"))
+        .child(
+            action("thread-fork")
+                .id("fork-thread")
+                .on_click(move |_, window, cx| {
+                    window.dispatch_action(Box::new(ForkThread(turn_id.clone())), cx)
+                }),
+        )
 }
 
 /// A turn's items without a final answer: agent messages and command rows. A running turn
 /// names its running commands; otherwise commands fold into `Ran a command`.
 fn activity(items: &[ThreadItem], running: bool, window: &Window, t: &Theme) -> Div {
-    let text60 = Hsla { a: 0.6, ..t.text };
+    let text60 = t.text_alpha_60;
     let row = |label: String| {
         div()
             .h(px(21.))

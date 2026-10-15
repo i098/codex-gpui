@@ -15,7 +15,8 @@ this image with `rgb * a + dst * (1 - a)`, and the result is the 8-bit pixel of 
    (icon, size, color) renders differently at a different position (tile seams), the script
    writes a position variant `<color>@<x>_<y>.png`.
 4. Write assets/icons/px/<name>[-flipx]@<W>x<H>/<rrggbbaa>[@<x>_<y>].png for every asset name
-   of the glyph, and tools/icons/check.json (the cases of the ui::icon parity test).
+   of the glyph, except the glyphs in RUNTIME, and tools/icons/check.json (the cases of the
+   ui::icon parity test).
 
 Run: uv run -p /usr/bin/python3 --with numpy --with pillow tools/icons/build.py
 """
@@ -42,6 +43,12 @@ PROFILE = "/tmp/cgx-mac/chs-icons"
 SSH = ["-o", "ControlMaster=auto", "-o", f"ControlPath={WORK}/cm-%r@%h", "-o",
        "ControlPersist=600", "-o", "ConnectTimeout=15"]
 MARGIN = 0.2  # distance of the fitted value from a rounding boundary, in 8-bit units
+# Glyphs (any asset name) that crates/shapes rasterizes at runtime to the ref's exact pixels at
+# every ref use, in the screens' own layers (full parity run with no fitted images): no image.
+RUNTIME = {"chevron-down-small", "composer-model", "diff-file-python", "diff-jump-to-file",
+           "diff-more", "diff-open-in", "diff-show-files", "scheduled-filled",
+           "sidebar-cmd-spinner", "thread-chevron-right", "thread-copy", "thread-fork",
+           "thread-lang-python", "thread-project", "thread-rate", "thread-read-aloud"}
 
 _spec = importlib.util.spec_from_file_location("icons", ROOT / "tools/extract/icons.py")
 icons = importlib.util.module_from_spec(_spec)
@@ -130,8 +137,9 @@ def coverage(uses):
     cells = []
     for i, ((*_, flip), u) in enumerate(geo.items()):
         x, y = (i % cols) * cell + 4, (i // cols) * cell + 4
+        svg = re.sub(r'fill="#\w{6}"', 'fill="currentColor"', u["svg"])  # two-tone: coverage
         cells.append(f'<div class="c{" f" * flip}" style="left:{x}px;top:{y}px;'
-                     f'width:{u["w"]}px;height:{u["h"]}px">{u["svg"]}</div>')
+                     f'width:{u["w"]}px;height:{u["h"]}px">{svg}</div>')
     css = ("<style>body{margin:0;background:#000}.c{position:absolute;line-height:0;color:#fff}"
            ".c>svg{display:block;width:100%;height:100%}.f>svg{transform:scaleX(-1)}</style>")
     rows = math.ceil(len(geo) / cols)
@@ -259,7 +267,7 @@ def main():
             f = images.get(f"@{o['x']}_{o['y']}", default)
             o["fitted"] = bool(reproduces(f, o))
             unfit += not o["fitted"]
-        for name in names.get(glyph, []):
+        for name in names.get(glyph, []) if RUNTIME.isdisjoint(names.get(glyph, [])) else []:
             for suffix, f in images.items():
                 save(f, OUT / f"{name}{'-flipx' * flip}@{W}x{H}" / f"{color}{suffix}.png")
                 written += 1

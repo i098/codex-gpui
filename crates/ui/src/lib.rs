@@ -82,10 +82,16 @@ pub struct Shell {
     /// Titlebar `New tab` button (chat routes; Settings and Automations hide it).
     pub new_tab: bool,
     /// Opaque background boxes the page paints under the main surface's clip that reach its
-    /// rounded corners (Settings' `electron:bg-surface`, the thread's band): each blends the
-    /// clip's anti-aliased edge once more. With any, the shell paints those corners itself,
-    /// over what the main panel's content painted there.
+    /// rounded corners (Settings' `electron:bg-surface`): each blends the clip's anti-aliased
+    /// edge once more. With any, the shell paints those corners itself, over what the main
+    /// panel's content painted there.
     pub main_backgrounds: u8,
+    /// The main surface is a composited layer (thread routes): Chromium clips each layer in
+    /// it, so its rounded corners show its own fill and then the content (the thread's top fade
+    /// or composer band, or the side panel) at the clip's coverage.
+    pub main_composited: bool,
+    /// A chat needs attention (unread): the rail's Home item carries the unread dot.
+    pub attention: bool,
     /// The profile avatar's menu is open.
     pub profile_menu: bool,
     /// Pointer over the avatar: its own click toggles the menu, so a press there must not
@@ -125,6 +131,8 @@ impl Shell {
             chat_chrome: true,
             new_tab: true,
             main_backgrounds: 0,
+            main_composited: false,
+            attention: false,
             profile_menu: false,
             avatar_hovered: false,
             sidebar,
@@ -286,7 +294,7 @@ impl Render for EmptySidebar {
             .size_full()
             .flex()
             .flex_col()
-            .child(home_sidebar_header(cx))
+            .child(home_sidebar_header(false, cx))
             .child(
                 div()
                     .flex_1()
@@ -343,8 +351,8 @@ pub fn home_shell(_: &mut Window, cx: &mut App) -> AnyView {
 }
 
 /// Top of the Home sidebar: `Codex ⌄` mode switch, activity bell and search, then the
-/// `New chat` and `Your dot` rows.
-pub fn home_sidebar_header(cx: &App) -> Div {
+/// `New chat` and `Your dot` rows. With `unread` chats the bell carries the blue dot.
+pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
     let t = cx.theme();
     let row = |id: &'static str, leading: AnyElement, label: &'static str| {
         let hover_bg = t.list_hover;
@@ -398,7 +406,12 @@ pub fn home_sidebar_header(cx: &App) -> Div {
                 .child(div().flex_1())
                 .child(icon_button(
                     "activity",
-                    icon::icon("bell", 16., t.text_tertiary),
+                    // The unread bell's dot is a path in its own color (`--blue-400`).
+                    icon::icon(
+                        if unread { "bell-unread" } else { "bell" },
+                        16.,
+                        t.text_tertiary,
+                    ),
                     t,
                 ))
                 .child(div().w(px(4.)))
@@ -478,6 +491,22 @@ impl Shell {
                         .group_hover(id, move |s| s.text_color(hover_fg)),
                 )
         };
+        // An unread dot (`bg-info-solid`, 8 px) `inset` px inside the item's top-right corner.
+        let dot = move |inset: f32| {
+            div()
+                .absolute()
+                .top(px(inset))
+                .right(px(inset))
+                .size(px(8.))
+                .child(in_layer(
+                    shapes::Decoration {
+                        radius: Corners::all(Theme::RADIUS_FULL),
+                        fill: Some(t.info_solid),
+                        ..Default::default()
+                    },
+                    move || list,
+                ))
+        };
         div()
             .absolute()
             .left_0()
@@ -499,28 +528,16 @@ impl Shell {
                     .items_center()
                     .gap(px(8.))
                     .layer()
-                    .child(item("home").on_click(dispatch::<NewChat>))
+                    .child(
+                        item("home")
+                            .when(self.attention, |d| d.child(dot(6.)))
+                            .on_click(dispatch::<NewChat>),
+                    )
                     .child(item("space"))
                     .child(item("scheduled").on_click(dispatch::<OpenScheduled>))
                     .child(item("plugins"))
-                    // Explore with its unread dot (`bg-info-solid`, 8 px, top-right).
-                    .child(
-                        item("explore").child(
-                            div()
-                                .absolute()
-                                .top(px(4.))
-                                .right(px(4.))
-                                .size(px(8.))
-                                .child(in_layer(
-                                    shapes::Decoration {
-                                        radius: Corners::all(Theme::RADIUS_FULL),
-                                        fill: Some(t.info_solid),
-                                        ..Default::default()
-                                    },
-                                    move || list,
-                                )),
-                        ),
-                    )
+                    // Explore with its unread dot.
+                    .child(item("explore").child(dot(4.)))
                     .child(div().w(px(24.)).h(px(1.)).bg(t.border))
                     .child(item("rail-code-review"))
                     .child(item("sites"))
@@ -752,20 +769,31 @@ impl Render for Shell {
         // `_MainContentSurface` paints into the same layer: its fill and hairline blend onto
         // the layer's translucent pixels too.
         let open = self.sidebar_open;
-        let fills = 1 + self.main_backgrounds;
+        let composited = self.main_composited;
+        let fills = if composited {
+            1
+        } else {
+            1 + self.main_backgrounds
+        };
         let r = Theme::RADIUS_XL_BASE;
+        let radius = if open {
+            Corners {
+                top_right: r,
+                bottom_right: r,
+                ..Default::default()
+            }
+        } else {
+            Corners::all(r)
+        };
         let main_fill = shapes::Decoration {
-            radius: if open {
-                Corners {
-                    top_right: r,
-                    bottom_right: r,
-                    ..Default::default()
-                }
-            } else {
-                Corners::all(r)
-            },
+            radius,
             fill: Some(t.surface),
             ..Default::default()
+        };
+        // A composited main surface's own fill, in its layer: the compositor rounds it.
+        let square_fill = shapes::Decoration {
+            radius: Corners::default(),
+            ..main_fill.clone()
         };
         let hairline = shapes::Decoration {
             fill: Some(t.sidebar_divider),
@@ -773,7 +801,8 @@ impl Render for Shell {
         };
         let under = t.background_surface_under;
         // The page frame over the root `bounds`.
-        let frame = move |bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App| {
+        let frame = move |bounds: Bounds<Pixels>, square, window: &mut Window, cx: &mut App| {
+            let fill = if square { &square_fill } else { &main_fill };
             let page_surface = Bounds::from_corners(
                 bounds.origin + point(RAIL_WIDTH, Theme::TITLEBAR_HEIGHT),
                 bounds.bottom_right() - point(PAGE_INSET, PAGE_INSET),
@@ -797,24 +826,20 @@ impl Render for Shell {
                     main.size.width -= MAIN_HAIRLINE;
                 }
                 for _ in 0..fills {
-                    shapes::paint(&main_fill, None, main, window, cx);
+                    shapes::paint(fill, None, main, window, cx);
                 }
             });
+            main
         };
         let page = canvas(|_, _, _| {}, {
             let frame = frame.clone();
             move |bounds, (), window, cx| {
-                frame(bounds, window, cx);
+                frame(bounds, composited, window, cx);
             }
         })
         .absolute()
         .size_full();
-        // `_MainContentSurface` clips its content with a rounded `clip-path`: content boxes
-        // that reach its rounded corners (fills, fades) are cut there. The frame is painted
-        // again over each rounded corner's device px that the arc does not fully cover, row by
-        // row, so they show what the clip leaves; the content inside the arc stays.
-        // ponytail: the arc's edge px take the main fill as the content; blend the content
-        // through the clip's coverage if that shows.
+        // `_MainContentSurface` clips its content with a rounded `clip-path`.
         let corners = canvas(
             |_, _, _| {},
             move |bounds, (), window, cx| {
@@ -830,6 +855,41 @@ impl Render for Shell {
                     corners.extend([(left, top, 1., 1.), (left, bottom, 1., -1.)]);
                 }
                 for (x, y, dx, dy) in corners {
+                    if composited {
+                        // viz composites each layer of the clipped surface through the clip's
+                        // coverage `m`: its own fill F over the page U, then the content C
+                        // (painted over the square F): C m + (F m + U (1 - m)) (1 - m). That is
+                        // the page with the rounded F (the frame), in a layer cut to 1 - m,
+                        // composited over C.
+                        // ponytail: F m + U (1 - m) takes the raster blit's rounding, not the
+                        // compositor's (1 level off on a few px; the compositor's was worse).
+                        // The diff panel's corners come out up to 4 levels lighter in the refs.
+                        let x0 = if dx < 0. { x - rd } else { x };
+                        let y0 = if dy > 0. { y } else { y - rd };
+                        let square = Bounds::new(
+                            point(px(x0 / s), px(y0 / s)),
+                            size(px(rd / s), px(rd / s)),
+                        );
+                        let mask = ContentMask {
+                            bounds: square + bounds.origin,
+                        };
+                        window.with_content_mask(Some(mask), |window| {
+                            window.with_skia_layer(255, |window| {
+                                let fill = shapes::Decoration {
+                                    fill: Some(under),
+                                    ..Default::default()
+                                };
+                                shapes::paint(&fill, None, bounds, window, cx);
+                                let main = frame(bounds, false, window, cx);
+                                shapes::paint_rounded_clip(radius, main, window, cx);
+                            })
+                        });
+                        continue;
+                    }
+                    // Each opaque box under a raster clip blends its edge once: the frame is
+                    // painted again over each rounded corner's device px that the arc does not
+                    // fully cover, row by row; the content inside the arc stays.
+                    // ponytail: the arc's edge px take the main fill as the content.
                     for i in 0..rd as u32 {
                         let i = i as f32;
                         let w = rd - (rd * rd - (rd - i).powi(2)).sqrt().floor();
@@ -842,7 +902,7 @@ impl Render for Shell {
                         };
                         window.with_content_mask(Some(mask), |window| {
                             window.paint_quad(fill(bounds, under));
-                            frame(bounds, window, cx);
+                            frame(bounds, false, window, cx);
                         });
                     }
                 }
@@ -860,7 +920,9 @@ impl Render for Shell {
             .child(page)
             .when(self.sidebar_open, |d| d.child(self.sidebar_panel(&t)))
             .child(self.main_panel())
-            .when(self.main_backgrounds > 0, |d| d.child(corners))
+            .when(composited || self.main_backgrounds > 0, |d| {
+                d.child(corners)
+            })
             .child(self.rail(&t, cx))
             .child(self.titlebar(&t, cx))
             .when(self.profile_menu, |d| d.child(self.profile_menu(&t, cx)))

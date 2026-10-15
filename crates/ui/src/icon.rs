@@ -247,6 +247,8 @@ impl InteractiveElement for Icon {
 /// position with GPUI's svg mask ("before") and with [`icon`] ("after": fitted image, else
 /// runtime raster), and counts the pixels that differ from the ref. Needs Metal:
 /// `tools/mac.sh -l <lane> 'cargo test -p ui --lib icon -- --ignored --nocapture'`.
+/// The runtime raster blends as the icon's own layers do, which this flat scene lacks: the
+/// glyphs build.py leaves to it (`RUNTIME`) differ here and are checked by the parity run.
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;

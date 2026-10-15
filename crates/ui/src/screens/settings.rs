@@ -12,11 +12,11 @@ use crate::{
 use bridge::Bridge;
 use bridge::types::{AccountReadResponse, ConfigReadResponse};
 use gpui::{
-    Anchor, AnyElement, AnyView, App, AppContext as _, ClipboardItem, Context, Corners, Div,
-    Entity, FocusHandle, Font, FontWeight, Global, HighlightStyle, Hsla, InteractiveElement,
-    IntoElement, KeyDownEvent, ParentElement, Pixels, Point, Render, Rgba, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, StyledText, TextRun, Window, anchored, canvas, deferred,
-    div, font, img, point, prelude::FluentBuilder as _, px,
+    Anchor, AnyElement, AnyView, App, AppContext as _, Bounds, ClipboardItem, Context, Corners,
+    Div, Entity, EventEmitter, FocusHandle, Font, FontWeight, Global, HighlightStyle, Hsla,
+    InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Pixels, Point, Render,
+    SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun, Window,
+    anchored, canvas, deferred, div, font, img, point, prelude::FluentBuilder as _, px, size,
 };
 use serde_json::{Value, json};
 use shapes::Corner::{self, Round, Squircle};
@@ -39,7 +39,7 @@ pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
     }
     let config: ConfigReadResponse = fixture::response("readback.jsonl", "config/read", 0);
     let skills: Value = fixture::response("readback.jsonl", "skills/list", 0);
-    let shell = shell(&config.config, &skills, None, cx);
+    let (shell, _) = shell(&config.config, &skills, None, cx);
     shell.update(cx, |shell, _| shell.can_go_back = true);
     shell.into()
 }
@@ -54,28 +54,29 @@ pub fn section(label: &str) -> Option<&'static str> {
 
 /// The Settings route's shell for a `config/read` config and `skills/list` result: settings
 /// nav in the sidebar panel, the page in the main panel, open at the nav item `section`
-/// (`General` if `None`).
+/// (`General` if `None`). The page emits [`SettingChanged`].
 pub fn shell(
     config: &Value,
     skills: &Value,
     section: Option<&'static str>,
     cx: &mut App,
-) -> Entity<Shell> {
+) -> (Entity<Shell>, Entity<SettingsPage>) {
     let mut page = SettingsPage::new(config, skills);
     if let Some(label) = section {
         page.section = label;
     }
     let page = cx.new(|_| page);
     let nav = cx.new(|cx| SettingsNav::new(page.clone(), cx)).into();
-    let pane = cx.new(|cx| SettingsPane::new(page, cx)).into();
-    cx.new(|_| {
+    let pane = cx.new(|cx| SettingsPane::new(page.clone(), cx)).into();
+    let shell = cx.new(|_| {
         let mut shell = Shell::new(nav, pane);
         shell.selected_rail = None;
         shell.chat_chrome = false;
         shell.new_tab = false;
         shell.main_backgrounds = 1;
         shell
-    })
+    });
+    (shell, page)
 }
 
 /// Sends `method` to the app-server in the background; failures are logged.
@@ -200,27 +201,24 @@ impl SettingsPage {
         self.get(path).as_str().unwrap_or(default)
     }
 
-    /// Stores a setting; config settings persist with `config/value/write`.
+    /// Stores a setting and reports it ([`SettingChanged`]): the app persists config settings
+    /// with `config/value/write` and keeps the others for the session.
     fn set(&mut self, path: &'static str, value: Value, cx: &mut Context<Self>) {
         let (store, key) = path.split_once('.').unwrap_or((path, ""));
         // `IndexMut` makes a missing store an object on its first key.
         self.values[store][key] = value.clone();
-        if matches!(store, "desktop" | "features") {
-            send(
-                "config/value/write",
-                json!({
-                    "keyPath": path,
-                    "value": value,
-                    "mergeStrategy": "upsert",
-                    "filePath": null,
-                    "expectedVersion": null,
-                }),
-                cx,
-            );
-        }
+        cx.emit(SettingChanged { path, value });
         cx.notify();
     }
 }
+
+/// A settings row changed `path` (`store.key`, see [`SettingsPage`]) to `value`.
+pub struct SettingChanged {
+    pub path: &'static str,
+    pub value: Value,
+}
+
+impl EventEmitter<SettingChanged> for SettingsPage {}
 
 /// `--sidebar-navigation` background, opaque.
 fn sidebar_color(t: &Theme) -> Hsla {
@@ -392,7 +390,9 @@ impl Render for SettingsNav {
                     .id("settings-nav")
                     .flex_1()
                     .overflow_y_scroll()
-                    .layer()
+                    // A composited scroller: a cc layer of its own over the sidebar's (cc
+                    // layers are flat), so its text blends onto the final sidebar pixel.
+                    .top_layer()
                     .flex()
                     .flex_col()
                     .gap(px(16.))
@@ -1074,55 +1074,45 @@ fn description(s: &'static str, t: &Theme) -> Div {
         })))
 }
 
-/// `Switch`: 32×20 track, 16 px thumb. `disabled` is the control's `opacity: .6`, folded
-/// into opaque colors so the thumb composites over the row like the CSS group does.
+/// `Switch`: 32×20 track, 16 px thumb. `disabled` is the control's `opacity: .6`: Chromium
+/// paints the track and thumb into one `saveLayerAlpha(153)`.
 fn switch(id: &'static str, on: bool, disabled: bool, t: &Theme) -> Stateful<Div> {
-    let track = if on {
-        t.switch_track_checked
-    } else {
-        t.switch_track
+    let track = surface(
+        9999.,
+        Round,
+        if on {
+            t.switch_track_checked
+        } else {
+            t.switch_track
+        },
+        None,
+    );
+    let thumb = shapes::Decoration {
+        radius: Corners::all(px(9999.)),
+        fill: Some(t.control_thumb),
+        border: Some((px(1.), t.control_thumb)),
+        shadows: vec![shadow(t.shadow_sm, 1., 2., -1., false)],
+        ..Default::default()
     };
-    let (track, thumb) = if disabled {
-        let bg = t.background_panel;
-        (fade(over(track, bg), bg), fade(t.control_thumb, bg))
-    } else {
-        (track, t.control_thumb)
-    };
-    div()
-        .id(id)
-        .relative()
-        .flex_none()
-        .w(px(32.))
-        .h(px(20.))
-        .child(on_card(9999., Round, track, None))
-        .child(
-            div()
-                .absolute()
-                .top(px(2.))
-                .left(px(if on { 14. } else { 2. }))
-                .size(px(16.))
-                .child(shapes::decoration(shapes::Decoration {
-                    radius: Corners::all(px(9999.)),
-                    fill: Some(thumb),
-                    border: Some((px(1.), thumb)),
-                    shadows: vec![shadow(t.shadow_sm, 1., 2., -1., false)],
-                    ..Default::default()
-                })),
+    let x = if on { 14. } else { 2. };
+    div().id(id).flex_none().w(px(32.)).h(px(20.)).child(
+        canvas(
+            |_, _, _| {},
+            move |b, (), window, cx| {
+                let paint = |window: &mut Window| {
+                    shapes::paint(&track, None, b, window, cx);
+                    let at = Bounds::new(b.origin + point(px(x), px(2.)), size(px(16.), px(16.)));
+                    shapes::paint(&thumb, None, at, window, cx);
+                };
+                if disabled {
+                    window.with_skia_layer(153, paint)
+                } else {
+                    paint(window)
+                }
+            },
         )
-}
-
-/// The `opacity: .6` group of a disabled switch: opaque `top` composited over opaque
-/// `bottom`, truncated to 8 bits like the reference pixels.
-fn fade(top: Hsla, bottom: Hsla) -> Hsla {
-    let (t, b) = (Rgba::from(top), Rgba::from(bottom));
-    let mix = |t: f32, b: f32| ((t * 255.).round() * 153. + (b * 255.).round() * 102.) / 255.;
-    Rgba {
-        r: mix(t.r, b.r).floor() / 255.,
-        g: mix(t.g, b.g).floor() / 255.,
-        b: mix(t.b, b.b).floor() / 255.,
-        a: 1.,
-    }
-    .into()
+        .size_full(),
+    )
 }
 
 /// A settings surface through `shapes`: CSS `radius`, corner shape, fill and 1 px border.

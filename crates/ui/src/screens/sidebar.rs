@@ -3,16 +3,15 @@
 //! refs/home and refs/sidebar.
 
 use crate::{
-    Shell, blit, fixture, home_sidebar_header, icon::icon, layout_color, over, sidebar_empty,
-    sidebar_section, text,
+    Shell, blit, fixture, home_sidebar_header, icon::icon, sidebar_empty, sidebar_section, text,
 };
 use bridge::types::{Thread, ThreadListResponse};
 use gpui::{
-    AnyElement, AnyView, App, AppContext as _, Context, Corners, Div, EventEmitter, FocusHandle,
-    Focusable, FontWeight, HighlightStyle, Hsla, InteractiveElement, IntoElement, KeyDownEvent,
-    MouseButton, ParentElement, Pixels, Render, Rgba, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, StyledText, TextRun, Window, div, linear_color_stop,
-    linear_gradient, point, prelude::FluentBuilder as _, px, relative, rgba,
+    Action, AnyElement, AnyView, App, AppContext as _, Context, Corners, Div, EventEmitter,
+    FocusHandle, Focusable, FontWeight, HighlightStyle, Hsla, InteractiveElement, IntoElement,
+    KeyDownEvent, MouseButton, ParentElement, Pixels, Render, Rgba, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, StyledText, TextRun, Window, div, point,
+    prelude::FluentBuilder as _, px, relative, rgba,
 };
 use std::{ops::Range, path::Path};
 use theme::{ActiveTheme as _, Appearance, Theme};
@@ -39,12 +38,19 @@ pub struct HomeSidebar {
     selected: Option<String>,
     /// `Projects`, `Recents` collapsed by a click on their header.
     collapsed: [bool; 2],
+    /// Threads whose rows carry the unread dot; any lights the header's bell.
+    pub unread: Vec<String>,
 }
 
 /// Emitted when a Recents row is clicked, with the thread id.
 pub struct OpenThread(pub String);
 
 impl EventEmitter<OpenThread> for HomeSidebar {}
+
+/// A Recents row's `Archive chat`: `thread/archive` on that thread (its id).
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = sidebar, no_json)]
+pub struct ArchiveThread(pub String);
 
 impl HomeSidebar {
     /// Recents from a live `thread/list`; `selected` is the open thread, highlighted.
@@ -53,6 +59,7 @@ impl HomeSidebar {
             threads: threads.iter().map(|t| (t.id.clone(), title(t))).collect(),
             selected: selected.map(str::to_owned),
             collapsed: [false; 2],
+            unread: Vec::new(),
         }
     }
 
@@ -100,8 +107,15 @@ impl Render for HomeSidebar {
                 .gap(px(1.))
                 .children(self.threads.iter().map(|(id, label)| {
                     let open = id.clone();
-                    thread_row(id, label.clone(), self.selected.as_ref() == Some(id), t)
-                        .on_click(cx.listener(move |_, _, _, cx| cx.emit(OpenThread(open.clone()))))
+                    let unread = self.unread.contains(id);
+                    thread_row(
+                        id,
+                        label.clone(),
+                        self.selected.as_ref() == Some(id),
+                        unread,
+                        t,
+                    )
+                    .on_click(cx.listener(move |_, _, _, cx| cx.emit(OpenThread(open.clone()))))
                 }))
                 .into_any_element()
         };
@@ -137,7 +151,7 @@ impl Render for HomeSidebar {
             .size_full()
             .flex()
             .flex_col()
-            .child(home_sidebar_header(cx))
+            .child(home_sidebar_header(!self.unread.is_empty(), cx))
             .child(
                 div()
                     .flex_1()
@@ -154,23 +168,17 @@ impl Render for HomeSidebar {
 
 /// One Recents row: 30 px, `primary-ghost-hover` fill when hovered or selected. The label is
 /// clipped at the row's end with the marquee's 16 px right fade (`_overflowingViewport`); on
-/// hover `Pin chat` and `Archive chat` appear at the end.
-fn thread_row(id: &str, label: SharedString, selected: bool, t: &Theme) -> Stateful<Div> {
+/// hover `Pin chat` and `Archive chat` appear at the end. An `unread` row ends in the blue
+/// dot, which takes 28 px off the label.
+fn thread_row(
+    id: &str,
+    label: SharedString,
+    selected: bool,
+    unread: bool,
+    t: &Theme,
+) -> Stateful<Div> {
+    let clip = if unread { 28. } else { 0. };
     let group = SharedString::from(format!("thread-row-{id}"));
-    let sidebar = over(t.sidebar_background, layout_color(t));
-    let active = blit(t.ghost_hover, sidebar);
-    let rest = if selected { active } else { sidebar };
-    // The CSS mask fades the label into whatever is under it; a gradient of the row's own
-    // (opaque) fill over the label's glyph rows composites to the same pixels.
-    // ponytail: also fades labels that end inside the last 16 px without overflowing; measure
-    // the label if such titles show up.
-    let fade = |c: Hsla| {
-        linear_gradient(
-            90.,
-            linear_color_stop(c.opacity(0.), 0.),
-            linear_color_stop(c, 1.),
-        )
-    };
     let fill = div()
         .absolute()
         .inset_0()
@@ -208,27 +216,35 @@ fn thread_row(id: &str, label: SharedString, selected: bool, t: &Theme) -> State
                 .group_hover(group.clone(), |s| s.opacity(1.))
         })
         .child(
+            // `_clipViewport _overflowingViewport`: the marquee's CSS mask (8 px left fade over
+            // the track's padding, 16 px right fade), a masked layer in the sidebar's layer.
             div()
                 .absolute()
-                .left(px(8.))
+                .left_0()
                 .top(px(5.))
-                .w(px(256.))
+                .w(px(264. - clip))
                 .h(px(20.))
+                .pl(px(8.))
                 .overflow_hidden()
-                // The marquee's CSS mask: Chromium paints the label in its own layer.
                 .layer()
-                .child(text(label, 14., 20., 430., t.text_default_nav)),
+                .child(text(label, 14., 20., 430., t.text_default_nav))
+                .child(shapes::x_fade(px(8.), px(16.))),
         )
-        .child(
-            div()
-                .absolute()
-                .left(px(248.))
-                .top(px(6.))
-                .w(px(16.))
-                .h(px(17.))
-                .bg(fade(rest))
-                .group_hover(group.clone(), move |s| s.bg(fade(active))),
-        )
+        .when(unread, |d| {
+            d.child(
+                div()
+                    .absolute()
+                    .top(px(11.))
+                    .right(px(14.))
+                    .size(px(8.))
+                    .group_hover(group.clone(), |s| s.opacity(0.))
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: Corners::all(Theme::RADIUS_FULL),
+                        fill: Some(t.info_solid),
+                        ..Default::default()
+                    })),
+            )
+        })
         .child(
             div()
                 .absolute()
@@ -244,7 +260,12 @@ fn thread_row(id: &str, label: SharedString, selected: bool, t: &Theme) -> State
                 .opacity(0.)
                 .group_hover(group, |s| s.opacity(1.))
                 .child(action("pin-chat", "sidebar-pin"))
-                .child(action("archive-chat", "sidebar-archive")),
+                .child({
+                    let id = id.to_owned();
+                    action("archive-chat", "sidebar-archive").on_click(move |_, window, cx| {
+                        window.dispatch_action(Box::new(ArchiveThread(id.clone())), cx)
+                    })
+                }),
         )
 }
 

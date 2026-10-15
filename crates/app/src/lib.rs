@@ -7,14 +7,14 @@ use anyhow::Result;
 use async_channel::Receiver;
 use bridge::types::{
     ApprovalDecision, CommandApprovalRequest, ConfigReadResponse, FileChangeApprovalRequest,
-    Thread, ThreadItem, ThreadStartResponse, ThreadStartedNotification,
+    Thread, ThreadItem, ThreadReadResponse, ThreadStartResponse, ThreadStartedNotification,
 };
 use bridge::{Bridge, Event};
 use gpui::{
-    Action, AnyElement, AnyView, App, AppContext as _, Context, Entity, FocusHandle,
-    Focusable as _, InteractiveElement as _, IntoElement, KeyBinding, Menu, MenuItem, OsAction,
-    ParentElement as _, Pixels, Render, SharedString, Styled as _, SystemMenuType, Task, Window,
-    WindowAppearance, actions, div, px,
+    Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Context, Entity,
+    FocusHandle, Focusable as _, InteractiveElement as _, IntoElement, KeyBinding, Menu, MenuItem,
+    OsAction, ParentElement as _, Pixels, Render, SharedString, Styled as _, SystemMenuType, Task,
+    WeakEntity, Window, WindowAppearance, actions, div, px,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -24,10 +24,10 @@ use theme::Theme;
 use ui::composer::{Approval, Composer, Permission, Submission};
 use ui::screens::diff::panel::{DiffPanel, SplitScreen, with_side_panel};
 use ui::screens::home::HomeMain;
-use ui::screens::settings::{self, AppServer, Login};
-use ui::screens::sidebar::{CommandMenu, CommandMenuEvent, HomeSidebar, OpenThread};
+use ui::screens::settings::{self, AppServer, Login, SettingChanged};
+use ui::screens::sidebar::{ArchiveThread, CommandMenu, CommandMenuEvent, HomeSidebar, OpenThread};
 use ui::screens::terminal::Xterm;
-use ui::screens::thread::view::{Clock, ThreadView};
+use ui::screens::thread::view::{Clock, ForkThread, RevertTurn, ThreadView};
 use ui::screens::{automations, mobile};
 use ui::{
     CloseSidePanel, Copy, Cut, GoBack, GoForward, NewChat, OpenBackgroundTerminal,
@@ -50,6 +50,8 @@ actions!(
         PreviousChat,
         /// The Recents row below the open thread (`nextThread`).
         NextChat,
+        /// `⌘⇧A`: archive the open chat (`archiveThread`).
+        ArchiveChat,
     ]
 );
 
@@ -57,6 +59,11 @@ actions!(
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = app, no_json)]
 pub struct GoToChat(pub usize);
+
+/// `recentThread1..6`: open the Nth most recently updated chat (0-based).
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = app, no_json)]
+pub struct GoToRecentChat(pub usize);
 
 /// `(min-width: 768px)`: below it the original hides the sidebar panel.
 const SIDEBAR_BREAKPOINT: Pixels = px(768.);
@@ -89,8 +96,12 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-k", OpenCommandMenu, None),
         KeyBinding::new("cmd-shift-p", OpenCommandMenu, None),
         KeyBinding::new("alt-cmd-b", ToggleChangesPanel, None),
+        KeyBinding::new("cmd-shift-a", ArchiveChat, None),
     ]);
     cx.bind_keys((1..=9).map(|n| KeyBinding::new(&format!("cmd-{n}"), GoToChat(n - 1), None)));
+    cx.bind_keys(
+        (1..=6).map(|n| KeyBinding::new(&format!("cmd-alt-{n}"), GoToRecentChat(n - 1), None)),
+    );
     ui::composer::bind_keys(cx);
     cx.on_action(|_: &Quit, cx| cx.quit());
     cx.on_action(|_: &Hide, cx| cx.hide());
@@ -313,8 +324,16 @@ impl Root {
         let bridge = Arc::new(bridge);
         cx.set_global(AppServer(bridge.clone()));
         let this = cx.weak_entity();
+        // Both pickers write the user's `config.toml`, like the original's `writeModel`.
+        let on_model = |this: WeakEntity<Self>| {
+            move |model: &str, effort: &str, cx: &mut App| {
+                this.update(cx, |this, cx| this.write_model(model, effort, cx))
+                    .ok();
+            }
+        };
         let home_composer = cx.new(|cx| {
             let mut composer = Composer::home(window, cx);
+            composer.on_model(on_model(this.clone()));
             let this = this.clone();
             composer.on_submit(move |s, window, cx| {
                 this.update(cx, |this, cx| this.start_thread(s.clone(), window, cx))
@@ -324,6 +343,7 @@ impl Root {
         });
         let thread_composer = cx.new(|cx| {
             let mut composer = Composer::thread(window, cx);
+            composer.on_model(on_model(this.clone()));
             let send = this.clone();
             composer.on_submit(move |s, window, cx| {
                 send.update(cx, |this, cx| this.send(s.clone(), window, cx))
@@ -493,6 +513,11 @@ impl Root {
         self.threads.iter().map(|t| t.id.clone()).collect()
     }
 
+    /// The `config/read` config with the writes the server took since.
+    pub fn config(&self) -> &Value {
+        &self.config
+    }
+
     fn set_threads(&mut self, threads: &[Thread], cx: &mut Context<Self>) {
         self.threads = threads.to_vec();
         self.sidebar.update(cx, |s, cx| s.set_threads(threads, cx));
@@ -579,7 +604,12 @@ impl Root {
                 let (store, key) = settings::THEME.split_once('.').expect("store.key");
                 config[store][key] = json!(self.state.theme);
                 let section = self.settings_section.take();
-                Some(settings::shell(&config, &self.skills, section, cx))
+                let (shell, page) = settings::shell(&config, &self.skills, section, cx);
+                cx.subscribe(&page, |this, _, e: &SettingChanged, cx| {
+                    this.write_setting(e, cx)
+                })
+                .detach();
+                Some(shell)
             }
             Route::Scheduled => Some(automations::shell(cx)),
             Route::Mobile => Some(mobile::shell(cx)),
@@ -617,7 +647,7 @@ impl Root {
             shell.can_go_forward = can_forward;
             // Thread routes: `with_side_panel` below sets its own.
             shell.new_tab = true;
-            shell.main_backgrounds = 0;
+            shell.main_composited = false;
             shell.set_main(main, cx);
         });
         self.split = view.map(|view| {
@@ -796,13 +826,139 @@ impl Root {
         let resume = !self.loaded.contains(&id);
         let bridge = self.bridge.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            if resume {
-                bridge
-                    .request::<_, Value>("thread/resume", json!({ "threadId": id }))
-                    .await?;
-                this.update(cx, |this, _| this.loaded.insert(id.clone()))?;
-            }
+            resume_if(resume, &bridge, &this, &id, cx).await?;
             turn_start(&bridge, &id, &s).await
+        });
+        log_err(task, cx);
+    }
+
+    /// A file change card's `Undo`: `thread/revert` to before `turn_id`, then shows the
+    /// reverted thread.
+    fn revert(&mut self, turn_id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(view) = &self.thread else { return };
+        let id = view.read(cx).id().to_owned();
+        let resume = !self.loaded.contains(&id);
+        let bridge = self.bridge.clone();
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            resume_if(resume, &bridge, &this, &id, cx).await?;
+            let params = json!({ "threadId": id, "beforeTurnId": turn_id });
+            let read: ThreadReadResponse = bridge.request("thread/revert", params).await?;
+            this.update_in(cx, |this, window, cx| {
+                if this.state.route == Route::Thread(read.thread.id.clone()) {
+                    this.show_thread(read.thread, window, cx);
+                }
+            })
+        });
+        log_err(task, cx);
+    }
+
+    /// `Fork chat from here` under `turn_id`: `thread/fork`, then `thread/rollback` of the
+    /// later turns, and opens the new chat.
+    fn fork(&mut self, turn_id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(view) = &self.thread else { return };
+        let view = view.read(cx);
+        let id = view.id().to_owned();
+        let Some(later) = view.turns().iter().rev().position(|t| t.id == turn_id) else {
+            return;
+        };
+        let bridge = self.bridge.clone();
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            // Both answer `{ thread }`, like `thread/read`.
+            let mut read: ThreadReadResponse = bridge
+                .request("thread/fork", json!({ "threadId": id }))
+                .await?;
+            if later > 0 {
+                let params = json!({ "threadId": read.thread.id, "numTurns": later });
+                read = bridge.request("thread/rollback", params).await?;
+            }
+            this.update_in(cx, |this, window, cx| {
+                this.loaded.insert(read.thread.id.clone());
+                this.add_thread(&read.thread, cx);
+                this.show_thread(read.thread, window, cx);
+            })
+        });
+        log_err(task, cx);
+    }
+
+    /// `thread/archive`, then drops the Recents row; an archived open chat leaves for Home.
+    fn archive(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let bridge = self.bridge.clone();
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            bridge
+                .request::<_, Value>("thread/archive", json!({ "threadId": id }))
+                .await?;
+            this.update_in(cx, |this, window, cx| {
+                this.threads.retain(|t| t.id != id);
+                this.sidebar
+                    .update(cx, |s, cx| s.set_threads(&this.threads, cx));
+                if this.state.route == Route::Thread(id) {
+                    this.new_chat(window, cx);
+                }
+            })
+        });
+        log_err(task, cx);
+    }
+
+    /// `recentThread1..6`: the `n`th chat by last update, newest first.
+    fn go_to_recent_chat(&mut self, n: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let mut recent: Vec<&Thread> = self.threads.iter().collect();
+        recent.sort_by_key(|t| std::cmp::Reverse(t.updated_at));
+        if let Some(id) = recent.get(n).map(|t| t.id.clone()) {
+            self.navigate(Route::Thread(id), window, cx);
+        }
+    }
+
+    /// A model picker choice: `config/batchWrite` of `model` and `model_reasoning_effort`
+    /// (the original's `writeModel`).
+    fn write_model(&mut self, model: &str, effort: &str, cx: &mut Context<Self>) {
+        let params = json!({
+            "edits": [
+                { "keyPath": "model", "value": model, "mergeStrategy": "upsert" },
+                { "keyPath": "model_reasoning_effort", "value": effort, "mergeStrategy": "upsert" },
+            ],
+            "filePath": null,
+            "expectedVersion": null,
+            "reloadUserConfig": true,
+        });
+        let (model, effort) = (model.to_owned(), effort.to_owned());
+        self.write_config("config/batchWrite", params, cx, move |config| {
+            config["model"] = model.into();
+            config["model_reasoning_effort"] = effort.into();
+        });
+    }
+
+    /// A settings row changed: `desktop.*` and `features.*` persist to `config.toml` with
+    /// `config/value/write`; the other stores live for the session. Reopening Settings shows
+    /// the kept value.
+    fn write_setting(&mut self, e: &SettingChanged, cx: &mut Context<Self>) {
+        let (store, key) = e.path.split_once('.').unwrap_or((e.path, ""));
+        let value = e.value.clone();
+        let apply = move |config: &mut Value| config[store][key] = value;
+        if !matches!(store, "desktop" | "features") {
+            return apply(&mut self.config);
+        }
+        let params = json!({
+            "keyPath": e.path,
+            "value": e.value,
+            "mergeStrategy": "upsert",
+            "filePath": null,
+            "expectedVersion": null,
+        });
+        self.write_config("config/value/write", params, cx, apply);
+    }
+
+    /// Sends a config write and, once the server took it, applies it to the kept config.
+    fn write_config(
+        &self,
+        method: &'static str,
+        params: Value,
+        cx: &mut Context<Self>,
+        apply: impl FnOnce(&mut Value) + 'static,
+    ) {
+        let bridge = self.bridge.clone();
+        let task = cx.spawn(async move |this, cx| -> Result<()> {
+            bridge.request::<_, Value>(method, params).await?;
+            this.update(cx, |this, _| apply(&mut this.config))
         });
         log_err(task, cx);
     }
@@ -919,6 +1075,23 @@ impl Root {
     }
 }
 
+/// `thread/resume` when this app-server has not loaded thread `id` yet (`resume`).
+async fn resume_if(
+    resume: bool,
+    bridge: &Bridge,
+    this: &WeakEntity<Root>,
+    id: &str,
+    cx: &mut AsyncWindowContext,
+) -> Result<()> {
+    if resume {
+        bridge
+            .request::<_, Value>("thread/resume", json!({ "threadId": id }))
+            .await?;
+        this.update(cx, |this, _| this.loaded.insert(id.to_owned()))?;
+    }
+    Ok(())
+}
+
 /// `None` (the server's default) when `model/list` gave the picker nothing.
 fn model(s: &Submission) -> Option<&str> {
     (!s.model.is_empty()).then_some(s.model.as_str())
@@ -1004,6 +1177,23 @@ impl Render for Root {
                 cx.listener(|this, _: &PreviousChat, window, cx| this.step_chat(-1, window, cx)),
             )
             .on_action(cx.listener(|this, _: &NextChat, window, cx| this.step_chat(1, window, cx)))
+            .on_action(cx.listener(|this, a: &GoToRecentChat, window, cx| {
+                this.go_to_recent_chat(a.0, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ArchiveChat, window, cx| {
+                if let Route::Thread(id) = this.state.route.clone() {
+                    this.archive(id, window, cx)
+                }
+            }))
+            .on_action(cx.listener(|this, a: &ArchiveThread, window, cx| {
+                this.archive(a.0.clone(), window, cx)
+            }))
+            .on_action(cx.listener(|this, a: &ForkThread, window, cx| this.fork(&a.0, window, cx)))
+            .on_action(
+                cx.listener(|this, a: &RevertTurn, window, cx| {
+                    this.revert(a.0.clone(), window, cx)
+                }),
+            )
             .on_action(
                 cx.listener(|this, a: &GoToChat, window, cx| {
                     this.go_to_chat(Some(a.0), window, cx)

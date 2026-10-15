@@ -11,8 +11,7 @@ use gpui::{
     AnyView, App, AppContext as _, Context, Corners, Div, Entity, Font, FontFeatures, FontWeight,
     HighlightStyle, Hsla, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels,
     Render, Rgba, SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun,
-    Window, black, div, font, linear_color_stop, linear_gradient, prelude::FluentBuilder as _, px,
-    rgb, white,
+    Window, black, div, font, prelude::FluentBuilder as _, px, rgb, white,
 };
 use shapes::Decoration;
 use std::{ops::Range, sync::Arc};
@@ -266,9 +265,6 @@ pub fn tab_strip(t: &Theme, tab_icon: &str, label: SharedString, window: &Window
         Appearance::Dark => t.ghost_hover,
         Appearance::Light => t.surface_elevated_secondary,
     };
-    let tab_bg = over(fill, layout);
-    // The mask fades the label's last 16 px; painting the tab fill over them as a gradient
-    // gives the same pixels. Only drawn when glyphs reach it: GPUI dithers gradients.
     let run = TextRun {
         len: label.len(),
         font: Font {
@@ -284,13 +280,9 @@ pub fn tab_strip(t: &Theme, tab_icon: &str, label: SharedString, window: &Window
         .text_system()
         .shape_line(label.clone(), px(13.), &[run], None)
         .width;
-    let fade = (width > px(LABEL_WIDTH - FADE)).then(|| {
-        linear_gradient(
-            90.,
-            linear_color_stop(tab_bg.opacity(0.), 0.),
-            linear_color_stop(tab_bg, 1.),
-        )
-    });
+    // `.text-fade-truncate` masks the label's last 16 px: in its own layer, as Chromium paints
+    // a masked box. Only when glyphs reach the fade.
+    let fade = width > px(LABEL_WIDTH - FADE);
     let tab = div()
         .relative()
         .w(px(238.))
@@ -344,17 +336,7 @@ pub fn tab_strip(t: &Theme, tab_icon: &str, label: SharedString, window: &Window
                         .ml(px(-4.))
                         .overflow_hidden()
                         .child(text(label, 13., 18.5714, 430., t.text))
-                        .when_some(fade, |d, fade| {
-                            d.child(
-                                div()
-                                    .absolute()
-                                    .top_0()
-                                    .right_0()
-                                    .w(px(FADE))
-                                    .h_full()
-                                    .bg(fade),
-                            )
-                        }),
+                        .when(fade, |d| d.layer().child(shapes::x_fade(px(0.), px(FADE)))),
                 ),
         )
         .child(
@@ -391,8 +373,10 @@ pub fn tab_strip(t: &Theme, tab_icon: &str, label: SharedString, window: &Window
             })
             .child(icon(name, 16., color))
     };
+    // `_strip` is `[contain:layout_paint]`.
     div()
         .relative()
+        .snap_origin()
         .h(Theme::TITLEBAR_HEIGHT)
         .flex()
         .items_center()
@@ -446,6 +430,8 @@ impl Render for SplitMain {
                     .w(panel_width(window))
                     .flex_none()
                     .border_l_1()
+                    // The panel content's `[contain:layout_paint]`.
+                    .snap_origin()
                     .border_color(over(t.border, t.surface))
                     .child(self.panel.clone()),
             )
@@ -543,8 +529,8 @@ pub fn with_side_panel(
     shell.update(cx, |shell, cx| {
         // A panel's tab strip brings its own `New tab`.
         shell.new_tab = panel.is_none();
-        // The thread's top fade and composer band reach the main surface's right corners.
-        shell.main_backgrounds = 1;
+        // The thread route's main surface is a composited layer.
+        shell.main_composited = true;
         shell.set_main(main, cx);
     });
     let tab = panel.map(|(_, icon, label)| (icon, label));
@@ -567,16 +553,23 @@ fn round_icon(name: &str, size: f32, t: &Theme) -> Div {
 
 /// `_capsule _controlSurface`: 32 px pill holding the header controls.
 fn capsule(t: &Theme) -> Div {
-    let shadows = match t.appearance {
-        Appearance::Dark => vec![
-            shadow(t.border, 0., 0., 0.5, false),
-            shadow(t.border, 0., 0., 0.5, false),
-            shadow(black().opacity(0.12), 8., 16., -4., false),
-        ],
-        Appearance::Light => vec![
-            shadow(t.text.opacity(0.047), 0., 0., 1., false),
-            shadow(black().opacity(0.05), 4., 16., 0., false),
-        ],
+    let (fill, shadows) = match t.appearance {
+        Appearance::Dark => (
+            t.control_background,
+            vec![
+                shadow(t.border, 0., 0., 0.5, false),
+                shadow(t.border, 0., 0., 0.5, false),
+                shadow(black().opacity(0.12), 8., 16., -4., false),
+            ],
+        ),
+        // The gradient is `rgba(255, 255, 255, 0.96)` in light.
+        Appearance::Light => (
+            t.control_background.opacity(0.96),
+            vec![
+                shadow(t.text.opacity(0.047), 0., 0., 1., false),
+                shadow(black().opacity(0.05), 4., 16., 0., false),
+            ],
+        ),
     };
     // `backdrop-filter: blur(24px)` under a one-color `linear-gradient` fill.
     div()
@@ -592,7 +585,7 @@ fn capsule(t: &Theme) -> Div {
             Decoration {
                 // `rounded-full`, constrained to the 32 px box's half height.
                 radius: Corners::all(px(16.)),
-                fill: Some(t.control_background),
+                fill: Some(fill),
                 shadows,
                 ..Default::default()
             },

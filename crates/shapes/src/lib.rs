@@ -215,6 +215,36 @@ pub fn top_fade(fade: Pixels) -> impl IntoElement {
     })
 }
 
+/// CSS `mask-image: linear-gradient(to right, transparent, black <left>, black calc(100% -
+/// <right>), transparent)` over its parent (`.text-fade-truncate` has `left` 0), which must be
+/// a `.layer()` element, like [`top_fade`]: put it last. macOS only, like [`top_fade`].
+pub fn x_fade(left: Pixels, right: Pixels) -> impl IntoElement {
+    cover(move |bounds, window, cx| {
+        #[cfg(target_os = "macos")]
+        mask::paint_x_fade(left, right, bounds, window, cx);
+        #[cfg(not(target_os = "macos"))]
+        let _ = (left, right, bounds, window, cx);
+    })
+}
+
+/// A rounded `clip-path` (or `border-radius` with `overflow: clip`) on a composited element:
+/// Chromium renders the element into one surface, multiplies it by the clip's coverage (the
+/// anti-aliased fill of the rounded rect `bounds` with `radius`) and composites it. This
+/// multiplies the px of the enclosing GPUI layer (`Window::with_skia_layer`) in the rounded
+/// corners by the coverage of what lies outside the rounded rect. Other px are left as they
+/// are. macOS only, like [`top_fade`].
+pub fn paint_rounded_clip(
+    radius: Corners<Pixels>,
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    cx: &App,
+) {
+    #[cfg(target_os = "macos")]
+    mask::paint_rounded_clip(radius, bounds, window, cx);
+    #[cfg(not(target_os = "macos"))]
+    let _ = (radius, bounds, window, cx);
+}
+
 /// Paints the svg icon `src` (asset bytes; `key` names it for the cache) into `bounds`,
 /// mirrored horizontally if `flip_x`, in `color`; `layer` as in [`paint`].
 /// False if this platform or svg is not supported: paint it another way then.
