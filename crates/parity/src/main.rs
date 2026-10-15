@@ -23,8 +23,23 @@ fn main() -> Result<()> {
             _ => bail!(USAGE),
         }
     }
-    // The `ui` crate's `parity_cases()` plugs in here once it exists.
-    let report = parity::run(&[], Arc::new(()), &refs, &out, screen.as_deref())?;
+    let cases: Vec<Case> = ui::SCREENS
+        .iter()
+        .flat_map(|&(screen, build)| {
+            ["dark", "light"].map(|theme| Case {
+                screen,
+                theme,
+                build,
+            })
+        })
+        .collect();
+    let report = parity::run(
+        &cases,
+        Arc::new(theme::Assets),
+        &refs,
+        &out,
+        screen.as_deref(),
+    )?;
     println!("{}", out.join("report.html").display());
     if gate && report.iter().any(|m| !m.pass) {
         std::process::exit(1);

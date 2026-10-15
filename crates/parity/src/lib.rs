@@ -77,6 +77,12 @@ fn headless(assets: Arc<dyn AssetSource>) -> HeadlessAppContext {
 }
 
 fn render_in(cx: &mut HeadlessAppContext, case: &Case, w: u32, h: u32) -> Result<RgbaImage> {
+    cx.update(|cx| {
+        cx.set_global(match case.theme {
+            "light" => theme::Theme::light(),
+            _ => theme::Theme::dark(),
+        })
+    });
     let window = cx.open_window(size(px(w as f32), px(h as f32)), |window, cx| {
         let view = (case.build)(window, cx);
         cx.new(|_| Root(view))
