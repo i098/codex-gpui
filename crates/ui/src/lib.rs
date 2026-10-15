@@ -283,7 +283,9 @@ pub static SCREENS: &[(&str, ScreenBuilder)] = &[
     ("composer", screens::composer::build),
     ("diff", screens::diff::build),
     ("settings", screens::settings::build),
+    ("automations", screens::automations::build),
     ("terminal", screens::terminal::build),
+    ("mobile", screens::mobile::build),
 ];
 
 /// The shell as refs/home shows it: sidebar open, Home selected, empty lists and main panel.
