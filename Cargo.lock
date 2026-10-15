@@ -3377,6 +3377,8 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "image",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
