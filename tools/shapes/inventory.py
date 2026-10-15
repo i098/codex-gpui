@@ -119,12 +119,21 @@ def node_layers(s, w, h):
         c = rgba8(colors.pop())
         if c[3]:
             layers.append(dict(kind="border", width=px(widths.pop()), color=c))
+    fill = [l for l in layers if l["kind"] == "fill"]
+    border = [l for l in layers if l["kind"] == "border"]
+    if fill and border:
+        # Both in one decoration: Blink's background bleed avoidance (an opaque border
+        # shrinks the background, else both paint in a clip layer).
+        f, b = fill[0]["color"], border[0]
+        layers.append(dict(kind="fillborder", color=f, border=b["color"], width=b["width"],
+                           bleed="shrink" if b["color"][3] == 255 else "clip", opaque_fill=f[3] == 255))
     return radii, layers
 
 
 def key_of(layer, radii):
     k = dict(kind=layer["kind"], radii=radii)
-    k.update({f: layer[f] for f in ("width", "x", "y", "blur", "spread", "inset") if f in layer})
+    k.update({f: layer[f] for f in ("width", "x", "y", "blur", "spread", "inset", "bleed", "opaque_fill")
+              if f in layer})
     return json.dumps(k, sort_keys=True)
 
 
@@ -155,6 +164,8 @@ def main():
                 e = keys[key_of(layer, radii)]
                 e["count"] += 1
                 sample = dict(w=w, h=h, color=layer["color"], backdrop=backdrop(nodes, n))
+                if "border" in layer:
+                    sample["border"] = layer["border"]
                 if e["sample"] is None or invisible(e["sample"]["color"], e["sample"]["backdrop"]):
                     e["sample"] = sample
     cases = []

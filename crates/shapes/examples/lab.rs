@@ -6,10 +6,13 @@
 //!   .shadow()` (before) and `shapes::decoration` (after), diffs both against Chromium's
 //!   `verify.png` per cell and prints the table.
 
+mod common;
+
 use anyhow::{Context as _, Result, bail, ensure};
+use common::{hsla, rgba_css};
 use gpui::{
-    AnyElement, AppContext, BoxShadow, Corners, HeadlessAppContext, Hsla, IntoElement,
-    ParentElement as _, Render, Rgba, Styled, Window, div, point, px, size,
+    AnyElement, AppContext, BoxShadow, Corners, HeadlessAppContext, IntoElement,
+    ParentElement as _, Render, Styled, Window, div, point, px, size,
 };
 use image::{Rgba as Px, RgbaImage};
 use serde::Deserialize;
@@ -26,6 +29,9 @@ struct Case {
     blur: Option<f32>,
     spread: Option<f32>,
     inset: Option<bool>,
+    /// `fillborder`: Blink's background bleed avoidance (`shrink` or `clip`).
+    bleed: Option<String>,
+    opaque_fill: Option<bool>,
     count: u32,
     reach: i32,
     sample: Sample,
@@ -36,6 +42,8 @@ struct Sample {
     w: i32,
     h: i32,
     color: [u8; 4],
+    /// `fillborder`: the border color (`color` is the fill).
+    border: Option<[u8; 4]>,
     backdrop: [u8; 4],
 }
 
@@ -90,10 +98,6 @@ fn css(v: impl Into<f64>) -> f64 {
     v.into() / 2.
 }
 
-fn rgba_css([r, g, b, a]: [u8; 4]) -> String {
-    format!("rgba({r},{g},{b},{})", f64::from(a) / 255.)
-}
-
 fn box_html(c: &Case, cell: &Cell, color: [u8; 4]) -> String {
     let r = c.radii.map(css);
     let mut s = format!(
@@ -115,6 +119,12 @@ fn box_html(c: &Case, cell: &Cell, color: [u8; 4]) -> String {
     match c.kind.as_str() {
         "fill" => write!(s, "background:{col};"),
         "border" => write!(s, "border:{}px solid {col};", css(c.width.unwrap())),
+        "fillborder" => write!(
+            s,
+            "background:{col};border:{}px solid {};",
+            css(c.width.unwrap()),
+            rgba_css(c.sample.border.unwrap())
+        ),
         _ => write!(
             s,
             "box-shadow:{}px {}px {}px {}px {col}{};",
@@ -162,17 +172,6 @@ fn pages(dir: &Path, cases: &[Case]) -> Result<()> {
     Ok(())
 }
 
-fn hsla([r, g, b, a]: [u8; 4]) -> Hsla {
-    let c = |v: u8| f32::from(v) / 255.;
-    Rgba {
-        r: c(r),
-        g: c(g),
-        b: c(b),
-        a: c(a),
-    }
-    .into()
-}
-
 fn decoration(c: &Case) -> shapes::Decoration {
     let color = hsla(c.sample.color);
     let r = |i: usize| px(c.radii[i] / 2.);
@@ -193,6 +192,10 @@ fn decoration(c: &Case) -> shapes::Decoration {
     match c.kind.as_str() {
         "fill" => d.fill = Some(color),
         "border" => d.border = Some((px(c.width.unwrap() / 2.), color)),
+        "fillborder" => {
+            d.fill = Some(color);
+            d.border = Some((px(c.width.unwrap() / 2.), hsla(c.sample.border.unwrap())));
+        }
         _ => d.shadows.push(shapes::Shadow {
             color,
             offset: point(px(c.x.unwrap() / 2.), px(c.y.unwrap() / 2.)),
@@ -313,6 +316,16 @@ fn params(c: &Case) -> String {
     match c.kind.as_str() {
         "fill" => r,
         "border" => format!("{r}, {}px", css(c.width.unwrap())),
+        "fillborder" => format!(
+            "{r}, {}px, {}{}",
+            css(c.width.unwrap()),
+            c.bleed.as_deref().unwrap(),
+            if c.opaque_fill.unwrap() {
+                ""
+            } else {
+                ", translucent fill"
+            }
+        ),
         _ => format!(
             "{r}, {}{} {} {} {}",
             if c.inset.unwrap() { "inset " } else { "" },
