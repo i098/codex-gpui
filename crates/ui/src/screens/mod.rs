@@ -3,6 +3,7 @@
 pub mod composer;
 pub mod diff;
 pub mod home;
+pub mod settings;
 pub mod sidebar;
 pub mod terminal;
 pub mod thread;
