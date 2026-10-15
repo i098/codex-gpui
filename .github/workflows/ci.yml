@@ -1,0 +1,20 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  rust:
+    runs-on: [self-hosted, linux, codex-gpui]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      # main has no Cargo workspace yet; the checks start once Cargo.toml lands.
+      - if: hashFiles('Cargo.toml') != ''
+        run: cargo fmt --check
+      - if: hashFiles('Cargo.toml') != ''
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - if: hashFiles('Cargo.toml') != ''
+        run: cargo test --workspace
