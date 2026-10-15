@@ -1,0 +1,5399 @@
+{
+ "app": {
+  "bundle_id": "com.openai.codex",
+  "version": "26.1007.30912"
+ },
+ "screens": [
+  "Home",
+  "Sidebar",
+  "Thread view",
+  "Composer",
+  "Diff view",
+  "Settings + login/onboarding",
+  "Automations",
+  "Background terminal",
+  "Mobile setup"
+ ],
+ "routes": {
+  "/": "Home",
+  "/local/:conversationId": "LocalConversationPage",
+  "/diff": "EditorDiffPage",
+  "/settings/:section/*": "SettingsPage",
+  "/login": "LoginRoute",
+  "/welcome": "OnboardingPage",
+  "/select-workspace": "SelectWorkspacePage",
+  "/codex-mobile": "CodexMobilePage",
+  "/automations": "AutomationsLayoutPage",
+  "/scheduled": "AutomationsLayoutPage (deep link)",
+  "/pull-requests": "PullRequestsRoute",
+  "/plugins": "ManagePluginsPage",
+  "/space": "SpacesLandingRoute",
+  "/sites": "Appgen"
+ },
+ "settings_sections": {
+  "general-settings": {
+   "export": "GeneralSettings",
+   "chunk": "general-settings-861f7f5f7042.js"
+  },
+  "notifications": {
+   "export": "NotificationsSettingsPage",
+   "chunk": "notifications-settings-632d328fca3d.js"
+  },
+  "import": {
+   "export": "ImportSettings",
+   "chunk": "import-settings-cdabe3e4c1d1.js"
+  },
+  "profile": {
+   "export": "ProfileSettings",
+   "chunk": "profile-settings-6d54d51340da.js"
+  },
+  "security": {
+   "export": "ChatGptSecuritySettings",
+   "chunk": "security-settings-21b709d77af4.js"
+  },
+  "account": {
+   "export": "ChatGptAccountSettings",
+   "chunk": "account-settings-b6b8255e8212.js"
+  },
+  "age": {
+   "export": "ChatGptAgeSettings",
+   "chunk": "age-settings-4b10d3d4c42c.js"
+  },
+  "agreements": {
+   "export": "AgreementsSettings",
+   "chunk": "agreements-settings-bc9add37a84b.js"
+  },
+  "family": {
+   "export": "GeneralSettings",
+   "chunk": "general-settings-861f7f5f7042.js"
+  },
+  "trusted-contact": {
+   "export": "ChatGptTrustedContactSettings",
+   "chunk": "trusted-contact-settings-fcebc326b38b.js"
+  },
+  "safety": {
+   "export": "ChatGptSafetySettings",
+   "chunk": "safety-settings-87cd943070f2.js"
+  },
+  "time-management": {
+   "export": "ChatGptTimeManagementSettings",
+   "chunk": "time-management-settings-a1e256d15af1.js"
+  },
+  "keyboard-shortcuts": {
+   "export": "KeyboardShortcutsSettings",
+   "chunk": "keyboard-shortcuts-settings-e5d452e7d34c.js"
+  },
+  "codex-micro": {
+   "export": "CodexMicroSettings",
+   "chunk": "codex-micro-settings-a81b033f873e.js"
+  },
+  "appshots": {
+   "export": "AppshotsSettings",
+   "chunk": "appshots-settings-3f31c623b72d.js"
+  },
+  "appearance": {
+   "export": "AppearanceSettings",
+   "chunk": "appearance-settings-bf899ed18bb8.js"
+  },
+  "voice": {
+   "export": "VoiceSettings",
+   "chunk": "voice-settings-7f1819748d32.js"
+  },
+  "storage": {
+   "export": "DeviceStorageSettings",
+   "chunk": "device-storage-9d79d1b3554c.js"
+  },
+  "pets": {
+   "export": "PetsSettingsRoute",
+   "chunk": "pets-settings-route-d66810db325d.js"
+  },
+  "agent": {
+   "export": "ConfigurationPanel",
+   "chunk": "configuration-panel-5d5682552c7c.js"
+  },
+  "work-settings": {
+   "export": "WorkSettingsPanel",
+   "chunk": "panel-1910047edbf2.js"
+  },
+  "git-settings": {
+   "export": "GitSettings",
+   "chunk": "git-settings-cc686a50f040.js"
+  },
+  "ads-controls": {
+   "export": "AdsControlsSettings",
+   "chunk": "route-e012bcfc4dbe.js"
+  },
+  "archived-chats": {
+   "export": "DataControlsSettings",
+   "chunk": "data-controls-c9dc29e9444b.js"
+  },
+  "data-controls": {
+   "export": "ChatGptDataControlsSettings",
+   "chunk": "data-controls-settings-807d74082bb4.js"
+  },
+  "code-review": {
+   "export": "CodeReviewPluginSettings",
+   "chunk": "settings-84199bf2f2cf.js"
+  },
+  "cloud-settings": {
+   "export": "CloudPreferencesSettings",
+   "chunk": "cloud-preferences-settings-41546184a793.js"
+  },
+  "codex-cloud": {
+   "export": "CodexCloudSettings",
+   "chunk": "settings-ae50ba9fa78a.js"
+  },
+  "cloud-environments": {
+   "export": "CloudEnvironmentsSettingsPage",
+   "chunk": "cloud-environments-settings-page-2f8899d93d38.js"
+  },
+  "personalization": {
+   "export": "ChatGptPersonalizationSettings",
+   "chunk": "personalization-settings-9b139bd250bc.js"
+  },
+  "chronicle": {
+   "export": "ComputerHistorySettingsPage",
+   "chunk": "chronicle-settings-page-585519c1acbc.js"
+  },
+  "usage": {
+   "export": "UsageSettingsPage",
+   "chunk": "page-400328cd46f4.js"
+  },
+  "analytics": {
+   "export": "UsageSettingsPage",
+   "chunk": "page-400328cd46f4.js"
+  },
+  "usage-code-review": {
+   "export": "UsageSettingsPage",
+   "chunk": "page-400328cd46f4.js"
+  },
+  "consumer-view": {
+   "export": "UsageSettingsPage",
+   "chunk": "page-400328cd46f4.js"
+  },
+  "debug": {
+   "export": "DebugSettings",
+   "chunk": "debug-settings-299be7300ee9.js"
+  },
+  "computer-use": {
+   "export": "ComputerUseSettings",
+   "chunk": "computer-use-settings-672bfa843f15.js"
+  },
+  "browser-use": {
+   "export": "BrowserUseSettings",
+   "chunk": "browser-use-settings-dd15aad57b40.js"
+  },
+  "extension": {
+   "export": "BrowserExtensionSettings",
+   "chunk": "browser-extension-settings-33e5503db7da.js"
+  },
+  "local-environments": {
+   "export": "LocalEnvironmentsSettings",
+   "chunk": "local-environments-settings-page-dd4c4cddd941.js"
+  },
+  "worktrees": {
+   "export": "WorktreesSettingsPage",
+   "chunk": "worktrees-settings-page-ad5cbb37d745.js"
+  },
+  "environments": {
+   "export": "SettingsExternalSection",
+   "chunk": "settings-external-section-b33e2f5e7f5d.js"
+  },
+  "mcp-settings": {
+   "export": "McpSettings",
+   "chunk": "mcp-settings-83d0520492d3.js"
+  },
+  "hooks-settings": {
+   "export": "HooksSettings",
+   "chunk": "hooks-settings-cb5541ab4198.js"
+  },
+  "connections": {
+   "export": "RemoteConnectionsSettings",
+   "chunk": "remote-connections-settings-5fcec56d1e17.js"
+  },
+  "plugins-settings": {
+   "export": "PluginsSettings",
+   "chunk": "plugins-settings-577ebe3677a7.js"
+  },
+  "file-type-handlers": {
+   "export": "FileTypeHandlersSettings",
+   "chunk": "file-type-handlers-e21cf9f18f92.js"
+  },
+  "skills-settings": {
+   "export": "SkillsSettings",
+   "chunk": "skills-settings-92f7be984f1d.js"
+  },
+  "cloud-computer": {
+   "export": "ChatGptCloudBrowserSettings",
+   "chunk": "settings-65381b73a1a2.js"
+  },
+  "passwords": {
+   "export": "PasswordsSettings",
+   "chunk": "settings-156aaa691e7d.js"
+  },
+  "teams": {
+   "export": "TeamSettingsPage",
+   "chunk": "team-settings-page-9276d495b863.js"
+  }
+ },
+ "app_server": {
+  "requests": [
+   {
+    "method": "account/bedrock/discover",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "login-route-27ff39de87da.js"
+    ]
+   },
+   {
+    "method": "account/bedrock/setup",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [
+     "type",
+     "profile",
+     "region"
+    ],
+    "response": [],
+    "chunks": [
+     "login-route-27ff39de87da.js"
+    ]
+   },
+   {
+    "method": "account/gatewayOAuth/cancel",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "account/gatewayOAuth/login",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "account/gatewayOAuth/read",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "account/login/cancel",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [
+     "loginId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "account/login/start",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [
+     "type",
+     "accessKeyId",
+     "secretAccessKey",
+     "sessionToken",
+     "region",
+     "apiKey",
+     "...r",
+     "...n"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js",
+     "login-route-27ff39de87da.js"
+    ]
+   },
+   {
+    "method": "account/logout",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "account/rateLimits/read",
+    "screens": [
+     "Home",
+     "Settings/Login"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "execution-fde3a4937b6a.js"
+    ]
+   },
+   {
+    "method": "account/read",
+    "screens": [
+     "Home",
+     "Settings/Login"
+    ],
+    "params": [
+     "refreshToken"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "app/installed",
+    "screens": [
+     "Composer",
+     "Settings/Login"
+    ],
+    "params": [
+     "forceRefresh",
+     "threadId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "widget-e1674d393867.js"
+    ]
+   },
+   {
+    "method": "app/list",
+    "screens": [
+     "Home",
+     "Settings/Login"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "app/read",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [
+     "appIds",
+     "...i"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "collaborationMode/list",
+    "screens": [
+     "Home",
+     "Composer"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "command/exec",
+    "screens": [
+     "Diff"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "panel-cfa1a69b08e2.js"
+    ]
+   },
+   {
+    "method": "config/batchWrite",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [
+     "edits",
+     "expectedVersion",
+     "filePath",
+     "reloadUserConfig"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-primary-6f60e9ac4103.js",
+     "app-shared-8bd9d0399038.js",
+     "apps-availability-602b68c7254e.js",
+     "browser-use-origin-state-queries-5b0748745b24.js",
+     "chronicle-service-queries-e7021ee8bd68.js",
+     "execution-fde3a4937b6a.js",
+     "plugin-installation-content-f2ba92649fe1.js",
+     "use-imported-setup-opportunity-e793024d8574.js"
+    ]
+   },
+   {
+    "method": "config/mcpServer/reload",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "config/read",
+    "screens": [
+     "Home",
+     "Settings/Login"
+    ],
+    "params": [
+     "includeLayers",
+     "cwd"
+    ],
+    "response": [
+     "config"
+    ],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-primary-6f60e9ac4103.js",
+     "app-shared-8bd9d0399038.js",
+     "home-ambient-suggestions-content-ba4330f6633f.js",
+     "pending-local-conversation-thread-3398c807ea7f.js",
+     "sidebar-onboarding-checklist-task-config-32bd431bfefb.js"
+    ]
+   },
+   {
+    "method": "config/value/write",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [
+     "keyPath",
+     "value",
+     "mergeStrategy",
+     "filePath",
+     "expectedVersion"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "configRequirements/read",
+    "screens": [
+     "Home",
+     "Settings/Login"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "experimentalFeature/list",
+    "screens": [
+     "Home",
+     "Settings/Login"
+    ],
+    "params": [
+     "cursor",
+     "limit"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "externalAgentConfig/import/readHistories",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "feedback/upload",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "threadId",
+     "classification",
+     "reason",
+     "includeLogs",
+     "tags",
+     "extraLogFiles"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "fs/copy",
+    "screens": [
+     "Diff"
+    ],
+    "params": [
+     "destinationPath",
+     "sourcePath"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "fs/createDirectory",
+    "screens": [
+     "Diff"
+    ],
+    "params": [
+     "path",
+     "recursive"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js",
+     "plan-side-panel-9997abc93cfe.js"
+    ]
+   },
+   {
+    "method": "fs/getMetadata",
+    "screens": [
+     "Diff"
+    ],
+    "params": [
+     "path"
+    ],
+    "response": [
+     "modifiedAtMs"
+    ],
+    "chunks": [
+     "app-shared-8bd9d0399038.js",
+     "dialog-98374c0319b8.js",
+     "text-file-storage-2de491513fbc.js"
+    ]
+   },
+   {
+    "method": "fs/readDirectory",
+    "screens": [
+     "Diff"
+    ],
+    "params": [
+     "path"
+    ],
+    "response": [
+     "entries"
+    ],
+    "chunks": [
+     "app-shared-8bd9d0399038.js",
+     "dialog-98374c0319b8.js"
+    ]
+   },
+   {
+    "method": "fs/readFile",
+    "screens": [
+     "Diff"
+    ],
+    "params": [
+     "path"
+    ],
+    "response": [
+     "dataBase64"
+    ],
+    "chunks": [
+     "app-shared-8bd9d0399038.js",
+     "save-cloud-file-copy-74b3b4a4a0c6.js",
+     "text-file-storage-2de491513fbc.js"
+    ]
+   },
+   {
+    "method": "fs/remove",
+    "screens": [
+     "Diff"
+    ],
+    "params": [
+     "path",
+     "force",
+     "recursive"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "fs/unwatch",
+    "screens": [
+     "Diff"
+    ],
+    "params": [
+     "watchId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "fs/watch",
+    "screens": [
+     "Diff"
+    ],
+    "params": [
+     "path",
+     "watchId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "fs/writeFile",
+    "screens": [
+     "Diff"
+    ],
+    "params": [
+     "...o",
+     "dataBase64",
+     "path"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js",
+     "text-file-storage-2de491513fbc.js"
+    ]
+   },
+   {
+    "method": "fuzzyFileSearch/sessionStart",
+    "screens": [
+     "Composer"
+    ],
+    "params": [
+     "sessionId",
+     "roots"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "fuzzyFileSearch/sessionStop",
+    "screens": [
+     "Composer"
+    ],
+    "params": [
+     "sessionId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "fuzzyFileSearch/sessionUpdate",
+    "screens": [
+     "Composer"
+    ],
+    "params": [
+     "sessionId",
+     "query"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "hooks/list",
+    "screens": [
+     "Home",
+     "Settings/Login"
+    ],
+    "params": [
+     "cwds"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "marketplace/add",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "marketplace/remove",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "marketplace/upgrade",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [
+     "marketplaceName"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "mcpServer/event/stream/start",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "_meta",
+     "arguments",
+     "name",
+     "server",
+     "subscriptionId",
+     "threadId"
+    ],
+    "response": [],
+    "chunks": [
+     "widget-e1674d393867.js"
+    ]
+   },
+   {
+    "method": "mcpServer/event/stream/stop",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "subscriptionId"
+    ],
+    "response": [],
+    "chunks": [
+     "widget-e1674d393867.js"
+    ]
+   },
+   {
+    "method": "mcpServer/oauth/login",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [
+     "name",
+     "...z"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "plugins-settings-39f4509a79cc.js",
+     "use-external-agent-import-setup-actions-1cfc7afc46a4.js"
+    ]
+   },
+   {
+    "method": "mcpServer/resource/read",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "...n",
+     "originCallId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "mcpServer/tool/call",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "...e",
+     "_meta"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "mcpServerStatus/list",
+    "screens": [
+     "Home",
+     "Settings/Login"
+    ],
+    "params": [
+     "cursor",
+     "limit",
+     "detail"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "memory/reset",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "personalization-settings-9b139bd250bc.js"
+    ]
+   },
+   {
+    "method": "memory/status",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [
+     "minConsolidatedThreads"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "model/list",
+    "screens": [
+     "Home",
+     "Composer",
+     "Settings/Login"
+    ],
+    "params": [
+     "includeHidden",
+     "cursor",
+     "limit",
+     "...t"
+    ],
+    "response": [
+     "data"
+    ],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-primary-6f60e9ac4103.js",
+     "app-shared-8bd9d0399038.js",
+     "content-fe0352f21c09.js",
+     "execution-fde3a4937b6a.js",
+     "new-thread-a920912d4148.js"
+    ]
+   },
+   {
+    "method": "permissionProfile/list",
+    "screens": [
+     "Home",
+     "Composer",
+     "Settings/Login"
+    ],
+    "params": [
+     "cursor",
+     "limit",
+     "cwd"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "plugin/install",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-primary-6f60e9ac4103.js"
+    ]
+   },
+   {
+    "method": "plugin/installed",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [
+     "cwds"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js",
+     "execution-fde3a4937b6a.js"
+    ]
+   },
+   {
+    "method": "plugin/list",
+    "screens": [
+     "Home",
+     "Composer",
+     "Settings/Login"
+    ],
+    "params": [
+     "marketplaceKinds",
+     "forceRefetch",
+     "...l"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js",
+     "onboarding-page-2b170595bf4d.js"
+    ]
+   },
+   {
+    "method": "plugin/read",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [
+     "...EXr",
+     "pluginName"
+    ],
+    "response": [
+     "plugin"
+    ],
+    "chunks": [
+     "app-shared-8bd9d0399038.js",
+     "plugin-installation-content-f2ba92649fe1.js"
+    ]
+   },
+   {
+    "method": "plugin/reconcile",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [
+     "reason"
+    ],
+    "response": [],
+    "chunks": [
+     "widget-e1674d393867.js"
+    ]
+   },
+   {
+    "method": "plugin/search",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [
+     "searchTerm",
+     "scope",
+     "...l",
+     "cursor",
+     "limit"
+    ],
+    "response": [],
+    "chunks": [
+     "use-search-plugins-1694a9a96393.js"
+    ]
+   },
+   {
+    "method": "plugin/share/list",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "installed-plugin-actions-1370e147e829.js"
+    ]
+   },
+   {
+    "method": "plugin/share/save",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "installed-plugin-actions-1370e147e829.js"
+    ]
+   },
+   {
+    "method": "plugin/share/updateTargets",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [
+     "remotePluginId",
+     "discoverability",
+     "shareTargets"
+    ],
+    "response": [],
+    "chunks": [
+     "installed-plugin-actions-1370e147e829.js"
+    ]
+   },
+   {
+    "method": "plugin/skill/read",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "plugin/uninstall",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "project/list",
+    "screens": [
+     "Home",
+     "Sidebar"
+    ],
+    "params": [
+     "cursor",
+     "limit"
+    ],
+    "response": [],
+    "chunks": [
+     "panel-fb651e5a5a08.js"
+    ]
+   },
+   {
+    "method": "remoteControl/client/list",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [
+     "environmentId",
+     "cursor",
+     "limit",
+     "order"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "remoteControl/client/revoke",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [
+     "environmentId",
+     "clientId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "remoteControl/pairing/start",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [
+     "manualCode"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "remoteControl/status/read",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "skills/config/write",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [
+     "enabled",
+     "path"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "pets-settings-route-d66810db325d.js",
+     "skill-card-15b3e007becd.js"
+    ]
+   },
+   {
+    "method": "skills/list",
+    "screens": [
+     "Home",
+     "Composer",
+     "Settings/Login"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "thread/approveGuardianDeniedAction",
+    "screens": [
+     "Composer"
+    ],
+    "params": [
+     "threadId",
+     "event"
+    ],
+    "response": [],
+    "chunks": [
+     "app-primary-6f60e9ac4103.js"
+    ]
+   },
+   {
+    "method": "thread/archive",
+    "screens": [
+     "Sidebar"
+    ],
+    "params": [
+     "threadId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/attachment/add",
+    "screens": [
+     "Composer"
+    ],
+    "params": [
+     "threadId",
+     "attachmentType",
+     "identityKey",
+     "payload"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/attachment/list",
+    "screens": [
+     "Composer"
+    ],
+    "params": [
+     "threadId",
+     "cursor",
+     "limit"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js",
+     "execution-fde3a4937b6a.js"
+    ]
+   },
+   {
+    "method": "thread/attachment/remove",
+    "screens": [
+     "Composer"
+    ],
+    "params": [
+     "threadId",
+     "attachmentType",
+     "identityKey"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/attachmentOwner/list",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "worktrees-settings-page-ad5cbb37d745.js"
+    ]
+   },
+   {
+    "method": "thread/backgroundTerminals/clean",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "threadId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/compact/start",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "threadId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/delete",
+    "screens": [
+     "Sidebar"
+    ],
+    "params": [
+     "threadId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js",
+     "delete-thread-dialog-a6789db079dc.js",
+     "device-storage-9d79d1b3554c.js"
+    ]
+   },
+   {
+    "method": "thread/fork",
+    "screens": [
+     "Thread"
+    ],
+    "params": [],
+    "response": [
+     "thread"
+    ],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/goal/clear",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "threadId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/goal/get",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "threadId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/goal/set",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "threadId",
+     "objective",
+     "status"
+    ],
+    "response": [
+     "goal"
+    ],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/inject_items",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "threadId",
+     "items"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/items/list",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "threadId",
+     "turnId",
+     "cursor",
+     "limit",
+     "sortDirection"
+    ],
+    "response": [
+     "data",
+     "nextCursor"
+    ],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/list",
+    "screens": [
+     "Sidebar"
+    ],
+    "params": [
+     "archived",
+     "cursor",
+     "limit",
+     "modelProviders",
+     "sortKey",
+     "sourceKinds",
+     "useStateDbOnly",
+     "projectId"
+    ],
+    "response": [
+     "data",
+     "nextCursor"
+    ],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js",
+     "billing-analytics-a920e3f98ec7.js",
+     "data-controls-c9dc29e9444b.js",
+     "device-storage-9d79d1b3554c.js",
+     "execution-fde3a4937b6a.js",
+     "panel-fb651e5a5a08.js",
+     "worktrees-settings-page-ad5cbb37d745.js"
+    ]
+   },
+   {
+    "method": "thread/memoryMode/set",
+    "screens": [
+     "Composer"
+    ],
+    "params": [
+     "threadId",
+     "mode"
+    ],
+    "response": [],
+    "chunks": [
+     "app-primary-6f60e9ac4103.js"
+    ]
+   },
+   {
+    "method": "thread/metadata/update",
+    "screens": [
+     "Sidebar"
+    ],
+    "params": [
+     "threadId",
+     "daybreakEnabled",
+     "gitInfo"
+    ],
+    "response": [
+     "thread"
+    ],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/name/set",
+    "screens": [
+     "Sidebar"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/queue/add",
+    "screens": [
+     "Composer"
+    ],
+    "params": [
+     "threadId",
+     "input",
+     "clientUserMessageId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/queue/delete",
+    "screens": [
+     "Composer"
+    ],
+    "params": [
+     "threadId",
+     "queuedSubmissionId"
+    ],
+    "response": [
+     "deleted"
+    ],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/queue/list",
+    "screens": [
+     "Composer"
+    ],
+    "params": [
+     "threadId",
+     "cursor"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/queue/reorder",
+    "screens": [
+     "Composer"
+    ],
+    "params": [
+     "threadId",
+     "queuedSubmissionIds"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/queue/start",
+    "screens": [
+     "Composer"
+    ],
+    "params": [
+     "threadId",
+     "queuedSubmissionId"
+    ],
+    "response": [
+     "turn"
+    ],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/queue/update",
+    "screens": [
+     "Composer"
+    ],
+    "params": [
+     "threadId",
+     "queuedSubmissionId",
+     "input"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/read",
+    "screens": [
+     "Sidebar"
+    ],
+    "params": [
+     "threadId",
+     "includeTurns"
+    ],
+    "response": [
+     "thread"
+    ],
+    "chunks": [
+     "app-shared-8bd9d0399038.js",
+     "device-storage-9d79d1b3554c.js",
+     "worktrees-settings-page-ad5cbb37d745.js"
+    ]
+   },
+   {
+    "method": "thread/realtime/appendSpeech",
+    "screens": [
+     "Home"
+    ],
+    "params": [
+     "threadId",
+     "text"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "thread/realtime/appendText",
+    "screens": [
+     "Home"
+    ],
+    "params": [
+     "threadId",
+     "role",
+     "text"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "thread/realtime/listVoices",
+    "screens": [
+     "Home"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "thread/realtime/start",
+    "screens": [
+     "Home"
+    ],
+    "params": [
+     "codexResponseHandoffChannelPrefixes",
+     "codexResponseHandoffMode",
+     "codexResponseItemPrefix",
+     "codexResponsesAsItems",
+     "flushTranscriptTailOnSessionEnd",
+     "includeStartupContext",
+     "outputModality",
+     "realtimeEndInstructions",
+     "realtimeSessionId",
+     "realtimeStartInstructions",
+     "threadId",
+     "transport",
+     "version"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "thread/realtime/stop",
+    "screens": [
+     "Home"
+    ],
+    "params": [
+     "threadId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "execution-fde3a4937b6a.js"
+    ]
+   },
+   {
+    "method": "thread/resume",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "threadId",
+     "history",
+     "path",
+     "model",
+     "modelProvider",
+     "cwd",
+     "personality",
+     "excludeTurns",
+     "initialTurnsPage"
+    ],
+    "response": [
+     "thread"
+    ],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/revert",
+    "screens": [
+     "Thread",
+     "Diff"
+    ],
+    "params": [
+     "threadId",
+     "beforeTurnId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/rollback",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "threadId",
+     "numTurns"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/search",
+    "screens": [
+     "Sidebar"
+    ],
+    "params": [
+     "cursor",
+     "limit",
+     "sortKey",
+     "archived",
+     "sourceKinds",
+     "searchTerm"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/searchOccurrences",
+    "screens": [
+     "Thread"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "local-conversation-thread-c8c5e92ea89e.js"
+    ]
+   },
+   {
+    "method": "thread/settings/update",
+    "screens": [
+     "Composer"
+    ],
+    "params": [
+     "threadId",
+     "...t",
+     "sandboxPolicy"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/start",
+    "screens": [
+     "Home"
+    ],
+    "params": [
+     "cwd",
+     "model",
+     "modelProvider",
+     "serviceTier",
+     "config",
+     "approvalsReviewer",
+     "approvalPolicy",
+     "sandbox/permissions (from permission profile)",
+     "runtimeWorkspaceRoots",
+     "personality",
+     "ephemeral",
+     "baseInstructions",
+     "developerInstructions",
+     "threadSource",
+     "mockExperimentalField",
+     "experimentalRawEvents",
+     "dynamicTools",
+     "historyMode",
+     "serviceName",
+     "projectId",
+     "environments"
+    ],
+    "response": [
+     "thread"
+    ],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/startAeon",
+    "screens": [
+     "Home"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/stop",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "threadId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/timeline/list",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "threadId",
+     "cursor",
+     "limit"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/turns/list",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "threadId",
+     "cursor",
+     "limit",
+     "sortDirection",
+     "itemsView"
+    ],
+    "response": [
+     "data",
+     "nextCursor"
+    ],
+    "chunks": [
+     "app-shared-8bd9d0399038.js",
+     "share-thread-857fe1d9dce4.js"
+    ]
+   },
+   {
+    "method": "thread/unarchive",
+    "screens": [
+     "Sidebar"
+    ],
+    "params": [
+     "threadId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/unsubscribe",
+    "screens": [
+     "Sidebar"
+    ],
+    "params": [
+     "threadId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "turn/addUserMessage",
+    "screens": [
+     "Composer"
+    ],
+    "params": [
+     "threadId",
+     "input",
+     "clientUserMessageId",
+     "messageThreadId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "turn/interrupt",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "threadId",
+     "turnId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "turn/settings/update",
+    "screens": [
+     "Composer"
+    ],
+    "params": [
+     "threadId",
+     "turnId",
+     "approvalsReviewer"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "turn/start",
+    "screens": [
+     "Composer"
+    ],
+    "params": [
+     "threadId",
+     "input",
+     "clientUserMessageId",
+     "cwd",
+     "approvalPolicy",
+     "approvalsReviewer",
+     "sandboxPolicy",
+     "model",
+     "serviceTier",
+     "effort",
+     "summary",
+     "personality",
+     "outputSchema",
+     "collaborationMode",
+     "attachments",
+     "toolOutput",
+     "additionalContext",
+     "responsesapiClientMetadata"
+    ],
+    "response": [
+     "turn"
+    ],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "turn/steer",
+    "screens": [
+     "Composer"
+    ],
+    "params": [
+     "threadId",
+     "input",
+     "expectedTurnId",
+     "additionalContext",
+     "responsesapiClientMetadata",
+     "clientUserMessageId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "windowsSandbox/readiness",
+    "screens": [
+     "Home",
+     "Settings/Login"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "windowsSandbox/setupStart",
+    "screens": [
+     "Home",
+     "Settings/Login"
+    ],
+    "params": [
+     "mode",
+     "cwd"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   }
+  ],
+  "notifications": [
+   {
+    "method": "account/gatewayOAuth/changed",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [
+     "name",
+     "success",
+     "error"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "account/login/completed",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [
+     "loginId",
+     "success",
+     "error",
+     "onboardingEntrypoint"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "account/updated",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [
+     "authMode"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "app/list/updated",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "codex/event/skills_update_available",
+    "screens": [
+     "Home"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "externalAgentConfig/import/completed",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "fs/changed",
+    "screens": [
+     "Diff"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "fuzzyFileSearch/sessionUpdated",
+    "screens": [
+     "Composer"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "hook/completed",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "threadId",
+     "turnId",
+     "run"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "hook/started",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "threadId",
+     "turnId",
+     "run"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "item/agentMessage/delta",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "itemId",
+     "delta",
+     "threadId",
+     "turnId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js",
+     "content-fe0352f21c09.js",
+     "remote-conversation-page-d5c77768f912.js"
+    ]
+   },
+   {
+    "method": "item/autoApprovalReview/completed",
+    "screens": [
+     "Thread"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "item/autoApprovalReview/started",
+    "screens": [
+     "Thread"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "item/commandExecution/outputDelta",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "itemId",
+     "delta",
+     "threadId",
+     "turnId",
+     "message"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js",
+     "remote-conversation-page-d5c77768f912.js"
+    ]
+   },
+   {
+    "method": "item/commandExecution/terminalInteraction",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "itemId",
+     "stdin",
+     "threadId",
+     "turnId",
+     "message"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "item/completed",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "item",
+     "threadId",
+     "turnId",
+     "completedAtMs"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js",
+     "content-fe0352f21c09.js",
+     "entry-points-701d4d6b2dd2.js",
+     "remote-conversation-page-d5c77768f912.js"
+    ]
+   },
+   {
+    "method": "item/fileChange/outputDelta",
+    "screens": [
+     "Thread",
+     "Diff"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "item/fileChange/patchUpdated",
+    "screens": [
+     "Thread",
+     "Diff"
+    ],
+    "params": [
+     "changes",
+     "itemId",
+     "threadId",
+     "turnId",
+     "message"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "item/mcpToolCall/progress",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "itemId",
+     "message",
+     "threadId",
+     "turnId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js",
+     "content-fe0352f21c09.js"
+    ]
+   },
+   {
+    "method": "item/plan/delta",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "itemId",
+     "delta",
+     "threadId",
+     "turnId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js",
+     "remote-conversation-page-d5c77768f912.js"
+    ]
+   },
+   {
+    "method": "item/reasoning/summaryPartAdded",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "itemId",
+     "delta",
+     "contentIndex",
+     "threadId",
+     "turnId",
+     "message"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "item/reasoning/summaryTextDelta",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "itemId",
+     "summaryIndex",
+     "delta",
+     "threadId",
+     "turnId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js",
+     "content-fe0352f21c09.js",
+     "remote-conversation-page-d5c77768f912.js"
+    ]
+   },
+   {
+    "method": "item/reasoning/textDelta",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "itemId",
+     "delta",
+     "contentIndex",
+     "threadId",
+     "turnId",
+     "message"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js",
+     "remote-conversation-page-d5c77768f912.js"
+    ]
+   },
+   {
+    "method": "item/started",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "item",
+     "threadId",
+     "turnId",
+     "startedAtMs"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js",
+     "content-fe0352f21c09.js",
+     "remote-conversation-page-d5c77768f912.js"
+    ]
+   },
+   {
+    "method": "mcpServer/oauthLogin/completed",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [
+     "name",
+     "success",
+     "error"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "mcpServer/startupStatus/updated",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "status",
+     "item",
+     "threadId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-primary-6f60e9ac4103.js",
+     "content-fe0352f21c09.js",
+     "onboarding-page-2b170595bf4d.js",
+     "security-route-d4f986069805.js"
+    ]
+   },
+   {
+    "method": "model/rerouted",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "threadId",
+     "turnId",
+     "fromModel",
+     "toModel",
+     "reason"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "model/safetyBuffering/updated",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "threadId",
+     "turnId",
+     "model",
+     "...i"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "model/verification",
+    "screens": [
+     "Thread"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "serverRequest/resolved",
+    "screens": [
+     "Thread"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "skills/changed",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "thread/archived",
+    "screens": [
+     "Sidebar"
+    ],
+    "params": [
+     "threadId",
+     "tokenUsage"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/deleted",
+    "screens": [
+     "Sidebar"
+    ],
+    "params": [
+     "threadId",
+     "tokenUsage"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/environment/connected",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "threadId",
+     "environmentId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/environment/disconnected",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "threadId",
+     "environmentId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/goal/cleared",
+    "screens": [
+     "Thread"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/goal/updated",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "threadId",
+     "goal"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/name/updated",
+    "screens": [
+     "Sidebar"
+    ],
+    "params": [
+     "threadId",
+     "threadName"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/realtime/closed",
+    "screens": [
+     "Home"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/realtime/error",
+    "screens": [
+     "Home"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "thread/realtime/item/completed",
+    "screens": [
+     "Home"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/realtime/item/started",
+    "screens": [
+     "Home"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/realtime/item/transcript/delta",
+    "screens": [
+     "Home"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/realtime/itemAdded",
+    "screens": [
+     "Home"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/realtime/sdp",
+    "screens": [
+     "Home"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "thread/realtime/started",
+    "screens": [
+     "Home"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/realtime/transcript/delta",
+    "screens": [
+     "Home"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "thread/realtime/transcript/done",
+    "screens": [
+     "Home"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js"
+    ]
+   },
+   {
+    "method": "thread/settings/updated",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "threadId",
+     "threadSettings"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/started",
+    "screens": [
+     "Sidebar"
+    ],
+    "params": [
+     "thread"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-primary-6f60e9ac4103.js",
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/status/changed",
+    "screens": [
+     "Sidebar"
+    ],
+    "params": [
+     "status",
+     "threadId"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js",
+     "content-fe0352f21c09.js"
+    ]
+   },
+   {
+    "method": "thread/tokenUsage/updated",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "threadId",
+     "tokenUsage"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "thread/unarchived",
+    "screens": [
+     "Sidebar"
+    ],
+    "params": [
+     "threadId",
+     "tokenUsage"
+    ],
+    "response": [],
+    "chunks": [
+     "app-primary-6f60e9ac4103.js",
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "turn/completed",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "threadId",
+     "turn"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js",
+     "content-fe0352f21c09.js",
+     "execution-fde3a4937b6a.js",
+     "remote-conversation-page-d5c77768f912.js"
+    ]
+   },
+   {
+    "method": "turn/diff/updated",
+    "screens": [
+     "Diff"
+    ],
+    "params": [
+     "threadId",
+     "turnId",
+     "diff"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js",
+     "remote-conversation-page-d5c77768f912.js"
+    ]
+   },
+   {
+    "method": "turn/plan/updated",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "threadId",
+     "turnId",
+     "plan",
+     "explanation"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js",
+     "remote-conversation-page-d5c77768f912.js"
+    ]
+   },
+   {
+    "method": "turn/started",
+    "screens": [
+     "Thread"
+    ],
+    "params": [
+     "status",
+     "threadId",
+     "turn"
+    ],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js",
+     "content-fe0352f21c09.js",
+     "remote-conversation-page-d5c77768f912.js"
+    ]
+   },
+   {
+    "method": "windowsSandbox/setupCompleted",
+    "screens": [
+     "Home",
+     "Settings/Login"
+    ],
+    "params": [
+     "mode",
+     "success",
+     "error"
+    ],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   }
+  ],
+  "server_requests": [
+   {
+    "method": "account/chatgptAuthTokens/refresh",
+    "screens": [
+     "Settings/Login"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "attestation/generate",
+    "screens": [
+     "Thread"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "autoApprovalReview/strictReviewRequired",
+    "screens": [
+     "Thread"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "currentTime/read",
+    "screens": [
+     "Thread"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "item/commandExecution/requestApproval",
+    "screens": [
+     "Thread",
+     "Composer"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "item/fileChange/requestApproval",
+    "screens": [
+     "Thread",
+     "Composer",
+     "Diff"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "item/permissions/requestApproval",
+    "screens": [
+     "Thread",
+     "Composer"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-primary-6f60e9ac4103.js",
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "item/plan/requestImplementation",
+    "screens": [
+     "Thread"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "item/tool/call",
+    "screens": [
+     "Thread"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "item/tool/requestOptionPicker",
+    "screens": [
+     "Thread",
+     "Composer"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "item/tool/requestSetupCodexContextPicker",
+    "screens": [
+     "Thread"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-shared-8bd9d0399038.js"
+    ]
+   },
+   {
+    "method": "item/tool/requestUserInput",
+    "screens": [
+     "Thread",
+     "Composer"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js",
+     "avatar-overlay-native-page-7ec1028a9c34.js"
+    ]
+   },
+   {
+    "method": "mcpServer/elicitation/request",
+    "screens": [
+     "Thread"
+    ],
+    "params": [],
+    "response": [],
+    "chunks": [
+     "app-initial-6350d04672d0.js",
+     "app-shared-8bd9d0399038.js",
+     "sites-end-resource-78b98c374310.js"
+    ]
+   }
+  ],
+  "mcp_widget_protocol": [
+   "control/clipboard",
+   "control/locked",
+   "control/release",
+   "notifications/events/terminated",
+   "notifications/resources/updated",
+   "openai/events/subscribe",
+   "openai/events/unsubscribe",
+   "openai/form",
+   "prompts/list",
+   "resources/list",
+   "resources/read",
+   "resources/subscribe",
+   "resources/templates/list",
+   "resources/unsubscribe",
+   "tools/call",
+   "tools/list",
+   "ui/message"
+  ]
+ },
+ "ipc": {
+  "channels": [
+   "codex_desktop:message-from-view",
+   "codex_desktop:message-for-view",
+   "codex_desktop:chunked-message-ack",
+   "codex_desktop:get-system-theme-variant",
+   "codex_desktop:system-theme-variant-updated",
+   "codex_desktop:get-shared-object-snapshot",
+   "codex_desktop:get-initial-sidebar-bootstrap",
+   "codex_desktop:get-build-flavor",
+   "codex_desktop:get-sentry-init-options",
+   "codex_desktop:get-fast-mode-rollout-metrics",
+   "codex_desktop:show-context-menu",
+   "codex_desktop:start-file-drag",
+   "codex_desktop:start-link-drag",
+   "codex_desktop:worker:<id>:from-view",
+   "codex_desktop:worker:<id>:for-view",
+   "codex_desktop:connect-app-host",
+   "codex_desktop:mcp-app-sandbox-host-message",
+   "codex_desktop:remote-hosted-pip-video-frame",
+   "codex_desktop:trigger-sentry-test"
+  ],
+  "from_view_types": {
+   "app-shell-shortcut-state-changed": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "avatar-overlay-close": [
+    "avatar-overlay-native-page-7ec1028a9c34.js"
+   ],
+   "avatar-overlay-drag-end": [
+    "avatar-overlay-native-page-7ec1028a9c34.js"
+   ],
+   "avatar-overlay-drag-move": [
+    "avatar-overlay-native-page-7ec1028a9c34.js"
+   ],
+   "avatar-overlay-drag-release": [
+    "avatar-overlay-native-page-7ec1028a9c34.js"
+   ],
+   "avatar-overlay-drag-start": [
+    "avatar-overlay-native-page-7ec1028a9c34.js"
+   ],
+   "avatar-overlay-element-size-changed": [
+    "avatar-overlay-native-page-7ec1028a9c34.js"
+   ],
+   "avatar-overlay-keyboard-interaction-changed": [
+    "avatar-overlay-native-page-7ec1028a9c34.js"
+   ],
+   "avatar-overlay-open": [
+    "app-initial-6350d04672d0.js",
+    "pets-settings-route-d66810db325d.js"
+   ],
+   "avatar-overlay-open-state-request": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "avatar-overlay-pointer-interaction-changed": [
+    "avatar-overlay-native-page-7ec1028a9c34.js"
+   ],
+   "browser-sidebar-annotation-multi-select-enabled-changed": [
+    "app-primary-6f60e9ac4103.js"
+   ],
+   "browser-sidebar-attach-dragged-image": [
+    "app-primary-6f60e9ac4103.js"
+   ],
+   "browser-sidebar-command": [
+    "app-initial-6350d04672d0.js",
+    "app-primary-6f60e9ac4103.js",
+    "tab-content-24fe1f531bbe.js"
+   ],
+   "browser-sidebar-comment-overlay-close": [
+    "app-primary-6f60e9ac4103.js"
+   ],
+   "browser-sidebar-comment-overlay-submit": [
+    "app-primary-6f60e9ac4103.js"
+   ],
+   "browser-sidebar-owner-sync": [
+    "app-primary-6f60e9ac4103.js"
+   ],
+   "browser-sidebar-site-annotation-api-enabled-changed": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "browser-sidebar-sync": [
+    "tab-content-24fe1f531bbe.js"
+   ],
+   "browser-sidebar-tweaks-enabled-changed": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "browser-sidebar-webview-destroyed": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "browser-use-cursor-arrived": [
+    "tab-content-24fe1f531bbe.js"
+   ],
+   "cancel-fetch": [
+    "app-shared-8bd9d0399038.js"
+   ],
+   "checkout-webview-presentation-changed": [
+    "webview-page-f15129326e35.js"
+   ],
+   "codex-app-server-restart": [
+    "app-initial-6350d04672d0.js",
+    "app-primary-6f60e9ac4103.js",
+    "data-controls-c9dc29e9444b.js",
+    "plugins-settings-39f4509a79cc.js",
+    "remote-connections-settings-5fcec56d1e17.js"
+   ],
+   "codex-runtimes-config-changed": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "electron-add-new-workspace-root-option": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "electron-app-state-snapshot-response": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "electron-avatar-overlay-feedback-diagnostics-changed": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "electron-avatar-overlay-restore-ready": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "electron-desktop-features-changed": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "electron-onboarding-skip-workspace": [
+    "select-workspace-page-93a123d78c93.js"
+   ],
+   "electron-pick-workspace-root-option": [
+    "app-initial-6350d04672d0.js",
+    "security-route-d4f986069805.js",
+    "select-workspace-page-93a123d78c93.js"
+   ],
+   "electron-set-badge-count": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "electron-set-window-mode": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "electron-sparkle-gates-changed": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "electron-window-focus-request": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "electron-window-zoom-changed": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "fetch": [
+    "app-shared-8bd9d0399038.js"
+   ],
+   "global-dictation-dismiss": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "global-dictation-enabled-changed": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "global-dictation-force-lock-changed": [
+    "panel-fb651e5a5a08.js"
+   ],
+   "global-dictation-in-app-started": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "global-dictation-record-history-item": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "heartbeat-automation-thread-state-changed": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "inbox-automation-runs-mark-all-read": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "inbox-item-set-read-state": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "inbox-items-create": [
+    "app-shared-8bd9d0399038.js"
+   ],
+   "keyboard-layout-map-changed": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "local-thread-activity-changed": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "log-message": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "mac-menu-bar-enabled-changed": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "open-browser-in-main-window": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "open-config-toml": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "open-current-main-window": [
+    "app-initial-6350d04672d0.js",
+    "avatar-overlay-native-page-7ec1028a9c34.js",
+    "use-imported-setup-opportunity-e793024d8574.js"
+   ],
+   "open-in-browser": [
+    "app-initial-6350d04672d0.js",
+    "local-conversation-thread-c8c5e92ea89e.js"
+   ],
+   "open-in-main-window": [
+    "app-initial-6350d04672d0.js",
+    "avatar-overlay-native-page-7ec1028a9c34.js",
+    "native-room-8cd0e2076929.js"
+   ],
+   "open-in-new-window": [
+    "app-initial-6350d04672d0.js",
+    "local-conversation-page-a83a1af2c24b.js"
+   ],
+   "pending-worktree-cancel": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "pending-worktree-continue": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "pending-worktree-create": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "pending-worktree-dismiss": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "pending-worktree-retry": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "pending-worktree-update-metadata": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "persisted-atom-sync-request": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "persisted-atom-update": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "power-save-blocker-set": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "ready": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "remote-hosted-pip-active-thread-changed": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "set-primary-runtime-install-release": [
+    "panel-fb651e5a5a08.js"
+   ],
+   "set-telemetry-user": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "shared-object-set": [
+    "app-shared-8bd9d0399038.js"
+   ],
+   "shared-object-subscribe": [
+    "app-shared-8bd9d0399038.js"
+   ],
+   "shared-object-unsubscribe": [
+    "app-shared-8bd9d0399038.js"
+   ],
+   "show-settings": [
+    "avatar-overlay-native-page-7ec1028a9c34.js",
+    "surface-774dbd4a6f15.js"
+   ],
+   "toggle-trace-recording": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "tray-menu-threads-changed": [
+    "app-initial-6350d04672d0.js"
+   ],
+   "update-diff-if-open": [
+    "local-conversation-turn-632904a8790c.js"
+   ],
+   "view-focused": [
+    "app-initial-6350d04672d0.js"
+   ]
+  },
+  "for_view_types_sent_by_menu": [
+   "archive-thread",
+   "chat-search-command-menu",
+   "codex-micro-device-lifecycle",
+   "codex-micro-hid-event",
+   "codex-micro-joystick-event",
+   "codex-micro-window-ownership-changed",
+   "codex-ui-render-process-gone",
+   "command-menu",
+   "connector-oauth-callback",
+   "copy-conversation-path",
+   "copy-deeplink",
+   "copy-working-directory",
+   "debug-run-eval-control-request",
+   "debug-window-client-analytics-history-changed",
+   "debug-window-origin-conversation-changed",
+   "electron-window-focus-changed",
+   "electron-window-opaque-surface-changed",
+   "electron-window-position-changed",
+   "file-search-command-menu",
+   "find-in-thread",
+   "find-next-in-thread",
+   "find-previous-in-thread",
+   "focus-composer",
+   "heartbeat-automation-thread-state-request",
+   "hotkey-window-transition",
+   "navigate-back",
+   "navigate-forward",
+   "navigate-to-route",
+   "new-projectless-task",
+   "open-agent-onboarding",
+   "open-browser-tab",
+   "open-pet-install-modal",
+   "rename-thread",
+   "reset-window-zoom",
+   "run-command",
+   "screenshot-selection-shortcut",
+   "show-chatgpt-rosalind-announcement",
+   "step-window-zoom",
+   "toggle-bottom-panel",
+   "toggle-browser-panel",
+   "toggle-debug-modal",
+   "toggle-diff-panel",
+   "toggle-query-devtools",
+   "toggle-ram-usage-indicator",
+   "toggle-react-scan",
+   "toggle-sidebar",
+   "toggle-terminal",
+   "toggle-thread-pin",
+   "visual-content-action-clicked",
+   "window-fullscreen-changed",
+   "workspace-root-option-added"
+  ],
+  "for_view_types_handled_by_renderer": [
+   "add-context-file",
+   "ambient-suggestion-generation",
+   "appshot-shortcut",
+   "archive-thread",
+   "artifact-direct-comment",
+   "automation-runs-updated",
+   "avatar-overlay-action",
+   "avatar-overlay-computer-use-cursor-changed",
+   "avatar-overlay-explicit-pet-opened",
+   "avatar-overlay-keyboard-interaction-ready",
+   "avatar-overlay-layout-changed",
+   "avatar-overlay-open-state-changed",
+   "browser-sidebar-browser-use-capture-surface",
+   "browser-sidebar-browser-use-cursor-state",
+   "browser-sidebar-browser-use-page-released",
+   "browser-sidebar-browser-use-state",
+   "browser-sidebar-browser-use-viewport",
+   "browser-sidebar-clear-pending-panel-open",
+   "browser-sidebar-command",
+   "browser-sidebar-comment-overlay-insert-text",
+   "browser-sidebar-comment-overlay-session",
+   "browser-sidebar-context-menu-action",
+   "browser-sidebar-destroy-webview",
+   "browser-sidebar-direct-comment",
+   "browser-sidebar-find-state",
+   "browser-sidebar-floating-composer-reveal",
+   "browser-sidebar-image-attachment",
+   "browser-sidebar-image-drag-state",
+   "browser-sidebar-open-panel-without-animation",
+   "browser-sidebar-page-loaded",
+   "browser-sidebar-runtime-annotation-permission-result",
+   "browser-sidebar-runtime-annotation-selection-hover-state",
+   "browser-sidebar-runtime-annotation-selection-modifier-state",
+   "browser-sidebar-runtime-clear-comment-screenshot",
+   "browser-sidebar-runtime-close-editor",
+   "browser-sidebar-runtime-create-comment-at-point",
+   "browser-sidebar-runtime-open-design-editor-at-point",
+   "browser-sidebar-runtime-prepare-comment-screenshot",
+   "browser-sidebar-runtime-remove-annotation-selection",
+   "browser-sidebar-runtime-restore-editor",
+   "browser-sidebar-runtime-select-comment",
+   "browser-sidebar-runtime-sync",
+   "browser-sidebar-screenshot-copied",
+   "browser-sidebar-screenshot-copy-failed",
+   "browser-sidebar-state",
+   "browser-sidebar-tab-capture-state",
+   "browser-sidebar-tab-lifecycle",
+   "browser-sidebar-tab-render-process-gone",
+   "browser-sidebar-tab-state",
+   "browser-sidebar-url-copied",
+   "browser-sidebar-usage",
+   "browser-sidebar-web-contents-pointer-down",
+   "browser-sidebar-webview-attached",
+   "bundled-plugin-install-state-observed",
+   "business-checkout-complete",
+   "capture-screenshot-selection",
+   "chat-font-settings",
+   "chat-search-command-menu",
+   "chatgpt-auth-token-unavailable",
+   "clear-active-terminal",
+   "close-active-app-shell-tab",
+   "close-browser-tab",
+   "close-terminal-session",
+   "codex-app-server-connection-changed",
+   "codex-app-server-fatal-error",
+   "codex-app-server-initialized",
+   "codex-micro-device-lifecycle",
+   "codex-micro-device-state-changed",
+   "codex-micro-hid-event",
+   "codex-micro-insert-composer-text",
+   "codex-micro-insert-skill-mention",
+   "codex-micro-joystick-event",
+   "codex-micro-push-to-talk-start",
+   "codex-micro-push-to-talk-stop",
+   "codex-micro-window-ownership-changed",
+   "codex-ui-render-process-gone",
+   "command-menu",
+   "computer-use-analytics-event",
+   "computer-use-capture-updated",
+   "connector-oauth-callback",
+   "copy-conversation-path",
+   "copy-deeplink",
+   "copy-working-directory",
+   "credit-purchase-checkout-complete",
+   "custom-prompts-updated",
+   "debug-run-eval-control-request",
+   "debug-run-eval-control-response",
+   "debug-window-client-analytics-history-changed",
+   "debug-window-origin-conversation-changed",
+   "desktop-app-entry-received",
+   "dynamic-tool-call-requested",
+   "dynamic-tools-for-thread-start-requested",
+   "electron-app-state-snapshot-request",
+   "electron-onboarding-skip-workspace-result",
+   "electron-window-focus-changed",
+   "electron-window-opaque-surface-changed",
+   "electron-window-position-changed",
+   "ephemeral-generation-token-usage",
+   "external-browser-open-finished",
+   "external-browser-open-started",
+   "fetch-response",
+   "file-search-command-menu",
+   "find-in-files",
+   "find-in-thread",
+   "find-next-in-thread",
+   "find-previous-in-thread",
+   "focus-composer",
+   "global-dictation-idle",
+   "global-dictation-in-app-start",
+   "global-dictation-in-app-stop",
+   "global-dictation-paste-failed",
+   "global-dictation-start",
+   "global-dictation-start-confirmed",
+   "global-dictation-stop",
+   "global-state-updated",
+   "heartbeat-automation-thread-state-request",
+   "hotkey-window-home-composer-position-changed",
+   "hotkey-window-transition",
+   "image-preview-zoom-command",
+   "implement-todo",
+   "invalidate-thread-search",
+   "is-copilot-api-available-updated",
+   "keyboard-modifier-state-changed",
+   "mcp-event-notification",
+   "mcp-request",
+   "mcp-request-delivery",
+   "mcp-resource-updated",
+   "mcp-response",
+   "navigate-back",
+   "navigate-forward",
+   "navigate-to-route",
+   "new-chat",
+   "new-chat-with-appshot",
+   "new-projectless-task",
+   "notch-overlay-collapse",
+   "notch-overlay-expand",
+   "notch-overlay-keyboard-interaction-ready",
+   "notch-overlay-layout-changed",
+   "notch-overlay-toggle",
+   "open-agent-onboarding",
+   "open-browser-tab",
+   "open-create-remote-project-modal",
+   "open-file-changed",
+   "open-pet-install-modal",
+   "pdf-direct-comment",
+   "persisted-atom-sync",
+   "persisted-atom-updated",
+   "personal-checkout-complete",
+   "personal-workspace-access-blocked",
+   "pinned-threads-updated",
+   "primary-runtime-install-progress",
+   "prompt-link-destination",
+   "rate-limit-reset-checkout-complete",
+   "refetch-review-file-source",
+   "remote-hosted-pip-browser-frame-state-changed",
+   "remote-hosted-pip-content-layout-state-changed",
+   "remote-hosted-pip-task-state-changed",
+   "remote-workspace-root-requested",
+   "rename-thread",
+   "request-user-input-auto-resolution-changed",
+   "request-user-input-auto-resolution-snapshot",
+   "reset-window-zoom",
+   "review-file-source-changed",
+   "run-command",
+   "screenshot-selection-shortcut",
+   "set-primary-runtime-install-release",
+   "shared-object-updated",
+   "show-chatgpt-rosalind-announcement",
+   "step-font-size",
+   "step-window-zoom",
+   "tasks-reload-requested",
+   "thread-project-memberships-updated",
+   "thread-title-updated",
+   "toggle-bottom-panel",
+   "toggle-browser-panel",
+   "toggle-debug-modal",
+   "toggle-diff-panel",
+   "toggle-file-tree-panel",
+   "toggle-performance-tools",
+   "toggle-query-devtools",
+   "toggle-ram-usage-indicator",
+   "toggle-react-scan",
+   "toggle-sidebar",
+   "toggle-terminal",
+   "toggle-thread-pin",
+   "trace-recording-state-changed",
+   "trace-recording-uploaded",
+   "visual-content-action-clicked",
+   "window-fullscreen-changed",
+   "worker-event",
+   "worker-response",
+   "workspace-root-option-add-canceled",
+   "workspace-root-option-added",
+   "workspace-root-option-picked",
+   "workspace-root-options-updated",
+   "worktrees-reload-requested"
+  ]
+ },
+ "host_fetch_endpoints": {
+  "workspace-root-options": [
+   "annotation-comment-editor-card-2a63d60663c7.js",
+   "app-initial-6350d04672d0.js",
+   "app-shared-8bd9d0399038.js",
+   "panel-fb651e5a5a08.js"
+  ],
+  "electron-clone-workspace-repo": [],
+  "worktree-create-managed": [
+   "app-initial-6350d04672d0.js"
+  ],
+  "worktree-delete": [
+   "app-initial-6350d04672d0.js",
+   "worktrees-settings-page-ad5cbb37d745.js"
+  ],
+  "worktree-set-owner-thread": [
+   "app-initial-6350d04672d0.js"
+  ],
+  "codex-home": [
+   "app-initial-6350d04672d0.js",
+   "app-shared-8bd9d0399038.js"
+  ],
+  "projectless-thread-cwd": [
+   "app-initial-6350d04672d0.js",
+   "app-shared-8bd9d0399038.js",
+   "panel-fb651e5a5a08.js"
+  ],
+  "projectless-workspace-root": [
+   "app-initial-6350d04672d0.js",
+   "app-shared-8bd9d0399038.js"
+  ],
+  "home-directory": [
+   "app-shared-8bd9d0399038.js"
+  ],
+  "auto-deny-some-permissions": [
+   "pending-request-item-panel-770855267df2.js"
+  ],
+  "download-internal-plugins": [
+   "app-initial-6350d04672d0.js"
+  ],
+  "app-connect-oauth-callback-url": [
+   "app-shared-8bd9d0399038.js"
+  ],
+  "fast-mode-rollout-metrics": [
+   "app-primary-6f60e9ac4103.js"
+  ],
+  "refresh-remote-connections": [
+   "remote-connections-settings-5fcec56d1e17.js"
+  ],
+  "discover-remote-ssh-connections": [
+   "remote-connections-settings-5fcec56d1e17.js"
+  ],
+  "refresh-remote-control-connections": [
+   "remote-connections-settings-5fcec56d1e17.js"
+  ],
+  "rename-remote-control-environment": [
+   "remote-connections-settings-5fcec56d1e17.js"
+  ],
+  "delete-remote-control-environment": [
+   "remote-connections-settings-5fcec56d1e17.js"
+  ],
+  "authorize-remote-control-connections": [
+   "remote-connections-settings-5fcec56d1e17.js"
+  ],
+  "set-remote-control-connections-enabled": [
+   "app-initial-6350d04672d0.js"
+  ],
+  "set-remote-wsl-connections-enabled": [
+   "app-initial-6350d04672d0.js"
+  ],
+  "set-local-remote-control-enabled": [
+   "codex-mobile-setup-flow-964d39beb2ad.js"
+  ],
+  "save-codex-managed-remote-ssh-connections": [
+   "remote-connection-editor-modal-94d8639e9683.js",
+   "remote-connections-settings-5fcec56d1e17.js"
+  ],
+  "set-remote-connection-auto-connect": [
+   "remote-connections-settings-5fcec56d1e17.js"
+  ],
+  "install-remote-codex": [],
+  "start-remote-chatgpt-login-port-forward": [
+   "app-shared-8bd9d0399038.js"
+  ],
+  "stop-remote-chatgpt-login-port-forward": [
+   "app-shared-8bd9d0399038.js"
+  ],
+  "app-server-connection-state": [
+   "app-initial-6350d04672d0.js"
+  ],
+  "remote-workspace-directory-entries": [
+   "app-initial-6350d04672d0.js",
+   "create-project-dialog-1b5add5efff1.js"
+  ],
+  "workspace-directory-entries": [
+   "app-initial-6350d04672d0.js",
+   "workspace-directory-entries-query-70873766e7c6.js"
+  ],
+  "has-custom-cli-executable": [
+   "composer-utility-bar-7738f1184086.js"
+  ],
+  "account-info": [
+   "app-initial-6350d04672d0.js",
+   "app-shared-8bd9d0399038.js",
+   "cloud-project-unavailable-banner-f12357e7e38e.js",
+   "login-route-27ff39de87da.js"
+  ],
+  "email-domain-mail-provider": [
+   "onboarding-mail-provider-b16a75ffdd1c.js",
+   "panel-fb651e5a5a08.js"
+  ],
+  "third-party-notices": [
+   "open-source-licenses-page-aa8c2e98f58d.js"
+  ],
+  "locale-info": [
+   "app-initial-6350d04672d0.js"
+  ],
+  "os-info": [
+   "app-shared-8bd9d0399038.js"
+  ],
+  "wsl-bash-availability": [
+   "app-initial-6350d04672d0.js",
+   "general-settings-65e65871cdcd.js"
+  ],
+  "browser-browsing-data-clear": [
+   "browser-use-origin-state-queries-5b0748745b24.js"
+  ],
+  "browser-use-origin-state-read": [
+   "browser-use-origin-state-queries-5b0748745b24.js"
+  ],
+  "browser-use-approval-mode-write": [
+   "browser-use-origin-state-queries-5b0748745b24.js"
+  ],
+  "browser-use-history-approval-mode-write": [
+   "browser-use-origin-state-queries-5b0748745b24.js"
+  ],
+  "browser-use-file-transfer-approval-mode-write": [
+   "browser-use-origin-state-queries-5b0748745b24.js"
+  ],
+  "browser-use-full-cdp-access-enabled-write": [
+   "browser-use-origin-state-queries-5b0748745b24.js"
+  ],
+  "node-repl-active-execs-kill": [
+   "app-shared-8bd9d0399038.js"
+  ],
+  "is-packaged": [
+   "app-shared-8bd9d0399038.js",
+   "panel-fb651e5a5a08.js"
+  ],
+  "global-dictation-hotkey-state": [
+   "app-initial-6350d04672d0.js",
+   "app-primary-6f60e9ac4103.js",
+   "keyboard-shortcuts-settings-bae6922f5c0c.js",
+   "voice-settings-7f1819748d32.js"
+  ],
+  "global-dictation-set-hotkey": [
+   "app-primary-6f60e9ac4103.js",
+   "voice-settings-7f1819748d32.js"
+  ],
+  "global-dictation-set-toggle-hotkey": [
+   "voice-settings-7f1819748d32.js"
+  ],
+  "codex-command-keymap-state": [
+   "app-initial-6350d04672d0.js",
+   "app-primary-6f60e9ac4103.js",
+   "general-settings-65e65871cdcd.js",
+   "keyboard-shortcuts-settings-bae6922f5c0c.js",
+   "pets-settings-route-d66810db325d.js",
+   "voice-settings-7f1819748d32.js"
+  ],
+  "set-codex-command-keybinding": [
+   "keyboard-shortcuts-settings-bae6922f5c0c.js",
+   "pets-settings-route-d66810db325d.js",
+   "voice-settings-7f1819748d32.js"
+  ],
+  "reset-codex-command-keybindings": [
+   "keyboard-shortcuts-settings-bae6922f5c0c.js"
+  ],
+  "feedback-desktop-log-archive": [
+   "app-initial-6350d04672d0.js"
+  ],
+  "delete-feedback-desktop-log-archive": [
+   "app-initial-6350d04672d0.js"
+  ],
+  "openai-api-key": [],
+  "recommended-skills": [
+   "skill-card-15b3e007becd.js",
+   "use-skills-page-data-0b2ad312fd4c.js"
+  ],
+  "local-custom-agents": [
+   "app-initial-6350d04672d0.js",
+   "app-shared-8bd9d0399038.js"
+  ],
+  "install-recommended-skill": [
+   "pets-settings-route-d66810db325d.js",
+   "use-skills-page-data-0b2ad312fd4c.js"
+  ],
+  "remove-skill": [
+   "app-initial-6350d04672d0.js",
+   "skill-card-15b3e007becd.js"
+  ],
+  "read-file": [
+   "app-initial-6350d04672d0.js",
+   "app-shared-8bd9d0399038.js",
+   "configuration-panel-5d5682552c7c.js",
+   "local-conversation-turn-632904a8790c.js",
+   "registered-c5346e82f931.js",
+   "review-file-source-item-9f3a33a4d5a6.js",
+   "review-file-tree-pane-e673182fde4d.js",
+   "text-file-storage-2de491513fbc.js",
+   "use-code-diff-context-menu-fc60a6d8afbd.js"
+  ],
+  "read-file-metadata": [
+   "app-initial-6350d04672d0.js",
+   "app-shared-8bd9d0399038.js",
+   "artifact-tab-content.electron-68a541ab97f2.js",
+   "local-conversation-turn-632904a8790c.js",
+   "local-template-catalog-e1a915a7cf8b.js",
+   "registered-959d2740284f.js",
+   "registered-c5346e82f931.js",
+   "review-file-source-item-9f3a33a4d5a6.js",
+   "text-file-storage-2de491513fbc.js"
+  ],
+  "write-file": [
+   "text-file-storage-2de491513fbc.js"
+  ],
+  "ensure-directory": [
+   "app-shared-8bd9d0399038.js"
+  ],
+  "read-file-binary": [
+   "app-initial-6350d04672d0.js",
+   "app-primary-6f60e9ac4103.js",
+   "app-shared-8bd9d0399038.js",
+   "artifact-tab-content.electron-68a541ab97f2.js",
+   "editable-review-file-source-tab-content.electron-ffbc45fd17ed.js",
+   "local-conversation-turn-632904a8790c.js",
+   "open-in-google-drive-menu-item-72bccfd58792.js",
+   "use-binary-preview-source-cf245fdbbb64.js",
+   "user-message-attachments-178fc2e1502f.js"
+  ],
+  "upload-local-file-over-sftp": [
+   "app-shared-8bd9d0399038.js"
+  ],
+  "compile-latex-artifact": [
+   "app-shared-8bd9d0399038.js",
+   "artifact-tab-content.electron-68a541ab97f2.js"
+  ],
+  "read-git-file-binary": [
+   "use-binary-preview-source-cf245fdbbb64.js"
+  ],
+  "codex-agents-md": [
+   "app-initial-6350d04672d0.js",
+   "personalization-settings-9b139bd250bc.js",
+   "project-import-prompt-host-13e8db734f83.js"
+  ],
+  "codex-agents-md-save": [
+   "personalization-settings-9b139bd250bc.js"
+  ],
+  "generate-commit-message": [
+   "git-action-new-branch-field-279c01ccef88.js"
+  ],
+  "generate-commit-pull-request-message": [
+   "git-action-new-branch-field-279c01ccef88.js"
+  ],
+  "generate-pull-request-message": [
+   "git-action-new-branch-field-279c01ccef88.js"
+  ],
+  "inbox-items": [
+   "app-initial-6350d04672d0.js",
+   "automations-page-58e351b49373.js",
+   "data-controls-c9dc29e9444b.js",
+   "local-conversation-thread-c8c5e92ea89e.js"
+  ],
+  "list-automations": [
+   "actions-b3b1b77c618b.js",
+   "app-initial-6350d04672d0.js",
+   "app-shared-8bd9d0399038.js",
+   "automation-side-panel-tab-b008a380ce69.js",
+   "automations-page-58e351b49373.js",
+   "execution-fde3a4937b6a.js",
+   "git-settings-cc686a50f040.js",
+   "habitat-automation-migration-dialog-8cadbc3f3845.js",
+   "habitat-automation-migration-state-2d2fb955528f.js",
+   "pull-request-detail-query-87192f682345.js",
+   "pull-request-fix-automation-1473b35ad8d0.js",
+   "thread-overflow-menu-95b62ccc8390.js"
+  ],
+  "ambient-suggestions": [
+   "first-app-connect-ambient-suggestions-1f7444f42d68.js",
+   "home-ambient-suggestions-content-ba4330f6633f.js",
+   "new-chat-suggestion-source-debug-state-e0b9a4575f0a.js",
+   "onboarding-page-2b170595bf4d.js",
+   "panel-fb651e5a5a08.js"
+  ],
+  "ambient-suggestions-refresh": [
+   "first-app-connect-ambient-suggestions-1f7444f42d68.js",
+   "home-ambient-suggestions-content-ba4330f6633f.js",
+   "new-chat-suggestion-source-debug-state-e0b9a4575f0a.js",
+   "onboarding-page-2b170595bf4d.js",
+   "panel-fb651e5a5a08.js"
+  ],
+  "ambient-suggestion-set-status": [
+   "home-ambient-suggestions-content-ba4330f6633f.js"
+  ],
+  "developer-instructions": [
+   "app-initial-6350d04672d0.js",
+   "app-shared-8bd9d0399038.js"
+  ],
+  "automation-run-archive": [
+   "app-shared-8bd9d0399038.js"
+  ],
+  "automation-run-delete": [],
+  "delete-archived-thread": [],
+  "delete-all-archived-threads": [],
+  "list-pinned-threads": [
+   "app-initial-6350d04672d0.js",
+   "app-shared-8bd9d0399038.js"
+  ],
+  "set-thread-pinned": [
+   "app-initial-6350d04672d0.js"
+  ],
+  "set-pinned-threads-order": [
+   "app-initial-6350d04672d0.js",
+   "execution-fde3a4937b6a.js"
+  ],
+  "automation-create": [
+   "app-initial-6350d04672d0.js",
+   "automation-side-panel-tab-b008a380ce69.js",
+   "automations-page-58e351b49373.js",
+   "pull-request-fix-automation-1473b35ad8d0.js"
+  ],
+  "automation-update": [
+   "actions-b3b1b77c618b.js",
+   "agent-activity-item-40fa48e24fdc.js",
+   "app-shared-8bd9d0399038.js",
+   "automation-side-panel-tab-b008a380ce69.js",
+   "automations-page-58e351b49373.js",
+   "conversation-markdown-481a27dbacfb.js",
+   "inline-followup-markdown-4916e7fc54e4.js",
+   "local-conversation-heartbeat-automation-eb50da46f57b.js",
+   "pull-request-fix-automation-1473b35ad8d0.js",
+   "sites-end-resource-78b98c374310.js",
+   "split-items-into-render-groups-61fa665f2dfe.js"
+  ],
+  "automation-delete": [
+   "actions-b3b1b77c618b.js",
+   "automation-side-panel-tab-b008a380ce69.js",
+   "automations-page-58e351b49373.js",
+   "local-conversation-heartbeat-automation-eb50da46f57b.js"
+  ],
+  "automation-run-now": [],
+  "find-files": [],
+  "paths-exist": [
+   "app-initial-6350d04672d0.js",
+   "app-primary-6f60e9ac4103.js",
+   "review-file-tree-pane-e673182fde4d.js",
+   "select-workspace-page-93a123d78c93.js"
+  ],
+  "claude-code-import-status": [],
+  "external-agent-imported-connectors": [
+   "app-initial-6350d04672d0.js"
+  ],
+  "local-environment-config": [
+   "app-initial-6350d04672d0.js",
+   "local-conversation-thread-c8c5e92ea89e.js",
+   "local-environments-settings-content-399f96d641e1.js"
+  ],
+  "local-environment-config-save": [
+   "configuration-panel-5d5682552c7c.js"
+  ],
+  "is-copilot-api-available": [
+   "app-shared-8bd9d0399038.js"
+  ],
+  "get-copilot-api-proxy-info": [
+   "app-shared-8bd9d0399038.js"
+  ],
+  "get-global-state": [
+   "app-initial-6350d04672d0.js",
+   "app-primary-6f60e9ac4103.js",
+   "app-shared-8bd9d0399038.js"
+  ],
+  "set-global-state": [
+   "app-shared-8bd9d0399038.js"
+  ],
+  "queued-follow-up-send-lock-acquire": [
+   "app-shared-8bd9d0399038.js"
+  ],
+  "queued-follow-up-send-lock-release": [
+   "app-shared-8bd9d0399038.js"
+  ],
+  "get-configuration": [],
+  "set-configuration": [],
+  "get-setting": [
+   "app-shared-8bd9d0399038.js"
+  ],
+  "get-settings": [
+   "app-initial-6350d04672d0.js",
+   "app-shared-8bd9d0399038.js",
+   "execution-fde3a4937b6a.js",
+   "register-app-actions-4b8b92c62fa1.js"
+  ],
+  "set-setting": [
+   "app-shared-8bd9d0399038.js"
+  ],
+  "settings-read": [
+   "execution-fde3a4937b6a.js"
+  ],
+  "settings-write": [
+   "execution-fde3a4937b6a.js"
+  ],
+  "apply-patch": [
+   "app-shared-8bd9d0399038.js",
+   "remote-conversation-page-d5c77768f912.js",
+   "sites-end-resource-78b98c374310.js",
+   "thread-side-panel-tab-content-e9ce64182d53.js"
+  ],
+  "mcp-codex-config": [
+   "app-shared-8bd9d0399038.js"
+  ],
+  "worktree-shell-environment-config": [
+   "app-shared-8bd9d0399038.js"
+  ],
+  "pick-file": [],
+  "pick-files": [
+   "app-initial-6350d04672d0.js"
+  ],
+  "save-file": [
+   "app-initial-6350d04672d0.js"
+  ],
+  "add-context-file": [
+   "app-initial-6350d04672d0.js",
+   "app-primary-6f60e9ac4103.js",
+   "base-file-tree-651d700763e3.js"
+  ],
+  "git-origins": [
+   "app-initial-6350d04672d0.js",
+   "app-primary-6f60e9ac4103.js",
+   "app-shared-8bd9d0399038.js",
+   "use-create-git-repository-68b40fad1718.js"
+  ],
+  "git-push": [
+   "app-shared-8bd9d0399038.js",
+   "git-action-new-branch-field-279c01ccef88.js"
+  ],
+  "git-create-branch": [
+   "app-initial-6350d04672d0.js",
+   "app-shared-8bd9d0399038.js",
+   "git-action-new-branch-field-279c01ccef88.js",
+   "git-branch-switcher-4b041e029b15.js"
+  ],
+  "git-checkout-branch": [
+   "app-shared-8bd9d0399038.js",
+   "git-action-new-branch-field-279c01ccef88.js",
+   "git-branch-switcher-4b041e029b15.js"
+  ],
+  "git-merge-base": [
+   "app-shared-8bd9d0399038.js",
+   "code-review-3b4934e8f7f0.js"
+  ],
+  "prepare-worktree-snapshot": [
+   "app-primary-6f60e9ac4103.js",
+   "app-shared-8bd9d0399038.js"
+  ],
+  "upload-worktree-snapshot": [
+   "app-primary-6f60e9ac4103.js",
+   "app-shared-8bd9d0399038.js"
+  ],
+  "set-vs-context": [],
+  "native-desktop-apps": [
+   "app-initial-6350d04672d0.js",
+   "computer-use-native-app-metadata-db64f29da0ce.js"
+  ],
+  "native-desktop-app-by-bundle-id": [
+   "computer-use-native-app-metadata-db64f29da0ce.js",
+   "user-message-attachments-178fc2e1502f.js"
+  ],
+  "computer-use-frontmost-window": [
+   "app-initial-6350d04672d0.js"
+  ],
+  "computer-use-start-capture": [
+   "app-initial-6350d04672d0.js"
+  ],
+  "native-desktop-app-icon": [],
+  "computer-use-native-desktop-app-icon": [
+   "app-initial-6350d04672d0.js"
+  ]
+ },
+ "commands": [
+  {
+   "id": "spotlightSearch",
+   "title": "Spotlight search",
+   "mac_keys": [
+    "Alt+K"
+   ],
+   "scope": "OS-global",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "toggleNotch",
+   "title": "Toggle Notch",
+   "mac_keys": [
+    "Alt+C"
+   ],
+   "scope": "OS-global",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "notchVoice",
+   "title": "Voice in Mini",
+   "mac_keys": [
+    "Alt+V"
+   ],
+   "scope": "OS-global",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "screenshotToCurrentChat",
+   "title": "Screenshot selection to current chat",
+   "mac_keys": [
+    "Control+Shift+4"
+   ],
+   "scope": "OS-global",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "screenshotToNewChat",
+   "title": "Screenshot selection to new chat",
+   "mac_keys": [
+    "Control+Alt+Shift+4"
+   ],
+   "scope": "OS-global",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "hotkeyWindow",
+   "title": "Popout Window hotkey",
+   "mac_keys": [],
+   "scope": "OS-global",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "globalDictationHold",
+   "title": "Dictation shortcut",
+   "mac_keys": [],
+   "scope": "OS-global",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "globalDictationSingleTap",
+   "title": "Single-tap dictation",
+   "mac_keys": [],
+   "scope": "OS-global",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "realtimeVoice",
+   "title": "codex.command.realtimeVoice",
+   "mac_keys": [],
+   "scope": "OS-global",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "newTask",
+   "title": "New chat",
+   "mac_keys": [
+    "CmdOrCtrl+N",
+    "CmdOrCtrl+Shift+O"
+   ],
+   "scope": "menu/default",
+   "group": "thread",
+   "command_menu": true
+  },
+  {
+   "id": "newProjectlessTask",
+   "title": "New standalone chat",
+   "mac_keys": [
+    "CmdOrCtrl+Alt+O"
+   ],
+   "scope": "menu/default",
+   "group": "thread",
+   "command_menu": true
+  },
+  {
+   "id": "temporaryChat",
+   "title": "New Temporary Chat",
+   "mac_keys": [
+    "CmdOrCtrl+Shift+N"
+   ],
+   "scope": "app",
+   "group": "thread",
+   "command_menu": true
+  },
+  {
+   "id": "openThreadInNewWindow",
+   "title": "Open in new window",
+   "mac_keys": [],
+   "scope": "menu/default",
+   "group": "thread",
+   "command_menu": true
+  },
+  {
+   "id": "archiveThread",
+   "title": "Archive chat",
+   "mac_keys": [
+    "CmdOrCtrl+Shift+A"
+   ],
+   "scope": "menu/default",
+   "group": "thread",
+   "command_menu": true
+  },
+  {
+   "id": "deleteChat",
+   "title": "Delete chat",
+   "mac_keys": [],
+   "scope": "menu/default",
+   "group": "thread",
+   "command_menu": false
+  },
+  {
+   "id": "markThreadUnread",
+   "title": "Mark as unread",
+   "mac_keys": [
+    "CmdOrCtrl+Shift+U"
+   ],
+   "scope": "app",
+   "group": "thread",
+   "command_menu": true
+  },
+  {
+   "id": "toggleThreadPin",
+   "title": "Toggle pin",
+   "mac_keys": [
+    "CmdOrCtrl+Alt+P"
+   ],
+   "scope": "menu/default",
+   "group": "thread",
+   "command_menu": true
+  },
+  {
+   "id": "copyConversationMarkdown",
+   "title": "Copy as Markdown",
+   "mac_keys": [],
+   "scope": "menu/default",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "copyLastCodeBlock",
+   "title": "Copy last code block",
+   "mac_keys": [
+    "CmdOrCtrl+Shift+;"
+   ],
+   "scope": "app",
+   "group": "thread",
+   "command_menu": true
+  },
+  {
+   "id": "openSideChat",
+   "title": "Open side chat",
+   "mac_keys": [
+    "CmdOrCtrl+Alt+S"
+   ],
+   "scope": "app",
+   "group": "thread",
+   "command_menu": true
+  },
+  {
+   "id": "openControlWindow",
+   "title": "Open control window",
+   "mac_keys": [],
+   "scope": "menu/default",
+   "group": "app",
+   "command_menu": true
+  },
+  {
+   "id": "toggleDebugModal",
+   "title": "Toggle debug panel",
+   "mac_keys": [
+    "Ctrl+D"
+   ],
+   "scope": "app",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "undoAppAction",
+   "title": "Undo last action",
+   "mac_keys": [
+    "CmdOrCtrl+Z"
+   ],
+   "scope": "app",
+   "group": "app",
+   "command_menu": true
+  },
+  {
+   "id": "redoAppAction",
+   "title": "Redo last action",
+   "mac_keys": [
+    "Command+Shift+Z"
+   ],
+   "scope": "app",
+   "group": "app",
+   "command_menu": true
+  },
+  {
+   "id": "reopenClosedTab",
+   "title": "Reopen closed tab",
+   "mac_keys": [
+    "CmdOrCtrl+Shift+T"
+   ],
+   "scope": "app",
+   "group": "panels",
+   "command_menu": true
+  },
+  {
+   "id": "forkThread",
+   "title": "Fork chat",
+   "mac_keys": [],
+   "scope": "app",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "openAvatarOverlay",
+   "title": "Show Mini",
+   "mac_keys": [
+    "Alt+Space"
+   ],
+   "scope": "OS-global",
+   "group": "app",
+   "command_menu": true
+  },
+  {
+   "id": "searchChats",
+   "title": "Switch chat\u2026",
+   "mac_keys": [],
+   "scope": "menu/default",
+   "group": "navigation",
+   "command_menu": true
+  },
+  {
+   "id": "togglePriorityFilter",
+   "title": "Toggle activity view",
+   "mac_keys": [
+    "CmdOrCtrl+Alt+U"
+   ],
+   "scope": "app",
+   "group": "navigation",
+   "command_menu": true
+  },
+  {
+   "id": "focusMainChat",
+   "title": "Focus main chat",
+   "mac_keys": [],
+   "scope": "app",
+   "group": "navigation",
+   "command_menu": true
+  },
+  {
+   "id": "focusSideChat",
+   "title": "Focus side chat",
+   "mac_keys": [],
+   "scope": "app",
+   "group": "navigation",
+   "command_menu": true
+  },
+  {
+   "id": "copyPageLink",
+   "title": "Copy Page link",
+   "mac_keys": [
+    "CmdOrCtrl+L"
+   ],
+   "scope": "app",
+   "group": "navigation",
+   "command_menu": true
+  },
+  {
+   "id": "focusPageBlockControls",
+   "title": "codex.command.focusPageBlockControls",
+   "mac_keys": [
+    "Shift+F10"
+   ],
+   "scope": "app",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "openOrbit",
+   "title": "codex.command.openOrbit.dot",
+   "mac_keys": [
+    "CmdOrCtrl+."
+   ],
+   "scope": "app",
+   "group": "navigation",
+   "command_menu": true
+  },
+  {
+   "id": "nextThreadNeedingAttention",
+   "title": "Next chat needing attention",
+   "mac_keys": [
+    "CmdOrCtrl+Alt+A"
+   ],
+   "scope": "app",
+   "group": "navigation",
+   "command_menu": true
+  },
+  {
+   "id": "previousTab",
+   "title": "Previous tab",
+   "mac_keys": [
+    "Ctrl+Shift+Tab",
+    "Command+Shift+[",
+    "Command+Alt+Left"
+   ],
+   "scope": "app",
+   "group": "navigation",
+   "command_menu": false
+  },
+  {
+   "id": "previousThread",
+   "title": "Previous chat",
+   "mac_keys": [
+    "Command+Shift+[",
+    "Command+Alt+Left"
+   ],
+   "scope": "menu/default",
+   "group": "navigation",
+   "command_menu": true
+  },
+  {
+   "id": "previousRecentThread",
+   "title": "Previous recently viewed chat",
+   "mac_keys": [
+    "Ctrl+Shift+Tab"
+   ],
+   "scope": "app",
+   "group": "navigation",
+   "command_menu": false
+  },
+  {
+   "id": "nextTab",
+   "title": "Next tab",
+   "mac_keys": [
+    "Ctrl+Tab",
+    "Command+Shift+]",
+    "Command+Alt+Right"
+   ],
+   "scope": "app",
+   "group": "navigation",
+   "command_menu": false
+  },
+  {
+   "id": "nextThread",
+   "title": "Next chat",
+   "mac_keys": [
+    "Command+Shift+]",
+    "Command+Alt+Right"
+   ],
+   "scope": "menu/default",
+   "group": "navigation",
+   "command_menu": true
+  },
+  {
+   "id": "nextRecentThread",
+   "title": "Next recently viewed chat",
+   "mac_keys": [
+    "Ctrl+Tab"
+   ],
+   "scope": "app",
+   "group": "navigation",
+   "command_menu": false
+  },
+  {
+   "id": "recentThread1",
+   "title": "Go to recent chat 1",
+   "mac_keys": [
+    "CmdOrCtrl+Alt+1"
+   ],
+   "scope": "app",
+   "group": "navigation",
+   "command_menu": true
+  },
+  {
+   "id": "recentThread2",
+   "title": "Go to recent chat 2",
+   "mac_keys": [
+    "CmdOrCtrl+Alt+2"
+   ],
+   "scope": "app",
+   "group": "navigation",
+   "command_menu": true
+  },
+  {
+   "id": "recentThread3",
+   "title": "Go to recent chat 3",
+   "mac_keys": [
+    "CmdOrCtrl+Alt+3"
+   ],
+   "scope": "app",
+   "group": "navigation",
+   "command_menu": true
+  },
+  {
+   "id": "recentThread4",
+   "title": "Go to recent chat 4",
+   "mac_keys": [
+    "CmdOrCtrl+Alt+4",
+    "CmdOrCtrl+Shift+9"
+   ],
+   "scope": "app",
+   "group": "navigation",
+   "command_menu": true
+  },
+  {
+   "id": "recentThread5",
+   "title": "Go to recent chat 5",
+   "mac_keys": [
+    "CmdOrCtrl+Alt+5",
+    "CmdOrCtrl+Shift+8"
+   ],
+   "scope": "app",
+   "group": "navigation",
+   "command_menu": true
+  },
+  {
+   "id": "recentThread6",
+   "title": "Go to recent chat 6",
+   "mac_keys": [
+    "CmdOrCtrl+Alt+6"
+   ],
+   "scope": "app",
+   "group": "navigation",
+   "command_menu": true
+  },
+  {
+   "id": "switchToMode1",
+   "title": "Switch to Chat",
+   "mac_keys": [
+    "Ctrl+1"
+   ],
+   "scope": "app",
+   "group": "navigation",
+   "command_menu": true
+  },
+  {
+   "id": "switchToMode2",
+   "title": "Switch to Work",
+   "mac_keys": [
+    "Ctrl+2"
+   ],
+   "scope": "app",
+   "group": "navigation",
+   "command_menu": true
+  },
+  {
+   "id": "switchToMode3",
+   "title": "Switch to Codex",
+   "mac_keys": [
+    "Ctrl+3"
+   ],
+   "scope": "app",
+   "group": "navigation",
+   "command_menu": true
+  },
+  {
+   "id": "settings",
+   "title": "Settings",
+   "mac_keys": [
+    "CmdOrCtrl+,"
+   ],
+   "scope": "menu/default",
+   "group": "app",
+   "command_menu": true
+  },
+  {
+   "id": "codexMicroSettings",
+   "title": "Codex Micro setup",
+   "mac_keys": [],
+   "scope": "menu/default",
+   "group": "configure",
+   "command_menu": false
+  },
+  {
+   "id": "mcpSettings",
+   "title": "MCP",
+   "mac_keys": [],
+   "scope": "menu/default",
+   "group": "configure",
+   "command_menu": true
+  },
+  {
+   "id": "personalitySettings",
+   "title": "codex.command.personalitySettings",
+   "mac_keys": [],
+   "scope": "menu/default",
+   "group": "configure",
+   "command_menu": true
+  },
+  {
+   "id": "importExternalAgent",
+   "title": "codex.command.importExternalAgent",
+   "mac_keys": [],
+   "scope": "menu/default",
+   "group": "configure",
+   "command_menu": true
+  },
+  {
+   "id": "keyboardShortcuts",
+   "title": "Keyboard shortcuts",
+   "mac_keys": [],
+   "scope": "menu/default",
+   "group": "configure",
+   "command_menu": true
+  },
+  {
+   "id": "showKeyboardShortcuts",
+   "title": "Show keyboard shortcuts",
+   "mac_keys": [
+    "CmdOrCtrl+/"
+   ],
+   "scope": "app",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "clearAllUnreads",
+   "title": "Clear all unreads",
+   "mac_keys": [
+    "Shift+Escape"
+   ],
+   "scope": "app",
+   "group": "app",
+   "command_menu": true
+  },
+  {
+   "id": "manageTasks",
+   "title": "Manage scheduled tasks",
+   "mac_keys": [],
+   "scope": "menu/default",
+   "group": "app",
+   "command_menu": true
+  },
+  {
+   "id": "forceReloadSkills",
+   "title": "Force reload skills",
+   "mac_keys": [],
+   "scope": "menu/default",
+   "group": "skills",
+   "command_menu": true
+  },
+  {
+   "id": "openSkills",
+   "title": "Go to skills",
+   "mac_keys": [],
+   "scope": "menu/default",
+   "group": "skills",
+   "command_menu": true
+  },
+  {
+   "id": "newProject",
+   "title": "New project",
+   "mac_keys": [],
+   "scope": "menu/default",
+   "group": "workspace",
+   "command_menu": true
+  },
+  {
+   "id": "openFolder",
+   "title": "Open folder",
+   "mac_keys": [
+    "CmdOrCtrl+O"
+   ],
+   "scope": "menu/default",
+   "group": "workspace",
+   "command_menu": true
+  },
+  {
+   "id": "toggleSidebar",
+   "title": "Toggle sidebar",
+   "mac_keys": [
+    "CmdOrCtrl+Shift+S",
+    "CmdOrCtrl+B"
+   ],
+   "scope": "menu/default",
+   "group": "panels",
+   "command_menu": true
+  },
+  {
+   "id": "toggleFileTreePanel",
+   "title": "Toggle navigation panel",
+   "mac_keys": [
+    "CmdOrCtrl+Shift+E"
+   ],
+   "scope": "app",
+   "group": "panels",
+   "command_menu": true
+  },
+  {
+   "id": "toggleBottomPanel",
+   "title": "Toggle bottom panel",
+   "mac_keys": [
+    "CmdOrCtrl+J"
+   ],
+   "scope": "menu/default",
+   "group": "panels",
+   "command_menu": true
+  },
+  {
+   "id": "togglePinnedSummary",
+   "title": "Toggle pinned summary",
+   "mac_keys": [],
+   "scope": "menu/default",
+   "group": "panels",
+   "command_menu": true
+  },
+  {
+   "id": "toggleTerminal",
+   "title": "Open terminal",
+   "mac_keys": [],
+   "scope": "menu/default",
+   "group": "panels",
+   "command_menu": true
+  },
+  {
+   "id": "openBrowserTab",
+   "title": "Open browser tab",
+   "mac_keys": [
+    "CmdOrCtrl+T"
+   ],
+   "scope": "menu/default",
+   "group": "panels",
+   "command_menu": true
+  },
+  {
+   "id": "closeOtherTabs",
+   "title": "Close other tabs",
+   "mac_keys": [
+    "CmdOrCtrl+Alt+W"
+   ],
+   "scope": "app",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "showWorkspaceTabView",
+   "title": "Full view",
+   "mac_keys": [
+    "CmdOrCtrl+Shift+F"
+   ],
+   "scope": "app",
+   "group": "panels",
+   "command_menu": true
+  },
+  {
+   "id": "stepWorkspaceLayout",
+   "title": "Cycle workspace layout",
+   "mac_keys": [
+    "CmdOrCtrl+Shift+B"
+   ],
+   "scope": "app",
+   "group": "panels",
+   "command_menu": true
+  },
+  {
+   "id": "openReviewTab",
+   "title": "Open Changes tab",
+   "mac_keys": [
+    "Ctrl+Shift+G"
+   ],
+   "scope": "app",
+   "group": "panels",
+   "command_menu": true
+  },
+  {
+   "id": "toggleReviewTab",
+   "title": "Toggle Changes",
+   "mac_keys": [],
+   "scope": "app",
+   "group": "panels",
+   "command_menu": false
+  },
+  {
+   "id": "toggleSidePanel",
+   "title": "Toggle Changes panel",
+   "mac_keys": [
+    "CmdOrCtrl+Alt+B"
+   ],
+   "scope": "menu/default",
+   "group": "panels",
+   "command_menu": true
+  },
+  {
+   "id": "toggleMaximizeSidePanel",
+   "title": "Toggle maximize side panel",
+   "mac_keys": [],
+   "scope": "app",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "findInThread",
+   "title": "Find",
+   "mac_keys": [
+    "Command+F"
+   ],
+   "scope": "menu/default",
+   "group": "navigation",
+   "command_menu": true
+  },
+  {
+   "id": "goToLine",
+   "title": "Go to line",
+   "mac_keys": [
+    "CmdOrCtrl+L"
+   ],
+   "scope": "app",
+   "group": "navigation",
+   "command_menu": true
+  },
+  {
+   "id": "focusBrowserAddressBar",
+   "title": "Focus browser address bar",
+   "mac_keys": [
+    "CmdOrCtrl+L"
+   ],
+   "scope": "menu/default",
+   "group": "navigation",
+   "command_menu": true
+  },
+  {
+   "id": "navigateBrowserBack",
+   "title": "Browser back",
+   "mac_keys": [
+    "Command+Left"
+   ],
+   "scope": "app",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "navigateBrowserForward",
+   "title": "Browser forward",
+   "mac_keys": [
+    "Command+Right"
+   ],
+   "scope": "app",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "navigateBack",
+   "title": "Back",
+   "mac_keys": [
+    "CmdOrCtrl+[",
+    "MouseBack"
+   ],
+   "scope": "menu/default",
+   "group": "navigation",
+   "command_menu": true
+  },
+  {
+   "id": "navigateForward",
+   "title": "Forward",
+   "mac_keys": [
+    "CmdOrCtrl+]",
+    "MouseForward"
+   ],
+   "scope": "menu/default",
+   "group": "navigation",
+   "command_menu": true
+  },
+  {
+   "id": "logOut",
+   "title": "Log out",
+   "mac_keys": [],
+   "scope": "menu/default",
+   "group": "app",
+   "command_menu": true
+  },
+  {
+   "id": "feedback",
+   "title": "Feedback",
+   "mac_keys": [],
+   "scope": "menu/default",
+   "group": "app",
+   "command_menu": true
+  },
+  {
+   "id": "environmentAction1",
+   "title": "Environment action 1",
+   "mac_keys": [
+    "Command+Shift+D"
+   ],
+   "scope": "app",
+   "group": "workspace",
+   "command_menu": false
+  },
+  {
+   "id": "environmentAction2",
+   "title": "Environment action 2",
+   "mac_keys": [],
+   "scope": "app",
+   "group": "workspace",
+   "command_menu": false
+  },
+  {
+   "id": "environmentAction3",
+   "title": "Environment action 3",
+   "mac_keys": [],
+   "scope": "app",
+   "group": "workspace",
+   "command_menu": false
+  },
+  {
+   "id": "environmentAction4",
+   "title": "Environment action 4",
+   "mac_keys": [],
+   "scope": "app",
+   "group": "workspace",
+   "command_menu": false
+  },
+  {
+   "id": "environmentAction5",
+   "title": "Environment action 5",
+   "mac_keys": [],
+   "scope": "app",
+   "group": "workspace",
+   "command_menu": false
+  },
+  {
+   "id": "environmentAction6",
+   "title": "Environment action 6",
+   "mac_keys": [],
+   "scope": "app",
+   "group": "workspace",
+   "command_menu": false
+  },
+  {
+   "id": "environmentAction7",
+   "title": "Environment action 7",
+   "mac_keys": [],
+   "scope": "app",
+   "group": "workspace",
+   "command_menu": false
+  },
+  {
+   "id": "environmentAction8",
+   "title": "Environment action 8",
+   "mac_keys": [],
+   "scope": "app",
+   "group": "workspace",
+   "command_menu": false
+  },
+  {
+   "id": "environmentAction9",
+   "title": "Environment action 9",
+   "mac_keys": [],
+   "scope": "app",
+   "group": "workspace",
+   "command_menu": false
+  },
+  {
+   "id": "thread1",
+   "title": "Go to chat 1",
+   "mac_keys": [
+    "CmdOrCtrl+1"
+   ],
+   "scope": "menu/default",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "thread2",
+   "title": "Go to chat 2",
+   "mac_keys": [
+    "CmdOrCtrl+2"
+   ],
+   "scope": "menu/default",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "thread3",
+   "title": "Go to chat 3",
+   "mac_keys": [
+    "CmdOrCtrl+3"
+   ],
+   "scope": "menu/default",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "thread4",
+   "title": "Go to chat 4",
+   "mac_keys": [
+    "CmdOrCtrl+4"
+   ],
+   "scope": "menu/default",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "thread5",
+   "title": "Go to chat 5",
+   "mac_keys": [
+    "CmdOrCtrl+5"
+   ],
+   "scope": "menu/default",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "thread6",
+   "title": "Go to chat 6",
+   "mac_keys": [
+    "CmdOrCtrl+6"
+   ],
+   "scope": "menu/default",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "thread7",
+   "title": "Go to chat 7",
+   "mac_keys": [
+    "CmdOrCtrl+7"
+   ],
+   "scope": "menu/default",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "thread8",
+   "title": "Go to chat 8",
+   "mac_keys": [
+    "CmdOrCtrl+8"
+   ],
+   "scope": "menu/default",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "thread9",
+   "title": "Go to chat 9",
+   "mac_keys": [
+    "CmdOrCtrl+9"
+   ],
+   "scope": "menu/default",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "openCommandMenu",
+   "title": "Open command menu",
+   "mac_keys": [
+    "CmdOrCtrl+K",
+    "CmdOrCtrl+Shift+P"
+   ],
+   "scope": "menu",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "searchFiles",
+   "title": "Search Files\u2026",
+   "mac_keys": [
+    "CmdOrCtrl+P"
+   ],
+   "scope": "menu",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "renameThread",
+   "title": "Rename chat",
+   "mac_keys": [
+    "CmdOrCtrl+Alt+R"
+   ],
+   "scope": "menu",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "copyWorkingDirectory",
+   "title": "Copy working directory",
+   "mac_keys": [
+    "CmdOrCtrl+Shift+C"
+   ],
+   "scope": "menu",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "copyDeeplink",
+   "title": "Copy deeplink",
+   "mac_keys": [
+    "CmdOrCtrl+Alt+L"
+   ],
+   "scope": "menu",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "copyConversationPath",
+   "title": "Copy conversation path",
+   "mac_keys": [
+    "CmdOrCtrl+Alt+Shift+C"
+   ],
+   "scope": "menu",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "closeTab",
+   "title": "Close Tab",
+   "mac_keys": [
+    "CmdOrCtrl+W"
+   ],
+   "scope": "menu",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "closeWindow",
+   "title": "Close",
+   "mac_keys": [
+    "CmdOrCtrl+W"
+   ],
+   "scope": "menu",
+   "group": null,
+   "command_menu": false
+  },
+  {
+   "id": "newWindow",
+   "title": "New Window",
+   "mac_keys": [],
+   "scope": "menu",
+   "group": null,
+   "command_menu": false
+  }
+ ],
+ "worker_js_case_labels_unfiltered": [
+  "abort",
+  "add",
+  "alacritty",
+  "all",
+  "apply-changes",
+  "apply-patch",
+  "apply-review-section-changes",
+  "approve",
+  "april",
+  "array",
+  "attrs",
+  "august",
+  "authored",
+  "automation-writable-roots",
+  "availability",
+  "background",
+  "base-branch",
+  "bash",
+  "before",
+  "between",
+  "bigint",
+  "blame-file",
+  "blob",
+  "block",
+  "blockquote",
+  "boolean",
+  "br",
+  "branch",
+  "branch-ahead-count",
+  "branch-commits",
+  "branch-diff-stats",
+  "branch-exists",
+  "branch-metadata",
+  "bytes",
+  "cancel-worktree-upstream-refresh",
+  "cat-file",
+  "check-ignore",
+  "checkout-branch",
+  "cleanup-host-handoff-transfer",
+  "client",
+  "clone-state",
+  "close",
+  "closed",
+  "cmd",
+  "coalesced",
+  "code",
+  "codespan",
+  "codex",
+  "codex-worktrees",
+  "comment",
+  "commit",
+  "commit-message-diff",
+  "completed",
+  "computer-use",
+  "config",
+  "config-value",
+  "container",
+  "continue",
+  "create-branch",
+  "create-worktree",
+  "current-branch",
+  "current-branch-snapshot",
+  "darwin",
+  "date",
+  "debug",
+  "december",
+  "def",
+  "default-branch",
+  "default-remote-branch",
+  "del",
+  "delete-worktree",
+  "dispose-git-init-watch",
+  "em",
+  "error",
+  "escape",
+  "export",
+  "failed",
+  "failing",
+  "february",
+  "fetch",
+  "filtered",
+  "firestore",
+  "first",
+  "for-each-ref",
+  "foreground",
+  "friday",
+  "full",
+  "function",
+  "get-target-command",
+  "gh",
+  "ghostty",
+  "git",
+  "git-context",
+  "github-request",
+  "git-init-repo",
+  "git-origins",
+  "gnome-terminal",
+  "head",
+  "headers",
+  "heading",
+  "hit",
+  "hr",
+  "html",
+  "image",
+  "import",
+  "index",
+  "index-info",
+  "inf",
+  "info",
+  "inline",
+  "integer",
+  "invalidate",
+  "invalidate-git-read-caches",
+  "invalidate-stable-metadata",
+  "january",
+  "july",
+  "june",
+  "kgx",
+  "kitty",
+  "konsole",
+  "last",
+  "link",
+  "linux",
+  "list",
+  "list-worktrees",
+  "load-target-icon",
+  "local-refs",
+  "ls-files",
+  "managed-worktree-state",
+  "march",
+  "mark-draft",
+  "mark-ready",
+  "mate-terminal",
+  "may",
+  "merge-base",
+  "merged",
+  "metadata",
+  "miss",
+  "monday",
+  "move-thread-to-host-worktree",
+  "move-thread-to-local",
+  "move-thread-to-worktree",
+  "name",
+  "nan",
+  "nearest-ancestor-branch",
+  "node",
+  "none",
+  "november",
+  "nth",
+  "null",
+  "number",
+  "object",
+  "october",
+  "open",
+  "open-in",
+  "origin-and-roots",
+  "origin-url",
+  "overwrite-repo",
+  "paragraph",
+  "passing",
+  "pause",
+  "pending",
+  "pipe",
+  "pipeline",
+  "posix",
+  "powershell",
+  "prepare-worktree-snapshot",
+  "primitive",
+  "promise",
+  "pull",
+  "push",
+  "pwsh",
+  "readable",
+  "read-git-file-binary",
+  "recent-branches",
+  "recover-live-queries",
+  "reject",
+  "release",
+  "remap",
+  "remote",
+  "remote-refs",
+  "remove-reviewers",
+  "reopen",
+  "reopen-ready",
+  "repository-identity",
+  "request",
+  "request-reviewers",
+  "resolve",
+  "resolve-worktree-for-thread",
+  "resolve-worktree-starting-ref",
+  "response",
+  "restore-worktree",
+  "revert",
+  "review-commit-line-counts",
+  "review-diff",
+  "reviewed",
+  "review-patch",
+  "review-search",
+  "review-source-line-counts",
+  "review-summary",
+  "rev-list",
+  "rev-parse",
+  "rg",
+  "rpc-promise",
+  "rpc-target",
+  "rpc-thenable",
+  "saturday",
+  "scheduler",
+  "screenshot",
+  "search-branches",
+  "second",
+  "september",
+  "set-config-value",
+  "set-worktree-owner-thread",
+  "sh",
+  "show-ref",
+  "socks",
+  "space",
+  "ssh",
+  "stable-metadata",
+  "stage",
+  "staged",
+  "start",
+  "status",
+  "status-summary",
+  "storage",
+  "stream",
+  "string",
+  "strong",
+  "stub",
+  "submodule-paths",
+  "subscribe-live-query",
+  "success",
+  "sunday",
+  "symbol",
+  "synced",
+  "synced-branch",
+  "synced-branch-state",
+  "table",
+  "tar",
+  "tectonic",
+  "text",
+  "third",
+  "thursday",
+  "tilix",
+  "toggle-auto-merge",
+  "trace",
+  "tuesday",
+  "turn-diff-capture-complete",
+  "turn-diff-capture-start",
+  "uncommitted",
+  "undefined",
+  "unstage",
+  "unstaged",
+  "unsupported",
+  "unwatch-repo",
+  "update-body",
+  "update-title",
+  "upstream-branch",
+  "url",
+  "warning",
+  "watch-repo",
+  "wednesday",
+  "worker-main-rpc-response",
+  "worker-request",
+  "worker-request-cancel",
+  "working-tree",
+  "worktree",
+  "worktree-owner",
+  "worktree-shell-environment",
+  "worktree-snapshot-ref",
+  "worktree-topology",
+  "writable",
+  "wsl",
+  "x-terminal-emulator",
+  "zsh",
+  "zutty"
+ ]
+}
