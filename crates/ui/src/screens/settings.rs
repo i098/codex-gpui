@@ -49,6 +49,7 @@ pub fn shell(config: &Value, skills: &Value, cx: &mut App) -> Entity<Shell> {
         shell.selected_rail = None;
         shell.chat_chrome = false;
         shell.new_tab = false;
+        shell.main_backgrounds = 1;
         shell
     })
 }
@@ -412,7 +413,7 @@ impl SettingsPane {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let on = self.page.read(cx).flag(key, default);
-        switch(&self.layer, key, on, false, t)
+        switch(key, on, false, t)
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.page
                     .update(cx, |p, cx| p.set(key, Value::Bool(!on), cx))
@@ -466,7 +467,6 @@ impl SettingsPane {
         cx: &mut Context<Self>,
     ) -> Vec<(&'static str, Vec<Div>)> {
         let page = self.page.read(cx);
-        let l = &self.layer;
         // The `w-48` path span middle-truncates to the width it has (`zLi`).
         let mono = Font {
             weight: FontWeight(430.),
@@ -506,7 +506,7 @@ impl SettingsPane {
                     .overflow_hidden()
                     .child(text(root, 12., 16., 430., t.text_secondary).font_family(MONO)),
             )
-            .child(button(l, "Change", t.text_alpha_5, None, t))
+            .child(button("Change", t.text_alpha_5, None, t))
             .into_any_element();
         let hotkey = div()
             .flex()
@@ -533,7 +533,7 @@ impl SettingsPane {
                             "By default, ChatGPT can read and edit files in its workspace. It can ask for additional access when needed",
                         ),
                         // Default permissions are always shown.
-                        switch(l, "default-permissions", true, true, t).into_any_element(),
+                        switch("default-permissions", true, true, t).into_any_element(),
                     ),
                     row(
                         "Full access",
@@ -558,7 +558,6 @@ impl SettingsPane {
                         "Default file open destination",
                         Some("Where files and folders open by default"),
                         select(
-                            l,
                             "Zed",
                             Some(
                                 img("icons/settings-zed.png")
@@ -573,7 +572,7 @@ impl SettingsPane {
                     row(
                         "Language",
                         Some("Language for the app UI"),
-                        select(l, "Auto detect", None, false, t),
+                        select("Auto detect", None, false, t),
                     ),
                     row(
                         "Show in menu bar",
@@ -583,7 +582,7 @@ impl SettingsPane {
                     row(
                         "Confirm before closing a window",
                         Some("Warn when a tab-close shortcut would close the window"),
-                        select(l, close, None, false, t),
+                        select(close, None, false, t),
                     ),
                     row(
                         "Full view by default",
@@ -625,7 +624,7 @@ impl SettingsPane {
                         Some(
                             "Choose how quickly ChatGPT runs across chats, subagents, and compaction",
                         ),
-                        select(l, "Standard", None, false, t),
+                        select("Standard", None, false, t),
                     ),
                     row(
                         "Suggested prompts",
@@ -637,7 +636,7 @@ impl SettingsPane {
                     row(
                         "Open source licenses",
                         Some("Third-party notices for bundled dependencies"),
-                        button(l, "View", t.text_alpha_5, None, t).into_any_element(),
+                        button("View", t.text_alpha_5, None, t).into_any_element(),
                     ),
                     row(
                         "Plugins",
@@ -669,7 +668,7 @@ impl SettingsPane {
                     row(
                         "Send shortcut",
                         Some("Choose when Enter sends a prompt or inserts a new line"),
-                        select(l, send_shortcut, None, false, t),
+                        select(send_shortcut, None, false, t),
                     ),
                     row(
                         "Follow-up behavior",
@@ -715,7 +714,6 @@ impl SettingsPane {
                         "Notifications are off",
                         Some("Turn on notifications in System Settings to use the options below"),
                         button(
-                            l,
                             "Open System Settings",
                             t.primary_soft_alpha,
                             Some(t.border),
@@ -726,27 +724,27 @@ impl SettingsPane {
                     row(
                         "Turn completion notifications",
                         Some("Set when ChatGPT alerts you that it's finished"),
-                        select(l, "Only when unfocused", None, true, t),
+                        select("Only when unfocused", None, true, t),
                     ),
                     row(
                         "Enable permission notifications",
                         Some("Show alerts when notification permissions are required"),
-                        switch(l, "permissions-notifications", true, true, t).into_any_element(),
+                        switch("permissions-notifications", true, true, t).into_any_element(),
                     ),
                     row(
                         "Enable question notifications",
                         Some("Show alerts when input is needed to continue"),
-                        switch(l, "question-notifications", true, true, t).into_any_element(),
+                        switch("question-notifications", true, true, t).into_any_element(),
                     ),
                     row(
                         "Enable dot notifications",
                         Some("Show alerts when your dot sends you a message"),
-                        switch(l, "dot-notifications", true, true, t).into_any_element(),
+                        switch("dot-notifications", true, true, t).into_any_element(),
                     ),
                     row(
                         "Notification sound",
                         Some("Sound for task completion, permission requests, and questions"),
-                        select(l, "Default", None, true, t),
+                        select("Default", None, true, t),
                     ),
                 ],
             ),
@@ -965,45 +963,38 @@ fn description(s: &'static str, t: &Theme) -> Div {
 
 /// `Switch`: 32×20 track, 16 px thumb. `disabled` is the control's `opacity: .6`, folded
 /// into opaque colors so the thumb composites over the row like the CSS group does.
-fn switch(l: &Layer, id: &'static str, on: bool, disabled: bool, t: &Theme) -> Stateful<Div> {
-    let bg = t.background_panel;
-    let track = over(
-        if on {
-            t.switch_track_checked
-        } else {
-            t.switch_track
-        },
-        bg,
-    );
+fn switch(id: &'static str, on: bool, disabled: bool, t: &Theme) -> Stateful<Div> {
+    let track = if on {
+        t.switch_track_checked
+    } else {
+        t.switch_track
+    };
     let (track, thumb) = if disabled {
-        (fade(track, bg), fade(t.control_thumb, bg))
+        let bg = t.background_panel;
+        (fade(over(track, bg), bg), fade(t.control_thumb, bg))
     } else {
         (track, t.control_thumb)
     };
-    let at = l.clone();
     div()
         .id(id)
         .relative()
         .flex_none()
         .w(px(32.))
         .h(px(20.))
-        .child(deco(l, 9999., Round, track, None))
+        .child(on_card(9999., Round, track, None))
         .child(
             div()
                 .absolute()
                 .top(px(2.))
                 .left(px(if on { 14. } else { 2. }))
                 .size(px(16.))
-                .child(in_layer(
-                    shapes::Decoration {
-                        radius: Corners::all(px(9999.)),
-                        fill: Some(thumb),
-                        border: Some((px(1.), thumb)),
-                        shadows: vec![shadow(t.shadow_sm, 1., 2., -1., false)],
-                        ..Default::default()
-                    },
-                    move || at.get(),
-                )),
+                .child(shapes::decoration(shapes::Decoration {
+                    radius: Corners::all(px(9999.)),
+                    fill: Some(thumb),
+                    border: Some((px(1.), thumb)),
+                    shadows: vec![shadow(t.shadow_sm, 1., 2., -1., false)],
+                    ..Default::default()
+                })),
         )
 }
 
@@ -1024,17 +1015,24 @@ fn fade(top: Hsla, bottom: Hsla) -> Hsla {
 /// A settings surface through `shapes`: CSS `radius`, corner shape, fill and 1 px border.
 fn deco(l: &Layer, radius: f32, corner: Corner, fill: Hsla, border: Option<Hsla>) -> AnyElement {
     let l = l.clone();
-    in_layer(
-        shapes::Decoration {
-            radius: Corners::all(px(radius)),
-            corner,
-            fill: Some(fill),
-            border: border.map(|c| (px(1.), c)),
-            shadows: Vec::new(),
-        },
-        move || l.get(),
-    )
-    .into_any_element()
+    in_layer(surface(radius, corner, fill, border), move || l.get()).into_any_element()
+}
+
+/// A control's surface on a settings card: Chromium blits it onto the card's opaque pixels in
+/// the scroller's layer, as on the page (`shapes` takes the `.layer()` origin for its tiles).
+fn on_card(radius: f32, corner: Corner, fill: Hsla, border: Option<Hsla>) -> AnyElement {
+    shapes::decoration(surface(radius, corner, fill, border)).into_any_element()
+}
+
+/// The `shapes` paint of [`deco`] and [`on_card`].
+fn surface(radius: f32, corner: Corner, fill: Hsla, border: Option<Hsla>) -> shapes::Decoration {
+    shapes::Decoration {
+        radius: Corners::all(px(radius)),
+        corner,
+        fill: Some(fill),
+        border: border.map(|c| (px(1.), c)),
+        ..Default::default()
+    }
 }
 
 /// The origin (window px) of the composited layer Chromium paints a scroll container's
@@ -1052,19 +1050,18 @@ fn probe(l: &Layer) -> impl IntoElement {
 
 /// Toolbar `_Button` (`Change`, `View`: `bg-text/5`, transparent 1 px border; `Open System
 /// Settings`: outlined).
-fn button(l: &Layer, label: &'static str, fill: Hsla, border: Option<Hsla>, t: &Theme) -> Div {
+fn button(label: &'static str, fill: Hsla, border: Option<Hsla>, t: &Theme) -> Div {
     div()
         .h(px(28.))
         .px(px(9.))
         .flex()
         .items_center()
         .relative()
-        .child(deco(l, 12.5, Squircle, fill, border))
+        .child(on_card(12.5, Squircle, fill, border))
         .child(text(label, 13., 18., 430., t.text))
 }
 /// Dropdown trigger: value (with an optional leading app icon) and a chevron.
 fn select(
-    l: &Layer,
     label: &'static str,
     leading: Option<AnyElement>,
     disabled: bool,
@@ -1078,8 +1075,7 @@ fn select(
         .justify_between()
         .gap(px(4.))
         .relative()
-        .child(deco(
-            l,
+        .child(on_card(
             12.5,
             Squircle,
             t.primary_soft_alpha,

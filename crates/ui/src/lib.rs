@@ -6,7 +6,8 @@ use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, Bounds, ClickEvent, Context, Corners, Div,
     FontWeight, Hsla, Image, ImageFormat, InteractiveElement, IntoElement, MouseButton,
     ParentElement, Pixels, Point, Render, Rgba, SharedString, Stateful, StatefulInteractiveElement,
-    Styled, Svg, Window, actions, canvas, div, img, point, prelude::FluentBuilder as _, px, svg,
+    Styled, Svg, Window, actions, canvas, div, img, point, prelude::FluentBuilder as _, px, size,
+    svg,
 };
 use std::sync::{Arc, LazyLock};
 use theme::{ActiveTheme as _, Theme};
@@ -38,6 +39,8 @@ pub const RAIL_WIDTH: Pixels = px(52.);
 pub const SIDEBAR_PANEL_WIDTH: Pixels = px(288.);
 /// `--app-shell-page-inline-end-inset`, also the layout's bottom padding.
 const PAGE_INSET: Pixels = px(4.);
+/// `--border-width-hairline` of `_MainContentLeftBorder`.
+const MAIN_HAIRLINE: Pixels = px(0.5);
 /// `--button-radius` of the 36 px (`xl`) and 28 px `_Button` sizes.
 const RADIUS_BUTTON_XL: Pixels = px(12.5);
 const RADIUS_BUTTON_MD: Pixels = px(9.375);
@@ -59,6 +62,10 @@ pub struct Shell {
     pub chat_chrome: bool,
     /// Titlebar `New tab` button (chat routes; Settings and Automations hide it).
     pub new_tab: bool,
+    /// Opaque background boxes the page paints under the main surface's clip that reach its
+    /// right corners (Settings' `electron:bg-surface`): each blends the clip's anti-aliased
+    /// edge once more.
+    pub main_backgrounds: u8,
     sidebar: AnyView,
     main: AnyView,
 }
@@ -92,6 +99,7 @@ impl Shell {
             selected_rail: Some("home"),
             chat_chrome: true,
             new_tab: true,
+            main_backgrounds: 0,
             sidebar,
             main,
         }
@@ -310,12 +318,6 @@ pub fn home_shell(_: &mut Window, cx: &mut App) -> AnyView {
 /// Top of the Home sidebar: `Codex ⌄` mode switch, activity bell and search, then the
 /// `New chat` and `Your dot` rows.
 pub fn home_sidebar_header(cx: &App) -> Div {
-    static YOUR_DOT: LazyLock<Arc<Image>> = LazyLock::new(|| {
-        Arc::new(Image::from_bytes(
-            ImageFormat::Svg,
-            include_bytes!("../assets/your-dot.svg").to_vec(),
-        ))
-    });
     let t = cx.theme();
     let row = |id: &'static str, leading: AnyElement, label: &'static str| {
         let hover_bg = t.list_hover;
@@ -329,7 +331,13 @@ pub fn home_sidebar_header(cx: &App) -> Div {
             .rounded(RADIUS_BUTTON_XL)
             .hover(move |s| s.bg(hover_bg))
             .child(leading)
-            .child(text(label, 14., 21., 430., t.text_default_nav))
+            // `.text-fade-truncate`: a CSS mask, so Chromium paints the label into its own
+            // transparent layer and composites that onto the sidebar.
+            .child(
+                text(label, 14., 21., 430., t.text_default_nav)
+                    .flex_1()
+                    .layer(),
+            )
     };
     div()
         .flex_none()
@@ -389,7 +397,8 @@ pub fn home_sidebar_header(cx: &App) -> Div {
                 )
                 .child(row(
                     "your-dot",
-                    img(YOUR_DOT.clone()).size(px(16.)).into_any_element(),
+                    // An `<img>`: its svg carries its own fill.
+                    icon::icon("your-dot", 16., gpui::rgb(0xbac1d3).into()).into_any_element(),
                     "Your dot",
                 )),
         )
@@ -530,59 +539,24 @@ impl Shell {
             .child(self.sidebar.clone())
     }
 
-    /// `_MainContentSurface`. With the sidebar open its left edge is square, its right corners
-    /// come from `clip-path: inset(0 -12px 0 0 round 12px)`, and `_MainContentLeftBorder` puts
-    /// a 0.5 px hairline left of the fill (`background-clip: padding-box`, so the hairline sits
-    /// on the layout color). With it closed it is a plain 12 px rounded box.
-    fn main_panel(&self, t: &Theme) -> Div {
-        let r = Theme::RADIUS_XL_BASE;
+    /// `_MainContentSurface`'s content box. Its fill and `_MainContentLeftBorder` hairline
+    /// (`background-clip: padding-box`) paint with the page in `render`: with the sidebar open
+    /// the left edge is square and the right corners are rounded by its `clip-path`; with it
+    /// closed it is a plain 12 px rounded box.
+    fn main_panel(&self) -> Div {
         let open = self.sidebar_open;
-        let radius = if open {
-            Corners {
-                top_right: r,
-                bottom_right: r,
-                ..Default::default()
-            }
-        } else {
-            Corners::all(r)
-        };
-        let hairline = px(if open { 0.5 } else { 0. });
         div()
             .absolute()
             .left(if open {
-                Theme::SIDEBAR_WIDTH
+                Theme::SIDEBAR_WIDTH + MAIN_HAIRLINE
             } else {
                 RAIL_WIDTH
             })
             .top(Theme::TITLEBAR_HEIGHT)
             .right(PAGE_INSET)
             .bottom(PAGE_INSET)
-            .when(open, |d| {
-                d.child(
-                    div()
-                        .absolute()
-                        .left_0()
-                        .top_0()
-                        .bottom_0()
-                        .w(hairline)
-                        .bg(blit(t.sidebar_divider, layout_color(t))),
-                )
-            })
-            .child(
-                div()
-                    .absolute()
-                    .left(hairline)
-                    .top_0()
-                    .right_0()
-                    .bottom_0()
-                    .overflow_hidden()
-                    .child(shapes::decoration(shapes::Decoration {
-                        radius,
-                        fill: Some(t.surface),
-                        ..Default::default()
-                    }))
-                    .child(self.main.clone()),
-            )
+            .overflow_hidden()
+            .child(self.main.clone())
     }
 
     fn titlebar(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
@@ -690,6 +664,28 @@ impl Render for Shell {
             ],
             ..Default::default()
         };
+        // `_MainContentSurface` paints into the same layer: its fill and hairline blend onto
+        // the layer's translucent pixels too.
+        let open = self.sidebar_open;
+        let fills = 1 + self.main_backgrounds;
+        let r = Theme::RADIUS_XL_BASE;
+        let main_fill = shapes::Decoration {
+            radius: if open {
+                Corners {
+                    top_right: r,
+                    bottom_right: r,
+                    ..Default::default()
+                }
+            } else {
+                Corners::all(r)
+            },
+            fill: Some(t.surface),
+            ..Default::default()
+        };
+        let hairline = shapes::Decoration {
+            fill: Some(t.sidebar_divider),
+            ..Default::default()
+        };
         let page = canvas(
             |_, _, _| {},
             move |bounds, (), window, cx| {
@@ -697,9 +693,27 @@ impl Render for Shell {
                     bounds.origin + point(RAIL_WIDTH, Theme::TITLEBAR_HEIGHT),
                     bounds.bottom_right() - point(PAGE_INSET, PAGE_INSET),
                 );
+                let main_left = if open {
+                    Theme::SIDEBAR_WIDTH
+                } else {
+                    RAIL_WIDTH
+                };
+                let mut main = Bounds::from_corners(
+                    bounds.origin + point(main_left, Theme::TITLEBAR_HEIGHT),
+                    page_surface.bottom_right(),
+                );
                 window.with_skia_layer(255, |window| {
                     shapes::paint(&layout, None, bounds, window, cx);
                     shapes::paint(&surface, None, page_surface, window, cx);
+                    if open {
+                        let line = Bounds::new(main.origin, size(MAIN_HAIRLINE, main.size.height));
+                        shapes::paint(&hairline, None, line, window, cx);
+                        main.origin.x += MAIN_HAIRLINE;
+                        main.size.width -= MAIN_HAIRLINE;
+                    }
+                    for _ in 0..fills {
+                        shapes::paint(&main_fill, None, main, window, cx);
+                    }
                 });
             },
         )
@@ -714,7 +728,7 @@ impl Render for Shell {
             .bg(t.background_surface_under)
             .child(page)
             .when(self.sidebar_open, |d| d.child(self.sidebar_panel(&t)))
-            .child(self.main_panel(&t))
+            .child(self.main_panel())
             .child(self.rail(&t))
             .child(self.titlebar(&t, cx))
     }

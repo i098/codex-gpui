@@ -9,16 +9,12 @@ use crate::{
 use bridge::types::{Thread, ThreadItem, ThreadReadResponse, ThreadStartResponse};
 use gpui::{
     AnyView, App, AppContext as _, Context, Corners, Div, Entity, Font, FontFeatures, FontWeight,
-    HighlightStyle, Hsla, Image, ImageFormat, InteractiveElement, IntoElement, ParentElement,
-    Pixels, Render, Rgba, SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText,
-    TextRun, Window, black, div, font, img, linear_color_stop, linear_gradient,
-    prelude::FluentBuilder as _, px, rgb, white,
+    HighlightStyle, Hsla, InteractiveElement, IntoElement, ParentElement, Pixels, Render, Rgba,
+    SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun, Window, black,
+    div, font, linear_color_stop, linear_gradient, prelude::FluentBuilder as _, px, rgb, white,
 };
 use shapes::Decoration;
-use std::{
-    ops::Range,
-    sync::{Arc, LazyLock},
-};
+use std::{ops::Range, sync::Arc};
 use theme::{ActiveTheme as _, Appearance, Theme};
 
 /// Panel width the capture had stored (`app-shell:right-panel-width:v3`) before clamping.
@@ -186,14 +182,7 @@ impl DiffPanel {
                                 .child(tool("diff-refresh"))
                                 .child(tool("diff-word-wrap"))
                                 .child(tool("diff-load-full-files"))
-                                .child(
-                                    div()
-                                        .size(px(28.))
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .child(word_diffs_icon(t)),
-                                ),
+                                .child(tool("diff-word-diffs")),
                         )
                     })
                     .child(
@@ -228,20 +217,34 @@ impl Render for DiffPanel {
                     d.children(file.hunks.iter().map(|h| hunk(h, &t)))
                 })
         });
-        // The capsules' shadows reach into the body's 1 px top border (translucent) but not into
-        // the opaque scroller under it, which Chromium composites in its own layer above them.
+        // No fill: the main panel's rounded fill (a `shapes` decoration the capsules' backdrop
+        // blur reads) shows through, so its corners stay round. The capsules' shadows reach into
+        // the body's 1 px top border (translucent) but not into the opaque scroller under it,
+        // which Chromium composites in its own layer above them: clip them there.
         div()
             .size_full()
             .flex()
             .flex_col()
-            .bg(t.surface)
-            .child(self.header(&t, wide))
-            .child(div().h(px(1.)).flex_none().bg(t.border))
+            .child(
+                div()
+                    .flex_none()
+                    .overflow_hidden()
+                    .child(self.header(&t, wide))
+                    // Skia blends it over the shadows like Chromium (a GPUI quad rounds apart).
+                    .child(
+                        div()
+                            .relative()
+                            .h(px(1.))
+                            .child(shapes::decoration(Decoration {
+                                fill: Some(t.border),
+                                ..Default::default()
+                            })),
+                    ),
+            )
             .child(
                 div()
                     .id("diff-files")
                     .flex_1()
-                    .bg(t.surface)
                     .overflow_y_scroll()
                     .flex()
                     .flex_col()
@@ -259,10 +262,11 @@ pub fn tab_strip(t: &Theme, tab_icon: &str, label: SharedString, window: &Window
     const LABEL_WIDTH: f32 = 181.;
     const FADE: f32 = 16.;
     let layout = layout_color(t);
-    let tab_bg = match t.appearance {
-        Appearance::Dark => over(t.ghost_hover, layout),
+    let fill = match t.appearance {
+        Appearance::Dark => t.ghost_hover,
         Appearance::Light => t.surface_elevated_secondary,
     };
+    let tab_bg = over(fill, layout);
     // The mask fades the label's last 16 px; painting the tab fill over them as a gradient
     // gives the same pixels. Only drawn when glyphs reach it: GPUI dithers gradients.
     let run = TextRun {
@@ -300,7 +304,7 @@ pub fn tab_strip(t: &Theme, tab_icon: &str, label: SharedString, window: &Window
         .child(shapes::decoration(Decoration {
             radius: Corners::all(Theme::RADIUS_MD),
             corner: shapes::Corner::Squircle,
-            fill: Some(tab_bg),
+            fill: Some(fill),
             border: Some((px(0.5), t.border)),
             shadows: vec![shadow(t.shadow_sm, 1., 2., -1., false)],
         }))
@@ -421,8 +425,8 @@ impl Render for SplitMain {
                 div()
                     .w(panel_width(window))
                     .flex_none()
-                    .pl(px(1.))
-                    .bg(over(t.border, t.surface))
+                    .border_l_1()
+                    .border_color(over(t.border, t.surface))
                     .child(self.panel.clone()),
             )
     }
@@ -575,28 +579,6 @@ pub fn stats(added: usize, removed: usize, size: f32, t: &Theme) -> Div {
         .gap(px(4.))
         .child(tracked(format!("+{added}"), t.git_added))
         .child(tracked(format!("-{removed}"), t.git_deleted))
-}
-
-/// `Word diffs` glyph: red and green halves in fixed colors, so it renders as an image.
-fn word_diffs_icon(t: &Theme) -> impl IntoElement {
-    static ICONS: LazyLock<[Arc<Image>; 2]> = LazyLock::new(|| {
-        let svg = include_str!("../../../assets/icons/diff-word-diffs.svg");
-        // `currentColor` is `--color-text-toolbar-action` (tertiary) of each theme.
-        [Theme::dark(), Theme::light()].map(|t| {
-            let c = Rgba::from(t.text_tertiary);
-            let hex = format!(
-                "#{:02x}{:02x}{:02x}\" fill-opacity=\"{}",
-                (c.r * 255.).round() as u8,
-                (c.g * 255.).round() as u8,
-                (c.b * 255.).round() as u8,
-                c.a
-            );
-            let svg = svg.replace("\"black\"", &format!("\"{hex}\""));
-            Arc::new(Image::from_bytes(ImageFormat::Svg, svg.into_bytes()))
-        })
-    });
-    let i = (t.appearance == Appearance::Light) as usize;
-    img(ICONS[i].clone()).size(px(16.))
 }
 
 fn file_header(i: usize, file: &FileDiff, t: &Theme) -> Stateful<Div> {

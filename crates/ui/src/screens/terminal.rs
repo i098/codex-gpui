@@ -61,9 +61,9 @@ impl Render for Xterm {
         };
         let terminals = self.thread.read(cx).background_terminals();
         let output = terminals.first().map_or("", |(_, output)| output);
+        // No fill: the main panel's rounded fill shows through, so its corners stay round.
         div()
             .size_full()
-            .bg(t.surface)
             .p(px(12.))
             .pr_0()
             .font_family(crate::MONO)

@@ -43,8 +43,10 @@ actions!(
 );
 
 const KEY_CONTEXT: &str = "Composer";
-/// Widest composer card (CSS px) that shows the icon-only footer.
-const COMPACT_WIDTH: f32 = 475.;
+/// `@container composer-footer` (the card's width, CSS px) at or below which the footer hides
+/// its `collapse=sm` labels (permissions) and its `collapse=xs` labels (model and effort).
+const SM_WIDTH: f32 = 440.;
+const XS_WIDTH: f32 = 300.;
 const FONT_SIZE: Pixels = px(14.);
 const LINE_HEIGHT: Pixels = px(20.);
 
@@ -296,9 +298,8 @@ pub struct Composer {
     fast: bool,
     permission: Permission,
     menu: Option<Menu>,
-    /// Icon-only footer: the original hides the footer labels in a composer at most
-    /// `COMPACT_WIDTH` wide (`@container composer-footer (width<=475px)`).
-    compact: bool,
+    /// The card's (`composer-footer` container's) width, CSS px: see `SM_WIDTH`, `XS_WIDTH`.
+    footer_width: f32,
     /// The pointer is over the open menu (it lies outside the card's hitbox).
     menu_hovered: bool,
     approval: Option<Approval>,
@@ -336,7 +337,7 @@ impl Composer {
             fast: false,
             permission: Permission::Custom,
             menu: None,
-            compact: false,
+            footer_width: f32::INFINITY,
             menu_hovered: false,
             approval: None,
             on_submit: None,
@@ -386,10 +387,9 @@ impl Composer {
         self.on_approval = Some(Rc::new(f));
     }
 
-    /// Icon-only footer for a known narrow composer; the editor also switches it when its
-    /// measured width crosses `COMPACT_WIDTH`.
+    /// Icon-only footer for a known narrow composer; the editor sets the measured width.
     pub fn set_compact(&mut self, compact: bool, cx: &mut Context<Self>) {
-        self.compact = compact;
+        self.footer_width = if compact { 0. } else { f32::INFINITY };
         cx.notify();
     }
 
@@ -964,11 +964,12 @@ impl gpui::Element for Editor {
             window,
         );
         // The editor spans the card minus its 12 px side padding.
-        let compact = f32::from(bounds.size.width) + 24. <= COMPACT_WIDTH;
+        let width = f32::from(bounds.size.width) + 24.;
+        let collapse = |w: f32| (w <= SM_WIDTH, w <= XS_WIDTH);
         let changed = self.0.update(cx, |c, _| {
             c.lines = lines;
             c.bounds = Some(bounds);
-            std::mem::replace(&mut c.compact, compact) != compact
+            collapse(std::mem::replace(&mut c.footer_width, width)) != collapse(width)
         });
         if changed {
             let entity = self.0.clone();
@@ -1088,11 +1089,33 @@ fn card_decoration(t: &Theme) -> shapes::Decoration {
     deco(22., t.composer_surface, shadows)
 }
 
-/// Popover surface: `--menu-background-color` at 90% over the `backdrop-filter: blur(8px)`
-/// backdrop, `--menu-corner-shape`.
-fn popover(t: &Theme) -> Div {
-    div()
+/// Popover surface `width` CSS px wide holding `content`: `--menu-background-color` at 90%
+/// over the `backdrop-filter: blur(8px)` backdrop, `--menu-corner-shape`. Chromium composites
+/// it as its own layer: the blurred backdrop, then the layer (shadows, fill and content
+/// rasterized into transparent tiles) over it. The layer's tile grid starts at its shadow's
+/// ink (`0 8px 16px -4px`: 12 px left of the box, 4 px above).
+fn popover(t: &Theme, width: f32, content: impl FnOnce(Div) -> Div) -> Div {
+    // `bg-surface-elevated-secondary/90` mixes in oklab: Chromium's round trip of white lands
+    // 1 below 255 in green (as in thread.rs `Tones::card`).
+    let fill = match t.appearance {
+        Appearance::Light => gpui::rgba(0xfffeffe6).into(),
+        Appearance::Dark => Hsla {
+            a: 0.9,
+            ..t.menu_background
+        },
+    };
+    let d = deco(
+        20.,
+        fill,
+        vec![
+            shadow(t.border, 0., 0., 0.5, false),
+            shadow(t.border, 0., 0., 0.5, false),
+            shadow(gpui::rgba(0x0000001f).into(), 8., 16., -4., false),
+        ],
+    );
+    let surface = div()
         .relative()
+        .w(px(width))
         .flex()
         .flex_col()
         .p(px(4.))
@@ -1100,21 +1123,22 @@ fn popover(t: &Theme) -> Div {
             px(8.),
             shapes::Fill::Color,
             shapes::Decoration {
+                radius: d.radius,
                 corner: shapes::Corner::Squircle,
-                ..deco(
-                    20.,
-                    Hsla {
-                        a: 0.9,
-                        ..t.menu_background
-                    },
-                    vec![
-                        shadow(t.border, 0., 0., 0.5, false),
-                        shadow(t.border, 0., 0., 0.5, false),
-                        shadow(gpui::rgba(0x0000001f).into(), 8., 16., -4., false),
-                    ],
-                )
+                ..Default::default()
             },
         ))
+        .child(shapes::decoration(shapes::Decoration {
+            corner: shapes::Corner::Squircle,
+            ..d
+        }));
+    div()
+        .ml(px(-12.))
+        .mt(px(-4.))
+        .pl(px(12.))
+        .pt(px(4.))
+        .layer()
+        .child(content(surface))
 }
 
 impl Composer {
@@ -1358,7 +1382,7 @@ impl Composer {
                         })),
                 ),
         );
-        popover(t).w(px(254.)).child(header).child(slider)
+        popover(t, 254., |d| d.child(header).child(slider))
     }
 }
 
@@ -1366,9 +1390,8 @@ impl Composer {
     /// `Select model` list.
     fn models_menu(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
         let hover = t.menu_item_hover;
-        popover(t)
-            .w(px(254.))
-            .child(div().px(px(8.)).py(px(6.)).child(text(
+        popover(t, 254., |d| {
+            d.child(div().px(px(8.)).py(px(6.)).child(text(
                 "Select model",
                 12.,
                 16.,
@@ -1398,14 +1421,14 @@ impl Composer {
                         cx.notify();
                     }))
             }))
+        })
     }
 
     /// `How should ChatGPT actions be approved?`
     fn permissions_menu(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
         let hover = t.menu_item_hover;
-        popover(t)
-            .w(px(320.))
-            .child(div().px(px(8.)).py(px(6.)).child(text(
+        popover(t, 320., |d| {
+            d.child(div().px(px(8.)).py(px(6.)).child(text(
                 "How should ChatGPT actions be approved?",
                 12.,
                 16.,
@@ -1436,6 +1459,7 @@ impl Composer {
                         cx.notify();
                     }))
             }))
+        })
     }
 
     /// Pending approval request card (`PendingRequestItemPanel`).
@@ -1557,7 +1581,7 @@ impl Composer {
                         .child(label("Select effort", t.text_tertiary)),
                 )
             });
-        let trigger = if self.compact {
+        let trigger = if self.footer_width <= XS_WIDTH {
             pill("model-picker", t)
                 .w(px(28.))
                 .justify_center()
@@ -1611,7 +1635,7 @@ impl Composer {
                             .px(px(6.))
                             .gap(px(4.))
                             .child(icon("permissions", 16., t.text_tertiary))
-                            .when(!self.compact, |d| {
+                            .when(self.footer_width > SM_WIDTH, |d| {
                                 d.child(label(self.permission.short_label(), t.text_tertiary))
                             })
                             .on_click(cx.listener(|this, _, _, cx| {

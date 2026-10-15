@@ -3,7 +3,7 @@
 //! Host data (`list-automations`, `/suggested_automations`) comes from the recorded answers
 //! in `tools/route1/oracle.json`.
 
-use crate::{Shell, icon, icon_button, text};
+use crate::{Shell, icon::icon, icon_button, text};
 use gpui::{
     Action, AnyView, App, AppContext as _, Bounds, Context, Hsla, InteractiveElement, IntoElement,
     ParentElement, PathBuilder, Pixels, Render, SharedString, StatefulInteractiveElement, Styled,

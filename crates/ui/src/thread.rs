@@ -199,47 +199,54 @@ impl ThreadView {
             );
         }
         let n = sections.len();
+        // A fixed popover: its own composited layer, whose rect (and tile grid) starts at the
+        // widest shadow's ink, `blur + spread` = 20 px out.
+        let ink = px(20.);
         div()
             .absolute()
             // Anchored under `Toggle summary`, 8 px from the thread's right edge.
-            .top(px(8.))
-            .right(px(8.))
-            .w(px(300.))
-            // A fixed popover: its own composited layer.
+            .top(px(8.) - ink)
+            .right(px(8.) - ink)
+            .p(ink)
             .layer()
-            .child(shapes::decoration(shapes::Decoration {
-                radius: Corners::all(Theme::RADIUS_2XL),
-                corner: shapes::Corner::Squircle,
-                fill: Some(t.surface_elevated_secondary),
-                // `--elevation-prominent`
-                shadows: vec![
-                    shadow(t.border_strong, 0., 0., 0.5, false),
-                    shadow(rgba(0x0000000a).into(), 3., 7.5, 0., false),
-                    shadow(rgba(0x0000000d).into(), 0., 20., 0., false),
-                ],
-                ..Default::default()
-            }))
             .child(
                 div()
                     .relative()
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.))
-                    .py(px(10.))
-                    .children(sections.into_iter().enumerate().map(|(i, s)| {
-                        s.when(i + 1 < n, |s| {
-                            // Half-px rule under every section but the last.
-                            s.relative().pb(px(8.)).child(
-                                div()
-                                    .absolute()
-                                    .bottom_0()
-                                    .left(px(20.))
-                                    .right(px(20.))
-                                    .h(px(0.5))
-                                    .bg(over(t.border, t.surface_elevated_secondary)),
-                            )
-                        })
-                    })),
+                    .w(px(300.))
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: Corners::all(Theme::RADIUS_2XL),
+                        corner: shapes::Corner::Squircle,
+                        fill: Some(t.surface_elevated_secondary),
+                        // `--elevation-prominent`
+                        shadows: vec![
+                            shadow(t.border_strong, 0., 0., 0.5, false),
+                            shadow(rgba(0x0000000a).into(), 3., 7.5, 0., false),
+                            shadow(rgba(0x0000000d).into(), 0., 20., 0., false),
+                        ],
+                        ..Default::default()
+                    }))
+                    .child(
+                        div()
+                            .relative()
+                            .flex()
+                            .flex_col()
+                            .gap(px(8.))
+                            .py(px(10.))
+                            .children(sections.into_iter().enumerate().map(|(i, s)| {
+                                s.when(i + 1 < n, |s| {
+                                    // Half-px rule under every section but the last.
+                                    s.relative().pb(px(8.)).child(
+                                        div()
+                                            .absolute()
+                                            .bottom_0()
+                                            .left(px(20.))
+                                            .right(px(20.))
+                                            .h(px(0.5))
+                                            .bg(over(t.border, t.surface_elevated_secondary)),
+                                    )
+                                })
+                            })),
+                    ),
             )
     }
 
@@ -593,20 +600,25 @@ impl Render for ThreadView {
                 d.child(gpui::deferred(self.summary(window, &t)))
             })
             // The `z-20` composer band is its own cc layer; its rect (and tile grid) starts at
-            // the composer shadow's ink, 84 px above the band (80 px blur + 8 spread - 4 y).
+            // the light composer shadow's ink, 84 px above the band (80 px blur + 8 spread - 4
+            // y); the dark card has no outer shadow. Its background paints into the layer (the
+            // shadows blit onto it there), so it is a `shapes` fill, not a GPUI quad.
             .child(
                 div()
                     .absolute()
                     .left_0()
                     .right_0()
                     .bottom_0()
-                    .pt(px(84.))
+                    .when(t.appearance == Appearance::Light, |d| d.pt(px(84.)))
                     .layer()
                     .child(
                         div()
                             .relative()
                             .pb(px(16.))
-                            .bg(t.surface)
+                            .child(shapes::decoration(shapes::Decoration {
+                                fill: Some(t.surface),
+                                ..Default::default()
+                            }))
                             .child(bottom_fade.absolute().top(px(-32.)).left_0())
                             .child(
                                 div()
