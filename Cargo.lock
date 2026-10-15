@@ -126,6 +126,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "app"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "gpui_platform",
+ "serde",
+ "serde_json",
+ "theme",
+ "ui",
+]
+
+[[package]]
 name = "arbitrary"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1777,7 +1789,6 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "git+https://github.com/zed-industries/zed?rev=3e145061d861ed32bb6a08dad7b03f2b5e455ad8#3e145061d861ed32bb6a08dad7b03f2b5e455ad8"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -1845,7 +1856,6 @@ dependencies = [
 [[package]]
 name = "gpui_apple"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed?rev=3e145061d861ed32bb6a08dad7b03f2b5e455ad8#3e145061d861ed32bb6a08dad7b03f2b5e455ad8"
 dependencies = [
  "anyhow",
  "async-task",
@@ -1879,6 +1889,7 @@ dependencies = [
  "parking_lot",
  "pathfinder_geometry",
  "smallvec",
+ "textsys",
  "thiserror 2.0.21",
  "zed-font-kit",
 ]
@@ -2110,6 +2121,16 @@ dependencies = [
  "crunchy",
  "num-traits",
  "zerocopy",
+]
+
+[[package]]
+name = "harfbuzz-sys"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b13f1cead31867a0d5b5e8905c262bc02b77701b8cd45ef402988f33745f9b7c"
+dependencies = [
+ "cc",
+ "pkg-config",
 ]
 
 [[package]]
@@ -3460,6 +3481,9 @@ dependencies = [
  "image",
  "serde",
  "serde_json",
+ "textsys",
+ "theme",
+ "ui",
 ]
 
 [[package]]
@@ -4876,6 +4900,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "textsys"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "core-foundation 0.10.1",
+ "core-graphics 0.24.0",
+ "core-text",
+ "gpui",
+ "gpui_platform",
+ "harfbuzz-sys",
+ "image",
+ "parking_lot",
+ "serde_json",
+]
+
+[[package]]
 name = "theme"
 version = "0.1.0"
 dependencies = [
@@ -5156,6 +5196,18 @@ dependencies = [
  "memoffset",
  "tempfile",
  "windows-sys",
+]
+
+[[package]]
+name = "ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "gpui_platform",
+ "image",
+ "textsys",
+ "theme",
 ]
 
 [[package]]
