@@ -350,6 +350,80 @@
   }
  },
  {
+  "bleed": "shrink",
+  "kind": "fillborder",
+  "opaque_fill": true,
+  "radii": [
+   16.0,
+   16.0,
+   16.0,
+   16.0
+  ],
+  "width": 2.0,
+  "corner": "round",
+  "count": 72,
+  "reach": 0,
+  "sample": {
+   "w": 32,
+   "h": 32,
+   "color": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "backdrop": [
+    58,
+    131,
+    247,
+    255
+   ],
+   "border": [
+    255,
+    255,
+    255,
+    255
+   ]
+  }
+ },
+ {
+  "bleed": "shrink",
+  "kind": "fillborder",
+  "opaque_fill": true,
+  "radii": [
+   16.0,
+   16.0,
+   16.0,
+   16.0
+  ],
+  "width": 2.0,
+  "corner": "squircle",
+  "count": 72,
+  "reach": 0,
+  "sample": {
+   "w": 32,
+   "h": 32,
+   "color": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "backdrop": [
+    58,
+    131,
+    247,
+    255
+   ],
+   "border": [
+    255,
+    255,
+    255,
+    255
+   ]
+  }
+ },
+ {
   "kind": "fill",
   "radii": [
    8.0,
@@ -402,6 +476,154 @@
     20,
     20,
     255
+   ]
+  }
+ },
+ {
+  "bleed": "clip",
+  "kind": "fillborder",
+  "opaque_fill": false,
+  "radii": [
+   25.0,
+   25.0,
+   25.0,
+   25.0
+  ],
+  "width": 2.0,
+  "corner": "round",
+  "count": 44,
+  "reach": 0,
+  "sample": {
+   "w": 205,
+   "h": 56,
+   "color": [
+    255,
+    255,
+    255,
+    245
+   ],
+   "backdrop": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "border": [
+    26,
+    28,
+    31,
+    20
+   ]
+  }
+ },
+ {
+  "bleed": "clip",
+  "kind": "fillborder",
+  "opaque_fill": false,
+  "radii": [
+   25.0,
+   25.0,
+   25.0,
+   25.0
+  ],
+  "width": 2.0,
+  "corner": "squircle",
+  "count": 44,
+  "reach": 0,
+  "sample": {
+   "w": 205,
+   "h": 56,
+   "color": [
+    255,
+    255,
+    255,
+    245
+   ],
+   "backdrop": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "border": [
+    26,
+    28,
+    31,
+    20
+   ]
+  }
+ },
+ {
+  "bleed": "clip",
+  "kind": "fillborder",
+  "opaque_fill": true,
+  "radii": [
+   25.0,
+   25.0,
+   25.0,
+   25.0
+  ],
+  "width": 2.0,
+  "corner": "round",
+  "count": 36,
+  "reach": 0,
+  "sample": {
+   "w": 68,
+   "h": 64,
+   "color": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "backdrop": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "border": [
+    255,
+    255,
+    255,
+    21
+   ]
+  }
+ },
+ {
+  "bleed": "clip",
+  "kind": "fillborder",
+  "opaque_fill": true,
+  "radii": [
+   25.0,
+   25.0,
+   25.0,
+   25.0
+  ],
+  "width": 2.0,
+  "corner": "squircle",
+  "count": 36,
+  "reach": 0,
+  "sample": {
+   "w": 68,
+   "h": 64,
+   "color": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "backdrop": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "border": [
+    255,
+    255,
+    255,
+    21
    ]
   }
  },
@@ -816,6 +1038,80 @@
     24,
     24,
     255
+   ]
+  }
+ },
+ {
+  "bleed": "clip",
+  "kind": "fillborder",
+  "opaque_fill": true,
+  "radii": [
+   40.0,
+   40.0,
+   40.0,
+   40.0
+  ],
+  "width": 2.0,
+  "corner": "round",
+  "count": 26,
+  "reach": 0,
+  "sample": {
+   "w": 1040,
+   "h": 376,
+   "color": [
+    45,
+    45,
+    45,
+    255
+   ],
+   "backdrop": [
+    20,
+    20,
+    20,
+    255
+   ],
+   "border": [
+    255,
+    255,
+    255,
+    21
+   ]
+  }
+ },
+ {
+  "bleed": "clip",
+  "kind": "fillborder",
+  "opaque_fill": true,
+  "radii": [
+   40.0,
+   40.0,
+   40.0,
+   40.0
+  ],
+  "width": 2.0,
+  "corner": "squircle",
+  "count": 26,
+  "reach": 0,
+  "sample": {
+   "w": 1040,
+   "h": 376,
+   "color": [
+    45,
+    45,
+    45,
+    255
+   ],
+   "backdrop": [
+    20,
+    20,
+    20,
+    255
+   ],
+   "border": [
+    255,
+    255,
+    255,
+    21
    ]
   }
  },
@@ -1977,6 +2273,154 @@
   }
  },
  {
+  "bleed": "clip",
+  "kind": "fillborder",
+  "opaque_fill": true,
+  "radii": [
+   28.0,
+   28.0,
+   28.0,
+   28.0
+  ],
+  "width": 1.0,
+  "corner": "round",
+  "count": 4,
+  "reach": 0,
+  "sample": {
+   "w": 56,
+   "h": 56,
+   "color": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "backdrop": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "border": [
+    255,
+    255,
+    255,
+    40
+   ]
+  }
+ },
+ {
+  "bleed": "clip",
+  "kind": "fillborder",
+  "opaque_fill": true,
+  "radii": [
+   28.0,
+   28.0,
+   28.0,
+   28.0
+  ],
+  "width": 1.0,
+  "corner": "squircle",
+  "count": 4,
+  "reach": 0,
+  "sample": {
+   "w": 56,
+   "h": 56,
+   "color": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "backdrop": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "border": [
+    255,
+    255,
+    255,
+    40
+   ]
+  }
+ },
+ {
+  "bleed": "clip",
+  "kind": "fillborder",
+  "opaque_fill": false,
+  "radii": [
+   20.0,
+   20.0,
+   20.0,
+   20.0
+  ],
+  "width": 1.0,
+  "corner": "round",
+  "count": 4,
+  "reach": 0,
+  "sample": {
+   "w": 476,
+   "h": 64,
+   "color": [
+    255,
+    255,
+    255,
+    20
+   ],
+   "backdrop": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "border": [
+    255,
+    255,
+    255,
+    21
+   ]
+  }
+ },
+ {
+  "bleed": "clip",
+  "kind": "fillborder",
+  "opaque_fill": false,
+  "radii": [
+   20.0,
+   20.0,
+   20.0,
+   20.0
+  ],
+  "width": 1.0,
+  "corner": "squircle",
+  "count": 4,
+  "reach": 0,
+  "sample": {
+   "w": 476,
+   "h": 64,
+   "color": [
+    255,
+    255,
+    255,
+    20
+   ],
+   "backdrop": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "border": [
+    255,
+    255,
+    255,
+    21
+   ]
+  }
+ },
+ {
   "blur": 32.0,
   "inset": false,
   "kind": "shadow",
@@ -2039,6 +2483,80 @@
     255,
     255,
     255
+   ]
+  }
+ },
+ {
+  "bleed": "clip",
+  "kind": "fillborder",
+  "opaque_fill": true,
+  "radii": [
+   20.0,
+   20.0,
+   20.0,
+   20.0
+  ],
+  "width": 1.0,
+  "corner": "round",
+  "count": 4,
+  "reach": 0,
+  "sample": {
+   "w": 476,
+   "h": 64,
+   "color": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "backdrop": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "border": [
+    26,
+    28,
+    31,
+    20
+   ]
+  }
+ },
+ {
+  "bleed": "clip",
+  "kind": "fillborder",
+  "opaque_fill": true,
+  "radii": [
+   20.0,
+   20.0,
+   20.0,
+   20.0
+  ],
+  "width": 1.0,
+  "corner": "squircle",
+  "count": 4,
+  "reach": 0,
+  "sample": {
+   "w": 476,
+   "h": 64,
+   "color": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "backdrop": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "border": [
+    26,
+    28,
+    31,
+    20
    ]
   }
  },
@@ -2229,6 +2747,80 @@
     24,
     24,
     255
+   ]
+  }
+ },
+ {
+  "bleed": "clip",
+  "kind": "fillborder",
+  "opaque_fill": true,
+  "radii": [
+   36.0,
+   36.0,
+   36.0,
+   36.0
+  ],
+  "width": 2.0,
+  "corner": "round",
+  "count": 4,
+  "reach": 0,
+  "sample": {
+   "w": 800,
+   "h": 72,
+   "color": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "backdrop": [
+    24,
+    24,
+    24,
+    255
+   ],
+   "border": [
+    255,
+    255,
+    255,
+    21
+   ]
+  }
+ },
+ {
+  "bleed": "clip",
+  "kind": "fillborder",
+  "opaque_fill": true,
+  "radii": [
+   36.0,
+   36.0,
+   36.0,
+   36.0
+  ],
+  "width": 2.0,
+  "corner": "squircle",
+  "count": 4,
+  "reach": 0,
+  "sample": {
+   "w": 800,
+   "h": 72,
+   "color": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "backdrop": [
+    24,
+    24,
+    24,
+    255
+   ],
+   "border": [
+    255,
+    255,
+    255,
+    21
    ]
   }
  },

@@ -36,12 +36,19 @@
 //!
 //! Limits: content Chromium paints into a composited layer (a scroll container's contents)
 //! needs that layer's origin ([`paint`]'s `layer`), and is exact only where the layer
-//! is transparent under it; a fill under a translucent rounded border is drawn as two
-//! layers, not Blink's clip layer; translucent `superellipse` borders and `superellipse`
-//! shadows with spread are close, not exact.
+//! is transparent under it; there a fill under a translucent rounded border paints as two
+//! layers, not Blink's clip layer, and so it does with inset shadows anywhere. A
+//! translucent `superellipse` border (alone or in the clip layer) comes back from its
+//! transparency layer as `SkBlendARGB32` at the clip coverage; in some cc tiles whose clip
+//! is a plain rect Chromium restores it with the sprite blitter, 1 level apart. A
+//! `superellipse` shadow with a large blur and spread is 1 level off in its far tail.
 
 use gpui::{App, Bounds, Corners, Hsla, IntoElement, Pixels, Point, Styled as _, Window, canvas};
 
+#[cfg(target_os = "macos")]
+mod backdrop;
+#[cfg(target_os = "macos")]
+mod mask;
 #[cfg(target_os = "macos")]
 mod skia;
 
@@ -91,7 +98,8 @@ pub fn decoration(d: Decoration) -> impl IntoElement {
 /// Paints `d` for the border box `bounds`. `layer`: for a box that Chromium paints into a
 /// composited layer (a scroll container's contents), that layer's origin in window
 /// coordinates: the layer's tiles start there and are transparent, and the compositor
-/// blends them onto the page.
+/// blends them onto the page. `None` takes the innermost GPUI `.layer()` div being painted
+/// (`Window::composited_layer_origin`), else the root layer.
 pub fn paint(
     d: &Decoration,
     layer: Option<Point<Pixels>>,
@@ -106,6 +114,63 @@ pub fn paint(
         let _ = (cx, layer);
         quads(d, bounds, window);
     }
+}
+
+/// How a [`backdrop_blur`] box paints `Decoration::fill`.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum Fill {
+    /// `background-color`.
+    #[default]
+    Color,
+    /// A one-color `background-image: linear-gradient(c, c)`: Blink clips the image to the
+    /// shape and Skia dithers it, so its edges and translucent levels differ from a color.
+    Gradient,
+}
+
+/// [`decoration`] for a box with CSS `backdrop-filter: blur(blur)`: Chromium's compositor
+/// blurs what was painted below the box (here: what `shapes` painted this frame), clips it
+/// to the box's shape, and composites the box's own layer (`d`, its fill painted as `fill`)
+/// over it. A box inside another `backdrop_blur` box (a nested `backdrop-filter`) blurs that
+/// box's layer instead. Paint it where the box's decoration goes (first child); its text and
+/// children paint on top as usual.
+pub fn backdrop_blur(blur: Pixels, fill: Fill, d: Decoration) -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        move |bounds, (), window, _| {
+            #[cfg(target_os = "macos")]
+            backdrop::paint(blur, fill, &d, bounds, window);
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = (blur, fill);
+                quads(&d, bounds, window);
+            }
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+}
+
+/// CSS `mask-image: linear-gradient(to bottom, transparent, black <fade>)` over its parent,
+/// which must be a `.layer()` element (Chromium masks the composited layer): put it last so it
+/// multiplies everything painted into that layer by the gradient's alpha (`DstIn`) before the
+/// layer is composited. The rows past `fade` are left as they are. macOS only: elsewhere GPUI
+/// has no layer pixels to mask and nothing is painted.
+pub fn top_fade(fade: Pixels) -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        move |bounds, (), window, cx| {
+            #[cfg(target_os = "macos")]
+            mask::paint_top_fade(fade, bounds, window, cx);
+            #[cfg(not(target_os = "macos"))]
+            let _ = (fade, bounds, window, cx);
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
 }
 
 /// Paints the svg icon `src` (asset bytes; `key` names it for the cache) into `bounds`,

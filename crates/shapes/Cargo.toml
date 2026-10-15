@@ -30,3 +30,7 @@ lab = []
 [[example]]
 name = "lab"
 required-features = ["lab"]
+
+[[example]]
+name = "blur"
+required-features = ["lab"]
