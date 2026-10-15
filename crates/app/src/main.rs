@@ -154,8 +154,9 @@ impl Root {
             !self.forward.is_empty(),
         );
         self.shell.update(cx, |shell, cx| {
-            shell.home_selected = home;
+            shell.selected_rail = home.then_some("home");
             shell.chat_chrome = !settings;
+            shell.new_tab = !settings;
             shell.can_go_back = can_back;
             shell.can_go_forward = can_forward;
             shell.set_main(main, cx);
