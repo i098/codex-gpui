@@ -14,10 +14,10 @@ use gpui::{
 use image::{ExtendedColorType, ImageEncoder as _, codecs::png::PngEncoder};
 use parking_lot::Mutex;
 use skia_safe::{
-    AlphaType, BlendMode, BlurStyle, Canvas, ClipOp, Color4f, ColorSpace, ColorType, Data,
-    FilterMode, ImageInfo, MaskFilter, Matrix, MipmapMode, Paint, PaintCap, PaintJoin, PaintStyle,
-    Path, PathBuilder, PathFillType, PathOp, RRect, Rect, SamplingOptions, Vector, color_filters,
-    surfaces,
+    AlphaType, BlendMode, BlurStyle, Canvas, ClipOp, Color4f, ColorSpace, ColorType,
+    ContourMeasureIter, Data, FilterMode, ImageInfo, MaskFilter, Matrix, MipmapMode, Paint,
+    PaintCap, PaintJoin, PaintStyle, Path, PathBuilder, PathDirection, PathEffect, PathFillType,
+    PathOp, RRect, Rect, SamplingOptions, Vector, color_filters, surfaces,
 };
 use std::{
     collections::HashMap,
@@ -427,8 +427,12 @@ fn superellipse_half_corner(curvature: f32) -> [Pt; 3] {
 pub(crate) enum Op {
     /// `FillContouredRect` (background color).
     Fill(Contour),
-    /// Uniform solid border (`BoxBorderPainter`).
-    Border { outer: Contour, inner: Contour },
+    /// Uniform solid or dashed border (`BoxBorderPainter`).
+    Border {
+        outer: Contour,
+        inner: Contour,
+        dashed: bool,
+    },
     /// Outer `box-shadow` layer (`PaintNormalBoxShadow`).
     Shadow {
         border: Contour,
@@ -451,11 +455,21 @@ pub(crate) enum Op {
     ClipPath(Contour),
 }
 
-/// A color as Skia gets it from the 8-bit CSS color.
+/// A color as Skia gets it: the 8-bit CSS color, or the float one if [`wide`].
 pub(crate) fn color4f(c: Hsla) -> Color4f {
     let c = Rgba::from(c);
+    if wide(c) {
+        return Color4f::new(c.r, c.g, c.b, c.a);
+    }
     let q = |v: f32| f32::from(alpha_byte(v)) / 255.;
     Color4f::new(q(c.r), q(c.g), q(c.b), q(c.a))
+}
+
+/// A color outside [0, 1] (an out-of-gamut CSS oklab/color-mix result): Skia keeps it in
+/// float and draws it with the float raster pipeline (`SkBlitter::UseLegacyBlitter`); the
+/// shader does the same for its sprites.
+pub(crate) fn wide(c: Rgba) -> bool {
+    [c.r, c.g, c.b].iter().any(|v| !(0. ..=1.).contains(v))
 }
 
 /// Shadow params `[x, y, blur, spread]`: the draw looper's paint for color `col`.
@@ -482,14 +496,12 @@ fn fill_paint(col: Color4f) -> Paint {
 
 impl Op {
     /// Whether Chromium's raster does not blit the draw itself but restores a layer: Blink's
-    /// slow border path paints a translucent border opaque inside a `saveLayerAlphaf` (whose
-    /// draws the earlier AA clips do not cut), restored through those clips as `SkBlendARGB32`
-    /// of the translucent color at the clip coverage (the legacy shader blitter).
-    /// ponytail: in some tiles whose clip is a plain rect Chromium restores it with the sprite
-    /// blitter (`blit_row_s32a_blend`, 1 level apart); which tiles is not pinned down.
+    /// slow (superellipse) or dashed border path paints a translucent border opaque inside a
+    /// `saveLayerAlphaf` (whose draws the earlier AA clips do not cut), restored through those
+    /// clips ([`restore_sprites`]).
     fn restored(&self, alpha: u8) -> bool {
-        matches!(self, Op::Border { inner, .. }
-            if alpha < 255 && !(inner.rr.renderable() && inner.round_curvature()))
+        matches!(self, Op::Border { inner, dashed, .. }
+            if alpha < 255 && (*dashed || !(inner.rr.renderable() && inner.round_curvature())))
     }
 
     /// The inset shadow's hole (`inner_contoured_rect`).
@@ -535,35 +547,32 @@ impl Op {
                 c.draw_rect(contour.rr.rect(), &fill_paint(col));
                 c.restore();
             }
-            Op::Border { outer, inner } => {
+            Op::Border {
+                outer,
+                inner,
+                dashed,
+            } if dashed || !(inner.rr.renderable() && inner.round_curvature()) => {
+                c.save();
+                ring_clip(c, &outer, &inner, dashed);
+                ring_content(c, &outer, &inner, dashed, col);
+                c.restore();
+            }
+            Op::Border { outer, inner, .. } => {
                 let mut paint = fill_paint(col);
-                if inner.rr.renderable() && inner.round_curvature() {
-                    let width = inner.rr.r[0] - outer.rr.r[0];
-                    paint.set_style(PaintStyle::Stroke).set_stroke_width(width);
-                    if !outer.rr.is_rounded() {
-                        // DrawSolidBorderRect
-                        c.draw_rect(
-                            rect(outset(outer.rr.r, -width / 2.).map(f32::round)),
-                            &paint,
-                        );
-                    } else if simple_drrect(&outer.rr, &inner.rr) {
-                        let mut rr = outer.rr.sk();
-                        rr.inset((width / 2., width / 2.));
-                        c.draw_rrect(rr, &paint);
-                    } else {
-                        c.draw_drrect(outer.rr.sk(), inner.rr.sk(), &fill_paint(col));
-                    }
+                let width = inner.rr.r[0] - outer.rr.r[0];
+                paint.set_style(PaintStyle::Stroke).set_stroke_width(width);
+                if !outer.rr.is_rounded() {
+                    // DrawSolidBorderRect
+                    c.draw_rect(
+                        rect(outset(outer.rr.r, -width / 2.).map(f32::round)),
+                        &paint,
+                    );
+                } else if simple_drrect(&outer.rr, &inner.rr) {
+                    let mut rr = outer.rr.sk();
+                    rr.inset((width / 2., width / 2.));
+                    c.draw_rrect(rr, &paint);
                 } else {
-                    // ponytail: Blink's slow border path draws the four sides inside these
-                    // clips, the sides' non-AA miter polygons partitioning the ring (translucent:
-                    // see `restored`); one fill of the clipped ring stands in.
-                    c.save();
-                    outer.clip(c, ClipOp::Intersect);
-                    if inner.rr.renderable() && !inner.rr.is_empty() {
-                        inner.clip(c, ClipOp::Difference);
-                    }
-                    c.draw_rect(outer.rr.rect(), &paint);
-                    c.restore();
+                    c.draw_drrect(outer.rr.sk(), inner.rr.sk(), &fill_paint(col));
                 }
             }
             Op::Shadow {
@@ -628,8 +637,6 @@ impl Op {
                 c.restore();
             }
             Op::ClipLayer { outer, inner, fill } => {
-                // ponytail: this Skia build restores the layers unlike Chromium's raster (see
-                // `clip_layer_sprites`); fine for what reads this draw back (backdrop blurs).
                 c.save();
                 outer.clip(c, ClipOp::Intersect);
                 c.save_layer(&skia_safe::canvas::SaveLayerRec::default());
@@ -661,6 +668,55 @@ impl Op {
             c.restore();
         }
     }
+}
+
+/// The clips Blink paints a slow-path (superellipse) or dashed border in: inside the outer
+/// contour, outside the inner one.
+fn ring_clip(c: &Canvas, outer: &Contour, inner: &Contour, dashed: bool) {
+    outer.clip(c, ClipOp::Intersect);
+    if dashed || (inner.rr.renderable() && !inner.rr.is_empty()) {
+        inner.clip(c, ClipOp::Difference);
+    }
+}
+
+/// What Blink draws of such a border inside [`ring_clip`] (inside its layer when translucent,
+/// see `Op::restored`): the sides' fills, whose non-AA miter polygons partition the outer rect
+/// (one fill of it stands in), or the dashed centerline.
+fn ring_content(c: &Canvas, outer: &Contour, inner: &Contour, dashed: bool, col: Color4f) {
+    if !dashed {
+        c.draw_rect(outer.rr.rect(), &fill_paint(col));
+        return;
+    }
+    // DrawCurvedDashedDottedBoxSide: the centerline rrect (from its top-left end) stroked 2.2x
+    // the width with Blink's dash.
+    // ponytail: Blink strokes it once per side in that side's clip; one stroke matches the
+    // refs. Paths too short for two dashes are not special-cased.
+    let width = inner.rr.r[0] - outer.rr.r[0];
+    let mut center = outer.rr;
+    center.outset(-width / 2.);
+    let path = Path::rrect_with_start_index(center.sk(), PathDirection::CW, 0);
+    let len = ContourMeasureIter::new(&path, false, None)
+        .next()
+        .map_or(0., |m| m.length().trunc());
+    // StyledStrokeData: dash and gap per width, the gap fitted to whole periods.
+    let (dash, gap) = if width >= 3. {
+        (2. * width, width)
+    } else {
+        (3. * width, 2. * width)
+    };
+    let n = (len / (dash + gap)).floor();
+    let (lo, hi) = ((len - n * dash) / n, (len - (n + 1.) * dash) / (n + 1.));
+    let gap = if hi <= 0. || (lo - gap).abs() < (hi - gap).abs() {
+        lo
+    } else {
+        hi
+    };
+    let mut paint = fill_paint(col);
+    paint
+        .set_style(PaintStyle::Stroke)
+        .set_stroke_width(2.2 * width)
+        .set_path_effect(PathEffect::dash(&[dash, gap], 0.));
+    c.draw_path(&path, &paint);
 }
 
 fn rect(r: [f32; 4]) -> Rect {
@@ -797,13 +853,11 @@ pub(crate) fn tiles(
 /// the paint (opaque legacy, translucent, color filter), so the probes that tell the modes
 /// apart draw with the real color's `alpha`. AAA blits some edge pixels twice (a partial
 /// row, then the rest of it): those are solved for two blits. In a composited layer every
-/// pixel is one [`LAYER`] blit of its coverage; a `restored` op's layer (`Op::restored`)
-/// comes back as one [`ARGB32`] blit at the coverage.
+/// pixel is one [`LAYER`] blit of its coverage.
 fn raster(
     [x0, y0, x1, y1]: [i32; 4],
     layer: Layer,
     alpha: u8,
-    restored: bool,
     draw: &dyn Fn(&Canvas, Color4f),
 ) -> ([i32; 4], Vec<Blits>) {
     let [lx, ly] = layer.origin;
@@ -813,10 +867,7 @@ fn raster(
     if x0 >= x1 || y0 >= y1 {
         return ([0; 4], Vec::new());
     }
-    let fixed = layer
-        .composited
-        .then_some(LAYER)
-        .or(restored.then_some(ARGB32));
+    let fixed = layer.composited.then_some(LAYER);
     // The first probe (opaque white on black) reads the coverage; the others, with distinct
     // channels, tell the blits apart (`blitAntiH`, `blitAntiH2`, raster pipeline).
     let mut probes = vec![Probe {
@@ -886,7 +937,21 @@ pub(crate) fn tile_pixels(
     clear: Color4f,
     draw: impl FnOnce(&Canvas),
 ) -> (Vec<u8>, usize) {
-    let mut surface = surfaces::raster_n32_premul(size).expect("shapes: tile surface");
+    // Chromium's raster canvases are sRGB: a [`wide`] paint color takes the float pipeline.
+    surface_pixels(o, size, clear, ColorSpace::new_srgb(), draw)
+}
+
+/// [`tile_pixels`] on a surface of color space `cs` (`None`: the compositor's, whose filters
+/// take Skia's legacy 8-bit paths).
+pub(crate) fn surface_pixels(
+    o: [i32; 2],
+    size: (i32, i32),
+    clear: Color4f,
+    cs: impl Into<Option<ColorSpace>>,
+    draw: impl FnOnce(&Canvas),
+) -> (Vec<u8>, usize) {
+    let info = ImageInfo::new_n32_premul(size, cs);
+    let mut surface = surfaces::raster(&info, None, None).expect("shapes: tile surface");
     let canvas = surface.canvas();
     canvas.clear(clear);
     canvas.translate((-o[0] as f32, -o[1] as f32));
@@ -898,17 +963,17 @@ pub(crate) fn tile_pixels(
     )
 }
 
-/// `Op::ClipLayer` as Chromium rasterizes it: the layer px (`Op::layer_content` on a
-/// transparent tile) and the outer clip's coverage, once per cc tile, painted as one sprite
-/// group per distinct layer px. Chromium restores the layer with the legacy shader blitter:
-/// `blit_row_s32a_opaque` where the clip covers a px (the px blitted into a GPUI layer, which
-/// restores it the same way), `SkBlendARGB32` at the clip coverage on its AA edge
-/// ([`ARGB32`]); a translucent superellipse border comes back from its own layer the same way
-/// (see `Op::restored`).
-fn clip_layer_sprites(op: &Op, border: Color4f, layer: Layer) -> Vec<Sprite> {
-    let Op::ClipLayer { outer, inner, fill } = *op else {
-        return Vec::new();
-    };
+/// An op Chromium paints into a layer it then restores (`Op::ClipLayer`, a `restored` border)
+/// as Skia rasterizes it, once per cc tile, painted as one sprite group per distinct restored
+/// px. The layer px `l` are Skia's own (a clip layer's content drawn on a transparent device
+/// of its bounds, with its own origin; a border layer's opaque sides, which no clip cuts). The
+/// restore (paint alpha `a`) takes the sprite blitter when the clip is a plain rect
+/// (`blit_row_s32a_blend` of `l` at `a`: [`ARGB32`] at coverage `a`), else the legacy shader
+/// blitter of `l` scaled by `a` (`SkAlphaMulQ`): `blit_row_s32a_opaque` where the clip covers
+/// a px (the px blitted into a GPUI layer, which restores it the same way), `SkBlendARGB32` at
+/// the clip coverage on its AA edge. Skia's AA clip only turns into a plain rect when it
+/// starts at its device's top row (`SkAAClip::isRect` compares a row offset with the bounds).
+fn restore_sprites(op: &Op, col: Color4f, layer: Layer) -> Vec<Sprite> {
     let [lx, ly] = layer.origin;
     let size = layer.size();
     // `op` is in layer space.
@@ -919,60 +984,76 @@ fn clip_layer_sprites(op: &Op, border: Color4f, layer: Layer) -> Vec<Sprite> {
         return Vec::new();
     }
     let (w, h) = (x1 - x0, y1 - y0);
-    let slow = !(inner.rr.renderable() && inner.round_curvature());
     let white = Color4f::new(1., 1., 1., 1.);
     let (clear, black) = (Color4f::new(0., 0., 0., 0.), Color4f::new(0., 0., 0., 1.));
-    let cover = |c: &Canvas, clip: &dyn Fn(&Canvas)| {
-        clip(c);
-        c.draw_paint(&fill_paint(white));
+    let opaque = Color4f { a: 1., ..col };
+    let alpha = match op {
+        Op::ClipLayer { .. } => 255,
+        _ => alpha_byte(col.a),
     };
-    // Distinct (premultiplied layer px, restored through the clip's AA edge), and each px's.
+    // Distinct (premultiplied restored px, restored through the clip's AA edge or by the
+    // sprite blitter), and each px's (group, coverage).
     let mut groups: Vec<([u8; 4], bool)> = Vec::new();
     let mut index = HashMap::new();
     let mut px = vec![(usize::MAX, 0u8); (w * h) as usize];
     for (o, ts, [ox0, oy0, ox1, oy1]) in tiles([x0, y0, x1, y1], size) {
+        // The restore's clip coverage, and whether Skia made it a plain rect.
+        let mut rect = false;
         let clip = tile_pixels(o, ts, black, |c| {
-            cover(c, &|c| outer.clip(c, ClipOp::Intersect))
-        });
-        let content = tile_pixels(o, ts, clear, |c| {
-            if slow {
-                c.draw_rect(outer.rr.rect(), &fill_paint(fill));
-            } else {
-                Op::layer_content(c, &outer, &inner, fill, border);
+            match op {
+                Op::ClipLayer { outer, .. } => outer.clip(c, ClipOp::Intersect),
+                Op::Border {
+                    outer,
+                    inner,
+                    dashed,
+                } => ring_clip(c, outer, inner, *dashed),
+                _ => {}
             }
+            rect = c.is_clip_rect();
+            c.draw_paint(&fill_paint(white));
         });
-        // The border layer's clip: outside the inner contour, within the clip layer's
-        // bounds (the outer rect).
-        let ring = slow.then(|| {
-            tile_pixels(o, ts, black, |c| {
-                cover(c, &|c| {
-                    c.clip_rect(outer.rr.rect(), ClipOp::Intersect, false);
-                    if !inner.rr.is_empty() {
-                        inner.clip(c, ClipOp::Difference);
-                    }
-                })
-            })
+        let (lo, ls) = match op {
+            // The clip layer's device: the outer clip's bounds within the tile.
+            Op::ClipLayer { outer, .. } => {
+                let r = outer.rr.r;
+                let lo = [o[0].max(r[0].floor() as i32), o[1].max(r[1].floor() as i32)];
+                let x1 = (o[0] + ts.0).min((r[0] + r[2]).ceil() as i32);
+                let y1 = (o[1] + ts.1).min((r[1] + r[3]).ceil() as i32);
+                (lo, (x1 - lo[0], y1 - lo[1]))
+            }
+            _ => (o, ts),
+        };
+        if ls.0 <= 0 || ls.1 <= 0 {
+            continue;
+        }
+        let content = tile_pixels(lo, ls, clear, |c| match op {
+            Op::ClipLayer { outer, inner, fill } => Op::layer_content(c, outer, inner, *fill, col),
+            Op::Border {
+                outer,
+                inner,
+                dashed,
+            } => ring_content(c, outer, inner, *dashed, opaque),
+            _ => {}
         });
-        for y in oy0..oy1 {
-            for x in ox0..ox1 {
+        let sprite = rect && alpha < 255;
+        for y in oy0.max(lo[1])..oy1.min(lo[1] + ls.1) {
+            for x in ox0.max(lo[0])..ox1.min(lo[0] + ls.0) {
                 let i = (y - o[1]) as usize * clip.1 + (x - o[0]) as usize * 4;
                 let m = clip.0[i + 1];
-                let mut l: [u8; 4] = content.0[i..i + 4].try_into().expect("rgba");
-                if let Some(ring) = &ring {
-                    // The border's layer restored onto the fill through its clip.
-                    let b = [border.r, border.g, border.b, 1.].map(alpha_byte);
-                    let (a, m) = (alpha_byte(border.a), ring.0[i + 1]);
-                    l = std::array::from_fn(|k| blend(ARGB32, b[k], a, l[k], m));
+                let j = (y - lo[1]) as usize * content.1 + (x - lo[0]) as usize * 4;
+                let mut l: [u8; 4] = content.0[j..j + 4].try_into().expect("rgba");
+                if !sprite {
+                    l = l.map(|v| ((u32::from(v) * (u32::from(alpha) + 1)) >> 8) as u8);
                 }
                 if m == 0 || l[3] == 0 {
                     continue;
                 }
-                let key = (l, m < 255);
+                let key = (l, sprite || m < 255);
                 let g = *index.entry(key).or_insert_with(|| {
                     groups.push(key);
                     groups.len() - 1
                 });
-                px[((y - y0) * w + x - x0) as usize] = (g, m);
+                px[((y - y0) * w + x - x0) as usize] = (g, if sprite { alpha } else { m });
             }
         }
     }
@@ -1217,16 +1298,16 @@ fn paint_op(op: Op, color: Hsla, layer: Layer, window: &mut Window, cx: &App) {
     // GPUI folds an `opacity` into a lone sprite's color, as cc folds it into the paint: Skia
     // picks its blitter by that alpha.
     let a = alpha_byte(color.a * window.element_opacity());
-    if let Op::ClipLayer { .. } = op {
-        let sprites = cached(format!("{op:?}{layer:?}{a}"), || {
-            clip_layer_sprites(&op, color4f(color), layer)
+    if matches!(op, Op::ClipLayer { .. }) || op.restored(a) {
+        let mut col = color4f(color);
+        col.a *= window.element_opacity();
+        let sprites = cached(format!("{op:?}{layer:?}{col:?}"), || {
+            restore_sprites(&op, col, layer)
         });
         return paint_sprites(&sprites, color, window, cx);
     }
     let sprites = sprites(format!("{op:?}{layer:?}{a}"), || {
-        raster(op.bbox(), layer, a, op.restored(a), &|c, col| {
-            op.draw(c, col)
-        })
+        raster(op.bbox(), layer, a, &|c, col| op.draw(c, col))
     });
     paint_sprites(&sprites, color, window, cx);
 }
@@ -1442,6 +1523,7 @@ pub(crate) fn ops(d: &Decoration, bounds: Bounds<Pixels>, s: f32) -> (Contour, V
         let op = Op::Border {
             outer: border,
             inner,
+            dashed: d.dashed,
         };
         (op, color)
     }));
@@ -1475,8 +1557,10 @@ thread_local! {
 }
 
 fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
-    let at = tag.find(&format!(" {name}=\""))? + name.len() + 3;
-    Some(&tag[at..at + tag[at..].find('"')?])
+    ['"', '\''].into_iter().find_map(|q| {
+        let at = tag.find(&format!(" {name}={q}"))? + name.len() + 3;
+        Some(&tag[at..at + tag[at..].find(q)?])
+    })
 }
 
 fn numbers(s: &str) -> Vec<f32> {
@@ -1706,7 +1790,7 @@ pub(crate) fn paint_icon(
         let a = alpha_byte(a * window.element_opacity());
         let sprites = sprites(
             format!("{key}#{n}{flip_x}{origin:?}{w}x{h}{layer:?}{a}"),
-            || raster(bbox, layer, a, false, &draw),
+            || raster(bbox, layer, a, &draw),
         );
         paint_sprites(&sprites, color.into(), window, cx);
     }
@@ -1763,5 +1847,40 @@ mod tests {
             assert_eq!(blend(ARGB32, 255, 21, 24, m), chromium);
         }
         assert_ne!(blend(MASK, 255, 21, 24, 55), 28);
+    }
+
+    /// A [`wide`] color's squircle fill over #242424, as Skia's float pipeline draws it,
+    /// against `shaders.metal` mode 4 (highp srcover at the coverage).
+    #[test]
+    fn wide_fill_blend() {
+        let rr = Rounded {
+            r: [3., 3., 56., 56.],
+            radii: [[25.; 2]; 4],
+        };
+        let fill = Op::Fill(Contour {
+            rr,
+            k: [2f32.powf(1.5); 4],
+            origin: rr,
+        });
+        let col = Color4f::new(1.00003, 0.99999, 1., 0.05);
+        let bg = 36. / 255.;
+        let real = tile_pixels([0, 0], (64, 64), Color4f::new(bg, bg, bg, 1.), |c| {
+            fill.draw(c, col)
+        });
+        let cov = tile_pixels([0, 0], (64, 64), Color4f::new(0., 0., 0., 1.), |c| {
+            fill.draw(c, Color4f::new(1., 1., 1., 1.))
+        });
+        let mut bad = Vec::new();
+        for i in (0..cov.0.len()).step_by(4) {
+            let m = f32::from(cov.0[i + 1]) / 255.;
+            let a = col.a * m;
+            let o =
+                |c: f32| ((bg * (1. - a) + c * col.a * m).clamp(0., 1.) * 255.).round_ties_even();
+            let want = [o(col.r), o(col.g), o(col.b)].map(|v| v as u8);
+            if real.0[i..i + 3] != want {
+                bad.push((cov.0[i + 1], real.0[i..i + 3].to_vec(), want));
+            }
+        }
+        assert!(bad.is_empty(), "{} px: {bad:?}", bad.len());
     }
 }

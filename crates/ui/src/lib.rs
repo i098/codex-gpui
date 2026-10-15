@@ -3,11 +3,11 @@
 //! the spec's CSS px.
 
 use gpui::{
-    Action, AnyElement, AnyView, App, AppContext as _, Bounds, ClickEvent, Context, Corners, Div,
-    FontWeight, Hsla, Image, ImageFormat, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, Pixels, Point, Render, Rgba, SharedString, Stateful, StatefulInteractiveElement,
-    Styled, Svg, Window, actions, canvas, div, img, point, prelude::FluentBuilder as _, px, size,
-    svg,
+    Action, AnyElement, AnyView, App, AppContext as _, Bounds, ClickEvent, ContentMask, Context,
+    Corners, Div, FontWeight, Hsla, Image, ImageFormat, InteractiveElement, IntoElement,
+    MouseButton, ParentElement, Pixels, Point, Render, Rgba, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, Svg, Window, actions, canvas, div, fill, img, point,
+    prelude::FluentBuilder as _, px, size, svg,
 };
 use std::sync::{Arc, LazyLock};
 use theme::{ActiveTheme as _, Theme};
@@ -27,8 +27,27 @@ actions!(
         GoBack,
         GoForward,
         OpenSettings,
+        /// Rail `Scheduled`: the Automations page.
+        OpenScheduled,
+        /// Profile menu ▸ Help ▸ `Set up mobile`.
+        OpenMobileSetup,
+        /// `⌥⌘B`: show or hide the Changes side panel.
+        ToggleChangesPanel,
+        /// A file change card's `View changes`, the thread summary's `Changes` row.
+        OpenChangesPanel,
+        /// Thread summary ▸ `Background processes` row: the command's terminal tab.
+        OpenBackgroundTerminal,
+        /// Side panel tab strip `Hide tabs`: close the side panel.
+        CloseSidePanel,
+        /// `⌘K`, `⌘⇧P`, sidebar `Search`: the command menu.
+        OpenCommandMenu,
     ]
 );
+
+/// Settings ▸ Appearance ▸ Theme: `"system"`, `"light"` or `"dark"`.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = shell, no_json)]
+pub struct SetTheme(pub &'static str);
 
 // Edit menu commands; text inputs handle them.
 actions!(edit, [Undo, Redo, Cut, Copy, Paste, SelectAll]);
@@ -63,9 +82,15 @@ pub struct Shell {
     /// Titlebar `New tab` button (chat routes; Settings and Automations hide it).
     pub new_tab: bool,
     /// Opaque background boxes the page paints under the main surface's clip that reach its
-    /// right corners (Settings' `electron:bg-surface`): each blends the clip's anti-aliased
-    /// edge once more.
+    /// rounded corners (Settings' `electron:bg-surface`, the thread's band): each blends the
+    /// clip's anti-aliased edge once more. With any, the shell paints those corners itself,
+    /// over what the main panel's content painted there.
     pub main_backgrounds: u8,
+    /// The profile avatar's menu is open.
+    pub profile_menu: bool,
+    /// Pointer over the avatar: its own click toggles the menu, so a press there must not
+    /// also close it as a click outside.
+    avatar_hovered: bool,
     sidebar: AnyView,
     main: AnyView,
 }
@@ -100,6 +125,8 @@ impl Shell {
             chat_chrome: true,
             new_tab: true,
             main_backgrounds: 0,
+            profile_menu: false,
+            avatar_hovered: false,
             sidebar,
             main,
         }
@@ -331,12 +358,13 @@ pub fn home_sidebar_header(cx: &App) -> Div {
             .rounded(RADIUS_BUTTON_XL)
             .hover(move |s| s.bg(hover_bg))
             .child(leading)
-            // `.text-fade-truncate`: a CSS mask, so Chromium paints the label into its own
-            // transparent layer and composites that onto the sidebar.
+            // `.text-fade-truncate`: a CSS mask layer inside the squashing cc layer Chromium
+            // makes for the rows (they overlap the header buttons' layers), composited over
+            // the sidebar's layer.
             .child(
                 text(label, 14., 21., 430., t.text_default_nav)
                     .flex_1()
-                    .layer(),
+                    .top_layer(),
             )
     };
     div()
@@ -374,11 +402,10 @@ pub fn home_sidebar_header(cx: &App) -> Div {
                     t,
                 ))
                 .child(div().w(px(4.)))
-                .child(icon_button(
-                    "search",
-                    icon::icon("search", 16., t.text_tertiary),
-                    t,
-                )),
+                .child(
+                    icon_button("search", icon::icon("search", 16., t.text_tertiary), t)
+                        .on_click(dispatch::<OpenCommandMenu>),
+                ),
         )
         .child(
             div()
@@ -405,7 +432,7 @@ pub fn home_sidebar_header(cx: &App) -> Div {
 }
 
 impl Shell {
-    fn rail(&self, t: &Theme) -> Div {
+    fn rail(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
         let (hover_bg, hover_fg) = (t.ghost_hover, t.text);
         let selected = self.selected_rail;
         // The list (`[6, 50, 40, 732]`) is a composited scroller: its items paint into the
@@ -474,7 +501,7 @@ impl Shell {
                     .layer()
                     .child(item("home").on_click(dispatch::<NewChat>))
                     .child(item("space"))
-                    .child(item("scheduled"))
+                    .child(item("scheduled").on_click(dispatch::<OpenScheduled>))
                     .child(item("plugins"))
                     // Explore with its unread dot (`bg-info-solid`, 8 px, top-right).
                     .child(
@@ -508,8 +535,66 @@ impl Shell {
                     .justify_center()
                     .rounded(RADIUS_RAIL)
                     .hover(move |s| s.bg(hover_bg))
+                    .on_hover(
+                        cx.listener(|this, hovered: &bool, _, _| this.avatar_hovered = *hovered),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.profile_menu ^= true;
+                        cx.notify();
+                    }))
                     .child(avatar()),
             )
+    }
+
+    /// Profile avatar menu (`codex.profileDropdown.*`) above the avatar: `Settings`, then the
+    /// `Help` submenu's `Set up mobile`, flattened under a `Help` heading.
+    /// ponytail: Profile, Usage, Log out and Show Mini open pages the port does not have; add
+    /// them with those pages.
+    fn profile_menu(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let hover = t.menu_item_hover;
+        let item = |id: &'static str,
+                    label: &'static str,
+                    action: fn(&ClickEvent, &mut Window, &mut App)| {
+            div()
+                .id(id)
+                .px(px(8.))
+                .py(px(6.))
+                .rounded(px(12.))
+                .hover(move |s| s.bg(hover))
+                .child(text(label, 14., 20., 430., t.text))
+                .on_click(cx.listener(move |this, e, window, cx| {
+                    this.profile_menu = false;
+                    cx.notify();
+                    action(e, window, cx);
+                }))
+        };
+        let settings = item("profile-settings", "Settings", dispatch::<OpenSettings>);
+        let mobile = item(
+            "profile-set-up-mobile",
+            "Set up mobile",
+            dispatch::<OpenMobileSetup>,
+        );
+        div()
+            .absolute()
+            .left(px(8.))
+            .bottom(px(48.))
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                if !this.avatar_hovered {
+                    this.profile_menu = false;
+                    cx.notify();
+                }
+            }))
+            .child(composer::popover(t, 220., |d| {
+                d.child(settings)
+                    .child(div().px(px(8.)).pt(px(8.)).pb(px(4.)).child(text(
+                        "Help",
+                        12.,
+                        16.,
+                        400.,
+                        t.text_tertiary,
+                    )))
+                    .child(mobile)
+            }))
     }
 
     /// `.sidebar-navigation`: its left corners come from `clip-path: inset(... round 12px)`.
@@ -686,35 +771,81 @@ impl Render for Shell {
             fill: Some(t.sidebar_divider),
             ..Default::default()
         };
-        let page = canvas(
+        let under = t.background_surface_under;
+        // The page frame over the root `bounds`.
+        let frame = move |bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App| {
+            let page_surface = Bounds::from_corners(
+                bounds.origin + point(RAIL_WIDTH, Theme::TITLEBAR_HEIGHT),
+                bounds.bottom_right() - point(PAGE_INSET, PAGE_INSET),
+            );
+            let main_left = if open {
+                Theme::SIDEBAR_WIDTH
+            } else {
+                RAIL_WIDTH
+            };
+            let mut main = Bounds::from_corners(
+                bounds.origin + point(main_left, Theme::TITLEBAR_HEIGHT),
+                page_surface.bottom_right(),
+            );
+            window.with_skia_layer(255, |window| {
+                shapes::paint(&layout, None, bounds, window, cx);
+                shapes::paint(&surface, None, page_surface, window, cx);
+                if open {
+                    let line = Bounds::new(main.origin, size(MAIN_HAIRLINE, main.size.height));
+                    shapes::paint(&hairline, None, line, window, cx);
+                    main.origin.x += MAIN_HAIRLINE;
+                    main.size.width -= MAIN_HAIRLINE;
+                }
+                for _ in 0..fills {
+                    shapes::paint(&main_fill, None, main, window, cx);
+                }
+            });
+        };
+        let page = canvas(|_, _, _| {}, {
+            let frame = frame.clone();
+            move |bounds, (), window, cx| {
+                frame(bounds, window, cx);
+            }
+        })
+        .absolute()
+        .size_full();
+        // `_MainContentSurface` clips its content with a rounded `clip-path`: content boxes
+        // that reach its rounded corners (fills, fades) are cut there. The frame is painted
+        // again over each rounded corner's device px that the arc does not fully cover, row by
+        // row, so they show what the clip leaves; the content inside the arc stays.
+        // ponytail: the arc's edge px take the main fill as the content; blend the content
+        // through the clip's coverage if that shows.
+        let corners = canvas(
             |_, _, _| {},
             move |bounds, (), window, cx| {
-                let page_surface = Bounds::from_corners(
-                    bounds.origin + point(RAIL_WIDTH, Theme::TITLEBAR_HEIGHT),
-                    bounds.bottom_right() - point(PAGE_INSET, PAGE_INSET),
-                );
-                let main_left = if open {
-                    Theme::SIDEBAR_WIDTH
-                } else {
-                    RAIL_WIDTH
-                };
-                let mut main = Bounds::from_corners(
-                    bounds.origin + point(main_left, Theme::TITLEBAR_HEIGHT),
-                    page_surface.bottom_right(),
-                );
-                window.with_skia_layer(255, |window| {
-                    shapes::paint(&layout, None, bounds, window, cx);
-                    shapes::paint(&surface, None, page_surface, window, cx);
-                    if open {
-                        let line = Bounds::new(main.origin, size(MAIN_HAIRLINE, main.size.height));
-                        shapes::paint(&hairline, None, line, window, cx);
-                        main.origin.x += MAIN_HAIRLINE;
-                        main.size.width -= MAIN_HAIRLINE;
+                let s = window.scale_factor();
+                let dev = |v: Pixels| f32::from(v) * s;
+                let rd = dev(r).round();
+                let (left, top) = (dev(RAIL_WIDTH), dev(Theme::TITLEBAR_HEIGHT));
+                let right = dev(bounds.size.width - PAGE_INSET);
+                let bottom = dev(bounds.size.height - PAGE_INSET);
+                // Each corner: its point and which way the main panel lies.
+                let mut corners = vec![(right, top, -1., 1.), (right, bottom, -1., -1.)];
+                if !open {
+                    corners.extend([(left, top, 1., 1.), (left, bottom, 1., -1.)]);
+                }
+                for (x, y, dx, dy) in corners {
+                    for i in 0..rd as u32 {
+                        let i = i as f32;
+                        let w = rd - (rd * rd - (rd - i).powi(2)).sqrt().floor();
+                        let x0 = if dx < 0. { x - w } else { x };
+                        let y0 = if dy > 0. { y + i } else { y - i - 1. };
+                        let row =
+                            Bounds::new(point(px(x0 / s), px(y0 / s)), size(px(w / s), px(1. / s)));
+                        let mask = ContentMask {
+                            bounds: row + bounds.origin,
+                        };
+                        window.with_content_mask(Some(mask), |window| {
+                            window.paint_quad(fill(bounds, under));
+                            frame(bounds, window, cx);
+                        });
                     }
-                    for _ in 0..fills {
-                        shapes::paint(&main_fill, None, main, window, cx);
-                    }
-                });
+                }
             },
         )
         .absolute()
@@ -725,12 +856,14 @@ impl Render for Shell {
             .relative()
             .overflow_hidden()
             .font_family(SANS)
-            .bg(t.background_surface_under)
+            .bg(under)
             .child(page)
             .when(self.sidebar_open, |d| d.child(self.sidebar_panel(&t)))
             .child(self.main_panel())
-            .child(self.rail(&t))
+            .when(self.main_backgrounds > 0, |d| d.child(corners))
+            .child(self.rail(&t, cx))
             .child(self.titlebar(&t, cx))
+            .when(self.profile_menu, |d| d.child(self.profile_menu(&t, cx)))
     }
 }
 

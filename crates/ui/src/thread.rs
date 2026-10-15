@@ -14,7 +14,7 @@ use bridge::types::{
     TurnStatus, UserInput,
 };
 use gpui::{
-    AnyView, App, Context, Corners, Div, FontWeight, Hsla, Image, ImageFormat, IntoElement,
+    AnyView, Context, Corners, Div, FontWeight, Hsla, Image, ImageFormat, IntoElement,
     ParentElement, Pixels, Render, Rgba, SharedString, Styled, Task, TextRun, Window, div, font,
     prelude::*, px, relative, rgb, rgba, white,
 };
@@ -76,6 +76,11 @@ impl ThreadView {
         &self.thread_id
     }
 
+    /// The thread's working directory, as the server reports it.
+    pub fn cwd(&self) -> &str {
+        &self.cwd
+    }
+
     pub fn turns(&self) -> &[Turn] {
         &self.turns
     }
@@ -124,40 +129,45 @@ impl ThreadView {
         };
         // `trailing`: the row's hover-only actions keep their space; a label that overflows its
         // viewport gets the marquee's right fade (`_overflowingViewport`, 1.14286em).
-        let row = |name: &'static str, label: String, trailing: f32| {
+        let row = |name: &'static str, label: String, trailing: f32, ix: usize| {
             let clip = 260. - 30. - trailing;
             let overflows = f32::from(width(window, &label, 13., 430., None)) > clip;
             let bg = t.surface_elevated_secondary;
-            div().h(px(28.)).px(px(20.)).py(px(4.)).child(
-                div()
-                    .h(px(20.))
-                    .flex()
-                    .items_center()
-                    .gap(px(4.))
-                    .child(div().mr(px(8.)).child(icon(name, 18., t.text)))
-                    .child(
-                        div()
-                            .relative()
-                            .w(px(clip))
-                            .overflow_hidden()
-                            .child(text(label, 13., 18.5714, 430., t.text))
-                            .when(overflows, |d| {
-                                d.child(
-                                    div()
-                                        .absolute()
-                                        .top_0()
-                                        .right_0()
-                                        .h_full()
-                                        .w(px(13. * 1.14286))
-                                        .bg(gpui::linear_gradient(
-                                            90.,
-                                            gpui::linear_color_stop(bg.opacity(0.), 0.),
-                                            gpui::linear_color_stop(bg, 1.),
-                                        )),
-                                )
-                            }),
-                    ),
-            )
+            div()
+                .id((name, ix))
+                .h(px(28.))
+                .px(px(20.))
+                .py(px(4.))
+                .child(
+                    div()
+                        .h(px(20.))
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .child(div().mr(px(8.)).child(icon(name, 18., t.text)))
+                        .child(
+                            div()
+                                .relative()
+                                .w(px(clip))
+                                .overflow_hidden()
+                                .child(text(label, 13., 18.5714, 430., t.text))
+                                .when(overflows, |d| {
+                                    d.child(
+                                        div()
+                                            .absolute()
+                                            .top_0()
+                                            .right_0()
+                                            .h_full()
+                                            .w(px(13. * 1.14286))
+                                            .bg(gpui::linear_gradient(
+                                                90.,
+                                                gpui::linear_color_stop(bg.opacity(0.), 0.),
+                                                gpui::linear_color_stop(bg, 1.),
+                                            )),
+                                    )
+                                }),
+                        ),
+                )
         };
         let has_changes = self
             .turns
@@ -181,7 +191,10 @@ impl ThreadView {
                     ),
                 )
                 .when(has_changes, |d| {
-                    d.child(row("thread-summary-changes", "Changes".into(), 32.))
+                    d.child(
+                        row("thread-summary-changes", "Changes".into(), 32., 0)
+                            .on_click(crate::dispatch::<crate::OpenChangesPanel>),
+                    )
                 }),
         ];
         if !terminals.is_empty() {
@@ -191,11 +204,10 @@ impl ThreadView {
                     .flex_col()
                     .gap(px(2.))
                     .child(header("Background processes".into()))
-                    .children(
-                        terminals
-                            .into_iter()
-                            .map(|(command, _)| row("thread-summary-terminal", command, 22.)),
-                    ),
+                    .children(terminals.into_iter().enumerate().map(|(ix, (command, _))| {
+                        row("thread-summary-terminal", command, 22., ix)
+                            .on_click(crate::dispatch::<crate::OpenBackgroundTerminal>)
+                    })),
             );
         }
         let n = sections.len();
@@ -354,16 +366,19 @@ impl ThreadView {
     /// The thread's part of the window titlebar (`Chat toolbar`): project icon and title, then
     /// `Chat actions` and `Toggle summary`, laid over the shell's titlebar (open-sidebar
     /// layout) from the main panel's left edge to the shell's `New tab` group.
-    pub fn titlebar_header(&self, cx: &App) -> Div {
+    pub fn titlebar_header(&self, cx: &Context<Self>) -> Div {
         div()
             .absolute()
             .top_0()
             .left(Theme::SIDEBAR_WIDTH)
             .right(px(43.))
+            // Chromium composites the `group/titlebar` (it overlaps composited layers): text
+            // blits into its transparent tile.
+            .layer()
             .child(self.header(cx))
     }
 
-    fn header(&self, cx: &App) -> Div {
+    fn header(&self, cx: &Context<Self>) -> Div {
         let t = cx.theme();
         div()
             .relative()
@@ -422,29 +437,38 @@ impl ThreadView {
                         icon("thread-chat-actions", 16., t.text_tertiary),
                         t,
                     ))
-                    .child(if self.summary_open {
-                        // Pressed: `bg-text/10` squircle, primary icon.
-                        div()
-                            .id("toggle-summary")
-                            .relative()
-                            .size(px(28.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(shapes::decoration(shapes::Decoration {
-                                radius: Corners::all(px(12.5)),
-                                corner: shapes::Corner::Squircle,
-                                fill: Some(over(Hsla { a: 0.1, ..t.text }, layout_color(t))),
-                                ..Default::default()
-                            }))
-                            .child(icon("thread-summary", 16., t.text))
-                    } else {
-                        icon_button(
-                            "toggle-summary",
-                            icon("thread-summary", 16., t.text_tertiary),
-                            t,
-                        )
-                    }),
+                    .child(
+                        if self.summary_open {
+                            // Pressed: `bg-text/10` squircle, primary icon.
+                            div()
+                                .id("toggle-summary")
+                                .relative()
+                                .size(px(28.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                                    cx.stop_propagation()
+                                })
+                                .child(shapes::decoration(shapes::Decoration {
+                                    radius: Corners::all(px(12.5)),
+                                    corner: shapes::Corner::Squircle,
+                                    fill: Some(over(Hsla { a: 0.1, ..t.text }, layout_color(t))),
+                                    ..Default::default()
+                                }))
+                                .child(icon("thread-summary", 16., t.text))
+                        } else {
+                            icon_button(
+                                "toggle-summary",
+                                icon("thread-summary", 16., t.text_tertiary),
+                                t,
+                            )
+                        }
+                        .on_click(cx.listener(|view, _, _, cx| {
+                            view.summary_open ^= true;
+                            cx.notify();
+                        })),
+                    ),
             )
     }
 
@@ -511,7 +535,8 @@ impl ThreadView {
     /// `Yesterday 9:54 PM` above a turn's user message.
     fn timestamp(&self, at: i64, window: &Window, t: &Theme) -> Div {
         let (day, time) = day_and_time(at, self.clock.now(), self.clock.utc_offset);
-        let day = format!("{day} ");
+        // The space is the `<time>` text's (400), not the bold day span's.
+        let time = format!(" {time}");
         div()
             .flex()
             .justify_center()
@@ -578,6 +603,8 @@ impl Render for ThreadView {
                     .id("conversation")
                     .size_full()
                     .overflow_y_scroll()
+                    // The scroller's contents are a composited layer (transparent tile).
+                    .layer()
                     .pt(px(32.))
                     .child(
                         div()
@@ -730,7 +757,7 @@ fn user_bubble(message: &str, t: &Theme) -> Div {
             .child(shapes::decoration(shapes::Decoration {
                 radius: Corners::all(px(22.)),
                 corner: shapes::Corner::Squircle,
-                fill: Some(over(t.user_message_background, t.surface)),
+                fill: Some(t.user_message_background),
                 ..Default::default()
             }))
             .child(
@@ -790,7 +817,7 @@ fn disclosure(label: String, window: &Window, t: &Theme) -> Div {
 
 /// Colors the original mixes in CSS that have no theme token.
 struct Tones {
-    /// `bg-token-…/50` resource card over the surface.
+    /// `bg-token-…/50` resource card, translucent in the conversation's layer.
     card: Hsla,
     inline_code: Hsla,
     mention: Hsla,
@@ -801,13 +828,10 @@ fn tones(t: &Theme) -> Tones {
     match t.appearance {
         // `--color-token-text-code-block-background`-style mixes, from the specs' computed styles.
         Appearance::Dark => Tones {
-            card: over(
-                Hsla {
-                    a: 0.5,
-                    ..t.control_background
-                },
-                t.surface,
-            ),
+            card: Hsla {
+                a: 0.5,
+                ..t.control_background
+            },
             inline_code: Hsla {
                 a: 0.107_059,
                 ..t.text
@@ -816,8 +840,14 @@ fn tones(t: &Theme) -> Tones {
             secondary_button: rgba(0xffffff08).into(),
         },
         Appearance::Light => Tones {
-            // Chromium's oklab mix of white lands 1 below 255 in green.
-            card: rgb(0xfffeff).into(),
+            // oklab(white / 0.5): sRGB red just above 1 (Skia's float blit).
+            card: gpui::Rgba {
+                r: 1.00003,
+                g: 0.99999,
+                b: 1.,
+                a: 0.5,
+            }
+            .into(),
             inline_code: Hsla {
                 a: 0.092_941,
                 ..t.text
@@ -893,11 +923,15 @@ fn markdown(source: &str, window: &Window, t: &Theme) -> Div {
                     Inline::Code(code) => row.child(
                         div().pt(px(3.5)).pb(px(3.25)).child(
                             div()
+                                .relative()
                                 .h(px(17.))
                                 .py(px(1.))
                                 .px(px(6.))
-                                .rounded(px(6.))
-                                .bg(over(tones.inline_code, t.surface))
+                                .child(shapes::decoration(shapes::Decoration {
+                                    radius: Corners::all(px(6.)),
+                                    fill: Some(tones.inline_code),
+                                    ..Default::default()
+                                }))
                                 .child(measured(
                                     window,
                                     code.to_owned(),
@@ -1044,23 +1078,27 @@ fn diff_card(items: &[ThreadItem], window: &Window, t: &Theme) -> Option<Div> {
                             .child(button("Undo", None).child(icon("thread-undo", 14., t.text)))
                             // Blink's background bleed avoidance paints the fill and the
                             // translucent border into one transparency layer.
-                            .child(button(
-                                "View changes",
-                                Some(
-                                    div()
-                                        .absolute()
-                                        .inset_0()
-                                        .layer()
-                                        .child(shapes::decoration(shapes::Decoration {
-                                            radius: Corners::all(Theme::RADIUS_LG),
-                                            corner: shapes::Corner::Squircle,
-                                            fill: Some(tones.secondary_button),
-                                            border: Some((px(1.), t.border)),
-                                            ..Default::default()
-                                        }))
-                                        .into_any_element(),
-                                ),
-                            )),
+                            .child(
+                                button(
+                                    "View changes",
+                                    Some(
+                                        div()
+                                            .absolute()
+                                            .inset_0()
+                                            .layer()
+                                            .child(shapes::decoration(shapes::Decoration {
+                                                radius: Corners::all(Theme::RADIUS_LG),
+                                                corner: shapes::Corner::Squircle,
+                                                fill: Some(tones.secondary_button),
+                                                border: Some((px(1.), t.border)),
+                                                ..Default::default()
+                                            }))
+                                            .into_any_element(),
+                                    ),
+                                )
+                                .id("view-changes")
+                                .on_click(crate::dispatch::<crate::OpenChangesPanel>),
+                            ),
                     ),
             ),
     )

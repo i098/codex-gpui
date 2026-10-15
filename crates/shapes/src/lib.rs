@@ -41,12 +41,10 @@
 //! layer: they bypass it. Without a GPUI layer, [`paint`]'s `layer` gives the origin and each
 //! op is composited on its own.
 //!
-//! Limits: inset shadows paint apart from Blink's clip layer. A translucent `superellipse`
-//! border (alone or in the clip layer) comes back from its transparency layer as
-//! `SkBlendARGB32` at the clip coverage; Blink paints its sides one by one, and some
-//! horizontal sides (in some cc tiles) come back 1 level brighter. A `superellipse` shadow
-//! with a large blur and spread is 1 level off in its far tail. A fill under a CSS `opacity`
-//! rounds 1 level darker on its anti-aliased edge.
+//! Colors outside [0, 1] (out-of-gamut oklab/color-mix results) are drawn as Skia draws them,
+//! with its float raster pipeline. Limits: inset shadows paint apart from Blink's clip layer.
+//! A `superellipse` shadow with a large blur and spread is 1 level off in its far tail. A
+//! fill under a CSS `opacity` rounds 1 level darker on its anti-aliased edge.
 
 use gpui::{App, Bounds, Corners, Hsla, IntoElement, Pixels, Point, Styled as _, Window, canvas};
 
@@ -84,6 +82,8 @@ pub struct Decoration {
     pub fill: Option<Hsla>,
     /// Uniform border: width, color.
     pub border: Option<(Pixels, Hsla)>,
+    /// `border-style: dashed` (round corners; Blink's curved dashed side).
+    pub dashed: bool,
     /// CSS order: the first shadow is the top layer.
     pub shadows: Vec<Shadow>,
 }
@@ -303,7 +303,11 @@ fn quads(d: &Decoration, bounds: Bounds<Pixels>, window: &mut Window) {
             none,
             Edges::all(width),
             color,
-            BorderStyle::Solid,
+            if d.dashed {
+                BorderStyle::Dashed
+            } else {
+                BorderStyle::Solid
+            },
         ));
     }
 }

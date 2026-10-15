@@ -30,12 +30,7 @@ pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
         .first()
         .map(|(command, _)| command.clone())
         .unwrap_or_default();
-    let xterm = cx.new(|cx| {
-        cx.observe(&thread, |_, _, cx| cx.notify()).detach();
-        Xterm {
-            thread: thread.clone(),
-        }
-    });
+    let xterm = cx.new(|cx| Xterm::new(thread.clone(), cx));
     let sidebar = home_sidebar(cx, Some(&id));
     split_screen(
         sidebar,
@@ -47,8 +42,16 @@ pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
 
 /// `Background terminal` tab: the first background command's output (xterm DOM renderer,
 /// 12/16.5 px monospace, 12 px padding).
-struct Xterm {
+pub struct Xterm {
     thread: Entity<ThreadView>,
+}
+
+impl Xterm {
+    /// Follows `thread`'s first background command.
+    pub fn new(thread: Entity<ThreadView>, cx: &mut Context<Self>) -> Self {
+        cx.observe(&thread, |_, _, cx| cx.notify()).detach();
+        Self { thread }
+    }
 }
 
 impl Render for Xterm {
@@ -78,7 +81,7 @@ impl Render for Xterm {
 /// The notifications tools/route1/server.mjs (`replayRunningCommand`) sends for the reference:
 /// the subtract session's python3 check, started in a new turn that completes while the
 /// command never gets `item/completed`.
-fn running_command_replay() -> Vec<Event> {
+pub fn running_command_replay() -> Vec<Event> {
     let msgs: Vec<Value> = include_str!("../../../../fixtures/sessions/subtract.jsonl")
         .lines()
         .map(|l| serde_json::from_str::<Value>(l).expect("fixture line is JSON")["msg"].take())

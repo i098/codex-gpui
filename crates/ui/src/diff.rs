@@ -3,15 +3,16 @@
 //! changes. All numbers are the spec's CSS px.
 
 use crate::{
-    MONO, SANS, Shell, composer::shadow, fixture, icon::icon, layout_color, over,
-    screens::thread::view::ThreadView, text,
+    CloseSidePanel, MONO, SANS, Shell, composer::shadow, dispatch, fixture, icon::icon,
+    layout_color, over, screens::thread::view::ThreadView, text,
 };
-use bridge::types::{Thread, ThreadItem, ThreadReadResponse, ThreadStartResponse};
+use bridge::types::{ThreadItem, ThreadReadResponse, ThreadStartResponse, Turn};
 use gpui::{
     AnyView, App, AppContext as _, Context, Corners, Div, Entity, Font, FontFeatures, FontWeight,
-    HighlightStyle, Hsla, InteractiveElement, IntoElement, ParentElement, Pixels, Render, Rgba,
-    SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun, Window, black,
-    div, font, linear_color_stop, linear_gradient, prelude::FluentBuilder as _, px, rgb, white,
+    HighlightStyle, Hsla, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels,
+    Render, Rgba, SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun,
+    Window, black, div, font, linear_color_stop, linear_gradient, prelude::FluentBuilder as _, px,
+    rgb, white,
 };
 use shapes::Decoration;
 use std::{ops::Range, sync::Arc};
@@ -76,16 +77,15 @@ impl DiffPanel {
         let start: ThreadStartResponse =
             fixture::response("sessions/subtract.jsonl", "thread/start", 0);
         let read: ThreadReadResponse = fixture::response("readback.jsonl", "thread/read", 1);
-        Self::last_turn(&start.cwd, &read.thread)
+        Self::last_turn(&start.cwd, &read.thread.cwd, &read.thread.turns)
     }
 
-    /// "Last Turn" source: every file change of the thread's last turn. Paths show relative to
-    /// `workspace_root`; the server reports the thread cwd canonicalized (`/private/tmp/...`),
-    /// which is why the reference shows `../../../private/tmp/...`.
-    pub fn last_turn(workspace_root: &str, thread: &Thread) -> Self {
+    /// "Last Turn" source: every file change of the last of `turns`, a thread in `cwd`. Paths
+    /// show relative to `workspace_root`; the server reports the thread cwd canonicalized
+    /// (`/private/tmp/...`), which is why the reference shows `../../../private/tmp/...`.
+    pub fn last_turn(workspace_root: &str, cwd: &str, turns: &[Turn]) -> Self {
         let mut files: Vec<FileDiff> = Vec::new();
-        let changes = thread
-            .turns
+        let changes = turns
             .last()
             .into_iter()
             .flat_map(|turn| &turn.items)
@@ -96,7 +96,7 @@ impl DiffPanel {
             .flatten();
         for change in changes {
             let path = match change.path.strip_prefix(workspace_root) {
-                Some(rel) => format!("{}/{}", thread.cwd, rel.trim_start_matches('/')),
+                Some(rel) => format!("{cwd}/{}", rel.trim_start_matches('/')),
                 None => change.path.clone(),
             };
             let shown = relative(workspace_root, &path);
@@ -300,14 +300,33 @@ pub fn tab_strip(t: &Theme, tab_icon: &str, label: SharedString, window: &Window
         .pl(px(10.))
         .pr(px(7.))
         // `_SelectedSurface`: its own squircle layer under the tab button, with a 0.5 px
-        // `border-hairline`.
-        .child(shapes::decoration(Decoration {
-            radius: Corners::all(Theme::RADIUS_MD),
-            corner: shapes::Corner::Squircle,
-            fill: Some(fill),
-            border: Some((px(0.5), t.border)),
-            shadows: vec![shadow(t.shadow_sm, 1., 2., -1., false)],
-        }))
+        // `border-hairline`. Chromium composites it (its rect: the ink of `0 1px 2px -1px`), so
+        // the shadow lands in the layer's transparent tiles and blends onto the titlebar once.
+        .child(
+            div()
+                .absolute()
+                .left(px(-1.))
+                .top_0()
+                .w(px(240.))
+                .h(px(34.))
+                .layer()
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(1.))
+                        .top_0()
+                        .w(px(238.))
+                        .h(px(32.))
+                        .child(shapes::decoration(Decoration {
+                            radius: Corners::all(Theme::RADIUS_MD),
+                            corner: shapes::Corner::Squircle,
+                            fill: Some(fill),
+                            border: Some((px(0.5), t.border)),
+                            shadows: vec![shadow(t.shadow_sm, 1., 2., -1., false)],
+                            ..Default::default()
+                        })),
+                ),
+        )
         .child(
             div()
                 .flex_1()
@@ -340,6 +359,7 @@ pub fn tab_strip(t: &Theme, tab_icon: &str, label: SharedString, window: &Window
         )
         .child(
             div()
+                .id("side-panel-close-tab")
                 .absolute()
                 .top(px(6.))
                 .right(px(7.))
@@ -347,9 +367,12 @@ pub fn tab_strip(t: &Theme, tab_icon: &str, label: SharedString, window: &Window
                 .flex()
                 .items_center()
                 .justify_center()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(dispatch::<CloseSidePanel>)
                 .child(icon("diff-tab-close", 14., t.text_tertiary)),
         );
-    // 28 px `_Button`: 12.5 px `--codex-corner-shape` squircle.
+    // 28 px `_Button`: 12.5 px `--codex-corner-shape` squircle, `border border-transparent`
+    // (Blink paints its fill in a clip layer).
     let button = |name: &str, color: Hsla, fill: Option<Hsla>| {
         div()
             .relative()
@@ -362,6 +385,7 @@ pub fn tab_strip(t: &Theme, tab_icon: &str, label: SharedString, window: &Window
                     radius: Corners::all(px(12.5)),
                     corner: shapes::Corner::Squircle,
                     fill: Some(fill),
+                    border: Some((px(1.), gpui::transparent_black())),
                     ..Default::default()
                 }))
             })
@@ -398,12 +422,8 @@ pub fn tab_strip(t: &Theme, tab_icon: &str, label: SharedString, window: &Window
                 .flex()
                 .gap(px(6.))
                 .child(button("diff-full-view", t.text_tertiary, None))
-                // `bg-text/5`, composited over the titlebar like Skia does.
-                .child(button(
-                    "diff-hide-tabs",
-                    t.text,
-                    Some(over(t.text.opacity(0.05), layout)),
-                )),
+                // `bg-text/5` (dark: a float color, see `Theme::text_alpha_5`).
+                .child(button("diff-hide-tabs", t.text, Some(t.text_alpha_5))),
         )
 }
 
@@ -434,7 +454,7 @@ impl Render for SplitMain {
 
 /// The shell with the thread header and, with a side panel, the panel's tab strip laid over
 /// its titlebar.
-struct SplitScreen {
+pub struct SplitScreen {
     shell: Entity<Shell>,
     thread: Entity<ThreadView>,
     tab: Option<(&'static str, SharedString)>,
@@ -458,8 +478,7 @@ impl Render for SplitScreen {
             .when(open, |d| {
                 d.child(
                     self.thread
-                        .read(cx)
-                        .titlebar_header(cx)
+                        .update(cx, |view, cx| view.titlebar_header(cx))
                         .when_some(left, |h, left| h.w(left - Theme::SIDEBAR_WIDTH)),
                 )
             })
@@ -496,6 +515,22 @@ pub fn split_screen(
     panel: Option<(AnyView, &'static str, SharedString)>,
     cx: &mut App,
 ) -> AnyView {
+    let shell = cx.new(|_| {
+        let mut shell = Shell::new(sidebar, thread.clone().into());
+        shell.can_go_back = true;
+        shell
+    });
+    with_side_panel(shell, thread, panel, cx).into()
+}
+
+/// `shell`'s thread route: `thread` in its main panel and, with `panel`, the panel on the
+/// right under its titlebar tab `(view, icon, label)`.
+pub fn with_side_panel(
+    shell: Entity<Shell>,
+    thread: Entity<ThreadView>,
+    panel: Option<(AnyView, &'static str, SharedString)>,
+    cx: &mut App,
+) -> Entity<SplitScreen> {
     let main = match &panel {
         Some((panel, ..)) => cx
             .new(|_| SplitMain {
@@ -505,19 +540,18 @@ pub fn split_screen(
             .into(),
         None => thread.clone().into(),
     };
-    let shell = cx.new(|_| {
-        let mut shell = Shell::new(sidebar, main);
-        shell.can_go_back = true;
+    shell.update(cx, |shell, cx| {
         // A panel's tab strip brings its own `New tab`.
         shell.new_tab = panel.is_none();
-        shell
+        // The thread's top fade and composer band reach the main surface's right corners.
+        shell.main_backgrounds = 1;
+        shell.set_main(main, cx);
     });
     let tab = panel.map(|(_, icon, label)| (icon, label));
     cx.new(|cx: &mut Context<SplitScreen>| {
         cx.observe(&thread, |_, _, cx| cx.notify()).detach();
         SplitScreen { shell, thread, tab }
     })
-    .into()
 }
 
 /// A `rounded-full` `size` px box around a 16 px tertiary icon.
