@@ -509,7 +509,7 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
                 .child(
                     icon_button(
                         "search",
-                        icon::icon("search", 16., t.text_tertiary).own_layer(overlap),
+                        icon::icon("search", 16., t.text_tertiary).own_layer(Some(overlap)),
                         t,
                     )
                     .on_click(dispatch::<OpenCommandMenu>),
@@ -534,7 +534,7 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
                     "your-dot",
                     // An `<img>`: its svg (with its own fill) draws into the overlap layer.
                     icon::icon("your-dot", 16., gpui::rgb(0xbac1d3).into())
-                        .own_layer(overlap)
+                        .own_layer(Some(overlap))
                         .into_any_element(),
                     "Your dot",
                 )),

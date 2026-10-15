@@ -8223,7 +8223,7 @@
 ],
 "css_color": "ffffffff",
 "opacity": 1.0,
-"fitted": true
+"fitted": false
 },
 {
 "ref": "refs/composer/dark@1440x900.png",
@@ -8241,7 +8241,7 @@
 ],
 "css_color": "ffffffff",
 "opacity": 1.0,
-"fitted": true
+"fitted": false
 },
 {
 "ref": "refs/diff/dark@1280x832.png",
@@ -8295,7 +8295,7 @@
 ],
 "css_color": "ffffffff",
 "opacity": 1.0,
-"fitted": false
+"fitted": true
 },
 {
 "ref": "refs/home/dark@1440x900.png",
@@ -8313,7 +8313,7 @@
 ],
 "css_color": "ffffffff",
 "opacity": 1.0,
-"fitted": false
+"fitted": true
 },
 {
 "ref": "refs/sidebar/dark@1280x832.png",

@@ -1674,6 +1674,11 @@ impl Composer {
                 ))
             });
         let has_input = !self.content.is_empty() || !self.attachments.is_empty();
+        // The docked body is a cc layer: its icons blend onto its transparent tile, not onto
+        // the card as the home composer's do (whose fitted pixels those are).
+        let docked = self.docked;
+        let footer_icon =
+            move |name: &str, color| icon(name, 16., color).when(docked, |i| i.own_layer(None));
         let left = div()
             .flex()
             .items_center()
@@ -1682,7 +1687,7 @@ impl Composer {
                 pill("add-files", t)
                     .w(px(28.))
                     .justify_center()
-                    .child(icon("plus", 16., t.text))
+                    .child(footer_icon("plus", t.text))
                     .on_click(cx.listener(|this, _, _, cx| this.add_files(cx))),
             )
             .child(
@@ -1692,7 +1697,7 @@ impl Composer {
                         pill("permissions", t)
                             .px(px(6.))
                             .gap(px(4.))
-                            .child(icon("permissions", 16., t.text_tertiary))
+                            .child(footer_icon("permissions", t.text_tertiary))
                             .when(self.footer_width > SM_WIDTH, |d| {
                                 d.child(label(self.permission.short_label(), t.text_tertiary))
                             })
@@ -1712,7 +1717,7 @@ impl Composer {
                 pill("dictate", t)
                     .w(px(28.))
                     .justify_center()
-                    .child(icon("mic", 16., t.text)),
+                    .child(footer_icon("mic", t.text)),
             )
             .child(
                 div()

@@ -2,7 +2,7 @@
 //! mask layer's alpha (`DstIn`) before it composites the layer, which the shader does to the
 //! GPUI layer's pixel with [`DST_IN`] sprites.
 
-use crate::skia::{Blits, DST_IN, MASK, paint_sprites, sprites, tile_pixels};
+use crate::skia::{Blits, DST_IN, LERP, MASK, paint_sprites, sprites, tile_pixels};
 use gpui::{App, Bounds, Corners, Hsla, Pixels, Window};
 use skia_safe::{Color4f, Paint, RRect, Rect, Vector};
 
@@ -61,8 +61,9 @@ pub(crate) fn paint_x_fade(
     paint_sprites(&sprites, Hsla::default(), window, cx);
 }
 
-/// `crate::paint_rounded_clip` on macOS: each rounded corner's square of device px gets the
-/// layer multiplied by Skia's anti-aliased coverage of the outside of the rounded rect.
+/// `crate::paint_rounded_clip` on macOS: in each rounded corner's square of device px, what is
+/// under the layer is lerped to the layer by Skia's anti-aliased coverage of the outside of the
+/// rounded rect.
 pub(crate) fn paint_rounded_clip(
     radius: Corners<Pixels>,
     bounds: Bounds<Pixels>,
@@ -106,7 +107,7 @@ pub(crate) fn paint_rounded_clip(
             let blits = px
                 .chunks(row)
                 .flat_map(|line| line.iter().skip(1).step_by(4).take(n as usize))
-                .map(|&m| [255 - m, DST_IN, 0, MASK] as Blits)
+                .map(|&m| [255 - m, LERP, 0, MASK] as Blits)
                 .collect();
             ([x0, y0, n, n], blits)
         });

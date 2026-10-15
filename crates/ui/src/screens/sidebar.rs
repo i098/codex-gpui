@@ -752,8 +752,9 @@ impl Render for CommandMenu {
                                             .overflow_y_scroll()
                                             // Its contents end 0.1 px past the box, so Chromium
                                             // scrolls and composites them in their own
-                                            // transparent layer.
-                                            .layer()
+                                            // transparent layer, over the dialog's (cc layers
+                                            // are flat): a row's opacity restores onto it.
+                                            .top_layer()
                                             .flex()
                                             .flex_col()
                                             .children(groups),

@@ -40,6 +40,9 @@ const PIPELINE: u8 = 2;
 const LAYER: u8 = 3;
 /// A mask layer's alpha applied to the layer pixel (`DstIn` at the sprite's coverage).
 pub(crate) const DST_IN: u8 = 5;
+/// What is under the enclosing GPUI layer lerped to the layer's pixel by the coverage (viz
+/// drawing a clipped render pass's content over that layer).
+pub(crate) const LERP: u8 = 7;
 
 /// gfx::SizeF's clamp: dimensions at or below 8 epsilon are 0.
 fn clamp(v: f32) -> f32 {
@@ -180,8 +183,16 @@ impl Contour {
     }
 
     /// `PathBuilder::AddContouredRect`: when the rect differs from its origin rect (spread
-    /// shadows, inner border edges) the rect minus each corner's clip-out path.
+    /// shadows, inner border edges) the rect minus each corner's clip-out path. Its convexity
+    /// is computed up front, as Chromium's paths reach Skia with it known: AAA and the AA
+    /// clip raster a path whose convexity is cached differently once a tile edge cuts it.
     fn path(&self) -> Path {
+        let path = self.contour_path();
+        path.is_convex();
+        path
+    }
+
+    fn contour_path(&self) -> Path {
         if self.round_curvature() {
             return Path::rrect(self.rr.sk(), None);
         }
@@ -767,7 +778,6 @@ fn blend(mode: u8, c: u8, a: u8, d: u8, m: u8) -> u8 {
     let src = div255(c * a);
     let scale = m + 1;
     (match mode {
-        ARGB32 if m == 0 => d,
         ARGB32 => {
             let inv = 0xFFFF - a * scale;
             ((src * scale + d * ((inv + (inv >> 8)) >> 8)) >> 8) & 0xFF
@@ -861,15 +871,17 @@ pub(crate) fn tiles(
 /// rendering `draw` (in layer space) once per cc tile like Chromium's raster worker; the
 /// result is in window device px. Skia picks its blitter by
 /// the paint (opaque legacy, translucent, color filter), so the probes that tell the modes
-/// apart draw with the real color's `alpha`. AAA blits some edge pixels twice (a partial
-/// row, then the rest of it): those are solved for two blits. In a composited layer every
-/// pixel is one [`LAYER`] blit of its coverage. `clips` (layer space) are the ancestors'
-/// anti-aliased clips ([`with_rounded_clip`]): Skia draws inside them, and in a tile their
-/// curves reach the AA clip makes AAA blit runs only.
+/// apart draw with the real color's `alpha`; an opaque black paint (`black`) takes Skia's own
+/// `SkARGB32_Black_Blitter`, so its probes are black. AAA blits some edge pixels twice (a
+/// partial row, then the rest of it): those are solved for two blits. In a composited layer
+/// every pixel is one [`LAYER`] blit of its coverage. `clips` (layer space) are the
+/// ancestors' anti-aliased clips ([`with_rounded_clip`]): Skia draws inside them, and in a
+/// tile their curves reach the AA clip makes AAA blit runs only.
 fn raster(
     [x0, y0, x1, y1]: [i32; 4],
     layer: Layer,
     alpha: u8,
+    black: bool,
     clips: &[Contour],
     draw: &dyn Fn(&Canvas, Color4f),
 ) -> ([i32; 4], Vec<Blits>) {
@@ -881,12 +893,14 @@ fn raster(
         return ([0; 4], Vec::new());
     }
     let fixed = layer.composited.then_some(LAYER);
-    // The first probe (opaque white on black) reads the coverage; the others, with distinct
-    // channels, tell the blits apart (`blitAntiH`, `blitAntiH2`, raster pipeline).
+    // The first probe (opaque white on black, or black on white) reads the coverage; the
+    // others, with distinct channels, tell the blits apart (`blitAntiH`, `blitAntiH2`, raster
+    // pipeline).
+    let fg = |fg: [u8; 3]| if black { [0; 3] } else { fg };
     let mut probes = vec![Probe {
-        fg: [255; 3],
+        fg: fg([255; 3]),
         a: 255,
-        bg: [0; 3],
+        bg: [if black { 255 } else { 0 }; 3],
     }];
     let pairs = [
         ([255, 0, 0], [255, 255, 255]),
@@ -896,7 +910,11 @@ fn raster(
     let modes: &[u8] = match fixed {
         Some(_) => &[],
         None => {
-            probes.extend(pairs.map(|(fg, bg)| Probe { fg, a: alpha, bg }));
+            probes.extend(pairs.map(|(f, bg)| Probe {
+                fg: fg(f),
+                a: alpha,
+                bg,
+            }));
             if alpha == 255 {
                 &[MASK, ARGB32]
             } else {
@@ -933,13 +951,15 @@ fn raster(
                     .iter()
                     .map(|s| [s.0[i], s.0[i + 1], s.0[i + 2]])
                     .collect();
-                let m = px[0][1];
+                // The coverage the first probe's blit shows: its value white on black, its
+                // inverse black on white.
+                let m = if black { 255 - px[0][1] } else { px[0][1] };
                 if m == 0 {
                     continue;
                 }
                 out[((y - y0) * w + x - x0) as usize] = match fixed {
                     Some(mode) => [m, mode, 0, MASK],
-                    None => solve(&probes, &px, modes).unwrap_or_else(|| {
+                    None => solve(&probes, &px, m, modes).unwrap_or_else(|| {
                         // AAA may split a translucent paint's edge px into other blits than the
                         // opaque probe's: one `blitAntiH` (as under an AA clip, which forces
                         // AAA's run blitter) of the coverage the translucent white probe shows,
@@ -1119,9 +1139,10 @@ fn restore_sprites(op: &Op, col: Color4f, layer: Layer) -> Vec<Sprite> {
     out
 }
 
-/// One or two blits that reproduce every probe value `px`. The coverage probe (opaque) may
-/// take other legacy modes than the real paint's when that is translucent.
-fn solve(probes: &[Probe], px: &[[u8; 3]], modes: &[u8]) -> Option<Blits> {
+/// One or two blits that reproduce every probe value `px`, trying one blit of the coverage
+/// `m` first. The coverage probe (opaque) may take other legacy modes than the real paint's
+/// when that is translucent.
+fn solve(probes: &[Probe], px: &[[u8; 3]], m: u8, modes: &[u8]) -> Option<Blits> {
     let run = |b: Blits, k: [u8; 2], c, a, d| {
         let d = blend(k[0], c, a, d, b[0]);
         if b[2] == 0 {
@@ -1153,7 +1174,6 @@ fn solve(probes: &[Probe], px: &[[u8; 3]], modes: &[u8]) -> Option<Blits> {
                 legacy.iter().any(|k| probe(b, *k, &probes[0], &px[0]))
             }
     };
-    let m = px[0][1];
     let single = modes
         .iter()
         .map(|&mode| [m, mode, 0, MASK])
@@ -1211,7 +1231,7 @@ pub(crate) fn sprites(
         let mut out = Vec::new();
         for (blit, mode) in [0, 2]
             .into_iter()
-            .flat_map(|b| [MASK, ARGB32, PIPELINE, LAYER, DST_IN].map(|m| (b, m)))
+            .flat_map(|b| [MASK, ARGB32, PIPELINE, LAYER, DST_IN, LERP].map(|m| (b, m)))
         {
             let value = |i: usize| {
                 let b = blits[i];
@@ -1286,20 +1306,12 @@ pub(crate) fn paint_sprites(sprites: &[Sprite], color: Hsla, window: &mut Window
             }
             .into()
         });
-        // Opaque black takes SkARGB32_Black_Blitter, whose blitAntiH2 is the mask formula.
-        let c = Rgba::from(color);
-        let black = [c.r, c.g, c.b].iter().all(|&v| v * 255. < 0.5) && c.a * 255. > 254.5;
-        let mode = if black && sp.mode == ARGB32 {
-            MASK
-        } else {
-            sp.mode
-        };
         let bounds = Bounds::new(
             point(px(sp.at[0] as f32 / s), px(sp.at[1] as f32 / s)),
             size(px(sp.size[0] as f32 / s), px(sp.size[1] as f32 / s)),
         );
         let color = Hsla {
-            h: color.h + 2. * f32::from(mode),
+            h: color.h + 2. * f32::from(sp.mode),
             ..color
         };
         let paint = |window: &mut Window| {
@@ -1357,6 +1369,13 @@ fn clips(layer: Layer) -> Vec<Contour> {
     CLIPS.with_borrow(|c| c.iter().map(|c| c.moved([x, y])).collect())
 }
 
+/// Skia's `SK_ColorBLACK` paint (8-bit color at the folded alpha `a`): it takes
+/// `SkARGB32_Black_Blitter`.
+fn is_black(color: Hsla, a: u8) -> bool {
+    let c = color4f(color);
+    a == 255 && [c.r, c.g, c.b] == [0.; 3]
+}
+
 fn paint_op(op: Op, color: Hsla, layer: Layer, window: &mut Window, cx: &App) {
     // GPUI folds an `opacity` into a lone sprite's color, as cc folds it into the paint: Skia
     // picks its blitter by that alpha.
@@ -1371,8 +1390,11 @@ fn paint_op(op: Op, color: Hsla, layer: Layer, window: &mut Window, cx: &App) {
         return paint_sprites(&sprites, color, window, cx);
     }
     let clips = clips(layer);
-    let sprites = sprites(format!("{op:?}{layer:?}{a}{clips:?}"), || {
-        raster(op.bbox(), layer, a, &clips, &|c, col| op.draw(c, col))
+    let black = is_black(color, a);
+    let sprites = sprites(format!("{op:?}{layer:?}{a}{black}{clips:?}"), || {
+        raster(op.bbox(), layer, a, black, &clips, &|c, col| {
+            op.draw(c, col)
+        })
     });
     paint_sprites(&sprites, color, window, cx);
 }
@@ -1856,9 +1878,10 @@ pub(crate) fn paint_icon(
         let color = Rgba { a, ..c };
         let a = alpha_byte(a * window.element_opacity());
         let clips = clips(layer);
+        let black = is_black(color.into(), a);
         let sprites = sprites(
-            format!("{key}#{n}{flip_x}{origin:?}{w}x{h}{layer:?}{a}{clips:?}"),
-            || raster(bbox, layer, a, &clips, &draw),
+            format!("{key}#{n}{flip_x}{origin:?}{w}x{h}{layer:?}{a}{black}{clips:?}"),
+            || raster(bbox, layer, a, black, &clips, &draw),
         );
         paint_sprites(&sprites, color.into(), window, cx);
     }

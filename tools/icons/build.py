@@ -102,13 +102,31 @@ def resolve_sprite(svg):
     return svg
 
 
+def covered(nodes, i, box):
+    """Whether a node after `nodes[i]` paints a translucent background or a box-shadow over the
+    device px `box` (x0, y0, x1, y1): the ref shows that paint over the icon's blit (the
+    composer's menu shadow, the command menu's overlay), which the port paints over the
+    fitted image in turn. Such uses fit last: an image reproduces the uncovered uses first."""
+    x0, y0, x1, y1 = box
+    for n in nodes[i + 1:]:
+        x, y, w, h = (v * 2 for v in n["rect"])
+        bg = inventory.rgba8(n["style"].get("backgroundColor", "rgba(0, 0, 0, 0)"))[3]
+        # Skia draws a blur out to 3 sigma (sigma = blur / 2).
+        rects = [(x, y, 0)] * bool(bg) + [(x + s["x"], y + s["y"], 1.5 * s["blur"] + s["spread"])
+                                          for s in inventory.shadows(n["style"]) if not s["inset"]]
+        if w and h and any(rx - e < x1 and ry - e < y1 and rx + w + e > x0 and ry + h + e > y0
+                           for rx, ry, e in rects):
+            return True
+    return False
+
+
 def read_uses():
     uses = []
     for spec_path in sorted(ROOT.glob("refs/*/*.spec.json")):
         spec = json.loads(spec_path.read_text())
         by_id = {n["id"]: n for n in spec["nodes"]}
         vw, vh = spec["viewport"][0] * 2, spec["viewport"][1] * 2
-        for node in spec["nodes"]:
+        for i, node in enumerate(spec["nodes"]):
             if not node.get("svg"):
                 continue
             svg = resolve_sprite(node["svg"])
@@ -126,7 +144,8 @@ def read_uses():
             uses.append(dict(
                 ref=spec_path.with_suffix("").with_suffix(".png"), glyph=icons.key(svg),
                 svg=svg, w=w, h=h, W=W, H=H, x0=x0, y0=y0,
-                rgb=tuple(rgb), alpha=own / 255 * opacity, own=own, opacity=opacity))
+                rgb=tuple(rgb), alpha=own / 255 * opacity, own=own, opacity=opacity,
+                covered=covered(spec["nodes"], i, (x0, y0, x0 + W, y0 + H))))
     return uses
 
 
@@ -262,9 +281,10 @@ def main():
         c = cov[(glyph, W, H, flip)]
         alpha = occs[0]["alpha"]
         by_pos = collections.defaultdict(list)
-        for o in occs:
+        for o in sorted(occs, key=lambda o: o["covered"]):
             by_pos[(o["x"], o["y"])].append(o)
-        ordered = sorted(occs, key=lambda o: (-len(by_pos[(o["x"], o["y"])]), str(o["ref"])))
+        ordered = sorted(occs, key=lambda o: (o["covered"], -len(by_pos[(o["x"], o["y"])]),
+                                              str(o["ref"])))
         kept, default = greedy(ordered, c, alpha)
         images = {"": default}
         for (x, y), at in by_pos.items():
