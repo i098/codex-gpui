@@ -148,7 +148,9 @@ learn(oracle);
 
 // ---- app-server on the Mac, shared by all page sessions.
 // thread/resume only loads a thread into the server; nothing is written until a turn starts.
-const READ_ONLY = /\/(read|list|get|search|status)[A-Za-z]*$|\/(installed|loaded\/list|capabilities\/read)$|^(getAuthStatus|gitDiffToRemote|fuzzyFileSearch|getConversationSummary|thread\/resume)$/;
+// account/login/start passes too: it only opens a login attempt that the stub's captured
+// open-external never completes (the signed-out mock stack records ST-178).
+const READ_ONLY = /\/(read|list|get|search|status)[A-Za-z]*$|\/(installed|loaded\/list|capabilities\/read)$|^(getAuthStatus|gitDiffToRemote|fuzzyFileSearch|getConversationSummary|thread\/resume|account\/login\/start)$/;
 // vscode://codex/<handler> fetches that only read (handler names from main-CqEoQDOU.js). Not
 // external-agent-import-detect: it lists the owner's Claude/Cursor sessions.
 const VSCODE_READ = /^(ambient-suggestions|app-server-connection-state|browser-use-origin-state-read|claude-code-import-status|codex-agents-md|codex-command-keymap-state|codex-home|developer-instructions|external-agent-import-status|external-agent-imported-connectors|fast-mode-rollout-metrics|find-files|get-.*|git-merge-base|git-origins|global-dictation-hotkey-state|has-custom-cli-executable|home-directory|inbox-items|is-.*|list-.*|local-custom-agents|locale-info|local-environment-config|mcp-codex-config|native-desktop-apps?|native-desktop-app-(icon|by-bundle-id)|os-info|paths-exist|projectless-.*|read-.*|recommended-skills|.*directory-entries|settings-read|third-party-notices|workspace-root-options|worktree-shell-environment-config|wsl-bash-availability|statsig-.*)$/;
