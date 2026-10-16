@@ -8,7 +8,7 @@ that only this process is stopped afterwards):
 
 ```
 # 1. Mac renderer (no window; it makes its own temporary profile)
-ssh mac 'echo PID $$; exec /tmp/cgx-mac/chrome-headless-shell-mac-arm64/chrome-headless-shell --headless --remote-debugging-port=9444 --hide-scrollbars --force-device-scale-factor=2 --num-raster-threads=1 --disable-checker-imaging about:blank'
+ssh mac 'echo PID $$; exec /tmp/cgx-mac/chrome-headless-shell-mac-arm64/chrome-headless-shell --headless --remote-debugging-port=9444 --hide-scrollbars --force-device-scale-factor=2 --num-raster-threads=1 --disable-checker-imaging --disable-partial-raster about:blank'
 # 2. Tunnels: CDP to Linux :19444, the server to the Mac's :4517
 ssh -N -o ExitOnForwardFailure=yes -L 19444:127.0.0.1:9444 -R 4517:127.0.0.1:4517 mac
 # 3. Server, then the captures (R1_OUT=<dir> writes elsewhere than refs/)
@@ -85,9 +85,10 @@ For a renderer without the Mac fonts (Linux Chrome), start the server with `R1_S
   and decoded images are rasterized again from the still page. The spec gets extra `texts[]`
   entries (`pseudo: "before"|"after"`) for CSS generated text such as the composer placeholder,
   measured as a span carrying the pseudo element's computed style.
-- Determinism: the shell runs with one raster thread and without checker-imaging. Two full runs
-  give 33/36 byte-identical PNGs. The other 3 (composer light 1280x832, mobile dark/light
-  1280x832) flip between two variants that differ in 2-8 antialiased pixels (at most 3 levels)
-  at rounded-clip corners; DOM, specs and layer trees are identical in both variants, and a
-  memory-pressure re-raster, a full-viewport repaint, `--run-all-compositor-stages-before-draw`
-  and `--disable-threaded-animation` do not remove it.
+- Determinism: the shell runs with one raster thread, without checker-imaging and without partial
+  raster. Two full runs give 36/36 byte-identical PNGs. Without `--disable-partial-raster`, cc
+  rasters only the invalidated rect of some tiles again, so a few antialiased px at rounded-clip
+  corners depend on the load timing.
+- The sidebar refs keep an earlier server state: the search panel shows the "Chats" spinner and a
+  snippet line. The current server answers the search POST locally, so a new capture shows
+  "Couldn't search ChatGPT chats" and no snippet.

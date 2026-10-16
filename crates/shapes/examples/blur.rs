@@ -252,8 +252,6 @@ fn decoration(n: &Node) -> shapes::Decoration {
             shapes::Corner::Round
         },
         fill: n.fill.map(hsla),
-        border: None,
-        dashed: false,
         shadows: n
             .shadows
             .iter()
@@ -265,6 +263,7 @@ fn decoration(n: &Node) -> shapes::Decoration {
                 inset: *inset,
             })
             .collect(),
+        ..Default::default()
     }
 }
 
@@ -284,7 +283,7 @@ fn element(n: &Node, parent: [f32; 2], after: bool) -> AnyElement {
             } else {
                 shapes::Fill::Color
             };
-            b.child(shapes::backdrop_blur(px(blur), fill, d))
+            b.child(shapes::backdrop_blur(px(blur), fill, false, d))
         }
         _ => b.child(shapes::decoration(d)),
     };
