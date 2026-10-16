@@ -12,6 +12,7 @@ use async_channel::Receiver;
 use bridge::types::{
     ApprovalDecision, CommandApprovalRequest, ConfigReadResponse, FileChangeApprovalRequest,
     Thread, ThreadItem, ThreadReadResponse, ThreadStartResponse, ThreadStartedNotification,
+    TurnStatus,
 };
 use bridge::{Bridge, Event};
 use gpui::{
@@ -26,6 +27,7 @@ use std::collections::HashSet;
 use std::{fs, path::PathBuf, sync::Arc};
 use theme::Theme;
 use ui::composer::{Approval, Composer, Permission, Submission};
+use ui::dialog::{Dialog, Kind as DialogKind, Outcome as DialogOutcome};
 use ui::screens::diff::panel::{DiffPanel, SplitScreen, with_side_panel};
 use ui::screens::home::HomeMain;
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
@@ -37,7 +39,7 @@ use ui::toast::{Toast, Toaster};
 use ui::{
     CloseSidePanel, Copy, Cut, GoBack, GoForward, NewChat, OpenBackgroundTerminal,
     OpenChangesPanel, OpenCommandMenu, OpenMobileSetup, OpenScheduled, OpenSettings, Paste, Redo,
-    SelectAll, SetTheme, Shell, ToggleChangesPanel, ToggleSidebar, Undo,
+    SelectAll, SetTheme, Shell, ShowKeyboardShortcuts, ToggleChangesPanel, ToggleSidebar, Undo,
 };
 
 actions!(
@@ -83,6 +85,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-n", NewChat, None),
         KeyBinding::new("cmd-shift-o", NewChat, None),
         KeyBinding::new("cmd-w", CloseWindow, None),
+        KeyBinding::new("cmd-/", ShowKeyboardShortcuts, None),
         KeyBinding::new("cmd-z", Undo, None),
         KeyBinding::new("cmd-shift-z", Redo, None),
         KeyBinding::new("cmd-x", Cut, None),
@@ -159,7 +162,10 @@ pub fn menus() -> Vec<Menu> {
             MenuItem::action("Minimize", Minimize),
             MenuItem::action("Zoom", Zoom),
         ]),
-        Menu::new("Help").items([MenuItem::action("Documentation", OpenDocumentation)]),
+        Menu::new("Help").items([
+            MenuItem::action("Documentation", OpenDocumentation),
+            MenuItem::action("Keyboard Shortcuts", ShowKeyboardShortcuts),
+        ]),
     ]
 }
 
@@ -206,7 +212,7 @@ impl ThemeSetting {
     }
 }
 
-/// Window size, sidebar, route and theme, persisted to `path` (none: not persisted).
+/// Window layout, route, theme and close preference, persisted to `path` when set.
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
 pub struct State {
@@ -215,6 +221,7 @@ pub struct State {
     pub sidebar_open: bool,
     pub route: Route,
     pub theme: ThemeSetting,
+    pub confirm_before_close: ConfirmBeforeClose,
     #[serde(skip)]
     pub path: Option<PathBuf>,
 }
@@ -227,6 +234,7 @@ impl Default for State {
             sidebar_open: true,
             route: Route::Home,
             theme: ThemeSetting::System,
+            confirm_before_close: ConfirmBeforeClose::default(),
             path: None,
         }
     }
@@ -255,6 +263,15 @@ impl State {
             eprintln!("codex-gpui: cannot save {}: {err}", path.display());
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ConfirmBeforeClose {
+    Never,
+    #[default]
+    KeyboardOnly,
+    Always,
 }
 
 pub fn theme_for(appearance: WindowAppearance) -> Theme {
@@ -304,6 +321,7 @@ pub struct Root {
     settings_section: Option<&'static str>,
     /// `⌘K` command menu over the window.
     command_menu: Option<Entity<CommandMenu>>,
+    dialog: Option<Entity<Dialog>>,
     /// Signed out: replaces the whole window.
     login: Option<Entity<Login>>,
     bridge: Arc<Bridge>,
@@ -436,6 +454,7 @@ impl Root {
             page: None,
             settings_section: None,
             command_menu: None,
+            dialog: None,
             login: None,
             bridge,
             host: Arc::new(host::LocalHost::from_env()),
@@ -451,6 +470,17 @@ impl Root {
             _events,
             state,
         };
+        let this = cx.weak_entity();
+        window.on_window_should_close(cx, move |window, cx| {
+            this.update(cx, |this, cx| {
+                if this.state.confirm_before_close != ConfirmBeforeClose::Always {
+                    return true;
+                }
+                this.open_dialog(DialogKind::CloseWindow, window, cx);
+                false
+            })
+            .unwrap_or(true)
+        });
         window.focus(&root.focus, cx);
         root.connect(window, cx);
         root
@@ -487,6 +517,9 @@ impl Root {
                     composer.update(cx, |c, cx| c.set_models(&models.data, &config.config, cx));
                 }
                 this.config = config.config;
+                this.config["host"]["confirm-before-close"] =
+                    serde_json::to_value(this.state.confirm_before_close)
+                        .expect("close preference");
                 this.skills = skills;
                 this.ready = true;
                 this.sync(window, cx);
@@ -682,6 +715,7 @@ impl Root {
                     .unwrap_or(Value::Null);
                 let (store, key) = settings::THEME.split_once('.').expect("store.key");
                 config[store][key] = json!(self.state.theme);
+                config["host"]["confirm-before-close"] = json!(self.state.confirm_before_close);
                 let section = self.settings_section.take();
                 let (shell, page) = settings::shell(&config, &self.skills, section, cx);
                 cx.subscribe(&page, |this, page, e: &SettingChanged, cx| {
@@ -692,6 +726,7 @@ impl Root {
                             .map(|settings| Value::Object(settings.read_all().clone()))
                             .unwrap_or(Value::Null);
                         values["appearance-theme"] = json!(this.state.theme);
+                        values["confirm-before-close"] = json!(this.state.confirm_before_close);
                         page.update(cx, |page, cx| page.refresh_host(values, cx));
                     }
                 })
@@ -802,6 +837,48 @@ impl Root {
         cx.notify();
     }
 
+    pub fn dialog(&self) -> Option<&Entity<Dialog>> {
+        self.dialog.as_ref()
+    }
+
+    fn open_dialog(&mut self, kind: DialogKind, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dialog.is_some() {
+            return;
+        }
+        self.command_menu = None;
+        let dialog = cx.new(|cx| Dialog::new(kind, cx));
+        cx.subscribe_in(&dialog, window, |this, _, outcome, window, cx| {
+            this.dialog = None;
+            match outcome {
+                DialogOutcome::Dismiss => window.focus(&this.focus, cx),
+                DialogOutcome::CloseWindow { do_not_ask_again } => {
+                    if *do_not_ask_again {
+                        this.state.confirm_before_close = ConfirmBeforeClose::Never;
+                        this.config["host"]["confirm-before-close"] = "never".into();
+                        this.state.save();
+                    }
+                    window.remove_window();
+                }
+            }
+            cx.notify();
+        })
+        .detach();
+        window.focus(&dialog.focus_handle(cx), cx);
+        self.dialog = Some(dialog);
+        cx.notify();
+    }
+
+    fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dialog.is_some() {
+            return;
+        }
+        if self.state.confirm_before_close == ConfirmBeforeClose::Never {
+            window.remove_window();
+        } else {
+            self.open_dialog(DialogKind::CloseWindow, window, cx);
+        }
+    }
+
     /// Closes the command menu and runs its row: a chat opens, `New chat`, `Manage scheduled
     /// tasks` and the settings pages navigate.
     /// ponytail: commands whose feature the port lacks (Open folder, Show Mini, Log out, ...)
@@ -848,6 +925,12 @@ impl Root {
     }
 
     fn show_thread(&mut self, thread: Thread, window: &mut Window, cx: &mut Context<Self>) {
+        let running = thread
+            .turns
+            .iter()
+            .any(|turn| turn.status == TurnStatus::InProgress);
+        self.thread_composer
+            .update(cx, |c, cx| c.set_running(running, cx));
         let route = Route::Thread(thread.id.clone());
         let clock = Clock {
             utc_offset: chrono::Local::now().offset().local_minus_utc().into(),
@@ -910,6 +993,37 @@ impl Root {
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             resume_if(resume, &bridge, &this, &id, cx).await?;
             turn_start(&bridge, &id, &s).await
+        });
+        log_err(task, cx);
+    }
+
+    fn stop(&mut self, cx: &mut Context<Self>) {
+        let Route::Thread(id) = &self.state.route else {
+            return;
+        };
+        let Some(view) = &self.thread else { return };
+        let view = view.read(cx);
+        if view.id() != id {
+            return;
+        }
+        let Some(turn) = view
+            .turns()
+            .iter()
+            .rev()
+            .find(|turn| turn.status == TurnStatus::InProgress)
+        else {
+            return;
+        };
+        let (thread_id, turn_id) = (id.clone(), turn.id.clone());
+        let bridge = self.bridge.clone();
+        let task = cx.spawn(async move |this, cx| -> Result<()> {
+            let result = bridge.turn_interrupt(&thread_id, &turn_id).await;
+            if result.is_err() {
+                this.update(cx, |this, cx| {
+                    this.toast(Toast::danger("Failed to stop chat"), cx)
+                })?;
+            }
+            result
         });
         log_err(task, cx);
     }
@@ -1104,9 +1218,17 @@ impl Root {
         });
     }
 
-    /// Config settings use the app-server; host settings use the desktop settings service.
+    /// Window preferences keep their state storage; other host settings use the desktop service.
     fn write_setting(&mut self, e: &SettingChanged, cx: &mut Context<Self>) {
         if e.path == settings::THEME {
+            return;
+        }
+        if e.path == "host.confirm-before-close" {
+            if let Ok(value) = serde_json::from_value(e.value.clone()) {
+                self.state.confirm_before_close = value;
+                self.config["host"]["confirm-before-close"] = e.value.clone();
+                self.state.save();
+            }
             return;
         }
         let (store, key) = e.path.split_once('.').unwrap_or((e.path, ""));
@@ -1177,6 +1299,16 @@ impl Root {
                     });
                 }
             });
+            if matches!(&event, Event::Notification { method, .. } if matches!(method.as_str(), "turn/started" | "turn/completed"))
+            {
+                let running = view
+                    .read(cx)
+                    .turns()
+                    .iter()
+                    .any(|turn| turn.status == TurnStatus::InProgress);
+                self.thread_composer
+                    .update(cx, |c, cx| c.set_running(running, cx));
+            }
         }
         if let Some(login) = &self.login {
             login.update(cx, |login, cx| login.apply(&event, cx));
@@ -1343,6 +1475,7 @@ impl Render for Root {
             .font_family(ui::SANS)
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &NewChat, window, cx| this.new_chat(window, cx)))
+            .on_action(cx.listener(|this, _: &ui::composer::Stop, _, cx| this.stop(cx)))
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
                 this.navigate(Route::Settings, window, cx)
             }))
@@ -1403,12 +1536,28 @@ impl Render for Root {
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
                 this.shell.update(cx, |shell, cx| shell.toggle_sidebar(cx))
             }))
-            .on_action(|_: &CloseWindow, window, _| window.remove_window())
+            .on_action(cx.listener(|this, _: &ShowKeyboardShortcuts, window, cx| {
+                if this
+                    .dialog
+                    .as_ref()
+                    .is_some_and(|dialog| dialog.read(cx).kind() == DialogKind::Shortcuts)
+                {
+                    this.dialog = None;
+                    window.focus(&this.focus, cx);
+                    cx.notify();
+                } else {
+                    this.open_dialog(DialogKind::Shortcuts, window, cx);
+                }
+            }))
+            .on_action(
+                cx.listener(|this, _: &CloseWindow, window, cx| this.close_window(window, cx)),
+            )
             .on_action(|_: &Minimize, window, _| window.minimize_window())
             .on_action(|_: &Zoom, window, _| window.zoom_window())
             .child(content)
             .children(self.command_menu.clone())
-            .child(self.toaster.clone());
+            .child(self.toaster.clone())
+            .children(self.dialog.clone());
         features::actions(root, cx)
     }
 }

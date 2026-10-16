@@ -25,6 +25,7 @@ actions!(
     [
         /// Send the prompt (Enter).
         Submit,
+        Stop,
         /// Insert a line break (Shift+Enter).
         Newline,
         Backspace,
@@ -52,11 +53,14 @@ mod menu {
     //! focus to the trigger, and Enter or Space activates the focused item.
 
     use gpui::{App, BoxShadow, FocusHandle, StyleRefinement, Styled, Window, point, px, rgb};
+    use std::time::{Duration, Instant};
 
     pub(super) struct MenuFocus {
         pub content: FocusHandle,
         pub items: Vec<FocusHandle>,
         pub trigger: FocusHandle,
+        search: String,
+        last_typed: Option<Instant>,
     }
 
     impl MenuFocus {
@@ -65,11 +69,15 @@ mod menu {
                 content: cx.focus_handle(),
                 items: Vec::new(),
                 trigger: cx.focus_handle(),
+                search: String::new(),
+                last_typed: None,
             }
         }
 
         pub fn prepare(&mut self, count: usize, cx: &mut App) {
             self.items.resize_with(count, || cx.focus_handle());
+            self.search.clear();
+            self.last_typed = None;
         }
 
         pub fn focused_item(&self, window: &Window) -> Option<usize> {
@@ -88,6 +96,40 @@ mod menu {
                 None => last,
             };
             self.items[index].focus(window, cx);
+        }
+
+        pub fn searching(&self) -> bool {
+            self.last_typed
+                .is_some_and(|at| at.elapsed() < Duration::from_secs(1))
+        }
+
+        pub fn typeahead(&mut self, key: &str, labels: &[&str], window: &mut Window, cx: &mut App) {
+            if !self.searching() {
+                self.search.clear();
+            }
+            self.search.extend(key.chars().flat_map(char::to_lowercase));
+            self.last_typed = Some(Instant::now());
+            let Some(first) = self.search.chars().next() else {
+                return;
+            };
+            // Repeating one letter cycles through matching items, as in Radix.
+            let query = if self.search.chars().all(|c| c == first) {
+                &self.search[..first.len_utf8()]
+            } else {
+                &self.search
+            };
+            let start = self
+                .focused_item(window)
+                .map_or(0, |i| i + usize::from(query.chars().count() == 1));
+            if let Some(index) = (0..labels.len())
+                .map(|n| (start + n) % labels.len())
+                .find(|&i| {
+                    let mut label = labels[i].chars().flat_map(char::to_lowercase);
+                    query.chars().all(|c| label.next() == Some(c))
+                })
+            {
+                self.items[index].focus(window, cx);
+            }
         }
 
         pub fn restore(&self, window: &mut Window, cx: &mut App) {
@@ -377,6 +419,7 @@ pub struct Composer {
     footer_width: f32,
     menu_trigger_hovered: bool,
     approval: Option<Approval>,
+    running: bool,
     on_submit: Option<SubmitHandler>,
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
@@ -421,6 +464,7 @@ impl Composer {
             footer_width: f32::INFINITY,
             menu_trigger_hovered: false,
             approval: None,
+            running: false,
             on_submit: None,
             on_approval: None,
             on_model: None,
@@ -491,6 +535,13 @@ impl Composer {
     pub fn set_approval(&mut self, approval: Option<Approval>, cx: &mut Context<Self>) {
         self.approval = approval;
         cx.notify();
+    }
+
+    pub fn set_running(&mut self, running: bool, cx: &mut Context<Self>) {
+        if self.running != running {
+            self.running = running;
+            cx.notify();
+        }
     }
 
     pub fn set_text(&mut self, s: &str, cx: &mut Context<Self>) {
@@ -586,15 +637,49 @@ impl Composer {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match event.keystroke.key.as_str() {
+        let key = event.keystroke.key.as_str();
+        let modifiers = event.keystroke.modifiers;
+        match key {
             "down" | "up" => self
                 .menu_focus
                 .move_focus(event.keystroke.key == "down", window, cx),
+            "home" | "end" => {
+                let item = if key == "home" {
+                    self.menu_focus.items.first()
+                } else {
+                    self.menu_focus.items.last()
+                };
+                if let Some(item) = item {
+                    item.focus(window, cx);
+                }
+            }
+            "tab" => {}
+            "space" if self.menu == Some(Menu::Permissions) && self.menu_focus.searching() => {
+                self.menu_focus.typeahead(
+                    " ",
+                    &Permission::ALL.map(|p| p.option_label()),
+                    window,
+                    cx,
+                );
+            }
             "escape" => self.dismiss(&Dismiss, window, cx),
             "enter" | "space" => {
                 if let Some(index) = self.menu_focus.focused_item(window) {
                     self.activate_menu_item(index, window, cx);
                 }
+            }
+            key if self.menu == Some(Menu::Permissions)
+                && key.chars().count() == 1
+                && !modifiers.control
+                && !modifiers.platform
+                && !modifiers.alt =>
+            {
+                self.menu_focus.typeahead(
+                    key,
+                    &Permission::ALL.map(|p| p.option_label()),
+                    window,
+                    cx,
+                );
             }
             _ => return,
         }
