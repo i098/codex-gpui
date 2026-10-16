@@ -23,6 +23,8 @@ cargo run -p app --release
 ```
 
 The app keeps its window state in `~/Library/Application Support/codex-gpui/state.json`.
+Host settings use the local `settings.write(key, value)` service and persist beside that file in `host-settings.json`.
+The S034 replay checks the menu-bar switch, its saved values, and Back navigation against `refs/interactions/s034.json`.
 
 ## Release bundle
 

@@ -4,6 +4,7 @@
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
 mod features;
+pub mod host_settings;
 
 use anyhow::Result;
 use async_channel::Receiver;
@@ -329,6 +330,18 @@ impl Root {
     ) -> Self {
         let bridge = Arc::new(bridge);
         cx.set_global(AppServer(bridge.clone()));
+        if !cx.has_global::<host_settings::Settings>() {
+            let settings = match state.path.as_ref() {
+                Some(path) => {
+                    host_settings::Settings::load(path.with_file_name("host-settings.json"))
+                }
+                None => Ok(host_settings::Settings::default()),
+            };
+            match settings {
+                Ok(settings) => cx.set_global(settings),
+                Err(error) => eprintln!("codex-gpui: cannot load host settings: {error:#}"),
+            }
+        }
         let this = cx.weak_entity();
         // Both pickers write the user's `config.toml`, like the original's `writeModel`.
         let on_model = |this: WeakEntity<Self>| {
@@ -613,12 +626,24 @@ impl Root {
             Route::Settings => {
                 // The Appearance page shows the theme the app keeps.
                 let mut config = self.config.clone();
+                config["host"] = cx
+                    .try_global::<host_settings::Settings>()
+                    .map(|settings| Value::Object(settings.read_all().clone()))
+                    .unwrap_or(Value::Null);
                 let (store, key) = settings::THEME.split_once('.').expect("store.key");
                 config[store][key] = json!(self.state.theme);
                 let section = self.settings_section.take();
                 let (shell, page) = settings::shell(&config, &self.skills, section, cx);
-                cx.subscribe(&page, |this, _, e: &SettingChanged, cx| {
-                    this.write_setting(e, cx)
+                cx.subscribe(&page, |this, page, e: &SettingChanged, cx| {
+                    this.write_setting(e, cx);
+                    if e.path.starts_with("host.") && e.path != settings::THEME {
+                        let mut values = cx
+                            .try_global::<host_settings::Settings>()
+                            .map(|settings| Value::Object(settings.read_all().clone()))
+                            .unwrap_or(Value::Null);
+                        values["appearance-theme"] = json!(this.state.theme);
+                        page.update(cx, |page, cx| page.refresh_host(values, cx));
+                    }
                 })
                 .detach();
                 Some(shell)
@@ -1029,11 +1054,25 @@ impl Root {
         });
     }
 
-    /// A settings row changed: `desktop.*` and `features.*` persist to `config.toml` with
-    /// `config/value/write`; the other stores live for the session. Reopening Settings shows
-    /// the kept value.
+    /// Config settings use the app-server; host settings use the desktop settings service.
     fn write_setting(&mut self, e: &SettingChanged, cx: &mut Context<Self>) {
+        if e.path == settings::THEME {
+            return;
+        }
         let (store, key) = e.path.split_once('.').unwrap_or((e.path, ""));
+        if store == "host" {
+            let result = if cx.has_global::<host_settings::Settings>() {
+                cx.global_mut::<host_settings::Settings>()
+                    .write(key, e.value.clone())
+            } else {
+                Err(anyhow::anyhow!("host settings could not be loaded"))
+            };
+            if let Err(error) = result {
+                eprintln!("codex-gpui: settings.write({key}): {error:#}");
+                self.toast(Toast::danger("Couldn't save your changes. Try again"), cx);
+            }
+            return;
+        }
         let value = e.value.clone();
         let apply = move |config: &mut Value| config[store][key] = value;
         if !matches!(store, "desktop" | "features") {
