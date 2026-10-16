@@ -11,11 +11,13 @@ use gpui::{
 };
 use std::sync::{Arc, LazyLock};
 use theme::{ActiveTheme as _, Theme};
+use tooltip::{Side, tooltip};
 
 pub mod composer;
 pub mod fixture;
 pub mod icon;
 pub mod screens;
+pub mod tooltip;
 
 actions!(
     shell,
@@ -515,14 +517,17 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
                     t,
                 ))
                 .child(div().w(px(4.)))
-                .child(
+                .child(tooltip(
                     icon_button(
                         "search",
                         icon::icon("search", 16., t.text_tertiary).own_layer(Some(overlap)),
                         t,
                     )
                     .on_click(dispatch::<OpenCommandMenu>),
-                ),
+                    "Search",
+                    Some("⌘K"),
+                    Side::Bottom,
+                )),
         )
         .child(
             div()
@@ -621,6 +626,8 @@ impl Shell {
                     move || list,
                 ))
         };
+        let rail_tip =
+            |item: Stateful<Div>, label: &'static str| tooltip(item, label, None, Side::Right);
         div()
             .absolute()
             .left_0()
@@ -642,19 +649,23 @@ impl Shell {
                     .items_center()
                     .gap(px(8.))
                     .layer()
-                    .child(
+                    .child(rail_tip(
                         item("home")
                             .when(self.attention, |d| d.child(dot(6.)))
                             .on_click(dispatch::<NewChat>),
-                    )
-                    .child(item("space"))
-                    .child(item("scheduled").on_click(dispatch::<OpenScheduled>))
-                    .child(item("plugins"))
-                    // Explore with its unread dot.
+                        "Home",
+                    ))
+                    .child(rail_tip(item("space"), "Space"))
+                    .child(rail_tip(
+                        item("scheduled").on_click(dispatch::<OpenScheduled>),
+                        "Scheduled",
+                    ))
+                    .child(rail_tip(item("plugins"), "Plugins"))
+                    // Explore with its unread dot; it shows no tooltip.
                     .child(item("explore").child(dot(4.)))
                     .child(div().w(px(24.)).h(px(1.)).bg(t.border))
-                    .child(item("rail-code-review"))
-                    .child(item("sites"))
+                    .child(rail_tip(item("rail-code-review"), "Code Review"))
+                    .child(rail_tip(item("sites"), "Sites"))
                     .child(shapes::top_fade(px(16.))),
             )
             .child(
@@ -835,18 +846,24 @@ impl Shell {
                     window.start_window_move();
                 }
             })
-            .child(
+            .child(tooltip(
                 nav("back", back, self.can_go_back)
                     .left(px(88.))
                     .on_click(dispatch::<GoBack>),
-            )
-            .child(
+                "Back",
+                Some("⌘["),
+                Side::Bottom,
+            ))
+            .child(tooltip(
                 nav("forward", forward, self.can_go_forward)
                     .left(px(122.))
                     .on_click(dispatch::<GoForward>),
-            )
+                "Forward",
+                Some("⌘]"),
+                Side::Bottom,
+            ))
             .when(self.chat_chrome, |d| {
-                d.child(
+                d.child(tooltip(
                     icon_button(
                         "toggle-sidebar",
                         icon::icon("sidebar", 16., t.text_tertiary),
@@ -856,7 +873,10 @@ impl Shell {
                     .left(px(156.))
                     .top(px(8.))
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
-                )
+                    "Toggle sidebar",
+                    Some("⇧⌘S"),
+                    Side::Bottom,
+                ))
             })
             .when(self.new_tab, |d| {
                 d.child(

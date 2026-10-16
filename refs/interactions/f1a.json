@@ -1,0 +1,1193 @@
+{
+ "name": "f1a-button-chrome-a",
+ "viewport": {
+  "w": 1280,
+  "h": 832,
+  "dpr": 1,
+  "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+  "theme": "dark",
+  "hoverEmulated": true,
+  "note": "route1 on Linux headless Chrome, own CODEX_HOME=/tmp/f1a-r1/home; hover via CDP Input.dispatchMouseEvent; tooltip DOM read from [role=tooltip]"
+ },
+ "steps": [
+  {
+   "type": "hover",
+   "target": {
+    "text": "(away)",
+    "bbox": {
+     "x": 700,
+     "y": 500,
+     "w": 1,
+     "h": 1
+    }
+   },
+   "waitMs": 1500,
+   "note": "pointer parked away from every trigger"
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "Search",
+    "selector": "button[aria-label=Search]",
+    "bbox": {
+     "x": 300,
+     "y": 56,
+     "w": 28,
+     "h": 28
+    }
+   },
+   "waitMs": 800,
+   "note": "cold hover Search 800 ms"
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "(leave)",
+    "bbox": {
+     "x": 700,
+     "y": 500,
+     "w": 1,
+     "h": 1
+    }
+   },
+   "waitMs": 300
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "(away)",
+    "bbox": {
+     "x": 700,
+     "y": 500,
+     "w": 1,
+     "h": 1
+    }
+   },
+   "waitMs": 1500,
+   "note": "pointer parked away from every trigger"
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "Back",
+    "selector": "button[aria-label=Back]",
+    "bbox": {
+     "x": 88,
+     "y": 8,
+     "w": 28,
+     "h": 28
+    }
+   },
+   "waitMs": 800
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "Forward",
+    "selector": "button[aria-label=Forward]",
+    "bbox": {
+     "x": 122,
+     "y": 8,
+     "w": 28,
+     "h": 28
+    }
+   },
+   "waitMs": 60,
+   "note": "warm: moved from Back while its tooltip was open"
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "(away)",
+    "bbox": {
+     "x": 700,
+     "y": 500,
+     "w": 1,
+     "h": 1
+    }
+   },
+   "waitMs": 1500,
+   "note": "pointer parked away from every trigger"
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "Forward",
+    "selector": "button[aria-label=Forward]",
+    "bbox": {
+     "x": 122,
+     "y": 8,
+     "w": 28,
+     "h": 28
+    }
+   },
+   "waitMs": 800
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "(away)",
+    "bbox": {
+     "x": 700,
+     "y": 500,
+     "w": 1,
+     "h": 1
+    }
+   },
+   "waitMs": 1500,
+   "note": "pointer parked away from every trigger"
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "Toggle sidebar",
+    "selector": "button[aria-label=\"Hide sidebar\"]",
+    "bbox": {
+     "x": 156,
+     "y": 8,
+     "w": 28,
+     "h": 28
+    }
+   },
+   "waitMs": 800
+  },
+  {
+   "type": "key",
+   "key": "Escape",
+   "waitMs": 150
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "(away)",
+    "bbox": {
+     "x": 700,
+     "y": 500,
+     "w": 1,
+     "h": 1
+    }
+   },
+   "waitMs": 1500,
+   "note": "pointer parked away from every trigger"
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "Home",
+    "bbox": {
+     "x": 8,
+     "y": 52,
+     "w": 36,
+     "h": 36
+    }
+   },
+   "waitMs": 800
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "(away)",
+    "bbox": {
+     "x": 700,
+     "y": 500,
+     "w": 1,
+     "h": 1
+    }
+   },
+   "waitMs": 1500,
+   "note": "pointer parked away from every trigger"
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "Space",
+    "bbox": {
+     "x": 8,
+     "y": 96,
+     "w": 36,
+     "h": 36
+    }
+   },
+   "waitMs": 800
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "(away)",
+    "bbox": {
+     "x": 700,
+     "y": 500,
+     "w": 1,
+     "h": 1
+    }
+   },
+   "waitMs": 1500,
+   "note": "pointer parked away from every trigger"
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "Scheduled",
+    "bbox": {
+     "x": 8,
+     "y": 140,
+     "w": 36,
+     "h": 36
+    }
+   },
+   "waitMs": 800
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "(away)",
+    "bbox": {
+     "x": 700,
+     "y": 500,
+     "w": 1,
+     "h": 1
+    }
+   },
+   "waitMs": 1500,
+   "note": "pointer parked away from every trigger"
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "Plugins",
+    "bbox": {
+     "x": 8,
+     "y": 184,
+     "w": 36,
+     "h": 36
+    }
+   },
+   "waitMs": 800
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "(away)",
+    "bbox": {
+     "x": 700,
+     "y": 500,
+     "w": 1,
+     "h": 1
+    }
+   },
+   "waitMs": 1500,
+   "note": "pointer parked away from every trigger"
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "Explore",
+    "bbox": {
+     "x": 8,
+     "y": 228,
+     "w": 36,
+     "h": 36
+    }
+   },
+   "waitMs": 800
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "(away)",
+    "bbox": {
+     "x": 700,
+     "y": 500,
+     "w": 1,
+     "h": 1
+    }
+   },
+   "waitMs": 1500,
+   "note": "pointer parked away from every trigger"
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "Code Review",
+    "bbox": {
+     "x": 8,
+     "y": 281,
+     "w": 36,
+     "h": 36
+    }
+   },
+   "waitMs": 800
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "(away)",
+    "bbox": {
+     "x": 700,
+     "y": 500,
+     "w": 1,
+     "h": 1
+    }
+   },
+   "waitMs": 1500,
+   "note": "pointer parked away from every trigger"
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "Sites",
+    "bbox": {
+     "x": 8,
+     "y": 325,
+     "w": 36,
+     "h": 36
+    }
+   },
+   "waitMs": 800
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "(away)",
+    "bbox": {
+     "x": 700,
+     "y": 500,
+     "w": 1,
+     "h": 1
+    }
+   },
+   "waitMs": 1500,
+   "note": "pointer parked away from every trigger"
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "Open profile menu",
+    "bbox": {
+     "x": 8,
+     "y": 788,
+     "w": 36,
+     "h": 36
+    }
+   },
+   "waitMs": 800
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "(away)",
+    "bbox": {
+     "x": 700,
+     "y": 500,
+     "w": 1,
+     "h": 1
+    }
+   },
+   "waitMs": 1500,
+   "note": "pointer parked away from every trigger"
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "Home",
+    "bbox": {
+     "x": 8,
+     "y": 52,
+     "w": 36,
+     "h": 36
+    }
+   },
+   "waitMs": 800
+  },
+  {
+   "type": "click",
+   "target": {
+    "text": "Home",
+    "bbox": {
+     "x": 8,
+     "y": 52,
+     "w": 36,
+     "h": 36
+    }
+   },
+   "waitMs": 300
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "(away)",
+    "bbox": {
+     "x": 700,
+     "y": 500,
+     "w": 1,
+     "h": 1
+    }
+   },
+   "waitMs": 1500,
+   "note": "pointer parked away from every trigger"
+  },
+  {
+   "type": "click",
+   "target": {
+    "text": "Hide sidebar",
+    "selector": "button[aria-label=\"Hide sidebar\"]",
+    "bbox": {
+     "x": 156,
+     "y": 8,
+     "w": 28,
+     "h": 28
+    }
+   },
+   "waitMs": 600
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "(away)",
+    "bbox": {
+     "x": 700,
+     "y": 500,
+     "w": 1,
+     "h": 1
+    }
+   },
+   "waitMs": 1500,
+   "note": "pointer parked away from every trigger"
+  },
+  {
+   "type": "hover",
+   "target": {
+    "text": "Toggle sidebar (closed)",
+    "selector": "button[aria-label=\"Show sidebar\"]",
+    "bbox": {
+     "x": 156,
+     "y": 8,
+     "w": 28,
+     "h": 28
+    }
+   },
+   "waitMs": 800,
+   "note": "sidebar closed"
+  }
+ ],
+ "result": {
+  "dom": [
+   {
+    "selector": "[role=tooltip]",
+    "afterStep": 1,
+    "note": "cold hover Search 800 ms",
+    "tooltip": {
+     "side": "bottom",
+     "text": "Search\n⌘K",
+     "label": "Search",
+     "kbd": "⌘K",
+     "bbox": {
+      "x": 263,
+      "y": 86,
+      "w": 101,
+      "h": 30
+     },
+     "kbdBbox": {
+      "x": 326,
+      "y": 92,
+      "w": 32,
+      "h": 18
+     },
+     "labelBbox": {
+      "x": 276,
+      "y": 92,
+      "w": 42,
+      "h": 18
+     },
+     "computed": {
+      "backgroundColor": "rgb(45, 45, 45)",
+      "color": "rgb(255, 255, 255)",
+      "opacity": "1",
+      "fontSize": "13px",
+      "lineHeight": "18px",
+      "fontWeight": "430",
+      "borderRadius": "20px",
+      "padding": "5px 12px",
+      "border": "1px solid oklab(0.999994 0.0000455678 0.0000200868 / 0.05)",
+      "boxShadow": "0px 8px 18px 0px"
+     },
+     "kbdComputed": {
+      "backgroundColor": "oklab(0.999994 0.0000455678 0.0000200868 / 0.25)",
+      "color": "rgb(255, 255, 255)",
+      "fontSize": "13px",
+      "borderRadius": "12.5px",
+      "padding": "0px 6px",
+      "margin": "0px -7px 0px 0px",
+      "height": "18px",
+      "minWidth": "16px"
+     }
+    },
+    "trigger": {
+     "x": 300,
+     "y": 56,
+     "w": 28,
+     "h": 28
+    },
+    "openMs": 220
+   },
+   {
+    "selector": "[role=tooltip]",
+    "afterStep": 2,
+    "note": "pointer left the trigger",
+    "tooltip": null
+   },
+   {
+    "selector": "[role=tooltip]",
+    "afterStep": 4,
+    "tooltip": {
+     "side": "bottom",
+     "text": "Back\n⌘[",
+     "label": "Back",
+     "kbd": "⌘[",
+     "bbox": {
+      "x": 59,
+      "y": 38,
+      "w": 85,
+      "h": 30
+     },
+     "kbdBbox": {
+      "x": 110,
+      "y": 44,
+      "w": 29,
+      "h": 18
+     },
+     "labelBbox": {
+      "x": 72,
+      "y": 44,
+      "w": 30,
+      "h": 18
+     },
+     "computed": {
+      "backgroundColor": "rgb(45, 45, 45)",
+      "color": "rgb(255, 255, 255)",
+      "opacity": "1",
+      "fontSize": "13px",
+      "lineHeight": "18px",
+      "fontWeight": "430",
+      "borderRadius": "20px",
+      "padding": "5px 12px",
+      "border": "1px solid oklab(0.999994 0.0000455678 0.0000200868 / 0.05)",
+      "boxShadow": "0px 8px 18px 0px"
+     },
+     "kbdComputed": {
+      "backgroundColor": "oklab(0.999994 0.0000455678 0.0000200868 / 0.25)",
+      "color": "rgb(255, 255, 255)",
+      "fontSize": "13px",
+      "borderRadius": "12.5px",
+      "padding": "0px 6px",
+      "margin": "0px -7px 0px 0px",
+      "height": "18px",
+      "minWidth": "16px"
+     }
+    },
+    "trigger": {
+     "x": 88,
+     "y": 8,
+     "w": 28,
+     "h": 28
+    },
+    "openMs": 229
+   },
+   {
+    "selector": "[role=tooltip]",
+    "afterStep": 5,
+    "note": "warm move Back -> Forward, 60 ms",
+    "tooltip": {
+     "side": "bottom",
+     "text": "Forward\n⌘]",
+     "label": "Forward",
+     "kbd": "⌘]",
+     "bbox": {
+      "x": 84,
+      "y": 38,
+      "w": 105,
+      "h": 30
+     },
+     "kbdBbox": {
+      "x": 154,
+      "y": 44,
+      "w": 29,
+      "h": 18
+     },
+     "labelBbox": {
+      "x": 97,
+      "y": 44,
+      "w": 49,
+      "h": 18
+     },
+     "computed": {
+      "backgroundColor": "rgb(45, 45, 45)",
+      "color": "rgb(255, 255, 255)",
+      "opacity": "1",
+      "fontSize": "13px",
+      "lineHeight": "18px",
+      "fontWeight": "430",
+      "borderRadius": "20px",
+      "padding": "5px 12px",
+      "border": "1px solid oklab(0.999994 0.0000455678 0.0000200868 / 0.05)",
+      "boxShadow": "0px 8px 18px 0px"
+     },
+     "kbdComputed": {
+      "backgroundColor": "oklab(0.999994 0.0000455678 0.0000200868 / 0.25)",
+      "color": "rgb(255, 255, 255)",
+      "fontSize": "13px",
+      "borderRadius": "12.5px",
+      "padding": "0px 6px",
+      "margin": "0px -7px 0px 0px",
+      "height": "18px",
+      "minWidth": "16px"
+     }
+    },
+    "trigger": {
+     "x": 122,
+     "y": 8,
+     "w": 28,
+     "h": 28
+    },
+    "warmOpenMs": 21
+   },
+   {
+    "selector": "[role=tooltip]",
+    "afterStep": 7,
+    "tooltip": {
+     "side": "bottom",
+     "text": "Forward\n⌘]",
+     "label": "Forward",
+     "kbd": "⌘]",
+     "bbox": {
+      "x": 84,
+      "y": 38,
+      "w": 105,
+      "h": 30
+     },
+     "kbdBbox": {
+      "x": 154,
+      "y": 44,
+      "w": 29,
+      "h": 18
+     },
+     "labelBbox": {
+      "x": 97,
+      "y": 44,
+      "w": 49,
+      "h": 18
+     },
+     "computed": {
+      "backgroundColor": "rgb(45, 45, 45)",
+      "color": "rgb(255, 255, 255)",
+      "opacity": "1",
+      "fontSize": "13px",
+      "lineHeight": "18px",
+      "fontWeight": "430",
+      "borderRadius": "20px",
+      "padding": "5px 12px",
+      "border": "1px solid oklab(0.999994 0.0000455678 0.0000200868 / 0.05)",
+      "boxShadow": "0px 8px 18px 0px"
+     },
+     "kbdComputed": {
+      "backgroundColor": "oklab(0.999994 0.0000455678 0.0000200868 / 0.25)",
+      "color": "rgb(255, 255, 255)",
+      "fontSize": "13px",
+      "borderRadius": "12.5px",
+      "padding": "0px 6px",
+      "margin": "0px -7px 0px 0px",
+      "height": "18px",
+      "minWidth": "16px"
+     }
+    },
+    "trigger": {
+     "x": 122,
+     "y": 8,
+     "w": 28,
+     "h": 28
+    },
+    "openMs": 214
+   },
+   {
+    "selector": "[role=tooltip]",
+    "afterStep": 9,
+    "tooltip": {
+     "side": "bottom",
+     "text": "Toggle sidebar\n⇧⌘S",
+     "label": "Toggle sidebar",
+     "kbd": "⇧⌘S",
+     "bbox": {
+      "x": 90,
+      "y": 38,
+      "w": 161,
+      "h": 30
+     },
+     "kbdBbox": {
+      "x": 200,
+      "y": 44,
+      "w": 45,
+      "h": 18
+     },
+     "labelBbox": {
+      "x": 103,
+      "y": 44,
+      "w": 89,
+      "h": 18
+     },
+     "computed": {
+      "backgroundColor": "rgb(45, 45, 45)",
+      "color": "rgb(255, 255, 255)",
+      "opacity": "1",
+      "fontSize": "13px",
+      "lineHeight": "18px",
+      "fontWeight": "430",
+      "borderRadius": "20px",
+      "padding": "5px 12px",
+      "border": "1px solid oklab(0.999994 0.0000455678 0.0000200868 / 0.05)",
+      "boxShadow": "0px 8px 18px 0px"
+     },
+     "kbdComputed": {
+      "backgroundColor": "oklab(0.999994 0.0000455678 0.0000200868 / 0.25)",
+      "color": "rgb(255, 255, 255)",
+      "fontSize": "13px",
+      "borderRadius": "12.5px",
+      "padding": "0px 6px",
+      "margin": "0px -7px 0px 0px",
+      "height": "18px",
+      "minWidth": "16px"
+     }
+    },
+    "trigger": {
+     "x": 156,
+     "y": 8,
+     "w": 28,
+     "h": 28
+    },
+    "openMs": 219
+   },
+   {
+    "selector": "[role=tooltip]",
+    "afterStep": 10,
+    "note": "Escape while hovering the toggle",
+    "tooltip": null
+   },
+   {
+    "selector": "[role=tooltip]",
+    "afterStep": 12,
+    "note": "rail Home",
+    "tooltip": {
+     "side": "right",
+     "text": "Home",
+     "label": "Home",
+     "kbd": null,
+     "bbox": {
+      "x": 46,
+      "y": 55,
+      "w": 62,
+      "h": 30
+     },
+     "kbdBbox": null,
+     "labelBbox": {
+      "x": 59,
+      "y": 61,
+      "w": 36,
+      "h": 18
+     },
+     "computed": {
+      "backgroundColor": "rgb(45, 45, 45)",
+      "color": "rgb(255, 255, 255)",
+      "opacity": "1",
+      "fontSize": "13px",
+      "lineHeight": "18px",
+      "fontWeight": "430",
+      "borderRadius": "20px",
+      "padding": "5px 12px",
+      "border": "1px solid oklab(0.999994 0.0000455678 0.0000200868 / 0.05)",
+      "boxShadow": "0px 8px 18px 0px"
+     },
+     "kbdComputed": null
+    },
+    "trigger": {
+     "x": 8,
+     "y": 52,
+     "w": 36,
+     "h": 36
+    },
+    "openMs": 212
+   },
+   {
+    "selector": "[role=tooltip]",
+    "afterStep": 14,
+    "note": "rail Space",
+    "tooltip": {
+     "side": "right",
+     "text": "Space",
+     "label": "Space",
+     "kbd": null,
+     "bbox": {
+      "x": 46,
+      "y": 99,
+      "w": 64,
+      "h": 30
+     },
+     "kbdBbox": null,
+     "labelBbox": {
+      "x": 59,
+      "y": 105,
+      "w": 38,
+      "h": 18
+     },
+     "computed": {
+      "backgroundColor": "rgb(45, 45, 45)",
+      "color": "rgb(255, 255, 255)",
+      "opacity": "1",
+      "fontSize": "13px",
+      "lineHeight": "18px",
+      "fontWeight": "430",
+      "borderRadius": "20px",
+      "padding": "5px 12px",
+      "border": "1px solid oklab(0.999994 0.0000455678 0.0000200868 / 0.05)",
+      "boxShadow": "0px 8px 18px 0px"
+     },
+     "kbdComputed": null
+    },
+    "trigger": {
+     "x": 8,
+     "y": 96,
+     "w": 36,
+     "h": 36
+    },
+    "openMs": 830
+   },
+   {
+    "selector": "[role=tooltip]",
+    "afterStep": 16,
+    "note": "rail Scheduled",
+    "tooltip": {
+     "side": "right",
+     "text": "Scheduled",
+     "label": "Scheduled",
+     "kbd": null,
+     "bbox": {
+      "x": 46,
+      "y": 143,
+      "w": 90,
+      "h": 30
+     },
+     "kbdBbox": null,
+     "labelBbox": {
+      "x": 59,
+      "y": 149,
+      "w": 64,
+      "h": 18
+     },
+     "computed": {
+      "backgroundColor": "rgb(45, 45, 45)",
+      "color": "rgb(255, 255, 255)",
+      "opacity": "1",
+      "fontSize": "13px",
+      "lineHeight": "18px",
+      "fontWeight": "430",
+      "borderRadius": "20px",
+      "padding": "5px 12px",
+      "border": "1px solid oklab(0.999994 0.0000455678 0.0000200868 / 0.05)",
+      "boxShadow": "0px 8px 18px 0px"
+     },
+     "kbdComputed": null
+    },
+    "trigger": {
+     "x": 8,
+     "y": 140,
+     "w": 36,
+     "h": 36
+    },
+    "openMs": 221
+   },
+   {
+    "selector": "[role=tooltip]",
+    "afterStep": 18,
+    "note": "rail Plugins",
+    "tooltip": {
+     "side": "right",
+     "text": "Plugins",
+     "label": "Plugins",
+     "kbd": null,
+     "bbox": {
+      "x": 46,
+      "y": 187,
+      "w": 70,
+      "h": 30
+     },
+     "kbdBbox": null,
+     "labelBbox": {
+      "x": 59,
+      "y": 193,
+      "w": 44,
+      "h": 18
+     },
+     "computed": {
+      "backgroundColor": "rgb(45, 45, 45)",
+      "color": "rgb(255, 255, 255)",
+      "opacity": "1",
+      "fontSize": "13px",
+      "lineHeight": "18px",
+      "fontWeight": "430",
+      "borderRadius": "20px",
+      "padding": "5px 12px",
+      "border": "1px solid oklab(0.999994 0.0000455678 0.0000200868 / 0.05)",
+      "boxShadow": "0px 8px 18px 0px"
+     },
+     "kbdComputed": null
+    },
+    "trigger": {
+     "x": 8,
+     "y": 184,
+     "w": 36,
+     "h": 36
+    },
+    "openMs": 215
+   },
+   {
+    "selector": "[role=tooltip]",
+    "afterStep": 20,
+    "note": "rail Explore",
+    "tooltip": null,
+    "trigger": {
+     "x": 8,
+     "y": 228,
+     "w": 36,
+     "h": 36
+    },
+    "openMs": null
+   },
+   {
+    "selector": "[role=tooltip]",
+    "afterStep": 22,
+    "note": "rail Code Review",
+    "tooltip": {
+     "side": "right",
+     "text": "Code Review",
+     "label": "Code Review",
+     "kbd": null,
+     "bbox": {
+      "x": 46,
+      "y": 284,
+      "w": 104,
+      "h": 30
+     },
+     "kbdBbox": null,
+     "labelBbox": {
+      "x": 59,
+      "y": 290,
+      "w": 78,
+      "h": 18
+     },
+     "computed": {
+      "backgroundColor": "rgb(45, 45, 45)",
+      "color": "rgb(255, 255, 255)",
+      "opacity": "1",
+      "fontSize": "13px",
+      "lineHeight": "18px",
+      "fontWeight": "430",
+      "borderRadius": "20px",
+      "padding": "5px 12px",
+      "border": "1px solid oklab(0.999994 0.0000455678 0.0000200868 / 0.05)",
+      "boxShadow": "0px 8px 18px 0px"
+     },
+     "kbdComputed": null
+    },
+    "trigger": {
+     "x": 8,
+     "y": 281,
+     "w": 36,
+     "h": 36
+    },
+    "openMs": 1244
+   },
+   {
+    "selector": "[role=tooltip]",
+    "afterStep": 24,
+    "note": "rail Sites",
+    "tooltip": {
+     "side": "right",
+     "text": "Sites",
+     "label": "Sites",
+     "kbd": null,
+     "bbox": {
+      "x": 46,
+      "y": 328,
+      "w": 56,
+      "h": 30
+     },
+     "kbdBbox": null,
+     "labelBbox": {
+      "x": 59,
+      "y": 334,
+      "w": 30,
+      "h": 18
+     },
+     "computed": {
+      "backgroundColor": "rgb(45, 45, 45)",
+      "color": "rgb(255, 255, 255)",
+      "opacity": "1",
+      "fontSize": "13px",
+      "lineHeight": "18px",
+      "fontWeight": "430",
+      "borderRadius": "20px",
+      "padding": "5px 12px",
+      "border": "1px solid oklab(0.999994 0.0000455678 0.0000200868 / 0.05)",
+      "boxShadow": "0px 8px 18px 0px"
+     },
+     "kbdComputed": null
+    },
+    "trigger": {
+     "x": 8,
+     "y": 325,
+     "w": 36,
+     "h": 36
+    },
+    "openMs": 395
+   },
+   {
+    "selector": "[role=tooltip]",
+    "afterStep": 26,
+    "note": "rail Open profile menu",
+    "tooltip": null,
+    "trigger": {
+     "x": 8,
+     "y": 788,
+     "w": 36,
+     "h": 36
+    },
+    "openMs": null
+   },
+   {
+    "selector": "[role=tooltip]",
+    "afterStep": 28,
+    "note": "Home tooltip open before click",
+    "tooltip": {
+     "side": "right",
+     "text": "Home",
+     "label": "Home",
+     "kbd": null,
+     "bbox": {
+      "x": 46,
+      "y": 55,
+      "w": 62,
+      "h": 30
+     },
+     "kbdBbox": null,
+     "labelBbox": {
+      "x": 59,
+      "y": 61,
+      "w": 36,
+      "h": 18
+     },
+     "computed": {
+      "backgroundColor": "rgb(45, 45, 45)",
+      "color": "rgb(255, 255, 255)",
+      "opacity": "1",
+      "fontSize": "13px",
+      "lineHeight": "18px",
+      "fontWeight": "430",
+      "borderRadius": "20px",
+      "padding": "5px 12px",
+      "border": "1px solid oklab(0.999994 0.0000455678 0.0000200868 / 0.05)",
+      "boxShadow": "0px 8px 18px 0px"
+     },
+     "kbdComputed": null
+    }
+   },
+   {
+    "selector": "[role=tooltip]",
+    "afterStep": 29,
+    "note": "after clicking the rail item (closeOnTriggerClick)",
+    "tooltip": null
+   },
+   {
+    "selector": "[role=tooltip]",
+    "afterStep": 31,
+    "note": "toggle click: sidebar closes",
+    "tooltip": null,
+    "sidebarOpen": false
+   },
+   {
+    "selector": "[role=tooltip]",
+    "afterStep": 33,
+    "note": "sidebar closed",
+    "tooltip": {
+     "side": "bottom",
+     "text": "Toggle sidebar\n⇧⌘S",
+     "label": "Toggle sidebar",
+     "kbd": "⇧⌘S",
+     "bbox": {
+      "x": 90,
+      "y": 38,
+      "w": 161,
+      "h": 30
+     },
+     "kbdBbox": {
+      "x": 200,
+      "y": 44,
+      "w": 45,
+      "h": 18
+     },
+     "labelBbox": {
+      "x": 103,
+      "y": 44,
+      "w": 89,
+      "h": 18
+     },
+     "computed": {
+      "backgroundColor": "rgb(45, 45, 45)",
+      "color": "rgb(255, 255, 255)",
+      "opacity": "1",
+      "fontSize": "13px",
+      "lineHeight": "18px",
+      "fontWeight": "430",
+      "borderRadius": "20px",
+      "padding": "5px 12px",
+      "border": "1px solid oklab(0.999994 0.0000455678 0.0000200868 / 0.05)",
+      "boxShadow": "0px 8px 18px 0px"
+     },
+     "kbdComputed": {
+      "backgroundColor": "oklab(0.999994 0.0000455678 0.0000200868 / 0.25)",
+      "color": "rgb(255, 255, 255)",
+      "fontSize": "13px",
+      "borderRadius": "12.5px",
+      "padding": "0px 6px",
+      "margin": "0px -7px 0px 0px",
+      "height": "18px",
+      "minWidth": "16px"
+     }
+    },
+    "trigger": {
+     "x": 156,
+     "y": 8,
+     "w": 28,
+     "h": 28
+    },
+    "openMs": 410
+   }
+  ],
+  "openMsNote": "ms from the pointer move to the tooltip's first DOM appearance, measured in the page; Radix delayDuration is 200 ms, the rest is CDP and frame latency. The recording host was heavily loaded (load average above 50), so single samples spike: the minimum is the delay.",
+  "openMsCold": [
+   228,
+   1371,
+   222,
+   306,
+   217
+  ],
+  "probes": [
+   {
+    "ms": 100,
+    "tip": false
+   },
+   {
+    "ms": 400,
+    "tip": true
+   }
+  ],
+  "requests": []
+ }
+}
