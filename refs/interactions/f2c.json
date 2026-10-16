@@ -1,0 +1,1086 @@
+{
+  "name": "f2c-model-picker-keyboard-and-speed-submenu",
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 1,
+    "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+    "theme": "dark",
+    "hoverEmulated": true
+  },
+  "source": {
+    "app": "Codex 26.1007.30912",
+    "transport": "route1 Linux, shared Chrome :9522, isolated CDP context"
+  },
+  "steps": [
+    {
+      "type": "click",
+      "target": {
+        "selector": ".ProseMirror",
+        "bbox": {
+          "x": 453,
+          "y": 728,
+          "w": 712,
+          "h": 44
+        }
+      },
+      "note": "Focus the editor; three Tabs reach the model trigger (Add files, Change permissions, model)."
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Enter",
+      "note": "Keyboard open focuses the first item, `Select model`."
+    },
+    {
+      "type": "key",
+      "key": "ArrowRight",
+      "note": "`Select model` is not a sub trigger: no change."
+    },
+    {
+      "type": "key",
+      "key": "ArrowDown"
+    },
+    {
+      "type": "key",
+      "key": "ArrowRight",
+      "note": "Opens the `Speed` submenu with its first item focused."
+    },
+    {
+      "type": "key",
+      "key": "ArrowDown"
+    },
+    {
+      "type": "key",
+      "key": "ArrowLeft",
+      "note": "Closes the submenu and focuses the `Speed` trigger."
+    },
+    {
+      "type": "key",
+      "key": "Escape",
+      "note": "Escape returns focus to the editor (not the trigger: not an F2c row)."
+    },
+    {
+      "type": "click",
+      "target": {
+        "selector": ".ProseMirror",
+        "bbox": {
+          "x": 453,
+          "y": 728,
+          "w": 712,
+          "h": 44
+        }
+      },
+      "note": "Focus the editor; three Tabs reach the model trigger (Add files, Change permissions, model)."
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Space"
+    },
+    {
+      "type": "key",
+      "key": "Escape"
+    },
+    {
+      "type": "click",
+      "target": {
+        "selector": ".ProseMirror",
+        "bbox": {
+          "x": 453,
+          "y": 728,
+          "w": 712,
+          "h": 44
+        }
+      },
+      "note": "Focus the editor; three Tabs reach the model trigger (Add files, Change permissions, model)."
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "ArrowDown"
+    },
+    {
+      "type": "hover",
+      "target": {
+        "selector": "[aria-label^=\"Speed\"]",
+        "bbox": {
+          "x": 906,
+          "y": 675,
+          "w": 32,
+          "h": 32
+        }
+      },
+      "waitMs": 50,
+      "note": "Pointer enter focuses `Speed`; the submenu is still closed 50 ms later."
+    },
+    {
+      "type": "hover",
+      "target": {
+        "selector": "[aria-label^=\"Speed\"]",
+        "bbox": {
+          "x": 906,
+          "y": 675,
+          "w": 32,
+          "h": 32
+        }
+      },
+      "waitMs": 300,
+      "note": "Open 100 ms after the pointer entered; focus stays on the trigger."
+    },
+    {
+      "type": "key",
+      "key": "Escape"
+    }
+  ],
+  "result": {
+    "dom": [
+      {
+        "open": false,
+        "focusedItem": -1,
+        "items": [],
+        "speedOpen": false,
+        "speedItem": -1,
+        "speedMenu": null,
+        "active": {
+          "tag": "div",
+          "text": "",
+          "aria": "Do anything",
+          "role": "textbox",
+          "bbox": {
+            "x": 453,
+            "y": 728,
+            "w": 712,
+            "h": 44
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          },
+          "highlighted": false
+        }
+      },
+      {
+        "open": false,
+        "focusedItem": -1,
+        "items": [],
+        "speedOpen": false,
+        "speedItem": -1,
+        "speedMenu": null,
+        "active": {
+          "tag": "button",
+          "text": "",
+          "aria": "Add files and more",
+          "role": null,
+          "bbox": {
+            "x": 449,
+            "y": 776,
+            "w": 28,
+            "h": 28
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+            "cursor": "default"
+          },
+          "highlighted": false
+        }
+      },
+      {
+        "open": false,
+        "focusedItem": -1,
+        "items": [],
+        "speedOpen": false,
+        "speedItem": -1,
+        "speedMenu": null,
+        "active": {
+          "tag": "button",
+          "text": "Custom",
+          "aria": "Change permissions",
+          "role": null,
+          "bbox": {
+            "x": 482,
+            "y": 776,
+            "w": 81,
+            "h": 28
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+            "cursor": "default"
+          },
+          "highlighted": false
+        }
+      },
+      {
+        "open": false,
+        "focusedItem": -1,
+        "items": [],
+        "speedOpen": false,
+        "speedItem": -1,
+        "speedMenu": null,
+        "active": {
+          "tag": "button",
+          "text": "GPT-6 Astra\nLight\nNone\nMinimal\nLight\nMedium\nHigh\nExtra High\nMax\nUltra\nPersistent",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 956,
+            "y": 776,
+            "w": 148,
+            "h": 28
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+            "cursor": "default"
+          },
+          "highlighted": false
+        }
+      },
+      {
+        "open": true,
+        "focusedItem": 0,
+        "items": [
+          "Select model",
+          "Speed Standard",
+          "Reset to default",
+          "Power"
+        ],
+        "speedOpen": false,
+        "speedItem": -1,
+        "speedMenu": null,
+        "active": {
+          "tag": "div",
+          "text": "GPT-6 Astra\nLight",
+          "aria": "Select model",
+          "role": "menuitem",
+          "bbox": {
+            "x": 970,
+            "y": 675,
+            "w": 118,
+            "h": 48
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "highlighted": true
+        }
+      },
+      {
+        "open": true,
+        "focusedItem": 0,
+        "items": [
+          "Select model",
+          "Speed Standard",
+          "Reset to default",
+          "Power"
+        ],
+        "speedOpen": false,
+        "speedItem": -1,
+        "speedMenu": null,
+        "active": {
+          "tag": "div",
+          "text": "GPT-6 Astra\nLight",
+          "aria": "Select model",
+          "role": "menuitem",
+          "bbox": {
+            "x": 970,
+            "y": 675,
+            "w": 118,
+            "h": 48
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "highlighted": true
+        }
+      },
+      {
+        "open": true,
+        "focusedItem": 1,
+        "items": [
+          "Select model",
+          "Speed Standard",
+          "Reset to default",
+          "Power"
+        ],
+        "speedOpen": false,
+        "speedItem": -1,
+        "speedMenu": null,
+        "active": {
+          "tag": "div",
+          "text": "",
+          "aria": "Speed Standard",
+          "role": "menuitem",
+          "bbox": {
+            "x": 906,
+            "y": 675,
+            "w": 32,
+            "h": 32
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "highlighted": true
+        }
+      },
+      {
+        "open": true,
+        "focusedItem": -1,
+        "items": [
+          "Select model",
+          "Speed Standard",
+          "Reset to default",
+          "Power"
+        ],
+        "speedOpen": true,
+        "speedItem": 0,
+        "speedMenu": {
+          "bbox": {
+            "x": 943,
+            "y": 671,
+            "w": 233,
+            "h": 150
+          },
+          "items": [
+            {
+              "text": "Standard\nDefault speed",
+              "bbox": {
+                "x": 947,
+                "y": 675,
+                "w": 225,
+                "h": 43
+              },
+              "backgroundColor": "rgba(255, 255, 255, 0.08)",
+              "checked": true
+            },
+            {
+              "text": "Fast\n1.5x speed, more usage",
+              "bbox": {
+                "x": 947,
+                "y": 718,
+                "w": 225,
+                "h": 43
+              },
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "checked": false
+            },
+            {
+              "text": "Ultrafast\nThe fastest available responses for latency-sensitive work.",
+              "bbox": {
+                "x": 947,
+                "y": 760,
+                "w": 225,
+                "h": 57
+              },
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "checked": false
+            }
+          ]
+        },
+        "active": {
+          "tag": "div",
+          "text": "Standard\nDefault speed",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 947,
+            "y": 675,
+            "w": 225,
+            "h": 43
+          },
+          "computed": {
+            "backgroundColor": "rgba(255, 255, 255, 0.08)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "highlighted": true
+        }
+      },
+      {
+        "open": true,
+        "focusedItem": -1,
+        "items": [
+          "Select model",
+          "Speed Standard",
+          "Reset to default",
+          "Power"
+        ],
+        "speedOpen": true,
+        "speedItem": 1,
+        "speedMenu": {
+          "bbox": {
+            "x": 943,
+            "y": 671,
+            "w": 233,
+            "h": 150
+          },
+          "items": [
+            {
+              "text": "Standard\nDefault speed",
+              "bbox": {
+                "x": 947,
+                "y": 675,
+                "w": 225,
+                "h": 43
+              },
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "checked": true
+            },
+            {
+              "text": "Fast\n1.5x speed, more usage",
+              "bbox": {
+                "x": 947,
+                "y": 718,
+                "w": 225,
+                "h": 43
+              },
+              "backgroundColor": "rgba(255, 255, 255, 0.08)",
+              "checked": false
+            },
+            {
+              "text": "Ultrafast\nThe fastest available responses for latency-sensitive work.",
+              "bbox": {
+                "x": 947,
+                "y": 760,
+                "w": 225,
+                "h": 57
+              },
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "checked": false
+            }
+          ]
+        },
+        "active": {
+          "tag": "div",
+          "text": "Fast\n1.5x speed, more usage",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 947,
+            "y": 718,
+            "w": 225,
+            "h": 43
+          },
+          "computed": {
+            "backgroundColor": "rgba(255, 255, 255, 0.08)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "highlighted": true
+        }
+      },
+      {
+        "open": true,
+        "focusedItem": 1,
+        "items": [
+          "Select model",
+          "Speed Standard",
+          "Reset to default",
+          "Power"
+        ],
+        "speedOpen": false,
+        "speedItem": -1,
+        "speedMenu": null,
+        "active": {
+          "tag": "div",
+          "text": "",
+          "aria": "Speed Standard",
+          "role": "menuitem",
+          "bbox": {
+            "x": 906,
+            "y": 675,
+            "w": 32,
+            "h": 32
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "highlighted": true
+        }
+      },
+      {
+        "open": false,
+        "focusedItem": -1,
+        "items": [],
+        "speedOpen": false,
+        "speedItem": -1,
+        "speedMenu": null,
+        "active": {
+          "tag": "div",
+          "text": "",
+          "aria": "Do anything",
+          "role": "textbox",
+          "bbox": {
+            "x": 453,
+            "y": 728,
+            "w": 712,
+            "h": 44
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          },
+          "highlighted": false
+        }
+      },
+      {
+        "open": false,
+        "focusedItem": -1,
+        "items": [],
+        "speedOpen": false,
+        "speedItem": -1,
+        "speedMenu": null,
+        "active": {
+          "tag": "div",
+          "text": "",
+          "aria": "Do anything",
+          "role": "textbox",
+          "bbox": {
+            "x": 453,
+            "y": 728,
+            "w": 712,
+            "h": 44
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          },
+          "highlighted": false
+        }
+      },
+      {
+        "open": false,
+        "focusedItem": -1,
+        "items": [],
+        "speedOpen": false,
+        "speedItem": -1,
+        "speedMenu": null,
+        "active": {
+          "tag": "button",
+          "text": "",
+          "aria": "Add files and more",
+          "role": null,
+          "bbox": {
+            "x": 449,
+            "y": 776,
+            "w": 28,
+            "h": 28
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+            "cursor": "default"
+          },
+          "highlighted": false
+        }
+      },
+      {
+        "open": false,
+        "focusedItem": -1,
+        "items": [],
+        "speedOpen": false,
+        "speedItem": -1,
+        "speedMenu": null,
+        "active": {
+          "tag": "button",
+          "text": "Custom",
+          "aria": "Change permissions",
+          "role": null,
+          "bbox": {
+            "x": 482,
+            "y": 776,
+            "w": 81,
+            "h": 28
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+            "cursor": "default"
+          },
+          "highlighted": false
+        }
+      },
+      {
+        "open": false,
+        "focusedItem": -1,
+        "items": [],
+        "speedOpen": false,
+        "speedItem": -1,
+        "speedMenu": null,
+        "active": {
+          "tag": "button",
+          "text": "GPT-6 Astra\nLight\nNone\nMinimal\nLight\nMedium\nHigh\nExtra High\nMax\nUltra\nPersistent",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 956,
+            "y": 776,
+            "w": 148,
+            "h": 28
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+            "cursor": "default"
+          },
+          "highlighted": false
+        }
+      },
+      {
+        "open": true,
+        "focusedItem": 0,
+        "items": [
+          "Select model",
+          "Speed Standard",
+          "Reset to default",
+          "Power"
+        ],
+        "speedOpen": false,
+        "speedItem": -1,
+        "speedMenu": null,
+        "active": {
+          "tag": "div",
+          "text": "GPT-6 Astra\nLight",
+          "aria": "Select model",
+          "role": "menuitem",
+          "bbox": {
+            "x": 970,
+            "y": 675,
+            "w": 118,
+            "h": 48
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "highlighted": true
+        }
+      },
+      {
+        "open": false,
+        "focusedItem": -1,
+        "items": [],
+        "speedOpen": false,
+        "speedItem": -1,
+        "speedMenu": null,
+        "active": {
+          "tag": "div",
+          "text": "",
+          "aria": "Do anything",
+          "role": "textbox",
+          "bbox": {
+            "x": 453,
+            "y": 728,
+            "w": 712,
+            "h": 44
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          },
+          "highlighted": false
+        }
+      },
+      {
+        "open": false,
+        "focusedItem": -1,
+        "items": [],
+        "speedOpen": false,
+        "speedItem": -1,
+        "speedMenu": null,
+        "active": {
+          "tag": "div",
+          "text": "",
+          "aria": "Do anything",
+          "role": "textbox",
+          "bbox": {
+            "x": 453,
+            "y": 728,
+            "w": 712,
+            "h": 44
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          },
+          "highlighted": false
+        }
+      },
+      {
+        "open": false,
+        "focusedItem": -1,
+        "items": [],
+        "speedOpen": false,
+        "speedItem": -1,
+        "speedMenu": null,
+        "active": {
+          "tag": "button",
+          "text": "",
+          "aria": "Add files and more",
+          "role": null,
+          "bbox": {
+            "x": 449,
+            "y": 776,
+            "w": 28,
+            "h": 28
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+            "cursor": "default"
+          },
+          "highlighted": false
+        }
+      },
+      {
+        "open": false,
+        "focusedItem": -1,
+        "items": [],
+        "speedOpen": false,
+        "speedItem": -1,
+        "speedMenu": null,
+        "active": {
+          "tag": "button",
+          "text": "Custom",
+          "aria": "Change permissions",
+          "role": null,
+          "bbox": {
+            "x": 482,
+            "y": 776,
+            "w": 81,
+            "h": 28
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+            "cursor": "default"
+          },
+          "highlighted": false
+        }
+      },
+      {
+        "open": false,
+        "focusedItem": -1,
+        "items": [],
+        "speedOpen": false,
+        "speedItem": -1,
+        "speedMenu": null,
+        "active": {
+          "tag": "button",
+          "text": "GPT-6 Astra\nLight\nNone\nMinimal\nLight\nMedium\nHigh\nExtra High\nMax\nUltra\nPersistent",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 956,
+            "y": 776,
+            "w": 148,
+            "h": 28
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+            "cursor": "default"
+          },
+          "highlighted": false
+        }
+      },
+      {
+        "open": true,
+        "focusedItem": 0,
+        "items": [
+          "Select model",
+          "Speed Standard",
+          "Reset to default",
+          "Power"
+        ],
+        "speedOpen": false,
+        "speedItem": -1,
+        "speedMenu": null,
+        "active": {
+          "tag": "div",
+          "text": "GPT-6 Astra\nLight",
+          "aria": "Select model",
+          "role": "menuitem",
+          "bbox": {
+            "x": 970,
+            "y": 675,
+            "w": 118,
+            "h": 48
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "highlighted": true
+        }
+      },
+      {
+        "open": true,
+        "focusedItem": 1,
+        "items": [
+          "Select model",
+          "Speed Standard",
+          "Reset to default",
+          "Power"
+        ],
+        "speedOpen": false,
+        "speedItem": -1,
+        "speedMenu": null,
+        "active": {
+          "tag": "div",
+          "text": "",
+          "aria": "Speed Standard",
+          "role": "menuitem",
+          "bbox": {
+            "x": 906,
+            "y": 675,
+            "w": 32,
+            "h": 32
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "highlighted": true
+        }
+      },
+      {
+        "open": true,
+        "focusedItem": 1,
+        "items": [
+          "Select model",
+          "Speed Standard",
+          "Reset to default",
+          "Power"
+        ],
+        "speedOpen": true,
+        "speedItem": -1,
+        "speedMenu": {
+          "bbox": {
+            "x": 943,
+            "y": 671,
+            "w": 233,
+            "h": 150
+          },
+          "items": [
+            {
+              "text": "Standard\nDefault speed",
+              "bbox": {
+                "x": 947,
+                "y": 675,
+                "w": 225,
+                "h": 43
+              },
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "checked": true
+            },
+            {
+              "text": "Fast\n1.5x speed, more usage",
+              "bbox": {
+                "x": 947,
+                "y": 718,
+                "w": 225,
+                "h": 43
+              },
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "checked": false
+            },
+            {
+              "text": "Ultrafast\nThe fastest available responses for latency-sensitive work.",
+              "bbox": {
+                "x": 947,
+                "y": 760,
+                "w": 225,
+                "h": 57
+              },
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "checked": false
+            }
+          ]
+        },
+        "active": {
+          "tag": "div",
+          "text": "",
+          "aria": "Speed Standard",
+          "role": "menuitem",
+          "bbox": {
+            "x": 906,
+            "y": 675,
+            "w": 32,
+            "h": 32
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "highlighted": true
+        }
+      },
+      {
+        "open": false,
+        "focusedItem": -1,
+        "items": [],
+        "speedOpen": false,
+        "speedItem": -1,
+        "speedMenu": null,
+        "active": {
+          "tag": "button",
+          "text": "GPT-6 Astra\nLight\nNone\nMinimal\nLight\nMedium\nHigh\nExtra High\nMax\nUltra\nPersistent",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 956,
+            "y": 776,
+            "w": 148,
+            "h": 28
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+            "cursor": "default"
+          },
+          "highlighted": false
+        }
+      }
+    ],
+    "requests": [],
+    "requestFilter": "Only app-server requests; background reads (config/read, app/*, mcpServerStatus/list, thread/attachment/list, externalAgentConfig/import/readHistories) and host services excluded.",
+    "screenshot": "/sdc-disk/tmp/cgx/f2c/r1/shots/f2c-original-final.png"
+  },
+  "scope": {
+    "covered": [
+      "HC-104",
+      "HC-105 (model trigger)"
+    ],
+    "notes": [
+      "Escape focus (editor after keyboard close, trigger after hover-open) is HC-103, not asserted by the port's f2c test."
+    ]
+  }
+}
