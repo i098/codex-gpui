@@ -1,0 +1,670 @@
+{
+  "name": "s008",
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 2,
+    "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+    "theme": "dark",
+    "hoverEmulated": true
+  },
+  "fixture": {
+    "threadId": "01a13de9-c48a-7b20-8382-db900881cb99",
+    "itemId": "msg_0553a1cd124135ea016ad05ca61e4481989070ad93e9216f10",
+    "source": "```python\ndef greet(name):\n    # Say hello\n    return \"Hello, \" + name\n\nprint(greet(\"Codex\"))\n```\n\n[OpenAI](https://openai.com/)",
+    "notification": {
+      "type": "mcp-notification",
+      "hostId": "local",
+      "method": "item/completed",
+      "params": {
+        "threadId": "01a13de9-c48a-7b20-8382-db900881cb99",
+        "turnId": "01a13de9-c4f9-7370-99bd-0512afdf8126",
+        "item": {
+          "type": "agentMessage",
+          "id": "msg_0553a1cd124135ea016ad05ca61e4481989070ad93e9216f10",
+          "text": "```python\ndef greet(name):\n    # Say hello\n    return \"Hello, \" + name\n\nprint(greet(\"Codex\"))\n```\n\n[OpenAI](https://openai.com/)",
+          "phase": "final_answer",
+          "memoryCitation": null,
+          "delivery": null,
+          "questions": null
+        }
+      }
+    },
+    "note": "The original receives item/completed after hydration. The port receives the same message through thread/read."
+  },
+  "steps": [
+    {
+      "type": "click",
+      "target": {
+        "text": "Change the greeting in hello.py to \"Hello, Codex\".",
+        "bbox": {
+          "x": 68,
+          "y": 295,
+          "w": 256,
+          "h": 20
+        }
+      },
+      "waitMs": 12000
+    },
+    {
+      "type": "bridge",
+      "message": {
+        "type": "mcp-notification",
+        "hostId": "local",
+        "method": "item/completed",
+        "params": {
+          "threadId": "01a13de9-c48a-7b20-8382-db900881cb99",
+          "turnId": "01a13de9-c4f9-7370-99bd-0512afdf8126",
+          "item": {
+            "type": "agentMessage",
+            "id": "msg_0553a1cd124135ea016ad05ca61e4481989070ad93e9216f10",
+            "text": "```python\ndef greet(name):\n    # Say hello\n    return \"Hello, \" + name\n\nprint(greet(\"Codex\"))\n```\n\n[OpenAI](https://openai.com/)",
+            "phase": "final_answer",
+            "memoryCitation": null,
+            "delivery": null,
+            "questions": null
+          }
+        }
+      }
+    },
+    {
+      "type": "hover",
+      "target": {
+        "selector": "[data-markdown-copy=\"code-block\"] button[aria-label=\"Copy\"]",
+        "bbox": {
+          "x": 1134,
+          "y": 268,
+          "w": 36,
+          "h": 36
+        }
+      },
+      "waitMs": 800
+    },
+    {
+      "type": "click",
+      "target": {
+        "selector": "[data-markdown-copy=\"code-block\"] button[aria-label=\"Copy\"]",
+        "bbox": {
+          "x": 1134,
+          "y": 268,
+          "w": 36,
+          "h": 36
+        }
+      }
+    },
+    {
+      "type": "wait",
+      "waitMs": 2200
+    },
+    {
+      "type": "click",
+      "target": {
+        "selector": "a[href=\"https://openai.com/\"]",
+        "bbox": {
+          "x": 460,
+          "y": 442,
+          "w": 50,
+          "h": 17
+        }
+      }
+    },
+    {
+      "type": "click",
+      "button": "middle",
+      "target": {
+        "selector": "a[href=\"https://openai.com/\"]",
+        "bbox": {
+          "x": 460,
+          "y": 442,
+          "w": 50,
+          "h": 17
+        }
+      }
+    }
+  ],
+  "result": {
+    "dom": [
+      {
+        "selector": "[data-markdown-copy=\"code-block\"]",
+        "tag": "div",
+        "text": "Python\ndef greet(name):\n    # Say hello\n    return \"Hello, \" + name\n\nprint(greet(\"Codex\"))",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 441,
+          "y": 261,
+          "w": 736,
+          "h": 162
+        },
+        "computed": {
+          "backgroundColor": "rgb(24, 24, 24)",
+          "color": "rgb(255, 255, 255)",
+          "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+          "fontSize": "14px",
+          "fontWeight": "430",
+          "lineHeight": "22.75px",
+          "padding": "0px",
+          "margin": "0px 0px 17.5px",
+          "border": "1px solid rgba(255, 255, 255, 0.043)",
+          "borderRadius": "20px",
+          "height": "162px",
+          "overflowX": "clip",
+          "cursor": "auto"
+        }
+      },
+      {
+        "selector": "[data-markdown-copy=\"code-block\"] > div",
+        "tag": "div",
+        "text": "Python",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 442,
+          "y": 262,
+          "w": 734,
+          "h": 48
+        },
+        "computed": {
+          "backgroundColor": "rgb(24, 24, 24)",
+          "color": "rgb(255, 255, 255)",
+          "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+          "fontSize": "13px",
+          "fontWeight": "500",
+          "lineHeight": "18.5714px",
+          "padding": "6px 6px 6px 20px",
+          "margin": "0px",
+          "border": "0px solid rgb(255, 255, 255)",
+          "borderRadius": "0px",
+          "height": "48px",
+          "overflowX": "visible",
+          "cursor": "auto"
+        }
+      },
+      {
+        "selector": "[data-markdown-copy=\"code-block\"] > div",
+        "tag": "div",
+        "text": "def greet(name):\n    # Say hello\n    return \"Hello, \" + name\n\nprint(greet(\"Codex\"))",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 442,
+          "y": 310,
+          "w": 734,
+          "h": 112
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+          "fontSize": "14px",
+          "fontWeight": "430",
+          "lineHeight": "22.75px",
+          "padding": "0px 20px 12px",
+          "margin": "0px",
+          "border": "0px solid rgb(255, 255, 255)",
+          "borderRadius": "0px",
+          "height": "112px",
+          "overflowX": "auto",
+          "cursor": "auto"
+        }
+      },
+      {
+        "selector": "[data-markdown-copy=\"code-block\"] code",
+        "tag": "code",
+        "text": "def greet(name):\n    # Say hello\n    return \"Hello, \" + name\n\nprint(greet(\"Codex\"))",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 462,
+          "y": 310,
+          "w": 694,
+          "h": 100
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "fontFamily": "ui-monospace, SFMono-Regular, \"SF Mono\", menlo, consolas, \"Liberation Mono\", monospace",
+          "fontSize": "12px",
+          "fontWeight": "430",
+          "lineHeight": "20px",
+          "padding": "0px",
+          "margin": "0px",
+          "border": "0px solid rgb(255, 255, 255)",
+          "borderRadius": "0px",
+          "height": "100px",
+          "overflowX": "visible",
+          "cursor": "auto"
+        }
+      },
+      {
+        "selector": "[data-markdown-copy=\"code-block\"] button",
+        "tag": "button",
+        "text": "",
+        "aria": "Enable word wrap",
+        "role": null,
+        "bbox": {
+          "x": 1097,
+          "y": 268,
+          "w": 36,
+          "h": 36
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+          "fontSize": "13px",
+          "fontWeight": "500",
+          "lineHeight": "20px",
+          "padding": "0px",
+          "margin": "0px",
+          "border": "0px solid rgba(0, 0, 0, 0)",
+          "borderRadius": "9999px",
+          "height": "36px",
+          "overflowX": "visible",
+          "cursor": "default"
+        }
+      },
+      {
+        "selector": "[data-markdown-copy=\"code-block\"] button",
+        "tag": "button",
+        "text": "",
+        "aria": "Copy",
+        "role": null,
+        "bbox": {
+          "x": 1134,
+          "y": 268,
+          "w": 36,
+          "h": 36
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+          "fontSize": "13px",
+          "fontWeight": "500",
+          "lineHeight": "20px",
+          "padding": "0px",
+          "margin": "0px",
+          "border": "0px solid rgba(0, 0, 0, 0)",
+          "borderRadius": "9999px",
+          "height": "36px",
+          "overflowX": "visible",
+          "cursor": "default"
+        }
+      },
+      {
+        "selector": ".hljs-keyword",
+        "tag": "span",
+        "text": "def",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 462,
+          "y": 312,
+          "w": 22,
+          "h": 15
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(248, 166, 200)",
+          "fontFamily": "ui-monospace, SFMono-Regular, \"SF Mono\", menlo, consolas, \"Liberation Mono\", monospace",
+          "fontSize": "12px",
+          "fontWeight": "430",
+          "lineHeight": "20px",
+          "padding": "0px",
+          "margin": "0px",
+          "border": "0px solid rgb(248, 166, 200)",
+          "borderRadius": "0px",
+          "height": "auto",
+          "overflowX": "visible",
+          "cursor": "auto"
+        }
+      },
+      {
+        "selector": ".hljs-keyword",
+        "tag": "span",
+        "text": "return",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 491,
+          "y": 352,
+          "w": 45,
+          "h": 15
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(248, 166, 200)",
+          "fontFamily": "ui-monospace, SFMono-Regular, \"SF Mono\", menlo, consolas, \"Liberation Mono\", monospace",
+          "fontSize": "12px",
+          "fontWeight": "430",
+          "lineHeight": "20px",
+          "padding": "0px",
+          "margin": "0px",
+          "border": "0px solid rgb(248, 166, 200)",
+          "borderRadius": "0px",
+          "height": "auto",
+          "overflowX": "visible",
+          "cursor": "auto"
+        }
+      },
+      {
+        "selector": ".hljs-title",
+        "tag": "span",
+        "text": "greet",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 491,
+          "y": 312,
+          "w": 37,
+          "h": 15
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(184, 151, 244)",
+          "fontFamily": "ui-monospace, SFMono-Regular, \"SF Mono\", menlo, consolas, \"Liberation Mono\", monospace",
+          "fontSize": "12px",
+          "fontWeight": "430",
+          "lineHeight": "20px",
+          "padding": "0px",
+          "margin": "0px",
+          "border": "0px solid rgb(184, 151, 244)",
+          "borderRadius": "0px",
+          "height": "auto",
+          "overflowX": "visible",
+          "cursor": "auto"
+        }
+      },
+      {
+        "selector": ".hljs-comment",
+        "tag": "span",
+        "text": "# Say hello",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 491,
+          "y": 332,
+          "w": 82,
+          "h": 15
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(185, 185, 185)",
+          "fontFamily": "ui-monospace, SFMono-Regular, \"SF Mono\", menlo, consolas, \"Liberation Mono\", monospace",
+          "fontSize": "12px",
+          "fontWeight": "430",
+          "lineHeight": "20px",
+          "padding": "0px",
+          "margin": "0px",
+          "border": "0px solid rgb(185, 185, 185)",
+          "borderRadius": "0px",
+          "height": "auto",
+          "overflowX": "visible",
+          "cursor": "auto"
+        }
+      },
+      {
+        "selector": ".hljs-string",
+        "tag": "span",
+        "text": "\"Hello, \"",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 543,
+          "y": 352,
+          "w": 67,
+          "h": 15
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(131, 209, 151)",
+          "fontFamily": "ui-monospace, SFMono-Regular, \"SF Mono\", menlo, consolas, \"Liberation Mono\", monospace",
+          "fontSize": "12px",
+          "fontWeight": "430",
+          "lineHeight": "20px",
+          "padding": "0px",
+          "margin": "0px",
+          "border": "0px solid rgb(131, 209, 151)",
+          "borderRadius": "0px",
+          "height": "auto",
+          "overflowX": "visible",
+          "cursor": "auto"
+        }
+      },
+      {
+        "selector": ".hljs-string",
+        "tag": "span",
+        "text": "\"Codex\"",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 551,
+          "y": 392,
+          "w": 52,
+          "h": 15
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(131, 209, 151)",
+          "fontFamily": "ui-monospace, SFMono-Regular, \"SF Mono\", menlo, consolas, \"Liberation Mono\", monospace",
+          "fontSize": "12px",
+          "fontWeight": "430",
+          "lineHeight": "20px",
+          "padding": "0px",
+          "margin": "0px",
+          "border": "0px solid rgb(131, 209, 151)",
+          "borderRadius": "0px",
+          "height": "auto",
+          "overflowX": "visible",
+          "cursor": "auto"
+        }
+      },
+      {
+        "selector": ".hljs-built_in",
+        "tag": "span",
+        "text": "print",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 462,
+          "y": 392,
+          "w": 37,
+          "h": 15
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(241, 162, 117)",
+          "fontFamily": "ui-monospace, SFMono-Regular, \"SF Mono\", menlo, consolas, \"Liberation Mono\", monospace",
+          "fontSize": "12px",
+          "fontWeight": "430",
+          "lineHeight": "20px",
+          "padding": "0px",
+          "margin": "0px",
+          "border": "0px solid rgb(241, 162, 117)",
+          "borderRadius": "0px",
+          "height": "auto",
+          "overflowX": "visible",
+          "cursor": "auto"
+        }
+      },
+      {
+        "selector": "a[href=\"https://openai.com/\"]",
+        "tag": "a",
+        "text": "OpenAI",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 441,
+          "y": 442,
+          "w": 69,
+          "h": 17
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+          "fontSize": "14px",
+          "fontWeight": "430",
+          "lineHeight": "22.75px",
+          "padding": "0px",
+          "margin": "0px",
+          "border": "0px solid rgb(255, 255, 255)",
+          "borderRadius": "0px",
+          "height": "auto",
+          "overflowX": "visible",
+          "cursor": "default"
+        }
+      }
+    ],
+    "tooltip": {
+      "tag": "div",
+      "text": "Copy code",
+      "aria": null,
+      "role": "tooltip",
+      "bbox": {
+        "x": 1106,
+        "y": 236,
+        "w": 91,
+        "h": 30
+      },
+      "computed": {
+        "backgroundColor": "rgb(45, 45, 45)",
+        "color": "rgb(255, 255, 255)",
+        "opacity": "1",
+        "outline": "rgb(255, 255, 255) none 3px",
+        "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.2) 0px 8px 18px 0px",
+        "cursor": "auto"
+      }
+    },
+    "copied": {
+      "tag": "button",
+      "text": "",
+      "aria": "Copied",
+      "role": null,
+      "bbox": {
+        "x": 1134,
+        "y": 268,
+        "w": 36,
+        "h": 36
+      },
+      "computed": {
+        "backgroundColor": "rgba(255, 255, 255, 0.08)",
+        "color": "rgb(255, 255, 255)",
+        "opacity": "1",
+        "outline": "rgb(255, 255, 255) none 3px",
+        "boxShadow": "none",
+        "cursor": "default"
+      }
+    },
+    "reset": {
+      "tag": "button",
+      "text": "",
+      "aria": "Copy",
+      "role": null,
+      "bbox": {
+        "x": 1134,
+        "y": 268,
+        "w": 36,
+        "h": 36
+      },
+      "computed": {
+        "backgroundColor": "rgba(255, 255, 255, 0.08)",
+        "color": "rgb(255, 255, 255)",
+        "opacity": "1",
+        "outline": "rgb(255, 255, 255) none 3px",
+        "boxShadow": "none",
+        "cursor": "default"
+      }
+    },
+    "copyTimeline": [
+      {
+        "t": 219002.5,
+        "label": "Copied"
+      },
+      {
+        "t": 221012.20000004768,
+        "label": "Copy"
+      }
+    ],
+    "requests": [
+      {
+        "svc": "clipboard",
+        "method": "writeText",
+        "args": [
+          "def greet(name):\n    # Say hello\n    return \"Hello, \" + name\n\nprint(greet(\"Codex\"))"
+        ]
+      },
+      {
+        "initiator": "markdown_link_click",
+        "openTargetIntent": "default",
+        "originHostId": "local",
+        "source": "manual",
+        "url": "https://openai.com/",
+        "type": "open-in-browser"
+      },
+      {
+        "disposition": "new-background-tab",
+        "initiator": "markdown_link_click",
+        "openTargetIntent": "default",
+        "originHostId": "local",
+        "source": "manual",
+        "url": "https://openai.com/",
+        "type": "open-in-browser"
+      }
+    ],
+    "samples": [
+      {
+        "x": 1000,
+        "y": 550,
+        "rgba": [
+          42,
+          42,
+          42,
+          255
+        ]
+      },
+      {
+        "x": 1000,
+        "y": 700,
+        "rgba": [
+          42,
+          42,
+          42,
+          255
+        ]
+      },
+      {
+        "x": 900,
+        "y": 700,
+        "rgba": [
+          42,
+          42,
+          42,
+          255
+        ]
+      },
+      {
+        "x": 1000,
+        "y": 521,
+        "rgba": [
+          24,
+          24,
+          24,
+          255
+        ]
+      },
+      {
+        "x": 1000,
+        "y": 522,
+        "rgba": [
+          51,
+          51,
+          51,
+          255
+        ]
+      }
+    ],
+    "screenshot": "s008-original.png"
+  }
+}
