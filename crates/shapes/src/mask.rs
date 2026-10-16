@@ -30,7 +30,7 @@ pub(crate) fn paint_top_fade(fade: Pixels, bounds: Bounds<Pixels>, window: &mut 
             .collect();
         ([x0, y0, w, h], blits)
     });
-    paint_sprites(&sprites, Hsla::default(), window, cx);
+    paint_sprites(&sprites, Hsla::default(), [0, 0], window, cx);
 }
 
 /// `crate::x_fade` on macOS: the gradient's alpha at each column's center, rounded to a byte,
@@ -59,7 +59,7 @@ pub(crate) fn paint_x_fade(
         let blits = row.repeat(h as usize);
         ([x0, y0, w, h], blits)
     });
-    paint_sprites(&sprites, Hsla::default(), window, cx);
+    paint_sprites(&sprites, Hsla::default(), [0, 0], window, cx);
 }
 
 /// Skia's anti-aliased coverage of the rounded rect `bounds` with `radius` in each rounded
@@ -142,7 +142,7 @@ pub(crate) fn paint_rounded_clip(
         }
         out
     });
-    paint_sprites(&sprites, Hsla::default(), window, cx);
+    paint_sprites(&sprites, Hsla::default(), [0, 0], window, cx);
 }
 
 /// `crate::paint_clipped_tile` on macOS.
@@ -189,7 +189,7 @@ pub(crate) fn paint_clipped_tile(
                 ([x0, y0, w, h], blits.collect())
             });
             let [r, g, b, a] = color.map(|v| f32::from(v) / 255.);
-            paint_sprites(&sprites, Rgba { r, g, b, a }.into(), window, cx);
+            paint_sprites(&sprites, Rgba { r, g, b, a }.into(), [0, 0], window, cx);
         }
     }
 }

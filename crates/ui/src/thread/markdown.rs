@@ -528,32 +528,38 @@ impl Markdown<'_> {
         (row, task)
     }
 
-    /// A word box with its selection highlight.
+    /// A word box with its selection highlight under its glyphs: one box, so a long answer
+    /// lays out a node per word.
     fn word(&self, s: &str, at: Option<usize>, style: Typography) -> Div {
+        let (width, label) = self.label(s, at, style);
         div()
             .relative()
             .flex_none()
+            .w(width)
             .child(
                 highlight(s.to_owned().into(), style.size, style.weight, None, 0.)
                     .absolute()
                     .inset_0(),
             )
-            .child(self.label(s, at, style))
+            .child(label)
     }
 
-    fn label(&self, s: &str, at: Option<usize>, style: Typography) -> Div {
+    /// The word's run width and its text.
+    fn label(&self, s: &str, at: Option<usize>, style: Typography) -> (Pixels, AnyElement) {
         let color = style.color.unwrap_or(self.theme.text);
         let find = self.find.zip(at);
         let fades = self.fades(s);
         if !style.italic && !style.strike && find.is_none() && fades.is_empty() {
-            return measured(
-                self.window,
-                s.to_owned(),
-                style.size,
-                style.line_height,
-                style.weight,
-                color,
-                None,
+            return (
+                width(self.window, s, style.size, style.weight, None),
+                text(
+                    s.to_owned(),
+                    style.size,
+                    style.line_height,
+                    style.weight,
+                    color,
+                )
+                .into_any_element(),
             );
         }
         let font = gpui::Font {
@@ -582,10 +588,11 @@ impl Markdown<'_> {
             .when(style.italic, |d| d.italic())
             .when(style.strike, |d| d.line_through());
         // ponytail: a find highlight replaces the fade of its word; both at once is rare.
-        div().flex_none().w(width).child(match find {
+        let label = match find {
             Some((find, at)) => label.child(find.text(s, at)),
             None => label.child(StyledText::new(s.to_owned()).with_highlights(fades)),
-        })
+        };
+        (width, label.into_any_element())
     }
 
     /// The fade of each still-streaming part of `text`, by its position in [`Self::source`].

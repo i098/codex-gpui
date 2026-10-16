@@ -886,6 +886,23 @@ impl Layer {
             self.window[1] - self.origin[1],
         ]
     }
+
+    /// The layer px a raster covers: the root layer ends at the window; a composited layer (a
+    /// scroller's contents) runs on past it, so its tiles there keep their full height.
+    fn clamp(&self) -> [i32; 2] {
+        let size = self.size();
+        if self.origin == [0, 0] {
+            size
+        } else {
+            [size[0], i32::MAX / 2]
+        }
+    }
+
+    /// What a raster in this layer depends on besides its layer-space ops: not the origin, so
+    /// a scroller's contents keep their sprites while they scroll.
+    fn key(&self) -> ([i32; 2], [i32; 2], bool, Option<[i32; 2]>) {
+        (self.tile, self.clamp(), self.composited, self.device)
+    }
 }
 
 /// cc `TileSizeCalculator` for CPU raster at device scale 2 (512 px default tiles, 1024 px
@@ -935,7 +952,7 @@ pub(crate) fn tiles(
 
 /// The blits of each pixel of `[x0, y0, x1, y1]` (layer device px, clamped to the layer),
 /// rendering `draw` (in layer space) once per cc tile like Chromium's raster worker; the
-/// result is in window device px. Skia picks its blitter by
+/// result is in layer device px. Skia picks its blitter by
 /// the paint (opaque legacy, translucent, color filter), so the probes that tell the modes
 /// apart draw with the real color's `alpha`; an opaque black paint (`black`) takes Skia's own
 /// `SkARGB32_Black_Blitter`, so its probes are black. AAA blits some edge pixels twice (a
@@ -955,8 +972,7 @@ fn raster(
     clips: &[Contour],
     draw: &dyn Fn(&Canvas, Color4f),
 ) -> ([i32; 4], Vec<Blits>) {
-    let [lx, ly] = layer.origin;
-    let size = layer.size();
+    let size = layer.clamp();
     let (x0, y0) = (x0.max(0), y0.max(0));
     let (x1, y1) = (x1.min(size[0]), y1.min(size[1]));
     if x0 >= x1 || y0 >= y1 {
@@ -1021,14 +1037,7 @@ fn raster(
             );
         })
     };
-    // A composited layer (a scroller's contents) runs on past the window: its tiles there
-    // keep their full height.
-    let grid = if layer.origin == [0, 0] {
-        size
-    } else {
-        [size[0], i32::MAX / 2]
-    };
-    for (o, ts, [ox0, oy0, ox1, oy1]) in tiles([x0, y0, x1, y1], grid, layer.tile) {
+    for (o, ts, [ox0, oy0, ox1, oy1]) in tiles([x0, y0, x1, y1], size, layer.tile) {
         // A `with_layer` draws on a device of the layer's bounds within the tile, whose origin
         // moves the float geometry of curves.
         let lo = layer.device.map_or(o, |d| [o[0].max(d[0]), o[1].max(d[1])]);
@@ -1084,7 +1093,7 @@ fn raster(
             }
         }
     }
-    ([x0 + lx, y0 + ly, w, h], out)
+    ([x0, y0, w, h], out)
 }
 
 /// The RGBA bytes (macOS N32, premultiplied) and row bytes of the cc tile of `size` at layer
@@ -1181,8 +1190,7 @@ pub(crate) fn surface_pixels(
 /// edge. Skia's AA clip only turns into a plain rect when it starts at its device's top row
 /// (`SkAAClip::isRect` compares a row offset with the bounds).
 fn restore_sprites(op: &Op, col: Color4f, layer: Layer) -> Vec<Sprite> {
-    let [lx, ly] = layer.origin;
-    let size = layer.size();
+    let size = layer.clamp();
     // `op` is in layer space.
     let [x0, y0, x1, y1] = op.bbox();
     let (x0, y0) = (x0.max(0), y0.max(0));
@@ -1285,7 +1293,7 @@ fn restore_sprites(op: &Op, col: Color4f, layer: Layer) -> Vec<Sprite> {
         };
         chunks(
             &mut out,
-            [x0 + lx, y0 + ly, w, h],
+            [x0, y0, w, h],
             &value,
             mode,
             Some(color),
@@ -1372,8 +1380,8 @@ pub(crate) struct Sprite {
     svg: Arc<str>,
 }
 
-/// Rasterized draws by their exact parameters (absolute device px: congruent positions are
-/// not shared, the float geometry may differ).
+/// Rasterized draws by their exact parameters (layer device px: congruent positions in a
+/// layer are not shared, the float geometry may differ).
 /// ponytail: cleared wholesale when full; an LRU only if scrolling ever thrashes it.
 static CACHE: LazyLock<Mutex<HashMap<String, Arc<Vec<Sprite>>>>> = LazyLock::new(Default::default);
 const CACHE_MAX: usize = 4096;
@@ -1465,19 +1473,47 @@ fn svg(plane: &[u8], w: i32, h: i32) -> Arc<str> {
     .into()
 }
 
-pub(crate) fn paint_sprites(sprites: &[Sprite], color: Hsla, window: &mut Window, cx: &App) {
+/// Paints `sprites` (layer px) of the layer at `origin` (window device px).
+pub(crate) fn paint_sprites(
+    sprites: &[Sprite],
+    color: Hsla,
+    origin: [i32; 2],
+    window: &mut Window,
+    cx: &App,
+) {
     // An op's opaque-layer sprites cover disjoint px: one GPUI layer holds them all. A layer
     // per sprite burns layer ids, which wrap at 255, and a px whose last layer had the same id
     // would resume that unrelated layer.
-    paint_each(sprites, false, color, window, cx);
+    paint_each(sprites, false, color, origin, window, cx);
     if sprites.iter().any(|s| s.opaque_layer) {
-        window.with_skia_layer(255, |window| paint_each(sprites, true, color, window, cx));
+        window.with_skia_layer(255, |window| {
+            paint_each(sprites, true, color, origin, window, cx)
+        });
     }
 }
 
-fn paint_each(sprites: &[Sprite], layered: bool, color: Hsla, window: &mut Window, cx: &App) {
+fn paint_each(
+    sprites: &[Sprite],
+    layered: bool,
+    color: Hsla,
+    [ox, oy]: [i32; 2],
+    window: &mut Window,
+    cx: &App,
+) {
     let s = window.scale_factor();
+    // The scene drops what the content mask hides (a scroller's contents off screen).
+    let mask = window.content_mask().bounds;
     for sp in sprites.iter().filter(|sp| sp.opaque_layer == layered) {
+        let bounds = Bounds::new(
+            point(
+                px((sp.at[0] + ox) as f32 / s),
+                px((sp.at[1] + oy) as f32 / s),
+            ),
+            size(px(sp.size[0] as f32 / s), px(sp.size[1] as f32 / s)),
+        );
+        if !bounds.intersects(&mask) {
+            continue;
+        }
         let color: Hsla = sp.color.map_or(color, |[r, g, b, a]| {
             let f = |v: u8| f32::from(v) / 255.;
             Rgba {
@@ -1488,10 +1524,6 @@ fn paint_each(sprites: &[Sprite], layered: bool, color: Hsla, window: &mut Windo
             }
             .into()
         });
-        let bounds = Bounds::new(
-            point(px(sp.at[0] as f32 / s), px(sp.at[1] as f32 / s)),
-            size(px(sp.size[0] as f32 / s), px(sp.size[1] as f32 / s)),
-        );
         let color = Hsla {
             h: color.h + 2. * f32::from(sp.mode),
             ..color
@@ -1600,10 +1632,10 @@ fn paint_op(op: Op, color: Hsla, layer: Layer, window: &mut Window, cx: &App) {
         // ponytail: restored layers ignore the ancestors' AA clips.
         let mut col = color4f(color);
         col.a *= window.element_opacity();
-        let sprites = cached(format!("{op:?}{layer:?}{col:?}"), || {
+        let sprites = cached(format!("{op:?}{:?}{col:?}", layer.key()), || {
             restore_sprites(&op, col, layer)
         });
-        return paint_sprites(&sprites, color, window, cx);
+        return paint_sprites(&sprites, color, layer.origin, window, cx);
     }
     let bbox = op.bbox();
     if !shown(bbox, layer, window) {
@@ -1612,12 +1644,13 @@ fn paint_op(op: Op, color: Hsla, layer: Layer, window: &mut Window, cx: &App) {
     let clips = clips(window, layer);
     let black = is_black(color, a);
     let wide = wide(color);
-    let sprites = sprites(format!("{op:?}{layer:?}{a}{black}{wide}{clips:?}"), || {
+    let key = format!("{op:?}{:?}{a}{black}{wide}{clips:?}", layer.key());
+    let sprites = sprites(key, || {
         raster(bbox, layer, a, black, wide, &clips, &|c, col| {
             op.draw(c, col)
         })
     });
-    paint_sprites(&sprites, color, window, cx);
+    paint_sprites(&sprites, color, layer.origin, window, cx);
 }
 
 /// Whether any px of the layer px rect `[x0, y0, x1, y1]` lies inside the content mask: the
@@ -2111,10 +2144,13 @@ pub(crate) fn paint_icon(
         let a = alpha_byte(a * window.element_opacity());
         let black = is_black(color.into(), a);
         let sprites = sprites(
-            format!("{key}#{n}{flip_x}{clip:?}{w}x{h}{layer:?}{a}{black}{clips:?}"),
+            format!(
+                "{key}#{n}{flip_x}{clip:?}{w}x{h}{:?}{a}{black}{clips:?}",
+                layer.key()
+            ),
             || raster(bbox, layer, a, black, false, &clips, &draw),
         );
-        paint_sprites(&sprites, color.into(), window, cx);
+        paint_sprites(&sprites, color.into(), layer.origin, window, cx);
     }
     true
 }
