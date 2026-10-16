@@ -34,6 +34,16 @@ fn stop_interrupts_only_the_active_turn() -> Result<()> {
     let started = &recording["steps"][1]["message"];
     let completed = &recording["steps"][3]["message"];
     let mut lines = script(None, |_| {})?;
+    let list_id = &lines
+        .iter()
+        .find(|line| line["msg"]["method"] == "thread/list")
+        .context("recorded thread list request")?["msg"]["id"];
+    let list = lines
+        .iter()
+        .find(|line| line["dir"] == "recv" && &line["msg"]["id"] == list_id)
+        .context("recorded thread list response")?["msg"]["result"]
+        .clone();
+    lines.extend(exchange("thread/list", list));
     for (method, notification) in [("s023/start", started), ("s023/complete", completed)] {
         lines.extend(exchange(method, json!({})));
         lines.push(json!({"dir":"recv", "msg":{
