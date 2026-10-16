@@ -14,7 +14,9 @@ use theme::{ActiveTheme as _, Theme};
 use tooltip::{Side, tooltip};
 
 pub mod composer;
+pub mod dialog;
 pub mod fixture;
+pub mod focus;
 pub mod icon;
 pub mod motion;
 pub mod screens;
@@ -31,6 +33,7 @@ actions!(
         GoBack,
         GoForward,
         OpenSettings,
+        ShowKeyboardShortcuts,
         /// Rail `Scheduled`: the Automations page.
         OpenScheduled,
         /// Profile menu ▸ Help ▸ `Set up mobile`.
@@ -508,15 +511,19 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
                         .child(icon::icon("chevron-down-medium", 14., t.text_tertiary)),
                 )
                 .child(div().flex_1())
-                .child(icon_button(
-                    "activity",
-                    // The unread bell's dot is a path in its own color (`--blue-400`).
-                    icon::icon(
-                        if unread { "bell-unread" } else { "bell" },
-                        16.,
-                        t.text_tertiary,
+                .child(tooltip(
+                    icon_button(
+                        "activity",
+                        icon::icon(
+                            if unread { "bell-unread" } else { "bell" },
+                            16.,
+                            t.text_tertiary,
+                        ),
+                        t,
                     ),
-                    t,
+                    "View activity",
+                    Some("⌥⌘U"),
+                    Side::Bottom,
                 ))
                 .child(div().w(px(4.)))
                 .child(tooltip(
@@ -566,7 +573,7 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
 }
 
 impl Shell {
-    fn rail(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
+    fn rail(&self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let (hover_bg, hover_fg) = (t.ghost_hover, t.text);
         let selected = self.selected_rail;
         // The list (`[6, 50, 40, 732]`) is a composited scroller: its items paint into the
@@ -585,32 +592,40 @@ impl Shell {
                 move || list,
             )
         };
-        let item = move |name: &'static str| {
+        let profile_focus = focus::handle("rail-profile", 0, window, cx);
+        let mut item = |name: &'static str| {
             let on = selected == Some(name);
             let fg = if on { t.text } else { t.text_tertiary };
             let id = SharedString::from(format!("rail-{name}"));
+            let focus = focus::handle(id.clone(), 0, window, cx);
             let glyph = if on {
                 format!("{name}-filled")
             } else {
                 name.to_string()
             };
-            div()
-                .id(id.clone())
-                .group(id.clone())
-                .relative()
-                .flex_none()
-                .size(px(36.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(RADIUS_RAIL)
-                .when(on, |d| d.child(fill(hover_bg)))
-                .when(!on, |d| d.hover(move |s| s.bg(hover_bg)))
-                .child(
-                    icon::icon(&glyph, 20., fg)
-                        .composited(Some(list))
-                        .group_hover(id, move |s| s.text_color(hover_fg)),
-                )
+            focus::ring(
+                div()
+                    .id(id.clone())
+                    .group(id.clone())
+                    .relative()
+                    .flex_none()
+                    .size(px(36.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(RADIUS_RAIL)
+                    .when(on, |d| d.child(fill(hover_bg)))
+                    .when(!on, |d| d.hover(move |s| s.bg(hover_bg)))
+                    .child(
+                        icon::icon(&glyph, 20., fg)
+                            .composited(Some(list))
+                            .group_hover(id, move |s| s.text_color(hover_fg)),
+                    ),
+                &focus,
+                RADIUS_RAIL,
+                px(1.),
+                cx,
+            )
         };
         // An unread dot (`bg-info-solid`, 8 px) `inset` px inside the item's top-right corner.
         let dot = move |inset: f32| {
@@ -654,7 +669,15 @@ impl Shell {
                     .child(rail_tip(
                         item("home")
                             .when(self.attention, |d| d.child(dot(6.)))
-                            .on_click(dispatch::<NewChat>),
+                            .on_click(move |_, window, cx| {
+                                let focus = window.focused(cx).filter(|_| selected == Some("home"));
+                                window.dispatch_action(Box::new(NewChat), cx);
+                                window.defer(cx, move |window, cx| {
+                                    if let Some(focus) = focus {
+                                        focus.focus(window, cx);
+                                    }
+                                });
+                            }),
                         "Home",
                     ))
                     .child(rail_tip(item("space"), "Space"))
@@ -671,22 +694,25 @@ impl Shell {
                     .child(shapes::top_fade(px(16.))),
             )
             .child(
-                div()
-                    .id("rail-profile")
-                    .size(px(36.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(RADIUS_RAIL)
-                    .hover(move |s| s.bg(hover_bg))
-                    .on_hover(
-                        cx.listener(|this, hovered: &bool, _, _| this.avatar_hovered = *hovered),
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.profile_menu ^= true;
-                        cx.notify();
-                    }))
-                    .child(avatar()),
+                focus::ring(
+                    div().id("rail-profile"),
+                    &profile_focus,
+                    RADIUS_RAIL,
+                    px(1.),
+                    cx,
+                )
+                .size(px(36.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(RADIUS_RAIL)
+                .hover(move |s| s.bg(hover_bg))
+                .on_hover(cx.listener(|this, hovered: &bool, _, _| this.avatar_hovered = *hovered))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.profile_menu ^= true;
+                    cx.notify();
+                }))
+                .child(avatar()),
             )
     }
 
@@ -738,6 +764,11 @@ impl Shell {
                         t.text_tertiary,
                     )))
                     .child(mobile)
+                    .child(item(
+                        "profile-keyboard-shortcuts",
+                        "Keyboard Shortcuts",
+                        dispatch::<ShowKeyboardShortcuts>,
+                    ))
             }))
     }
 
@@ -1138,6 +1169,7 @@ impl Render for Shell {
             .size_full()
             .relative()
             .overflow_hidden()
+            .on_key_down(focus::tab)
             .font_family(SANS)
             .bg(under)
             .child(page)
@@ -1146,7 +1178,7 @@ impl Render for Shell {
             .when(composited || self.main_backgrounds > 0, |d| {
                 d.child(corners)
             })
-            .child(self.rail(&t, cx))
+            .child(self.rail(&t, window, cx))
             .child(self.titlebar(&t, cx))
             .when(self.profile_menu, |d| d.child(self.profile_menu(&t, cx)))
     }

@@ -1,4 +1,193 @@
 use super::*;
+use crate::tooltip::{Side, tooltip};
+use gpui::{Entity, FocusHandle, MouseButton, PathBuilder, Stateful, canvas, point};
+
+#[derive(IntoElement)]
+pub(super) struct UserMessage {
+    pub id: SharedString,
+    pub message: SharedString,
+    pub sent_at: Option<String>,
+}
+
+struct MessageActions {
+    hovered: bool,
+    copied: bool,
+    focus: FocusHandle,
+    copy_focus: FocusHandle,
+    reset: Option<Task<()>>,
+}
+
+impl MessageActions {
+    fn copy(&mut self, message: &str, cx: &mut Context<Self>) {
+        cx.write_to_clipboard(ClipboardItem::new_string(message.to_owned()));
+        #[cfg(target_os = "macos")]
+        if !cx.is_test()
+            && !write_html(
+                &objc2_app_kit::NSPasteboard::generalPasteboard(),
+                &message_html(message),
+            )
+        {
+            return;
+        }
+        self.copied = true;
+        self.reset = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(1500))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.copied = false;
+                this.reset = None;
+                cx.notify();
+            });
+        }));
+        cx.notify();
+    }
+}
+
+impl RenderOnce for UserMessage {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let state = window.use_keyed_state(self.id.clone(), cx, |_, cx| MessageActions {
+            hovered: false,
+            copied: false,
+            focus: cx.focus_handle(),
+            copy_focus: cx.focus_handle(),
+            reset: None,
+        });
+        let s = state.read(cx);
+        let visible = s.hovered || s.focus.contains_focused(window, cx);
+        let copied = s.copied;
+        let focus = s.focus.clone();
+        let t = cx.theme();
+        let color = t.text_tertiary.opacity(if visible { 1. } else { 0. });
+        let button = |id: &'static str| {
+            div()
+                .id(SharedString::from(format!("{}-{id}", self.id)))
+                .role(gpui::Role::Button)
+                .relative()
+                .size(px(26.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(Theme::RADIUS_MD)
+                .hover(|s| s.bg(t.ghost_hover))
+                .focus_visible(|s| s.border_2().border_color(rgb(0x3a83f7)))
+        };
+        let copy = copy_button(button("copy-message"), state.clone(), self.message.clone())
+            .aria_label(if copied { "Copied" } else { "Copy message" })
+            .track_focus(&s.copy_focus)
+            .child(if copied {
+                checkmark(color).into_any_element()
+            } else {
+                icon("thread-copy", 16., color).into_any_element()
+            });
+        let controls = div()
+            .absolute()
+            .bottom_0()
+            .right(px(4.))
+            .h(px(26.))
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .children(self.sent_at.map(|sent| text(sent, 12., 16., 400., color)))
+            .child(
+                div()
+                    .flex()
+                    .gap(px(2.))
+                    .child(tooltip(
+                        copy,
+                        if copied { "Copied" } else { "Copy message" },
+                        None,
+                        Side::Bottom,
+                    ))
+                    .child(tooltip(
+                        button("edit-message")
+                            .aria_label("Edit message")
+                            .child(icon("pencil", 16., color)),
+                        "Edit message",
+                        None,
+                        Side::Bottom,
+                    )),
+            );
+        // Keep the existing 30 px reserve: revealing controls must not move the transcript.
+        user_bubble(&self.message, t)
+            .relative()
+            .id(self.id)
+            .track_focus(&focus)
+            .on_mouse_down_out(move |_, window, cx| {
+                if focus.contains_focused(window, cx) {
+                    window.blur(cx);
+                }
+            })
+            .on_hover(move |hovered, _, cx| {
+                state.update(cx, |s, cx| {
+                    s.hovered = *hovered;
+                    cx.notify();
+                })
+            })
+            .child(controls)
+    }
+}
+
+fn copy_button(
+    button: Stateful<Div>,
+    state: Entity<MessageActions>,
+    message: SharedString,
+) -> Stateful<Div> {
+    let (key_state, key_message, mouse_state) = (state.clone(), message.clone(), state.clone());
+    button
+        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+            let focus = mouse_state.read(cx).copy_focus.clone();
+            window.focus(&focus, cx);
+            cx.stop_propagation();
+        })
+        .on_click(move |_, _, cx| state.update(cx, |s, cx| s.copy(&message, cx)))
+        .on_key_down(move |event, _, cx| {
+            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                key_state.update(cx, |s, cx| s.copy(&key_message, cx));
+                cx.stop_propagation();
+            }
+        })
+}
+
+fn checkmark(color: Hsla) -> impl IntoElement {
+    canvas(
+        |_, _, _| (),
+        move |bounds, _, window, _| {
+            let mut path = PathBuilder::stroke(px(1.5));
+            let p = |x, y| bounds.origin + point(px(x), px(y));
+            path.move_to(p(3., 8.));
+            path.line_to(p(6.5, 11.5));
+            path.line_to(p(13., 4.5));
+            if let Ok(path) = path.build() {
+                window.paint_path(path, color);
+            }
+        },
+    )
+    .size(px(16.))
+}
+
+#[cfg(target_os = "macos")]
+fn message_html(message: &str) -> String {
+    let escaped = message
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
+    format!(
+        "<div><p><span>{}</span></p></div>",
+        escaped.replace('\n', "<br>")
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn write_html(pasteboard: &objc2_app_kit::NSPasteboard, html: &str) -> bool {
+    use objc2_app_kit::NSPasteboardTypeHTML;
+    use objc2_foundation::{NSArray, NSString};
+    // No owner callback: both clipboard representations are available immediately.
+    unsafe {
+        pasteboard.addTypes_owner(&NSArray::from_slice(&[NSPasteboardTypeHTML]), None);
+        pasteboard.setString_forType(&NSString::from_str(html), NSPasteboardTypeHTML)
+    }
+}
 
 /// `Fork chat from here` under a turn: a new chat with the thread up to that turn (its id).
 #[derive(Clone, PartialEq, Action)]
@@ -61,4 +250,37 @@ pub(super) fn action_row(
                     window.dispatch_action(Box::new(ForkThread(turn_id.clone())), cx)
                 }),
         )
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+    use objc2_app_kit::{NSPasteboard, NSPasteboardTypeHTML, NSPasteboardTypeString};
+    use objc2_foundation::{NSArray, NSString};
+
+    #[test]
+    fn rich_copy_preserves_plain_text_and_escapes_html() {
+        let board = NSPasteboard::pasteboardWithUniqueName();
+        let message = "<script>&\nsecond line";
+        unsafe {
+            board.declareTypes_owner(&NSArray::from_slice(&[NSPasteboardTypeString]), None);
+            assert!(board.setString_forType(&NSString::from_str(message), NSPasteboardTypeString));
+            assert!(write_html(&board, &message_html(message)));
+            assert_eq!(
+                board
+                    .stringForType(NSPasteboardTypeString)
+                    .unwrap()
+                    .to_string(),
+                message
+            );
+            assert_eq!(
+                board
+                    .stringForType(NSPasteboardTypeHTML)
+                    .unwrap()
+                    .to_string(),
+                "<div><p><span>&lt;script&gt;&amp;<br>second line</span></p></div>"
+            );
+            board.clearContents();
+        }
+    }
 }

@@ -602,6 +602,11 @@ fn menu_bar_actions() -> Result<String> {
 fn cmd_w_closes_window() -> Result<String> {
     let mut fx = Fx::new()?;
     fx.keys("cmd-w")?;
+    ensure!(
+        fx.read(|r, _| r.dialog().is_some()),
+        "close confirmation missing"
+    );
+    fx.keys("tab enter")?;
     let open = fx.cx.update(|cx| cx.windows().len());
     ensure!(open == 0, "{open} windows open");
     Ok(String::new())

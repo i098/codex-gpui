@@ -2,6 +2,9 @@
 //! them (timestamp, user bubble, `Worked for` disclosure, final answer markdown, turn diff card,
 //! message actions, docked composer), kept live by `item/*` and `turn/*` notifications.
 //! Numbers are the spec's CSS px.
+//!
+//! User-message controls appear on hover or focus without moving the transcript.
+//! Copy writes plain text and HTML on macOS and shows a checkmark for 1500 ms.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -430,7 +433,14 @@ impl ThreadView {
             if let Some(started) = turn.started_at {
                 col = col.child(self.timestamp(started, window, t));
             }
-            col = col.child(user_bubble(&user, t));
+            col = col.child(actions::UserMessage {
+                id: format!("user-message-{}", turn.id).into(),
+                message: user.into(),
+                sent_at: turn.started_at.and_then(|at| {
+                    chrono::DateTime::from_timestamp(at + self.clock.utc_offset, 0)
+                        .map(|at| at.format("%A %-I:%M %p").to_string())
+                }),
+            });
         }
         let final_answer = match turn.items.last() {
             Some(ThreadItem::AgentMessage { text, .. })

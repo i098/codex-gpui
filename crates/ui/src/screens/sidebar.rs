@@ -3,7 +3,10 @@
 //! refs/home and refs/sidebar.
 
 use crate::{
-    Shell, blit, fixture, home_sidebar_header, icon::icon, sidebar_empty, sidebar_section, text,
+    Shell, blit, fixture, focus, home_sidebar_header,
+    icon::icon,
+    sidebar_empty, sidebar_section, text,
+    tooltip::{Side, tooltip},
 };
 use bridge::types::{Thread, ThreadListResponse};
 use gpui::{
@@ -99,8 +102,7 @@ pub fn home_sidebar(cx: &mut App, selected_thread: Option<&str>) -> AnyView {
 }
 
 impl Render for HomeSidebar {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = cx.theme();
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let recents = if self.threads.is_empty() {
             sidebar_empty("No chats", cx).into_any_element()
         } else {
@@ -111,45 +113,77 @@ impl Render for HomeSidebar {
                 .children(self.threads.iter().map(|(id, label)| {
                     let open = id.clone();
                     let unread = self.unread.contains(id);
+                    let row_focus = focus::handle(
+                        SharedString::from(format!("thread-row-{id}")),
+                        0,
+                        window,
+                        cx,
+                    );
+                    let pin_focus =
+                        focus::handle(SharedString::from(format!("pin-chat-{id}")), 0, window, cx);
+                    let archive_focus = focus::handle(
+                        SharedString::from(format!("archive-chat-{id}")),
+                        0,
+                        window,
+                        cx,
+                    );
+                    let focused = row_focus.read(cx).handle.contains_focused(window, cx);
                     thread_row(
                         id,
                         label.clone(),
                         self.selected.as_ref() == Some(id),
                         unread,
-                        t,
+                        cx,
+                        focused,
+                        [&row_focus, &pin_focus, &archive_focus],
                     )
                     .on_click(cx.listener(move |_, _, _, cx| cx.emit(OpenThread(open.clone()))))
                 }))
                 .into_any_element()
         };
         // A header click collapses or expands its section (`group/nav-section`).
-        let section = |i: usize, title: &'static str, body: AnyElement, cx: &mut Context<Self>| {
+        let section = |i: usize,
+                       title: &'static str,
+                       body: AnyElement,
+                       window: &mut Window,
+                       cx: &mut Context<Self>| {
             let body = if self.collapsed[i] {
                 div().into_any_element()
             } else {
                 body
             };
-            sidebar_section(title, body, cx).relative().child(
-                div()
-                    .id(title)
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .right_0()
-                    .h(px(30.))
+            let header_focus = focus::handle(title, -1, window, cx);
+            sidebar_section(title, body, cx)
+                .relative()
+                .tab_group()
+                .child(
+                    focus::ring(
+                        div()
+                            .id(title)
+                            .absolute()
+                            .top(px(2.5))
+                            .left(px(12.))
+                            .right(px(74.))
+                            .h(px(25.)),
+                        &header_focus,
+                        px(10.),
+                        px(2.),
+                        cx,
+                    )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.collapsed[i] ^= true;
                         cx.notify();
                     })),
-            )
+                )
         };
         let projects = section(
             0,
             "Projects",
             sidebar_empty("No projects", cx).into_any_element(),
+            window,
             cx,
         );
-        let recents = section(1, "Recents", recents, cx);
+        let recents = section(1, "Recents", recents, window, cx);
         div()
             .size_full()
             .flex()
@@ -177,16 +211,19 @@ impl Render for HomeSidebar {
 }
 
 /// One Recents row: 30 px, `primary-ghost-hover` fill when hovered or selected. The label is
-/// clipped at the row's end with the marquee's 16 px right fade (`_overflowingViewport`); on
-/// hover `Pin chat` and `Archive chat` appear at the end. An `unread` row ends in the blue
-/// dot, which takes 28 px off the label.
+/// clipped at the row's end with the marquee's 16 px right fade (`_overflowingViewport`).
+/// Hover or focus within the row shows `Pin chat` and `Archive chat`.
+/// An unread row ends in a blue dot, which takes 28 px off the label.
 fn thread_row(
     id: &str,
     label: SharedString,
     selected: bool,
     unread: bool,
-    t: &Theme,
+    cx: &App,
+    focused: bool,
+    handles: [&gpui::Entity<focus::ControlFocus>; 3],
 ) -> Stateful<Div> {
+    let t = cx.theme();
     let clip = if unread { 28. } else { 0. };
     let group = SharedString::from(format!("thread-row-{id}"));
     let fill = div()
@@ -200,83 +237,115 @@ fn thread_row(
         }));
     let (hover_bg, hover_fg) = (t.ghost_hover, t.text);
     let action = |id: &'static str, name: &'static str| {
-        div()
-            .id(id)
-            .group(id)
-            .size(px(20.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(6.))
-            .hover(move |s| s.bg(hover_bg))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                icon(name, 14., t.text_tertiary).group_hover(id, move |s| s.text_color(hover_fg)),
-            )
-    };
-    div()
-        .id(group.clone())
-        .group(group.clone())
-        .relative()
-        .h(px(30.))
-        .child(if selected {
-            fill
-        } else {
-            fill.opacity(0.)
-                .group_hover(group.clone(), |s| s.opacity(1.))
-        })
-        .child(
-            // `_clipViewport _overflowingViewport`: the marquee's CSS mask (8 px left fade over
-            // the track's padding, 16 px right fade), a masked layer in the sidebar's layer.
+        focus::ring(
             div()
-                .absolute()
-                .left_0()
-                .top(px(5.))
-                .w(px(264. - clip))
-                .h(px(20.))
-                .pl(px(8.))
-                .overflow_hidden()
-                .layer()
-                .child(text(label, 14., 20., 430., t.text_default_nav))
-                .child(shapes::x_fade(px(8.), px(16.))),
-        )
-        .when(unread, |d| {
-            d.child(
-                div()
-                    .absolute()
-                    .top(px(11.))
-                    .right(px(14.))
-                    .size(px(8.))
-                    .group_hover(group.clone(), |s| s.opacity(0.))
-                    .child(shapes::decoration(shapes::Decoration {
-                        radius: Corners::all(Theme::RADIUS_FULL),
-                        fill: Some(t.info_solid),
-                        ..Default::default()
-                    })),
-            )
-        })
-        .child(
-            div()
-                .absolute()
-                .top_0()
-                .right(px(2.))
-                .h_full()
-                .w(px(52.))
-                .pr(px(6.))
+                .id(SharedString::from(format!("{id}-{}", group)))
+                .group(id)
+                .size(px(20.))
+                .flex_none()
                 .flex()
                 .items_center()
-                .justify_end()
-                .gap(px(8.))
-                .opacity(0.)
-                .group_hover(group, |s| s.opacity(1.))
-                .child(action("pin-chat", "sidebar-pin"))
-                .child({
-                    let id = id.to_owned();
-                    action("archive-chat", "sidebar-archive").on_click(move |_, window, cx| {
-                        window.dispatch_action(Box::new(ArchiveThread(id.clone())), cx)
-                    })
-                }),
+                .justify_center()
+                .rounded(px(6.))
+                .hover(move |s| s.bg(hover_bg))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(
+                    icon(name, 14., t.text_tertiary)
+                        .group_hover(id, move |s| s.text_color(hover_fg)),
+                ),
+            if id == "pin-chat" {
+                handles[1]
+            } else {
+                handles[2]
+            },
+            Theme::RADIUS_FULL,
+            px(1.),
+            cx,
         )
+    };
+    focus::ring(
+        div()
+            .id(group.clone())
+            .group(group.clone())
+            .relative()
+            .tab_group()
+            .h(px(30.))
+            .child(if selected {
+                fill
+            } else {
+                fill.opacity(0.)
+                    .group_hover(group.clone(), |s| s.opacity(1.))
+            })
+            .child(
+                // `_clipViewport _overflowingViewport`: the marquee's CSS mask (8 px left fade over
+                // the track's padding, 16 px right fade), a masked layer in the sidebar's layer.
+                div()
+                    .absolute()
+                    .left_0()
+                    .top(px(5.))
+                    .w(px(if focused { 216. } else { 264. - clip }))
+                    .h(px(20.))
+                    .pl(px(8.))
+                    .overflow_hidden()
+                    .layer()
+                    .child(text(label, 14., 20., 430., t.text_default_nav))
+                    .child(shapes::x_fade(px(8.), px(16.))),
+            )
+            .when(unread, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .top(px(11.))
+                        .right(px(14.))
+                        .size(px(8.))
+                        .opacity(if focused { 0. } else { 1. })
+                        .group_hover(group.clone(), |s| s.opacity(0.))
+                        .child(shapes::decoration(shapes::Decoration {
+                            radius: Corners::all(Theme::RADIUS_FULL),
+                            fill: Some(t.info_solid),
+                            ..Default::default()
+                        })),
+                )
+            })
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .right(px(2.))
+                    .h_full()
+                    .w(px(54.))
+                    .pr(px(6.))
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap(px(8.))
+                    .opacity(if focused { 1. } else { 0. })
+                    .group_hover(group.clone(), |s| s.opacity(1.))
+                    .child(tooltip(
+                        action("pin-chat", "sidebar-pin"),
+                        "Pin chat",
+                        None,
+                        Side::Top,
+                    ))
+                    .child({
+                        let id = id.to_owned();
+                        tooltip(
+                            action("archive-chat", "sidebar-archive").on_click(
+                                move |_, window, cx| {
+                                    window.dispatch_action(Box::new(ArchiveThread(id.clone())), cx)
+                                },
+                            ),
+                            "Archive chat",
+                            None,
+                            Side::Top,
+                        )
+                    }),
+            ),
+        handles[0],
+        RADIUS_ROW,
+        px(0.),
+        cx,
+    )
 }
 
 /// One command menu row: optional 16 px leading icon, label, then a description, the chat's
