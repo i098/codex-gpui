@@ -4,6 +4,7 @@
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
 mod features;
+pub mod host;
 
 use anyhow::Result;
 use async_channel::Receiver;
@@ -291,6 +292,7 @@ pub struct Root {
     /// Docked under every open thread.
     thread_composer: Entity<Composer>,
     thread: Option<Entity<ThreadView>>,
+    diff: Option<Entity<DiffPanel>>,
     /// The open thread in the main shell, with its side panel if any.
     split: Option<Entity<SplitScreen>>,
     /// Side panel tab of the thread route; kept across threads like the original's panel.
@@ -304,6 +306,9 @@ pub struct Root {
     /// Signed out: replaces the whole window.
     login: Option<Entity<Login>>,
     bridge: Arc<Bridge>,
+    host: Arc<dyn host::Host>,
+    automations: Option<Result<Value, String>>,
+    automation_load: Option<Task<()>>,
     cwd: String,
     config: Value,
     skills: Value,
@@ -412,6 +417,7 @@ impl Root {
             }),
             thread_composer,
             thread: None,
+            diff: None,
             split: None,
             side: None,
             page: None,
@@ -419,6 +425,9 @@ impl Root {
             command_menu: None,
             login: None,
             bridge,
+            host: Arc::new(host::LocalHost::from_env()),
+            automations: None,
+            automation_load: None,
             cwd,
             config: Value::Null,
             skills: Value::Null,
@@ -507,6 +516,10 @@ impl Root {
         self.side
     }
 
+    pub fn diff_panel(&self) -> Option<&Entity<DiffPanel>> {
+        self.diff.as_ref()
+    }
+
     /// The `⌘K` command menu, while open.
     pub fn command_menu(&self) -> Option<&Entity<CommandMenu>> {
         self.command_menu.as_ref()
@@ -528,6 +541,43 @@ impl Root {
     /// The `config/read` config with the writes the server took since.
     pub fn config(&self) -> &Value {
         &self.config
+    }
+
+    /// Replaces the desktop host and cancels any pending host read.
+    pub fn set_host(&mut self, host: Arc<dyn host::Host>, cx: &mut Context<Self>) {
+        self.automation_load = None;
+        self.host = host;
+        self.automations = None;
+        if self.state.route == Route::Scheduled {
+            self.load_automations(cx);
+        }
+        cx.notify();
+    }
+
+    /// The host's automation list, or its error; `None` means that the read has not completed.
+    pub fn automations(&self) -> Option<&Result<Value, String>> {
+        self.automations.as_ref()
+    }
+
+    fn load_automations(&mut self, cx: &mut Context<Self>) {
+        self.automations = None;
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move {
+            host.fetch(&host::Request::post("list-automations", None))
+                .and_then(|response| host::json_body(&response))
+                .map_err(|error| error.to_string())
+        });
+        self.automation_load = Some(cx.spawn(async move |this, cx| {
+            let result = read.await;
+            this.update(cx, |this, cx| {
+                if result.is_err() && this.state.route == Route::Scheduled {
+                    this.toast(Toast::danger("Failed to load automations"), cx);
+                }
+                this.automations = Some(result);
+                cx.notify();
+            })
+            .ok();
+        }));
     }
 
     fn set_threads(&mut self, threads: &[Thread], cx: &mut Context<Self>) {
@@ -623,7 +673,10 @@ impl Root {
                 .detach();
                 Some(shell)
             }
-            Route::Scheduled => Some(automations::shell(cx)),
+            Route::Scheduled => {
+                self.load_automations(cx);
+                Some(automations::shell(cx))
+            }
             Route::Mobile => Some(mobile::shell(cx)),
             Route::Home | Route::Thread(_) => None,
         };
@@ -691,15 +744,11 @@ impl Root {
         cx: &mut Context<Self>,
     ) -> Option<(AnyView, &'static str, SharedString)> {
         match side {
-            SidePanel::Changes => {
-                let v = view.read(cx);
-                let panel = DiffPanel::last_turn(&self.cwd, v.cwd(), v.turns());
-                Some((
-                    cx.new(|_| panel).into(),
-                    "diff-tab-changes",
-                    "Changes".into(),
-                ))
-            }
+            SidePanel::Changes => Some((
+                self.diff.as_ref()?.clone().into(),
+                "diff-tab-changes",
+                "Changes".into(),
+            )),
             SidePanel::Terminal => {
                 let (command, _) = view.read(cx).background_terminals().into_iter().next()?;
                 let xterm = cx.new(|cx| Xterm::new(view.clone(), cx));
@@ -780,6 +829,7 @@ impl Root {
             pinned_now: None,
         };
         let composer = self.thread_composer.clone().into();
+        self.diff = Some(cx.new(|_| DiffPanel::last_turn(&self.cwd, &thread.cwd, &thread.turns)));
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
         self.thread = Some(view);
         if self.state.route == route {
@@ -1075,9 +1125,19 @@ impl Root {
 
     /// Every server message: streamed into the open thread and the sign-in view, plus
     /// Recents updates and approval prompts.
-    fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
+    pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
         if let Some(view) = &self.thread {
-            view.update(cx, |view, cx| view.apply(&event, cx));
+            view.update(cx, |view, cx| {
+                view.apply(&event, cx);
+                if let Some(panel) = &self.diff
+                    && let Event::Notification { params, .. } = &event
+                    && params["threadId"].as_str() == Some(view.id())
+                {
+                    panel.update(cx, |panel, cx| {
+                        panel.apply(&event, &self.cwd, view.turns(), cx);
+                    });
+                }
+            });
         }
         if let Some(login) = &self.login {
             login.update(cx, |login, cx| login.apply(&event, cx));
