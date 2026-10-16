@@ -149,8 +149,25 @@ impl Composer {
     }
 
     pub(super) fn paste(&mut self, _: &crate::Paste, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(s) = cx.read_from_clipboard().and_then(|item| item.text()) {
-            self.insert(&s, window, cx);
+        let Some(item) = cx.read_from_clipboard() else {
+            return;
+        };
+        if item
+            .entries()
+            .iter()
+            .any(|e| matches!(e, gpui::ClipboardEntry::Image(_)))
+        {
+            for entry in item.into_entries() {
+                if let gpui::ClipboardEntry::Image(image) = entry {
+                    self.save_paste(attach::Content::Image(std::sync::Arc::new(image)), cx);
+                }
+            }
+        } else if let Some(text) = item.text() {
+            if text.encode_utf16().take(5000).count() == 5000 {
+                self.save_paste(attach::Content::Text(text), cx);
+            } else {
+                self.insert(&text, window, cx);
+            }
         }
     }
 

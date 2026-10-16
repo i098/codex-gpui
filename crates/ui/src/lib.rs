@@ -19,6 +19,7 @@ pub mod focus;
 pub mod icon;
 pub mod motion;
 pub mod screens;
+pub mod toast;
 pub mod tooltip;
 
 actions!(

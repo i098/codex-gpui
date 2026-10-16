@@ -1,0 +1,660 @@
+{
+ "name": "f3a",
+ "viewport": {
+  "w": 1280,
+  "h": 832,
+  "dpr": 1,
+  "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+  "theme": "dark",
+  "hoverEmulated": true
+ },
+ "steps": [
+  {
+   "type": "click",
+   "button": "right",
+   "target": {
+    "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Change the greeting\"]",
+    "bbox": {
+     "x": 60,
+     "y": 290,
+     "w": 272,
+     "h": 30
+    }
+   },
+   "nativeMenuPick": "copy-conversation-markdown",
+   "note": "Copy > Copy as Markdown"
+  },
+  {
+   "type": "hover",
+   "target": {
+    "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Change the greeting\"]",
+    "bbox": {
+     "x": 60,
+     "y": 290,
+     "w": 272,
+     "h": 30
+    }
+   }
+  },
+  {
+   "type": "click",
+   "target": {
+    "text": "Archive chat",
+    "bbox": {
+     "x": 304,
+     "y": 295,
+     "w": 20,
+     "h": 20
+    }
+   }
+  },
+  {
+   "type": "hover",
+   "target": {
+    "selector": "[data-sonner-toast]",
+    "bbox": {
+     "x": 496,
+     "y": 48,
+     "w": 289,
+     "h": 42
+    }
+   },
+   "at": {
+    "x": 640.5,
+    "y": 56
+   },
+   "note": "hover the toast 6 s: it stays and the region is expanded",
+   "waitMs": 6000
+  },
+  {
+   "type": "hover",
+   "at": {
+    "x": 900,
+    "y": 500
+   },
+   "note": "leave: the remaining time (about 4.4 s) runs out",
+   "waitMs": 6000
+  },
+  {
+   "type": "click",
+   "target": {
+    "text": "Archive chat",
+    "bbox": {
+     "x": 304,
+     "y": 295,
+     "w": 20,
+     "h": 20
+    }
+   },
+   "note": "second row (now first in Recents), for the swipe"
+  },
+  {
+   "type": "drag",
+   "from": {
+    "x": 526,
+    "y": 56
+   },
+   "to": {
+    "x": 556,
+    "y": 56
+   },
+   "note": "swipe right 30 px over 600 ms (slower than 0.11 px/ms): follows the pointer (translateX 30), snaps back on release"
+  },
+  {
+   "type": "drag",
+   "from": {
+    "x": 526,
+    "y": 56
+   },
+   "to": {
+    "x": 598,
+    "y": 56
+   },
+   "note": "swipe right 72 px (> 45 px threshold): the toast slides out right and is removed"
+  },
+  {
+   "type": "click",
+   "target": {
+    "text": "Archive chat",
+    "bbox": {
+     "x": 304,
+     "y": 295,
+     "w": 20,
+     "h": 20
+    }
+   },
+   "note": "last row, for Undo"
+  },
+  {
+   "type": "click",
+   "target": {
+    "text": "Undo",
+    "bbox": {
+     "x": 695,
+     "y": 57,
+     "w": 48,
+     "h": 24
+    }
+   },
+   "note": "Undo in a freshly archived toast"
+  }
+ ],
+ "result": {
+  "dom": [
+   {
+    "after": "copy-error",
+    "note": "danger toast, window-centred, 48 px from the top; no actions, Close only",
+    "region": {
+     "ariaLabel": "Notifications alt+T",
+     "tag": "section",
+     "list": "codex-sonner-toaster flex max-w-(--composer-adjacent-max-width) justify-center"
+    },
+    "toasts": [
+     {
+      "selector": "[data-sonner-toast]",
+      "index": "0",
+      "front": "true",
+      "expanded": "false",
+      "removed": "false",
+      "text": "Failed to copy conversation as Markdown",
+      "li": {
+       "x": 460.3,
+       "y": 48,
+       "w": 359.3,
+       "h": 42
+      },
+      "liComputed": {
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "border": "0px solid rgb(255, 255, 255)",
+       "borderRadius": "0px",
+       "boxShadow": "none",
+       "padding": "0px",
+       "fontSize": "16px",
+       "fontWeight": "430",
+       "lineHeight": "24px",
+       "transform": "matrix(1, 0, 0, 1, 0, 0)"
+      },
+      "alert": {
+       "x": 460.3,
+       "y": 48,
+       "w": 359.3,
+       "h": 42
+      },
+      "alertComputed": {
+       "backgroundColor": "rgb(40, 11, 10)",
+       "color": "rgb(255, 103, 100)",
+       "opacity": "1",
+       "border": "1px solid oklab(0.652749 0.197095 0.0994216 / 0.4)",
+       "borderRadius": "15px",
+       "boxShadow": "rgba(0, 0, 0, 0.1) 0px 4px 12px 0px",
+       "padding": "8px 12px",
+       "fontSize": "14px",
+       "fontWeight": "430",
+       "lineHeight": "21px",
+       "transform": "none"
+      },
+      "title": {
+       "bbox": {
+        "x": 501.3,
+        "y": 57,
+        "w": 277.3,
+        "h": 24
+       },
+       "computed": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(255, 103, 100)",
+        "opacity": "1",
+        "border": "0px solid rgb(255, 103, 100)",
+        "borderRadius": "0px",
+        "boxShadow": "none",
+        "padding": "0px",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "lineHeight": "21px",
+        "transform": "none"
+       }
+      },
+      "icon": {
+       "bbox": {
+        "x": 477.3,
+        "y": 61,
+        "w": 16,
+        "h": 16
+       },
+       "color": "rgb(255, 103, 100)",
+       "paths": 3
+      },
+      "buttons": [
+       {
+        "text": "",
+        "aria": "Close",
+        "bbox": {
+         "x": 782.7,
+         "y": 57,
+         "w": 24,
+         "h": 24
+        },
+        "computed": {
+         "backgroundColor": "rgba(0, 0, 0, 0)",
+         "color": "rgb(255, 103, 100)",
+         "opacity": "1",
+         "border": "0px solid rgb(255, 103, 100)",
+         "borderRadius": "9999px",
+         "boxShadow": "none",
+         "padding": "0px",
+         "fontSize": "14px",
+         "fontWeight": "430",
+         "lineHeight": "21px",
+         "transform": "none"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "after": "copy-error-expired",
+    "toastsLeft": 0
+   },
+   {
+    "after": "archive",
+    "note": "neutral toast with archive icon, View and Undo, Close",
+    "region": {
+     "ariaLabel": "Notifications alt+T",
+     "tag": "section",
+     "list": "codex-sonner-toaster flex max-w-(--composer-adjacent-max-width) justify-center"
+    },
+    "toasts": [
+     {
+      "selector": "[data-sonner-toast]",
+      "index": "0",
+      "front": "true",
+      "expanded": "false",
+      "removed": "false",
+      "text": "Archived chat | View | Undo",
+      "li": {
+       "x": 495.5,
+       "y": 48,
+       "w": 288.9,
+       "h": 42
+      },
+      "liComputed": {
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "border": "0px solid rgb(255, 255, 255)",
+       "borderRadius": "0px",
+       "boxShadow": "none",
+       "padding": "0px",
+       "fontSize": "16px",
+       "fontWeight": "430",
+       "lineHeight": "24px",
+       "transform": "matrix(1, 0, 0, 1, 0, 0)"
+      },
+      "alert": {
+       "x": 495.5,
+       "y": 48,
+       "w": 288.9,
+       "h": 42
+      },
+      "alertComputed": {
+       "backgroundColor": "rgb(45, 45, 45)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "border": "1px solid rgba(255, 255, 255, 0.082)",
+       "borderRadius": "15px",
+       "boxShadow": "rgba(0, 0, 0, 0.1) 0px 4px 12px 0px",
+       "padding": "8px 12px",
+       "fontSize": "14px",
+       "fontWeight": "430",
+       "lineHeight": "21px",
+       "transform": "none"
+      },
+      "title": {
+       "bbox": {
+        "x": 536.5,
+        "y": 57,
+        "w": 93,
+        "h": 24
+       },
+       "computed": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(255, 255, 255)",
+        "opacity": "1",
+        "border": "0px solid rgb(255, 255, 255)",
+        "borderRadius": "0px",
+        "boxShadow": "none",
+        "padding": "0px",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "lineHeight": "21px",
+        "transform": "none"
+       }
+      },
+      "icon": {
+       "bbox": {
+        "x": 512.5,
+        "y": 61,
+        "w": 16,
+        "h": 16
+       },
+       "color": "rgb(255, 255, 255)",
+       "paths": 2
+      },
+      "buttons": [
+       {
+        "text": "View",
+        "aria": null,
+        "bbox": {
+         "x": 641.5,
+         "y": 57,
+         "w": 45.4,
+         "h": 24
+        },
+        "computed": {
+         "backgroundColor": "oklab(0.999994 0.0000455678 0.0000200868 / 0.05)",
+         "color": "rgb(255, 255, 255)",
+         "opacity": "1",
+         "border": "1px solid rgba(0, 0, 0, 0)",
+         "borderRadius": "12.5px",
+         "boxShadow": "none",
+         "padding": "0px 8px",
+         "fontSize": "12px",
+         "fontWeight": "430",
+         "lineHeight": "16px",
+         "transform": "none"
+        }
+       },
+       {
+        "text": "Undo",
+        "aria": null,
+        "bbox": {
+         "x": 695,
+         "y": 57,
+         "w": 48.5,
+         "h": 24
+        },
+        "computed": {
+         "backgroundColor": "rgb(255, 255, 255)",
+         "color": "rgb(45, 45, 45)",
+         "opacity": "1",
+         "border": "1px solid rgba(255, 255, 255, 0.082)",
+         "borderRadius": "12.5px",
+         "boxShadow": "none",
+         "padding": "0px 8px",
+         "fontSize": "12px",
+         "fontWeight": "430",
+         "lineHeight": "16px",
+         "transform": "none"
+        }
+       },
+       {
+        "text": "",
+        "aria": "Close",
+        "bbox": {
+         "x": 747.5,
+         "y": 57,
+         "w": 24,
+         "h": 24
+        },
+        "computed": {
+         "backgroundColor": "rgba(0, 0, 0, 0)",
+         "color": "rgb(255, 255, 255)",
+         "opacity": "1",
+         "border": "0px solid rgb(255, 255, 255)",
+         "borderRadius": "9999px",
+         "boxShadow": "none",
+         "padding": "0px",
+         "fontSize": "14px",
+         "fontWeight": "430",
+         "lineHeight": "21px",
+         "transform": "none"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "after": "archive",
+    "selector": "[data-app-action-sidebar-thread-row]",
+    "rows": [
+     "Add a subtract(a, b) fun",
+     "In two sentences, what d"
+    ],
+    "note": "row leaves Recents at once"
+   },
+   {
+    "after": "hover-6s",
+    "note": "still shown after 6 s of hover (timer paused)",
+    "region": {
+     "ariaLabel": "Notifications alt+T",
+     "tag": "section",
+     "list": "codex-sonner-toaster flex max-w-(--composer-adjacent-max-width) justify-center"
+    },
+    "toasts": [
+     {
+      "selector": "[data-sonner-toast]",
+      "index": "0",
+      "front": "true",
+      "expanded": "true",
+      "removed": "false",
+      "text": "Archived chat | View | Undo",
+      "li": {
+       "x": 495.5,
+       "y": 48,
+       "w": 288.9,
+       "h": 42
+      },
+      "liComputed": {
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "border": "0px solid rgb(255, 255, 255)",
+       "borderRadius": "0px",
+       "boxShadow": "none",
+       "padding": "0px",
+       "fontSize": "16px",
+       "fontWeight": "430",
+       "lineHeight": "24px",
+       "transform": "matrix(1, 0, 0, 1, 0, 0)"
+      },
+      "alert": {
+       "x": 495.5,
+       "y": 48,
+       "w": 288.9,
+       "h": 42
+      },
+      "alertComputed": {
+       "backgroundColor": "rgb(45, 45, 45)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "border": "1px solid rgba(255, 255, 255, 0.082)",
+       "borderRadius": "15px",
+       "boxShadow": "rgba(0, 0, 0, 0.1) 0px 4px 12px 0px",
+       "padding": "8px 12px",
+       "fontSize": "14px",
+       "fontWeight": "430",
+       "lineHeight": "21px",
+       "transform": "none"
+      },
+      "title": {
+       "bbox": {
+        "x": 536.5,
+        "y": 57,
+        "w": 93,
+        "h": 24
+       },
+       "computed": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(255, 255, 255)",
+        "opacity": "1",
+        "border": "0px solid rgb(255, 255, 255)",
+        "borderRadius": "0px",
+        "boxShadow": "none",
+        "padding": "0px",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "lineHeight": "21px",
+        "transform": "none"
+       }
+      },
+      "icon": {
+       "bbox": {
+        "x": 512.5,
+        "y": 61,
+        "w": 16,
+        "h": 16
+       },
+       "color": "rgb(255, 255, 255)",
+       "paths": 2
+      },
+      "buttons": [
+       {
+        "text": "View",
+        "aria": null,
+        "bbox": {
+         "x": 641.5,
+         "y": 57,
+         "w": 45.4,
+         "h": 24
+        },
+        "computed": {
+         "backgroundColor": "oklab(0.999994 0.0000455678 0.0000200868 / 0.05)",
+         "color": "rgb(255, 255, 255)",
+         "opacity": "1",
+         "border": "1px solid rgba(0, 0, 0, 0)",
+         "borderRadius": "12.5px",
+         "boxShadow": "none",
+         "padding": "0px 8px",
+         "fontSize": "12px",
+         "fontWeight": "430",
+         "lineHeight": "16px",
+         "transform": "none"
+        }
+       },
+       {
+        "text": "Undo",
+        "aria": null,
+        "bbox": {
+         "x": 695,
+         "y": 57,
+         "w": 48.5,
+         "h": 24
+        },
+        "computed": {
+         "backgroundColor": "rgb(255, 255, 255)",
+         "color": "rgb(45, 45, 45)",
+         "opacity": "1",
+         "border": "1px solid rgba(255, 255, 255, 0.082)",
+         "borderRadius": "12.5px",
+         "boxShadow": "none",
+         "padding": "0px 8px",
+         "fontSize": "12px",
+         "fontWeight": "430",
+         "lineHeight": "16px",
+         "transform": "none"
+        }
+       },
+       {
+        "text": "",
+        "aria": "Close",
+        "bbox": {
+         "x": 747.5,
+         "y": 57,
+         "w": 24,
+         "h": 24
+        },
+        "computed": {
+         "backgroundColor": "rgba(0, 0, 0, 0)",
+         "color": "rgb(255, 255, 255)",
+         "opacity": "1",
+         "border": "0px solid rgb(255, 255, 255)",
+         "borderRadius": "9999px",
+         "boxShadow": "none",
+         "padding": "0px",
+         "fontSize": "14px",
+         "fontWeight": "430",
+         "lineHeight": "21px",
+         "transform": "none"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "after": "leave-6s",
+    "toastsLeft": 0
+   },
+   {
+    "after": "lifetime",
+    "note": "ms from the toast appearing to data-removed, no hover (the copy-error toast)",
+    "samples": {
+     "copyErrorMs": 5004
+    }
+   },
+   {
+    "after": "swipe-30-held",
+    "transform": "matrix(1, 0, 0, 1, 30, 0)",
+    "swiped": "true"
+   },
+   {
+    "after": "swipe-30-released",
+    "toastsLeft": 1,
+    "transform": "matrix(1, 0, 0, 1, 0, 0)"
+   },
+   {
+    "after": "swipe-72-released",
+    "toastsLeft": 0
+   },
+   {
+    "after": "undo",
+    "toasts": [
+     {
+      "text": "Failed to unarchive conversation",
+      "removed": "false"
+     }
+    ],
+    "note": "the Archived toast is dismissed; route1 cannot finish the restore, so it adds the error toast 'Failed to unarchive conversation'"
+   }
+  ],
+  "requests": [
+   {
+    "type": "mcp-request",
+    "method": "thread/archive",
+    "params": "{\"threadId\":\"01a13de9-c48a-7b20-8382-db900881cb99\"}"
+   }
+  ],
+  "screenshot": [
+   "f3a-copy-error.png",
+   "f3a-archive.png",
+   "f3a-hover-6s.png"
+  ],
+  "requestsFull": [
+   {
+    "type": "mcp-request",
+    "method": "thread/archive",
+    "params": "{\"threadId\":\"01a13de9-c48a-7b20-8382-db900881cb99\"}"
+   },
+   {
+    "type": "mcp-request",
+    "method": "thread/archive",
+    "params": "{\"threadId\":\"01a13de9-6fff-78e1-84fc-ebb3a2dc873f\"}"
+   },
+   {
+    "type": "mcp-request",
+    "method": "thread/archive",
+    "params": "{\"threadId\":\"01a13de9-35ed-7c72-a36a-68eeb2f4e1ee\"}"
+   },
+   {
+    "type": "mcp-request",
+    "method": "thread/unarchive",
+    "params": "{\"threadId\":\"01a13de9-35ed-7c72-a36a-68eeb2f4e1ee\"}"
+   }
+  ],
+  "requestsNote": "requests lists what the generic replay (tests/replay.rs) can check: its app-server has no recording of thread/archive, so the port restores the row and every later archive click repeats the first request. requestsFull is the whole recorded sequence, replayed by tests/f3a.rs."
+ }
+}
