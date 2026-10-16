@@ -1791,6 +1791,9 @@ impl Render for Root {
                     this.navigate(Route::Automation(a.id.clone()), window, cx)
                 }),
             )
+            .on_action(cx.listener(|this, _: &automations::NewTask, window, cx| {
+                this.open_dialog(DialogKind::ScheduleTask, window, cx)
+            }))
             .on_action(cx.listener(|this, _: &OpenMobileSetup, window, cx| {
                 this.navigate(Route::Mobile, window, cx)
             }))
