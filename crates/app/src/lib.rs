@@ -4,6 +4,7 @@
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
 mod features;
+pub mod host;
 
 use anyhow::Result;
 use async_channel::Receiver;
@@ -305,6 +306,9 @@ pub struct Root {
     /// Signed out: replaces the whole window.
     login: Option<Entity<Login>>,
     bridge: Arc<Bridge>,
+    host: Arc<dyn host::Host>,
+    automations: Option<Result<Value, String>>,
+    automation_load: Option<Task<()>>,
     cwd: String,
     config: Value,
     skills: Value,
@@ -421,6 +425,9 @@ impl Root {
             command_menu: None,
             login: None,
             bridge,
+            host: Arc::new(host::LocalHost::from_env()),
+            automations: None,
+            automation_load: None,
             cwd,
             config: Value::Null,
             skills: Value::Null,
@@ -536,6 +543,43 @@ impl Root {
         &self.config
     }
 
+    /// Replaces the desktop host and cancels any pending host read.
+    pub fn set_host(&mut self, host: Arc<dyn host::Host>, cx: &mut Context<Self>) {
+        self.automation_load = None;
+        self.host = host;
+        self.automations = None;
+        if self.state.route == Route::Scheduled {
+            self.load_automations(cx);
+        }
+        cx.notify();
+    }
+
+    /// The host's automation list, or its error; `None` means that the read has not completed.
+    pub fn automations(&self) -> Option<&Result<Value, String>> {
+        self.automations.as_ref()
+    }
+
+    fn load_automations(&mut self, cx: &mut Context<Self>) {
+        self.automations = None;
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move {
+            host.fetch(&host::Request::post("list-automations", None))
+                .and_then(|response| host::json_body(&response))
+                .map_err(|error| error.to_string())
+        });
+        self.automation_load = Some(cx.spawn(async move |this, cx| {
+            let result = read.await;
+            this.update(cx, |this, cx| {
+                if result.is_err() && this.state.route == Route::Scheduled {
+                    this.toast(Toast::danger("Failed to load automations"), cx);
+                }
+                this.automations = Some(result);
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
     fn set_threads(&mut self, threads: &[Thread], cx: &mut Context<Self>) {
         self.threads = threads.to_vec();
         self.sidebar.update(cx, |s, cx| s.set_threads(threads, cx));
@@ -629,7 +673,10 @@ impl Root {
                 .detach();
                 Some(shell)
             }
-            Route::Scheduled => Some(automations::shell(cx)),
+            Route::Scheduled => {
+                self.load_automations(cx);
+                Some(automations::shell(cx))
+            }
             Route::Mobile => Some(mobile::shell(cx)),
             Route::Home | Route::Thread(_) => None,
         };
