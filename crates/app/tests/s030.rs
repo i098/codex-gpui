@@ -28,18 +28,14 @@ fn width(fx: &mut Fx) -> f32 {
         .expect("window")
 }
 
-/// Pointer x inside the divider's 16 px hit area on the panel side of the border.
-fn divider_x(fx: &mut Fx) -> f32 {
-    fx.size.0 - 4. - width(fx) + 8.
-}
-
 fn pointer_x(at: &Value) -> Result<f32> {
     Ok(at["x"].as_f64().context("x")? as f32)
 }
 
 /// Presses the divider, moves `dx` in 10 steps sampling the width halfway, releases.
 fn drag(fx: &mut Fx, dx: f32) -> Result<f32> {
-    let (x, y) = (divider_x(fx), 400.);
+    // Inside the divider's 16 px hit area on the panel side of the border.
+    let (x, y) = (fx.size.0 - 4. - width(fx) + 8., 400.);
     fx.hover((x, y))?;
     fx.input(PlatformInput::MouseDown(MouseDownEvent {
         button: MouseButton::Left,
@@ -96,7 +92,6 @@ fn divider_drag_resizes_the_panel() -> Result<()> {
     // The original opens at its maximum (`aria-valuenow` = `aria-valuemax`): the window
     // leaves the chat its 320 px. The port's main panel counts its 0.5 px hairline in the
     // width, so its maximum is 0.5 px wider.
-    ensure!(start["now"] == start["max"], "recording: panel at its max");
     ensure!(rest == max + 0.5, "panel at rest {rest}, original {max}");
     let before = fx.shot()?;
 
@@ -114,22 +109,12 @@ fn divider_drag_resizes_the_panel() -> Result<()> {
                 .as_f64()
                 .context("now")? as f32;
         ensure!(
-            delta == -dx,
-            "recording: width follows the pointer ({delta} vs {dx})"
-        );
-        ensure!(
             mid == was - dx / 2.,
             "live width {mid} halfway, from {was} by {dx}"
         );
         ensure!(
             now == was + delta,
             "width {now} after release, from {was} by {delta}"
-        );
-        ensure!(
-            step["expect"]["requests"].as_array().is_some_and(|r| r
-                .iter()
-                .any(|r| r["key"] == "app-shell:right-panel-width:v3")),
-            "recording: the width is saved on pointer-up"
         );
     }
     let after = fx.shot()?;

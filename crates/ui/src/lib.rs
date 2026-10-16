@@ -1273,20 +1273,17 @@ impl Render for Shell {
                         ),
                 )
             })
-            .when(self.sidebar_drag_offset.is_some(), |d| {
+            .when_some(self.sidebar_drag_offset, |d, offset| {
                 let moved = cx.entity().downgrade();
                 let released = moved.clone();
                 d.child(drag_layer(
-                    move |x, window, cx| {
+                    move |x, _, cx| {
                         moved
                             .update(cx, |this, _| {
-                                if let Some(offset) = this.sidebar_drag_offset {
-                                    let width = x - offset;
-                                    this.sidebar_open = width >= px(145.);
-                                    if this.sidebar_open {
-                                        this.sidebar_width = width.clamp(px(290.), px(520.));
-                                    }
-                                    window.refresh();
+                                let width = x - offset;
+                                this.sidebar_open = width >= px(145.);
+                                if this.sidebar_open {
+                                    this.sidebar_width = width.clamp(px(290.), px(520.));
                                 }
                             })
                             .ok();
@@ -1307,8 +1304,8 @@ impl Render for Shell {
     }
 }
 
-/// The window-wide capture layer of a live drag: `on_move` with every pointer x until the
-/// left button's release, then `on_release`.
+/// The window-wide capture layer of a live drag: `on_move` with every pointer x (then a
+/// refresh) until the left button's release, then `on_release`.
 pub(crate) fn drag_layer(
     on_move: impl Fn(Pixels, &mut Window, &mut App) + 'static,
     on_release: impl Fn(&mut App) + 'static,
@@ -1319,6 +1316,7 @@ pub(crate) fn drag_layer(
             window.on_mouse_event(move |e: &MouseMoveEvent, phase, window, cx| {
                 if phase == DispatchPhase::Capture {
                     on_move(e.position.x, window, cx);
+                    window.refresh();
                 }
             });
             window.on_mouse_event(move |e: &MouseUpEvent, phase, _, cx| {

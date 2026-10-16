@@ -36,8 +36,7 @@ const CODE_LINE: f32 = 21.6;
 const CH: f32 = 7.224;
 
 /// The panel width the user last dragged the divider to (DT-056); `STORED_WIDTH` until then.
-#[derive(Clone, Copy)]
-pub struct PanelWidth(pub Pixels);
+struct PanelWidth(Pixels);
 
 impl Global for PanelWidth {}
 
@@ -974,9 +973,9 @@ impl Render for SplitMain {
                 let released = cx.entity().downgrade();
                 d.child(drag_layer(
                     move |x, window, cx| {
-                        let width = (anchor - x).clamp(px(MIN_CHAT), panel_max(window));
-                        cx.set_global(PanelWidth(width));
-                        window.refresh();
+                        cx.set_global(PanelWidth(
+                            (anchor - x).clamp(px(MIN_CHAT), panel_max(window)),
+                        ));
                     },
                     move |cx| {
                         released
