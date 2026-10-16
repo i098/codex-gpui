@@ -7,6 +7,7 @@ pub(super) struct UserMessage {
     pub id: SharedString,
     pub message: SharedString,
     pub sent_at: Option<String>,
+    pub find: Option<FindPaint>,
 }
 
 struct MessageActions {
@@ -109,7 +110,31 @@ impl RenderOnce for UserMessage {
                     )),
             );
         // Keep the existing 30 px reserve: revealing controls must not move the transcript.
-        user_bubble(&self.message, t)
+        let bubble = match &self.find {
+            None => user_bubble(&self.message, t),
+            Some(find) => div().flex().flex_col().items_end().pb(px(30.)).child(
+                div()
+                    .relative()
+                    .max_w(relative(0.7))
+                    .py(px(10.))
+                    .px(px(16.))
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: Corners::all(px(22.)),
+                        corner: shapes::Corner::Squircle,
+                        fill: Some(t.user_message_background),
+                        ..Default::default()
+                    }))
+                    .child(
+                        div()
+                            .text_size(px(14.))
+                            .line_height(px(22.75))
+                            .font_weight(FontWeight(430.))
+                            .text_color(white())
+                            .child(find.text(&self.message, 0)),
+                    ),
+            ),
+        };
+        bubble
             .relative()
             .id(self.id)
             .track_focus(&focus)

@@ -5,10 +5,12 @@
 //!
 //! User-message controls appear on hover or focus without moving the transcript.
 //! Copy writes plain text and HTML on macOS and shows a checkmark for 1500 ms.
+//! Find searches user and agent messages, including collapsed activity, without server requests.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash as _, Hasher as _};
+use std::ops::Range;
 use std::rc::Rc;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -82,6 +84,7 @@ pub struct ThreadView {
     scroll: ScrollHandle,
     /// The turns as last laid out, to stand in for the ones far off screen.
     laid_out: Rc<RefCell<LaidOut>>,
+    find: Option<FindState>,
 }
 
 /// Where the last frame laid out each turn, in the scroller's content (top, height), and the
@@ -93,6 +96,101 @@ struct LaidOut {
     key: Option<(Size<Pixels>, bool)>,
     width: Pixels,
     turns: HashMap<String, (Pixels, Pixels)>,
+}
+
+#[derive(PartialEq)]
+struct FindMatch {
+    item: String,
+    range: Range<usize>,
+}
+
+struct FindState {
+    query: String,
+    selection: Range<usize>,
+    focus: gpui::FocusHandle,
+    matches: Rc<Vec<FindMatch>>,
+    active: usize,
+    total: usize,
+    dirty: bool,
+    target: Rc<RefCell<Option<(gpui::TextLayout, usize)>>>,
+    scroll_pending: Rc<Cell<bool>>,
+}
+
+#[derive(Clone)]
+struct FindPaint {
+    item: String,
+    matches: Rc<Vec<FindMatch>>,
+    active: usize,
+    target: Rc<RefCell<Option<(gpui::TextLayout, usize)>>>,
+}
+
+impl FindPaint {
+    fn text(&self, text: &str, offset: usize) -> gpui::StyledText {
+        let mut active = None;
+        let highlights = self
+            .matches
+            .iter()
+            .enumerate()
+            .filter_map(|(index, found)| {
+                if found.item != self.item {
+                    return None;
+                }
+                let start = found.range.start.max(offset);
+                let end = found.range.end.min(offset + text.len());
+                if start >= end {
+                    return None;
+                }
+                if index == self.active && found.range.start >= offset {
+                    active = Some(start - offset);
+                }
+                Some((
+                    start - offset..end - offset,
+                    gpui::HighlightStyle {
+                        background_color: Some(
+                            rgb(if index == self.active {
+                                0xfb6a22
+                            } else {
+                                0xffd240
+                            })
+                            .into(),
+                        ),
+                        color: Some(white()),
+                        ..Default::default()
+                    },
+                ))
+            })
+            .collect::<Vec<_>>();
+        let text = gpui::StyledText::new(text.to_owned()).with_highlights(highlights);
+        if let Some(index) = active {
+            *self.target.borrow_mut() = Some((text.layout().clone(), index));
+        }
+        text
+    }
+}
+
+fn find_ranges(text: &str, query: &str, limit: usize) -> (Vec<Range<usize>>, usize) {
+    if query.is_empty() {
+        return (Vec::new(), 0);
+    }
+    let mut folded = String::new();
+    let mut offsets = Vec::new();
+    for (index, c) in text.char_indices() {
+        for lower in c.to_lowercase() {
+            for _ in 0..lower.len_utf8() {
+                offsets.push((index, index + c.len_utf8()));
+            }
+            folded.push(lower);
+        }
+    }
+    let mut ranges = Vec::new();
+    let mut total = 0;
+    for (start, matched) in folded.match_indices(query) {
+        total += 1;
+        if ranges.len() < limit {
+            ranges.push(offsets[start].0..offsets[start + matched.len() - 1].1);
+        }
+    }
+    (ranges, total)
 }
 
 impl ThreadView {
@@ -111,6 +209,7 @@ impl ThreadView {
             expanded: HashSet::new(),
             scroll: ScrollHandle::new(),
             laid_out: Rc::default(),
+            find: None,
         }
     }
 
@@ -125,6 +224,365 @@ impl ThreadView {
 
     pub fn turns(&self) -> &[Turn] {
         &self.turns
+    }
+
+    pub fn find_state(&self) -> Option<(&str, usize, usize)> {
+        self.find
+            .as_ref()
+            .map(|find| (find.query.as_str(), find.active, find.total))
+    }
+
+    pub fn open_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let find = self.find.get_or_insert_with(|| FindState {
+            query: String::new(),
+            selection: 0..0,
+            focus: cx.focus_handle(),
+            matches: Rc::default(),
+            active: 0,
+            total: 0,
+            dirty: false,
+            target: Rc::default(),
+            scroll_pending: Rc::new(Cell::new(false)),
+        });
+        find.selection = 0..find.query.len();
+        window.focus(&find.focus, cx);
+        cx.notify();
+    }
+
+    pub fn next_find(&mut self, previous: bool, cx: &mut Context<Self>) {
+        let Some(find) = &mut self.find else { return };
+        let count = find.matches.len();
+        if count > 0 {
+            find.active = (find.active + if previous { count - 1 } else { 1 }) % count;
+            find.scroll_pending.set(true);
+            cx.notify();
+        }
+    }
+
+    fn find_paint(&self, item: &str) -> Option<FindPaint> {
+        let find = self.find.as_ref()?;
+        (!find.matches.is_empty()).then(|| FindPaint {
+            item: item.to_owned(),
+            matches: find.matches.clone(),
+            active: find.active,
+            target: find.target.clone(),
+        })
+    }
+
+    fn replace_find(&mut self, text: &str, cx: &mut Context<Self>) {
+        let Some(find) = &mut self.find else { return };
+        find.query.replace_range(find.selection.clone(), text);
+        let cursor = find.selection.start + text.len();
+        find.selection = cursor..cursor;
+        find.dirty = true;
+        cx.notify();
+    }
+
+    fn refresh_find(&mut self) {
+        let Some(find) = &mut self.find else { return };
+        if !std::mem::take(&mut find.dirty) {
+            return;
+        }
+        let query = find.query.trim().to_lowercase();
+        let mut matches = Vec::new();
+        find.total = 0;
+        for turn in &self.turns {
+            for item in &turn.items {
+                let (id, text) = match item {
+                    ThreadItem::UserMessage { id, content } => (
+                        id,
+                        content
+                            .iter()
+                            .filter_map(|part| match part {
+                                UserInput::Text { text } => Some(text.as_str()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                    ),
+                    ThreadItem::AgentMessage { id, text, .. } => (id, markdown::plain(text)),
+                    _ => continue,
+                };
+                let (ranges, total) = find_ranges(&text, &query, 250 - matches.len());
+                find.total += total;
+                matches.extend(ranges.into_iter().map(|range| FindMatch {
+                    item: id.clone(),
+                    range,
+                }));
+            }
+        }
+        if matches != *find.matches {
+            find.active = 0;
+        }
+        find.active = find.active.min(matches.len().saturating_sub(1));
+        find.matches = Rc::new(matches);
+        find.scroll_pending.set(true);
+    }
+
+    fn find_key(
+        &mut self,
+        event: &gpui::KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(find) = &mut self.find else { return };
+        if !find.focus.is_focused(window) {
+            return;
+        }
+        let key = &event.keystroke;
+        match key.key.as_str() {
+            "enter" => self.next_find(key.modifiers.shift, cx),
+            "escape" => {
+                self.find = None;
+                window.blur(cx);
+            }
+            "backspace" | "delete" => {
+                if find.selection.is_empty() {
+                    if key.key == "backspace" {
+                        find.selection.start = find.query[..find.selection.start]
+                            .char_indices()
+                            .next_back()
+                            .map_or(0, |(i, _)| i);
+                    } else if let Some(c) = find.query[find.selection.end..].chars().next() {
+                        find.selection.end += c.len_utf8();
+                    }
+                }
+                self.replace_find("", cx);
+            }
+            "left" | "right" | "home" | "end" => {
+                let cursor = match key.key.as_str() {
+                    "home" => 0,
+                    "end" => find.query.len(),
+                    "left" => find.query[..find.selection.start]
+                        .char_indices()
+                        .next_back()
+                        .map_or(0, |(i, _)| i),
+                    _ => {
+                        find.selection.end
+                            + find.query[find.selection.end..]
+                                .chars()
+                                .next()
+                                .map_or(0, char::len_utf8)
+                    }
+                };
+                find.selection = cursor..cursor;
+            }
+            _ if !key.modifiers.platform && !key.modifiers.control => {
+                let Some(text) = &key.key_char else { return };
+                self.replace_find(text, cx);
+            }
+            _ => return,
+        }
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    fn find_bar(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
+        let find = self.find.as_ref().unwrap();
+        let t = cx.theme();
+        let input = gpui::StyledText::new(if find.query.is_empty() {
+            "Search chat…".to_owned()
+        } else {
+            find.query.clone()
+        })
+        .with_highlights(
+            (!find.selection.is_empty() && find.focus.is_focused(window)).then(|| {
+                (
+                    find.selection.clone(),
+                    gpui::HighlightStyle {
+                        background_color: Some(t.text_selection),
+                        ..Default::default()
+                    },
+                )
+            }),
+        );
+        let input_layout = input.layout().clone();
+        let cursor_layout = input_layout.clone();
+        let cursor = find.selection.end;
+        let caret_visible = find.selection.is_empty() && find.focus.is_focused(window);
+        let caret_color = t.text;
+        let button = |id, name, label, size| {
+            div()
+                .id(id)
+                .size(px(size))
+                .flex()
+                .items_center()
+                .justify_center()
+                .role(gpui::Role::Button)
+                .aria_label(label)
+                .rounded(px(4.))
+                .hover(|s| s.bg(t.ghost_hover))
+                .child(icon(name, 16., t.text_tertiary))
+        };
+        let count = if find.matches.is_empty() {
+            "0 results".to_owned()
+        } else {
+            format!(
+                "{} / {}{} results",
+                find.active + 1,
+                find.total,
+                if find.total > find.matches.len() {
+                    "+"
+                } else {
+                    ""
+                }
+            )
+        };
+        gpui::deferred(
+            div()
+                .id("thread-find-bar")
+                .absolute()
+                .top(px(-36.))
+                .right(px(12.))
+                .w(px(340.))
+                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .rounded(px(20.))
+                .border(px(0.5))
+                .border_color(t.border)
+                .bg(t.surface_secondary)
+                .flex()
+                .flex_col()
+                .font_family(SANS)
+                .child(
+                    div()
+                        .h(px(44.))
+                        .flex()
+                        .items_center()
+                        .pl(px(16.))
+                        .pr(px(14.))
+                        .gap(px(8.))
+                        .child(icon("search", 16., t.text))
+                        .child(
+                            div()
+                                .id("thread-find-input")
+                                .relative()
+                                .flex_1()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .cursor_text()
+                                .track_focus(&find.focus)
+                                .role(gpui::Role::TextInput)
+                                .aria_label("Find in chat")
+                                .aria_placeholder("Search chat…")
+                                .aria_value(find.query.clone())
+                                .aria_active_descendant()
+                                .on_mouse_down(
+                                    gpui::MouseButton::Left,
+                                    cx.listener(
+                                        move |this, event: &gpui::MouseDownEvent, window, cx| {
+                                            let find = this.find.as_mut().unwrap();
+                                            let cursor = input_layout
+                                                .index_for_position(event.position)
+                                                .unwrap_or_else(|index| index)
+                                                .min(find.query.len());
+                                            find.selection = if event.click_count == 3 {
+                                                0..find.query.len()
+                                            } else {
+                                                cursor..cursor
+                                            };
+                                            window.focus(&find.focus, cx);
+                                            cx.stop_propagation();
+                                            cx.notify();
+                                        },
+                                    ),
+                                )
+                                .on_key_down(cx.listener(Self::find_key))
+                                .on_action(cx.listener(|this, _: &crate::SelectAll, _, cx| {
+                                    let find = this.find.as_mut().unwrap();
+                                    find.selection = 0..find.query.len();
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }))
+                                .on_action(cx.listener(|this, _: &crate::Paste, _, cx| {
+                                    if let Some(text) =
+                                        cx.read_from_clipboard().and_then(|item| item.text())
+                                    {
+                                        this.replace_find(&text.replace(['\n', '\r'], ""), cx);
+                                    }
+                                    cx.stop_propagation();
+                                }))
+                                .child(
+                                    div()
+                                        .text_size(px(14.))
+                                        .line_height(px(24.))
+                                        .font_weight(FontWeight(400.))
+                                        .whitespace_nowrap()
+                                        .text_color(if find.query.is_empty() {
+                                            t.text_tertiary
+                                        } else {
+                                            t.text
+                                        })
+                                        .child(input),
+                                )
+                                .child(
+                                    gpui::canvas(
+                                        |_, _, _| (),
+                                        move |_, (), window, _| {
+                                            if caret_visible
+                                                && let Some(position) =
+                                                    cursor_layout.position_for_index(cursor)
+                                            {
+                                                window.paint_quad(gpui::fill(
+                                                    Bounds::new(
+                                                        position + gpui::point(px(0.), px(3.)),
+                                                        gpui::size(px(1.), px(18.)),
+                                                    ),
+                                                    caret_color,
+                                                ));
+                                            }
+                                        },
+                                    )
+                                    .absolute()
+                                    .inset_0(),
+                                ),
+                        )
+                        .child(
+                            button("thread-find-close", "close", "Close find", 24.).on_click(
+                                cx.listener(|this, _, window, cx| {
+                                    this.find = None;
+                                    window.blur(cx);
+                                    cx.notify();
+                                }),
+                            ),
+                        ),
+                )
+                .when(!find.query.trim().is_empty(), |d| {
+                    d.child(
+                        div()
+                            .h(px(36.))
+                            .flex()
+                            .items_center()
+                            .px(px(16.))
+                            .gap(px(12.))
+                            .border_t_1()
+                            .border_color(t.border)
+                            .child(
+                                button(
+                                    "thread-find-previous",
+                                    "composer-arrow-up",
+                                    "Previous result",
+                                    16.,
+                                )
+                                .when(find.matches.is_empty(), |d| {
+                                    d.opacity(0.4).aria_description("No results")
+                                })
+                                .on_click(cx.listener(|this, _, _, cx| this.next_find(true, cx))),
+                            )
+                            .child(
+                                button("thread-find-next", "diff-chevron-down", "Next result", 16.)
+                                    .when(find.matches.is_empty(), |d| {
+                                        d.opacity(0.4).aria_description("No results")
+                                    })
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.next_find(false, cx)),
+                                    ),
+                            )
+                            .child(div().flex_1())
+                            .child(text(count, 14., 20., 400., t.text_tertiary)),
+                    )
+                }),
+        )
+        .with_priority(3)
     }
 
     /// Commands still running after their turn ended (background terminals), oldest first:
@@ -320,6 +778,9 @@ impl ThreadView {
         if params["threadId"].as_str() != Some(&self.thread_id) {
             return;
         }
+        if let Some(find) = &mut self.find {
+            find.dirty = true;
+        }
         match method.as_str() {
             "turn/started" | "turn/completed" => {
                 let Ok(n) = serde_json::from_value::<TurnNotification>(params.clone()) else {
@@ -417,7 +878,8 @@ impl ThreadView {
         let group = SharedString::from(format!("turn-{}", turn.id));
         let mut col = div().group(group.clone()).flex().flex_col();
         let user = turn.items.iter().find_map(|i| match i {
-            ThreadItem::UserMessage { content, .. } => Some(
+            ThreadItem::UserMessage { id, content } => Some((
+                id,
                 content
                     .iter()
                     .filter_map(|c| match c {
@@ -426,16 +888,17 @@ impl ThreadView {
                     })
                     .collect::<Vec<_>>()
                     .join("\n"),
-            ),
+            )),
             _ => None,
         });
-        if let Some(user) = user {
+        if let Some((item, user)) = user {
             if let Some(started) = turn.started_at {
                 col = col.child(self.timestamp(started, window, t));
             }
             col = col.child(actions::UserMessage {
                 id: format!("user-message-{}", turn.id).into(),
                 message: user.into(),
+                find: self.find_paint(item),
                 sent_at: turn.started_at.and_then(|at| {
                     chrono::DateTime::from_timestamp(at + self.clock.utc_offset, 0)
                         .map(|at| at.format("%A %-I:%M %p").to_string())
@@ -443,16 +906,23 @@ impl ThreadView {
             });
         }
         let final_answer = match turn.items.last() {
-            Some(ThreadItem::AgentMessage { text, .. })
+            Some(ThreadItem::AgentMessage { id, text, .. })
                 if turn.status != TurnStatus::InProgress =>
             {
-                Some(text.as_str())
+                Some((id.as_str(), text.as_str()))
             }
             _ => None,
         };
-        if let Some(answer) = final_answer {
+        if let Some((item, answer)) = final_answer {
             let secs = turn.duration_ms.unwrap_or(0) / 1000;
-            let open = self.expanded.contains(&turn.id);
+            let open = self.expanded.contains(&turn.id)
+                || self.find.as_ref().is_some_and(|find| {
+                    turn.items[..turn.items.len() - 1].iter().any(|item| {
+                        find.matches
+                            .iter()
+                            .any(|found| Some(found.item.as_str()) == item_id(item))
+                    })
+                });
             let id = turn.id.clone();
             col = col.child(div().h(px(16.))).child(
                 disclosure(format!("Worked for {}", duration(secs)), open, window, t)
@@ -469,11 +939,14 @@ impl ThreadView {
                 let work = &turn.items[..turn.items.len() - 1];
                 col = col
                     .child(div().h(px(16.)))
-                    .child(activity(work, false, window, t));
+                    .child(self.activity(work, false, window, t));
             }
-            col = col
-                .child(div().h(px(16.)))
-                .child(markdown(answer, window, t));
+            col = col.child(div().h(px(16.))).child(markdown::with_find(
+                answer,
+                window,
+                t,
+                self.find_paint(item).as_ref(),
+            ));
             if let Some(card) = diff_card(&turn.id, &turn.items, window, t) {
                 col = col.child(div().mt(px(12.)).pb(px(8.)).child(card));
             }
@@ -492,7 +965,37 @@ impl ThreadView {
                 .child(div().h(px(16.)));
         }
         let running = turn.status == TurnStatus::InProgress;
-        col.child(activity(&turn.items, running, window, t))
+        col.child(self.activity(&turn.items, running, window, t))
+    }
+
+    fn activity(&self, items: &[ThreadItem], running: bool, window: &Window, t: &Theme) -> Div {
+        if self
+            .find
+            .as_ref()
+            .is_none_or(|find| find.matches.is_empty())
+        {
+            return activity(items, running, window, t);
+        }
+        let mut column = div().flex().flex_col().gap(px(16.));
+        let mut start = 0;
+        for (index, item) in items.iter().enumerate() {
+            if let ThreadItem::AgentMessage { id, text, .. } = item {
+                if start < index {
+                    column = column.child(activity(&items[start..index], running, window, t));
+                }
+                column = column.child(markdown::with_find(
+                    text,
+                    window,
+                    t,
+                    self.find_paint(id).as_ref(),
+                ));
+                start = index + 1;
+            }
+        }
+        if start < items.len() {
+            column = column.child(activity(&items[start..], running, window, t));
+        }
+        column
     }
 
     /// `Yesterday 9:54 PM` above a turn's user message.
@@ -519,8 +1022,12 @@ impl ThreadView {
 
 impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.refresh_find();
         let t = cx.theme().clone();
         let n = self.turns.len();
+        if let Some(find) = &self.find {
+            *find.target.borrow_mut() = None;
+        }
         // Turns more than half a viewport above or below it stand in as empty boxes of their
         // last height while the window size and side panel stay as they were laid out; the
         // last turn (and a running one) can still grow, so it always renders.
@@ -533,6 +1040,10 @@ impl Render for ThreadView {
             .enumerate()
             .map(|(i, turn)| {
                 let stand_in = (laid_out.key == Some(key)
+                    && self
+                        .find
+                        .as_ref()
+                        .is_none_or(|find| find.matches.is_empty())
                     && i + 1 < n
                     && turn.status != TurnStatus::InProgress)
                     .then(|| laid_out.turns.get(&turn.id))
@@ -547,7 +1058,12 @@ impl Render for ThreadView {
         drop(laid_out);
         let ids: Vec<String> = self.turns.iter().map(|t| t.id.clone()).collect();
         let (laid_out, scroll) = (self.laid_out.clone(), self.scroll.clone());
-        let measure = move |bounds: Vec<Bounds<Pixels>>, window: &mut Window, _: &mut App| {
+        let find_scroll = self
+            .find
+            .as_ref()
+            .map(|find| (find.target.clone(), find.scroll_pending.clone()));
+        let view_id = cx.entity().entity_id();
+        let measure = move |bounds: Vec<Bounds<Pixels>>, window: &mut Window, cx: &mut App| {
             let origin = scroll.bounds().top() + scroll.offset().y;
             let width = bounds.first().map_or(px(0.), |b| b.size.width);
             let mut l = laid_out.borrow_mut();
@@ -565,6 +1081,22 @@ impl Render for ThreadView {
                 .zip(&bounds)
                 .map(|(id, b)| (id.clone(), (b.top() - origin, b.size.height)))
                 .collect();
+            if let Some((target, pending)) = &find_scroll
+                && pending.replace(false)
+                && let Some((layout, index)) = target.borrow().as_ref()
+                && let Some(position) = layout.position_for_index(*index)
+            {
+                let viewport = scroll.bounds();
+                // The original reserves the 114 px composer band plus 16 px of scroll padding.
+                let center = (viewport.top() + viewport.bottom() - px(130.)) / 2.;
+                let mut offset = scroll.offset();
+                offset.y = (offset.y + center - position.y - layout.line_height() / 2.)
+                    .clamp(-scroll.max_offset().y, px(0.));
+                if offset != scroll.offset() {
+                    scroll.set_offset(offset);
+                    window.defer(cx, move |_, cx| cx.notify(view_id));
+                }
+            }
         };
         // The thread fills the main panel: window minus titlebar (44) and bottom inset (4).
         let viewport = window.viewport_size();
@@ -637,6 +1169,7 @@ impl Render for ThreadView {
         );
         div()
             .size_full()
+            .key_context("Thread")
             .relative()
             .overflow_hidden()
             .bg(t.surface)
@@ -702,6 +1235,7 @@ impl Render for ThreadView {
                             ),
                     ),
             )
+            .when(self.find.is_some(), |d| d.child(self.find_bar(window, cx)))
     }
 }
 
@@ -937,6 +1471,22 @@ fn far(top: Pixels, h: Pixels, view: Pixels) -> bool {
 mod tests {
     use super::markdown::{Inline, inlines};
     use super::*;
+
+    #[test]
+    fn find_ranges_preserve_unicode_offsets_and_nonoverlapping_matches() {
+        assert_eq!(find_ranges("İİ", "i", 250), (vec![0..2, 2..4], 2));
+        assert_eq!(find_ranges("éÉ", "é", 250), (vec![0..2, 2..4], 2));
+        assert_eq!(find_ranges("aaaa", "aa", 250), (vec![0..2, 2..4], 2));
+        assert_eq!(find_ranges("text", "", 250), (vec![], 0));
+    }
+
+    #[test]
+    fn find_caps_navigation_without_losing_total_count() {
+        let (ranges, total) = find_ranges(&"x".repeat(251), "x", 250);
+        assert_eq!(total, 251);
+        assert_eq!(ranges.len(), 250);
+        assert_eq!(ranges.last(), Some(&(249..250)));
+    }
 
     #[test]
     fn far_turns_lie_past_half_a_viewport() {

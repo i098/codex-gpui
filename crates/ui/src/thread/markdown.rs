@@ -92,6 +92,51 @@ pub(super) fn inlines(mut rest: &str) -> Vec<Inline<'_>> {
 
 /// Agent markdown: paragraphs of words, inline code chips and file links, wrapping at words.
 pub(super) fn markdown(source: &str, window: &Window, t: &Theme) -> Div {
+    with_find(source, window, t, None)
+}
+
+pub(super) fn plain(source: &str) -> String {
+    source
+        .split("\n\n")
+        .filter(|p| !p.trim().is_empty())
+        .map(|p| {
+            let p = p.replace('\n', " ");
+            inlines(&p)
+                .into_iter()
+                .map(|part| match part {
+                    Inline::Text(text) | Inline::Code(text) => text,
+                    Inline::Link { label, .. } => label,
+                })
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+pub(super) fn with_find(source: &str, window: &Window, t: &Theme, find: Option<&FindPaint>) -> Div {
+    let offset = Cell::new(0);
+    let run = |s: &str, size, height, weight, color, family| {
+        let at = offset.replace(offset.get() + s.len());
+        match find {
+            None => measured(window, s.to_owned(), size, height, weight, color, family),
+            Some(find) => {
+                let label = div()
+                    .text_size(px(size))
+                    .line_height(px(height))
+                    .font_weight(FontWeight(weight))
+                    .text_color(color)
+                    .whitespace_nowrap()
+                    .child(find.text(s, at));
+                div()
+                    .flex_none()
+                    .w(width(window, s, size, weight, family))
+                    .child(match family {
+                        Some(f) => label.font_family(f),
+                        None => label,
+                    })
+            }
+        }
+    };
     let tones = tones(t);
     let paragraphs = source
         .split("\n\n")
@@ -104,7 +149,13 @@ pub(super) fn markdown(source: &str, window: &Window, t: &Theme) -> Div {
             let mut row = wrap_row();
             for part in parts {
                 row = match part {
-                    Inline::Text(s) => row.children(words(s, 430., t.text, window)),
+                    Inline::Text(s) if find.is_none() => {
+                        row.children(words(s, 430., t.text, window))
+                    }
+                    Inline::Text(s) => row.children(
+                        s.split_inclusive(' ')
+                            .map(|word| run(word, 14., 22.75, 430., t.text, None)),
+                    ),
                     Inline::Code(code) => row.child(
                         div().pt(px(3.5)).pb(px(3.25)).child(
                             div()
@@ -117,15 +168,7 @@ pub(super) fn markdown(source: &str, window: &Window, t: &Theme) -> Div {
                                     fill: Some(tones.inline_code),
                                     ..Default::default()
                                 }))
-                                .child(measured(
-                                    window,
-                                    code.to_owned(),
-                                    12.88,
-                                    15.,
-                                    430.,
-                                    t.text,
-                                    Some(MONO),
-                                )),
+                                .child(run(code, 12.88, 15., 430., t.text, Some(MONO))),
                         ),
                     ),
                     // A file link opens the Changes panel.
@@ -147,18 +190,11 @@ pub(super) fn markdown(source: &str, window: &Window, t: &Theme) -> Div {
                                     )),
                                 )
                             })
-                            .child(measured(
-                                window,
-                                label.to_owned(),
-                                14.,
-                                22.75,
-                                500.,
-                                tones.mention,
-                                None,
-                            )),
+                            .child(run(label, 14., 22.75, 500., tones.mention, None)),
                     ),
                 };
             }
+            offset.set(offset.get() + 2);
             row
         });
     div().flex().flex_col().gap(px(12.)).children(paragraphs)

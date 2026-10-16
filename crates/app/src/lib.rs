@@ -51,6 +51,9 @@ actions!(
         HideOthers,
         ShowAll,
         OpenDocumentation,
+        FindInThread,
+        FindNext,
+        FindPrevious,
         /// The Recents row above the open thread (`previousThread`).
         PreviousChat,
         /// The Recents row below the open thread (`nextThread`).
@@ -90,6 +93,9 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-c", Copy, None),
         KeyBinding::new("cmd-v", Paste, None),
         KeyBinding::new("cmd-a", SelectAll, None),
+        KeyBinding::new("cmd-f", FindInThread, Some("Thread")),
+        KeyBinding::new("cmd-g", FindNext, None),
+        KeyBinding::new("cmd-shift-g", FindPrevious, None),
         KeyBinding::new("cmd-shift-s", ToggleSidebar, None),
         KeyBinding::new("cmd-b", ToggleSidebar, None),
         KeyBinding::new("cmd-[", GoBack, None),
@@ -146,6 +152,10 @@ pub fn menus() -> Vec<Menu> {
             MenuItem::os_action("Copy", Copy, OsAction::Copy),
             MenuItem::os_action("Paste", Paste, OsAction::Paste),
             MenuItem::os_action("Select All", SelectAll, OsAction::SelectAll),
+            MenuItem::separator(),
+            MenuItem::action("Find", FindInThread),
+            MenuItem::action("Find Next", FindNext),
+            MenuItem::action("Find Previous", FindPrevious),
         ]),
         Menu::new("View").items([
             MenuItem::action("Toggle Sidebar", ToggleSidebar),
@@ -1382,6 +1392,33 @@ impl Render for Root {
             .relative()
             .font_family(ui::SANS)
             .track_focus(&self.focus)
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                if event.keystroke.modifiers.platform
+                    && event.keystroke.key == "f"
+                    && matches!(this.state.route, Route::Thread(_))
+                    && let Some(thread) = &this.thread
+                {
+                    thread.update(cx, |thread, cx| thread.open_find(window, cx));
+                    cx.stop_propagation();
+                }
+            }))
+            .on_action(cx.listener(|this, _: &FindInThread, window, cx| {
+                if matches!(this.state.route, Route::Thread(_))
+                    && let Some(thread) = &this.thread
+                {
+                    thread.update(cx, |thread, cx| thread.open_find(window, cx));
+                }
+            }))
+            .on_action(cx.listener(|this, _: &FindNext, _, cx| {
+                if let Some(thread) = &this.thread {
+                    thread.update(cx, |thread, cx| thread.next_find(false, cx));
+                }
+            }))
+            .on_action(cx.listener(|this, _: &FindPrevious, _, cx| {
+                if let Some(thread) = &this.thread {
+                    thread.update(cx, |thread, cx| thread.next_find(true, cx));
+                }
+            }))
             .on_action(cx.listener(|this, _: &NewChat, window, cx| this.new_chat(window, cx)))
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
                 this.navigate(Route::Settings, window, cx)
