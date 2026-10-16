@@ -417,6 +417,29 @@ impl Root {
             });
             composer
         });
+        for composer in [&home_composer, &thread_composer] {
+            cx.subscribe_in(composer, window, |this, _, command: &ui::composer::SlashCommand, window, cx| {
+                match command {
+                    ui::composer::SlashCommand::Fast => {
+                        this.write_config("config/batchWrite", json!({
+                            "edits": [{"keyPath": "service_tier", "value": "priority", "mergeStrategy": "upsert"}],
+                            "filePath": null, "expectedVersion": null, "reloadUserConfig": true,
+                        }), cx, |config| config["service_tier"] = "priority".into());
+                    }
+                    ui::composer::SlashCommand::Archive => {
+                        if let Route::Thread(id) = this.state.route.clone() {
+                            this.archive(id, window, cx);
+                        }
+                    }
+                    ui::composer::SlashCommand::NewChat => this.new_chat(window, cx),
+                    ui::composer::SlashCommand::Usage => {
+                        if let Some(section) = settings::section("Usage & billing") {
+                            this.open_settings_section(section, window, cx);
+                        }
+                    }
+                }
+            }).detach();
+        }
         let sidebar = cx.new(|_| HomeSidebar::new(&[], None));
         cx.subscribe_in(
             &sidebar,
@@ -541,7 +564,10 @@ impl Root {
                     this.thread_composer.clone(),
                 ];
                 for composer in composers {
-                    composer.update(cx, |c, cx| c.set_models(&models.data, &config.config, cx));
+                    composer.update(cx, |c, cx| {
+                        c.set_models(&models.data, &config.config, cx);
+                        c.set_slash_skills(&skills, cx);
+                    });
                 }
                 this.config = config.config;
                 this.config["host"]["confirm-before-close"] =
