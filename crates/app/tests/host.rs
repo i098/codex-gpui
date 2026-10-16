@@ -519,9 +519,9 @@ fn cloud_errors_retry_once_after_401_and_never_expose_the_token() -> Result<()> 
     let response = cloud.fetch(&Request::Http(elsewhere))?;
     assert_eq!(response["value"]["status"], 400);
     assert_eq!(received.lock().len(), count);
-    // Nothing observable carries the token: debug output, refusals, transport failures,
-    // credential failures.
-    let mut observed = vec![format!("{cloud:?}"), response.to_string()];
+    // Nothing observable carries the token: refusals, transport failures, credential
+    // failures. `CloudHost` and `Credentials` have no `Debug`, so logging cannot print it.
+    let mut observed = vec![response.to_string()];
     let closed = CloudHost::new(
         LocalHost::new(tempfile::tempdir()?.path()),
         Box::new(move |_| {

@@ -438,14 +438,6 @@ pub struct CloudHost {
     agent: ureq::Agent,
 }
 
-impl std::fmt::Debug for CloudHost {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CloudHost")
-            .field("base_url", &self.base_url)
-            .finish_non_exhaustive()
-    }
-}
-
 impl CloudHost {
     /// `base_url` is the ChatGPT backend root, like `https://chatgpt.com/backend-api`.
     pub fn new(
@@ -475,8 +467,7 @@ impl CloudHost {
         let base = std::env::var("CODEX_API_BASE_URL")
             .ok()
             .filter(|u| !u.trim().is_empty())
-            .map(|u| u.trim_end_matches('/').to_owned())
-            .unwrap_or_else(|| "https://chatgpt.com/backend-api".to_owned());
+            .unwrap_or_else(|| "https://chatgpt.com/backend-api".into());
         Self::new(LocalHost::from_env(), credentials, base)
     }
 
@@ -544,29 +535,26 @@ impl CloudHost {
         let allowed = auth_allowed(&target, &self.base_url);
         let attach_auth = (attach_auth || (allowed && infers_auth(target.path())))
             && !has_header(&headers, "Authorization");
-        if attach_auth && !allowed {
-            return Err((
-                400,
-                "Refusing to attach authentication to non-OpenAI URL".into(),
-            ));
-        }
-        if surface && !allowed {
-            return Err((
-                400,
-                "Refusing to attach desktop surface to non-OpenAI URL".into(),
-            ));
-        }
-        if device_check {
-            return Err((
-                400,
-                "DeviceCheck tokens are unavailable on this host".into(),
-            ));
-        }
-        if integrity && !allowed {
-            return Err((
-                400,
-                "Refusing to attach integrity state to non-OpenAI URL".into(),
-            ));
+        let refusals = [
+            (
+                attach_auth && !allowed,
+                "Refusing to attach authentication to non-OpenAI URL",
+            ),
+            (
+                surface && !allowed,
+                "Refusing to attach desktop surface to non-OpenAI URL",
+            ),
+            (
+                device_check,
+                "DeviceCheck tokens are unavailable on this host",
+            ),
+            (
+                integrity && !allowed,
+                "Refusing to attach integrity state to non-OpenAI URL",
+            ),
+        ];
+        if let Some((_, message)) = refusals.into_iter().find(|(refused, _)| *refused) {
+            return Err((400, message.into()));
         }
         if let Some(body) = &body
             && !has_header(&headers, "Content-Type")
@@ -586,11 +574,7 @@ impl CloudHost {
         let return_error_response = request["returnErrorResponse"] == true;
         let expected_identity = request.get("expectedIdentity").filter(|v| v.is_object());
         let mut retry = request["retry"] != "never";
-        let mut credentials = if attach_auth {
-            Some(self.credentials(false)?)
-        } else {
-            None
-        };
+        let mut credentials = attach_auth.then(|| self.credentials(false)).transpose()?;
         loop {
             let mut headers = headers.clone();
             let mut target = target.clone();
@@ -633,14 +617,14 @@ impl CloudHost {
                     set_header(&mut headers, "X-OpenAI-Account-Routing-Override", route);
                 }
             }
-            let state = if integrity {
-                self.integrity_state
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .clone()
-            } else {
-                None
-            };
+            let state = integrity
+                .then(|| {
+                    self.integrity_state
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .clone()
+                })
+                .flatten();
             if let Some(state) = &state {
                 set_header(&mut headers, "X-OAI-IS", state);
             }
@@ -752,7 +736,6 @@ fn wire(
 }
 
 /// The token's `https://api.openai.com/auth` claims (`Kn` and `qn` in the original).
-#[derive(Default)]
 struct Claims {
     /// `chatgpt_account_id`: the `ChatGPT-Account-Id` header and expected-account check.
     account_id: Option<String>,
@@ -764,16 +747,12 @@ struct Claims {
 }
 
 fn claims(token: &str) -> Claims {
-    let Some(payload) = token.split('.').nth(1) else {
-        return Claims::default();
-    };
-    let Some(json) = URL_SAFE_NO_PAD
-        .decode(payload)
-        .ok()
+    let json = token
+        .split('.')
+        .nth(1)
+        .and_then(|payload| URL_SAFE_NO_PAD.decode(payload).ok())
         .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-    else {
-        return Claims::default();
-    };
+        .unwrap_or_default();
     let auth = &json["https://api.openai.com/auth"];
     let text = |key: &str| auth[key].as_str().map(str::to_owned);
     Claims {
@@ -789,12 +768,8 @@ fn auth_allowed(url: &Url, base_url: &str) -> bool {
     if !matches!(url.scheme(), "http" | "https") {
         return false;
     }
-    let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
-    let authority = match url.port() {
-        Some(port) => format!("{host}:{port}"),
-        None => host.clone(),
-    };
-    if authority == "localhost" || authority == "localhost:8000" {
+    let host = url.host_str().unwrap_or_default();
+    if host == "localhost" && matches!(url.port(), None | Some(8000)) {
         return true;
     }
     if host == "status.openai.com" {
