@@ -37,7 +37,7 @@
         }
       }
     ],
-    "screenshot": "Original screenshot retained in task proof: /tmp/cgx-f4-r1/shots/host-scheduled.png"
+    "screenshot": "Original screenshot retained in task proof: /sdc-disk/tmp/cgx/cgx-f4/host-original.png"
   },
   "source": {
     "app": "Codex 26.1007.30912",
