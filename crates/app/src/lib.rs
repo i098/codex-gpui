@@ -970,11 +970,15 @@ impl Root {
         });
         if !valid || edit.message.trim().is_empty() {
             edit.editor.update(cx, |editor, cx| editor.edit_failed(cx));
+            if !valid {
+                self.toast(Toast::danger("Failed to edit message"), cx);
+            }
             return;
         }
         let resume = !self.loaded.contains(&edit.thread_id);
         let bridge = self.bridge.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let mut reverted = false;
             let result =
                 async {
                     resume_if(resume, &bridge, &this, &edit.thread_id, cx).await?;
@@ -986,6 +990,7 @@ impl Root {
                             }),
                         )
                         .await?;
+                    reverted = true;
                     let cwd = read.thread.cwd.clone();
                     this.update_in(cx, |this, window, cx| {
                         if this.state.route == Route::Thread(edit.thread_id.clone()) {
@@ -1004,6 +1009,10 @@ impl Root {
             if result.is_err() {
                 this.update(cx, |this, cx| {
                     edit.editor.update(cx, |editor, cx| editor.edit_failed(cx));
+                    if reverted {
+                        this.thread_composer
+                            .update(cx, |composer, cx| composer.restore_text(&edit.message, cx));
+                    }
                     this.toast(Toast::danger("Failed to edit message"), cx);
                 })?;
             }

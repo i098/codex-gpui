@@ -523,6 +523,15 @@ impl Composer {
         cx.notify();
     }
 
+    pub fn restore_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        if self.content.is_empty() {
+            self.set_text(text, cx);
+        } else {
+            let restored = format!("{text}\n\n{}", self.content);
+            self.set_text(&restored, cx);
+        }
+    }
+
     /// Open the model picker (`Select effort`), as `⌘⇧M`-style commands and the menu do.
     pub fn open_model_picker(&mut self, cx: &mut Context<Self>) {
         self.menu = Some(Menu::Effort);

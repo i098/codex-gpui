@@ -189,6 +189,44 @@ fn edit_reverts_before_resending() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn failed_resend_preserves_both_drafts() -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        return Ok(());
+    }
+    let rec: Value = serde_json::from_str(include_str!("../../../refs/interactions/s006.json"))?;
+    let steps = rec["steps"].as_array().unwrap();
+    let mut thread = recorded_thread(SUBTRACT)?;
+    let mut lines = script(None, |_| {})?;
+    lines.extend(exchange("thread/resume", json!({"thread": thread})));
+    thread["turns"] = json!([]);
+    lines.extend(exchange("thread/revert", json!({"thread": thread})));
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    fx.click(target(&steps[0]))?;
+    fx.wait_thread(SUBTRACT)?;
+    fx.type_text("Keep the existing draft.")?;
+    fx.hover(target(&steps[1]))?;
+    fx.click(edit_target(&steps[2])?)?;
+    fx.type_text(steps[10]["text"].as_str().unwrap())?;
+    fx.click(target(&steps[11]))?;
+    fx.wait("failed resend", |fx| {
+        fx.read(|r, cx| r.toasts(cx).iter().any(|t| t == "Failed to edit message"))
+    })?;
+    ensure!(
+        fx.composer_text()?
+            == format!(
+                "{}\n\nKeep the existing draft.",
+                rec["result"]["edited"].as_str().unwrap()
+            ),
+        "failed resend lost a draft"
+    );
+    ensure!(
+        fx.read(|r, cx| r.thread().unwrap().read(cx).turns().is_empty()),
+        "the UI did not show the server's reverted history"
+    );
+    Ok(())
+}
+
 fn edit_target(step: &Value) -> Result<(f32, f32)> {
     let spec: Value = serde_json::from_slice(&std::fs::read(format!(
         "{ROOT}/refs/thread/dark@1280x832.spec.json"

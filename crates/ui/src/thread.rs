@@ -8,6 +8,7 @@
 //! The last text message opens an inline editor. Send reverts that turn before resending it.
 //! Response copy adds HTML. Response actions use the shared delayed tooltip.
 //! A failed resume or revert leaves the draft open and shows `Failed to edit message`.
+//! A failed resend restores the edited text to the docked composer and retains its existing draft.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
