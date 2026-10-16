@@ -11,7 +11,7 @@ To run some flows only, add a name filter: `cargo test -p app --test flows -- se
 
 ## Status values
 
-- **PASS (flow)**: the named flow in `crates/app/tests/flows.rs` passes.
+- **PASS (flow)**: the named flow or slice test in `crates/app/tests/` passes.
 - **FAIL (why)**: the port behaves differently, or no flow can reach the row yet (the reason tells which).
 - **NOT WIRED (owner)**: the port has no handler for the row; the owner file must add it.
 
@@ -27,13 +27,13 @@ The rows were not clicked again on the original through `tools/route1`: its `ser
 | 14.2 Sidebar | 23 | 11 | 4 | 8 |
 | 14.3 Home | 21 | 10 | 3 | 8 |
 | 14.4 Thread view | 20 | 6 | 3 | 11 |
-| 14.5 Composer | 20 | 5 | 4 | 11 |
+| 14.5 Composer | 20 | 6 | 5 | 9 |
 | 14.6 Diff view | 20 | 2 | 1 | 17 |
 | 14.7 Settings, login and onboarding | 20 | 7 | 8 | 5 |
 | 15.1 Automations | 16 | 2 | 2 | 12 |
 | 15.2 Background terminal | 10 | 2 | 2 | 6 |
 | 15.3 Mobile setup | 10 | 2 | 1 | 7 |
-| **All** | **192** | **64** | **32** | **96** |
+| **All** | **192** | **65** | **33** | **94** |
 
 Before round 5 (F2Flows): 57 PASS, 33 FAIL, 102 NOT WIRED. Before round 4 (F1Flows): 42 PASS, 25 FAIL, 125 NOT WIRED.
 
@@ -233,8 +233,8 @@ Numbers from the round 4 run (F1Flows); the screen builder column is a run of th
 | 9 | Attachment chip remove | click | Removes the attachment. | Handler exists (`remove-attachment`). | FAIL (no flow: attachments come only from the system file picker, which the headless window does not answer) |
 | 10 | Model picker | click | `Select model`, `Select effort`, Fast. | Opens; a model or effort choice writes `model` and `model_reasoning_effort` with `config/batchWrite` (the original's `writeModel`); parity: see `parity_composer`. | PASS (`model_picker_popover`, `effort_pick_writes_config`, `parity_composer`) |
 | 11 | Permissions dropdown | click | Ask / Approve for me / Full access / Custom. | Opens. | PASS (`permissions_popover`) |
-| 12 | Submit while running | click | Stop; with text Queue or Steer. | The send button keeps its arrow. | NOT WIRED (`crates/ui/src/composer.rs`) |
-| 13 | Stop | click | `turn/interrupt`. | — | NOT WIRED (`crates/ui/src/composer.rs`, then `crates/app/src/lib.rs`) |
+| 12 | Submit while running | click | Stop; with text Queue or Steer. | Stop appears when the composer is empty. Queue and Steer remain unimplemented. | FAIL (CP-108 follow-up) |
+| 13 | Stop | click | `turn/interrupt`. | Sends the active thread and turn IDs; completion removes Stop. Errors show `Failed to stop chat`. | PASS (`s023::stop_interrupts_only_the_active_turn`) |
 | 14 | Queued message row | click | Steer, Edit, Delete, Retry. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 15 | Submit blocked | error | `Unable to send message`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 16 | Upload in progress | loading | `Files uploading…`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
@@ -242,6 +242,10 @@ Numbers from the round 4 run (F1Flows); the screen builder column is a run of th
 | 18 | Button hover | hover | Ghost hover; tooltip after a delay. | Hover fill; no tooltip. | FAIL (no tooltip: `crates/ui/src/composer.rs`; fill checked by `composer_button_hover`) |
 | 19 | Focus ring | focus ring | Send button ring. | — | NOT WIRED (`crates/ui/src/composer.rs`: no `focus_visible` ring) |
 | 20 | Resize | resize | Below 40rem the editor and footer stack. | Only the 475 px compact footer. | FAIL (`crates/ui/src/composer.rs`) |
+
+The S023 test replays `refs/interactions/s023.json`, recorded from the original renderer with the isolated Linux route1 stub.
+It checks the Stop pixels, request, error toast, focus, completion, and inactive click.
+Firstmate authorized a separate CP-108 follow-up after the corrected recording stub still emitted no `turn/steer` request.
 
 ## 14.6 Diff view
 
@@ -382,3 +386,16 @@ A row above that names a `crates/ui` owner needs that change first. The changes 
 2. `crates/ui/src/diff.rs`: the Changes header controls (source selector, file tree, layout, wrap, refresh), empty, loading and error states.
 3. `crates/ui/src/screens/mobile.rs`: the allow-host, pairing and connected steps (`remoteControl/*`).
 4. Focus-visible rings on the shared buttons (`icon_button`, `pill`, rail items), and tooltips on the composer and sidebar row buttons.
+
+## S016: Thread header
+
+`crates/app/tests/s016.rs` replays `refs/interactions/s016.json` on the Mac headless app.
+The test opens a chat, opens and dismisses `Chat actions`, and checks the header tooltips.
+It checks the title, menu labels, menu pixels, tooltip position, and outgoing thread requests.
+The menu uses the original labels, icons, separators, and shortcuts.
+The `Toggle summary` tooltip stays inside the window.
+The recorded `Chat actions` button has no tooltip.
+
+This slice covers TH-011, TH-013, and TH-036.
+Menu command activation, submenus, and arrow-key navigation belong to the later header slices.
+The recording also retains the delayed `Add scheduled task…` item as an observation of host-dependent state.
