@@ -3,7 +3,7 @@
 
 use super::composer::fixture_composer;
 use crate::composer::{Composer, label, pill};
-use crate::{Shell, icon::icon, rounded_clip, text};
+use crate::{Shell, focus, icon::icon, rounded_clip, text};
 use gpui::{
     AnyView, App, AppContext as _, Context, Corners, Div, Entity, Hsla, IntoElement, ParentElement,
     Render, Styled, Window, div, px,
@@ -40,9 +40,17 @@ pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
 
 /// `Choose project` / `This computer` chip of the utility bar. The pill is `overflow: hidden`:
 /// Skia draws its icon under that AA clip (its padding box; light has no fitted images).
-fn chip(id: &'static str, glyph: &str, s: &'static str, fg: Hsla, t: &Theme) -> Div {
+fn chip(
+    id: &'static str,
+    glyph: &str,
+    s: &'static str,
+    fg: Hsla,
+    t: &Theme,
+    focus: &Entity<focus::ControlFocus>,
+    cx: &App,
+) -> Div {
     div().child(
-        pill(id, t).child(rounded_clip(
+        focus::ring(pill(id, t), focus, Theme::RADIUS_FULL, px(2.), cx).child(rounded_clip(
             px(13.),
             shapes::Corner::Round,
             div()
@@ -59,7 +67,9 @@ fn chip(id: &'static str, glyph: &str, s: &'static str, fg: Hsla, t: &Theme) -> 
 
 /// `Composer utility bar` (`_rail_1hrlq` attached above the composer): project and
 /// environment.
-fn utility_bar(t: &Theme) -> Div {
+fn utility_bar(t: &Theme, window: &mut Window, cx: &mut App) -> Div {
+    let project_focus = focus::handle("choose-project", 0, window, cx);
+    let work_focus = focus::handle("work-in", 0, window, cx);
     div().mx(px(13.)).pb(px(20.)).mb(px(-24.)).child(
         div()
             .px(px(4.))
@@ -94,8 +104,18 @@ fn utility_bar(t: &Theme) -> Div {
                             "Choose project",
                             t.text_tertiary,
                             t,
+                            &project_focus,
+                            cx,
                         ))
-                        .child(chip("work-in", "laptop", "This computer", t.text, t))
+                        .child(chip(
+                            "work-in",
+                            "laptop",
+                            "This computer",
+                            t.text,
+                            t,
+                            &work_focus,
+                            cx,
+                        ))
                         .child(shapes::x_fade(px(16.), px(16.))),
                 ),
             ),
@@ -103,7 +123,7 @@ fn utility_bar(t: &Theme) -> Div {
 }
 
 impl Render for HomeMain {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let hero = div()
             .flex()
@@ -120,7 +140,7 @@ impl Render for HomeMain {
             .flex()
             .flex_col()
             .child(div().h(px(8.)))
-            .child(utility_bar(&t))
+            .child(utility_bar(&t, window, cx))
             .child(self.composer.clone());
         div()
             .size_full()
