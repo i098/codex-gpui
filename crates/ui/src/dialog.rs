@@ -267,11 +267,7 @@ impl Dialog {
                                 .flex()
                                 .justify_end(),
                         )
-                        .child(div().size(px(20.)).ml(px(8.)).child(icon(
-                            "chevron-down",
-                            20.,
-                            label,
-                        ))),
+                        .child(icon("chevron-down", 20., label).ml(px(8.))),
                 )
         };
         div()
@@ -332,11 +328,7 @@ impl Dialog {
                         .flex()
                         .items_center()
                         .child(text("Advanced", 14., 18., 400., label))
-                        .child(div().size(px(20.)).ml(px(4.)).child(icon(
-                            "chevron-down",
-                            20.,
-                            label,
-                        ))),
+                        .child(icon("chevron-down", 20., label).ml(px(4.))),
                 ),
             )
             .child(
@@ -643,31 +635,34 @@ impl Render for Dialog {
                     .h(px(height))
                     .rounded(px(if schedule { 30. } else { 24. }))
                     .overflow_hidden()
-                    .when(schedule, |d| d.bg(t.surface_elevated_secondary))
-                    .when(!schedule, |d| {
-                        d.child(shapes::backdrop_blur(
-                            px(24.),
-                            shapes::Fill::Color,
-                            false,
-                            shapes::Decoration {
-                                radius: Corners::all(px(24.)),
-                                fill: Some(gpui::Hsla {
-                                    a: 0.9,
-                                    ..t.menu_background
-                                }),
-                                shadows: vec![
-                                    crate::composer::shadow(t.border, 0., 0., 0.5, false),
-                                    crate::composer::shadow(
-                                        rgba(0x0000001a).into(),
-                                        4.,
-                                        8.,
-                                        -2.,
-                                        false,
-                                    ),
-                                ],
-                                ..Default::default()
-                            },
-                        ))
+                    .map(|d| {
+                        if !schedule {
+                            d.child(shapes::backdrop_blur(
+                                px(24.),
+                                shapes::Fill::Color,
+                                false,
+                                shapes::Decoration {
+                                    radius: Corners::all(px(24.)),
+                                    fill: Some(gpui::Hsla {
+                                        a: 0.9,
+                                        ..t.menu_background
+                                    }),
+                                    shadows: vec![
+                                        crate::composer::shadow(t.border, 0., 0., 0.5, false),
+                                        crate::composer::shadow(
+                                            rgba(0x0000001a).into(),
+                                            4.,
+                                            8.,
+                                            -2.,
+                                            false,
+                                        ),
+                                    ],
+                                    ..Default::default()
+                                },
+                            ))
+                        } else {
+                            d.bg(t.surface_elevated_secondary)
+                        }
                     })
                     .child(content),
             )
