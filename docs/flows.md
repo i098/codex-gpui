@@ -37,7 +37,12 @@ The rows were not clicked again on the original through `tools/route1`: its `ser
 
 Before round 5 (F2Flows): 57 PASS, 33 FAIL, 102 NOT WIRED. Before round 4 (F1Flows): 42 PASS, 25 FAIL, 125 NOT WIRED.
 
-Last run: 70 flows, 70 passed.
+Last run: 76 flows, 76 passed.
+
+The `scroll_*` flows send wheel events (pixel deltas, a trackpad flick with its momentum events, and wheel lines) to the sidebar sections, the thread, the Changes panel, the Settings nav and page, and the Scheduled page.
+At 1280x320, the largest offset of the sidebar sections is 82 px, the same as in the original.
+This value was recorded through `tools/route1` with a copy of the fixture `CODEX_HOME`.
+The other panes must repaint on the first wheel, stay still past the end, and show the start again.
 
 ## Parity of the states the flows reach
 
@@ -129,7 +134,7 @@ Numbers from the round 4 run (F1Flows); the screen builder column is a run of th
 | 6 | Code Review | click | Navigates to `/pull-requests`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
 | 7 | Sites | click | Navigates to `/sites`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
 | 8 | Profile avatar | click | Opens the profile menu. | Menu above the avatar: `Settings`, `Help` ▸ `Set up mobile`; a click outside or on the avatar closes it. | PASS (`profile_menu_settings`, `profile_menu_dismiss`, `profile_menu_mobile`) |
-| 9 | Rail item hover | hover | Tooltip on the right side with label and shortcut. | Hover fill shows (4716 px repainted); no tooltip. | FAIL (no tooltip: `crates/ui/src/lib.rs` `Shell::rail`; hover fill checked by `rail_hover_fill`) |
+| 9 | Rail item hover | hover | Tooltip on the right side with label and shortcut. | Hover fill shows (4716 px repainted); a tooltip with the item's label opens 200 ms after the pointer enters (at once when another was open), 2 px right of the item; `Explore` and the avatar have none; it closes on leave, press or Escape. | PASS (`rail_hover_fill`; tooltip: `crates/app/tests/f1a.rs` against `refs/interactions/f1a.json`) |
 | 10 | Drag a rail item | click | Reorders pinned items. | — | NOT WIRED (`crates/ui/src/lib.rs` `Shell::rail`) |
 | 11 | Focus ring | focus ring | 2 px ring on the 36×36 button. | No tab stops. | NOT WIRED (`crates/ui/src/lib.rs` `Shell::rail`: no focus handles or `focus_visible` ring) |
 | 12 | Resize | resize | At 1280, 767 and 600 px the rail stays 52 px. | The rail stays and rail Home answers at all 3 widths. | PASS (`resize_three_widths`) |
@@ -154,7 +159,7 @@ Numbers from the round 4 run (F1Flows); the screen builder column is a run of th
 | 14 | `⌘1`…`⌘9` | shortcut | Go to chat N. | Opens Recents row N; `⌘9` past the end does nothing. | PASS (`cmd_digit_goes_to_chat`) |
 | 15 | `⌘⇧[` / `⌘⇧]` | shortcut | Previous / next chat. | Previous / next Recents row. | PASS (`previous_next_chat`, `menu_bar_actions`) |
 | 16 | `⌘⇧S` / `⌘B` | shortcut | Toggle sidebar. | Toggles. | PASS (`sidebar_toggle_keys`) |
-| 17 | Titlebar `Hide sidebar` | click | Collapses the left panel; label changes to `Show sidebar`. | Toggles; the label is a tooltip, which the port does not have. | PASS (`sidebar_toggle_titlebar`) |
+| 17 | Titlebar `Hide sidebar` | click | Collapses the left panel; label changes to `Show sidebar`. | Toggles; tooltip `Toggle sidebar ⇧⌘S` below the button (also `Back ⌘[`, `Forward ⌘]` and the sidebar's `Search ⌘K`). | PASS (`sidebar_toggle_titlebar`; tooltips: `crates/app/tests/f1a.rs`) |
 | 18 | Row focus | focus ring | 2 px ring, offset -2 px. | No tab stops. | NOT WIRED (`crates/ui/src/screens/sidebar.rs` `thread_row`) |
 | 19 | Empty lists | empty | `No projects`, `No chats`; activity `Nothing needs attention`. | Empty `thread/list` gives no Recents (`No chats` branch); `No projects` always. No activity view. | PASS (`sidebar_empty_lists`) |
 | 20 | Lists loading | loading | Activity: `Checking unread chats…`. | — | NOT WIRED (`crates/ui/src/screens/sidebar.rs`: no activity view or loading state) |
@@ -356,4 +361,4 @@ A row above that names a `crates/ui` owner needs that change first. The changes 
 1. `crates/ui/src/thread.rs`: click handlers on the reasoning and command cards, `Reapply`, the user message's hover actions, a find bar, and loading and error views.
 2. `crates/ui/src/diff.rs`: the Changes header controls (source selector, file tree, layout, wrap, refresh), empty, loading and error states.
 3. `crates/ui/src/screens/mobile.rs`: the allow-host, pairing and connected steps (`remoteControl/*`).
-4. Tooltips and focus-visible rings on the shared buttons (`icon_button`, `pill`, rail items).
+4. Focus-visible rings on the shared buttons (`icon_button`, `pill`, rail items), and tooltips on the composer and sidebar row buttons.

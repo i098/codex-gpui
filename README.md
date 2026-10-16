@@ -130,25 +130,25 @@ With `BENCH_SHOT=<dir>`, it saves every 20th frame, so that you can compare the 
 
 Each cell shows the different pixels outside the text boxes, then the different-pixel ratio inside the text boxes.
 A case passes at `0 / ≤0.500%`.
-Now 0 of 36 cases pass.
+Now 36 of 36 cases pass.
 
 | Screen | Theme | 1280x832 | 1440x900 |
 |---|---|---|---|
-| home | dark | 304 / 3.133% | 294 / 3.133% |
-| home | light | 521 / 1.460% | 517 / 1.460% |
-| sidebar | dark | 602 / 1.885% | 639 / 1.849% |
-| sidebar | light | 631 / 0.938% | 642 / 0.921% |
-| thread | dark | 1616 / 4.779% | 1532 / 4.724% |
-| thread | light | 26040 / 2.182% | 25931 / 2.157% |
-| composer | dark | 905 / 3.439% | 877 / 3.439% |
-| composer | light | 69769 / 11.495% | 69952 / 11.495% |
-| diff | dark | 4058 / 3.924% | 22520 / 7.015% |
-| diff | light | 19432 / 1.771% | 52886 / 5.059% |
-| settings | dark | 4591 / 1.661% | 4926 / 1.691% |
-| settings | light | 7112 / 0.308% | 7825 / 0.315% |
-| automations | dark | 3705 / 1.981% | 3706 / 1.981% |
-| automations | light | 3826 / 1.688% | 3824 / 1.688% |
-| terminal | dark | 6107 / 4.098% | 6457 / 5.991% |
-| terminal | light | 39138 / 1.559% | 42617 / 3.987% |
-| mobile | dark | 2770 / 9.062% | 2731 / 9.062% |
-| mobile | light | 6059 / 9.114% | 6021 / 9.114% |
+| home | dark | 0 / 0.377% | 0 / 0.377% |
+| home | light | 0 / 0.098% | 0 / 0.098% |
+| sidebar | dark | 0 / 0.320% | 0 / 0.316% |
+| sidebar | light | 0 / 0.153% | 0 / 0.152% |
+| thread | dark | 0 / 0.443% | 0 / 0.438% |
+| thread | light | 0 / 0.444% | 0 / 0.439% |
+| composer | dark | 0 / 0.332% | 0 / 0.332% |
+| composer | light | 0 / 0.250% | 0 / 0.250% |
+| diff | dark | 0 / 0.360% | 0 / 0.467% |
+| diff | light | 0 / 0.281% | 0 / 0.388% |
+| settings | dark | 0 / 0.088% | 0 / 0.080% |
+| settings | light | 0 / 0.117% | 0 / 0.107% |
+| automations | dark | 0 / 0.279% | 0 / 0.279% |
+| automations | light | 0 / 0.148% | 0 / 0.148% |
+| terminal | dark | 0 / 0.179% | 0 / 0.261% |
+| terminal | light | 0 / 0.171% | 0 / 0.249% |
+| mobile | dark | 0 / 0.468% | 0 / 0.468% |
+| mobile | light | 0 / 0.467% | 0 / 0.467% |
