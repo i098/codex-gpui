@@ -17,7 +17,7 @@ use std::hash::{DefaultHasher, Hash as _, Hasher as _};
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::{Arc, LazyLock, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bridge::Event;
 use bridge::types::{
@@ -27,11 +27,13 @@ use bridge::types::{
 use gpui::{
     Action, AnyView, App, Bounds, ClipboardItem, Context, Corners, Div, FontWeight, Hsla, Image,
     ImageFormat, IntoElement, ParentElement, Pixels, Render, Rgba, ScrollHandle, SharedString,
-    Size, Styled, Task, TextRun, Window, div, font, prelude::*, px, relative, rgb, rgba, white,
+    Size, Styled, Task, TextRun, TransformationMatrix, Window, canvas, div, font, prelude::*, px,
+    radians, relative, rgb, rgba, white,
 };
 use theme::{ActiveTheme as _, Appearance, Theme};
 
 use crate::icon::icon;
+use crate::motion::{self, HoverFade};
 use crate::screens::sidebar::title;
 use crate::{MONO, SANS, composer::shadow, icon_button, layout_color, over, text};
 
@@ -51,6 +53,16 @@ use markdown::{markdown, tones};
 
 /// `--thread-content-max-width`
 const CONTENT_MAX_WIDTH: Pixels = px(768.);
+
+/// One turn's `Worked for` disclosure (`refs/interactions/ms6a.json`): the chevron rotates
+/// 0 -> 90 deg in 150 ms `ease-in-out`; the content clips its height, fades and slides 8 px
+/// over 300 ms `ease-enter` on open and 150 ms `ease-enter-snappy` on close (instant under
+/// reduced motion). `height` is the content's measured natural height.
+struct Disclosure {
+    chevron: HoverFade,
+    content: HoverFade,
+    height: Rc<Cell<f32>>,
+}
 
 /// Wall clock for timestamps: the local UTC offset and, for fixture screens, a pinned "now".
 #[derive(Clone, Copy)]
@@ -86,6 +98,7 @@ pub struct ThreadView {
     clock: Clock,
     composer: AnyView,
     _tick: Option<Task<()>>,
+    stream_fades: HashMap<String, Vec<StreamSegment>>,
     /// Open disclosures: turns whose `Worked for` is expanded, by turn id, and activity groups
     /// whose rows show, by the id of their first item.
     expanded: HashSet<String>,
@@ -93,6 +106,12 @@ pub struct ThreadView {
     /// The turns as last laid out, to stand in for the ones far off screen.
     laid_out: Rc<RefCell<LaidOut>>,
     find: Option<FindState>,
+}
+
+struct StreamSegment {
+    range: std::ops::Range<usize>,
+    started_at: Instant,
+    alpha: f32,
 }
 
 /// Where the last frame laid out each turn, in the scroller's content (top, height), and the
@@ -217,6 +236,7 @@ impl ThreadView {
             clock,
             composer,
             _tick: None,
+            stream_fades: HashMap::new(),
             expanded: HashSet::new(),
             scroll: ScrollHandle::new(),
             laid_out: Rc::default(),
@@ -862,7 +882,17 @@ impl ThreadView {
                     .iter_mut()
                     .find(|i| id.is_some() && item_id(i) == id.as_deref())
                 {
-                    Some(item) => *item = n.item,
+                    Some(item) => {
+                        if let (
+                            ThreadItem::AgentMessage { id, text: before },
+                            ThreadItem::AgentMessage { text: after, .. },
+                        ) = (&*item, &n.item)
+                            && before != after
+                        {
+                            self.stream_fades.remove(id);
+                        }
+                        *item = n.item;
+                    }
                     None => turn.items.push(n.item),
                 }
             }
@@ -872,7 +902,21 @@ impl ThreadView {
                     return;
                 };
                 match self.item_mut(&n.item_id) {
-                    Some(ThreadItem::AgentMessage { text, .. }) => text.push_str(&n.delta),
+                    Some(ThreadItem::AgentMessage { text, .. }) => {
+                        let start = text.len();
+                        text.push_str(&n.delta);
+                        let end = text.len();
+                        if start != end && !cx.reduce_motion() {
+                            self.stream_fades
+                                .entry(n.item_id)
+                                .or_default()
+                                .push(StreamSegment {
+                                    range: start..end,
+                                    started_at: cx.background_executor().now(),
+                                    alpha: 0.,
+                                });
+                        }
+                    }
                     Some(ThreadItem::CommandExecution {
                         aggregated_output, ..
                     }) => aggregated_output.get_or_insert_default().push_str(&n.delta),
@@ -917,7 +961,14 @@ impl ThreadView {
         }));
     }
 
-    fn turn(&self, turn: &Turn, last: bool, window: &Window, t: &Theme, cx: &Context<Self>) -> Div {
+    fn turn(
+        &self,
+        turn: &Turn,
+        last: bool,
+        window: &mut Window,
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let group = SharedString::from(format!("turn-{}", turn.id));
         let mut col = div().group(group.clone()).flex().flex_col();
         let user = turn.items.iter().find_map(|i| match i {
@@ -962,26 +1013,82 @@ impl ThreadView {
                     })
                 });
             let id = turn.id.clone();
+            let state = window.use_keyed_state(group.clone(), cx, |_, cx| {
+                let settled = open as u8 as f32;
+                (
+                    cx.background_executor().now(),
+                    Disclosure {
+                        chevron: HoverFade::settled(settled),
+                        content: HoverFade::settled(settled),
+                        height: Rc::default(),
+                    },
+                )
+            });
+            let (angle, progress, height) = {
+                let (epoch, d) = state.read(cx);
+                let now = cx.background_executor().now() - *epoch;
+                if d.chevron.is_animating(now) || d.content.is_animating(now) {
+                    window.request_animation_frame();
+                }
+                (
+                    d.chevron.value(now) * 90.,
+                    d.content.value(now),
+                    d.height.clone(),
+                )
+            };
             col = col.child(div().h(px(16.))).child(
-                disclosure(format!("Worked for {}", duration(secs)), open, window, t)
+                disclosure(format!("Worked for {}", duration(secs)), angle, window, t)
                     .id(group.clone())
                     .on_click(cx.listener(move |view, _, _, cx| {
-                        if !view.expanded.remove(&id) {
+                        let open = !view.expanded.remove(&id);
+                        if open {
                             view.expanded.insert(id.clone());
                         }
+                        let instant = motion::reduced(cx);
+                        state.update(cx, |(epoch, d), cx| {
+                            let now = cx.background_executor().now() - *epoch;
+                            let target = open as u8 as f32;
+                            d.chevron
+                                .transition(target, now, motion::BASIC, motion::EASE_IN_OUT);
+                            let (duration, ease) = match (instant, open) {
+                                (true, _) => (Duration::ZERO, motion::EASE_ENTER),
+                                (false, true) => (motion::RELAXED, motion::EASE_ENTER),
+                                (false, false) => (motion::BASIC, motion::EASE_ENTER_SNAPPY),
+                            };
+                            d.content.transition(target, now, duration, ease);
+                        });
                         cx.notify();
                     })),
             );
-            if open {
-                col = col
+            if progress > 0. {
+                let natural = height.get();
+                let content = div()
+                    .relative()
+                    .child(
+                        canvas(
+                            move |b, _, _| height.set(b.size.height.into()),
+                            |_, (), _, _| {},
+                        )
+                        .absolute()
+                        .size_full(),
+                    )
                     .child(div().h(px(16.)))
                     .child(self.activity(work, false, window, t, cx));
+                col = col.child(if progress < 1. {
+                    div()
+                        .overflow_hidden()
+                        .h(px(natural * progress))
+                        .child(content.mt(px(-8. * (1. - progress))).opacity(progress))
+                } else {
+                    content
+                });
             }
             col = col.child(div().h(px(16.))).child(markdown::with_find(
                 answer,
                 window,
                 t,
                 self.find_paint(item).as_ref(),
+                self.fades(item),
             ));
             if let Some(card) = diff_card(&turn.id, &turn.items, window, t) {
                 col = col.child(div().mt(px(12.)).pb(px(8.)).child(card));
@@ -994,7 +1101,7 @@ impl ThreadView {
                 .child(div().h(px(16.)))
                 .child(disclosure(
                     format!("Working for {}", duration(secs)),
-                    false,
+                    0.,
                     window,
                     t,
                 ))
@@ -1002,6 +1109,14 @@ impl ThreadView {
         }
         let running = turn.status == TurnStatus::InProgress;
         col.child(self.activity(work, running, window, t, cx))
+    }
+
+    /// The still-fading streamed segments of agent message `item`.
+    fn fades(&self, item: &str) -> &[StreamSegment] {
+        self.stream_fades
+            .get(item)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
     }
 
     /// [`activity`], with find highlights painted over the agent messages while find has
@@ -1019,7 +1134,15 @@ impl ThreadView {
             .as_ref()
             .is_none_or(|find| find.matches.is_empty())
         {
-            return activity(items, running, &self.expanded, window, t, cx);
+            return activity(
+                items,
+                running,
+                &self.expanded,
+                &self.stream_fades,
+                window,
+                t,
+                cx,
+            );
         }
         let mut column = div().flex().flex_col().gap(px(16.));
         let mut start = 0;
@@ -1030,6 +1153,7 @@ impl ThreadView {
                         &items[start..index],
                         running,
                         &self.expanded,
+                        &self.stream_fades,
                         window,
                         t,
                         cx,
@@ -1040,6 +1164,7 @@ impl ThreadView {
                     window,
                     t,
                     self.find_paint(id).as_ref(),
+                    self.fades(id),
                 ));
                 start = index + 1;
             }
@@ -1049,6 +1174,7 @@ impl ThreadView {
                 &items[start..],
                 running,
                 &self.expanded,
+                &self.stream_fades,
                 window,
                 t,
                 cx,
@@ -1081,6 +1207,20 @@ impl ThreadView {
 
 impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let now = cx.background_executor().now();
+        self.stream_fades.retain(|_, segments| {
+            segments.retain_mut(|segment| {
+                let elapsed = now.saturating_duration_since(segment.started_at);
+                segment.alpha = crate::motion::EASE_STREAMING(
+                    elapsed.as_secs_f32() / crate::motion::STREAMING_TEXT.as_secs_f32(),
+                );
+                !cx.reduce_motion() && elapsed < crate::motion::STREAMING_TEXT
+            });
+            !segments.is_empty()
+        });
+        if !self.stream_fades.is_empty() {
+            window.request_animation_frame();
+        }
         self.refresh_find();
         let t = cx.theme().clone();
         let n = self.turns.len();

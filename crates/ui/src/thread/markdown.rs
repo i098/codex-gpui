@@ -52,8 +52,10 @@ pub(super) fn tones(t: &Theme) -> Tones {
     }
 }
 
-use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
-use std::iter::Peekable;
+use pulldown_cmark::{
+    CodeBlockKind, Event, HeadingLevel, OffsetIter, Options, Parser, Tag, TagEnd,
+};
+use std::{iter::Peekable, ops::Range};
 
 const OPTIONS: Options = Options::ENABLE_TASKLISTS.union(Options::ENABLE_STRIKETHROUGH);
 
@@ -86,22 +88,25 @@ pub(super) fn plain(source: &str) -> String {
         .collect()
 }
 
-/// The parser events; `start` is the [`plain`] offset of the last consumed one.
+/// The parser events; `start` is the [`plain`] offset of the last consumed one and `range`
+/// its source bytes.
 struct Events<'a> {
-    inner: Peekable<Parser<'a>>,
+    inner: Peekable<OffsetIter<'a>>,
     offset: usize,
     start: usize,
+    range: Range<usize>,
 }
 
 impl<'a> Events<'a> {
     fn peek(&mut self) -> Option<&Event<'a>> {
-        self.inner.peek()
+        self.inner.peek().map(|(event, _)| event)
     }
 
     fn next(&mut self) -> Option<Event<'a>> {
-        let event = self.inner.next()?;
+        let (event, range) = self.inner.next()?;
         self.start = self.offset;
         self.offset += plain_text(&event).map_or(0, str::len);
+        self.range = range;
         Some(event)
     }
 }
@@ -131,21 +136,38 @@ impl Default for Typography {
 
 /// GFM blocks share the existing code chips and file links.
 /// Task markers are read-only, as in the original assistant messages.
-pub(super) fn markdown(source: &str, window: &Window, t: &Theme) -> Div {
-    with_find(source, window, t, None)
+/// `segments` are the still-fading streamed byte ranges of `source`.
+pub(super) fn markdown(
+    source: &str,
+    window: &Window,
+    t: &Theme,
+    segments: &[StreamSegment],
+) -> Div {
+    with_find(source, window, t, None, segments)
 }
 
 /// [`markdown`] with the find matches of this answer highlighted.
-pub(super) fn with_find(source: &str, window: &Window, t: &Theme, find: Option<&FindPaint>) -> Div {
+pub(super) fn with_find(
+    source: &str,
+    window: &Window,
+    t: &Theme,
+    find: Option<&FindPaint>,
+    segments: &[StreamSegment],
+) -> Div {
     Markdown {
         events: Events {
-            inner: Parser::new_ext(source, OPTIONS).peekable(),
+            inner: Parser::new_ext(source, OPTIONS)
+                .into_offset_iter()
+                .peekable(),
             offset: 0,
             start: 0,
+            range: 0..0,
         },
         window,
         theme: t,
         find,
+        source,
+        segments,
         block_index: 0,
     }
     .blocks(Typography::default(), 0)
@@ -157,6 +179,8 @@ struct Markdown<'a> {
     window: &'a Window,
     theme: &'a Theme,
     find: Option<&'a FindPaint>,
+    source: &'a str,
+    segments: &'a [StreamSegment],
     block_index: usize,
 }
 
@@ -366,6 +390,7 @@ impl Markdown<'_> {
             match self.events.next().expect("peeked event") {
                 Event::Text(s) | Event::Html(s) | Event::InlineHtml(s) => {
                     if self.find.is_none()
+                        && self.segments.is_empty()
                         && style.size == 14.
                         && style.line_height == 22.75
                         && !style.italic
@@ -509,7 +534,8 @@ impl Markdown<'_> {
     fn word(&self, s: &str, at: Option<usize>, style: Typography) -> Div {
         let color = style.color.unwrap_or(self.theme.text);
         let find = self.find.zip(at);
-        if !style.italic && !style.strike && find.is_none() {
+        let fades = self.fades(s);
+        if !style.italic && !style.strike && find.is_none() && fades.is_empty() {
             return measured(
                 self.window,
                 s.to_owned(),
@@ -545,13 +571,54 @@ impl Markdown<'_> {
         let label = run_style(style.size, style.line_height, style.weight, color)
             .when(style.italic, |d| d.italic())
             .when(style.strike, |d| d.line_through());
+        // ponytail: a find highlight replaces the fade of its word; both at once is rare.
         div().flex_none().w(width).child(match find {
             Some((find, at)) => label.child(find.text(s, at)),
-            None => label.child(s.to_owned()),
+            None => label.child(StyledText::new(s.to_owned()).with_highlights(fades)),
         })
     }
 
+    /// The fade of each still-streaming part of `text`, by its position in [`Self::source`].
+    fn fades(&self, text: &str) -> Vec<(Range<usize>, gpui::HighlightStyle)> {
+        if self.segments.is_empty() {
+            return Vec::new();
+        }
+        let fade = |alpha| gpui::HighlightStyle {
+            fade_out: Some(1. - alpha),
+            ..Default::default()
+        };
+        // Borrowed parser text retains its source offsets, including code and Unicode words.
+        if let Some(start) = (text.as_ptr() as usize).checked_sub(self.source.as_ptr() as usize)
+            && start <= self.source.len()
+            && text.len() <= self.source.len() - start
+        {
+            let end = start + text.len();
+            let first = self
+                .segments
+                .partition_point(|segment| segment.range.end <= start);
+            return self.segments[first..]
+                .iter()
+                .take_while(|segment| segment.range.start < end)
+                .map(|segment| {
+                    (
+                        segment.range.start.max(start) - start..segment.range.end.min(end) - start,
+                        fade(segment.alpha),
+                    )
+                })
+                .collect();
+        }
+        // Decoded entities and normalized code appear when their final source byte arrives.
+        let range = &self.events.range;
+        self.segments
+            .iter()
+            .rev()
+            .find(|segment| !range.is_empty() && segment.range.contains(&(range.end - 1)))
+            .map(|segment| vec![(0..text.len(), fade(segment.alpha))])
+            .unwrap_or_default()
+    }
+
     fn code(&self, code: &str, at: usize) -> Div {
+        let fades = self.fades(code);
         let label = match self.find {
             Some(find) => div()
                 .flex_none()
@@ -560,6 +627,14 @@ impl Markdown<'_> {
                     run_style(12.88, 15., 430., self.theme.text)
                         .font_family(MONO)
                         .child(find.text(code, at)),
+                ),
+            None if !fades.is_empty() => div()
+                .flex_none()
+                .w(width(self.window, code, 12.88, 430., Some(MONO)))
+                .child(
+                    run_style(12.88, 15., 430., self.theme.text)
+                        .font_family(MONO)
+                        .child(StyledText::new(code.to_owned()).with_highlights(fades)),
                 ),
             None => measured(
                 self.window,
