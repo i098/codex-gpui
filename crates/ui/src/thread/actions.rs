@@ -1,4 +1,5 @@
 use super::*;
+use crate::composer::Composer;
 use crate::tooltip::{Side, tooltip};
 use gpui::{Entity, FocusHandle, MouseButton, PathBuilder, Stateful, canvas, point};
 
@@ -7,6 +8,8 @@ pub(super) struct UserMessage {
     pub id: SharedString,
     pub message: SharedString,
     pub sent_at: Option<String>,
+    pub thread_id: String,
+    pub editable_turn: Option<String>,
 }
 
 struct MessageActions {
@@ -15,6 +18,7 @@ struct MessageActions {
     focus: FocusHandle,
     copy_focus: FocusHandle,
     reset: Option<Task<()>>,
+    editor: Option<Entity<Composer>>,
 }
 
 impl MessageActions {
@@ -42,6 +46,49 @@ impl MessageActions {
         }));
         cx.notify();
     }
+
+    fn edit(
+        &mut self,
+        message: &str,
+        thread_id: String,
+        turn_id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let owner = cx.weak_entity();
+        self.editor = Some(cx.new(|cx| {
+            let editor = cx.weak_entity();
+            let mut composer = Composer::message_edit(
+                message,
+                move |window, cx| {
+                    owner
+                        .update(cx, |this, cx| {
+                            this.editor = None;
+                            window.blur(cx);
+                            cx.notify();
+                        })
+                        .ok();
+                },
+                window,
+                cx,
+            );
+            composer.on_submit(move |submission, window, cx| {
+                if let Some(editor) = editor.upgrade() {
+                    window.dispatch_action(
+                        Box::new(EditMessage {
+                            thread_id: thread_id.clone(),
+                            turn_id: turn_id.clone(),
+                            message: submission.text.clone(),
+                            editor,
+                        }),
+                        cx,
+                    );
+                }
+            });
+            composer
+        }));
+        cx.notify();
+    }
 }
 
 impl RenderOnce for UserMessage {
@@ -52,12 +99,17 @@ impl RenderOnce for UserMessage {
             focus: cx.focus_handle(),
             copy_focus: cx.focus_handle(),
             reset: None,
+            editor: None,
         });
         let s = state.read(cx);
+        if let Some(editor) = &s.editor {
+            return div().child(editor.clone()).into_any_element();
+        }
         let visible = s.hovered || s.focus.contains_focused(window, cx);
         let copied = s.copied;
         let focus = s.focus.clone();
         let t = cx.theme();
+        let (edit_state, edit_message) = (state.clone(), self.message.clone());
         let color = t.text_tertiary.opacity(if visible { 1. } else { 0. });
         let button = |id: &'static str| {
             div()
@@ -99,14 +151,29 @@ impl RenderOnce for UserMessage {
                         None,
                         Side::Bottom,
                     ))
-                    .child(tooltip(
-                        button("edit-message")
-                            .aria_label("Edit message")
-                            .child(icon("pencil", 16., color)),
-                        "Edit message",
-                        None,
-                        Side::Bottom,
-                    )),
+                    .when_some(self.editable_turn, |d, turn_id| {
+                        d.child(tooltip(
+                            button("edit-message")
+                                .aria_label("Edit message")
+                                .focusable()
+                                .tab_index(0)
+                                .on_click(move |_, window, cx| {
+                                    edit_state.update(cx, |s, cx| {
+                                        s.edit(
+                                            &edit_message,
+                                            self.thread_id.clone(),
+                                            turn_id.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    })
+                                })
+                                .child(icon("pencil", 16., color)),
+                            "Edit message",
+                            None,
+                            Side::Bottom,
+                        ))
+                    }),
             );
         // Keep the existing 30 px reserve: revealing controls must not move the transcript.
         user_bubble(&self.message, t)
@@ -125,6 +192,7 @@ impl RenderOnce for UserMessage {
                 })
             })
             .child(controls)
+            .into_any_element()
     }
 }
 
@@ -189,6 +257,104 @@ fn write_html(pasteboard: &objc2_app_kit::NSPasteboard, html: &str) -> bool {
     }
 }
 
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = thread, no_json)]
+pub struct EditMessage {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub message: String,
+    pub editor: Entity<Composer>,
+}
+
+#[cfg(target_os = "macos")]
+fn response_html(answer: &str) -> String {
+    use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+    use std::fmt::Write as _;
+    let escape = |s: &str| {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+    };
+    let mut html = String::new();
+    let mut events = Parser::new_ext(
+        answer,
+        Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS,
+    )
+    .into_offset_iter();
+    while let Some((event, range)) = events.next() {
+        match event {
+            Event::Start(Tag::Link { dest_url, .. }) => {
+                let mut label = String::new();
+                for (event, _) in events.by_ref() {
+                    match event {
+                        Event::End(TagEnd::Link) => break,
+                        Event::Text(s) | Event::Code(s) => label.push_str(&s),
+                        _ => {}
+                    }
+                }
+                let _ = write!(
+                    html,
+                    "<span data-prompt-link-label=\"{}\" data-prompt-link-href=\"{}\">{}</span>",
+                    escape(&label),
+                    escape(&dest_url),
+                    escape(&answer[range])
+                );
+            }
+            Event::Start(tag) => {
+                if let Some(tag) = response_html_tag(tag.to_end()) {
+                    let _ = write!(html, "<{tag}>");
+                }
+            }
+            Event::End(tag) => {
+                if let Some(tag) = response_html_tag(tag) {
+                    let _ = write!(html, "</{tag}>");
+                }
+            }
+            Event::Code(s) => {
+                let _ = write!(html, "<code dir=\"ltr\">{}</code>", escape(&s));
+            }
+            Event::Text(s) | Event::Html(s) | Event::InlineHtml(s) => {
+                let _ = write!(html, "<span>{}</span>", escape(&s));
+            }
+            Event::SoftBreak | Event::HardBreak => html.push_str("<br>"),
+            Event::Rule => html.push_str("<hr>"),
+            Event::TaskListMarker(checked) => {
+                html.push_str(if checked {
+                    "<input type=\"checkbox\" disabled checked>"
+                } else {
+                    "<input type=\"checkbox\" disabled>"
+                });
+            }
+            _ => {}
+        }
+    }
+    html
+}
+
+#[cfg(target_os = "macos")]
+fn response_html_tag(tag: pulldown_cmark::TagEnd) -> Option<&'static str> {
+    use pulldown_cmark::{HeadingLevel, TagEnd};
+    Some(match tag {
+        TagEnd::Paragraph => "p",
+        TagEnd::Heading(HeadingLevel::H1) => "h1",
+        TagEnd::Heading(HeadingLevel::H2) => "h2",
+        TagEnd::Heading(HeadingLevel::H3) => "h3",
+        TagEnd::Heading(HeadingLevel::H4) => "h4",
+        TagEnd::Heading(HeadingLevel::H5) => "h5",
+        TagEnd::Heading(HeadingLevel::H6) => "h6",
+        TagEnd::BlockQuote(_) => "blockquote",
+        TagEnd::CodeBlock => "pre",
+        TagEnd::List(true) => "ol",
+        TagEnd::List(false) => "ul",
+        TagEnd::Item => "li",
+        TagEnd::Emphasis => "em",
+        TagEnd::Strong => "strong",
+        TagEnd::Strikethrough => "s",
+        _ => return None,
+    })
+}
+
 /// `Fork chat from here` under a turn: a new chat with the thread up to that turn (its id).
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = thread, no_json)]
@@ -234,22 +400,57 @@ pub(super) fn action_row(
         .h(px(26.))
         .flex()
         .gap(px(2.))
-        .child(
+        .child(tooltip(
             action("thread-copy")
                 .id("copy-response")
+                .aria_label("Copy")
+                .role(gpui::Role::Button)
+                .focusable()
+                .tab_index(0)
                 .on_click(move |_, _, cx| {
-                    cx.write_to_clipboard(ClipboardItem::new_string(answer.clone()))
+                    cx.write_to_clipboard(ClipboardItem::new_string(answer.clone()));
+                    #[cfg(target_os = "macos")]
+                    if !cx.is_test() {
+                        write_html(
+                            &objc2_app_kit::NSPasteboard::generalPasteboard(),
+                            &response_html(&answer),
+                        );
+                    }
                 }),
-        )
-        .child(action("thread-read-aloud"))
-        .child(action("thread-rate"))
-        .child(
+            "Copy response",
+            None,
+            Side::Top,
+        ))
+        .child(tooltip(
+            action("thread-read-aloud")
+                .id("read-response")
+                .aria_label("Read aloud"),
+            "Read aloud",
+            None,
+            Side::Top,
+        ))
+        .child(tooltip(
+            action("thread-rate")
+                .id("rate-response")
+                .aria_label("Rate response"),
+            "Rate response",
+            None,
+            Side::Top,
+        ))
+        .child(tooltip(
             action("thread-fork")
                 .id("fork-thread")
+                .aria_label("Fork chat from here")
+                .role(gpui::Role::Button)
+                .focusable()
+                .tab_index(0)
                 .on_click(move |_, window, cx| {
                     window.dispatch_action(Box::new(ForkThread(turn_id.clone())), cx)
                 }),
-        )
+            "Branch in new chat",
+            None,
+            Side::Top,
+        ))
 }
 
 #[cfg(all(test, target_os = "macos"))]
@@ -257,6 +458,39 @@ mod tests {
     use super::*;
     use objc2_app_kit::{NSPasteboard, NSPasteboardTypeHTML, NSPasteboardTypeString};
     use objc2_foundation::{NSArray, NSString};
+
+    #[test]
+    fn response_copy_matches_recorded_html() {
+        let recording: serde_json::Value =
+            serde_json::from_str(include_str!("../../../../refs/interactions/s006.json")).unwrap();
+        let plain = recording["result"]["clipboard"][0]["text/plain"]
+            .as_str()
+            .unwrap();
+        let html = recording["result"]["clipboard"][0]["text/html"]
+            .as_str()
+            .unwrap();
+        let board = NSPasteboard::pasteboardWithUniqueName();
+        unsafe {
+            board.declareTypes_owner(&NSArray::from_slice(&[NSPasteboardTypeString]), None);
+            assert!(board.setString_forType(&NSString::from_str(plain), NSPasteboardTypeString));
+            assert!(write_html(&board, &response_html(plain)));
+            assert_eq!(
+                board
+                    .stringForType(NSPasteboardTypeString)
+                    .unwrap()
+                    .to_string(),
+                plain
+            );
+            assert_eq!(
+                board
+                    .stringForType(NSPasteboardTypeHTML)
+                    .unwrap()
+                    .to_string(),
+                html
+            );
+            board.clearContents();
+        }
+    }
 
     #[test]
     fn rich_copy_preserves_plain_text_and_escapes_html() {

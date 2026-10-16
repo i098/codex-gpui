@@ -267,6 +267,16 @@ Run `tools/mac.sh -l s028 'cargo test -p app --test s028 -- --nocapture'`.
 The open panel keeps its state across streamed updates and uses `turn/diff/updated` as the authoritative diff.
 Search scope switching and repository-watch sources remain separate inventory slices.
 
+`refs/interactions/s027.json` records the original diff menus, text selection, clipboard writes, and line hover.
+`s027::diff_selection_and_hover_replay` checks forward and reverse text selection and `Cmd+C` without line numbers.
+The original does not change a line's background on hover in this state, despite the DT-014 inventory claim.
+The test compares the port's pixels before and after the same hover.
+The header menu copies the displayed path and collapses or expands the file.
+The body menu copies selected text, absolute paths, or displayed relative paths.
+The body menu also wraps long code lines without changing the copied text.
+The editor entry stays disabled until the native `openIn` service exists.
+Comment actions (S075/S082), file tabs (S186), and external targets remain outside this slice, as firstmate approved.
+
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
@@ -275,15 +285,15 @@ Search scope switching and repository-watch sources remain separate inventory sl
 | 3 | Source selector | click | Uncommitted / Staged / … | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 4 | Show / Hide files | click | Toggles the file tree. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 5 | File tree filter | focus | `Filter files…`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Header click collapses or expands the file; no Copy path or Open. | FAIL (Copy path, Open: `crates/ui/src/diff.rs` `file_header`; collapse checked by `diff_file_header_toggle`) |
+| 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Copy path and Collapse/Expand work. Open in editor remains disabled pending host services. | PARTIAL (`s027::diff_selection_and_hover_replay`) |
 | 7 | Hunk revert / stage | click | Revert, Stage / Unstage hunk. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 8 | Revert all | click | `Revert changes?` dialog. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 9 | Split / unified toggle | click | Switch diff layout. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 10 | Word wrap | click | Toggles wrap. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
+| 10 | Word wrap | click | Toggles wrap. | The body context menu toggles wrap; the header control remains separate work. | PARTIAL (`s027::diff_selection_and_hover_replay`) |
 | 11 | Mark as viewed | click | Collapses, persists. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 12 | `⌘F` in diff | shortcut | `Search diff…`. | Focus the panel, open find, and type a query; matches highlight and update with the diff. | PASS (`s028::streamed_diff_and_find_replay`) |
 | 13 | `⌘L` | shortcut | Go to line. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 14 | Line hover | hover | Line hover background. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
+| 14 | Line hover | hover | No background change in the recorded Last Turn state; no `data-hovered` attribute. | No background change. | PASS (`s027::diff_selection_and_hover_replay`; corrects DT-014) |
 | 15 | No changes | empty | `No file changes yet`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 16 | Not a git repo | empty | `Create a Git repository`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 17 | Loading | loading | `Loading diff`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
@@ -322,6 +332,12 @@ A settings row reports its change to `Root`: `desktop.*` and `features.*` rows p
 
 `Root` opens the page on rail `Scheduled` and on the command menu's `Manage scheduled tasks`. The page data comes from host fetches (`list-automations`, `inbox-items`, `automation-*`) that need the original's Electron host; the port has no host process, so the page shows the empty state with the landing examples.
 
+Slice S035 proves suggestion hover (AM-037) with `refs/interactions/s035.json` and `crates/app/tests/s035.rs`.
+The test replays pointer entry and exit on the existing fixture screen with the original server suggestions.
+It checks the card fill, the adjacent card, and the icon colors against the Linux route1 recording.
+The existing hover implementation already matches; no production code changes are needed.
+Suggestion click (AM-036) waits for F4b authenticated cloud transport.
+
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Rail `Scheduled` | entry | Automations page, `ScheduledSidebar`. | `Route::Scheduled` with `ScheduledSidebar` and the page. | PASS (`rail_scheduled`, `parity_automations`) |
@@ -334,7 +350,7 @@ A settings row reports its change to `Root`: `desktop.*` and `features.*` rows p
 | 8 | Row actions | click | Edit, Run now, Pause, Delete. | — | NOT WIRED (no host: `automation-update`, `automation-delete`) |
 | 9 | Editor fields | focus | Name, Prompt, schedule. | — | NOT WIRED (no host: `automation-create`) |
 | 10 | Previous runs | click | Run chat, mark read, archive. | — | NOT WIRED (no host: `inbox-items`, `automation-run-archive`) |
-| 11 | Row hover | hover | Row highlight. | No task rows; the suggestion cards' hover fill shows (152887 px repainted). | FAIL (no task rows without the host; card hover checked by `scheduled_card_hover`) |
+| 11 | Row hover | hover | Row highlight. | No task rows; suggestion hover matches the original recording. | FAIL (no task rows; suggestion hover passes `s035::suggestion_hover_matches_original`) |
 | 12 | Focus ring | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/screens/automations.rs`) |
 | 13 | No tasks | empty | `No scheduled tasks`, suggestions. | `No scheduled tasks` and the landing examples (no `/suggested_automations` backend). | PASS (`rail_scheduled`, `parity_automations`) |
 | 14 | Loading | loading | `Loading scheduled tasks…`. | — | NOT WIRED (no host: `list-automations`) |
