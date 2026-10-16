@@ -2548,9 +2548,16 @@ impl Interactivity {
                     tab_group = self.tab_index;
                 }
 
+                // A scroller's composited layer is its scrolling contents: Chromium rasters
+                // them in content space, so its tiles (and `crates/shapes`' sprites) start at
+                // the content's origin and keep their pixels while it scrolls.
+                let layer_bounds = match &self.scroll_offset {
+                    Some(offset) => Bounds::new(bounds.origin + *offset.borrow(), bounds.size),
+                    None => bounds,
+                };
                 window.with_element_opacity(
                     style.opacity,
-                    style.layer.then_some((bounds, &style)),
+                    style.layer.then_some((layer_bounds, &style)),
                     |window| {
                             style.paint(bounds, window, cx, |window: &mut Window, cx: &mut App| {
                                 window.with_text_style(style.text_style().cloned(), |window| {

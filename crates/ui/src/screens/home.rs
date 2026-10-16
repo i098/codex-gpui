@@ -142,48 +142,48 @@ impl Render for HomeMain {
             .child(div().h(px(8.)))
             .child(utility_bar(&t, window, cx))
             .child(self.composer.clone());
+        // The page column under the `home-mode-toggle` row is the file drop target.
+        let page = div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .px(px(10.))
+            .pt(px(24.))
+            .child(
+                div()
+                    .flex_grow(1.)
+                    .flex_basis(px(0.))
+                    .flex()
+                    .items_end()
+                    .justify_center()
+                    .pb(px(96.))
+                    .child(hero),
+            )
+            .child(
+                div()
+                    .flex_grow(1.)
+                    .flex_shrink_0()
+                    .flex_basis(px(0.))
+                    .flex()
+                    .flex_col()
+                    .justify_end()
+                    .child(
+                        div()
+                            .pt(px(6.))
+                            .pb(px(16.))
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .child(column),
+                    ),
+            );
         div()
             .size_full()
             .flex()
             .flex_col()
             // `home-mode-toggle` toolbar row.
             .child(div().flex_none().h(px(46.)))
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .flex_col()
-                    .px(px(10.))
-                    .pt(px(24.))
-                    .child(
-                        div()
-                            .flex_grow(1.)
-                            .flex_basis(px(0.))
-                            .flex()
-                            .items_end()
-                            .justify_center()
-                            .pb(px(96.))
-                            .child(hero),
-                    )
-                    .child(
-                        div()
-                            .flex_grow(1.)
-                            .flex_shrink_0()
-                            .flex_basis(px(0.))
-                            .flex()
-                            .flex_col()
-                            .justify_end()
-                            .child(
-                                div()
-                                    .pt(px(6.))
-                                    .pb(px(16.))
-                                    .flex()
-                                    .flex_col()
-                                    .items_center()
-                                    .child(column),
-                            ),
-                    ),
-            )
+            .child(crate::composer::drop_target(page, &self.composer, cx))
     }
 }
