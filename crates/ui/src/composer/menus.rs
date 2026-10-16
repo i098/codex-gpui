@@ -353,7 +353,11 @@ impl Composer {
 
     /// Popover anchored above a footer button. `width`: the box the original centers on the
     /// button (`None`: left-aligned).
-    pub(super) fn anchored_menu(menu: Div, center_width: Option<f32>, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn anchored_menu(
+        menu: Div,
+        center_width: Option<f32>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         // `occlude`: a click in the menu must not reach the editor under it, whose mouse
         // down closes the menu.
         let menu = div()

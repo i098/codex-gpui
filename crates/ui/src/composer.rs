@@ -617,7 +617,6 @@ pub(crate) fn popover(t: &Theme, width: f32, content: impl FnOnce(Div) -> Div) -
         .child(surface)
 }
 
-
 /// Width the original's popper positions the effort menu with, centered on the model button:
 /// in refs/composer its 256 px box sits 1.19 px left of the button's center, snapped to
 /// device px.

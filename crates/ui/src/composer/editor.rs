@@ -125,7 +125,12 @@ impl Composer {
         self.move_to(to, cx);
     }
 
-    pub(super) fn select_all(&mut self, _: &crate::SelectAll, _: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn select_all(
+        &mut self,
+        _: &crate::SelectAll,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.selected_range = 0..self.content.len();
         self.selection_reversed = false;
         cx.notify();
@@ -149,7 +154,12 @@ impl Composer {
         }
     }
 
-    pub(super) fn on_mouse_down(&mut self, e: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn on_mouse_down(
+        &mut self,
+        e: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         window.focus(&self.focus_handle, cx);
         self.is_selecting = true;
         self.menu = None;
@@ -165,7 +175,12 @@ impl Composer {
         self.is_selecting = false;
     }
 
-    pub(super) fn on_mouse_move(&mut self, e: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn on_mouse_move(
+        &mut self,
+        e: &MouseMoveEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.is_selecting {
             self.select_to(self.index_for_point(e.position), cx);
         }
