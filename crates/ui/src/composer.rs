@@ -958,12 +958,11 @@ pub fn drop_target(target: Div, composer: &Entity<Composer>, cx: &App) -> Div {
             .child(
                 div()
                     .relative()
-                    .px(px(12.))
-                    .py(px(4.))
-                    .border(px(1.))
-                    .border_color(gpui::transparent_black())
+                    // `px-3 py-1` plus the 1 px border, painted by the decoration.
+                    .px(px(13.))
+                    .py(px(5.))
                     .child(shapes::decoration(pill))
-                    .child(text("Drop to attach", 13., 40., 430., t.text)),
+                    .child(text("Drop to attach", 13., 18.5714, 430., t.text)),
             ),
     )
 }
