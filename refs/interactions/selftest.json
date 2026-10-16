@@ -1,0 +1,193 @@
+{
+  "name": "selftest (recording 01-sidebar-row-hover)",
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 1,
+    "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+    "theme": "dark",
+    "hoverEmulated": true
+  },
+  "steps": [
+    {
+      "type": "hover",
+      "target": {
+        "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Change the greeting\"]",
+        "text": "Change the greeting in hello.py to \"Hello, Codex\".",
+        "bbox": {
+          "x": 60,
+          "y": 290,
+          "w": 272,
+          "h": 30
+        }
+      },
+      "at": {
+        "x": 150,
+        "y": 305
+      }
+    },
+    {
+      "type": "hover",
+      "target": {
+        "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Change the greeting\"] [aria-label=\"Pin chat\"]",
+        "bbox": {
+          "x": 276,
+          "y": 295,
+          "w": 20,
+          "h": 20
+        }
+      }
+    }
+  ],
+  "result": {
+    "dom": [
+      {
+        "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Change the greeting\"]",
+        "state": "rest",
+        "bbox": {
+          "x": 60,
+          "y": 290,
+          "w": 272,
+          "h": 30
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(255, 255, 255) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Change the greeting\"]",
+        "state": "hover",
+        "bbox": {
+          "x": 60,
+          "y": 290,
+          "w": 272,
+          "h": 30
+        },
+        "computed": {
+          "backgroundColor": "rgba(255, 255, 255, 0.08)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(255, 255, 255) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        },
+        "note": "class hover:bg-primary-ghost-hover -> rgba(255,255,255,0.08) in dark"
+      },
+      {
+        "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Change the greeting\"] .opacity-0.group-hover\\:opacity-100",
+        "state": "rest->hover",
+        "note": "action group (absolute end-0, w 52) opacity 0 -> 1 on row hover, row focus-visible or focus inside",
+        "children": [
+          {
+            "aria": "Pin chat",
+            "bbox": {
+              "x": 276,
+              "y": 295,
+              "w": 20,
+              "h": 20
+            }
+          },
+          {
+            "aria": "Archive chat",
+            "bbox": {
+              "x": 304,
+              "y": 295,
+              "w": 20,
+              "h": 20
+            }
+          }
+        ]
+      },
+      {
+        "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Change the greeting\"] ._track_a3okg_28",
+        "state": "hover",
+        "note": "overflowing title scrolls as a marquee on hover (animation _marqueeTextScroll, 4.958s for this title; translateX ~ -72px at sample), viewport gets fade-right mask",
+        "computed": [
+          {
+            "cls": "_clipViewport_a3okg_20 _overflowingViewport_a3okg_40",
+            "sl": 0,
+            "tr": "none",
+            "an": "_marqueeTextFadeRightMask_a3okg_102",
+            "dur": "4.958s"
+          },
+          {
+            "cls": "_track_a3okg_28 _scrolling_a3okg_66",
+            "sl": 0,
+            "tr": "matrix(1, 0, 0, 1, -71.7648, 0)",
+            "an": "_marqueeTextScroll_a3okg_102",
+            "dur": "4.958s"
+          }
+        ]
+      },
+      {
+        "selector": "[role=tooltip] (row hover card)",
+        "text": "Change the greeting in hello.py to \"Hello, Codex\". | 12h | proj",
+        "bbox": {
+          "x": 335,
+          "y": 291,
+          "w": 320,
+          "h": 78
+        },
+        "note": "appears 150-300 ms after row hover, right of sidebar; title, host icon + relative time, project folder; closes on leave (<300 ms)",
+        "samples": [
+          {
+            "ms": 50,
+            "n": 0
+          },
+          {
+            "ms": 150,
+            "n": 0
+          },
+          {
+            "ms": 300,
+            "n": 1
+          },
+          {
+            "ms": 500,
+            "n": 1
+          },
+          {
+            "ms": 800,
+            "n": 1
+          },
+          {
+            "ms": 1200,
+            "n": 1
+          },
+          {
+            "ms": 2000,
+            "n": 1
+          }
+        ]
+      },
+      {
+        "selector": "[role=tooltip] (Pin chat)",
+        "text": "Pin chat",
+        "bbox": {
+          "x": 249,
+          "y": 263,
+          "w": 75,
+          "h": 30
+        },
+        "note": "above the button; shown <=100 ms because a tooltip was already open (delay group); Archive chat same"
+      }
+    ],
+    "requests": [
+      {
+        "svc": "windowNavigation.setHistorySwipeNavigationState",
+        "note": "x3, sent on any mouse move; not interaction-specific"
+      }
+    ],
+    "state": {
+      "route": "home",
+      "selectedRail": "home",
+      "commandMenu": false
+    },
+    "requestsExact": true
+  }
+}
