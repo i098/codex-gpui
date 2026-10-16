@@ -1,0 +1,1660 @@
+{
+  "name": "f3b",
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 1,
+    "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+    "theme": "dark",
+    "hoverEmulated": true
+  },
+  "steps": [
+    {
+      "type": "key",
+      "key": "Meta+/",
+      "portKey": "cmd-/",
+      "after": "shortcuts-open",
+      "bridge": {
+        "type": "run-command",
+        "id": "showKeyboardShortcuts"
+      },
+      "note": "Electron accelerator replayed through the original run-command bridge."
+    },
+    {
+      "type": "type",
+      "text": "archive",
+      "after": "shortcuts-filter"
+    },
+    {
+      "type": "key",
+      "key": "Control+a",
+      "portKey": "cmd-a"
+    },
+    {
+      "type": "type",
+      "text": "zzzz-no-shortcut",
+      "after": "shortcuts-no-match"
+    },
+    {
+      "type": "key",
+      "key": "Escape",
+      "portKey": "escape",
+      "after": "shortcuts-escape"
+    },
+    {
+      "type": "key",
+      "key": "Meta+/",
+      "portKey": "cmd-/",
+      "bridge": {
+        "type": "run-command",
+        "id": "showKeyboardShortcuts"
+      },
+      "note": "Electron accelerator replayed through the original run-command bridge."
+    },
+    {
+      "type": "click",
+      "at": {
+        "x": 100,
+        "y": 400
+      },
+      "after": "shortcuts-outside"
+    },
+    {
+      "type": "key",
+      "key": "Meta+w",
+      "portKey": "cmd-w",
+      "after": "close-open",
+      "bridge": {
+        "service": "windowCloseConfirmation",
+        "method": "confirm"
+      },
+      "note": "Called the original renderer service over its Capn Web MessagePort."
+    },
+    {
+      "type": "key",
+      "key": "Escape",
+      "portKey": "escape",
+      "after": "close-escape"
+    },
+    {
+      "type": "key",
+      "key": "Meta+w",
+      "portKey": "cmd-w",
+      "bridge": {
+        "service": "windowCloseConfirmation",
+        "method": "confirm"
+      },
+      "note": "Called the original renderer service over its Capn Web MessagePort."
+    },
+    {
+      "type": "click",
+      "at": {
+        "x": 100,
+        "y": 400
+      },
+      "after": "close-outside"
+    },
+    {
+      "type": "key",
+      "key": "Meta+w",
+      "portKey": "cmd-w",
+      "bridge": {
+        "service": "windowCloseConfirmation",
+        "method": "confirm"
+      },
+      "note": "Called the original renderer service over its Capn Web MessagePort."
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "Do not ask me again",
+        "bbox": {
+          "x": 450,
+          "y": 421,
+          "w": 14,
+          "h": 14
+        }
+      }
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "Cancel",
+        "bbox": {
+          "x": 610,
+          "y": 449,
+          "w": 80,
+          "h": 32
+        }
+      },
+      "after": "close-cancel-checked"
+    }
+  ],
+  "result": {
+    "dom": [
+      {
+        "after": "shortcuts-open",
+        "dialog": {
+          "tag": "div",
+          "text": "Keyboard shortcuts\nSearch keyboard shortcuts\nChat\nNew chat\n⌘N\n⇧⌘O\nArchive chat\n⇧⌘A\nNew standalone chat\n⌥⌘O\nToggle pin\n⌥⌘P\nNavigation\nFind\n⌘F\nFocus tab 1\n⌘1\nFocus tab 2\n⌘2\nFocus tab 3\n⌘3\nFocus tab 4\n⌘4\nFocus tab 5\n⌘5\nFocus tab 6\n⌘6\nFocus tab 7\n⌘7\nFocus tab 8\n⌘8\nFocus tab 9\n⌘9\nBack\n⌘[\nMouse Back\nForward\n⌘]\nMouse Forward\nNext recently viewed chat\n⌃Tab\nNext tab\n⌃Tab\n⇧⌘]\n⌥⌘→\nNext chat\n⇧⌘]\n⌥⌘→\nNext chat needing attention\n⌥⌘A\nOpen your dot\n⌘.\nPrevious recently viewed chat\n⌃⇧Tab\nPrevious tab\n⌃⇧Tab\n⇧⌘[\n⌥⌘←\nPrevious chat\n⇧⌘[\n⌥⌘←\nGo to recent chat 1\n⌥⌘1\nGo to recent chat 2\n⌥⌘2\nGo to recent chat 3\n⌥⌘3\nGo to recent chat 4\n⌥⌘4\n⇧⌘9\nGo to recent chat 5\n⌥⌘5\n⇧⌘8\nGo to recent chat 6\n⌥⌘6\nToggle activity view\n⌥⌘U\nPanels\nOpen browser tab\n⌘T\nReopen closed tab\n⇧⌘T\nNew tab in full view\n⇧⌘F\nCycle workspace layout\n⇧⌘B\nToggle bottom panel\n⌘J\nToggle navigation panel\n⇧⌘E\nToggle sidebar\n⇧⌘S\n⌘B\nNew tab\n⌥⌘B\nOpen terminal\n⌃`\nProject\nOpen folder\n⌘O\nApp\nClear all unreads\n⇧Esc\nShow Mini\n⌥Space\nSettings\n⌘,\nGeneral\nClose other tabs\n⌥⌘W\nClose Tab\n⌘W\nClose\n⌘W\nSelect effort\n⌃⇧M\nOpen project picker\n⌥⇧⌘O\nOpen recent models\n⌃⌘M\nToggle voice chat\n⌃⇧V\nSend message in background\n⌘⏎\nCopy conversation path\n⌥⇧⌘C\nCopy deeplink\n⌥⌘L\nCopy working directory\n⇧⌘C\nForce Reload Browser Page\n⇧⌘R\nVoice in Mini\n⌥V\nOpen command menu\n⌘K\n⇧⌘P\nReload Browser Page\n⌘R\nRename chat\n⌥⌘R\nScreenshot selection to current chat\n⌃⇧4\nScreenshot selection to new chat\n⌃⌥⇧4\nSearch Files…\n⌘P\nShow keyboard shortcuts\n⌘/\nGo to chat 1\n⌃1\nGo to chat 2\n⌃2\nGo to chat 3\n⌃3\nGo to chat 4\n⌃4\nGo to chat 5\n⌃5\nGo to chat 6\n⌃6\nGo to chat 7\n⌃7\nGo to chat 8\n⌃8\nGo to chat 9\n⌃9\nToggle Notch\n⌥C\nClose dialog",
+          "aria": null,
+          "role": "dialog",
+          "bbox": {
+            "x": 340,
+            "y": 136,
+            "w": 600,
+            "h": 560
+          },
+          "computed": {
+            "backgroundColor": "oklab(0.297161 0.0000135154 0.00000594556 / 0.9)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(255, 255, 255, 0.082) 0px 0px 0px 0.5px, rgba(0, 0, 0, 0.1) 0px 4px 8px -2px",
+            "cursor": "auto"
+          }
+        },
+        "focus": {
+          "tag": "input",
+          "text": "",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 397,
+            "y": 203,
+            "w": 512,
+            "h": 18
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 2px",
+            "boxShadow": "none",
+            "cursor": "text"
+          }
+        },
+        "inputs": [
+          {
+            "tag": "input",
+            "text": "",
+            "aria": null,
+            "role": null,
+            "bbox": {
+              "x": 397,
+              "y": 203,
+              "w": 512,
+              "h": 18
+            },
+            "computed": {
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(238, 238, 238) none 2px",
+              "boxShadow": "none",
+              "cursor": "text"
+            },
+            "placeholder": "Search shortcuts",
+            "value": ""
+          }
+        ],
+        "buttons": [
+          {
+            "tag": "button",
+            "text": "Close dialog",
+            "aria": null,
+            "role": null,
+            "bbox": {
+              "x": 900,
+              "y": 152,
+              "w": 24,
+              "h": 24
+            },
+            "computed": {
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "color": "oklab(0.999994 0.0000455677 0.0000200868 / 0.8)",
+              "opacity": "1",
+              "outline": "oklab(0.999994 0.0000455677 0.0000200868 / 0.8) none 3px",
+              "boxShadow": "none",
+              "cursor": "default"
+            }
+          }
+        ],
+        "sections": [
+          {
+            "title": "Chat",
+            "bbox": {
+              "x": 360,
+              "y": 240,
+              "w": 538,
+              "h": 184
+            }
+          },
+          {
+            "title": "Navigation",
+            "bbox": {
+              "x": 360,
+              "y": 424,
+              "w": 538,
+              "h": 1012
+            }
+          },
+          {
+            "title": "Panels",
+            "bbox": {
+              "x": 360,
+              "y": 1436,
+              "w": 538,
+              "h": 364
+            }
+          },
+          {
+            "title": "Project",
+            "bbox": {
+              "x": 360,
+              "y": 1800,
+              "w": 538,
+              "h": 76
+            }
+          },
+          {
+            "title": "App",
+            "bbox": {
+              "x": 360,
+              "y": 1876,
+              "w": 538,
+              "h": 148
+            }
+          },
+          {
+            "title": "General",
+            "bbox": {
+              "x": 360,
+              "y": 2024,
+              "w": 538,
+              "h": 1120
+            }
+          }
+        ],
+        "pixel": {
+          "x": 350,
+          "y": 176,
+          "rgba": [
+            43,
+            43,
+            43,
+            255
+          ]
+        },
+        "screenshot": "/tmp/cgx-f3b/shots/f3b-shortcuts-open.png"
+      },
+      {
+        "after": "shortcuts-filter",
+        "dialog": {
+          "tag": "div",
+          "text": "Keyboard shortcuts\nSearch keyboard shortcuts\nChat\nArchive chat\n⇧⌘A\nClose dialog",
+          "aria": null,
+          "role": "dialog",
+          "bbox": {
+            "x": 340,
+            "y": 156,
+            "w": 600,
+            "h": 520
+          },
+          "computed": {
+            "backgroundColor": "oklab(0.297161 0.0000135154 0.00000594556 / 0.9)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(255, 255, 255, 0.082) 0px 0px 0px 0.5px, rgba(0, 0, 0, 0.1) 0px 4px 8px -2px",
+            "cursor": "auto"
+          }
+        },
+        "focus": {
+          "tag": "input",
+          "text": "",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 397,
+            "y": 223,
+            "w": 488,
+            "h": 18
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 2px",
+            "boxShadow": "none",
+            "cursor": "text"
+          }
+        },
+        "inputs": [
+          {
+            "tag": "input",
+            "text": "",
+            "aria": null,
+            "role": null,
+            "bbox": {
+              "x": 397,
+              "y": 223,
+              "w": 488,
+              "h": 18
+            },
+            "computed": {
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(238, 238, 238) none 2px",
+              "boxShadow": "none",
+              "cursor": "text"
+            },
+            "placeholder": "Search shortcuts",
+            "value": "archive"
+          }
+        ],
+        "buttons": [
+          {
+            "tag": "button",
+            "text": "",
+            "aria": "Clear search",
+            "role": null,
+            "bbox": {
+              "x": 893,
+              "y": 224,
+              "w": 16,
+              "h": 16
+            },
+            "computed": {
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 1 1 1 / 0.65)",
+              "opacity": "1",
+              "outline": "color(srgb 1 1 1 / 0.65) none 3px",
+              "boxShadow": "none",
+              "cursor": "default"
+            }
+          },
+          {
+            "tag": "button",
+            "text": "Close dialog",
+            "aria": null,
+            "role": null,
+            "bbox": {
+              "x": 900,
+              "y": 172,
+              "w": 24,
+              "h": 24
+            },
+            "computed": {
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "color": "oklab(0.999994 0.0000455677 0.0000200868 / 0.8)",
+              "opacity": "1",
+              "outline": "oklab(0.999994 0.0000455677 0.0000200868 / 0.8) none 3px",
+              "boxShadow": "none",
+              "cursor": "default"
+            }
+          }
+        ],
+        "pixel": {
+          "x": 350,
+          "y": 196,
+          "rgba": [
+            43,
+            43,
+            43,
+            255
+          ]
+        },
+        "screenshot": "/tmp/cgx-f3b/shots/f3b-shortcuts-filter.png"
+      },
+      {
+        "after": "shortcuts-no-match",
+        "dialog": {
+          "tag": "div",
+          "text": "Keyboard shortcuts\nSearch keyboard shortcuts\nNo matching shortcuts\nClose dialog",
+          "aria": null,
+          "role": "dialog",
+          "bbox": {
+            "x": 340,
+            "y": 156,
+            "w": 600,
+            "h": 520
+          },
+          "computed": {
+            "backgroundColor": "oklab(0.297161 0.0000135154 0.00000594556 / 0.9)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(255, 255, 255, 0.082) 0px 0px 0px 0.5px, rgba(0, 0, 0, 0.1) 0px 4px 8px -2px",
+            "cursor": "auto"
+          }
+        },
+        "focus": {
+          "tag": "input",
+          "text": "",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 397,
+            "y": 223,
+            "w": 488,
+            "h": 18
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 2px",
+            "boxShadow": "none",
+            "cursor": "text"
+          }
+        },
+        "inputs": [
+          {
+            "tag": "input",
+            "text": "",
+            "aria": null,
+            "role": null,
+            "bbox": {
+              "x": 397,
+              "y": 223,
+              "w": 488,
+              "h": 18
+            },
+            "computed": {
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(238, 238, 238) none 2px",
+              "boxShadow": "none",
+              "cursor": "text"
+            },
+            "placeholder": "Search shortcuts",
+            "value": "zzzz-no-shortcut"
+          }
+        ],
+        "buttons": [
+          {
+            "tag": "button",
+            "text": "",
+            "aria": "Clear search",
+            "role": null,
+            "bbox": {
+              "x": 893,
+              "y": 224,
+              "w": 16,
+              "h": 16
+            },
+            "computed": {
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 1 1 1 / 0.65)",
+              "opacity": "1",
+              "outline": "color(srgb 1 1 1 / 0.65) none 3px",
+              "boxShadow": "none",
+              "cursor": "default"
+            }
+          },
+          {
+            "tag": "button",
+            "text": "Close dialog",
+            "aria": null,
+            "role": null,
+            "bbox": {
+              "x": 900,
+              "y": 172,
+              "w": 24,
+              "h": 24
+            },
+            "computed": {
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "color": "oklab(0.999994 0.0000455677 0.0000200868 / 0.8)",
+              "opacity": "1",
+              "outline": "oklab(0.999994 0.0000455677 0.0000200868 / 0.8) none 3px",
+              "boxShadow": "none",
+              "cursor": "default"
+            }
+          }
+        ],
+        "pixel": {
+          "x": 350,
+          "y": 196,
+          "rgba": [
+            43,
+            43,
+            43,
+            255
+          ]
+        },
+        "screenshot": "/tmp/cgx-f3b/shots/f3b-shortcuts-no-match.png"
+      },
+      {
+        "after": "shortcuts-escape",
+        "dialog": null,
+        "focus": {
+          "tag": "body",
+          "text": "Skip to content\nHome\nSpace\nScheduled\nPlugins\nExplore\nCode Review\nSites\nCodex\nNew chat\nYour dot\nProjects\nNo projects\nRecents\nChange the greeting in hello.py to \"",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 0,
+            "y": 0,
+            "w": 1280,
+            "h": 832
+          },
+          "computed": {
+            "backgroundColor": "rgb(20, 20, 20)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          }
+        },
+        "inputs": [],
+        "buttons": [],
+        "screenshot": "/tmp/cgx-f3b/shots/f3b-shortcuts-escape.png"
+      },
+      {
+        "after": "shortcuts-outside",
+        "dialog": null,
+        "focus": {
+          "tag": "body",
+          "text": "Skip to content\nHome\nSpace\nScheduled\nPlugins\nExplore\nCode Review\nSites\nCodex\nNew chat\nYour dot\nProjects\nNo projects\nRecents\nChange the greeting in hello.py to \"",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 0,
+            "y": 0,
+            "w": 1280,
+            "h": 832
+          },
+          "computed": {
+            "backgroundColor": "rgb(20, 20, 20)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          }
+        },
+        "inputs": [],
+        "buttons": [],
+        "screenshot": "/tmp/cgx-f3b/shots/f3b-shortcuts-outside.png"
+      },
+      {
+        "after": "close-open",
+        "dialog": {
+          "tag": "div",
+          "text": "Are you sure you want to close the window?\nAre you sure you want to close the window?\nDo not ask me again\nCancel\nClose Window",
+          "aria": null,
+          "role": "dialog",
+          "bbox": {
+            "x": 430,
+            "y": 331,
+            "w": 420,
+            "h": 171
+          },
+          "computed": {
+            "backgroundColor": "oklab(0.297161 0.0000135154 0.00000594556 / 0.9)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(255, 255, 255, 0.082) 0px 0px 0px 0.5px, rgba(0, 0, 0, 0.1) 0px 4px 8px -2px",
+            "cursor": "auto"
+          }
+        },
+        "focus": {
+          "tag": "button",
+          "text": "Cancel",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 610,
+            "y": 449,
+            "w": 80,
+            "h": 32
+          },
+          "computed": {
+            "backgroundColor": "oklab(0.999994 0.0000455678 0.0000200868 / 0.05)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+            "cursor": "default"
+          }
+        },
+        "inputs": [
+          {
+            "tag": "input",
+            "text": "",
+            "aria": null,
+            "role": null,
+            "bbox": {
+              "x": 436,
+              "y": 421,
+              "w": 14,
+              "h": 14
+            },
+            "computed": {
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "0",
+              "outline": "rgb(255, 255, 255) none 2px",
+              "boxShadow": "none",
+              "cursor": "default"
+            },
+            "placeholder": "",
+            "value": "on"
+          }
+        ],
+        "buttons": [
+          {
+            "tag": "button",
+            "text": "",
+            "aria": null,
+            "role": "checkbox",
+            "bbox": {
+              "x": 450,
+              "y": 421,
+              "w": 14,
+              "h": 14
+            },
+            "computed": {
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0.08) 0px 1px 2px -1px",
+              "cursor": "default"
+            }
+          },
+          {
+            "tag": "button",
+            "text": "Cancel",
+            "aria": null,
+            "role": null,
+            "bbox": {
+              "x": 610,
+              "y": 449,
+              "w": 80,
+              "h": 32
+            },
+            "computed": {
+              "backgroundColor": "oklab(0.999994 0.0000455678 0.0000200868 / 0.05)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(238, 238, 238) none 1px",
+              "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+              "cursor": "default"
+            }
+          },
+          {
+            "tag": "button",
+            "text": "Close Window",
+            "aria": null,
+            "role": null,
+            "bbox": {
+              "x": 702,
+              "y": 449,
+              "w": 128,
+              "h": 32
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 255, 255)",
+              "color": "rgb(45, 45, 45)",
+              "opacity": "1",
+              "outline": "rgb(45, 45, 45) none 3px",
+              "boxShadow": "none",
+              "cursor": "default"
+            }
+          }
+        ],
+        "pixel": {
+          "x": 440,
+          "y": 371,
+          "rgba": [
+            43,
+            43,
+            43,
+            255
+          ]
+        },
+        "screenshot": "/tmp/cgx-f3b/shots/f3b-close-open.png"
+      },
+      {
+        "after": "close-escape",
+        "dialog": null,
+        "focus": {
+          "tag": "body",
+          "text": "Skip to content\nHome\nSpace\nScheduled\nPlugins\nExplore\nCode Review\nSites\nCodex\nNew chat\nYour dot\nProjects\nNo projects\nRecents\nChange the greeting in hello.py to \"",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 0,
+            "y": 0,
+            "w": 1280,
+            "h": 832
+          },
+          "computed": {
+            "backgroundColor": "rgb(20, 20, 20)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          }
+        },
+        "inputs": [],
+        "buttons": [],
+        "response": {
+          "confirmed": false
+        },
+        "screenshot": "/tmp/cgx-f3b/shots/f3b-close-escape.png"
+      },
+      {
+        "after": "close-outside",
+        "dialog": null,
+        "focus": {
+          "tag": "body",
+          "text": "Skip to content\nHome\nSpace\nScheduled\nPlugins\nExplore\nCode Review\nSites\nCodex\nNew chat\nYour dot\nProjects\nNo projects\nRecents\nChange the greeting in hello.py to \"",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 0,
+            "y": 0,
+            "w": 1280,
+            "h": 832
+          },
+          "computed": {
+            "backgroundColor": "rgb(20, 20, 20)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          }
+        },
+        "inputs": [],
+        "buttons": [],
+        "response": {
+          "confirmed": false
+        },
+        "screenshot": "/tmp/cgx-f3b/shots/f3b-close-outside.png"
+      },
+      {
+        "after": "close-cancel-checked",
+        "dialog": null,
+        "focus": {
+          "tag": "body",
+          "text": "Skip to content\nHome\nSpace\nScheduled\nPlugins\nExplore\nCode Review\nSites\nCodex\nNew chat\nYour dot\nProjects\nNo projects\nRecents\nChange the greeting in hello.py to \"",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 0,
+            "y": 0,
+            "w": 1280,
+            "h": 832
+          },
+          "computed": {
+            "backgroundColor": "rgb(20, 20, 20)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          }
+        },
+        "inputs": [],
+        "buttons": [],
+        "response": {
+          "confirmed": false
+        },
+        "screenshot": "/tmp/cgx-f3b/shots/f3b-close-cancel-checked.png"
+      },
+      {
+        "after": "close-checked",
+        "dialog": {
+          "tag": "div",
+          "text": "Are you sure you want to close the window?\nAre you sure you want to close the window?\nDo not ask me again\nCancel\nClose Window",
+          "aria": null,
+          "role": "dialog",
+          "bbox": {
+            "x": 430,
+            "y": 331,
+            "w": 420,
+            "h": 171
+          },
+          "computed": {
+            "backgroundColor": "oklab(0.297161 0.0000135154 0.00000594556 / 0.9)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(255, 255, 255, 0.082) 0px 0px 0px 0.5px, rgba(0, 0, 0, 0.1) 0px 4px 8px -2px",
+            "cursor": "auto"
+          }
+        },
+        "focus": {
+          "tag": "button",
+          "text": "",
+          "aria": null,
+          "role": "checkbox",
+          "bbox": {
+            "x": 450,
+            "y": 421,
+            "w": 14,
+            "h": 14
+          },
+          "computed": {
+            "backgroundColor": "rgba(45, 45, 45, 0.46)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0.08) 0px 1px 2px -1px",
+            "cursor": "default"
+          }
+        },
+        "inputs": [
+          {
+            "tag": "input",
+            "text": "",
+            "aria": null,
+            "role": null,
+            "bbox": {
+              "x": 436,
+              "y": 421,
+              "w": 14,
+              "h": 14
+            },
+            "computed": {
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "0",
+              "outline": "rgb(255, 255, 255) none 2px",
+              "boxShadow": "none",
+              "cursor": "default"
+            },
+            "placeholder": "",
+            "value": "on"
+          }
+        ],
+        "buttons": [
+          {
+            "tag": "button",
+            "text": "",
+            "aria": null,
+            "role": "checkbox",
+            "bbox": {
+              "x": 450,
+              "y": 421,
+              "w": 14,
+              "h": 14
+            },
+            "computed": {
+              "backgroundColor": "rgba(45, 45, 45, 0.46)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0.08) 0px 1px 2px -1px",
+              "cursor": "default"
+            }
+          },
+          {
+            "tag": "button",
+            "text": "Cancel",
+            "aria": null,
+            "role": null,
+            "bbox": {
+              "x": 610,
+              "y": 449,
+              "w": 80,
+              "h": 32
+            },
+            "computed": {
+              "backgroundColor": "oklab(0.999994 0.0000455678 0.0000200868 / 0.05)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "default"
+            }
+          },
+          {
+            "tag": "button",
+            "text": "Close Window",
+            "aria": null,
+            "role": null,
+            "bbox": {
+              "x": 702,
+              "y": 449,
+              "w": 128,
+              "h": 32
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 255, 255)",
+              "color": "rgb(45, 45, 45)",
+              "opacity": "1",
+              "outline": "rgb(45, 45, 45) none 3px",
+              "boxShadow": "none",
+              "cursor": "default"
+            }
+          }
+        ],
+        "pixel": {
+          "x": 440,
+          "y": 371,
+          "rgba": [
+            43,
+            43,
+            43,
+            255
+          ]
+        },
+        "screenshot": "/tmp/cgx-f3b/shots/f3b-close-checked.png"
+      },
+      {
+        "after": "close-confirm",
+        "dialog": null,
+        "focus": {
+          "tag": "body",
+          "text": "Skip to content\nHome\nSpace\nScheduled\nPlugins\nExplore\nCode Review\nSites\nCodex\nNew chat\nYour dot\nProjects\nNo projects\nRecents\nChange the greeting in hello.py to \"",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 0,
+            "y": 0,
+            "w": 1280,
+            "h": 832
+          },
+          "computed": {
+            "backgroundColor": "rgb(20, 20, 20)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          }
+        },
+        "inputs": [],
+        "buttons": [],
+        "response": {
+          "confirmed": true,
+          "doNotAskAgain": true
+        },
+        "screenshot": "/tmp/cgx-f3b/shots/f3b-close-confirm.png"
+      },
+      {
+        "after": "shortcuts-focus-return",
+        "dialog": null,
+        "focus": {
+          "tag": "body",
+          "text": "Skip to content\nHome\nSpace\nScheduled\nPlugins\nExplore\nCode Review\nSites\nCodex\nNew chat\nYour dot\nProjects\nNo projects\nRecents\nChange the greeting in hello.py to \"",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 0,
+            "y": 0,
+            "w": 1280,
+            "h": 832
+          },
+          "computed": {
+            "backgroundColor": "rgb(20, 20, 20)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          }
+        },
+        "inputs": [],
+        "buttons": [],
+        "screenshot": "/tmp/cgx-f3b/shots/f3b-shortcuts-focus-return.png"
+      }
+    ],
+    "requests": [],
+    "requestsFull": [
+      {
+        "svc": "windowNavigation.setHistorySwipeNavigationState",
+        "args": "[{\"canGoBack\":false,\"canGoForward\":false,\"overlayBounds\":{\"x\":340,\"y\":44,\"width\":936,\"height\":784},\"overlayColor\":\"#3a83f7\",\"page\":{\"key\":\"s0inzv15\",\"backKey\":null,\"forwardKey\":null,\"ready\":true,\"appe"
+      },
+      {
+        "svc": "windowNavigation.setHistorySwipeNavigationState",
+        "args": "[{\"canGoBack\":false,\"canGoForward\":false,\"overlayBounds\":{\"x\":340,\"y\":44,\"width\":936,\"height\":784},\"overlayColor\":\"#3a83f7\",\"page\":{\"key\":\"s0inzv15\",\"backKey\":null,\"forwardKey\":null,\"ready\":true,\"appe"
+      },
+      {
+        "svc": "httpFetch.fetch",
+        "args": "[\"e7cfd7f1-b914-438e-bf82-8c7c7da079b3\",{\"url\":\"/wham/usage\",\"method\":\"GET\",\"headers\":{\"OAI-Language\":\"en-US\",\"X-OpenAI-Attach-Auth\":\"1\",\"X-OpenAI-Attach-Integrity-State\":\"1\",\"originator\":\"Codex Deskt"
+      },
+      {
+        "svc": "httpFetch.cancel",
+        "args": "[\"e7cfd7f1-b914-438e-bf82-8c7c7da079b3\"]"
+      },
+      {
+        "svc": "httpFetch.fetch",
+        "args": "[\"2e6ff4d8-5af1-442c-84ce-fcdae22f4e0e\",{\"url\":\"/settings/user\",\"method\":\"GET\",\"headers\":{\"OAI-Language\":\"en-US\",\"X-OpenAI-Attach-Auth\":\"1\",\"X-OpenAI-Attach-Integrity-State\":\"1\",\"originator\":\"Codex De"
+      },
+      {
+        "svc": "httpFetch.fetch",
+        "args": "[\"748a1e03-471f-44be-8de4-3e8337f82861\",{\"url\":\"/automations?filter=scheduled&limit=25\",\"method\":\"GET\",\"headers\":{\"OAI-Language\":\"en-US\",\"X-OpenAI-Attach-Auth\":\"1\",\"X-OpenAI-Attach-Integrity-State\":\"1"
+      },
+      {
+        "svc": "httpFetch.cancel",
+        "args": "[\"2e6ff4d8-5af1-442c-84ce-fcdae22f4e0e\"]"
+      },
+      {
+        "type": "persisted-atom-update",
+        "key": "last-observed-cloud-pet-selection-v1"
+      },
+      {
+        "svc": "httpFetch.cancel",
+        "args": "[\"748a1e03-471f-44be-8de4-3e8337f82861\"]"
+      },
+      {
+        "type": "fetch",
+        "url": "vscode://codex/inbox-items"
+      },
+      {
+        "type": "fetch",
+        "url": "vscode://codex/list-automations"
+      },
+      {
+        "svc": "windowNavigation.setHistorySwipeNavigationState",
+        "args": "[{\"canGoBack\":false,\"canGoForward\":false,\"overlayBounds\":{\"x\":340,\"y\":44,\"width\":936,\"height\":784},\"overlayColor\":\"#3a83f7\",\"page\":{\"key\":\"s0inzv15\",\"backKey\":null,\"forwardKey\":null,\"ready\":true,\"appe"
+      },
+      {
+        "svc": "windowNavigation.setHistorySwipeNavigationState",
+        "args": "[{\"canGoBack\":false,\"canGoForward\":false,\"overlayBounds\":{\"x\":340,\"y\":44,\"width\":936,\"height\":784},\"overlayColor\":\"#3a83f7\",\"page\":{\"key\":\"s0inzv15\",\"backKey\":null,\"forwardKey\":null,\"ready\":true,\"appe"
+      },
+      {
+        "svc": "keyboardModifiers.watchRelease",
+        "args": "[\"control\"]"
+      },
+      {
+        "svc": "keyboardModifiers.watchRelease",
+        "args": "[\"control\"]"
+      },
+      {
+        "svc": "windowNavigation.setHistorySwipeNavigationState",
+        "args": "[{\"canGoBack\":false,\"canGoForward\":false,\"overlayBounds\":{\"x\":340,\"y\":44,\"width\":936,\"height\":784},\"overlayColor\":\"#3a83f7\",\"page\":{\"key\":\"s0inzv15\",\"backKey\":null,\"forwardKey\":null,\"ready\":true,\"appe"
+      },
+      {
+        "svc": "windowNavigation.setHistorySwipeNavigationState",
+        "args": "[{\"canGoBack\":false,\"canGoForward\":false,\"overlayBounds\":{\"x\":340,\"y\":44,\"width\":936,\"height\":784},\"overlayColor\":\"#3a83f7\",\"page\":{\"key\":\"s0inzv15\",\"backKey\":null,\"forwardKey\":null,\"ready\":true,\"appe"
+      },
+      {
+        "svc": "httpFetch.fetch",
+        "args": "[\"3a92ea9c-dd52-49e6-bca2-c7a54bc5887e\",{\"url\":\"/spaces/v2?limit=100&include_checkpoint_cdn=true&prefer_lite_checkpoint=true\",\"method\":\"GET\",\"headers\":{\"OAI-Language\":\"en-US\",\"X-OpenAI-Attach-Auth\":\"1"
+      },
+      {
+        "svc": "httpFetch.cancel",
+        "args": "[\"3a92ea9c-dd52-49e6-bca2-c7a54bc5887e\"]"
+      },
+      {
+        "svc": "httpFetch.fetch",
+        "args": "[\"7d322aec-5949-4772-9096-47f7edfb71e1\",{\"url\":\"/pins/pages?include_metadata=true&include_checkpoint_cdn=true&prefer_lite_checkpoint=true\",\"method\":\"GET\",\"headers\":{\"x-openai-web-frontend\":\"codex_webv"
+      },
+      {
+        "svc": "httpFetch.cancel",
+        "args": "[\"7d322aec-5949-4772-9096-47f7edfb71e1\"]"
+      },
+      {
+        "svc": "localThreadCatalog.readThreadCount",
+        "args": "[\"local\"]"
+      },
+      {
+        "svc": "httpFetch.fetch",
+        "args": "[\"1ae6ba82-02a8-4015-b3c4-cb64a08f2dd8\",{\"url\":\"/wham/tasks/list?limit=20&task_filter=current\",\"method\":\"GET\",\"headers\":{\"OAI-Language\":\"en-US\",\"X-OpenAI-Attach-Auth\":\"1\",\"X-OpenAI-Attach-Integrity-St"
+      },
+      {
+        "svc": "httpFetch.cancel",
+        "args": "[\"1ae6ba82-02a8-4015-b3c4-cb64a08f2dd8\"]"
+      },
+      {
+        "type": "persisted-atom-update",
+        "key": "sidebar-usage-snapshot-attempts-v1"
+      },
+      {
+        "svc": "windowNavigation.setHistorySwipeNavigationState",
+        "args": "[{\"canGoBack\":false,\"canGoForward\":false,\"overlayBounds\":{\"x\":340,\"y\":44,\"width\":936,\"height\":784},\"overlayColor\":\"#3a83f7\",\"page\":{\"key\":\"s0inzv15\",\"backKey\":null,\"forwardKey\":null,\"ready\":true,\"appe"
+      }
+    ],
+    "state": {
+      "route": "home",
+      "composerFocused": false
+    }
+  },
+  "catalog": [
+    {
+      "section": "Chat",
+      "rows": [
+        {
+          "title": "New chat",
+          "keys": [
+            "⌘N",
+            "⇧⌘O"
+          ]
+        },
+        {
+          "title": "Archive chat",
+          "keys": [
+            "⇧⌘A"
+          ]
+        },
+        {
+          "title": "New standalone chat",
+          "keys": [
+            "⌥⌘O"
+          ]
+        },
+        {
+          "title": "Toggle pin",
+          "keys": [
+            "⌥⌘P"
+          ]
+        }
+      ]
+    },
+    {
+      "section": "Navigation",
+      "rows": [
+        {
+          "title": "Find",
+          "keys": [
+            "⌘F"
+          ]
+        },
+        {
+          "title": "Focus tab 1",
+          "keys": [
+            "⌘1"
+          ]
+        },
+        {
+          "title": "Focus tab 2",
+          "keys": [
+            "⌘2"
+          ]
+        },
+        {
+          "title": "Focus tab 3",
+          "keys": [
+            "⌘3"
+          ]
+        },
+        {
+          "title": "Focus tab 4",
+          "keys": [
+            "⌘4"
+          ]
+        },
+        {
+          "title": "Focus tab 5",
+          "keys": [
+            "⌘5"
+          ]
+        },
+        {
+          "title": "Focus tab 6",
+          "keys": [
+            "⌘6"
+          ]
+        },
+        {
+          "title": "Focus tab 7",
+          "keys": [
+            "⌘7"
+          ]
+        },
+        {
+          "title": "Focus tab 8",
+          "keys": [
+            "⌘8"
+          ]
+        },
+        {
+          "title": "Focus tab 9",
+          "keys": [
+            "⌘9"
+          ]
+        },
+        {
+          "title": "Back",
+          "keys": [
+            "⌘[",
+            "Mouse Back"
+          ]
+        },
+        {
+          "title": "Forward",
+          "keys": [
+            "⌘]",
+            "Mouse Forward"
+          ]
+        },
+        {
+          "title": "Next recently viewed chat",
+          "keys": [
+            "⌃Tab"
+          ]
+        },
+        {
+          "title": "Next tab",
+          "keys": [
+            "⌃Tab",
+            "⇧⌘]",
+            "⌥⌘→"
+          ]
+        },
+        {
+          "title": "Next chat",
+          "keys": [
+            "⇧⌘]",
+            "⌥⌘→"
+          ]
+        },
+        {
+          "title": "Next chat needing attention",
+          "keys": [
+            "⌥⌘A"
+          ]
+        },
+        {
+          "title": "Open your dot",
+          "keys": [
+            "⌘."
+          ]
+        },
+        {
+          "title": "Previous recently viewed chat",
+          "keys": [
+            "⌃⇧Tab"
+          ]
+        },
+        {
+          "title": "Previous tab",
+          "keys": [
+            "⌃⇧Tab",
+            "⇧⌘[",
+            "⌥⌘←"
+          ]
+        },
+        {
+          "title": "Previous chat",
+          "keys": [
+            "⇧⌘[",
+            "⌥⌘←"
+          ]
+        },
+        {
+          "title": "Go to recent chat 1",
+          "keys": [
+            "⌥⌘1"
+          ]
+        },
+        {
+          "title": "Go to recent chat 2",
+          "keys": [
+            "⌥⌘2"
+          ]
+        },
+        {
+          "title": "Go to recent chat 3",
+          "keys": [
+            "⌥⌘3"
+          ]
+        },
+        {
+          "title": "Go to recent chat 4",
+          "keys": [
+            "⌥⌘4",
+            "⇧⌘9"
+          ]
+        },
+        {
+          "title": "Go to recent chat 5",
+          "keys": [
+            "⌥⌘5",
+            "⇧⌘8"
+          ]
+        },
+        {
+          "title": "Go to recent chat 6",
+          "keys": [
+            "⌥⌘6"
+          ]
+        },
+        {
+          "title": "Toggle activity view",
+          "keys": [
+            "⌥⌘U"
+          ]
+        }
+      ]
+    },
+    {
+      "section": "Panels",
+      "rows": [
+        {
+          "title": "Open browser tab",
+          "keys": [
+            "⌘T"
+          ]
+        },
+        {
+          "title": "Reopen closed tab",
+          "keys": [
+            "⇧⌘T"
+          ]
+        },
+        {
+          "title": "New tab in full view",
+          "keys": [
+            "⇧⌘F"
+          ]
+        },
+        {
+          "title": "Cycle workspace layout",
+          "keys": [
+            "⇧⌘B"
+          ]
+        },
+        {
+          "title": "Toggle bottom panel",
+          "keys": [
+            "⌘J"
+          ]
+        },
+        {
+          "title": "Toggle navigation panel",
+          "keys": [
+            "⇧⌘E"
+          ]
+        },
+        {
+          "title": "Toggle sidebar",
+          "keys": [
+            "⇧⌘S",
+            "⌘B"
+          ]
+        },
+        {
+          "title": "New tab",
+          "keys": [
+            "⌥⌘B"
+          ]
+        },
+        {
+          "title": "Open terminal",
+          "keys": [
+            "⌃`"
+          ]
+        }
+      ]
+    },
+    {
+      "section": "Project",
+      "rows": [
+        {
+          "title": "Open folder",
+          "keys": [
+            "⌘O"
+          ]
+        }
+      ]
+    },
+    {
+      "section": "App",
+      "rows": [
+        {
+          "title": "Clear all unreads",
+          "keys": [
+            "⇧Esc"
+          ]
+        },
+        {
+          "title": "Show Mini",
+          "keys": [
+            "⌥Space"
+          ]
+        },
+        {
+          "title": "Settings",
+          "keys": [
+            "⌘,"
+          ]
+        }
+      ]
+    },
+    {
+      "section": "General",
+      "rows": [
+        {
+          "title": "Close other tabs",
+          "keys": [
+            "⌥⌘W"
+          ]
+        },
+        {
+          "title": "Close Tab",
+          "keys": [
+            "⌘W"
+          ]
+        },
+        {
+          "title": "Close",
+          "keys": [
+            "⌘W"
+          ]
+        },
+        {
+          "title": "Select effort",
+          "keys": [
+            "⌃⇧M"
+          ]
+        },
+        {
+          "title": "Open project picker",
+          "keys": [
+            "⌥⇧⌘O"
+          ]
+        },
+        {
+          "title": "Open recent models",
+          "keys": [
+            "⌃⌘M"
+          ]
+        },
+        {
+          "title": "Toggle voice chat",
+          "keys": [
+            "⌃⇧V"
+          ]
+        },
+        {
+          "title": "Send message in background",
+          "keys": [
+            "⌘⏎"
+          ]
+        },
+        {
+          "title": "Copy conversation path",
+          "keys": [
+            "⌥⇧⌘C"
+          ]
+        },
+        {
+          "title": "Copy deeplink",
+          "keys": [
+            "⌥⌘L"
+          ]
+        },
+        {
+          "title": "Copy working directory",
+          "keys": [
+            "⇧⌘C"
+          ]
+        },
+        {
+          "title": "Force Reload Browser Page",
+          "keys": [
+            "⇧⌘R"
+          ]
+        },
+        {
+          "title": "Voice in Mini",
+          "keys": [
+            "⌥V"
+          ]
+        },
+        {
+          "title": "Open command menu",
+          "keys": [
+            "⌘K",
+            "⇧⌘P"
+          ]
+        },
+        {
+          "title": "Reload Browser Page",
+          "keys": [
+            "⌘R"
+          ]
+        },
+        {
+          "title": "Rename chat",
+          "keys": [
+            "⌥⌘R"
+          ]
+        },
+        {
+          "title": "Screenshot selection to current chat",
+          "keys": [
+            "⌃⇧4"
+          ]
+        },
+        {
+          "title": "Screenshot selection to new chat",
+          "keys": [
+            "⌃⌥⇧4"
+          ]
+        },
+        {
+          "title": "Search Files…",
+          "keys": [
+            "⌘P"
+          ]
+        },
+        {
+          "title": "Show keyboard shortcuts",
+          "keys": [
+            "⌘/"
+          ]
+        },
+        {
+          "title": "Go to chat 1",
+          "keys": [
+            "⌃1"
+          ]
+        },
+        {
+          "title": "Go to chat 2",
+          "keys": [
+            "⌃2"
+          ]
+        },
+        {
+          "title": "Go to chat 3",
+          "keys": [
+            "⌃3"
+          ]
+        },
+        {
+          "title": "Go to chat 4",
+          "keys": [
+            "⌃4"
+          ]
+        },
+        {
+          "title": "Go to chat 5",
+          "keys": [
+            "⌃5"
+          ]
+        },
+        {
+          "title": "Go to chat 6",
+          "keys": [
+            "⌃6"
+          ]
+        },
+        {
+          "title": "Go to chat 7",
+          "keys": [
+            "⌃7"
+          ]
+        },
+        {
+          "title": "Go to chat 8",
+          "keys": [
+            "⌃8"
+          ]
+        },
+        {
+          "title": "Go to chat 9",
+          "keys": [
+            "⌃9"
+          ]
+        },
+        {
+          "title": "Toggle Notch",
+          "keys": [
+            "⌥C"
+          ]
+        }
+      ]
+    }
+  ],
+  "confirmationSteps": [
+    {
+      "type": "key",
+      "key": "Meta+w",
+      "portKey": "cmd-w",
+      "bridge": {
+        "service": "windowCloseConfirmation",
+        "method": "confirm"
+      },
+      "note": "Called the original renderer service over its Capn Web MessagePort."
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "Do not ask me again",
+        "bbox": {
+          "x": 450,
+          "y": 421,
+          "w": 14,
+          "h": 14
+        }
+      },
+      "after": "close-checked"
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "Close Window",
+        "bbox": {
+          "x": 702,
+          "y": 449,
+          "w": 128,
+          "h": 32
+        }
+      },
+      "after": "close-confirm"
+    }
+  ],
+  "notes": [
+    "Recorded from Codex 26.1007.30912 on shared Chrome :9522 in a private browser context.",
+    "The original returns focus to body, including when the composer had focus before opening. This corrects the inventory inference.",
+    "The close service returns confirmed and doNotAskAgain. The native host persists confirm-before-close only after confirmation.",
+    "The generic replay runs steps; f3b.rs additionally replays confirmationSteps because confirming destroys the port window.",
+    "The catalog is the active shortcut list returned by the original fixture, not a claim that every listed command is implemented by the port."
+  ]
+}
