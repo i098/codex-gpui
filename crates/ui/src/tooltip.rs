@@ -6,7 +6,7 @@
 //!   was open or closed less than `SKIP_DELAY` ago (Radix `skipDelayDuration`), so moving
 //!   along a row of buttons shows each at once.
 //! - Closes when the pointer leaves, on a press on the trigger, and on Escape.
-//! - Sits `OFFSET` px off the trigger's edge, centred on it, below it or to its right.
+//! - Sits `OFFSET` px from the trigger, centred above, below, or to its right.
 //!
 //! The tooltip stays at least 8 px inside the window, including narrow titlebar layouts.
 
@@ -28,6 +28,7 @@ const OFFSET: Pixels = px(2.);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Side {
+    Top,
     Bottom,
     Right,
 }
@@ -262,6 +263,11 @@ fn bubble(spec: &Spec, side: Side, state: &Entity<TipState>, cx: &App) -> impl I
         );
     // A zero-size point on the trigger's edge, centred along it; the pill hangs off it.
     let (point_on_edge, anchor, offset) = match side {
+        Side::Top => (
+            div().absolute().left(relative(0.5)).top_0(),
+            Anchor::BottomCenter,
+            point(px(0.), -OFFSET),
+        ),
         Side::Bottom => (
             div().absolute().left(relative(0.5)).top(relative(1.)),
             Anchor::TopCenter,
