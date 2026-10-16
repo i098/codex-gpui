@@ -439,6 +439,11 @@ impl Composer {
         Self::new("Work with Codex", true, cx)
     }
 
+    /// Composer under a scheduled task's thread: placeholder `Reply about this task…`.
+    pub fn automation(_: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::new("Reply about this task…", true, cx)
+    }
+
     fn new(placeholder: &'static str, docked: bool, cx: &mut Context<Self>) -> Self {
         Self {
             focus_handle: cx.focus_handle().tab_stop(true),
