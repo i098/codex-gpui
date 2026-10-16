@@ -11,15 +11,18 @@ use bridge::{
     types::{ThreadItem, ThreadReadResponse, ThreadStartResponse, Turn},
 };
 use gpui::{
-    AnyView, App, AppContext as _, Context, Corners, Div, Entity, FocusHandle, Font, FontFeatures,
-    FontWeight, HighlightStyle, Hsla, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
-    ParentElement, Pixels, Render, Rgba, SharedString, Stateful, StatefulInteractiveElement,
-    Styled, StyledText, TextRun, Window, black, combine_highlights, deferred, div, font,
-    prelude::FluentBuilder as _, px, rgb, white,
+    AnyView, App, AppContext as _, ClipboardItem, Context, Corners, Div, Entity, FocusHandle, Font,
+    FontFeatures, FontWeight, HighlightStyle, Hsla, InteractiveElement, IntoElement, KeyDownEvent,
+    MouseButton, ParentElement, Pixels, Render, Rgba, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, StyledText, TextRun, Window, black, combine_highlights,
+    deferred, div, font, prelude::FluentBuilder as _, px, rgb, white,
 };
 use shapes::Decoration;
 use std::{cell::Cell, ops::Range, sync::Arc};
 use theme::{ActiveTheme as _, Appearance, Theme};
+
+#[path = "diff/menu.rs"]
+mod menu;
 
 /// Panel width the capture had stored (`app-shell:right-panel-width:v3`) before clamping.
 const STORED_WIDTH: f32 = 664.17;
@@ -96,6 +99,11 @@ pub struct DiffPanel {
     active_match: usize,
     selected_query: bool,
     aggregated_turn: Option<String>,
+    selection: Option<((usize, usize), (usize, usize))>,
+    selecting: bool,
+    menu: Option<menu::Menu>,
+    workspace: String,
+    wrap: bool,
 }
 
 impl DiffPanel {
@@ -182,6 +190,11 @@ impl DiffPanel {
             active_match: 0,
             selected_query: false,
             aggregated_turn: None,
+            selection: None,
+            selecting: false,
+            menu: None,
+            workspace: workspace_root.to_owned(),
+            wrap: false,
         }
     }
 
@@ -264,6 +277,9 @@ impl DiffPanel {
             }
         }
         self.files = files;
+        self.selection = None;
+        self.selecting = false;
+        self.menu = None;
         self.search_changed();
     }
 
@@ -297,7 +313,44 @@ impl DiffPanel {
         self.active_match = self.active_match.min(self.matches.saturating_sub(1));
     }
 
-    fn on_key(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+    pub fn selected_text(&self) -> String {
+        let Some((anchor, head)) = self.selection else {
+            return String::new();
+        };
+        let (start, end) = (anchor.min(head), anchor.max(head));
+        let mut text = String::new();
+        for (i, line) in self
+            .files
+            .iter()
+            .flat_map(|f| &f.hunks)
+            .flat_map(|h| &h.lines)
+            .enumerate()
+        {
+            if i < start.0 || i > end.0 {
+                continue;
+            }
+            if i > start.0 {
+                text.push('\n');
+            }
+            let a = if i == start.0 { start.1 } else { 0 };
+            let b = if i == end.0 { end.1 } else { line.text.len() };
+            text.push_str(&line.text[a..b]);
+        }
+        text
+    }
+
+    fn copy_selection(&self, cx: &App) {
+        let text = self.selected_text();
+        if !text.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        }
+    }
+
+    fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.menu.is_some() {
+            self.menu_key(event, window, cx);
+            return;
+        }
         let key = &event.keystroke;
         if key.modifiers.platform && key.key == "f" {
             self.query.get_or_insert_default();
@@ -529,22 +582,38 @@ impl Render for DiffPanel {
         let wide = panel_width(window) - px(1.) >= px(625.);
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
         let ordinal = Cell::new(0);
+        let line_index = Cell::new(0);
         let files = self.files.iter().enumerate().map(|(i, file)| {
             div()
                 .flex()
                 .flex_col()
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                        this.open_menu(i, menu::Kind::Body, event.position, window, cx);
+                    }),
+                )
                 .child(
-                    file_header(i, file, &t).on_click(cx.listener(move |this, _, _, cx| {
+                    file_header(i, file, &t, cx).on_click(cx.listener(move |this, _, _, cx| {
                         this.files[i].open ^= true;
+                        this.selection = None;
                         cx.notify();
                     })),
                 )
-                .when(file.open, |d| {
-                    d.children(
-                        file.hunks
-                            .iter()
-                            .map(|h| hunk(h, &t, &ordinal, self.active_match)),
-                    )
+                .map(|d| {
+                    if file.open {
+                        d.children(
+                            file.hunks
+                                .iter()
+                                .map(|h| hunk(h, &t, &ordinal, &line_index, self, cx)),
+                        )
+                    } else {
+                        line_index.set(
+                            line_index.get()
+                                + file.hunks.iter().map(|h| h.lines.len()).sum::<usize>(),
+                        );
+                        d
+                    }
                 })
         });
         // No fill: the main panel's rounded fill (a `shapes` decoration the capsules' backdrop
@@ -555,10 +624,25 @@ impl Render for DiffPanel {
         div()
             .relative()
             .track_focus(&focus)
-            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                window.focus(&focus, cx)
-            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, window, cx| {
+                    this.selection = None;
+                    this.selecting = false;
+                    window.focus(&focus, cx);
+                    cx.notify();
+                }),
+            )
             .on_key_down(cx.listener(Self::on_key))
+            .on_action(cx.listener(|this, _: &crate::Copy, _, cx| {
+                this.copy_selection(cx);
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, _| {
+                    this.selecting = false;
+                }),
+            )
             .size_full()
             .flex()
             .flex_col()
@@ -594,6 +678,9 @@ impl Render for DiffPanel {
                     .children(files),
             )
             .when(self.query.is_some(), |d| d.child(self.find_bar(cx)))
+            .when(self.menu.is_some(), |d| {
+                d.child(self.menu_overlay(window, cx))
+            })
     }
 }
 
@@ -986,7 +1073,7 @@ pub fn stats(added: usize, removed: usize, size: f32, t: &Theme) -> Div {
         .child(tracked(format!("-{removed}"), t.git_deleted))
 }
 
-fn file_header(i: usize, file: &FileDiff, t: &Theme) -> Stateful<Div> {
+fn file_header(i: usize, file: &FileDiff, t: &Theme, cx: &Context<DiffPanel>) -> Stateful<Div> {
     let small = |name| round_icon(name, 20., t);
     let python = match t.appearance {
         Appearance::Dark => rgb(0x69b1ff),
@@ -1030,8 +1117,29 @@ fn file_header(i: usize, file: &FileDiff, t: &Theme) -> Stateful<Div> {
                 .items_center()
                 .gap(px(4.))
                 .child(stats(file.added, file.removed, 14., t).mx(px(4.)))
-                .child(small("diff-open-in"))
-                .child(small("diff-more")),
+                .child(
+                    small("diff-open-in")
+                        .id(("diff-open-editor", i))
+                        .role(gpui::Role::Button)
+                        .aria_label("Open in editor")
+                        .aria_disabled(true)
+                        .on_click(|_, _, cx| cx.stop_propagation()),
+                )
+                .child(
+                    small("diff-more")
+                        .id(("diff-actions", i))
+                        .role(gpui::Role::Button)
+                        .aria_label("File actions")
+                        .focusable()
+                        .cursor_pointer()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(cx.listener(
+                            move |this, event: &gpui::ClickEvent, window, cx| {
+                                let position = event.position() + gpui::point(px(10.), px(12.));
+                                this.open_menu(i, menu::Kind::Header, position, window, cx);
+                            },
+                        )),
+                ),
         )
 }
 
@@ -1142,7 +1250,14 @@ fn mix(a: Hsla, b: Hsla, w: f32) -> Hsla {
     .into()
 }
 
-fn hunk(h: &Hunk, t: &Theme, ordinal: &Cell<usize>, active: usize) -> Div {
+fn hunk(
+    h: &Hunk,
+    t: &Theme,
+    ordinal: &Cell<usize>,
+    line_index: &Cell<usize>,
+    panel: &DiffPanel,
+    cx: &Context<DiffPanel>,
+) -> Div {
     let syntax = Syntax::of(t);
     let digits = h
         .lines
@@ -1160,15 +1275,18 @@ fn hunk(h: &Hunk, t: &Theme, ordinal: &Cell<usize>, active: usize) -> Div {
     let row = |number: Option<u32>, number_bg: Hsla, bg: Hsla, content: StyledText| {
         div()
             .h(px(CODE_LINE))
+            .when(panel.wrap, |d| d.h_auto().min_h(px(CODE_LINE)))
             .flex()
             .child(
                 div()
                     .w(gutter)
                     .flex_none()
                     .h_full()
+                    .when(panel.wrap, |d| d.h_auto())
                     .flex()
                     .justify_end()
                     .items_center()
+                    .when(panel.wrap, |d| d.items_start())
                     .pr(px(8.))
                     .bg(number_bg)
                     .text_color(t.text_tertiary)
@@ -1178,11 +1296,14 @@ fn hunk(h: &Hunk, t: &Theme, ordinal: &Cell<usize>, active: usize) -> Div {
                 div()
                     .flex_1()
                     .h_full()
+                    .when(panel.wrap, |d| d.h_auto().min_h(px(CODE_LINE)).min_w_0())
                     .flex()
                     .items_center()
+                    .when(panel.wrap, |d| d.flex_col().items_stretch())
                     .pl(px(8.))
                     .bg(bg)
                     .whitespace_nowrap()
+                    .when(panel.wrap, |d| d.whitespace_normal())
                     .child(content),
             )
     };
@@ -1226,15 +1347,76 @@ fn hunk(h: &Hunk, t: &Theme, ordinal: &Cell<usize>, active: usize) -> Div {
                     HighlightStyle {
                         color: Some(t.text),
                         background_color: Some(
-                            rgb(if index == active { 0xfb6a22 } else { 0xffd240 }).into(),
+                            rgb(if index == panel.active_match {
+                                0xfb6a22
+                            } else {
+                                0xffd240
+                            })
+                            .into(),
                         ),
                         ..Default::default()
                     },
                 )
             });
-            let content = StyledText::new(l.text.clone())
-                .with_highlights(combine_highlights(highlight(&l.text, &syntax), found));
+            let index = line_index.get();
+            line_index.set(index + 1);
+            let selection = panel.selection.and_then(|(anchor, head)| {
+                let (start, end) = (anchor.min(head), anchor.max(head));
+                if index < start.0 || index > end.0 {
+                    return None;
+                }
+                let a = if index == start.0 { start.1 } else { 0 };
+                let b = if index == end.0 { end.1 } else { l.text.len() };
+                (a < b).then_some((
+                    a..b,
+                    HighlightStyle {
+                        background_color: Some(t.text_selection),
+                        ..Default::default()
+                    },
+                ))
+            });
+            let content = StyledText::new(l.text.clone()).with_highlights(combine_highlights(
+                combine_highlights(highlight(&l.text, &syntax), found),
+                selection,
+            ));
+            let down_layout = content.layout().clone();
+            let move_layout = down_layout.clone();
             row(Some(l.number), number_bg, bg, content)
+                .cursor_pointer()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                        let offset = down_layout
+                            .index_for_position(event.position)
+                            .unwrap_or_else(|i| i);
+                        let point = (index, offset);
+                        let anchor = if event.modifiers.shift {
+                            this.selection.map_or(point, |s| s.0)
+                        } else {
+                            point
+                        };
+                        this.selection = Some((anchor, point));
+                        this.selecting = true;
+                        if let Some(focus) = &this.focus {
+                            window.focus(focus, cx);
+                        }
+                        cx.stop_propagation();
+                        cx.notify();
+                    }),
+                )
+                .on_mouse_move(
+                    cx.listener(move |this, event: &gpui::MouseMoveEvent, _, cx| {
+                        if this.selecting && event.pressed_button == Some(MouseButton::Left) {
+                            let offset = move_layout
+                                .index_for_position(event.position)
+                                .unwrap_or_else(|i| i);
+                            if let Some(selection) = &mut this.selection {
+                                selection.1 = (index, offset);
+                                cx.notify();
+                            }
+                        }
+                    }),
+                )
         }))
 }
 
