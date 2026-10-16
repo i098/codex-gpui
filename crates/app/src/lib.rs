@@ -28,7 +28,9 @@ use std::{fs, path::PathBuf, sync::Arc};
 use theme::Theme;
 use ui::composer::{Approval, Composer, Permission, Submission};
 use ui::dialog::{Dialog, Kind as DialogKind, Outcome as DialogOutcome};
-use ui::screens::diff::panel::{DiffPanel, SplitScreen, with_side_panel};
+use ui::screens::diff::panel::{
+    ActivateSideTab, CloseSideTab, DiffPanel, SplitScreen, Tab, with_side_tabs,
+};
 use ui::screens::home::HomeMain;
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
 use ui::screens::sidebar::{ArchiveThread, CommandMenu, CommandMenuEvent, HomeSidebar, OpenThread};
@@ -37,9 +39,9 @@ use ui::screens::thread::view::{Clock, EditMessage, ForkThread, RevertTurn, Thre
 use ui::screens::{automations, mobile};
 use ui::toast::{Toast, Toaster};
 use ui::{
-    CloseSidePanel, Copy, Cut, GoBack, GoForward, NewChat, OpenBackgroundTerminal,
-    OpenChangesPanel, OpenCommandMenu, OpenMobileSetup, OpenScheduled, OpenSettings, Paste, Redo,
-    SelectAll, SetTheme, Shell, ShowKeyboardShortcuts, ToggleChangesPanel, ToggleSidebar, Undo,
+    Copy, Cut, GoBack, GoForward, NewChat, OpenBackgroundTerminal, OpenChangesPanel,
+    OpenCommandMenu, OpenMobileSetup, OpenScheduled, OpenSettings, Paste, Redo, SelectAll,
+    SetTheme, Shell, ShowKeyboardShortcuts, ToggleChangesPanel, ToggleSidebar, Undo,
 };
 
 actions!(
@@ -313,7 +315,9 @@ pub struct Root {
     diff: Option<Entity<DiffPanel>>,
     /// The open thread in the main shell, with its side panel if any.
     split: Option<Entity<SplitScreen>>,
-    /// Side panel tab of the thread route; kept across threads like the original's panel.
+    /// Side panel tabs of the thread route in opening order, and the selected one (always in
+    /// `tabs`); kept across threads like the original's panel.
+    tabs: Vec<SidePanel>,
     side: Option<SidePanel>,
     /// The route's own shell (Settings, Scheduled, Mobile).
     page: Option<Entity<Shell>>,
@@ -450,6 +454,7 @@ impl Root {
             thread: None,
             diff: None,
             split: None,
+            tabs: Vec::new(),
             side: None,
             page: None,
             settings_section: None,
@@ -557,9 +562,14 @@ impl Root {
         &self.sidebar
     }
 
-    /// The thread route's side panel tab.
+    /// The thread route's selected side panel tab.
     pub fn side_panel(&self) -> Option<SidePanel> {
         self.side
+    }
+
+    /// The thread route's side panel tabs in strip order.
+    pub fn side_tabs(&self) -> &[SidePanel] {
+        &self.tabs
     }
 
     pub fn diff_panel(&self) -> Option<&Entity<DiffPanel>> {
@@ -776,8 +786,8 @@ impl Root {
             shell.set_main(main, cx);
         });
         self.split = view.map(|view| {
-            let panel = self.side.and_then(|side| self.side_view(side, &view, cx));
-            with_side_panel(self.shell.clone(), view, panel, cx)
+            let panel = self.side_tabs_view(&view, cx);
+            with_side_tabs(self.shell.clone(), view, panel, cx)
         });
         self.save(window, cx);
         cx.notify();
@@ -795,34 +805,68 @@ impl Root {
         }
     }
 
-    /// The side panel tab `side` of the open thread `view`: `(view, tab icon, tab label)`.
-    /// No terminal tab without a background command.
-    fn side_view(
-        &self,
-        side: SidePanel,
-        view: &Entity<ThreadView>,
-        cx: &mut Context<Self>,
-    ) -> Option<(AnyView, &'static str, SharedString)> {
+    /// The strip tab of `side` in the open thread `view`: `(icon, label)`. No terminal tab
+    /// without a background command.
+    fn side_tab(side: SidePanel, view: &Entity<ThreadView>, cx: &App) -> Option<Tab> {
         match side {
-            SidePanel::Changes => Some((
-                self.diff.as_ref()?.clone().into(),
-                "diff-tab-changes",
-                "Changes".into(),
-            )),
+            SidePanel::Changes => Some(("diff-tab-changes", "Changes".into())),
             SidePanel::Terminal => {
                 let (command, _) = view.read(cx).background_terminals().into_iter().next()?;
-                let xterm = cx.new(|cx| Xterm::new(view.clone(), cx));
-                Some((xterm.into(), "thread-terminal", command.into()))
+                Some(("thread-terminal", command.into()))
             }
         }
     }
 
-    /// Opens, switches or (`None`) closes the thread route's side panel.
-    fn set_side(&mut self, side: Option<SidePanel>, window: &mut Window, cx: &mut Context<Self>) {
-        if matches!(self.state.route, Route::Thread(_)) {
-            self.side = side;
-            self.sync(window, cx);
+    /// The open tabs of thread `view` and the selected tab's view, dropping the tabs the
+    /// thread cannot show: `(view, tabs, selected index)`.
+    fn side_tabs_view(
+        &mut self,
+        view: &Entity<ThreadView>,
+        cx: &mut Context<Self>,
+    ) -> Option<(AnyView, Vec<Tab>, usize)> {
+        self.tabs
+            .retain(|side| Self::side_tab(*side, view, cx).is_some());
+        let tabs: Vec<Tab> = self
+            .tabs
+            .iter()
+            .filter_map(|side| Self::side_tab(*side, view, cx))
+            .collect();
+        let active = self
+            .side
+            .and_then(|side| self.tabs.iter().position(|t| *t == side))
+            .or(self.tabs.len().checked_sub(1));
+        self.side = active.map(|ix| self.tabs[ix]);
+        let active = active?;
+        let view: AnyView = match self.tabs[active] {
+            SidePanel::Changes => self.diff.as_ref()?.clone().into(),
+            SidePanel::Terminal => cx.new(|cx| Xterm::new(view.clone(), cx)).into(),
+        };
+        Some((view, tabs, active))
+    }
+
+    /// Opens (a new tab after the others) or switches to the thread route's side panel tab.
+    fn set_side(&mut self, side: SidePanel, window: &mut Window, cx: &mut Context<Self>) {
+        if !matches!(self.state.route, Route::Thread(_)) || self.side == Some(side) {
+            return;
         }
+        if !self.tabs.contains(&side) {
+            self.tabs.push(side);
+        }
+        self.side = Some(side);
+        self.sync(window, cx);
+    }
+
+    /// Closes tab `side` (`Close {title} tab`, `⌘W` on the selected one): the next tab, else
+    /// the previous, is selected; closing the last tab closes the panel.
+    fn close_side(&mut self, side: SidePanel, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ix) = self.tabs.iter().position(|t| *t == side) else {
+            return;
+        };
+        self.tabs.remove(ix);
+        if self.side == Some(side) {
+            self.side = self.tabs.get(ix).or(self.tabs.last()).copied();
+        }
+        self.sync(window, cx);
     }
 
     /// `⌘K`, `⌘⇧P` and the sidebar `Search`: the command menu over live Recents, focused.
@@ -868,9 +912,14 @@ impl Root {
         cx.notify();
     }
 
+    /// `⌘W`: Electron main runs `closeTab` (`close-active-app-shell-tab`) while the thread
+    /// route's panel shows a tab, else the window closes.
     fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.dialog.is_some() {
             return;
+        }
+        if let Some(side) = self.side.filter(|_| self.split.is_some()) {
+            return self.close_side(side, window, cx);
         }
         if self.state.confirm_before_close == ConfirmBeforeClose::Never {
             window.remove_window();
@@ -1544,18 +1593,28 @@ impl Render for Root {
                 this.navigate(Route::Mobile, window, cx)
             }))
             .on_action(cx.listener(|this, _: &ToggleChangesPanel, window, cx| {
-                let side = (this.side != Some(SidePanel::Changes)).then_some(SidePanel::Changes);
-                this.set_side(side, window, cx)
+                if this.side == Some(SidePanel::Changes) {
+                    this.close_side(SidePanel::Changes, window, cx)
+                } else {
+                    this.set_side(SidePanel::Changes, window, cx)
+                }
             }))
             .on_action(cx.listener(|this, _: &OpenChangesPanel, window, cx| {
-                this.set_side(Some(SidePanel::Changes), window, cx)
+                this.set_side(SidePanel::Changes, window, cx)
             }))
             .on_action(cx.listener(|this, _: &OpenBackgroundTerminal, window, cx| {
-                this.set_side(Some(SidePanel::Terminal), window, cx)
+                this.set_side(SidePanel::Terminal, window, cx)
             }))
-            .on_action(
-                cx.listener(|this, _: &CloseSidePanel, window, cx| this.set_side(None, window, cx)),
-            )
+            .on_action(cx.listener(|this, a: &ActivateSideTab, window, cx| {
+                if let Some(side) = this.tabs.get(a.0).copied() {
+                    this.set_side(side, window, cx)
+                }
+            }))
+            .on_action(cx.listener(|this, a: &CloseSideTab, window, cx| {
+                if let Some(side) = this.tabs.get(a.0).copied() {
+                    this.close_side(side, window, cx)
+                }
+            }))
             .on_action(cx.listener(|this, _: &OpenCommandMenu, window, cx| {
                 this.open_command_menu(window, cx)
             }))

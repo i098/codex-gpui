@@ -3,19 +3,19 @@
 //! changes. All numbers are the spec's CSS px.
 
 use crate::{
-    CloseSidePanel, MONO, SANS, Shell, composer::shadow, dispatch, fixture, icon::icon,
-    layout_color, over, screens::thread::view::ThreadView, text,
+    MONO, SANS, Shell, composer::shadow, fixture, icon::icon, layout_color, over,
+    screens::thread::view::ThreadView, text,
 };
 use bridge::{
     Event,
     types::{ThreadItem, ThreadReadResponse, ThreadStartResponse, Turn},
 };
 use gpui::{
-    AnyView, App, AppContext as _, ClipboardItem, Context, Corners, Div, Entity, FocusHandle, Font,
-    FontFeatures, FontWeight, HighlightStyle, Hsla, InteractiveElement, IntoElement, KeyDownEvent,
-    MouseButton, ParentElement, Pixels, Render, Rgba, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, StyledText, TextRun, Window, black, combine_highlights,
-    deferred, div, font, prelude::FluentBuilder as _, px, rgb, white,
+    Action, AnyView, App, AppContext as _, ClickEvent, ClipboardItem, Context, Corners, Div,
+    Entity, FocusHandle, Font, FontFeatures, FontWeight, HighlightStyle, Hsla, InteractiveElement,
+    IntoElement, KeyDownEvent, MouseButton, ParentElement, Pixels, Render, Rgba, SharedString,
+    Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun, Window, black,
+    combine_highlights, deferred, div, font, prelude::FluentBuilder as _, px, rgb, white,
 };
 use shapes::Decoration;
 use std::{cell::Cell, ops::Range, sync::Arc};
@@ -684,172 +684,240 @@ impl Render for DiffPanel {
     }
 }
 
-/// Titlebar row over a side panel (`Task tabs`): the panel's one selected tab (`tab_icon`,
-/// `label`), `New tab`, and the `Enter full view` / `Hide tabs` buttons. The caller places it
-/// from the panel's left edge to the window's right edge, 44 px tall.
-pub fn tab_strip(t: &Theme, tab_icon: &str, label: SharedString, window: &Window) -> Div {
-    /// Label box width and its `text-fade-truncate` distance.
-    const LABEL_WIDTH: f32 = 181.;
-    const FADE: f32 = 16.;
-    let layout = layout_color(t);
-    let fill = match t.appearance {
-        Appearance::Dark => t.ghost_hover,
-        Appearance::Light => t.surface_elevated_secondary,
-    };
-    let run = TextRun {
-        len: label.len(),
-        font: Font {
-            weight: FontWeight(430.),
-            ..font(SANS)
-        },
-        color: t.text,
-        background_color: None,
-        underline: None,
-        strikethrough: None,
-    };
-    let width = window
-        .text_system()
-        .shape_line(label.clone(), px(13.), &[run], None)
-        .width;
-    // `.text-fade-truncate` masks the label's last 16 px: in its own layer, as Chromium paints
-    // a masked box. Only when glyphs reach the fade.
-    let fade = width > px(LABEL_WIDTH - FADE);
-    let tab = div()
-        .relative()
-        .w(px(238.))
-        .h(px(32.))
-        .flex()
-        .items_center()
-        .pl(px(10.))
-        .pr(px(7.))
-        // `_SelectedSurface`: its own squircle layer under the tab button, with a 0.5 px
-        // `border-hairline`. Chromium composites it (its rect: the ink of `0 1px 2px -1px`), so
-        // the shadow lands in the layer's transparent tiles and blends onto the titlebar once.
-        .child(
+/// A side panel tab: its icon and label.
+pub type Tab = (&'static str, SharedString);
+
+/// Click on a tab of the side panel's strip (`activateOnClick`): index into the strip.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = ui, no_json)]
+pub struct ActivateSideTab(pub usize);
+
+/// A tab's `Close {title} tab` button: index into the strip.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = ui, no_json)]
+pub struct CloseSideTab(pub usize);
+
+impl SplitScreen {
+    /// Titlebar row over a side panel (`Task tabs`): every open tab in a 240 px slot (the
+    /// selected one on its surface, the others `text-tertiary`, surface and `×` on hover),
+    /// `New tab`, and the `Enter full view` / `Hide tabs` buttons. The caller places it from
+    /// the panel's left edge to the window's right edge, 44 px tall.
+    fn tab_strip(&self, t: &Theme, window: &Window, cx: &mut Context<Self>) -> Div {
+        /// Label box width and its `text-fade-truncate` distance.
+        const LABEL_WIDTH: f32 = 181.;
+        const FADE: f32 = 16.;
+        let layout = layout_color(t);
+        let fill = match t.appearance {
+            Appearance::Dark => t.ghost_hover,
+            Appearance::Light => t.surface_elevated_secondary,
+        };
+        let tab = |ix: usize, (tab_icon, label): &Tab, cx: &mut Context<Self>| {
+            let selected = ix == self.active;
+            let hovered = self.hovered == Some(ix);
+            let color = if selected { t.text } else { t.text_tertiary };
+            let label = label.clone();
+            let run = TextRun {
+                len: label.len(),
+                font: Font {
+                    weight: FontWeight(430.),
+                    ..font(SANS)
+                },
+                color,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            let width = window
+                .text_system()
+                .shape_line(label.clone(), px(13.), &[run], None)
+                .width;
+            // `.text-fade-truncate` masks the label's last 16 px: in its own layer, as Chromium
+            // paints a masked box. Only when glyphs reach the fade. An unselected tab shows the
+            // `×` (and its `pe-5`) on hover only, so its label box is 20 px wider until then.
+            let closable = selected || hovered;
+            let label_width = if closable {
+                LABEL_WIDTH
+            } else {
+                LABEL_WIDTH + 20.
+            };
+            let fade = width > px(label_width - FADE);
             div()
-                .absolute()
-                .left(px(-1.))
-                .top_0()
-                .w(px(240.))
-                .h(px(34.))
-                .layer()
-                .child(
-                    div()
-                        .absolute()
-                        .left(px(1.))
-                        .top_0()
-                        .w(px(238.))
-                        .h(px(32.))
-                        .child(shapes::decoration(Decoration {
-                            radius: Corners::all(Theme::RADIUS_MD),
-                            corner: shapes::Corner::Squircle,
-                            fill: Some(fill),
-                            border: Some((px(0.5), t.border)),
-                            shadows: vec![shadow(t.shadow_sm, 1., 2., -1., false)],
-                            ..Default::default()
-                        })),
-                ),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
+                .id(("side-tab", ix))
+                .relative()
+                .w(px(238.))
+                .h(px(32.))
                 .flex()
                 .items_center()
-                .gap(px(8.))
-                .pr(px(20.))
-                .child(icon(tab_icon, 16., t.text))
+                .pl(px(10.))
+                .pr(px(7.))
+                // `no-drag`: the titlebar behind must not start a window move.
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                    this.hovered = hovered.then_some(ix);
+                    cx.notify();
+                }))
+                .when(!selected, |d| {
+                    d.on_click(dispatch_ix::<ActivateSideTab>(ix))
+                })
+                // `_SelectedSurface`: its own squircle layer under the tab button, with a 0.5 px
+                // `border-hairline`. Chromium composites it (its rect: the ink of
+                // `0 1px 2px -1px`), so the shadow lands in the layer's transparent tiles and
+                // blends onto the titlebar once. Hovered unselected: `bg-primary-ghost-hover`,
+                // transparent border, no shadow.
+                .when(closable, |d| {
+                    d.child(
+                        div()
+                            .absolute()
+                            .left(px(-1.))
+                            .top_0()
+                            .w(px(240.))
+                            .h(px(34.))
+                            .layer()
+                            .child(
+                                div()
+                                    .absolute()
+                                    .left(px(1.))
+                                    .top_0()
+                                    .w(px(238.))
+                                    .h(px(32.))
+                                    .child(shapes::decoration(Decoration {
+                                        radius: Corners::all(Theme::RADIUS_MD),
+                                        corner: shapes::Corner::Squircle,
+                                        fill: Some(if selected { fill } else { t.ghost_hover }),
+                                        border: selected.then_some((px(0.5), t.border)),
+                                        shadows: if selected {
+                                            vec![shadow(t.shadow_sm, 1., 2., -1., false)]
+                                        } else {
+                                            vec![]
+                                        },
+                                        ..Default::default()
+                                    })),
+                            ),
+                    )
+                })
                 .child(
                     div()
-                        .relative()
                         .flex_1()
                         .min_w_0()
-                        .ml(px(-4.))
-                        .overflow_hidden()
-                        .child(text(label, 13., 18.5714, 430., t.text))
-                        .when(fade, |d| d.layer().child(shapes::x_fade(px(0.), px(FADE)))),
-                ),
-        )
-        .child(
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .when(closable, |d| d.pr(px(20.)))
+                        .child(icon(tab_icon, 16., color))
+                        .child(
+                            div()
+                                .relative()
+                                .flex_1()
+                                .min_w_0()
+                                .ml(px(-4.))
+                                .overflow_hidden()
+                                .child(text(label, 13., 18.5714, 430., color))
+                                .when(fade, |d| d.layer().child(shapes::x_fade(px(0.), px(FADE)))),
+                        ),
+                )
+                .when(closable, |d| {
+                    d.child(
+                        div()
+                            .id("side-panel-close-tab")
+                            .absolute()
+                            .top(px(6.))
+                            .right(px(7.))
+                            .size(px(20.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(dispatch_ix::<CloseSideTab>(ix))
+                            .child(icon("diff-tab-close", 14., t.text_tertiary)),
+                    )
+                })
+        };
+        // 28 px `_Button`: 12.5 px `--codex-corner-shape` squircle, `border border-transparent`.
+        // Blink's clip layer for its fill composites onto the titlebar layer's transparent tile
+        // unchanged, so the fill paints straight into the strip's layer.
+        let button = |name: &str, color: Hsla, fill: Option<Hsla>| {
             div()
-                .id("side-panel-close-tab")
-                .absolute()
-                .top(px(6.))
-                .right(px(7.))
-                .size(px(20.))
+                .relative()
+                .size(px(28.))
                 .flex()
                 .items_center()
                 .justify_center()
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(dispatch::<CloseSidePanel>)
-                .child(icon("diff-tab-close", 14., t.text_tertiary)),
-        );
-    // 28 px `_Button`: 12.5 px `--codex-corner-shape` squircle, `border border-transparent`.
-    // Blink's clip layer for its fill composites onto the titlebar layer's transparent tile
-    // unchanged, so the fill paints straight into the strip's layer.
-    let button = |name: &str, color: Hsla, fill: Option<Hsla>| {
+                .when_some(fill, |d, fill| {
+                    d.child(shapes::decoration(Decoration {
+                        radius: Corners::all(px(12.5)),
+                        corner: shapes::Corner::Squircle,
+                        fill: Some(fill),
+                        ..Default::default()
+                    }))
+                })
+                .child(icon(name, 16., color))
+        };
+        // `_strip` is `[contain:layout_paint]`.
         div()
             .relative()
-            .size(px(28.))
+            .snap_origin()
+            .h(Theme::TITLEBAR_HEIGHT)
             .flex()
             .items_center()
-            .justify_center()
-            .when_some(fill, |d, fill| {
-                d.child(shapes::decoration(Decoration {
-                    radius: Corners::all(px(12.5)),
-                    corner: shapes::Corner::Squircle,
-                    fill: Some(fill),
-                    ..Default::default()
-                }))
-            })
-            .child(icon(name, 16., color))
-    };
-    // `_strip` is `[contain:layout_paint]`.
-    div()
-        .relative()
-        .snap_origin()
-        .h(Theme::TITLEBAR_HEIGHT)
-        .flex()
-        .items_center()
-        .pl(px(8.))
-        // `border-b border-transparent`: the content box is 43 px, so the tab sits at y 5.5.
-        .pb(px(1.))
-        .child(
-            div()
-                .absolute()
-                .left_0()
-                .top(px(12.))
-                .w(px(1.))
-                .h(px(20.))
-                .bg(over(t.border, layout)),
-        )
-        .child(
-            // The tab's box clips its shadow (`overflow` on the 240 px tab slot).
-            div()
-                .h_full()
-                .flex()
-                .items_center()
-                .w(px(240.))
-                .pr(px(2.))
-                .overflow_hidden()
-                .child(tab),
-        )
-        .child(
-            div()
-                .pl(px(6.))
-                .child(button("diff-new-tab", t.text_tertiary, None)),
-        )
-        .child(
-            div()
-                .absolute()
-                .top(px(8.))
-                .right(px(8.))
-                .flex()
-                .gap(px(6.))
-                .child(button("diff-full-view", t.text_tertiary, None))
-                // `bg-text/5` (dark: a float color, see `Theme::text_alpha_5`).
-                .child(button("diff-hide-tabs", t.text, Some(t.text_alpha_5))),
-        )
+            .pl(px(8.))
+            // `border-b border-transparent`: the content box is 43 px, so the tab sits at y 5.5.
+            .pb(px(1.))
+            .child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .top(px(12.))
+                    .w(px(1.))
+                    .h(px(20.))
+                    .bg(over(t.border, layout)),
+            )
+            .children(self.tabs.iter().enumerate().map(|(ix, t)| {
+                // The tab's box clips its shadow (`overflow` on the 240 px tab slot).
+                div()
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .w(px(240.))
+                    .pr(px(2.))
+                    .overflow_hidden()
+                    .child(tab(ix, t, cx))
+            }))
+            .child(
+                div()
+                    .pl(px(6.))
+                    .child(button("diff-new-tab", t.text_tertiary, None)),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top(px(8.))
+                    .right(px(8.))
+                    .flex()
+                    .gap(px(6.))
+                    .child(button("diff-full-view", t.text_tertiary, None))
+                    // `bg-text/5` (dark: a float color, see `Theme::text_alpha_5`).
+                    .child(button("diff-hide-tabs", t.text, Some(t.text_alpha_5))),
+            )
+    }
+}
+
+/// Click handler dispatching `A(ix)`.
+fn dispatch_ix<A: Action + From<usize>>(
+    ix: usize,
+) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+    move |_, window, cx| window.dispatch_action(Box::new(A::from(ix)), cx)
+}
+
+impl From<usize> for ActivateSideTab {
+    fn from(ix: usize) -> Self {
+        Self(ix)
+    }
+}
+
+impl From<usize> for CloseSideTab {
+    fn from(ix: usize) -> Self {
+        Self(ix)
+    }
 }
 
 /// Main panel of a thread with a side panel open: the thread, then the panel behind its 1 px
@@ -884,16 +952,18 @@ impl Render for SplitMain {
 pub struct SplitScreen {
     shell: Entity<Shell>,
     thread: Entity<ThreadView>,
-    tab: Option<(&'static str, SharedString)>,
+    /// The strip's tabs (empty: no panel) and the selected one, whose view the panel shows.
+    tabs: Vec<Tab>,
+    active: usize,
+    /// The tab under the pointer.
+    hovered: Option<usize>,
 }
 
 impl Render for SplitScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // The panel ends at the main panel's right edge, 4 px
         // (`--app-shell-page-inline-end-inset`) from the window's.
-        let left = self
-            .tab
-            .is_some()
+        let left = (!self.tabs.is_empty())
             .then(|| window.viewport_size().width - px(4.) - panel_width(window));
         // ponytail: like refs/thread, the header only follows the open-sidebar titlebar layout.
         let open = self.shell.read(cx).sidebar_open;
@@ -922,7 +992,7 @@ impl Render for SplitScreen {
                         .bg(over(t.border, layout_color(t))),
                 )
             })
-            .when_some(self.tab.clone().zip(left), |d, ((icon, label), left)| {
+            .when_some(left, |d, left| {
                 d.child(
                     // In the composited `group/titlebar`, like the thread's header: the
                     // layer (and its tile grid) starts at its left edge. Its rect is
@@ -935,7 +1005,7 @@ impl Render for SplitScreen {
                         .h(Theme::TITLEBAR_HEIGHT)
                         .cc_tiles()
                         .child(
-                            tab_strip(cx.theme(), icon, label, window)
+                            self.tab_strip(&cx.theme().clone(), window, cx)
                                 .absolute()
                                 .top_0()
                                 .left(left - TITLEBAR_LAYER_X)
@@ -973,6 +1043,18 @@ pub fn with_side_panel(
     panel: Option<(AnyView, &'static str, SharedString)>,
     cx: &mut App,
 ) -> Entity<SplitScreen> {
+    let panel = panel.map(|(view, icon, label)| (view, vec![(icon, label)], 0));
+    with_side_tabs(shell, thread, panel, cx)
+}
+
+/// `shell`'s thread route: `thread` in its main panel and, with `panel`, the view of tab
+/// `active` on the right under the titlebar strip of every open `tabs`.
+pub fn with_side_tabs(
+    shell: Entity<Shell>,
+    thread: Entity<ThreadView>,
+    panel: Option<(AnyView, Vec<Tab>, usize)>,
+    cx: &mut App,
+) -> Entity<SplitScreen> {
     let main = match &panel {
         Some((panel, ..)) => cx
             .new(|_| SplitMain {
@@ -996,10 +1078,18 @@ pub fn with_side_panel(
         shell.set_main(main, cx);
     });
     thread.update(cx, |thread, _| thread.clip_right = panel.is_none());
-    let tab = panel.map(|(_, icon, label)| (icon, label));
+    let (tabs, active) = panel
+        .map(|(_, tabs, active)| (tabs, active))
+        .unwrap_or_default();
     cx.new(|cx: &mut Context<SplitScreen>| {
         cx.observe(&thread, |_, _, cx| cx.notify()).detach();
-        SplitScreen { shell, thread, tab }
+        SplitScreen {
+            shell,
+            thread,
+            tabs,
+            active,
+            hovered: None,
+        }
     })
 }
 
