@@ -1132,8 +1132,10 @@ impl Root {
             .turns
             .iter()
             .any(|turn| turn.status == TurnStatus::InProgress);
+        // The composer is shared: the new thread's queue arrives with `thread/queue/changed`.
         self.thread_composer.update(cx, |c, cx| {
             c.set_running(running, cx);
+            c.set_queued(Vec::new(), cx);
             c.set_search_roots(vec![thread.cwd.clone()]);
         });
         let route = Route::Thread(thread.id.clone());
@@ -1190,15 +1192,86 @@ impl Root {
         log_err(task, cx);
     }
 
-    /// Thread composer: `turn/start` on the open thread, resuming it first if needed.
+    /// Thread composer: `turn/start` on the open thread, resuming it first if needed. While a
+    /// turn runs (CP-108), `Follow-up behavior` decides: `Queue` adds the message to the
+    /// app-server's queue (`thread/queue/add`, drained by the server when the turn ends),
+    /// `Steer` sends it into the turn (`turn/steer`). A refusal shows `Error submitting
+    /// message` and puts the text back.
     fn send(&mut self, s: Submission, window: &mut Window, cx: &mut Context<Self>) {
         let Some(view) = &self.thread else { return };
-        let id = view.read(cx).id().to_owned();
+        let view = view.read(cx);
+        let id = view.id().to_owned();
         let resume = !self.loaded.contains(&id);
         let bridge = self.bridge.clone();
+        let running = view
+            .turns()
+            .iter()
+            .rev()
+            .find(|turn| turn.status == TurnStatus::InProgress)
+            .map(|turn| turn.id.clone());
+        let queue = self.config["desktop"]["followUpQueueMode"] == "queue";
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             resume_if(resume, &bridge, &this, &id, cx).await?;
-            turn_start(&bridge, &id, &s).await
+            let Some(turn_id) = running else {
+                return turn_start(&bridge, &id, &s).await;
+            };
+            let input = json!([{ "type": "text", "text": s.text, "text_elements": [] }]);
+            let (method, params) = if queue {
+                let params = json!({
+                    "threadId": id, "input": input, "clientUserMessageId": uuid_v4(),
+                });
+                ("thread/queue/add", params)
+            } else {
+                let params = json!({ "threadId": id, "input": input, "expectedTurnId": turn_id });
+                ("turn/steer", params)
+            };
+            let result = bridge.request::<_, Value>(method, params).await.map(drop);
+            this.update(cx, |this, cx| match &result {
+                Ok(()) if queue => this.list_queue(id, cx),
+                Ok(()) => {}
+                Err(_) => {
+                    this.thread_composer
+                        .update(cx, |c, cx| c.restore_text(&s.text, cx));
+                    this.toast(Toast::danger("Error submitting message"), cx);
+                }
+            })?;
+            result
+        });
+        log_err(task, cx);
+    }
+
+    /// `thread/queue/list`: the queued follow-ups of thread `id`, shown over the composer.
+    fn list_queue(&self, id: String, cx: &mut Context<Self>) {
+        let bridge = self.bridge.clone();
+        let task = cx.spawn(async move |this, cx| -> Result<()> {
+            let list: Value = bridge
+                .request(
+                    "thread/queue/list",
+                    json!({ "threadId": id, "cursor": null }),
+                )
+                .await?;
+            let rows = list["data"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|row| {
+                    row["input"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|part| part["text"].as_str())
+                        .collect::<String>()
+                        .trim_end()
+                        .to_owned()
+                        .into()
+                })
+                .collect();
+            this.update(cx, |this, cx| {
+                if this.thread.as_ref().is_some_and(|v| v.read(cx).id() == id) {
+                    this.thread_composer
+                        .update(cx, |c, cx| c.set_queued(rows, cx));
+                }
+            })
         });
         log_err(task, cx);
     }
@@ -1525,6 +1598,11 @@ impl Root {
             }
             return;
         }
+        if e.path == "desktop.followUpQueueMode" {
+            let queue = e.value == "queue";
+            self.thread_composer
+                .update(cx, |c, cx| c.set_queue_mode(queue, cx));
+        }
         let (store, key) = e.path.split_once('.').unwrap_or((e.path, ""));
         if store == "host" {
             let result = if cx.has_global::<host_settings::Settings>() {
@@ -1616,6 +1694,13 @@ impl Root {
                 }
                 // Recents rows show the thread preview, known once a turn ran.
                 "turn/completed" => self.refresh_threads(cx),
+                "thread/queue/changed" => {
+                    if let Some(id) = params["threadId"].as_str()
+                        && self.thread.as_ref().is_some_and(|v| v.read(cx).id() == id)
+                    {
+                        self.list_queue(id.to_owned(), cx);
+                    }
+                }
                 "fuzzyFileSearch/sessionUpdated" | "fuzzyFileSearch/sessionCompleted" => {
                     let completed = method == "fuzzyFileSearch/sessionCompleted";
                     self.thread_composer
@@ -1706,6 +1791,23 @@ impl Root {
         self.state.sidebar_width = self.shell.read(cx).sidebar_width.into();
         self.state.save();
     }
+}
+
+/// A random v4 UUID (`clientUserMessageId`) from the std hasher's per-instance random keys.
+/// ponytail: not a CSPRNG; the `uuid` crate if a collision ever matters.
+fn uuid_v4() -> String {
+    use std::collections::hash_map::RandomState;
+    use std::hash::BuildHasher;
+    let word = |salt: u64| RandomState::new().hash_one(salt);
+    let (a, b) = (word(1), word(2));
+    format!(
+        "{:08x}-{:04x}-4{:03x}-{:04x}-{:012x}",
+        a >> 32,
+        (a >> 16) & 0xffff,
+        a & 0xfff,
+        0x8000 | ((b >> 48) & 0x3fff),
+        b & 0xffff_ffff_ffff
+    )
 }
 
 /// `thread/resume` when this app-server has not loaded thread `id` yet (`resume`).
