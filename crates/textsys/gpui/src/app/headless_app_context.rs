@@ -11,8 +11,8 @@
 use crate::{
     AnyView, AnyWindowHandle, App, AppCell, AppContext, AssetSource, BackgroundExecutor, Bounds,
     Context, Entity, EntityId, ForegroundExecutor, Global, Pixels, PlatformHeadlessRenderer,
-    PlatformTextSystem, Render, Reservation, Size, Task, TestDispatcher, TestPlatform, TextSystem,
-    Window, WindowBounds, WindowHandle, WindowOptions,
+    PlatformTextSystem, Render, Reservation, Size, Task, TestDispatcher, TestPlatform, TestWindow,
+    TextSystem, Window, WindowBounds, WindowHandle, WindowOptions,
     app::{GpuiBorrow, GpuiMode},
 };
 use anyhow::Result;
@@ -172,15 +172,18 @@ impl HeadlessAppContext {
 
     /// Simulates the user resizing the window to `size` (runs its resize callbacks).
     pub fn simulate_window_resize(&mut self, window: AnyWindowHandle, size: Size<Pixels>) {
-        let mut test_window = self
-            .app
+        self.test_window(window).simulate_resize(size);
+    }
+
+    /// The platform side of an open window.
+    pub fn test_window(&mut self, window: AnyWindowHandle) -> TestWindow {
+        self.app
             .borrow_mut()
             .windows
             .get_mut(window.id)
             .and_then(|w| w.as_deref_mut())
             .and_then(|w| w.platform_window.as_test().cloned())
-            .expect("open test window");
-        test_window.simulate_resize(size);
+            .expect("open test window")
     }
 
     /// Returns the text system.

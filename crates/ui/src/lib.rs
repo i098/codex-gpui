@@ -854,10 +854,14 @@ impl Shell {
     }
 
     fn titlebar(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
+        // The header is the window drag region (`-webkit-app-region: drag`, macOS hiddenInset);
+        // its buttons are `no-drag`, so a press on one never reaches the move handler.
+        let no_drag =
+            |d: Stateful<Div>| d.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
         // Disabled (`opacity: .4`, no hover) when there is no history in that direction. The
         // opacity goes on the icon itself so `icon::icon` finds its fitted image.
         let nav = |id: &'static str, glyph: icon::Icon, enabled: bool| {
-            if enabled {
+            no_drag(if enabled {
                 icon_button(id, glyph, t)
             } else {
                 div()
@@ -867,7 +871,7 @@ impl Shell {
                     .items_center()
                     .justify_center()
                     .child(glyph.opacity(0.4))
-            }
+            })
             .absolute()
             .top(px(8.))
         };
@@ -905,11 +909,11 @@ impl Shell {
             ))
             .when(self.chat_chrome, |d| {
                 d.child(tooltip(
-                    icon_button(
+                    no_drag(icon_button(
                         "toggle-sidebar",
                         icon::icon("sidebar", 16., t.text_tertiary),
                         t,
-                    )
+                    ))
                     .absolute()
                     .left(px(156.))
                     .top(px(8.))
@@ -921,7 +925,7 @@ impl Shell {
             })
             .when(self.new_tab, |d| {
                 d.child(
-                    div()
+                    no_drag(div().id("new-tab"))
                         .absolute()
                         .top(px(8.))
                         .right(px(8.))
