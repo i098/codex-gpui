@@ -31,7 +31,11 @@ fn check(fx: &mut Fx, sample: &Value) -> Result<()> {
         );
     }
     let shot = fx.shot()?;
-    shot.save(format!("{}/s004-{}.png", env!("CARGO_TARGET_TMPDIR"), sample["afterStep"]))?;
+    shot.save(format!(
+        "{}/s004-{}.png",
+        env!("CARGO_TARGET_TMPDIR"),
+        sample["afterStep"]
+    ))?;
     for pixel in sample["pixels"].as_array().context("pixel samples")? {
         let (x, y) = point(pixel);
         let expected: [u8; 4] = serde_json::from_value(pixel["rgba"].clone())?;
