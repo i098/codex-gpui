@@ -653,6 +653,10 @@ impl Composer {
     pub fn permission(&self) -> Permission {
         self.permission
     }
+
+    pub fn fast_mode(&self) -> bool {
+        self.fast
+    }
 }
 
 /// `_Button` pill (28 px, `rounded-full`, 1 px transparent border).

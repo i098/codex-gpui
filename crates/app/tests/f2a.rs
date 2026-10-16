@@ -129,3 +129,85 @@ fn permissions_popover() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn keyboard_model_selection_and_reset_preserve_the_draft() -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        return Ok(());
+    }
+    let mut lines = common::script(None, |_| {})?;
+    let first_model = lines
+        .iter()
+        .find_map(|line| {
+            line["msg"]["result"]["data"]
+                .as_array()?
+                .iter()
+                .find(|model| model["model"].is_string() && model["hidden"] != true)
+                .map(|model| model["id"].clone())
+        })
+        .unwrap();
+    for _ in 0..2 {
+        lines.extend(common::exchange(
+            "config/batchWrite",
+            serde_json::json!({"status": "ok"}),
+        ));
+    }
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    let original_model = fx.read(|root, _| root.config()["model"].clone());
+    let before_requests = fx.sent()?.len();
+    fx.type_text("Keep this draft")?;
+    fx.click(fx.at("home", "GPT-6 Astra")?)?;
+    fx.keys("down space")?;
+    ensure!(
+        fx.composer()
+            .read_with(&fx.cx, |composer, _| composer.fast_mode()),
+        "Space did not enable fast mode"
+    );
+    fx.keys("space")?;
+    ensure!(
+        !fx.composer()
+            .read_with(&fx.cx, |composer, _| composer.fast_mode()),
+        "Space did not disable fast mode"
+    );
+
+    fx.keys("down enter")?;
+    fx.keys("down enter")?;
+    fx.wait("keyboard model selection", |fx| {
+        fx.read(|root, _| root.config()["model"] == first_model)
+    })?;
+    let composer = fx.composer();
+    ensure!(
+        fx.cx.update_window(fx.window, |_, window, cx| composer
+            .read(cx)
+            .menu_state(window))?
+            == (true, None, false),
+        "model selection did not return to the effort popup"
+    );
+
+    fx.keys("down down down enter")?;
+    fx.wait("keyboard model reset", |fx| {
+        fx.read(|root, _| root.config()["model"] == original_model)
+    })?;
+    fx.keys("escape")?;
+    ensure!(
+        fx.cx.update_window(fx.window, |_, window, cx| composer
+            .read(cx)
+            .menu_state(window))?
+            == (false, None, true),
+        "Escape did not return focus to the model trigger"
+    );
+    ensure!(
+        fx.composer_text()? == "Keep this draft",
+        "menu keys changed the draft"
+    );
+    let sent = fx.sent()?;
+    let methods: Vec<_> = sent[before_requests..]
+        .iter()
+        .map(|request| request["method"].as_str().unwrap())
+        .collect();
+    ensure!(
+        methods == ["config/batchWrite", "config/batchWrite"],
+        "unexpected menu requests: {methods:?}"
+    );
+    Ok(())
+}
