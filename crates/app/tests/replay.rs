@@ -13,7 +13,11 @@
 //!   port during the steps, in that order (exactly those with `result.requestsExact`).
 //!
 //! Steps carry a position (`at`, else the centre of `target.bbox`); `key` steps may carry a
-//! `portKey` (gpui syntax, e.g. `cmd-a`) where the recorder's Linux Chrome used another chord.
+//! `portKey` (gpui syntax, e.g. `cmd-a`) where the recorder's Linux Chrome used another chord,
+//! and a `clipboard` (`text` or `pngBytes`) that is on the clipboard when the key goes down.
+//! Recorded `fs/*` requests (the app-server's filesystem API, absent from the fixtures) are
+//! answered with an empty result; attachment paths use the recorder's codex home, and a v4
+//! UUID in a param (the original's random attachment directory) compares as `<id>`.
 //! `REPLAY=<stem>` selects one exact file stem (e.g. `f2a`); unset or empty runs all scripts.
 //! Recorder determinism fixtures contain `runs` instead of `steps` and report `SKIP`.
 
@@ -21,13 +25,15 @@ mod common;
 
 use anyhow::{Context as _, Result, bail, ensure};
 use app::Route;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use common::*;
+use gpui::{ClipboardItem, Image, ImageFormat};
 use image::RgbaImage;
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The app-server of [`Fx::captured`].
 #[test]
@@ -42,6 +48,9 @@ fn recordings() {
         println!("replay: macOS only, skipped");
         return;
     }
+    // The recordings' attachment paths are under the route1 app-server's codex home.
+    // SAFETY: set before any app or background thread of this test reads the environment.
+    unsafe { std::env::set_var("CODEX_HOME", "/tmp/cgx-mac/home") };
     let filter = std::env::var("REPLAY").unwrap_or_default();
     let mut files: Vec<_> = fs::read_dir(format!("{ROOT}/refs/interactions"))
         .expect("refs/interactions")
@@ -126,11 +135,14 @@ fn run(path: &Path) -> Result<Option<String>> {
     } else {
         "dark"
     };
-    let mut fx = Fx::captured(
-        theme,
-        (size("w", 1280.), size("h", 832.)),
-        script(None, |_| {})?,
-    )?;
+    let mut lines = script(None, |_| {})?;
+    for (method, _) in recorded(&rec["result"])
+        .iter()
+        .filter(|(m, _)| m.starts_with("fs/"))
+    {
+        lines.extend(exchange(method, json!({})));
+    }
+    let mut fx = Fx::captured(theme, (size("w", 1280.), size("h", 832.)), lines)?;
     let checks = pixel_checks(&rec, steps.len())?;
 
     let rest = fx.shot()?;
@@ -141,6 +153,17 @@ fn run(path: &Path) -> Result<Option<String>> {
         check_pixels(&mut fx, &rest, &checks, Some(i))?;
     }
     check_state(&mut fx, &rec["result"]["state"])?;
+    // The port awaits each app-server answer (real I/O) before its next request: the check
+    // runs once the recorded requests are there or nothing new came for 300 ms.
+    let mut last = (before, Instant::now());
+    fx.wait("the recorded requests", |fx| {
+        let sent = fx.sent().unwrap_or_default();
+        if sent.len() != last.0 {
+            last = (sent.len(), Instant::now());
+        }
+        check_requests(&rec["result"], &sent[before..]).is_ok()
+            || last.1.elapsed() > Duration::from_millis(300)
+    })?;
     let sent = fx.sent()?.split_off(before);
     check_requests(&rec["result"], &sent)?;
     Ok(Some(format!(
@@ -171,7 +194,19 @@ fn run_step(fx: &mut Fx, step: &Value) -> Result<()> {
                 fx.wait_thread(id)?;
             }
         }
-        "key" => fx.keys(&port_key(step)?)?,
+        "key" => {
+            let clipboard = &step["clipboard"];
+            if let Some(text) = clipboard["text"].as_str() {
+                fx.cx
+                    .update(|cx| cx.write_to_clipboard(ClipboardItem::new_string(text.into())));
+            } else if clipboard["pngBytes"].is_array() {
+                let bytes: Vec<u8> = serde_json::from_value(clipboard["pngBytes"].clone())?;
+                let image = Image::from_bytes(ImageFormat::Png, bytes);
+                fx.cx
+                    .update(|cx| cx.write_to_clipboard(ClipboardItem::new_image(&image)));
+            }
+            fx.keys(&port_key(step)?)?
+        }
         "type" => fx.type_text(step["text"].as_str().context("no text")?)?,
         "bridge" => {
             let event = bridge::Event::Notification {
@@ -413,20 +448,31 @@ fn check_state(fx: &mut Fx, state: &Value) -> Result<()> {
 
 // --- Bridge ---
 
-/// `{method, params}` with null fields dropped: the port leaves out what the original sends
-/// as `null` (`cursor`).
+/// `{method, params}` with null fields dropped (the port leaves out what the original sends
+/// as `null`, e.g. `cursor`), v4 UUIDs as `<id>` and a `dataBase64` JSON document decoded.
 fn normalise(method: &str, params: Option<&Value>) -> (String, Value) {
     fn strip(v: Value) -> Value {
         match v {
             Value::Object(m) => Value::Object(
                 m.into_iter()
                     .filter(|(_, v)| !v.is_null())
-                    .map(|(k, v)| (k, strip(v)))
+                    .map(|(k, v)| match (k.as_str(), &v) {
+                        ("dataBase64", Value::String(s)) => (k, decoded(s)),
+                        _ => (scrub(&k), strip(v)),
+                    })
                     .collect(),
             ),
             Value::Array(a) => Value::Array(a.into_iter().map(strip).collect()),
+            Value::String(s) => Value::String(scrub(&s)),
             v => v,
         }
+    }
+    fn decoded(base64: &str) -> Value {
+        BASE64
+            .decode(base64)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .map_or_else(|| Value::String(base64.into()), strip)
     }
     let params = match params {
         // The recorder keeps params as a JSON string.
@@ -437,8 +483,34 @@ fn normalise(method: &str, params: Option<&Value>) -> (String, Value) {
     (method.into(), strip(params))
 }
 
-fn check_requests(result: &Value, sent: &[Value]) -> Result<()> {
-    let want: Vec<_> = result["requests"]
+/// Every `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` hex id as `<id>`.
+fn scrub(s: &str) -> String {
+    let is_id = |w: &str| {
+        w.bytes().enumerate().all(|(i, c)| {
+            if matches!(i, 8 | 13 | 18 | 23) {
+                c == b'-'
+            } else {
+                c.is_ascii_hexdigit()
+            }
+        })
+    };
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(c) = rest.chars().next() {
+        if rest.get(..36).is_some_and(is_id) {
+            out.push_str("<id>");
+            rest = &rest[36..];
+        } else {
+            out.push(c);
+            rest = &rest[c.len_utf8()..];
+        }
+    }
+    out
+}
+
+/// The normalised `result.requests`, in order.
+fn recorded(result: &Value) -> Vec<(String, Value)> {
+    result["requests"]
         .as_array()
         .into_iter()
         .flatten()
@@ -449,7 +521,11 @@ fn check_requests(result: &Value, sent: &[Value]) -> Result<()> {
             }
             r => Some(normalise(r["method"].as_str()?, r.get("params"))),
         })
-        .collect();
+        .collect()
+}
+
+fn check_requests(result: &Value, sent: &[Value]) -> Result<()> {
+    let want = recorded(result);
     let got: Vec<_> = sent
         .iter()
         .map(|m| normalise(m["method"].as_str().unwrap_or("?"), m.get("params")))

@@ -6,8 +6,9 @@
 use crate::{Shell, icon::icon, icon_button, motion::ButtonVisual, text};
 use gpui::{
     Action, AnyView, App, AppContext as _, Context, Corners, Div, Entity, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, Render, SharedString, StatefulInteractiveElement,
-    Styled, Window, actions, canvas, div, img, prelude::FluentBuilder as _, px,
+    IntoElement, MouseButton, ParentElement, Render, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, Window, actions, canvas, div, img,
+    prelude::FluentBuilder as _, px,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -26,7 +27,8 @@ actions!(
     ]
 );
 
-/// A suggested-task card was clicked: start a task from its prompt.
+/// A suggested-task card was clicked: the page shows the card as `Starting…` and the app
+/// starts the guided setup conversation from its prompt.
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = automations, no_json)]
 pub struct StartSuggestedTask {
@@ -230,21 +232,26 @@ fn cards(mut all: Vec<Suggestion>) -> Vec<Suggestion> {
 pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
     let server = serde_json::from_value(oracle("\"url\":\"/suggested_automations\""))
         .expect("suggested_automations shape");
-    let (shell, _) = shell_with(server, Vec::new(), None, 0, cx);
+    let (shell, _, _) = shell_with(server, Vec::new(), None, 0, cx);
     shell.update(cx, |shell, _| shell.can_go_back = true);
     shell.into()
 }
 
 /// The app's `/scheduled` route with the host's `tasks`: the task thread of `selected`
-/// (`?automationId=`, with the composer docked under it), else the empty page. The port has
-/// no ChatGPT backend for `/suggested_automations`, so the cards are the landing examples, as
-/// the original shows them without server suggestions. Dates show at `utc_offset` seconds.
+/// (`?automationId=`, with the composer docked under it), else the empty page (returned
+/// third). The port has no ChatGPT backend for `/suggested_automations`, so the cards are the
+/// landing examples, as the original shows them without server suggestions. Dates show at
+/// `utc_offset` seconds.
 pub fn shell(
     tasks: Vec<Task>,
     selected: Option<(Task, AnyView)>,
     utc_offset: i64,
     cx: &mut App,
-) -> (Entity<Shell>, Entity<ScheduledSidebar>) {
+) -> (
+    Entity<Shell>,
+    Entity<ScheduledSidebar>,
+    Option<Entity<AutomationsPage>>,
+) {
     shell_with(Vec::new(), tasks, selected, utc_offset, cx)
 }
 
@@ -254,12 +261,17 @@ fn shell_with(
     selected: Option<(Task, AnyView)>,
     utc_offset: i64,
     cx: &mut App,
-) -> (Entity<Shell>, Entity<ScheduledSidebar>) {
+) -> (
+    Entity<Shell>,
+    Entity<ScheduledSidebar>,
+    Option<Entity<AutomationsPage>>,
+) {
     let sidebar = cx.new(|_| ScheduledSidebar {
         tasks,
         selected: selected.as_ref().map(|(task, _)| task.id.clone()),
         utc_offset,
     });
+    let mut page = None;
     let main: AnyView = match selected {
         Some((task, composer)) => cx
             .new(|_| AutomationThread {
@@ -268,10 +280,12 @@ fn shell_with(
                 utc_offset,
             })
             .into(),
-        None => cx
-            .new(|_| AutomationsPage {
+        None => page
+            .insert(cx.new(|_| AutomationsPage {
                 cards: cards(server),
-            })
+                pending: None,
+            }))
+            .clone()
             .into(),
     };
     let shell = cx.new(|_| {
@@ -280,7 +294,7 @@ fn shell_with(
         shell.new_tab = false;
         shell
     });
-    (shell, sidebar)
+    (shell, sidebar, page)
 }
 
 /// `ScheduledSidebar`: header `Scheduled` + search, `New task`, section `Upcoming` with one
@@ -473,20 +487,38 @@ impl Render for ScheduledSidebar {
     }
 }
 
-/// Main column of the empty page: hero and the suggested-task grid.
+/// Main column of the empty page: hero and the suggested-task grid. While `pending` (a card
+/// index) starts its conversation, that card shows the rays spinner and `Starting…` instead
+/// of its description, and every card is disabled (`disabled:opacity-40`, no hover fill, no
+/// click).
 pub struct AutomationsPage {
     cards: Vec<Suggestion>,
+    pending: Option<usize>,
 }
 
 impl AutomationsPage {
-    fn card(&self, i: usize, s: &Suggestion, cx: &App) -> impl IntoElement {
+    /// The card whose conversation is starting.
+    pub fn pending(&self) -> Option<usize> {
+        self.pending
+    }
+
+    pub fn set_pending(&mut self, pending: Option<usize>, cx: &mut Context<Self>) {
+        self.pending = pending;
+        cx.notify();
+    }
+
+    fn card(&self, i: usize, s: &Suggestion, cx: &mut Context<Self>) -> Stateful<Div> {
         let t: &Theme = cx.theme();
         let hover_bg = t.ghost_hover;
+        let disabled = self.pending.is_some();
+        let starting = self.pending == Some(i);
         // `icon_url` is shown from its bundled copy under assets/ui/automations, its paths
         // rasterized by Chromium's Skia like Blink draws an svg `<img>`. Elsewhere GPUI's own
         // image raster (the copies declare 40x40, the 20 px slot at 2x: GPUI rasterizes svg
         // images at their intrinsic size).
         let glyph = match &s.icon_url {
+            // ponytail: the original spins the rays (`animate-spin`); animations are out of scope.
+            _ if starting => icon("rays", 20., t.text_tertiary).into_any_element(),
             Some(url) => {
                 let path = format!("ui/automations/{}", url.rsplit('/').next().unwrap_or(url));
                 if cfg!(target_os = "macos") {
@@ -508,6 +540,11 @@ impl AutomationsPage {
             None => text(s.emoji.clone(), 28., 28., 430., t.text).into_any_element(),
         };
         let prompt = s.user_message.clone();
+        let description = if starting {
+            "Starting…".into()
+        } else {
+            s.description.clone()
+        };
         div()
             .id(("suggestion", i))
             .flex_1()
@@ -527,14 +564,19 @@ impl AutomationsPage {
                 dashed: true,
                 ..Default::default()
             }))
-            .hover(move |st| st.bg(hover_bg))
-            .on_click(move |_, window, cx| {
-                window.dispatch_action(
-                    Box::new(StartSuggestedTask {
-                        prompt: prompt.clone(),
-                    }),
-                    cx,
-                )
+            .when(disabled, |d| d.opacity(0.4))
+            .when(!disabled, |d| {
+                d.hover(move |st| st.bg(hover_bg)).on_click(cx.listener(
+                    move |this, _, window, cx| {
+                        this.set_pending(Some(i), cx);
+                        window.dispatch_action(
+                            Box::new(StartSuggestedTask {
+                                prompt: prompt.clone(),
+                            }),
+                            cx,
+                        )
+                    },
+                ))
             })
             .child(
                 div()
@@ -558,7 +600,7 @@ impl AutomationsPage {
                             .truncate(),
                     )
                     .child(
-                        text(s.description.clone(), 14., 20., 400., t.text_tertiary)
+                        text(description, 14., 20., 400., t.text_tertiary)
                             .whitespace_normal()
                             .line_clamp(2)
                             .text_ellipsis(),
@@ -569,14 +611,20 @@ impl AutomationsPage {
 
 impl Render for AutomationsPage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let rows: Vec<_> = self
+            .cards
+            .chunks(2)
+            .enumerate()
+            .map(|(r, pair)| {
+                div().flex().gap(px(20.)).children(
+                    pair.iter()
+                        .enumerate()
+                        .map(|(c, s)| self.card(r * 2 + c, s, cx))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect();
         let t = cx.theme();
-        let rows = self.cards.chunks(2).enumerate().map(|(r, pair)| {
-            div().flex().gap(px(20.)).children(
-                pair.iter()
-                    .enumerate()
-                    .map(|(c, s)| self.card(r * 2 + c, s, cx)),
-            )
-        });
         div()
             .size_full()
             .flex()
