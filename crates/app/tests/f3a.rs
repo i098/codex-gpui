@@ -76,7 +76,7 @@ fn button<'a>(toast: &'a Value, text: &str) -> Result<&'a Value> {
 
 /// Recorded `method` requests as their raw params.
 fn requests(rec: &Value, method: &str) -> Vec<Value> {
-    rec["result"]["requests"]
+    rec["result"]["requestsFull"]
         .as_array()
         .into_iter()
         .flatten()

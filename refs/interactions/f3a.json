@@ -63,7 +63,8 @@
     "x": 640.5,
     "y": 56
    },
-   "note": "hover the toast 6 s: it stays and the region is expanded"
+   "note": "hover the toast 6 s: it stays and the region is expanded",
+   "waitMs": 6000
   },
   {
    "type": "hover",
@@ -71,7 +72,8 @@
     "x": 900,
     "y": 500
    },
-   "note": "leave: the remaining time (about 4.4 s) runs out"
+   "note": "leave: the remaining time (about 4.4 s) runs out",
+   "waitMs": 6000
   },
   {
    "type": "click",
@@ -624,6 +626,18 @@
     "type": "mcp-request",
     "method": "thread/archive",
     "params": "{\"threadId\":\"01a13de9-c48a-7b20-8382-db900881cb99\"}"
+   }
+  ],
+  "screenshot": [
+   "f3a-copy-error.png",
+   "f3a-archive.png",
+   "f3a-hover-6s.png"
+  ],
+  "requestsFull": [
+   {
+    "type": "mcp-request",
+    "method": "thread/archive",
+    "params": "{\"threadId\":\"01a13de9-c48a-7b20-8382-db900881cb99\"}"
    },
    {
     "type": "mcp-request",
@@ -641,10 +655,6 @@
     "params": "{\"threadId\":\"01a13de9-35ed-7c72-a36a-68eeb2f4e1ee\"}"
    }
   ],
-  "screenshot": [
-   "f3a-copy-error.png",
-   "f3a-archive.png",
-   "f3a-hover-6s.png"
-  ]
+  "requestsNote": "requests lists what the generic replay (tests/replay.rs) can check: its app-server has no recording of thread/archive, so the port restores the row and every later archive click repeats the first request. requestsFull is the whole recorded sequence, replayed by tests/f3a.rs."
  }
 }
