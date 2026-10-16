@@ -11,8 +11,8 @@
 use crate::{
     AnyView, AnyWindowHandle, App, AppCell, AppContext, AssetSource, BackgroundExecutor, Bounds,
     Context, Entity, EntityId, ForegroundExecutor, Global, Pixels, PlatformHeadlessRenderer,
-    PlatformTextSystem, Render, Reservation, Size, Task, TestDispatcher, TestPlatform, TextSystem,
-    Window, WindowBounds, WindowHandle, WindowOptions,
+    PlatformTextSystem, Render, Reservation, Size, Task, TestDispatcher, TestPlatform, TestWindow,
+    TextSystem, Window, WindowBounds, WindowHandle, WindowOptions,
     app::{GpuiBorrow, GpuiMode},
 };
 use anyhow::Result;
@@ -44,6 +44,7 @@ pub struct HeadlessAppContext {
     pub foreground_executor: ForegroundExecutor,
     dispatcher: TestDispatcher,
     text_system: Arc<TextSystem>,
+    platform: Rc<TestPlatform>,
 }
 
 impl HeadlessAppContext {
@@ -88,7 +89,7 @@ impl HeadlessAppContext {
 
         let text_system = Arc::new(TextSystem::new(platform_text_system));
         let http_client = http_client::FakeHttpClient::with_404_response();
-        let app = App::new_app(platform, asset_source, http_client);
+        let app = App::new_app(platform.clone(), asset_source, http_client);
         app.borrow_mut().mode = GpuiMode::test();
 
         Self {
@@ -97,6 +98,7 @@ impl HeadlessAppContext {
             foreground_executor,
             dispatcher,
             text_system,
+            platform,
         }
     }
 
@@ -145,6 +147,11 @@ impl HeadlessAppContext {
         self.dispatcher.forbid_parking();
     }
 
+    /// Takes the last URL opened through the test platform.
+    pub fn take_opened_url(&self) -> Option<String> {
+        self.platform.opened_url.borrow_mut().take()
+    }
+
     /// Updates app state.
     pub fn update<R>(&mut self, f: impl FnOnce(&mut App) -> R) -> R {
         let mut app = self.app.borrow_mut();
@@ -172,15 +179,18 @@ impl HeadlessAppContext {
 
     /// Simulates the user resizing the window to `size` (runs its resize callbacks).
     pub fn simulate_window_resize(&mut self, window: AnyWindowHandle, size: Size<Pixels>) {
-        let mut test_window = self
-            .app
+        self.test_window(window).simulate_resize(size);
+    }
+
+    /// The platform side of an open window.
+    pub fn test_window(&mut self, window: AnyWindowHandle) -> TestWindow {
+        self.app
             .borrow_mut()
             .windows
             .get_mut(window.id)
             .and_then(|w| w.as_deref_mut())
             .and_then(|w| w.platform_window.as_test().cloned())
-            .expect("open test window");
-        test_window.simulate_resize(size);
+            .expect("open test window")
     }
 
     /// Returns the text system.

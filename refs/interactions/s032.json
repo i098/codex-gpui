@@ -1,0 +1,169 @@
+{
+  "name": "s032-window-drag-region",
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 1,
+    "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+    "theme": "dark",
+    "hoverEmulated": true
+  },
+  "steps": [
+    {
+      "type": "drag",
+      "target": {
+        "text": "Empty titlebar"
+      },
+      "from": {
+        "x": 600,
+        "y": 22
+      },
+      "to": {
+        "x": 610,
+        "y": 82
+      },
+      "nativeMove": true
+    },
+    {
+      "type": "drag",
+      "target": {
+        "text": "Back"
+      },
+      "from": {
+        "x": 102,
+        "y": 22
+      },
+      "to": {
+        "x": 112,
+        "y": 82
+      },
+      "nativeMove": false
+    },
+    {
+      "type": "drag",
+      "target": {
+        "text": "Forward"
+      },
+      "from": {
+        "x": 136,
+        "y": 22
+      },
+      "to": {
+        "x": 146,
+        "y": 82
+      },
+      "nativeMove": false
+    },
+    {
+      "type": "drag",
+      "target": {
+        "text": "Hide sidebar"
+      },
+      "from": {
+        "x": 170,
+        "y": 22
+      },
+      "to": {
+        "x": 180,
+        "y": 82
+      },
+      "nativeMove": false
+    },
+    {
+      "type": "drag",
+      "target": {
+        "text": "New tab"
+      },
+      "from": {
+        "x": 1258,
+        "y": 22
+      },
+      "to": {
+        "x": 1268,
+        "y": 82
+      },
+      "nativeMove": false
+    },
+    {
+      "type": "click",
+      "at": {
+        "x": 170,
+        "y": 22
+      },
+      "target": {
+        "text": "Hide sidebar"
+      }
+    }
+  ],
+  "result": {
+    "dom": [
+      {
+        "selector": "header.draggable",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "w": 1280,
+          "h": 44
+        },
+        "computed": {
+          "appRegion": "drag"
+        }
+      },
+      {
+        "selector": "button[aria-label=\"Back\"]",
+        "bbox": {
+          "x": 88,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        },
+        "computed": {
+          "appRegion": "no-drag"
+        }
+      },
+      {
+        "selector": "button[aria-label=\"Forward\"]",
+        "bbox": {
+          "x": 122,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        },
+        "computed": {
+          "appRegion": "no-drag"
+        }
+      },
+      {
+        "selector": "button[aria-label=\"Hide sidebar\"]",
+        "bbox": {
+          "x": 156,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        },
+        "computed": {
+          "appRegion": "no-drag"
+        }
+      },
+      {
+        "selector": "button[aria-label=\"New tab\"]",
+        "bbox": {
+          "x": 1244,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        },
+        "computed": {
+          "appRegion": "no-drag"
+        }
+      }
+    ],
+    "state": {
+      "sidebarOpen": false
+    },
+    "requests": [],
+    "requestsExact": true,
+    "screenshot": "s032-after.png",
+    "note": "Route1 records renderer app-region styles and pointer interactions. Chrome cannot perform an Electron native window move. nativeMove expectations use the observed drag/no-drag regions, not a measured window displacement."
+  }
+}
