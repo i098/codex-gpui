@@ -55,7 +55,7 @@ fn recordings() {
         let name = file.file_stem().unwrap().to_string_lossy();
         match run(file) {
             Ok(Some(note)) => println!("PASS {name} {note}"),
-            Ok(None) => println!("SKIP {name}: recorder determinism fixture"),
+            Ok(None) => println!("SKIP {name}: recorder determinism bundle, checked by f0a"),
             Err(err) => {
                 println!("FAIL {name}: {err:#}");
                 failed.push(format!("{name}: {err:#}"));
@@ -157,9 +157,34 @@ fn run_step(fx: &mut Fx, step: &Value) -> Result<()> {
     match kind {
         "hover" => fx.hover(target(step)?)?,
         "click" if step["button"] == "right" => fx.right_click(target(step)?)?,
-        "click" => fx.click(target(step)?)?,
+        "click" => {
+            let at = if let Some(reference) = step["portReference"].as_object() {
+                fx.at(
+                    reference["screen"].as_str().context("reference screen")?,
+                    reference["text"].as_str().context("reference text")?,
+                )?
+            } else {
+                target(step)?
+            };
+            fx.click(at)?;
+            if let Some(id) = step["waitThread"].as_str() {
+                fx.wait_thread(id)?;
+            }
+        }
         "key" => fx.keys(&port_key(step)?)?,
         "type" => fx.type_text(step["text"].as_str().context("no text")?)?,
+        "bridge" => {
+            let event = bridge::Event::Notification {
+                method: step["method"]
+                    .as_str()
+                    .context("notification method")?
+                    .into(),
+                params: step["params"].clone(),
+            };
+            fx.root
+                .update(&mut fx.cx, |root, cx| root.on_event(event, cx));
+            fx.cx.run_until_parked();
+        }
         // The DOM's positive deltaY scrolls down; gpui's negative delta does.
         "scroll" | "wheel" => fx.scroll(
             target(step)?,
@@ -359,6 +384,25 @@ fn check_state(fx: &mut Fx, state: &Value) -> Result<()> {
             "canGoForward" => fx.shell(|s| s.can_go_forward).into(),
             "commandMenu" => fx.read(|r, _| r.command_menu().is_some()).into(),
             "composerFocused" => fx.composer_focused()?.into(),
+            "diffFiles" => fx.read(|root, cx| {
+                serde_json::json!(
+                    root.diff_panel()
+                        .map(|panel| panel
+                            .read(cx)
+                            .files
+                            .iter()
+                            .map(|file| (
+                                format!("{}{}", file.dir, file.name),
+                                file.added,
+                                file.removed
+                            ))
+                            .collect::<Vec<_>>())
+                        .unwrap_or_default()
+                )
+            }),
+            "diffSearch" => fx.read(|root, cx| {
+                serde_json::json!(root.diff_panel().and_then(|panel| panel.read(cx).search()))
+            }),
             _ => bail!("unknown state key {key:?}"),
         };
         ensure!(&got == want, "state {key}: port {got}, expected {want}");
