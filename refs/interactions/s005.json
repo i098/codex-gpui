@@ -555,6 +555,6 @@
       ]
     },
     "requestsNote": "Copy invokes navigator.clipboard.write, with no app-server request. Clipboard payloads were captured after the real write succeeded.",
-    "screenshot": "/tmp/cgx-s005/shots/s005-hover.png"
+    "screenshot": "/sdc-disk/tmp/cgx/cgx-s005/shots/s005-hover.png"
   }
 }
