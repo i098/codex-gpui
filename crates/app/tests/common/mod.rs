@@ -239,6 +239,16 @@ impl Fx {
         Ok(())
     }
 
+    /// Advances the test clock and renders the next animation frame.
+    pub fn advance(&mut self, duration: Duration) -> Result<()> {
+        self.cx.advance_clock(duration);
+        self.cx.update_window(self.window, |_, window, cx| {
+            window.simulate_next_frame(cx);
+        })?;
+        self.cx.run_until_parked();
+        Ok(())
+    }
+
     pub fn hover(&mut self, (x, y): (f32, f32)) -> Result<()> {
         self.input(PlatformInput::MouseMove(MouseMoveEvent {
             position: point(px(x), px(y)),
@@ -391,6 +401,7 @@ impl Fx {
     }
 
     pub fn shot(&mut self) -> Result<RgbaImage> {
+        self.advance(Duration::ZERO)?;
         self.cx.capture_screenshot(self.window)
     }
 
@@ -485,12 +496,14 @@ pub fn changed(a: &RgbaImage, b: &RgbaImage, [x, y, w, h]: [f32; 4]) -> usize {
         .count()
 }
 
-/// Hovering `at` repaints at least `min` device px of `rect`.
+/// Checks the settled hover fill. `ms1.rs` checks the intermediate motion frames.
 pub fn assert_hover(fx: &mut Fx, at: (f32, f32), rect: [f32; 4], min: usize) -> Result<usize> {
     // Rest the pointer on the titlebar's empty middle first.
     fx.hover((640., 22.))?;
+    fx.advance(ui::motion::BASIC)?;
     let before = fx.shot()?;
     fx.hover(at)?;
+    fx.advance(ui::motion::BASIC)?;
     let after = fx.shot()?;
     let n = changed(&before, &after, rect);
     ensure!(n >= min, "hover at {at:?} repainted {n} px of {rect:?}");

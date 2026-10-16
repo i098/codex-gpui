@@ -198,21 +198,22 @@ fn thread_row(
             fill: Some(t.ghost_hover),
             ..Default::default()
         }));
-    let (hover_bg, hover_fg) = (t.ghost_hover, t.text);
     let action = |id: &'static str, name: &'static str| {
         div()
             .id(id)
-            .group(id)
             .size(px(20.))
             .flex()
             .items_center()
             .justify_center()
             .rounded(px(6.))
-            .hover(move |s| s.bg(hover_bg))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                icon(name, 14., t.text_tertiary).group_hover(id, move |s| s.text_color(hover_fg)),
-            )
+            .child(crate::motion::ButtonVisual {
+                glyph: icon(name, 14., t.text_tertiary),
+                radius: px(6.),
+                hover: t.ghost_hover,
+                foreground: t.text.opacity(0.85),
+                selected: false,
+            })
     };
     div()
         .id(group.clone())
