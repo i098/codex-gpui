@@ -884,19 +884,9 @@ impl Shell {
             })
     }
 
-<<<<<<< HEAD
-    fn titlebar(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
-        // The header is the window drag region (`-webkit-app-region: drag`, macOS hiddenInset);
-        // its buttons are `no-drag`, so a press on one never reaches the move handler.
-        let no_drag =
-            |d: Stateful<Div>| d.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
-        // Disabled (`opacity: .4`, no hover) when there is no history in that direction. The
-        // opacity goes on the icon itself so `icon::icon` finds its fitted image.
-        let nav = |id: &'static str, glyph: icon::Icon, enabled: bool| {
-            no_drag(if enabled {
-                icon_button(id, glyph, t)
-=======
     fn titlebar(&self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        // The header is the window drag region (`-webkit-app-region: drag`, macOS hiddenInset);
+        // its buttons are `no-drag`: each stops the press before the move handler below.
         // Disabled history controls do not participate in keyboard navigation.
         let mut nav = |id: &'static str, glyph: icon::Icon, enabled: bool| {
             if enabled {
@@ -910,8 +900,8 @@ impl Shell {
                 )
                 .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                     focus.read(cx).handle.clone().focus(window, cx);
+                    cx.stop_propagation();
                 })
->>>>>>> origin/main
             } else {
                 div()
                     .id(id)
@@ -920,7 +910,8 @@ impl Shell {
                     .items_center()
                     .justify_center()
                     .child(glyph.opacity(0.4))
-            })
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            }
             .absolute()
             .top(px(8.))
         };
@@ -961,13 +952,6 @@ impl Shell {
             ))
             .when(self.chat_chrome, |d| {
                 d.child(tooltip(
-<<<<<<< HEAD
-                    no_drag(icon_button(
-                        "toggle-sidebar",
-                        icon::icon("sidebar", 16., t.text_tertiary),
-                        t,
-                    ))
-=======
                     focus::ring(
                         icon_button(
                             "toggle-sidebar",
@@ -979,12 +963,12 @@ impl Shell {
                         px(2.),
                         cx,
                     )
->>>>>>> origin/main
                     .absolute()
                     .left(px(156.))
                     .top(px(8.))
                     .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                         sidebar_focus.read(cx).handle.clone().focus(window, cx);
+                        cx.stop_propagation();
                     })
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
                     "Toggle sidebar",
@@ -994,11 +978,7 @@ impl Shell {
             })
             .when(self.new_tab, |d| {
                 d.child(
-<<<<<<< HEAD
-                    no_drag(div().id("new-tab"))
-=======
                     focus::ring(div().id("new-tab"), &new_tab_focus, px(8.), px(2.), cx)
->>>>>>> origin/main
                         .absolute()
                         .top(px(8.))
                         .right(px(8.))
