@@ -15,9 +15,9 @@ use image::{ExtendedColorType, ImageEncoder as _, codecs::png::PngEncoder};
 use parking_lot::Mutex;
 use skia_safe::{
     AlphaType, BlendMode, BlurStyle, Canvas, ClipOp, Color4f, ColorSpace, ColorType,
-    ContourMeasureIter, Data, FilterMode, ImageInfo, MaskFilter, Matrix, MipmapMode, Paint,
+    ContourMeasureIter, Data, FilterMode, IRect, ImageInfo, MaskFilter, Matrix, MipmapMode, Paint,
     PaintCap, PaintJoin, PaintStyle, Path, PathBuilder, PathDirection, PathEffect, PathFillType,
-    PathOp, RRect, Rect, SamplingOptions, Vector, color_filters, surfaces,
+    PathOp, RRect, Rect, SamplingOptions, Surface, Vector, color_filters, surfaces,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -1030,8 +1030,8 @@ fn raster(
         let f = |v: u8| f32::from(v) / 255.;
         Color4f::new(f(r), f(g), f(b), f(a))
     };
-    let tile = |o: [i32; 2], size: (i32, i32), p: Probe, pb: Option<[i32; 4]>| {
-        tile_pixels(o, size, color(p.bg, 255), |c| {
+    let tile = |o: [i32; 2], size: (i32, i32), p: Probe, pb: Option<[i32; 4]>, rect: [i32; 4]| {
+        rect_pixels(o, size, color(p.bg, 255), rect, |c| {
             clip_playback(c, pb);
             for clip in clips {
                 clip.clip(c, ClipOp::Intersect);
@@ -1061,33 +1061,49 @@ fn raster(
         if ls.0 <= 0 || ls.1 <= 0 {
             continue;
         }
-        let full: Vec<_> = probes.iter().map(|&p| tile(lo, ls, p, None)).collect();
+        // The px this tile owns: only they are cleared and read back.
+        let rect = [ox0.max(lo[0]), oy0.max(lo[1]), ox1, oy1];
+        if rect[0] >= rect[2] || rect[1] >= rect[3] {
+            continue;
+        }
+        let full: Vec<_> = probes
+            .iter()
+            .map(|&p| tile(lo, ls, p, None, rect))
+            .collect();
         // A partial raster: the px in the playback rect take that pass.
         let part = layer.playback(o, ts).map(|r| {
-            let s: Vec<_> = probes.iter().map(|&p| tile(lo, ls, p, Some(r))).collect();
+            let s: Vec<_> = probes
+                .iter()
+                .map(|&p| tile(lo, ls, p, Some(r), rect))
+                .collect();
             (r, s)
         });
-        for y in oy0.max(lo[1])..oy1 {
-            for x in ox0.max(lo[0])..ox1 {
+        let n = probes.len();
+        // The last px's probe values and blits: a fill's inner px repeat their neighbor's.
+        let mut last: Option<([[u8; 3]; 5], Blits)> = None;
+        for y in rect[1]..rect[3] {
+            for x in rect[0]..rect[2] {
                 let seen = match &part {
                     Some((r, s)) if x >= r[0] && y >= r[1] && x < r[2] && y < r[3] => s,
                     _ => &full,
                 };
                 // RGBA bytes (macOS N32).
-                let i = (y - lo[1]) as usize * seen[0].1 + (x - lo[0]) as usize * 4;
-                let px: Vec<[u8; 3]> = seen
-                    .iter()
-                    .map(|s| [s.0[i], s.0[i + 1], s.0[i + 2]])
-                    .collect();
+                let i = (y - rect[1]) as usize * seen[0].1 + (x - rect[0]) as usize * 4;
+                let mut buf = [[0; 3]; 5];
+                for (v, s) in buf.iter_mut().zip(seen) {
+                    *v = [s.0[i], s.0[i + 1], s.0[i + 2]];
+                }
+                let px = &buf[..n];
                 // The coverage the first probe's blit shows: its value white on black, its
                 // inverse black on white.
                 let m = if black { 255 - px[0][1] } else { px[0][1] };
                 if m == 0 {
                     continue;
                 }
-                out[((y - y0) * w + x - x0) as usize] = match fixed {
-                    Some(mode) => [m, mode, 0, MASK],
-                    None => solve(&probes, &px, m, modes).unwrap_or_else(|| {
+                let blits = match (fixed, last) {
+                    (Some(mode), _) => [m, mode, 0, MASK],
+                    (None, Some((prev, b))) if prev == buf => b,
+                    (None, _) => solve(&probes, px, m, modes).unwrap_or_else(|| {
                         // AAA may split a translucent paint's edge px into other blits than the
                         // opaque probe's: one `blitAntiH` (as under an AA clip, which forces
                         // AAA's run blitter) of the coverage the translucent white probe shows,
@@ -1103,6 +1119,8 @@ fn raster(
                         ]
                     }),
                 };
+                last = Some((buf, blits));
+                out[((y - y0) * w + x - x0) as usize] = blits;
             }
         }
     }
@@ -1119,6 +1137,55 @@ pub(crate) fn tile_pixels(
 ) -> (Vec<u8>, usize) {
     // Chromium's raster canvases are sRGB: a [`wide`] paint color takes the float pipeline.
     surface_pixels(o, size, clear, ColorSpace::new_srgb(), draw)
+}
+
+thread_local! {
+    /// Tile surfaces by size for [`rect_pixels`]: a tile is up to 4 MB, too much to allocate
+    /// and clear for every draw.
+    /// ponytail: kept for the thread's life, a few per tile size; cap them if sizes multiply.
+    static SURFACES: RefCell<HashMap<(i32, i32), Vec<Surface>>> = Default::default();
+}
+
+/// [`tile_pixels`] for the layer px `[x0, y0, x1, y1]` of the tile only, rows packed, drawn on
+/// a reused surface where only those px are cleared: the px `draw` blends into outside them
+/// are never read, so what an earlier draw left there does not matter.
+fn rect_pixels(
+    o: [i32; 2],
+    size: (i32, i32),
+    clear: Color4f,
+    [x0, y0, x1, y1]: [i32; 4],
+    draw: impl FnOnce(&Canvas),
+) -> (Vec<u8>, usize) {
+    let pooled = SURFACES.with_borrow_mut(|s| s.get_mut(&size).and_then(Vec::pop));
+    let mut surface = pooled.unwrap_or_else(|| {
+        let info = ImageInfo::new_n32_premul(size, ColorSpace::new_srgb());
+        surfaces::raster(&info, None, None).expect("shapes: tile surface")
+    });
+    let r = IRect::new(x0 - o[0], y0 - o[1], x1 - o[0], y1 - o[1]);
+    let canvas = surface.canvas();
+    canvas.save();
+    canvas.clip_irect(r, ClipOp::Intersect);
+    canvas.clear(clear);
+    canvas.restore();
+    canvas.save();
+    canvas.translate((-o[0] as f32, -o[1] as f32));
+    draw(canvas);
+    canvas.restore();
+    let w = r.width() as usize * 4;
+    let mut out = Vec::with_capacity(w * r.height() as usize);
+    {
+        let pixmap = surface.peek_pixels().expect("shapes: tile pixels");
+        let (bytes, row) = (
+            pixmap.bytes().expect("shapes: tile bytes"),
+            pixmap.row_bytes(),
+        );
+        for y in r.top..r.bottom {
+            let i = y as usize * row + r.left as usize * 4;
+            out.extend_from_slice(&bytes[i..i + w]);
+        }
+    }
+    SURFACES.with_borrow_mut(|s| s.entry(size).or_default().push(surface));
+    (out, w)
 }
 
 /// [`tile_pixels`] on a surface of color space `cs` (`None`: the compositor's, whose filters
@@ -1392,6 +1459,9 @@ pub(crate) fn sprites(
             .into_iter()
             .flat_map(|b| [MASK, ARGB32, PIPELINE, LAYER, DST_IN].map(|m| (b, m)))
         {
+            if !blits.iter().any(|b| b[blit + 1] == mode && b[blit] != 0) {
+                continue;
+            }
             let value = |i: usize| {
                 let b = blits[i];
                 if b[blit + 1] == mode { b[blit] } else { 0 }
@@ -1592,15 +1662,32 @@ fn paint_op(op: Op, color: Hsla, layer: Layer, window: &mut Window, cx: &App) {
         });
         return paint_sprites(&sprites, color, window, cx);
     }
+    let bbox = op.bbox();
+    if !shown(bbox, layer, window) {
+        return;
+    }
     let clips = clips(window, layer);
     let black = is_black(color, a);
     let wide = wide(color);
     let sprites = sprites(format!("{op:?}{layer:?}{a}{black}{wide}{clips:?}"), || {
-        raster(op.bbox(), layer, a, black, wide, &clips, &|c, col| {
+        raster(bbox, layer, a, black, wide, &clips, &|c, col| {
             op.draw(c, col)
         })
     });
     paint_sprites(&sprites, color, window, cx);
+}
+
+/// Whether any px of the layer px rect `[x0, y0, x1, y1]` lies inside the content mask: the
+/// scene drops sprites outside it, so a draw that cannot reach it needs no raster (a long
+/// chat's off-screen turns).
+fn shown([x0, y0, x1, y1]: [i32; 4], layer: Layer, window: &Window) -> bool {
+    let (m, s) = (window.content_mask().bounds, window.scale_factor());
+    let [lx, ly] = layer.origin;
+    let dev = |v: Pixels| f32::from(v) * s;
+    ((x0 + lx) as f32) < dev(m.right())
+        && ((x1 + lx) as f32) > dev(m.left())
+        && ((y0 + ly) as f32) < dev(m.bottom())
+        && ((y1 + ly) as f32) > dev(m.top())
 }
 
 /// `crate::paint` on macOS: Blink's box decoration painting, op by op.
@@ -2090,6 +2177,9 @@ pub(crate) fn paint_icon(
             (origin[0] as f64 + w).ceil() as i32 + 2,
             (origin[1] as f64 + h).ceil() as i32 + 2,
         ];
+        if !shown(bbox, layer, window) {
+            continue;
+        }
         let c = p.color.unwrap_or(rgba);
         // ponytail: the svg's `opacity` (a layer in Chromium) is folded into the paint alpha.
         let a = if p.color.is_some() { 1. } else { rgba.a } * p.opacity * p.layer;

@@ -115,6 +115,17 @@ It types a prompt into the Home composer with key events and pushes Enter.
 It waits for `turn/completed` and checks that the thread view shows `pong`.
 It prints the transcript and saves `live-1-home.png`, `live-2-streaming.png` and `live-3-done.png`.
 
+## Frame benchmark
+
+```sh
+tools/mac.sh 'cargo run -p app --release --example bench'
+```
+
+The example runs the real root view, headless at 1280x832 @2x, on a replayed app-server with 60 Recents and a 40-turn chat.
+It sends key, mouse and scroll-wheel events and prints, for each scenario, the p50, p95 and max milliseconds from an input to the end of its frame.
+The 120 Hz frame budget is 8.3 ms.
+With `BENCH_SHOT=<dir>`, it saves every 20th frame, so that you can compare the pixels of two builds.
+
 ## Current parity
 
 Each cell shows the different pixels outside the text boxes, then the different-pixel ratio inside the text boxes.
