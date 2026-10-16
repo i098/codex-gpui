@@ -202,7 +202,7 @@ impl Markdown<'_> {
                     let (row, checked) = self.inline(style);
                     task |= checked;
                     self.events.next();
-                    (wrap_row().children(row), 7., 3.5)
+                    (block(row, 2), 7., 3.5)
                 }
                 Event::Start(Tag::Heading { level, .. }) => {
                     let (size, line_height, top, bottom) = match level {
@@ -222,7 +222,7 @@ impl Markdown<'_> {
                         })
                         .0;
                     self.events.next();
-                    (wrap_row().children(row), top, bottom)
+                    (block(row, 2), top, bottom)
                 }
                 Event::Start(Tag::List(start)) => {
                     let start = *start;
@@ -315,7 +315,7 @@ impl Markdown<'_> {
                 _ => {
                     let (row, checked) = self.inline(style);
                     task |= checked;
-                    (wrap_row().children(row), 0., 0.)
+                    (block(row, 1), 0., 0.)
                 }
             };
             let gap = if first || style.weight == 400. {
@@ -389,37 +389,18 @@ impl Markdown<'_> {
             }
             match self.events.next().expect("peeked event") {
                 Event::Text(s) | Event::Html(s) | Event::InlineHtml(s) => {
-                    if self.find.is_none()
-                        && self.segments.is_empty()
-                        && style.size == 14.
-                        && style.line_height == 22.75
-                        && !style.italic
-                        && !style.strike
-                    {
-                        row.extend(
-                            super::items::words(
-                                &s,
-                                style.weight,
-                                style.color.unwrap_or(self.theme.text),
-                                self.window,
-                            )
-                            .into_iter()
-                            .map(IntoElement::into_any_element),
-                        );
-                    } else {
-                        let mut at = self.events.start;
-                        row.extend(s.split_inclusive(' ').map(|s| {
-                            let here = at;
-                            at += s.len();
-                            self.word(s, Some(here), style).into_any_element()
-                        }));
-                    }
+                    let mut at = self.events.start;
+                    row.extend(s.split_inclusive(' ').map(|s| {
+                        let here = at;
+                        at += s.len();
+                        self.word(s, Some(here), style).into_any_element()
+                    }));
                 }
                 Event::SoftBreak => {
                     let at = self.events.start;
                     row.push(self.word(" ", Some(at), style).into_any_element());
                 }
-                Event::HardBreak => row.push(div().w_full().h_0().into_any_element()),
+                Event::HardBreak => row.push(block_end(1).w_full().h_0().into_any_element()),
                 Event::Code(code) => {
                     let at = self.events.start;
                     row.push(self.code(&code, at).into_any_element());
@@ -460,6 +441,7 @@ impl Markdown<'_> {
                                 .when(external, |d| {
                                     let url = dest_url.to_string();
                                     let middle_url = url.clone();
+                                    let menu_url = url.clone();
                                     d.tab_index(0)
                                         .role(gpui::Role::Link)
                                         .hover(|s| s.underline())
@@ -471,9 +453,28 @@ impl Markdown<'_> {
                                                 cx.stop_propagation();
                                             }
                                         })
+                                        .on_mouse_down(MouseButton::Right, move |_, _, _| {
+                                            super::menu::note_right_clicked_link(menu_url.clone())
+                                        })
                                 })
                                 .when(!external, |d| {
-                                    d.on_click(crate::dispatch::<crate::OpenChangesPanel>)
+                                    // `path:12` cites a line; the thread's cwd resolves a
+                                    // relative path.
+                                    let (path, line) = dest_url
+                                        .rsplit_once(':')
+                                        .and_then(|(p, n)| Some((p.to_owned(), n.parse().ok()?)))
+                                        .map_or((dest_url.to_string(), None), |(p, n)| {
+                                            (p, Some(n))
+                                        });
+                                    d.on_click(move |_, window, cx| {
+                                        window.dispatch_action(
+                                            Box::new(crate::screens::diff::panel::OpenFile {
+                                                path: path.clone(),
+                                                line,
+                                            }),
+                                            cx,
+                                        )
+                                    })
                                 })
                                 .when(!external && dest_url.ends_with(".py"), |d| {
                                     d.child(div().w(px(19.))).child(
@@ -531,7 +532,20 @@ impl Markdown<'_> {
         (row, task)
     }
 
+    /// A word box with its selection highlight.
     fn word(&self, s: &str, at: Option<usize>, style: Typography) -> Div {
+        div()
+            .relative()
+            .flex_none()
+            .child(
+                highlight(s.to_owned().into(), style.size, style.weight, None, 0.)
+                    .absolute()
+                    .inset_0(),
+            )
+            .child(self.label(s, at, style))
+    }
+
+    fn label(&self, s: &str, at: Option<usize>, style: Typography) -> Div {
         let color = style.color.unwrap_or(self.theme.text);
         let find = self.find.zip(at);
         let fades = self.fades(s);
@@ -657,9 +671,24 @@ impl Markdown<'_> {
                     fill: Some(tones(self.theme).inline_code),
                     ..Default::default()
                 }))
+                // Over the chip's fill, under its glyphs, the height of the line box.
+                .child(
+                    highlight(code.to_owned().into(), 12.88, 430., Some(MONO), 6.)
+                        .absolute()
+                        .left_0()
+                        .right_0()
+                        .top(px(-3.5))
+                        .bottom(px(-3.25)),
+                )
                 .child(label),
         )
     }
+}
+
+/// A wrapped inline row that ends a block: `newlines` is what Chrome's `Selection.toString`
+/// emits after it (two for paragraphs and headings).
+fn block(row: Vec<AnyElement>, newlines: usize) -> Div {
+    wrap_row().children(row).child(block_end(newlines))
 }
 
 /// The text style of [`text`] without its content: the find highlights go in as `StyledText`.

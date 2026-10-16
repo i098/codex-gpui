@@ -413,6 +413,8 @@ impl Render for ScheduledSidebar {
                     .child(
                         div()
                             .id("new-task")
+                            .group("new-task")
+                            .relative()
                             .mb(px(8.))
                             .h(px(30.))
                             .flex()
@@ -420,7 +422,11 @@ impl Render for ScheduledSidebar {
                             .gap(px(8.))
                             .px(px(8.))
                             .rounded(px(12.5))
-                            .hover(move |s| s.bg(hover_bg))
+                            .child(
+                                fill(px(12.5), hover_bg)
+                                    .opacity(0.)
+                                    .group_hover("new-task", |s| s.opacity(1.)),
+                            )
                             .on_click(crate::dispatch::<NewTask>)
                             .child(icon("automations-plus", 16., t.text_default_nav))
                             .child(text("New task", 14., 21., 430., t.text_default_nav)),

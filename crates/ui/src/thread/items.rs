@@ -32,13 +32,6 @@ pub(super) fn wrap_row() -> Div {
     div().flex().flex_wrap().mr(px(-4.))
 }
 
-/// 14 px words of `s`, each with its trailing space, in 22.75 px line boxes.
-pub(super) fn words(s: &str, weight: f32, color: Hsla, window: &Window) -> Vec<Div> {
-    s.split_inclusive(' ')
-        .map(|word| measured(window, word.to_owned(), 14., 22.75, weight, color, None))
-        .collect()
-}
-
 /// `Worked for 17s ›` over a hairline (turn disclosure); `angle` turns the chevron clockwise
 /// in degrees (90 = open). At rest it is the fitted icon; while it turns, the svg path is
 /// rotated about its viewBox centre and rasterized like any icon (no clipping: the path stays
@@ -291,6 +284,17 @@ pub(super) struct GroupRow {
     verb: String,
     file: Option<String>,
     stats: Option<(usize, usize)>,
+    /// A `Ran` row's shell card, shown under it while open under `shell.key`.
+    shell: Option<Shell>,
+}
+
+/// The shell card of a command (`ShellOutputBlock`): `$ command`, its output, exit footer.
+pub(super) struct Shell {
+    key: String,
+    command: String,
+    output: String,
+    /// `Success`, `Exit code 1`; empty while the command runs.
+    footer: String,
 }
 
 impl GroupRow {
@@ -366,8 +370,12 @@ fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
     for item in items {
         match item {
             ThreadItem::CommandExecution {
+                id,
                 command,
                 command_actions,
+                status,
+                aggregated_output,
+                exit_code,
                 ..
             } => {
                 // The server's parse: all `read` / `search` / `list_files` is exploration.
@@ -397,11 +405,28 @@ fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
                         .join("; "),
                 };
                 rows.push(if names.is_empty() {
+                    // ponytail: `Stopped` (an interrupted turn) is not told apart from a failure.
+                    let footer = match (status.as_str(), exit_code) {
+                        ("inProgress", _) => String::new(),
+                        (_, Some(0)) => "Success".into(),
+                        (_, Some(code)) => format!("Exit code {code}"),
+                        (_, None) => "Exit code unknown".into(),
+                    };
                     GroupRow {
                         icon: "thread-terminal",
                         verb: format!("Ran {parsed}"),
                         file: None,
                         stats: None,
+                        shell: Some(Shell {
+                            key: format!("shell-{id}"),
+                            command: shell_command(command),
+                            output: aggregated_output
+                                .as_deref()
+                                .unwrap_or_default()
+                                .trim_end()
+                                .to_owned(),
+                            footer,
+                        }),
                     }
                 } else {
                     GroupRow {
@@ -409,6 +434,7 @@ fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
                         verb: "Read".into(),
                         file: Some(names.join(", ")),
                         stats: None,
+                        shell: None,
                     }
                 });
             }
@@ -423,6 +449,7 @@ fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
                     verb: "Edited".into(),
                     file: Some(name.to_owned()),
                     stats: Some(diff_counts(changes.iter())),
+                    shell: None,
                 });
             }
             _ => {}
@@ -482,6 +509,39 @@ pub(super) fn activity(
             .child(icon(icon_name, 16., text60))
             .child(words)
     };
+    // A row that opens `key`: its label whitens on hover, its 14 px chevron shows on hover and
+    // points down while open.
+    let disclosure = |key: String, icon_name: &'static str, (label, w): (Div, Pixels), is_open| {
+        let group = SharedString::from(format!("activity-group-{key}"));
+        // Group hover recolours text only on a stateful element: the run colour is fixed at
+        // layout, before this frame's group hitbox exists.
+        let label = label
+            .id(SharedString::from(format!("activity-summary-{key}")))
+            .group_hover(group.clone(), |s| s.text_color(t.text));
+        let chevron = if is_open {
+            "chevron-down"
+        } else {
+            "thread-chevron-right"
+        };
+        div()
+            .id(group.clone())
+            .group(group.clone())
+            .flex()
+            .items_center()
+            .gap(px(4.))
+            .child(row(icon_name, boxed(label.into_any_element(), w)))
+            .child(
+                // `Icon` folds its opacity into the color, so the hover sets the color.
+                icon(chevron, 14., text60.opacity(if is_open { 1. } else { 0. }))
+                    .group_hover(group, move |s| s.text_color(text60)),
+            )
+            .on_click(cx.listener(move |view, _, _, cx| {
+                if !view.expanded.remove(&key) {
+                    view.expanded.insert(key.clone());
+                }
+                cx.notify();
+            }))
+    };
     let mut col = div().flex().flex_col().gap(px(16.));
     for entry in activities(items, running) {
         col = col.child(match entry {
@@ -499,37 +559,7 @@ pub(super) fn activity(
                 rows,
             } => {
                 let is_open = open.contains(key);
-                let group = SharedString::from(format!("activity-group-{key}"));
-                let key = key.to_owned();
-                let (summary, w) = label(summary, text60);
-                // Group hover recolours text only on a stateful element: the run colour is
-                // fixed at layout, before this frame's group hitbox exists.
-                let summary = summary
-                    .id(SharedString::from(format!("activity-summary-{key}")))
-                    .group_hover(group.clone(), |s| s.text_color(t.text));
-                let chevron = if is_open {
-                    "chevron-down"
-                } else {
-                    "thread-chevron-right"
-                };
-                let header = div()
-                    .id(group.clone())
-                    .group(group.clone())
-                    .flex()
-                    .items_center()
-                    .gap(px(4.))
-                    .child(row(icon_name, boxed(summary.into_any_element(), w)))
-                    .child(
-                        // `Icon` folds its opacity into the color, so the hover sets the color.
-                        icon(chevron, 14., text60.opacity(if is_open { 1. } else { 0. }))
-                            .group_hover(group, move |s| s.text_color(text60)),
-                    )
-                    .on_click(cx.listener(move |view, _, _, cx| {
-                        if !view.expanded.remove(&key) {
-                            view.expanded.insert(key.clone());
-                        }
-                        cx.notify();
-                    }));
+                let header = disclosure(key.to_owned(), icon_name, label(summary, text60), is_open);
                 let mut col = div()
                     .flex()
                     .flex_col()
@@ -538,6 +568,17 @@ pub(super) fn activity(
                     .child(header);
                 if is_open {
                     col = col.children(rows.into_iter().map(|r| {
+                        if let Some(shell) = r.shell {
+                            let is_open = open.contains(&shell.key);
+                            let key = shell.key.clone();
+                            return div()
+                                .w_full()
+                                .flex()
+                                .flex_col()
+                                .items_start()
+                                .child(disclosure(key, r.icon, label(r.verb, text60), is_open))
+                                .when(is_open, |d| d.child(shell_card(&shell, t)));
+                        }
                         let mut words = div()
                             .flex()
                             .items_center()
@@ -565,6 +606,74 @@ pub(super) fn activity(
         });
     }
     col
+}
+
+/// The card under an open `Ran` row, 8 px below it and 4 px above the next row, 10 px short
+/// of the column (the original's row list keeps that for its scrollbar): a 27 px `Shell`
+/// header, `$ command`, the output (144 px max; ponytail: scrolls from the top, the original
+/// sticks to the bottom) and a 27 px footer with `Success` or `Exit code N` at the right.
+fn shell_card(shell: &Shell, t: &Theme) -> Div {
+    let description = t.text.opacity(0.7);
+    let mono =
+        |s: String, weight: f32, color: Hsla| text(s, 13., 19.5, weight, color).font_family(MONO);
+    let footer = div()
+        .h(px(27.))
+        .pt(px(2.))
+        .px(px(10.))
+        .flex()
+        .items_center()
+        .justify_end()
+        .gap(px(4.))
+        .when(shell.footer == "Success", |d| {
+            d.child(icon("thread-check", 12., t.text_tertiary))
+        })
+        .when(!shell.footer.is_empty(), |d| {
+            d.child(text(shell.footer.clone(), 14., 21., 430., t.text_tertiary))
+        });
+    div().w_full().pt(px(8.)).pb(px(4.)).pr(px(10.)).child(
+        div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .rounded(Theme::RADIUS_LG)
+            .border_1()
+            .border_color(t.border_strong)
+            .bg(t.ghost_hover)
+            .child(div().h(px(27.)).px(px(8.)).py(px(4.)).child(text(
+                "Shell",
+                13.,
+                18.571_428,
+                430.,
+                description,
+            )))
+            .child(
+                div()
+                    .pt(px(8.))
+                    .pl(px(8.))
+                    .pr(px(24.))
+                    .flex()
+                    .gap(px(8.))
+                    .child(mono("$".into(), 430., t.text_tertiary))
+                    .child(mono(shell.command.clone(), 430., description)),
+            )
+            .child(
+                div()
+                    .id(SharedString::from(format!("{}-output", shell.key)))
+                    .max_h(px(144.))
+                    .overflow_y_scroll()
+                    .child(div().p(px(8.)).child(mono(
+                        if shell.output.is_empty() {
+                            "No output".into()
+                        } else {
+                            shell.output.clone()
+                        },
+                        500.,
+                        description,
+                    ))),
+            )
+            .child(footer),
+    )
 }
 
 /// `+4`, `-0` in one colour: 13 px tabular figures, tracked like the diff header's.
