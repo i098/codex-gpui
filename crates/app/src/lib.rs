@@ -218,6 +218,7 @@ pub struct State {
     pub width: f32,
     pub height: f32,
     pub sidebar_open: bool,
+    pub sidebar_width: f32,
     pub route: Route,
     pub theme: ThemeSetting,
     pub confirm_before_close: ConfirmBeforeClose,
@@ -231,6 +232,7 @@ impl Default for State {
             width: 1280.,
             height: 832.,
             sidebar_open: true,
+            sidebar_width: 340.,
             route: Route::Home,
             theme: ThemeSetting::System,
             confirm_before_close: ConfirmBeforeClose::default(),
@@ -398,6 +400,11 @@ impl Root {
         let shell = cx.new(|_| {
             let mut shell = Shell::new(sidebar.clone().into(), main);
             shell.sidebar_open = sidebar_open;
+            shell.sidebar_width = px(if state.sidebar_width.is_finite() {
+                state.sidebar_width.clamp(290., 520.)
+            } else {
+                340.
+            });
             shell
         });
         cx.observe_in(&shell, window, |this, _, window, cx| {
@@ -1360,6 +1367,7 @@ impl Root {
         if self.wide {
             self.state.sidebar_open = self.shell.read(cx).sidebar_open;
         }
+        self.state.sidebar_width = self.shell.read(cx).sidebar_width.into();
         self.state.save();
     }
 }
