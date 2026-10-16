@@ -1,4 +1,22 @@
 use super::*;
+use crate::screens::thread::view::menu::{ContextMenu, Item};
+use std::time::Instant;
+
+/// ProseMirror's history: edits closer than `newGroupDelay` (500 ms) that touch the last
+/// edit's end form one undo step; undo and redo close the group.
+#[derive(Default)]
+pub(super) struct History {
+    undo: Vec<(String, Range<usize>)>,
+    redo: Vec<(String, Range<usize>)>,
+    /// When the last edit happened and where it ended.
+    last: Option<(Instant, usize)>,
+}
+
+const NEW_GROUP_DELAY: Duration = Duration::from_millis(500);
+
+fn is_word(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
 
 impl Composer {
     pub(super) fn cursor(&self) -> usize {
@@ -45,6 +63,60 @@ impl Composer {
             .map_or(offset, |c| offset + c.len_utf8())
     }
 
+    /// Start of the word before `offset` (skipping spaces first), as `moveWordLeft` does.
+    // ponytail: words are alphanumeric runs; ICU word breaks (CJK, punctuation) if asked for.
+    fn word_start(&self, offset: usize) -> usize {
+        let before = self.content[..offset].trim_end_matches(|c| !is_word(c));
+        before.trim_end_matches(is_word).len()
+    }
+
+    /// End of the word after `offset` (skipping spaces first), as `moveWordRight` does.
+    fn word_end(&self, offset: usize) -> usize {
+        let rest = self.content[offset..].trim_start_matches(|c| !is_word(c));
+        self.content.len() - rest.trim_start_matches(is_word).len()
+    }
+
+    /// Records the state before an edit of `range`, unless it joins the last edit's group.
+    fn remember(&mut self, range: &Range<usize>) {
+        let joins = self.history.last.is_some_and(|(at, end)| {
+            at.elapsed() < NEW_GROUP_DELAY && range.start <= end && end <= range.end
+        });
+        if !joins {
+            self.history
+                .undo
+                .push((self.content.clone(), self.selected_range.clone()));
+            self.history.redo.clear();
+        }
+    }
+
+    fn restore(&mut self, (content, selection): (String, Range<usize>), cx: &mut Context<Self>) {
+        self.history.last = None;
+        self.content = content;
+        self.selected_range = selection;
+        self.selection_reversed = false;
+        self.marked_range = None;
+        self.refresh_slash(cx);
+        cx.notify();
+    }
+
+    pub(super) fn undo(&mut self, _: &crate::Undo, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(state) = self.history.undo.pop() {
+            self.history
+                .redo
+                .push((self.content.clone(), self.selected_range.clone()));
+            self.restore(state, cx);
+        }
+    }
+
+    pub(super) fn redo(&mut self, _: &crate::Redo, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(state) = self.history.redo.pop() {
+            self.history
+                .undo
+                .push((self.content.clone(), self.selected_range.clone()));
+            self.restore(state, cx);
+        }
+    }
+
     pub(super) fn insert(&mut self, s: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.replace_text_in_range(None, s, window, cx);
     }
@@ -63,6 +135,76 @@ impl Composer {
     pub(super) fn delete(&mut self, _: &Delete, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
             self.select_to(self.next_boundary(self.cursor()), cx);
+        }
+        self.insert("", window, cx);
+    }
+
+    pub(super) fn word_left(&mut self, _: &WordLeft, _: &mut Window, cx: &mut Context<Self>) {
+        let to = self.word_start(self.cursor());
+        self.move_to(to, cx);
+    }
+
+    pub(super) fn word_right(&mut self, _: &WordRight, _: &mut Window, cx: &mut Context<Self>) {
+        let to = self.word_end(self.cursor());
+        self.move_to(to, cx);
+    }
+
+    pub(super) fn select_word_left(
+        &mut self,
+        _: &SelectWordLeft,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_to(self.word_start(self.cursor()), cx);
+    }
+
+    pub(super) fn select_word_right(
+        &mut self,
+        _: &SelectWordRight,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_to(self.word_end(self.cursor()), cx);
+    }
+
+    pub(super) fn delete_word_backward(
+        &mut self,
+        _: &DeleteWordBackward,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selected_range.is_empty() {
+            self.select_to(self.word_start(self.cursor()), cx);
+        }
+        self.insert("", window, cx);
+    }
+
+    pub(super) fn delete_word_forward(
+        &mut self,
+        _: &DeleteWordForward,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selected_range.is_empty() {
+            self.select_to(self.word_end(self.cursor()), cx);
+        }
+        self.insert("", window, cx);
+    }
+
+    /// Command+Backspace deletes to the start of the line.
+    // ponytail: the logical line (after the last `\n`); Chromium deletes to the wrapped
+    // line's start.
+    pub(super) fn delete_to_line_start(
+        &mut self,
+        _: &DeleteToLineStart,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selected_range.is_empty() {
+            let to = self.content[..self.cursor()]
+                .rfind('\n')
+                .map_or(0, |i| i + 1);
+            self.select_to(to, cx);
         }
         self.insert("", window, cx);
     }
@@ -155,14 +297,18 @@ impl Composer {
         self.insert("", window, cx);
     }
 
-    pub(super) fn paste(&mut self, _: &crate::Paste, window: &mut Window, cx: &mut Context<Self>) {
+    /// Command+V, or the menu's Paste: images and long text (5,000 UTF-16 units or more)
+    /// become attachments, except in the message editor, which takes clipboard text only.
+    pub(super) fn paste(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(item) = cx.read_from_clipboard() else {
             return;
         };
-        if item
-            .entries()
-            .iter()
-            .any(|e| matches!(e, gpui::ClipboardEntry::Image(_)))
+        let attach = self.on_cancel_edit.is_none();
+        if attach
+            && item
+                .entries()
+                .iter()
+                .any(|e| matches!(e, gpui::ClipboardEntry::Image(_)))
         {
             for entry in item.into_entries() {
                 if let gpui::ClipboardEntry::Image(image) = entry {
@@ -170,11 +316,87 @@ impl Composer {
                 }
             }
         } else if let Some(text) = item.text() {
-            if text.encode_utf16().take(5000).count() == 5000 {
+            if attach && text.encode_utf16().take(5000).count() == 5000 {
                 self.save_paste(attach::Content::Text(text), cx);
             } else {
                 self.insert(&text, window, cx);
             }
+        }
+    }
+
+    /// The open right-click menu's items as `(id, label, enabled)`; empty when none is open.
+    pub fn context_menu_items(&self) -> impl Iterator<Item = (&str, &str, bool)> {
+        self.context_menu.iter().flat_map(ContextMenu::rows)
+    }
+
+    /// Where the open right-click menu's top-left corner is anchored (the pointer).
+    pub fn context_menu_at(&self) -> Option<Point<Pixels>> {
+        self.context_menu.as_ref().map(|menu| menu.position)
+    }
+
+    /// Electron's `context-menu` for an editable field (main's `installNativeContextMenu`):
+    /// `Look Up “…”` and `Search with Google` with a selection, then Cut ⌘X, Copy ⌘C (both
+    /// need a selection) and Paste ⌘V. A right-click outside the selection moves the caret
+    /// there first, as Chromium does.
+    fn on_right_click(&mut self, e: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.focus_handle, cx);
+        self.menu = None;
+        let at = self.index_for_point(e.position);
+        if !self.selected_range.contains(&at) {
+            self.move_to(at, cx);
+        }
+        let selection = self.content[self.selected_range.clone()].to_string();
+        let has = !selection.is_empty();
+        let mut items = Vec::new();
+        if has {
+            let trimmed = selection.trim();
+            // `p$e(t, 25)`: the label shows the first 24 characters and an ellipsis.
+            let shown = match trimmed.char_indices().nth(24) {
+                Some((i, _)) if trimmed.chars().count() > 25 => format!("{}…", &trimmed[..i]),
+                _ => trimmed.to_string(),
+            };
+            items.push(Item::new(
+                "lookUpSelection",
+                format!("Look Up “{shown}”"),
+                true,
+            ));
+            items.push(Item::new("searchWithGoogle", "Search with Google", true));
+            items.push(Item::separator("separator"));
+        }
+        for (id, label, keys, enabled) in [
+            ("cut", "Cut", "⌘X", has),
+            ("copy", "Copy", "⌘C", has),
+            ("paste", "Paste", "⌘V", true),
+        ] {
+            items.push(Item {
+                accelerator: Some(keys),
+                ..Item::new(id, label, enabled)
+            });
+        }
+        self.context_menu = Some(ContextMenu::open(items, selection, e.position, window, cx));
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    pub(super) fn activate_context_item(
+        &mut self,
+        id: &str,
+        selection: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match id {
+            // ponytail: `showDefinitionForSelection` has no GPUI call; Dictionary.app opens
+            // the same entry from its URL scheme.
+            "lookUpSelection" => cx.open_url(&format!("dict://{}", form_encode(&selection))),
+            "searchWithGoogle" => cx.open_url(&format!(
+                "https://www.google.com/search?q={}",
+                form_encode(&selection)
+            )),
+            "cut" => self.cut(&crate::Cut, window, cx),
+            "copy" => self.copy(&crate::Copy, window, cx),
+            "paste" => self.paste(window, cx),
+            _ => {}
         }
     }
 
@@ -298,6 +520,7 @@ impl Composer {
             .line_height(LINE_HEIGHT)
             .font_weight(gpui::FontWeight(430.))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
+            .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_click))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
@@ -392,8 +615,10 @@ impl EntityInputHandler for Composer {
             .map(|r| self.range_from_utf16(r))
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
+        self.remember(&range);
         self.content.replace_range(range.clone(), new_text);
         let end = range.start + new_text.len();
+        self.history.last = Some((Instant::now(), end));
         self.marked_range = (!new_text.is_empty()).then_some(range.start..end);
         self.selected_range = match new_selected_range_utf16 {
             Some(sel) => {
@@ -432,6 +657,21 @@ impl EntityInputHandler for Composer {
         let local = p - self.bounds?.origin;
         Some(self.offset_to_utf16(self.index_for_local(local)))
     }
+}
+
+/// `URLSearchParams` encoding (`application/x-www-form-urlencoded`): spaces become `+`.
+fn form_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'*' | b'-' | b'.' | b'_' => {
+                out.push(b as char)
+            }
+            b' ' => out.push('+'),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 /// The text area: wraps to its width, grows one row per line.
