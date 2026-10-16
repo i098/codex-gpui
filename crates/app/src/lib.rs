@@ -11,6 +11,7 @@ use async_channel::Receiver;
 use bridge::types::{
     ApprovalDecision, CommandApprovalRequest, ConfigReadResponse, FileChangeApprovalRequest,
     Thread, ThreadItem, ThreadReadResponse, ThreadStartResponse, ThreadStartedNotification,
+    TurnStatus,
 };
 use bridge::{Bridge, Event};
 use gpui::{
@@ -923,6 +924,12 @@ impl Root {
     }
 
     fn show_thread(&mut self, thread: Thread, window: &mut Window, cx: &mut Context<Self>) {
+        let running = thread
+            .turns
+            .iter()
+            .any(|turn| turn.status == TurnStatus::InProgress);
+        self.thread_composer
+            .update(cx, |c, cx| c.set_running(running, cx));
         let route = Route::Thread(thread.id.clone());
         let clock = Clock {
             utc_offset: chrono::Local::now().offset().local_minus_utc().into(),
@@ -985,6 +992,37 @@ impl Root {
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             resume_if(resume, &bridge, &this, &id, cx).await?;
             turn_start(&bridge, &id, &s).await
+        });
+        log_err(task, cx);
+    }
+
+    fn stop(&mut self, cx: &mut Context<Self>) {
+        let Route::Thread(id) = &self.state.route else {
+            return;
+        };
+        let Some(view) = &self.thread else { return };
+        let view = view.read(cx);
+        if view.id() != id {
+            return;
+        }
+        let Some(turn) = view
+            .turns()
+            .iter()
+            .rev()
+            .find(|turn| turn.status == TurnStatus::InProgress)
+        else {
+            return;
+        };
+        let (thread_id, turn_id) = (id.clone(), turn.id.clone());
+        let bridge = self.bridge.clone();
+        let task = cx.spawn(async move |this, cx| -> Result<()> {
+            let result = bridge.turn_interrupt(&thread_id, &turn_id).await;
+            if result.is_err() {
+                this.update(cx, |this, cx| {
+                    this.toast(Toast::danger("Failed to stop chat"), cx)
+                })?;
+            }
+            result
         });
         log_err(task, cx);
     }
@@ -1243,6 +1281,16 @@ impl Root {
                     });
                 }
             });
+            if matches!(&event, Event::Notification { method, .. } if matches!(method.as_str(), "turn/started" | "turn/completed"))
+            {
+                let running = view
+                    .read(cx)
+                    .turns()
+                    .iter()
+                    .any(|turn| turn.status == TurnStatus::InProgress);
+                self.thread_composer
+                    .update(cx, |c, cx| c.set_running(running, cx));
+            }
         }
         if let Some(login) = &self.login {
             login.update(cx, |login, cx| login.apply(&event, cx));
@@ -1409,6 +1457,7 @@ impl Render for Root {
             .font_family(ui::SANS)
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &NewChat, window, cx| this.new_chat(window, cx)))
+            .on_action(cx.listener(|this, _: &ui::composer::Stop, _, cx| this.stop(cx)))
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
                 this.navigate(Route::Settings, window, cx)
             }))
