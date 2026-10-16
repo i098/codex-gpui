@@ -89,22 +89,7 @@ fn link_context_menu_and_find_close_match_original() -> Result<()> {
         return Ok(());
     }
     let rec: Value = serde_json::from_str(include_str!("../../../refs/interactions/s012.json"))?;
-    let mut lines = script(None, |_| {})?;
-    for line in &mut lines {
-        if let Some(turns) = line
-            .pointer_mut("/msg/result/thread/turns")
-            .and_then(Value::as_array_mut)
-        {
-            for turn in turns {
-                for item in turn["items"].as_array_mut().context("turn items")? {
-                    if item["id"] == rec["fixture"]["itemId"] {
-                        item["text"] = rec["fixture"]["source"].clone();
-                    }
-                }
-            }
-        }
-    }
-    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
     let steps = rec["steps"].as_array().context("steps")?;
     let menus = rec["result"]["contextMenus"]
         .as_array()
@@ -113,15 +98,23 @@ fn link_context_menu_and_find_close_match_original() -> Result<()> {
     let out = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
     for (index, step) in steps.iter().enumerate() {
         match step["type"].as_str() {
-            Some("click") => {
+            Some("click") if step["button"] != "right" => {
                 fx.click(center(&step["target"]["bbox"]))?;
                 if let Some(id) = step["waitThread"].as_str() {
                     fx.wait_thread(id)?;
                 }
             }
-            // The port reads the fixture item through thread/read.
-            Some("bridge") => {}
-            Some("context-menu") => {
+            // The fixture answer with the link, as the original got it after hydration.
+            Some("bridge") => {
+                let event = bridge::Event::Notification {
+                    method: step["method"].as_str().context("method")?.into(),
+                    params: step["params"].clone(),
+                };
+                fx.root
+                    .update(&mut fx.cx, |root, cx| root.on_event(event, cx));
+                fx.cx.run_until_parked();
+            }
+            Some("click") => {
                 let expected = menus
                     .iter()
                     .find(|m| m["afterStep"] == index)

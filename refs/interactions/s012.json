@@ -33,28 +33,25 @@
   },
   {
    "type": "bridge",
-   "message": {
-    "type": "mcp-notification",
-    "hostId": "local",
-    "method": "item/completed",
-    "params": {
-     "threadId": "01a13de9-c48a-7b20-8382-db900881cb99",
-     "turnId": "01a13de9-c4f9-7370-99bd-0512afdf8126",
-     "item": {
-      "type": "agentMessage",
-      "id": "msg_0553a1cd124135ea016ad05ca61e4481989070ad93e9216f10",
-      "text": "Updated `hello.py` to print Hello, Codex.\n\nDocs: [OpenAI](https://openai.com/) for details.",
-      "phase": "final_answer",
-      "memoryCitation": null,
-      "delivery": null,
-      "questions": null
-     }
+   "method": "item/completed",
+   "params": {
+    "threadId": "01a13de9-c48a-7b20-8382-db900881cb99",
+    "turnId": "01a13de9-c4f9-7370-99bd-0512afdf8126",
+    "item": {
+     "type": "agentMessage",
+     "id": "msg_0553a1cd124135ea016ad05ca61e4481989070ad93e9216f10",
+     "text": "Updated `hello.py` to print Hello, Codex.\n\nDocs: [OpenAI](https://openai.com/) for details.",
+     "phase": "final_answer",
+     "memoryCitation": null,
+     "delivery": null,
+     "questions": null
     }
    },
-   "note": "The original receives item/completed after hydration. The port receives the same text through thread/read."
+   "note": "The original receives item/completed after hydration (a for-view message); the port's Root gets the same notification."
   },
   {
-   "type": "context-menu",
+   "type": "click",
+   "button": "right",
    "target": {
     "selector": "a[href=\"https://openai.com/\"]",
     "text": "OpenAI",
@@ -71,7 +68,8 @@
    }
   },
   {
-   "type": "context-menu",
+   "type": "click",
+   "button": "right",
    "target": {
     "selector": "a[href=\"https://openai.com/\"]",
     "text": "OpenAI",
@@ -89,7 +87,8 @@
    "pick": "copy-link"
   },
   {
-   "type": "context-menu",
+   "type": "click",
+   "button": "right",
    "target": {
     "selector": "a[href=\"https://openai.com/\"]",
     "text": "OpenAI",
@@ -107,7 +106,8 @@
    "pick": "open-in-external-browser"
   },
   {
-   "type": "context-menu",
+   "type": "click",
+   "button": "right",
    "target": {
     "selector": "p (plain text, no selection)",
     "text": "Docs: \nOpenAI for details.",
