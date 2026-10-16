@@ -490,6 +490,11 @@ impl Root {
         self.page.as_ref().unwrap_or(&self.shell)
     }
 
+    /// The Home sidebar of the chat routes.
+    pub fn sidebar(&self) -> &Entity<HomeSidebar> {
+        &self.sidebar
+    }
+
     /// The thread route's side panel tab.
     pub fn side_panel(&self) -> Option<SidePanel> {
         self.side

@@ -37,7 +37,12 @@ The rows were not clicked again on the original through `tools/route1`: its `ser
 
 Before round 5 (F2Flows): 57 PASS, 33 FAIL, 102 NOT WIRED. Before round 4 (F1Flows): 42 PASS, 25 FAIL, 125 NOT WIRED.
 
-Last run: 70 flows, 70 passed.
+Last run: 76 flows, 76 passed.
+
+The `scroll_*` flows send wheel events (pixel deltas, a trackpad flick with its momentum events, and wheel lines) to the sidebar sections, the thread, the Changes panel, the Settings nav and page, and the Scheduled page.
+At 1280x320, the largest offset of the sidebar sections is 82 px, the same as in the original.
+This value was recorded through `tools/route1` with a copy of the fixture `CODEX_HOME`.
+The other panes must repaint on the first wheel, stay still past the end, and show the start again.
 
 ## Parity of the states the flows reach
 

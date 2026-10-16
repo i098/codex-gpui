@@ -149,6 +149,12 @@ const FLOWS: &[(&str, Flow)] = &[
     ("recent_chat_keys", recent_chat_keys),
     ("effort_pick_writes_config", effort_pick_writes_config),
     ("settings_value_round_trip", settings_value_round_trip),
+    ("scroll_sidebar_extent", scroll_sidebar_extent),
+    ("scroll_sidebar_momentum", scroll_sidebar_momentum),
+    ("scroll_thread", scroll_thread),
+    ("scroll_diff", scroll_diff),
+    ("scroll_settings", scroll_settings),
+    ("scroll_automations", scroll_automations),
     ("resize_live", resize_live),
 ];
 
@@ -354,11 +360,21 @@ impl Fx {
     /// Scrolls the wheel at `at` by `dy` CSS px (negative: down the page).
     fn scroll(&mut self, at: (f32, f32), dy: f32) -> Result<()> {
         self.hover(at)?;
+        self.wheel(
+            at,
+            ScrollDelta::Pixels(point(px(0.), px(dy))),
+            TouchPhase::Moved,
+        )
+    }
+
+    /// One wheel event at `at`, the pointer already there. macOS sends a trackpad flick's
+    /// momentum events after the `Ended` phase; gpui_macos reports them as `Moved` pixels.
+    fn wheel(&mut self, at: (f32, f32), delta: ScrollDelta, touch_phase: TouchPhase) -> Result<()> {
         self.input(PlatformInput::ScrollWheel(ScrollWheelEvent {
             position: point(px(at.0), px(at.1)),
-            delta: ScrollDelta::Pixels(point(px(0.), px(dy))),
+            delta,
             modifiers: Modifiers::default(),
-            touch_phase: TouchPhase::Moved,
+            touch_phase,
         }))
     }
 
@@ -1648,6 +1664,140 @@ fn settings_value_round_trip() -> Result<String> {
     let left = changed(&set, &open(&mut fx)?, MAIN_PANEL);
     ensure!(left < 50, "reopened Settings differ by {left} px");
     Ok(format!("{n} px"))
+}
+
+// --- Scrolling ---
+
+/// A window short enough that readback's sidebar sections (Projects, then Recents' 3 rows)
+/// overflow their scroller.
+const SHORT: (f32, f32) = (1280., 320.);
+/// In the sidebar sections, between Projects and Recents.
+const SIDEBAR_LIST: (f32, f32) = (196., 250.);
+/// The original's sidebar sections scroller at [`SHORT`], recorded with tools/route1 (headless
+/// Chromium, readback's `thread/list`): `scrollHeight` 233 - `clientHeight` 151, and a wheel
+/// past the end leaves `scrollTop` there.
+const ORIGINAL_SIDEBAR_MAX: f32 = 82.;
+
+/// The sidebar scroller's offset down the list and its largest offset, CSS px.
+fn sidebar_scroll(fx: &Fx) -> (f32, f32) {
+    fx.read(|r, cx| {
+        let scroll = &r.sidebar().read(cx).scroll;
+        (
+            -f32::from(scroll.offset().y),
+            f32::from(scroll.max_offset().y),
+        )
+    })
+}
+
+/// The sidebar sections scroll as far as the original's and stop at both ends.
+fn scroll_sidebar_extent() -> Result<String> {
+    let mut fx = Fx::with("dark", SHORT, None, |_| {})?;
+    let (_, max) = sidebar_scroll(&fx);
+    ensure!(
+        max == ORIGINAL_SIDEBAR_MAX,
+        "max offset {max}, original {ORIGINAL_SIDEBAR_MAX}"
+    );
+    fx.scroll(SIDEBAR_LIST, -1000.)?;
+    let end = sidebar_scroll(&fx).0;
+    ensure!(end == max, "past the end: {end} px");
+    fx.scroll(SIDEBAR_LIST, 1000.)?;
+    let top = sidebar_scroll(&fx).0;
+    ensure!(top == 0., "past the top: {top} px");
+    Ok(format!("max {max} px"))
+}
+
+/// A trackpad flick keeps gliding on its momentum events after release and stops at the end;
+/// a mouse wheel scrolls by lines.
+fn scroll_sidebar_momentum() -> Result<String> {
+    let mut fx = Fx::with("dark", SHORT, None, |_| {})?;
+    let at = SIDEBAR_LIST;
+    let pixels = |dy: f32| ScrollDelta::Pixels(point(px(0.), px(dy)));
+    fx.hover(at)?;
+    fx.wheel(at, pixels(0.), TouchPhase::Started)?;
+    for dy in [-4., -8.] {
+        fx.wheel(at, pixels(dy), TouchPhase::Moved)?;
+    }
+    fx.wheel(at, pixels(0.), TouchPhase::Ended)?;
+    let released = sidebar_scroll(&fx).0;
+    ensure!(released == 12., "under the finger: {released} px");
+    for dy in [-10., -6., -3., -1.] {
+        fx.wheel(at, pixels(dy), TouchPhase::Moved)?;
+    }
+    let glided = sidebar_scroll(&fx).0;
+    ensure!(glided == 32., "after the momentum events: {glided} px");
+    for _ in 0..20 {
+        fx.wheel(at, pixels(-10.), TouchPhase::Moved)?;
+    }
+    let (end, max) = sidebar_scroll(&fx);
+    ensure!(end == max, "momentum past the end: {end} of {max} px");
+    fx.wheel(at, ScrollDelta::Lines(point(0., 1.)), TouchPhase::Moved)?;
+    let line = end - sidebar_scroll(&fx).0;
+    ensure!(line > 0., "a wheel line up moved {line} px");
+    Ok(format!(
+        "released {released}, glided {glided}, line {line} px"
+    ))
+}
+
+/// Wheels the pane `rect` at `at`: the first wheel repaints it, a wheel past the end leaves it
+/// still (a further wheel repaints nothing), and a wheel back up shows the start again.
+fn assert_scrolls(fx: &mut Fx, at: (f32, f32), rect: [f32; 4]) -> Result<String> {
+    fx.hover(at)?;
+    let start = fx.shot()?;
+    fx.scroll(at, -100.)?;
+    let moved = changed(&start, &fx.shot()?, rect);
+    ensure!(moved > 0, "a wheel at {at:?} repainted nothing");
+    fx.scroll(at, -100_000.)?;
+    let end = fx.shot()?;
+    fx.scroll(at, -100.)?;
+    let past = changed(&end, &fx.shot()?, rect);
+    ensure!(past == 0, "a wheel past the end repainted {past} px");
+    fx.scroll(at, 100_000.)?;
+    let back = changed(&start, &fx.shot()?, rect);
+    ensure!(back == 0, "back at the top, {back} px differ");
+    Ok(format!("{moved} px"))
+}
+
+/// Opens `reach` at 1280x832, then shrinks the window to `h` px: at 832 px readback's thread,
+/// diff and Scheduled page fit their panes, as they do in the original's refs.
+fn short(h: f32, reach: fn(&mut Fx) -> Result<()>) -> Result<Fx> {
+    let mut fx = Fx::new()?;
+    reach(&mut fx)?;
+    fx.cx
+        .simulate_window_resize(fx.window, size(px(fx.size.0), px(h)));
+    fx.cx.run_until_parked();
+    Ok(fx)
+}
+
+fn scroll_thread() -> Result<String> {
+    let mut fx = short(SHORT.1, |fx| {
+        fx.click(fx.at("home", "Add a subtract")?)?;
+        fx.wait_thread(SUBTRACT)
+    })?;
+    // Above the docked composer.
+    assert_scrolls(&mut fx, (640., 120.), [340., 44., 936., 150.])
+}
+
+fn scroll_diff() -> Result<String> {
+    // The subtract diff's 5 lines overflow a 200 px window only.
+    let h = 200.;
+    let mut fx = short(h, open_changes)?;
+    let left = panel_left(fx.size.0);
+    let panel = [left, 44., fx.size.0 - left, h - 48.];
+    assert_scrolls(&mut fx, (left + 200., 150.), panel)
+}
+
+/// The section list in the sidebar and the page.
+fn scroll_settings() -> Result<String> {
+    let mut fx = Fx::new()?;
+    fx.keys("cmd-,")?;
+    let nav = assert_scrolls(&mut fx, (196., 400.), SIDEBAR_PANEL)?;
+    let page = assert_scrolls(&mut fx, (800., 400.), MAIN_PANEL)?;
+    Ok(format!("nav {nav}, page {page}"))
+}
+
+fn scroll_automations() -> Result<String> {
+    let mut fx = short(SHORT.1, |fx| fx.click(RAIL_SCHEDULED))?;
+    assert_scrolls(&mut fx, (800., 200.), [340., 44., 936., SHORT.1 - 48.])
 }
 
 // --- Window ---
