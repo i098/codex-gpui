@@ -291,6 +291,7 @@ pub struct Root {
     /// Docked under every open thread.
     thread_composer: Entity<Composer>,
     thread: Option<Entity<ThreadView>>,
+    diff: Option<Entity<DiffPanel>>,
     /// The open thread in the main shell, with its side panel if any.
     split: Option<Entity<SplitScreen>>,
     /// Side panel tab of the thread route; kept across threads like the original's panel.
@@ -412,6 +413,7 @@ impl Root {
             }),
             thread_composer,
             thread: None,
+            diff: None,
             split: None,
             side: None,
             page: None,
@@ -505,6 +507,10 @@ impl Root {
     /// The thread route's side panel tab.
     pub fn side_panel(&self) -> Option<SidePanel> {
         self.side
+    }
+
+    pub fn diff_panel(&self) -> Option<&Entity<DiffPanel>> {
+        self.diff.as_ref()
     }
 
     /// The `⌘K` command menu, while open.
@@ -691,15 +697,11 @@ impl Root {
         cx: &mut Context<Self>,
     ) -> Option<(AnyView, &'static str, SharedString)> {
         match side {
-            SidePanel::Changes => {
-                let v = view.read(cx);
-                let panel = DiffPanel::last_turn(&self.cwd, v.cwd(), v.turns());
-                Some((
-                    cx.new(|_| panel).into(),
-                    "diff-tab-changes",
-                    "Changes".into(),
-                ))
-            }
+            SidePanel::Changes => Some((
+                self.diff.as_ref()?.clone().into(),
+                "diff-tab-changes",
+                "Changes".into(),
+            )),
             SidePanel::Terminal => {
                 let (command, _) = view.read(cx).background_terminals().into_iter().next()?;
                 let xterm = cx.new(|cx| Xterm::new(view.clone(), cx));
@@ -780,6 +782,7 @@ impl Root {
             pinned_now: None,
         };
         let composer = self.thread_composer.clone().into();
+        self.diff = Some(cx.new(|_| DiffPanel::last_turn(&self.cwd, &thread.cwd, &thread.turns)));
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
         self.thread = Some(view);
         if self.state.route == route {
@@ -1075,9 +1078,19 @@ impl Root {
 
     /// Every server message: streamed into the open thread and the sign-in view, plus
     /// Recents updates and approval prompts.
-    fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
+    pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
         if let Some(view) = &self.thread {
-            view.update(cx, |view, cx| view.apply(&event, cx));
+            view.update(cx, |view, cx| {
+                view.apply(&event, cx);
+                if let Some(panel) = &self.diff
+                    && let Event::Notification { params, .. } = &event
+                    && params["threadId"].as_str() == Some(view.id())
+                {
+                    panel.update(cx, |panel, cx| {
+                        panel.apply(&event, &self.cwd, view.turns(), cx);
+                    });
+                }
+            });
         }
         if let Some(login) = &self.login {
             login.update(cx, |login, cx| login.apply(&event, cx));

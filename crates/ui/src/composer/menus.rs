@@ -38,15 +38,16 @@ impl Composer {
             .justify_center()
             .child(
                 corner("fast-mode", "composer-bolt", bolt)
+                    .track_focus(&self.menu_focus.items[0])
                     .left_0()
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.fast = !this.fast;
-                        cx.notify();
-                    })),
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.activate_menu_item(0, window, cx)),
+                    ),
             )
             .child(
                 div()
                     .id("select-model")
+                    .track_focus(&self.menu_focus.items[1])
                     .p(px(4.))
                     .rounded(px(8.))
                     .child(
@@ -82,16 +83,17 @@ impl Composer {
                                     ),
                             ),
                     )
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_menu(Menu::Models, cx))),
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.activate_menu_item(1, window, cx)),
+                    ),
             )
             .child(
                 corner("reset-effort", "composer-reset", t.text_tertiary)
+                    .track_focus(&self.menu_focus.items[2])
                     .right_0()
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        (this.model, this.effort) = this.default_selection.clone();
-                        this.picked(cx);
-                        cx.notify();
-                    })),
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.activate_menu_item(2, window, cx)),
+                    ),
             );
         // Track 230 px; dot centers 13 + 51·i; the thumb (28 px) centers on the selected dot.
         let n = efforts.len().max(2);
@@ -216,6 +218,8 @@ impl Composer {
             .children(self.models.iter().enumerate().map(|(i, m)| {
                 div()
                     .id(("model", i))
+                    .track_focus(&self.menu_focus.items[i])
+                    .focus(move |s| s.bg(hover))
                     .h(px(32.))
                     .px(px(8.))
                     .flex()
@@ -224,17 +228,8 @@ impl Composer {
                     .when(i == self.model, |d| d.bg(hover))
                     .hover(move |s| s.bg(hover))
                     .child(text(m.label.clone(), 14., 20., 430., t.text))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.model = i;
-                        let efforts = &this.models[i].efforts;
-                        if !efforts.contains(&this.effort)
-                            && let Some(first) = efforts.first()
-                        {
-                            this.effort = first.clone();
-                        }
-                        this.menu = Some(Menu::Effort);
-                        this.picked(cx);
-                        cx.notify();
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.activate_menu_item(i, window, cx)
                     }))
             }))
         })
@@ -251,15 +246,16 @@ impl Composer {
                 400.,
                 t.text_tertiary,
             )))
-            .children(Permission::ALL.into_iter().map(|p| {
+            .children(Permission::ALL.into_iter().enumerate().map(|(i, p)| {
                 div()
                     .id(p.short_label())
+                    .track_focus(&self.menu_focus.items[i])
+                    .focus(move |s| s.bg(hover))
                     .px(px(8.))
                     .py(px(6.))
                     .flex()
                     .flex_col()
                     .rounded(px(12.))
-                    .when(p == self.permission, |d| d.bg(hover))
                     .hover(move |s| s.bg(hover))
                     .child(text(p.option_label(), 14., 20., 430., t.text))
                     .child(
@@ -269,10 +265,8 @@ impl Composer {
                             .text_color(t.text_tertiary)
                             .child(p.description()),
                     )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.permission = p;
-                        this.menu = None;
-                        cx.notify();
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.activate_menu_item(i, window, cx)
                     }))
             }))
         })
@@ -354,6 +348,7 @@ impl Composer {
     /// Popover anchored above a footer button. `width`: the box the original centers on the
     /// button (`None`: left-aligned).
     pub(super) fn anchored_menu(
+        &self,
         menu: Div,
         center_width: Option<f32>,
         cx: &mut Context<Self>,
@@ -363,7 +358,14 @@ impl Composer {
         let menu = div()
             .id("menu")
             .occlude()
-            .on_hover(cx.listener(|this, hovered: &bool, _, _| this.menu_hovered = *hovered))
+            .track_focus(&self.menu_focus.content)
+            .on_key_down(cx.listener(Self::menu_key))
+            .on_mouse_down_out(cx.listener(|this, _, window, cx| {
+                if !this.menu_trigger_hovered && this.menu.take().is_some() {
+                    window.blur(cx);
+                    cx.notify();
+                }
+            }))
             .child(menu);
         let slot = div().absolute().bottom(px(36.)).flex();
         deferred(match center_width {
