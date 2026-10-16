@@ -1,0 +1,1120 @@
+{
+ "name": "s019-composer-mention",
+ "viewport": {
+  "w": 1280,
+  "h": 832,
+  "dpr": 1,
+  "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+  "theme": "dark",
+  "hoverEmulated": true
+ },
+ "steps": [
+  {
+   "type": "click",
+   "target": {
+    "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Change the greeting\"]",
+    "bbox": {
+     "x": 60,
+     "y": 290,
+     "w": 272,
+     "h": 30
+    }
+   },
+   "note": "opens the thread route; its cwd becomes the file search root",
+   "portReference": {
+    "screen": "home",
+    "row": "Change the greeting"
+   }
+  },
+  {
+   "type": "click",
+   "target": {
+    "selector": ".ProseMirror",
+    "bbox": {
+     "x": 453,
+     "y": 728,
+     "w": 712,
+     "h": 44
+    }
+   },
+   "portReference": {
+    "screen": "thread",
+    "text": "Work with Codex"
+   },
+   "expect": {
+    "text": "",
+    "focused": true,
+    "menu": null
+   }
+  },
+  {
+   "type": "type",
+   "text": "@",
+   "expect": {
+    "text": "@",
+    "focused": true,
+    "menu": {
+     "bbox": {
+      "x": 441,
+      "y": 390,
+      "w": 736,
+      "h": 320
+     },
+     "scroll": {
+      "x": 446,
+      "y": 395,
+      "w": 726,
+      "h": 310
+     },
+     "computed": {
+      "backgroundColor": "rgb(45, 45, 45)",
+      "color": "rgb(255, 255, 255)",
+      "opacity": "1",
+      "outline": "rgb(255, 255, 255) none 3px",
+      "boxShadow": "none",
+      "cursor": "auto"
+     },
+     "scrollState": {
+      "top": 0,
+      "h": 779,
+      "ch": 310
+     },
+     "sections": [
+      {
+       "id": "context-actions",
+       "heading": {
+        "text": "Add",
+        "bbox": {
+         "x": 446,
+         "y": 395,
+         "w": 716,
+         "h": 27
+        },
+        "computed": {
+         "color": "rgba(255, 255, 255, 0.498)",
+         "fontSize": "13px",
+         "lineHeight": "18.5714px",
+         "paddingTop": "4px",
+         "paddingLeft": "8px"
+        }
+       },
+       "items": [
+        {
+         "text": "Files and folders",
+         "tag": "button",
+         "disabled": false,
+         "current": true,
+         "bbox": {
+          "x": 446,
+          "y": 422,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(255, 255, 255, 0.08)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1"
+         }
+        },
+        {
+         "text": "Attach appshot",
+         "tag": "div",
+         "disabled": true,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 450,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "0.5"
+         }
+        },
+        {
+         "text": "Goal | Set a goal to keep pursuing",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 479,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Sketch | Draw a sketch",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 507,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        }
+       ],
+       "empty": null,
+       "bbox": {
+        "x": 446,
+        "y": 395,
+        "w": 716,
+        "h": 141
+       }
+      },
+      {
+       "id": "plugins",
+       "heading": {
+        "text": "Plugins",
+        "bbox": {
+         "x": 446,
+         "y": 536,
+         "w": 716,
+         "h": 31
+        },
+        "computed": {
+         "color": "rgba(255, 255, 255, 0.498)",
+         "fontSize": "13px",
+         "lineHeight": "18.5714px",
+         "paddingTop": "8px",
+         "paddingLeft": "8px"
+        }
+       },
+       "items": [
+        {
+         "text": "Skyscanner | Find cheap flights",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 566,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Codex Security Cloud | Find and fix vulnerabilities across your repositories",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 595,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Interactive Brokers (IBKR) | Analyze global markets",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 624,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Google Calendar | Manage Google Calendar events",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 652,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Gmail | Read and manage Gmail",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 681,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "GitHub | Triage PRs, issues, CI, and publish flows",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 709,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Browser | Control the in-app browser",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 738,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Computer | Control Mac apps from ChatGPT",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 766,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Visualize | Create interactive visuals",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 795,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Pages | Create and edit pages and spaces",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 823,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Pets | Create and manage animated ChatGPT pets, not real-world or other-app pets.",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 852,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Plugin Management | Discover and manage plugins",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 881,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Sites Build and deploy websites",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 909,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        }
+       ],
+       "empty": null,
+       "bbox": {
+        "x": 446,
+        "y": 536,
+        "w": 716,
+        "h": 402
+       }
+      },
+      {
+       "id": "agents",
+       "heading": {
+        "text": "Agents",
+        "bbox": {
+         "x": 446,
+         "y": 938,
+         "w": 716,
+         "h": 31
+        },
+        "computed": {
+         "color": "rgba(255, 255, 255, 0.498)",
+         "fontSize": "13px",
+         "lineHeight": "18.5714px",
+         "paddingTop": "8px",
+         "paddingLeft": "8px"
+        }
+       },
+       "items": [
+        {
+         "text": "Loading agents…",
+         "tag": "div",
+         "disabled": true,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 968,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1"
+         }
+        }
+       ],
+       "empty": null,
+       "bbox": {
+        "x": 446,
+        "y": 938,
+        "w": 716,
+        "h": 59
+       }
+      },
+      {
+       "id": "files",
+       "heading": {
+        "text": "Files",
+        "bbox": {
+         "x": 446,
+         "y": 997,
+         "w": 716,
+         "h": 31
+        },
+        "computed": {
+         "color": "rgba(255, 255, 255, 0.498)",
+         "fontSize": "13px",
+         "lineHeight": "18.5714px",
+         "paddingTop": "8px",
+         "paddingLeft": "8px"
+        }
+       },
+       "items": [
+        {
+         "text": "Type to search for files",
+         "tag": "div",
+         "disabled": true,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 1027,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1"
+         }
+        }
+       ],
+       "empty": null,
+       "bbox": {
+        "x": 446,
+        "y": 997,
+        "w": 716,
+        "h": 59
+       }
+      },
+      {
+       "id": "pages",
+       "heading": {
+        "text": "Pages",
+        "bbox": {
+         "x": 446,
+         "y": 1056,
+         "w": 716,
+         "h": 31
+        },
+        "computed": {
+         "color": "rgba(255, 255, 255, 0.498)",
+         "fontSize": "13px",
+         "lineHeight": "18.5714px",
+         "paddingTop": "8px",
+         "paddingLeft": "8px"
+        }
+       },
+       "items": [
+        {
+         "text": "Retry pages",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 1087,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        }
+       ],
+       "empty": null,
+       "bbox": {
+        "x": 446,
+        "y": 1056,
+        "w": 716,
+        "h": 59
+       }
+      },
+      {
+       "id": "spaces",
+       "heading": {
+        "text": "Spaces",
+        "bbox": {
+         "x": 446,
+         "y": 1115,
+         "w": 716,
+         "h": 31
+        },
+        "computed": {
+         "color": "rgba(255, 255, 255, 0.498)",
+         "fontSize": "13px",
+         "lineHeight": "18.5714px",
+         "paddingTop": "8px",
+         "paddingLeft": "8px"
+        }
+       },
+       "items": [
+        {
+         "text": "test",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 1146,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        }
+       ],
+       "empty": null,
+       "bbox": {
+        "x": 446,
+        "y": 1115,
+        "w": 716,
+        "h": 59
+       }
+      }
+     ]
+    }
+   },
+   "note": "popover 736x320 above the composer card; sections Add, Plugins, Agents, Files, Pages, Spaces (Plugins/Agents/Pages/Spaces come from host services the port does not have: F4)"
+  },
+  {
+   "type": "type",
+   "text": "mat",
+   "at": 150,
+   "expect": {
+    "text": "@mat",
+    "focused": true,
+    "menu": {
+     "bbox": {
+      "x": 441,
+      "y": 529,
+      "w": 736,
+      "h": 181
+     },
+     "scroll": {
+      "x": 446,
+      "y": 534,
+      "w": 726,
+      "h": 171
+     },
+     "computed": {
+      "backgroundColor": "rgb(45, 45, 45)",
+      "color": "rgb(255, 255, 255)",
+      "opacity": "1",
+      "outline": "rgb(255, 255, 255) none 3px",
+      "boxShadow": "none",
+      "cursor": "auto"
+     },
+     "scrollState": {
+      "top": 0,
+      "h": 171,
+      "ch": 171
+     },
+     "sections": [
+      {
+       "id": "search-results",
+       "heading": null,
+       "items": [
+        {
+         "text": "Ask Matt | Find the right skill or workflow",
+         "tag": "button",
+         "disabled": false,
+         "current": true,
+         "bbox": {
+          "x": 446,
+          "y": 534,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(255, 255, 255, 0.08)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1"
+         }
+        },
+        {
+         "text": "Setup Matt Pocock Skills | Configure a repo for the skills",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 562,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Aws Cloudformation | Author, validate, and troubleshoot AWS CloudFormation templates. Covers template authoring with sec",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 591,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Browser | Control the in-app browser",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 619,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Computer | Control Mac apps from ChatGPT",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 648,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Pets | Create and manage animated ChatGPT pets, not real-world or other-app pets.",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 676,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        }
+       ],
+       "empty": null,
+       "bbox": {
+        "x": 446,
+        "y": 534,
+        "w": 726,
+        "h": 171
+       }
+      }
+     ]
+    }
+   },
+   "requests": [
+    {
+     "type": "mcp-request",
+     "method": "fuzzyFileSearch/sessionStart",
+     "params": {
+      "sessionId": "2cf8deb3-f9b2-47b8-b4c8-c08a8f9173f5",
+      "roots": [
+       "/private/tmp/cgx-mac/proj"
+      ]
+     }
+    },
+    {
+     "type": "mcp-request",
+     "method": "fuzzyFileSearch/sessionUpdate",
+     "params": {
+      "sessionId": "2cf8deb3-f9b2-47b8-b4c8-c08a8f9173f5",
+      "query": "mat"
+     }
+    }
+   ],
+   "note": "150 ms after typing: the search is pending"
+  },
+  {
+   "type": "wait",
+   "at": 1650,
+   "expect": {
+    "text": "@mat",
+    "focused": true,
+    "menu": {
+     "bbox": {
+      "x": 441,
+      "y": 472,
+      "w": 736,
+      "h": 239
+     },
+     "scroll": {
+      "x": 446,
+      "y": 477,
+      "w": 726,
+      "h": 229
+     },
+     "computed": {
+      "backgroundColor": "rgb(45, 45, 45)",
+      "color": "rgb(255, 255, 255)",
+      "opacity": "1",
+      "outline": "rgb(255, 255, 255) none 3px",
+      "boxShadow": "none",
+      "cursor": "auto"
+     },
+     "scrollState": {
+      "top": 0,
+      "h": 229,
+      "ch": 229
+     },
+     "sections": [
+      {
+       "id": "search-results",
+       "heading": null,
+       "items": [
+        {
+         "text": "Ask Matt | Find the right skill or workflow",
+         "tag": "button",
+         "disabled": false,
+         "current": true,
+         "bbox": {
+          "x": 446,
+          "y": 477,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(255, 255, 255, 0.08)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1"
+         }
+        },
+        {
+         "text": "Setup Matt Pocock Skills | Configure a repo for the skills",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 505,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Aws Cloudformation | Author, validate, and troubleshoot AWS CloudFormation templates. Covers template authoring with sec",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 534,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Browser | Control the in-app browser",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 562,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Computer | Control Mac apps from ChatGPT",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 591,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Pets | Create and manage animated ChatGPT pets, not real-world or other-app pets.",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 619,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "math.py | src",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 648,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "matrix.rs | src",
+         "tag": "button",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 676,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        }
+       ],
+       "empty": null,
+       "bbox": {
+        "x": 446,
+        "y": 477,
+        "w": 726,
+        "h": 229
+       }
+      }
+     ]
+    }
+   },
+   "requests": [],
+   "note": "no new request: after fuzzyFileSearch/sessionUpdated with the matches and sessionCompleted"
+  },
+  {
+   "type": "type",
+   "text": "zzz",
+   "at": 1500,
+   "expect": {
+    "text": "@matzzz",
+    "focused": true,
+    "menu": {
+     "bbox": {
+      "x": 441,
+      "y": 671,
+      "w": 736,
+      "h": 39
+     },
+     "scroll": {
+      "x": 446,
+      "y": 676,
+      "w": 726,
+      "h": 29
+     },
+     "computed": {
+      "backgroundColor": "rgb(45, 45, 45)",
+      "color": "rgb(255, 255, 255)",
+      "opacity": "1",
+      "outline": "rgb(255, 255, 255) none 3px",
+      "boxShadow": "none",
+      "cursor": "auto"
+     },
+     "scrollState": {
+      "top": 0,
+      "h": 29,
+      "ch": 29
+     },
+     "sections": [
+      {
+       "id": "search-results",
+       "heading": null,
+       "items": [
+        {
+         "text": "Couldn’t search Pages",
+         "tag": "div",
+         "disabled": true,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 676,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1"
+         }
+        }
+       ],
+       "empty": null,
+       "bbox": {
+        "x": 446,
+        "y": 676,
+        "w": 726,
+        "h": 29
+       }
+      }
+     ]
+    }
+   },
+   "requests": [
+    {
+     "type": "mcp-request",
+     "method": "fuzzyFileSearch/sessionUpdate",
+     "params": {
+      "sessionId": "2cf8deb3-f9b2-47b8-b4c8-c08a8f9173f5",
+      "query": "matzzz"
+     }
+    }
+   ]
+  },
+  {
+   "type": "key",
+   "key": "Escape",
+   "portKey": "escape",
+   "expect": {
+    "text": "@matzzz",
+    "focused": true,
+    "menu": null
+   }
+  }
+ ],
+ "result": {
+  "dom": {
+   "text": "@matzzz",
+   "focused": true,
+   "menu": null
+  },
+  "requests": [
+   {
+    "type": "mcp-request",
+    "method": "fuzzyFileSearch/sessionStart",
+    "params": {
+     "sessionId": "2cf8deb3-f9b2-47b8-b4c8-c08a8f9173f5",
+     "roots": [
+      "/private/tmp/cgx-mac/proj"
+     ]
+    }
+   },
+   {
+    "type": "mcp-request",
+    "method": "fuzzyFileSearch/sessionUpdate",
+    "params": {
+     "sessionId": "2cf8deb3-f9b2-47b8-b4c8-c08a8f9173f5",
+     "query": "mat"
+    }
+   },
+   {
+    "type": "mcp-request",
+    "method": "fuzzyFileSearch/sessionUpdate",
+    "params": {
+     "sessionId": "2cf8deb3-f9b2-47b8-b4c8-c08a8f9173f5",
+     "query": "matzzz"
+    }
+   },
+   {
+    "type": "mcp-request",
+    "method": "fuzzyFileSearch/sessionStop",
+    "params": {
+     "sessionId": "2cf8deb3-f9b2-47b8-b4c8-c08a8f9173f5"
+    }
+   }
+  ],
+  "screenshot": [
+   "/sdc-disk/tmp/cgx/s019/shots/s019-at.png",
+   "/sdc-disk/tmp/cgx/s019/shots/s019-at-mat-loading.png",
+   "/sdc-disk/tmp/cgx/s019/shots/s019-at-mat.png",
+   "/sdc-disk/tmp/cgx/s019/shots/s019-at-matzzz.png"
+  ]
+ },
+ "recorder": {
+  "stack": "tools/route1/linux/start.sh on port 4619 (fake ssh runs the mock app-server with a fuzzyFileSearch session over hello.py, README.md, src/math.py, src/matrix.rs, docs/notes.md; the real app-server answers the same shape), fleet chrome tier :9522, own incognito context, CODEX_HOME /sdc-disk/tmp/cgx/s019/inv-r1/home",
+  "notes": [
+   "Plugins/Agents/Pages/Spaces sections and their rows come from host services (F4); the port lists Add and Files.",
+   "The ranked list mixes skills (score first) and files; the mock returned 2 of 5 files for `mat`.",
+   "Escape closes the list; the text stays; sessionStop follows (result.requests)."
+  ]
+ }
+}

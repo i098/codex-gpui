@@ -14,12 +14,11 @@ use crate::{
 use bridge::Bridge;
 use bridge::types::{AccountReadResponse, ConfigReadResponse};
 use gpui::{
-    Anchor, AnyElement, AnyView, App, AppContext as _, Bounds, ClipboardItem, Context, Corners,
-    Div, Entity, EventEmitter, FocusHandle, Font, FontWeight, Global, HighlightStyle, Hsla,
-    InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Pixels, Point, Render,
-    RenderImage, SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun,
-    Window, anchored, canvas, deferred, div, font, img, point, prelude::FluentBuilder as _, px,
-    size,
+    Anchor, AnyElement, AnyView, App, AppContext as _, Bounds, Context, Corners, Div, Entity,
+    EventEmitter, FocusHandle, Font, FontWeight, Global, HighlightStyle, Hsla, InteractiveElement,
+    IntoElement, KeyDownEvent, ParentElement, Pixels, Point, Render, RenderImage, SharedString,
+    Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun, Window, anchored, canvas,
+    deferred, div, font, img, point, prelude::FluentBuilder as _, px, size,
 };
 use serde_json::{Value, json};
 use shapes::Corner::{self, Round, Squircle};
@@ -1293,8 +1292,8 @@ pub struct Login {
 
 enum Stage {
     Welcome,
-    /// Browser sign-in started: `(loginId, authUrl)`.
-    Pending(String, String),
+    /// Browser sign-in started: the `loginId` that `account/login/cancel` takes.
+    Pending(String),
     OtherMethods,
     ApiKey,
 }
@@ -1323,7 +1322,8 @@ impl Login {
         cx.notify();
     }
 
-    /// `account/login/start`; a ChatGPT login opens its `authUrl` and waits in `Pending`.
+    /// `account/login/start` as the original's `loginWithChatGpt`: a ChatGPT login opens its
+    /// `authUrl` in the browser and waits in `Pending` for `account/login/completed`.
     fn start(&mut self, params: Value, cx: &mut Context<Self>) {
         let Some(AppServer(bridge)) = cx.try_global::<AppServer>() else {
             return;
@@ -1340,7 +1340,7 @@ impl Login {
                             (r["loginId"].as_str(), r["authUrl"].as_str())
                         {
                             cx.open_url(url);
-                            this.stage = Stage::Pending(id.into(), url.into());
+                            this.stage = Stage::Pending(id.into());
                         }
                     }
                     Err(e) => this.error = Some(format!("Sign-in failed: {e}")),
@@ -1349,6 +1349,14 @@ impl Login {
             })
         })
         .detach();
+    }
+
+    /// The ChatGPT sign-in request of the original (`appBrand`, hosted success page).
+    fn start_chatgpt(&mut self, cx: &mut Context<Self>) {
+        self.start(
+            json!({ "type": "chatgpt", "appBrand": "chatgpt", "useHostedLoginSuccessPage": true }),
+            cx,
+        );
     }
 
     fn key_down(&mut self, e: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -1428,9 +1436,7 @@ impl Render for Login {
                             .bg(t.button_primary_solid)
                             .child(icon("codex-logo", 24., t.text_inverse))
                             .child(text("Continue to sign in", 14., 20., 500., t.text_inverse))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.start(json!({ "type": "chatgpt" }), cx)
-                            })),
+                            .on_click(cx.listener(|this, _, _, cx| this.start_chatgpt(cx))),
                     )
                     .child(
                         login_button("another-way", "Sign in another way", &t).on_click(
@@ -1445,58 +1451,26 @@ impl Render for Login {
                             .flex()
                             .items_center()
                             .child(text("Sign up", 14., 20., 500., t.text_description).underline())
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.start(json!({ "type": "chatgpt" }), cx)
-                            })),
+                            .on_click(cx.listener(|this, _, _, cx| this.start_chatgpt(cx))),
                     )
                     .into_any_element(),
             ),
-            Stage::Pending(id, url) => {
-                let (id, url) = (id.clone(), url.clone());
+            Stage::Pending(id) => {
+                let id = id.clone();
                 (
-                    title("Continue signing in with your browser"),
-                    div()
-                        .w_full()
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .gap(px(24.))
-                        .child(
-                            login_button("cancel", "Cancel sign-in", &t)
-                                .h(px(42.))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    send("account/login/cancel", json!({ "loginId": id }), cx);
-                                    this.go(Stage::Welcome, cx);
-                                })),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_wrap()
-                                .items_center()
-                                .justify_center()
-                                .gap(px(8.))
-                                .child(text(
-                                    "Browser didn't open?",
-                                    14.,
-                                    20.,
-                                    400.,
-                                    t.text_description,
-                                ))
-                                .child(
-                                    div()
-                                        .id("copy-link")
-                                        .child(
-                                            text("Copy sign-in link", 14., 20., 500., t.text)
-                                                .underline(),
-                                        )
-                                        .on_click(move |_, _, cx| {
-                                            cx.write_to_clipboard(ClipboardItem::new_string(
-                                                url.clone(),
-                                            ))
-                                        }),
-                                ),
-                        )
+                    text(
+                        "Continue signing in with your browser",
+                        14.,
+                        20.,
+                        400.,
+                        t.text_description,
+                    ),
+                    login_button("cancel", "Cancel sign-in", &t)
+                        .h(px(42.))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            send("account/login/cancel", json!({ "loginId": id }), cx);
+                            this.go(Stage::Welcome, cx);
+                        }))
                         .into_any_element(),
                 )
             }

@@ -1136,6 +1136,7 @@ impl Root {
         self.thread_composer.update(cx, |c, cx| {
             c.set_running(running, cx);
             c.set_queued(Vec::new(), cx);
+            c.set_search_roots(vec![thread.cwd.clone()]);
         });
         let route = Route::Thread(thread.id.clone());
         let clock = Clock {
@@ -1699,6 +1700,11 @@ impl Root {
                     {
                         self.list_queue(id.to_owned(), cx);
                     }
+                }
+                "fuzzyFileSearch/sessionUpdated" | "fuzzyFileSearch/sessionCompleted" => {
+                    let completed = method == "fuzzyFileSearch/sessionCompleted";
+                    self.thread_composer
+                        .update(cx, |c, cx| c.apply_file_search(completed, &params, cx));
                 }
                 "account/login/completed" if params["success"] == true => {
                     self.login = None;

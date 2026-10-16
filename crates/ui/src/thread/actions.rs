@@ -14,7 +14,6 @@ pub(super) struct UserMessage {
 }
 
 struct MessageActions {
-    hovered: bool,
     copied: bool,
     focus: FocusHandle,
     copy_focus: FocusHandle,
@@ -92,10 +91,16 @@ impl MessageActions {
     }
 }
 
+/// `e` in the visible controls color while the pointer is over the message (`group-hover` in
+/// the original). A style, not state: a message that scrolls under the pointer paints its
+/// controls in the same frame, without a second one.
+fn reveal<E: InteractiveElement>(e: E, group: &SharedString, color: Hsla) -> E {
+    e.group_hover(group.clone(), move |s| s.text_color(color))
+}
+
 impl RenderOnce for UserMessage {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let state = window.use_keyed_state(self.id.clone(), cx, |_, cx| MessageActions {
-            hovered: false,
             copied: false,
             focus: cx.focus_handle(),
             copy_focus: cx.focus_handle(),
@@ -106,12 +111,14 @@ impl RenderOnce for UserMessage {
         if let Some(editor) = &s.editor {
             return div().child(editor.clone()).into_any_element();
         }
-        let visible = s.hovered || s.focus.contains_focused(window, cx);
+        let visible = s.focus.contains_focused(window, cx);
         let copied = s.copied;
         let focus = s.focus.clone();
         let t = cx.theme();
         let (edit_state, edit_message) = (state.clone(), self.message.clone());
-        let color = t.text_tertiary.opacity(if visible { 1. } else { 0. });
+        let group = SharedString::from(format!("{}-group", self.id));
+        let shown = t.text_tertiary;
+        let color = shown.opacity(if visible { 1. } else { 0. });
         let button = |id: &'static str| {
             div()
                 .id(SharedString::from(format!("{}-{id}", self.id)))
@@ -128,11 +135,14 @@ impl RenderOnce for UserMessage {
         let copy = copy_button(button("copy-message"), state.clone(), self.message.clone())
             .aria_label(if copied { "Copied" } else { "Copy message" })
             .track_focus(&s.copy_focus)
+            // The checkmark takes the button's text color.
+            .text_color(color)
             .child(if copied {
-                checkmark(color).into_any_element()
+                checkmark().into_any_element()
             } else {
-                icon("thread-copy", 16., color).into_any_element()
+                reveal(icon("thread-copy", 16., color), &group, shown).into_any_element()
             });
+        let copy = reveal(copy, &group, shown);
         let controls = div()
             .absolute()
             .bottom_0()
@@ -141,7 +151,10 @@ impl RenderOnce for UserMessage {
             .flex()
             .items_center()
             .gap(px(8.))
-            .children(self.sent_at.map(|sent| text(sent, 12., 16., 400., color)))
+            .children(
+                self.sent_at
+                    .map(|sent| reveal(text(sent, 12., 16., 400., color), &group, shown)),
+            )
             .child(
                 div()
                     .flex()
@@ -169,7 +182,7 @@ impl RenderOnce for UserMessage {
                                         );
                                     })
                                 })
-                                .child(icon("pencil", 16., color)),
+                                .child(reveal(icon("pencil", 16., color), &group, shown)),
                             "Edit message",
                             None,
                             Side::Bottom,
@@ -204,17 +217,12 @@ impl RenderOnce for UserMessage {
         bubble
             .relative()
             .id(self.id)
+            .group(group)
             .track_focus(&focus)
             .on_mouse_down_out(move |_, window, cx| {
                 if focus.contains_focused(window, cx) {
                     window.blur(cx);
                 }
-            })
-            .on_hover(move |hovered, _, cx| {
-                state.update(cx, |s, cx| {
-                    s.hovered = *hovered;
-                    cx.notify();
-                })
             })
             .child(controls)
             .into_any_element()
@@ -242,17 +250,18 @@ fn copy_button(
         })
 }
 
-fn checkmark(color: Hsla) -> impl IntoElement {
+/// The copied check, in the text color where it paints (the button's, hover included).
+fn checkmark() -> impl IntoElement {
     canvas(
         |_, _, _| (),
-        move |bounds, _, window, _| {
+        |bounds, _, window, _| {
             let mut path = PathBuilder::stroke(px(1.5));
             let p = |x, y| bounds.origin + point(px(x), px(y));
             path.move_to(p(3., 8.));
             path.line_to(p(6.5, 11.5));
             path.line_to(p(13., 4.5));
             if let Ok(path) = path.build() {
-                window.paint_path(path, color);
+                window.paint_path(path, window.text_style().color);
             }
         },
     )
