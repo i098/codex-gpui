@@ -897,6 +897,7 @@ impl Render for SplitScreen {
             .then(|| window.viewport_size().width - px(4.) - panel_width(window));
         // ponytail: like refs/thread, the header only follows the open-sidebar titlebar layout.
         let open = self.shell.read(cx).sidebar_open;
+        let sidebar_width = self.shell.read(cx).sidebar_width;
         div()
             .size_full()
             .relative()
@@ -906,7 +907,8 @@ impl Render for SplitScreen {
                 d.child(
                     self.thread
                         .update(cx, |view, cx| view.titlebar_header(cx))
-                        .when_some(left, |h, left| h.w(left - Theme::SIDEBAR_WIDTH)),
+                        .left(sidebar_width)
+                        .when_some(left, |h, left| h.w(left - sidebar_width)),
                 )
             })
             // Without a panel the shell's `New tab` group follows the header behind a divider.
