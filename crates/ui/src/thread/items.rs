@@ -39,9 +39,66 @@ pub(super) fn words(s: &str, weight: f32, color: Hsla, window: &Window) -> Vec<D
         .collect()
 }
 
-/// `Worked for 17s ›` over a hairline (collapsed turn disclosure); `open`: the chevron points
-/// down.
-pub(super) fn disclosure(label: String, open: bool, window: &Window, t: &Theme) -> Div {
+/// `Worked for 17s ›` over a hairline (turn disclosure); `angle` turns the chevron clockwise
+/// in degrees (90 = open). At rest it is the fitted icon; while it turns, the svg path is
+/// rotated about its viewBox centre and rasterized like any icon (no clipping: the path stays
+/// 5.5 px from the centre). The sprite fallback (Linux) rotates the mask instead.
+pub(super) fn disclosure(label: String, angle: f32, window: &Window, t: &Theme) -> Div {
+    let color = t.text_tertiary;
+    let chevron = if angle == 0. {
+        icon("thread-chevron-right", 14., color).into_any_element()
+    } else {
+        canvas(
+            |_, _, _| {},
+            move |bounds, (), window, cx| {
+                let path = "icons/thread-chevron-right.svg";
+                let Ok(Some(src)) = cx.asset_source().load(path) else {
+                    return;
+                };
+                // ponytail: one parsed icon per 0.1 deg (at most 900), keyed by the angle.
+                let angle = (angle * 10.).round() / 10.;
+                let (sin, cos) = angle.to_radians().sin_cos();
+                let rotated = String::from_utf8_lossy(&src)
+                    .replacen(
+                        "><path",
+                        &format!(
+                            "><g transform=\"matrix({cos} {sin} {} {cos} {} {})\"><path",
+                            -sin,
+                            10. - 10. * cos + 10. * sin,
+                            10. - 10. * sin - 10. * cos
+                        ),
+                        1,
+                    )
+                    .replacen("</svg>", "</g></svg>", 1);
+                let key = format!("{path}@{angle:.1}");
+                if shapes::paint_icon(
+                    rotated.as_bytes(),
+                    &key,
+                    bounds,
+                    false,
+                    color,
+                    None,
+                    window,
+                    cx,
+                ) {
+                    return;
+                }
+                let scale = window.scale_factor();
+                let center = bounds.center();
+                let matrix = TransformationMatrix::unit()
+                    .translate(center.scale(scale))
+                    .rotate(radians(angle.to_radians()))
+                    .translate(center.scale(-scale));
+                window
+                    .paint_svg(bounds, path.into(), None, matrix, color, cx)
+                    .ok();
+            },
+        )
+        .flex_none()
+        .w(px(14.))
+        .h(px(14.))
+        .into_any_element()
+    };
     div()
         .flex()
         .flex_col()
@@ -51,24 +108,8 @@ pub(super) fn disclosure(label: String, open: bool, window: &Window, t: &Theme) 
                     .flex()
                     .items_center()
                     .gap(px(4.))
-                    .child(measured(
-                        window,
-                        label,
-                        14.,
-                        21.,
-                        430.,
-                        t.text_tertiary,
-                        None,
-                    ))
-                    .child(icon(
-                        if open {
-                            "chevron-down"
-                        } else {
-                            "thread-chevron-right"
-                        },
-                        14.,
-                        t.text_tertiary,
-                    )),
+                    .child(measured(window, label, 14., 21., 430., color, None))
+                    .child(chevron),
             ),
         )
         .child(
