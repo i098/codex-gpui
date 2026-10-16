@@ -1,0 +1,1141 @@
+{
+  "name": "s027-diff-body",
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 1,
+    "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+    "theme": "dark",
+    "hoverEmulated": true
+  },
+  "source": {
+    "app": "26.1007.30912",
+    "transport": "route1, isolated shared Chrome CDP context",
+    "fixtureAliases": [
+      "openIn.getTargets: existing recorded project targets reused for the file path",
+      "git current-branch: existing recorded main branch reused for diff_context_menu"
+    ],
+    "inventoryCorrection": "DT-014: no data-hovered attribute or background change was observed with fine-pointer hover; firstmate approved matching this behavior."
+  },
+  "steps": [
+    {
+      "type": "click",
+      "target": {
+        "text": "Add a subtract(a, b) function",
+        "bbox": {
+          "x": 68,
+          "y": 326,
+          "w": 256,
+          "h": 20
+        }
+      },
+      "portReference": {
+        "screen": "sidebar",
+        "text": "Add a subtract"
+      },
+      "waitThread": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f"
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "View changes",
+        "bbox": {
+          "x": 1061,
+          "y": 360,
+          "w": 104,
+          "h": 28
+        }
+      },
+      "portReference": {
+        "screen": "thread",
+        "text": "View changes"
+      }
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "File actions",
+        "bbox": {
+          "x": 1248,
+          "y": 102,
+          "w": 20,
+          "h": 20
+        }
+      },
+      "expect": {
+        "menu": [
+          {
+            "text": "Copy path",
+            "disabled": null,
+            "bbox": {
+              "x": 1051,
+              "y": 128,
+              "w": 212,
+              "h": 29
+            }
+          },
+          {
+            "text": "Open in editor",
+            "disabled": null,
+            "bbox": {
+              "x": 1051,
+              "y": 157,
+              "w": 212,
+              "h": 29
+            }
+          },
+          {
+            "text": "Collapse file",
+            "disabled": null,
+            "bbox": {
+              "x": 1051,
+              "y": 185,
+              "w": 212,
+              "h": 29
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "Copy path",
+        "bbox": {
+          "x": 1059,
+          "y": 133,
+          "w": 196,
+          "h": 19
+        }
+      },
+      "expect": {
+        "clipboard": "../../../private/tmp/cgx-mac/proj/src/math.py"
+      }
+    },
+    {
+      "type": "hover",
+      "target": {
+        "selector": "[data-line=\"5\"]",
+        "bbox": {
+          "x": 716,
+          "y": 229,
+          "w": 560,
+          "h": 22
+        }
+      },
+      "at": {
+        "x": 800,
+        "y": 240
+      },
+      "portAt": {
+        "x": 800,
+        "y": 229
+      },
+      "expect": {
+        "hover": {
+          "steps": [
+            {
+              "type": "hover",
+              "at": {
+                "x": 650,
+                "y": 330
+              }
+            },
+            {
+              "type": "hover",
+              "at": {
+                "x": 800,
+                "y": 240
+              },
+              "waitMs": 800
+            }
+          ],
+          "before": [
+            {
+              "line": "2",
+              "bbox": {
+                "x": 716,
+                "y": 164,
+                "w": 560,
+                "h": 22
+              },
+              "hovered": false,
+              "background": "rgb(24, 24, 24)"
+            },
+            {
+              "line": "3",
+              "bbox": {
+                "x": 716,
+                "y": 186,
+                "w": 560,
+                "h": 22
+              },
+              "hovered": false,
+              "background": "lab(18.5136 -10.4106 5.97268)"
+            },
+            {
+              "line": "4",
+              "bbox": {
+                "x": 716,
+                "y": 207,
+                "w": 560,
+                "h": 22
+              },
+              "hovered": false,
+              "background": "lab(18.5136 -10.4106 5.97268)"
+            },
+            {
+              "line": "5",
+              "bbox": {
+                "x": 716,
+                "y": 229,
+                "w": 560,
+                "h": 22
+              },
+              "hovered": false,
+              "background": "lab(18.5136 -10.4106 5.97268)"
+            },
+            {
+              "line": "6",
+              "bbox": {
+                "x": 716,
+                "y": 250,
+                "w": 560,
+                "h": 22
+              },
+              "hovered": false,
+              "background": "lab(18.5136 -10.4106 5.97268)"
+            }
+          ],
+          "after": [
+            {
+              "line": "2",
+              "bbox": {
+                "x": 716,
+                "y": 164,
+                "w": 560,
+                "h": 22
+              },
+              "hovered": false,
+              "background": "rgb(24, 24, 24)"
+            },
+            {
+              "line": "3",
+              "bbox": {
+                "x": 716,
+                "y": 186,
+                "w": 560,
+                "h": 22
+              },
+              "hovered": false,
+              "background": "lab(18.5136 -10.4106 5.97268)"
+            },
+            {
+              "line": "4",
+              "bbox": {
+                "x": 716,
+                "y": 207,
+                "w": 560,
+                "h": 22
+              },
+              "hovered": false,
+              "background": "lab(18.5136 -10.4106 5.97268)"
+            },
+            {
+              "line": "5",
+              "bbox": {
+                "x": 716,
+                "y": 229,
+                "w": 560,
+                "h": 22
+              },
+              "hovered": false,
+              "background": "lab(18.5136 -10.4106 5.97268)"
+            },
+            {
+              "line": "6",
+              "bbox": {
+                "x": 716,
+                "y": 250,
+                "w": 560,
+                "h": 22
+              },
+              "hovered": false,
+              "background": "lab(18.5136 -10.4106 5.97268)"
+            }
+          ],
+          "pointerFine": true,
+          "hoverMedia": true
+        }
+      }
+    },
+    {
+      "type": "drag",
+      "from": {
+        "x": 716,
+        "y": 240
+      },
+      "to": {
+        "x": 845,
+        "y": 262
+      },
+      "portFrom": {
+        "x": 716,
+        "y": 229
+      },
+      "portTo": {
+        "x": 845,
+        "y": 251
+      },
+      "expect": {
+        "selection": "def subtract(a, b):\n    return a - b"
+      }
+    },
+    {
+      "type": "key",
+      "key": "Control+C",
+      "portKey": "cmd-c",
+      "expect": {
+        "clipboard": "def subtract(a, b):\n    return a - b"
+      }
+    },
+    {
+      "type": "context-menu",
+      "at": {
+        "x": 800,
+        "y": 240
+      },
+      "portAt": {
+        "x": 800,
+        "y": 229
+      },
+      "expect": {
+        "items": [
+          {
+            "id": "request-changes",
+            "label": "Request changes",
+            "enabled": true
+          },
+          {
+            "id": "open-primary",
+            "label": "Open in Zed",
+            "enabled": true
+          },
+          {
+            "id": "open-with",
+            "label": "Open with",
+            "enabled": true,
+            "submenu": [
+              {
+                "id": "open-in-new-tab",
+                "label": "New tab",
+                "enabled": true
+              },
+              {
+                "id": "zed",
+                "label": "Zed",
+                "enabled": true
+              },
+              {
+                "id": "systemDefault",
+                "label": "Default app",
+                "enabled": true
+              },
+              {
+                "id": "fileManager",
+                "label": "Finder",
+                "enabled": true
+              },
+              {
+                "id": "terminal",
+                "label": "Terminal",
+                "enabled": true
+              },
+              {
+                "id": "xcode",
+                "label": "Xcode",
+                "enabled": true
+              }
+            ]
+          },
+          {
+            "id": "section-separator-1",
+            "type": "separator",
+            "label": "",
+            "enabled": true
+          },
+          {
+            "id": "copy-selection",
+            "label": "Copy selection",
+            "enabled": true
+          },
+          {
+            "id": "copy-path",
+            "label": "Copy path",
+            "enabled": true
+          },
+          {
+            "id": "copy-relative-path",
+            "label": "Copy relative path",
+            "enabled": true
+          },
+          {
+            "id": "toggle-wrap",
+            "label": "Toggle line wrap",
+            "enabled": true
+          }
+        ]
+      }
+    }
+  ],
+  "result": {
+    "dom": [
+      {
+        "line": "2",
+        "bbox": {
+          "x": 716,
+          "y": 164,
+          "w": 560,
+          "h": 22
+        },
+        "hovered": false,
+        "background": "rgb(24, 24, 24)"
+      },
+      {
+        "line": "3",
+        "bbox": {
+          "x": 716,
+          "y": 186,
+          "w": 560,
+          "h": 22
+        },
+        "hovered": false,
+        "background": "lab(18.5136 -10.4106 5.97268)"
+      },
+      {
+        "line": "4",
+        "bbox": {
+          "x": 716,
+          "y": 207,
+          "w": 560,
+          "h": 22
+        },
+        "hovered": false,
+        "background": "lab(18.5136 -10.4106 5.97268)"
+      },
+      {
+        "line": "5",
+        "bbox": {
+          "x": 716,
+          "y": 229,
+          "w": 560,
+          "h": 22
+        },
+        "hovered": false,
+        "background": "lab(18.5136 -10.4106 5.97268)"
+      },
+      {
+        "line": "6",
+        "bbox": {
+          "x": 716,
+          "y": 250,
+          "w": 560,
+          "h": 22
+        },
+        "hovered": false,
+        "background": "lab(18.5136 -10.4106 5.97268)"
+      }
+    ],
+    "contextMenus": [
+      {
+        "items": [
+          {
+            "id": "request-changes",
+            "label": "Request changes",
+            "enabled": true
+          },
+          {
+            "id": "open-primary",
+            "label": "Open in Zed",
+            "enabled": true
+          },
+          {
+            "id": "open-with",
+            "label": "Open with",
+            "enabled": true,
+            "submenu": [
+              {
+                "id": "open-in-new-tab",
+                "label": "New tab",
+                "enabled": true
+              },
+              {
+                "id": "zed",
+                "label": "Zed",
+                "enabled": true
+              },
+              {
+                "id": "systemDefault",
+                "label": "Default app",
+                "enabled": true
+              },
+              {
+                "id": "fileManager",
+                "label": "Finder",
+                "enabled": true
+              },
+              {
+                "id": "terminal",
+                "label": "Terminal",
+                "enabled": true
+              },
+              {
+                "id": "xcode",
+                "label": "Xcode",
+                "enabled": true
+              }
+            ]
+          },
+          {
+            "id": "section-separator-1",
+            "type": "separator",
+            "label": "",
+            "enabled": true
+          },
+          {
+            "id": "copy-selection",
+            "label": "Copy selection",
+            "enabled": false
+          },
+          {
+            "id": "copy-path",
+            "label": "Copy path",
+            "enabled": true
+          },
+          {
+            "id": "copy-relative-path",
+            "label": "Copy relative path",
+            "enabled": true
+          },
+          {
+            "id": "toggle-wrap",
+            "label": "Toggle line wrap",
+            "enabled": true
+          }
+        ],
+        "pos": {
+          "x": 800,
+          "y": 240
+        },
+        "t": 59436
+      },
+      {
+        "items": [
+          {
+            "id": "request-changes",
+            "label": "Request changes",
+            "enabled": true
+          },
+          {
+            "id": "open-primary",
+            "label": "Open in Zed",
+            "enabled": true
+          },
+          {
+            "id": "open-with",
+            "label": "Open with",
+            "enabled": true,
+            "submenu": [
+              {
+                "id": "open-in-new-tab",
+                "label": "New tab",
+                "enabled": true
+              },
+              {
+                "id": "zed",
+                "label": "Zed",
+                "enabled": true
+              },
+              {
+                "id": "systemDefault",
+                "label": "Default app",
+                "enabled": true
+              },
+              {
+                "id": "fileManager",
+                "label": "Finder",
+                "enabled": true
+              },
+              {
+                "id": "terminal",
+                "label": "Terminal",
+                "enabled": true
+              },
+              {
+                "id": "xcode",
+                "label": "Xcode",
+                "enabled": true
+              }
+            ]
+          },
+          {
+            "id": "section-separator-1",
+            "type": "separator",
+            "label": "",
+            "enabled": true
+          },
+          {
+            "id": "copy-selection",
+            "label": "Copy selection",
+            "enabled": true
+          },
+          {
+            "id": "copy-path",
+            "label": "Copy path",
+            "enabled": true
+          },
+          {
+            "id": "copy-relative-path",
+            "label": "Copy relative path",
+            "enabled": true
+          },
+          {
+            "id": "toggle-wrap",
+            "label": "Toggle line wrap",
+            "enabled": true
+          }
+        ],
+        "pos": {
+          "x": 800,
+          "y": 240
+        },
+        "t": 66003
+      },
+      {
+        "items": [
+          {
+            "id": "request-changes",
+            "label": "Request changes",
+            "enabled": true
+          },
+          {
+            "id": "open-primary",
+            "label": "Open in Zed",
+            "enabled": true
+          },
+          {
+            "id": "open-with",
+            "label": "Open with",
+            "enabled": true,
+            "submenu": [
+              {
+                "id": "open-in-new-tab",
+                "label": "New tab",
+                "enabled": true
+              },
+              {
+                "id": "zed",
+                "label": "Zed",
+                "enabled": true
+              },
+              {
+                "id": "systemDefault",
+                "label": "Default app",
+                "enabled": true
+              },
+              {
+                "id": "fileManager",
+                "label": "Finder",
+                "enabled": true
+              },
+              {
+                "id": "terminal",
+                "label": "Terminal",
+                "enabled": true
+              },
+              {
+                "id": "xcode",
+                "label": "Xcode",
+                "enabled": true
+              }
+            ]
+          },
+          {
+            "id": "section-separator-1",
+            "type": "separator",
+            "label": "",
+            "enabled": true
+          },
+          {
+            "id": "copy-selection",
+            "label": "Copy selection",
+            "enabled": true
+          },
+          {
+            "id": "copy-path",
+            "label": "Copy path",
+            "enabled": true
+          },
+          {
+            "id": "copy-relative-path",
+            "label": "Copy relative path",
+            "enabled": true
+          },
+          {
+            "id": "toggle-wrap",
+            "label": "Toggle line wrap",
+            "enabled": true
+          }
+        ],
+        "pos": {
+          "x": 800,
+          "y": 240
+        },
+        "t": 66270
+      }
+    ],
+    "clipboard": [
+      {
+        "svc": "clipboard",
+        "method": "writeText",
+        "args": [
+          "def subtract(a, b):\n    return a - b"
+        ]
+      }
+    ],
+    "requests": [],
+    "screenshot": "/sdc-disk/tmp/cgx/s027/shots/s027-selected-diff.png"
+  },
+  "preconditions": {
+    "thread": "subtract",
+    "fileExpanded": true,
+    "note": "The original persisted the file as collapsed. Expand file was selected before the replay actions."
+  },
+  "contextActions": [
+    {
+      "type": "context-menu",
+      "id": "copy-path",
+      "at": {
+        "x": 800,
+        "y": 240
+      },
+      "portAt": {
+        "x": 800,
+        "y": 229
+      },
+      "expect": {
+        "items": [
+          {
+            "id": "request-changes",
+            "label": "Request changes",
+            "enabled": true
+          },
+          {
+            "id": "open-primary",
+            "label": "Open in Zed",
+            "enabled": true
+          },
+          {
+            "id": "open-with",
+            "label": "Open with",
+            "enabled": true,
+            "submenu": [
+              {
+                "id": "open-in-new-tab",
+                "label": "New tab",
+                "enabled": true
+              },
+              {
+                "id": "zed",
+                "label": "Zed",
+                "enabled": true
+              },
+              {
+                "id": "systemDefault",
+                "label": "Default app",
+                "enabled": true
+              },
+              {
+                "id": "fileManager",
+                "label": "Finder",
+                "enabled": true
+              },
+              {
+                "id": "terminal",
+                "label": "Terminal",
+                "enabled": true
+              },
+              {
+                "id": "xcode",
+                "label": "Xcode",
+                "enabled": true
+              }
+            ]
+          },
+          {
+            "id": "section-separator-1",
+            "type": "separator",
+            "label": "",
+            "enabled": true
+          },
+          {
+            "id": "copy-selection",
+            "label": "Copy selection",
+            "enabled": false
+          },
+          {
+            "id": "copy-path",
+            "label": "Copy path",
+            "enabled": true
+          },
+          {
+            "id": "copy-relative-path",
+            "label": "Copy relative path",
+            "enabled": true
+          },
+          {
+            "id": "toggle-wrap",
+            "label": "Toggle line wrap",
+            "enabled": true
+          }
+        ],
+        "clipboard": [
+          {
+            "svc": "clipboard",
+            "method": "writeText",
+            "args": [
+              "/private/tmp/cgx-mac/proj/src/math.py"
+            ]
+          }
+        ],
+        "wrap": [
+          {
+            "whiteSpace": "pre",
+            "html": "<code data-code=\"\" data-unified=\"\" data-container-size=\"\" style=\"--diffs-column-width: 614px; --diffs-column-number-width: 54px; --diffs-column-content-width: 560px;\"><div data-gutter=\"\" style=\"grid-r"
+          }
+        ]
+      }
+    },
+    {
+      "type": "context-menu",
+      "id": "copy-relative-path",
+      "at": {
+        "x": 800,
+        "y": 240
+      },
+      "portAt": {
+        "x": 800,
+        "y": 229
+      },
+      "expect": {
+        "items": [
+          {
+            "id": "request-changes",
+            "label": "Request changes",
+            "enabled": true
+          },
+          {
+            "id": "open-primary",
+            "label": "Open in Zed",
+            "enabled": true
+          },
+          {
+            "id": "open-with",
+            "label": "Open with",
+            "enabled": true,
+            "submenu": [
+              {
+                "id": "open-in-new-tab",
+                "label": "New tab",
+                "enabled": true
+              },
+              {
+                "id": "zed",
+                "label": "Zed",
+                "enabled": true
+              },
+              {
+                "id": "systemDefault",
+                "label": "Default app",
+                "enabled": true
+              },
+              {
+                "id": "fileManager",
+                "label": "Finder",
+                "enabled": true
+              },
+              {
+                "id": "terminal",
+                "label": "Terminal",
+                "enabled": true
+              },
+              {
+                "id": "xcode",
+                "label": "Xcode",
+                "enabled": true
+              }
+            ]
+          },
+          {
+            "id": "section-separator-1",
+            "type": "separator",
+            "label": "",
+            "enabled": true
+          },
+          {
+            "id": "copy-selection",
+            "label": "Copy selection",
+            "enabled": false
+          },
+          {
+            "id": "copy-path",
+            "label": "Copy path",
+            "enabled": true
+          },
+          {
+            "id": "copy-relative-path",
+            "label": "Copy relative path",
+            "enabled": true
+          },
+          {
+            "id": "toggle-wrap",
+            "label": "Toggle line wrap",
+            "enabled": true
+          }
+        ],
+        "clipboard": [
+          {
+            "svc": "clipboard",
+            "method": "writeText",
+            "args": [
+              "../../../private/tmp/cgx-mac/proj/src/math.py"
+            ]
+          }
+        ],
+        "wrap": [
+          {
+            "whiteSpace": "pre",
+            "html": "<code data-code=\"\" data-unified=\"\" data-container-size=\"\" style=\"--diffs-column-width: 614px; --diffs-column-number-width: 54px; --diffs-column-content-width: 560px;\"><div data-gutter=\"\" style=\"grid-r"
+          }
+        ]
+      }
+    },
+    {
+      "type": "context-menu",
+      "id": "toggle-wrap",
+      "at": {
+        "x": 800,
+        "y": 240
+      },
+      "portAt": {
+        "x": 800,
+        "y": 229
+      },
+      "expect": {
+        "items": [
+          {
+            "id": "request-changes",
+            "label": "Request changes",
+            "enabled": true
+          },
+          {
+            "id": "open-primary",
+            "label": "Open in Zed",
+            "enabled": true
+          },
+          {
+            "id": "open-with",
+            "label": "Open with",
+            "enabled": true,
+            "submenu": [
+              {
+                "id": "open-in-new-tab",
+                "label": "New tab",
+                "enabled": true
+              },
+              {
+                "id": "zed",
+                "label": "Zed",
+                "enabled": true
+              },
+              {
+                "id": "systemDefault",
+                "label": "Default app",
+                "enabled": true
+              },
+              {
+                "id": "fileManager",
+                "label": "Finder",
+                "enabled": true
+              },
+              {
+                "id": "terminal",
+                "label": "Terminal",
+                "enabled": true
+              },
+              {
+                "id": "xcode",
+                "label": "Xcode",
+                "enabled": true
+              }
+            ]
+          },
+          {
+            "id": "section-separator-1",
+            "type": "separator",
+            "label": "",
+            "enabled": true
+          },
+          {
+            "id": "copy-selection",
+            "label": "Copy selection",
+            "enabled": false
+          },
+          {
+            "id": "copy-path",
+            "label": "Copy path",
+            "enabled": true
+          },
+          {
+            "id": "copy-relative-path",
+            "label": "Copy relative path",
+            "enabled": true
+          },
+          {
+            "id": "toggle-wrap",
+            "label": "Toggle line wrap",
+            "enabled": true
+          }
+        ],
+        "clipboard": [],
+        "wrap": [
+          {
+            "whiteSpace": "pre",
+            "html": "<code data-code=\"\" data-unified=\"\" data-container-size=\"\" style=\"--diffs-column-width: 614px; --diffs-column-number-width: 54px; --diffs-column-content-width: 560px; grid-row: span 6;\"><div data-gutte"
+          }
+        ],
+        "wrapMode": "wrap"
+      }
+    }
+  ],
+  "portScope": {
+    "disabled": [
+      "Open in editor"
+    ],
+    "absent": [
+      "Request changes",
+      "Open in Zed",
+      "Open with",
+      "New tab",
+      "Open in GitHub"
+    ],
+    "reason": "Firstmate approved shipping clipboard, collapse, selection, and wrap actions without the missing host, comment, or file-tab services."
+  },
+  "selectionNative": {
+    "items": [
+      {
+        "id": "request-changes",
+        "label": "Request changes",
+        "enabled": true
+      },
+      {
+        "id": "open-primary",
+        "label": "Open in Zed",
+        "enabled": true
+      },
+      {
+        "id": "open-with",
+        "label": "Open with",
+        "enabled": true,
+        "submenu": [
+          {
+            "id": "open-in-new-tab",
+            "label": "New tab",
+            "enabled": true
+          },
+          {
+            "id": "zed",
+            "label": "Zed",
+            "enabled": true
+          },
+          {
+            "id": "systemDefault",
+            "label": "Default app",
+            "enabled": true
+          },
+          {
+            "id": "fileManager",
+            "label": "Finder",
+            "enabled": true
+          },
+          {
+            "id": "terminal",
+            "label": "Terminal",
+            "enabled": true
+          },
+          {
+            "id": "xcode",
+            "label": "Xcode",
+            "enabled": true
+          }
+        ]
+      },
+      {
+        "id": "section-separator-1",
+        "type": "separator",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "id": "copy-selection",
+        "label": "Copy selection",
+        "enabled": true
+      },
+      {
+        "id": "copy-path",
+        "label": "Copy path",
+        "enabled": true
+      },
+      {
+        "id": "copy-relative-path",
+        "label": "Copy relative path",
+        "enabled": true
+      },
+      {
+        "id": "toggle-wrap",
+        "label": "Toggle line wrap",
+        "enabled": true
+      }
+    ],
+    "clipboard": [
+      {
+        "svc": "clipboard",
+        "method": "writeText",
+        "args": [
+          "def subtract(a, b):\n    return a - b"
+        ]
+      }
+    ]
+  },
+  "whitespaceSelection": {
+    "from": {
+      "x": 716,
+      "y": 175
+    },
+    "to": {
+      "x": 850,
+      "y": 175
+    },
+    "portFrom": {
+      "x": 714,
+      "y": 164
+    },
+    "portTo": {
+      "x": 850,
+      "y": 164
+    },
+    "selection": "    return a + b",
+    "keyboardClipboard": "    return a + b",
+    "menuClipboard": "return a + b"
+  }
+}

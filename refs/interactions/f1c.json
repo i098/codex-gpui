@@ -1,0 +1,3731 @@
+{
+  "name": "f1c",
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 1,
+    "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+    "theme": "dark",
+    "hoverEmulated": true
+  },
+  "rows": [
+    "SH-018",
+    "SH-021"
+  ],
+  "steps": [
+    {
+      "type": "click",
+      "phase": "down",
+      "target": {
+        "text": "Last chat row",
+        "bbox": {
+          "x": 60,
+          "y": 352,
+          "w": 272,
+          "h": 30
+        }
+      }
+    },
+    {
+      "type": "click",
+      "phase": "up",
+      "target": {
+        "text": "Empty main area",
+        "bbox": {
+          "x": 800,
+          "y": 250,
+          "w": 1,
+          "h": 1
+        }
+      }
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "shift": true
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "shift": true
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "shift": true
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "shift": true
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "shift": true
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "shift": true
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "shift": true
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "Scheduled",
+        "bbox": {
+          "x": 8,
+          "y": 140,
+          "w": 36,
+          "h": 36
+        }
+      }
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "Home",
+        "bbox": {
+          "x": 8,
+          "y": 52,
+          "w": 36,
+          "h": 36
+        }
+      }
+    },
+    {
+      "type": "click",
+      "phase": "down",
+      "target": {
+        "text": "Back",
+        "bbox": {
+          "x": 88,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        }
+      }
+    },
+    {
+      "type": "click",
+      "phase": "up",
+      "target": {
+        "text": "Empty main area",
+        "bbox": {
+          "x": 800,
+          "y": 250,
+          "w": 1,
+          "h": 1
+        }
+      }
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "shift": true
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "Back",
+        "bbox": {
+          "x": 88,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        }
+      }
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "Back",
+        "bbox": {
+          "x": 88,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        }
+      }
+    },
+    {
+      "type": "click",
+      "phase": "down",
+      "target": {
+        "text": "Forward",
+        "bbox": {
+          "x": 122,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        }
+      }
+    },
+    {
+      "type": "click",
+      "phase": "up",
+      "target": {
+        "text": "Empty main area",
+        "bbox": {
+          "x": 800,
+          "y": 250,
+          "w": 1,
+          "h": 1
+        }
+      }
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "shift": true
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "Empty main area",
+        "bbox": {
+          "x": 800,
+          "y": 250,
+          "w": 1,
+          "h": 1
+        }
+      }
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "Composer",
+        "bbox": {
+          "x": 453,
+          "y": 728,
+          "w": 712,
+          "h": 44
+        }
+      }
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "shift": true
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "shift": true
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "shift": true
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "shift": true
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "shift": true
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "Home",
+        "bbox": {
+          "x": 8,
+          "y": 52,
+          "w": 36,
+          "h": 36
+        }
+      }
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "shift": true
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "shift": true
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "shift": true
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "shift": true
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "shift": true
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "shift": true
+    }
+  ],
+  "result": {
+    "dom": [
+      {
+        "tag": "div",
+        "text": "In two sentences, what does this repository contain?",
+        "aria": "In two sentences, what does this repository contain?",
+        "role": "button",
+        "bbox": {
+          "x": 60,
+          "y": 352,
+          "w": 272,
+          "h": 30
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(255, 255, 255) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 0,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-0.png",
+        "pixels": [
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(255, 255, 255, 0.08)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "div",
+        "text": "In two sentences, what does this repository contain?",
+        "aria": "In two sentences, what does this repository contain?",
+        "role": "button",
+        "bbox": {
+          "x": 60,
+          "y": 352,
+          "w": 272,
+          "h": 30
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(255, 255, 255) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 1,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-1.png",
+        "pixels": [
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "",
+        "aria": "Pin chat",
+        "role": null,
+        "bbox": {
+          "x": 276,
+          "y": 357,
+          "w": 20,
+          "h": 20
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "borderRadius": "9999px",
+          "boxShadow": "none"
+        },
+        "afterStep": 2,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-2.png",
+        "pixels": [
+          {
+            "x": 286,
+            "y": 356,
+            "rgb": [
+              49,
+              108,
+              205
+            ],
+            "tolerance": 45
+          },
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "",
+        "aria": "Archive chat",
+        "role": null,
+        "bbox": {
+          "x": 304,
+          "y": 357,
+          "w": 20,
+          "h": 20
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "borderRadius": "9999px",
+          "boxShadow": "none"
+        },
+        "afterStep": 3,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-3.png",
+        "pixels": [
+          {
+            "x": 314,
+            "y": 356,
+            "rgb": [
+              49,
+              108,
+              205
+            ],
+            "tolerance": 45
+          },
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "",
+        "aria": "Hide sidebar",
+        "role": null,
+        "bbox": {
+          "x": 156,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "borderRadius": "9.375px",
+          "boxShadow": "none"
+        },
+        "afterStep": 4,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-4.png",
+        "pixels": [
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 45
+          },
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              58,
+              131,
+              247
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "",
+        "aria": "New tab",
+        "role": null,
+        "bbox": {
+          "x": 1244,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 5,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-5.png",
+        "pixels": [
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 45
+          },
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              58,
+              131,
+              247
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgb(238, 238, 238) none 1px",
+          "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "Choose project",
+        "aria": "Choose project",
+        "role": null,
+        "bbox": {
+          "x": 458,
+          "y": 681,
+          "w": 133,
+          "h": 28
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 6,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-6.png",
+        "pixels": [
+          {
+            "x": 525,
+            "y": 680,
+            "rgb": [
+              51,
+              114,
+              215
+            ],
+            "tolerance": 45
+          },
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgb(238, 238, 238) none 1px",
+          "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "This computer",
+        "aria": "Work in",
+        "role": null,
+        "bbox": {
+          "x": 599,
+          "y": 681,
+          "w": 128,
+          "h": 28
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 7,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-7.png",
+        "pixels": [
+          {
+            "x": 663,
+            "y": 680,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 45
+          },
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgb(238, 238, 238) none 1px",
+          "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "div",
+        "text": "",
+        "aria": "Do anything",
+        "role": "textbox",
+        "bbox": {
+          "x": 453,
+          "y": 728,
+          "w": 712,
+          "h": 44
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(255, 255, 255) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 8,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-8.png",
+        "pixels": [
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(255, 255, 255) none 3px",
+          "boxShadow": "none",
+          "cursor": "auto"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "This computer",
+        "aria": "Work in",
+        "role": null,
+        "bbox": {
+          "x": 599,
+          "y": 681,
+          "w": 128,
+          "h": 28
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 9,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-9.png",
+        "pixels": [
+          {
+            "x": 663,
+            "y": 680,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 45
+          },
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgb(238, 238, 238) none 1px",
+          "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "Choose project",
+        "aria": "Choose project",
+        "role": null,
+        "bbox": {
+          "x": 458,
+          "y": 681,
+          "w": 133,
+          "h": 28
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 10,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-10.png",
+        "pixels": [
+          {
+            "x": 525,
+            "y": 680,
+            "rgb": [
+              51,
+              114,
+              215
+            ],
+            "tolerance": 45
+          },
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgb(238, 238, 238) none 1px",
+          "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "",
+        "aria": "New tab",
+        "role": null,
+        "bbox": {
+          "x": 1244,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 11,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-11.png",
+        "pixels": [
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 45
+          },
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              58,
+              131,
+              247
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgb(238, 238, 238) none 1px",
+          "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "",
+        "aria": "Hide sidebar",
+        "role": null,
+        "bbox": {
+          "x": 156,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "borderRadius": "9.375px",
+          "boxShadow": "none"
+        },
+        "afterStep": 12,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-12.png",
+        "pixels": [
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 45
+          },
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              58,
+              131,
+              247
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "",
+        "aria": "Archive chat",
+        "role": null,
+        "bbox": {
+          "x": 304,
+          "y": 357,
+          "w": 20,
+          "h": 20
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "borderRadius": "9999px",
+          "boxShadow": "none"
+        },
+        "afterStep": 13,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-13.png",
+        "pixels": [
+          {
+            "x": 314,
+            "y": 356,
+            "rgb": [
+              49,
+              108,
+              205
+            ],
+            "tolerance": 45
+          },
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "",
+        "aria": "Pin chat",
+        "role": null,
+        "bbox": {
+          "x": 276,
+          "y": 357,
+          "w": 20,
+          "h": 20
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "borderRadius": "9999px",
+          "boxShadow": "none"
+        },
+        "afterStep": 14,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-14.png",
+        "pixels": [
+          {
+            "x": 286,
+            "y": 356,
+            "rgb": [
+              49,
+              108,
+              205
+            ],
+            "tolerance": 45
+          },
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "div",
+        "text": "In two sentences, what does this repository contain?",
+        "aria": "In two sentences, what does this repository contain?",
+        "role": "button",
+        "bbox": {
+          "x": 60,
+          "y": 352,
+          "w": 272,
+          "h": 30
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(255, 255, 255) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 15,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-15.png",
+        "pixels": [
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "Scheduled",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 8,
+          "y": 140,
+          "w": 36,
+          "h": 36
+        },
+        "focusVisible": false,
+        "after": {
+          "outline": "rgb(255, 255, 255) none 3px",
+          "borderRadius": "12.5px",
+          "boxShadow": "none"
+        },
+        "afterStep": 16,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-16.png",
+        "pixels": [
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(255, 255, 255) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "div",
+        "text": "",
+        "aria": "Do anything",
+        "role": "textbox",
+        "bbox": {
+          "x": 453,
+          "y": 728,
+          "w": 712,
+          "h": 44
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(255, 255, 255) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 17,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-17.png",
+        "pixels": [
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(255, 255, 255) none 3px",
+          "boxShadow": "none",
+          "cursor": "auto"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "",
+        "aria": "Back",
+        "role": null,
+        "bbox": {
+          "x": 88,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        },
+        "focusVisible": false,
+        "after": {
+          "outline": "rgb(255, 255, 255) none 3px",
+          "borderRadius": "9.375px",
+          "boxShadow": "none"
+        },
+        "afterStep": 18,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-18.png",
+        "pixels": [
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(255, 255, 255) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "",
+        "aria": "Back",
+        "role": null,
+        "bbox": {
+          "x": 88,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        },
+        "focusVisible": false,
+        "after": {
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "borderRadius": "9.375px",
+          "boxShadow": "none"
+        },
+        "afterStep": 19,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-19.png",
+        "pixels": [
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "",
+        "aria": "Hide sidebar",
+        "role": null,
+        "bbox": {
+          "x": 156,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "borderRadius": "9.375px",
+          "boxShadow": "none"
+        },
+        "afterStep": 20,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-20.png",
+        "pixels": [
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 45
+          },
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              58,
+              131,
+              247
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "",
+        "aria": "Back",
+        "role": null,
+        "bbox": {
+          "x": 88,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "borderRadius": "9.375px",
+          "boxShadow": "none"
+        },
+        "afterStep": 21,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-21.png",
+        "pixels": [
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 45
+          },
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              58,
+              131,
+              247
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "body",
+        "text": "Skip to content\nHome\nSpace\nScheduled\nPlugins\nExplore\nCode Review\nSites\nScheduled\nNew task\nUpcoming\nNo scheduled tasks\n🕗\nSchedule a task\n\nChatGPT can take care ",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "w": 1280,
+          "h": 832
+        },
+        "focusVisible": false,
+        "after": {
+          "outline": "rgb(255, 255, 255) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 22,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-22.png",
+        "pixels": [
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgb(20, 20, 20)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(255, 255, 255) none 3px",
+          "boxShadow": "none",
+          "cursor": "auto"
+        }
+      },
+      {
+        "tag": "div",
+        "text": "",
+        "aria": "Do anything",
+        "role": "textbox",
+        "bbox": {
+          "x": 453,
+          "y": 728,
+          "w": 712,
+          "h": 44
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(255, 255, 255) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 23,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-23.png",
+        "pixels": [
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(255, 255, 255) none 3px",
+          "boxShadow": "none",
+          "cursor": "auto"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "",
+        "aria": "Forward",
+        "role": null,
+        "bbox": {
+          "x": 122,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        },
+        "focusVisible": false,
+        "after": {
+          "outline": "rgb(255, 255, 255) none 3px",
+          "borderRadius": "9.375px",
+          "boxShadow": "none"
+        },
+        "afterStep": 24,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-24.png",
+        "pixels": [
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(255, 255, 255) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "",
+        "aria": "Forward",
+        "role": null,
+        "bbox": {
+          "x": 122,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        },
+        "focusVisible": false,
+        "after": {
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "borderRadius": "9.375px",
+          "boxShadow": "none"
+        },
+        "afterStep": 25,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-25.png",
+        "pixels": [
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "",
+        "aria": "Hide sidebar",
+        "role": null,
+        "bbox": {
+          "x": 156,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "borderRadius": "9.375px",
+          "boxShadow": "none"
+        },
+        "afterStep": 26,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-26.png",
+        "pixels": [
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 45
+          },
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              58,
+              131,
+              247
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "",
+        "aria": "Forward",
+        "role": null,
+        "bbox": {
+          "x": 122,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "borderRadius": "9.375px",
+          "boxShadow": "none"
+        },
+        "afterStep": 27,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-27.png",
+        "pixels": [
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 45
+          },
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              58,
+              131,
+              247
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "main",
+        "text": "What should we build?\nChoose project\nThis computer\n\n\n\n\nCustom\nGPT-6 Astra\nLight\nNone\nMinimal\nLight\nMedium\nHigh\nExtra High\nMax\nUltra\nPersistent",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 340,
+          "y": 44,
+          "w": 936,
+          "h": 784
+        },
+        "focusVisible": false,
+        "after": {
+          "outline": "rgb(255, 255, 255) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 28,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-28.png",
+        "pixels": [
+          {
+            "x": 102,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 136,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 170,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 1258,
+            "y": 7,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgb(24, 24, 24)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(255, 255, 255) none 3px",
+          "boxShadow": "none",
+          "cursor": "auto"
+        }
+      },
+      {
+        "tag": "div",
+        "text": "",
+        "aria": "Do anything",
+        "role": "textbox",
+        "bbox": {
+          "x": 453,
+          "y": 728,
+          "w": 712,
+          "h": 44
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(255, 255, 255) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 29,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-29.png",
+        "pixels": [],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(255, 255, 255) none 3px",
+          "boxShadow": "none",
+          "cursor": "auto"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "",
+        "aria": "Add files and more",
+        "role": null,
+        "bbox": {
+          "x": 449,
+          "y": 776,
+          "w": 28,
+          "h": 28
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 30,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-30.png",
+        "pixels": [
+          {
+            "x": 463,
+            "y": 775,
+            "rgb": [
+              52,
+              116,
+              218
+            ],
+            "tolerance": 45
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgb(238, 238, 238) none 1px",
+          "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "Custom",
+        "aria": "Change permissions",
+        "role": null,
+        "bbox": {
+          "x": 482,
+          "y": 776,
+          "w": 81,
+          "h": 28
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 31,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-31.png",
+        "pixels": [
+          {
+            "x": 523,
+            "y": 775,
+            "rgb": [
+              51,
+              114,
+              215
+            ],
+            "tolerance": 45
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgb(238, 238, 238) none 1px",
+          "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "GPT-6 Astra\nLight\nNone\nMinimal\nLight\nMedium\nHigh\nExtra High\nMax\nUltra\nPersistent",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 956,
+          "y": 776,
+          "w": 148,
+          "h": 28
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 32,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-32.png",
+        "pixels": [
+          {
+            "x": 1030,
+            "y": 775,
+            "rgb": [
+              51,
+              114,
+              215
+            ],
+            "tolerance": 45
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgb(238, 238, 238) none 1px",
+          "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "",
+        "aria": "Dictate",
+        "role": null,
+        "bbox": {
+          "x": 1105,
+          "y": 776,
+          "w": 28,
+          "h": 28
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 33,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-33.png",
+        "pixels": [
+          {
+            "x": 1119,
+            "y": 775,
+            "rgb": [
+              51,
+              114,
+              215
+            ],
+            "tolerance": 45
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgb(238, 238, 238) none 1px",
+          "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "",
+        "aria": "Start new voice chat",
+        "role": null,
+        "bbox": {
+          "x": 1141,
+          "y": 776,
+          "w": 28,
+          "h": 28
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(255, 255, 255) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 34,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-34.png",
+        "pixels": [
+          {
+            "x": 1155,
+            "y": 775,
+            "rgb": [
+              218,
+              219,
+              222
+            ],
+            "tolerance": 45
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgb(255, 255, 255)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(255, 255, 255) solid 2px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "",
+        "aria": "Dictate",
+        "role": null,
+        "bbox": {
+          "x": 1105,
+          "y": 776,
+          "w": 28,
+          "h": 28
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 35,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-35.png",
+        "pixels": [
+          {
+            "x": 1119,
+            "y": 775,
+            "rgb": [
+              51,
+              114,
+              215
+            ],
+            "tolerance": 45
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgb(238, 238, 238) none 1px",
+          "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "GPT-6 Astra\nLight\nNone\nMinimal\nLight\nMedium\nHigh\nExtra High\nMax\nUltra\nPersistent",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 956,
+          "y": 776,
+          "w": 148,
+          "h": 28
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 36,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-36.png",
+        "pixels": [
+          {
+            "x": 1030,
+            "y": 775,
+            "rgb": [
+              51,
+              114,
+              215
+            ],
+            "tolerance": 45
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgb(238, 238, 238) none 1px",
+          "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "Custom",
+        "aria": "Change permissions",
+        "role": null,
+        "bbox": {
+          "x": 482,
+          "y": 776,
+          "w": 81,
+          "h": 28
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 37,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-37.png",
+        "pixels": [
+          {
+            "x": 523,
+            "y": 775,
+            "rgb": [
+              51,
+              114,
+              215
+            ],
+            "tolerance": 45
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgb(238, 238, 238) none 1px",
+          "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "",
+        "aria": "Add files and more",
+        "role": null,
+        "bbox": {
+          "x": 449,
+          "y": 776,
+          "w": 28,
+          "h": 28
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 38,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-38.png",
+        "pixels": [
+          {
+            "x": 463,
+            "y": 775,
+            "rgb": [
+              52,
+              116,
+              218
+            ],
+            "tolerance": 45
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgb(238, 238, 238) none 1px",
+          "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "div",
+        "text": "",
+        "aria": "Do anything",
+        "role": "textbox",
+        "bbox": {
+          "x": 453,
+          "y": 728,
+          "w": 712,
+          "h": 44
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(255, 255, 255) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 39,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-39.png",
+        "pixels": [],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(255, 255, 255) none 3px",
+          "boxShadow": "none",
+          "cursor": "auto"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "Home",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 8,
+          "y": 52,
+          "w": 36,
+          "h": 36
+        },
+        "focusVisible": false,
+        "after": {
+          "outline": "rgb(255, 255, 255) none 3px",
+          "borderRadius": "12.5px",
+          "boxShadow": "none"
+        },
+        "afterStep": 40,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-40.png",
+        "pixels": [],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(255, 255, 255) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "Space",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 8,
+          "y": 96,
+          "w": 36,
+          "h": 36
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "borderRadius": "12.5px",
+          "boxShadow": "none"
+        },
+        "afterStep": 41,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-41.png",
+        "pixels": [
+          {
+            "x": 26,
+            "y": 95,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 45
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "Scheduled",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 8,
+          "y": 140,
+          "w": 36,
+          "h": 36
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "borderRadius": "12.5px",
+          "boxShadow": "none"
+        },
+        "afterStep": 42,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-42.png",
+        "pixels": [
+          {
+            "x": 26,
+            "y": 139,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 45
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "Plugins",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 8,
+          "y": 184,
+          "w": 36,
+          "h": 36
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "borderRadius": "12.5px",
+          "boxShadow": "none"
+        },
+        "afterStep": 43,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-43.png",
+        "pixels": [
+          {
+            "x": 26,
+            "y": 183,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 45
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "Explore",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 8,
+          "y": 228,
+          "w": 36,
+          "h": 36
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "borderRadius": "12.5px",
+          "boxShadow": "none"
+        },
+        "afterStep": 44,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-44.png",
+        "pixels": [
+          {
+            "x": 26,
+            "y": 227,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 45
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "Code Review",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 8,
+          "y": 281,
+          "w": 36,
+          "h": 36
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "borderRadius": "12.5px",
+          "boxShadow": "none"
+        },
+        "afterStep": 45,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-45.png",
+        "pixels": [
+          {
+            "x": 26,
+            "y": 280,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 45
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "Sites",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 8,
+          "y": 325,
+          "w": 36,
+          "h": 36
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "borderRadius": "12.5px",
+          "boxShadow": "none"
+        },
+        "afterStep": 46,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-46.png",
+        "pixels": [
+          {
+            "x": 26,
+            "y": 324,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 45
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "",
+        "aria": "Open profile menu",
+        "role": null,
+        "bbox": {
+          "x": 8,
+          "y": 788,
+          "w": 36,
+          "h": 36
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "borderRadius": "12.5px",
+          "boxShadow": "none"
+        },
+        "afterStep": 47,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-47.png",
+        "pixels": [
+          {
+            "x": 26,
+            "y": 787,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 45
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "Codex",
+        "aria": "Switch mode, current mode: Codex",
+        "role": null,
+        "bbox": {
+          "x": 62,
+          "y": 54,
+          "w": 84,
+          "h": 32
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "borderRadius": "12.5px",
+          "boxShadow": "none"
+        },
+        "afterStep": 48,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-48.png",
+        "pixels": [
+          {
+            "x": 104,
+            "y": 53,
+            "rgb": [
+              28,
+              28,
+              28
+            ],
+            "tolerance": 45
+          },
+          {
+            "x": 104,
+            "y": 54,
+            "rgb": [
+              58,
+              131,
+              247
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "oklab(0.999994 0.0000455678 0.0000200868 / 0.85)",
+          "opacity": "1",
+          "outline": "oklab(0.999994 0.0000455678 0.0000200868 / 0.85) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "",
+        "aria": "View activity",
+        "role": null,
+        "bbox": {
+          "x": 268,
+          "y": 56,
+          "w": 28,
+          "h": 28
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "borderRadius": "9.375px",
+          "boxShadow": "none"
+        },
+        "afterStep": 49,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-49.png",
+        "pixels": [
+          {
+            "x": 282,
+            "y": 55,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 45
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "",
+        "aria": "Search",
+        "role": null,
+        "bbox": {
+          "x": 300,
+          "y": 56,
+          "w": 28,
+          "h": 28
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "borderRadius": "9.375px",
+          "boxShadow": "none"
+        },
+        "afterStep": 50,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-50.png",
+        "pixels": [
+          {
+            "x": 314,
+            "y": 55,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 45
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "New chat",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 60,
+          "y": 96,
+          "w": 272,
+          "h": 30
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(255, 255, 255) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 51,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-51.png",
+        "pixels": [
+          {
+            "x": 196,
+            "y": 95,
+            "rgb": [
+              28,
+              28,
+              28
+            ],
+            "tolerance": 45
+          },
+          {
+            "x": 196,
+            "y": 96,
+            "rgb": [
+              58,
+              131,
+              247
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "Your dot",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 60,
+          "y": 127,
+          "w": 272,
+          "h": 30
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(255, 255, 255) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 52,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-52.png",
+        "pixels": [
+          {
+            "x": 196,
+            "y": 126,
+            "rgb": [
+              28,
+              28,
+              28
+            ],
+            "tolerance": 45
+          },
+          {
+            "x": 196,
+            "y": 127,
+            "rgb": [
+              58,
+              131,
+              247
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "Projects",
+        "aria": null,
+        "role": "button",
+        "bbox": {
+          "x": 64,
+          "y": 172,
+          "w": 202,
+          "h": 25
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 53,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-53.png",
+        "pixels": [
+          {
+            "x": 165,
+            "y": 171,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 45
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "Your dot",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 60,
+          "y": 127,
+          "w": 272,
+          "h": 30
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(255, 255, 255) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 54,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-54.png",
+        "pixels": [
+          {
+            "x": 196,
+            "y": 126,
+            "rgb": [
+              28,
+              28,
+              28
+            ],
+            "tolerance": 45
+          },
+          {
+            "x": 196,
+            "y": 127,
+            "rgb": [
+              58,
+              131,
+              247
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "New chat",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 60,
+          "y": 96,
+          "w": 272,
+          "h": 30
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(255, 255, 255) none 3px",
+          "borderRadius": "0px",
+          "boxShadow": "none"
+        },
+        "afterStep": 55,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-55.png",
+        "pixels": [
+          {
+            "x": 196,
+            "y": 95,
+            "rgb": [
+              28,
+              28,
+              28
+            ],
+            "tolerance": 45
+          },
+          {
+            "x": 196,
+            "y": 96,
+            "rgb": [
+              58,
+              131,
+              247
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "",
+        "aria": "Search",
+        "role": null,
+        "bbox": {
+          "x": 300,
+          "y": 56,
+          "w": 28,
+          "h": 28
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "borderRadius": "9.375px",
+          "boxShadow": "none"
+        },
+        "afterStep": 56,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-56.png",
+        "pixels": [
+          {
+            "x": 314,
+            "y": 55,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 45
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "",
+        "aria": "View activity",
+        "role": null,
+        "bbox": {
+          "x": 268,
+          "y": 56,
+          "w": 28,
+          "h": 28
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "borderRadius": "9.375px",
+          "boxShadow": "none"
+        },
+        "afterStep": 57,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-57.png",
+        "pixels": [
+          {
+            "x": 282,
+            "y": 55,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 45
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "Codex",
+        "aria": "Switch mode, current mode: Codex",
+        "role": null,
+        "bbox": {
+          "x": 62,
+          "y": 54,
+          "w": 84,
+          "h": 32
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "borderRadius": "12.5px",
+          "boxShadow": "none"
+        },
+        "afterStep": 58,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-58.png",
+        "pixels": [
+          {
+            "x": 104,
+            "y": 53,
+            "rgb": [
+              28,
+              28,
+              28
+            ],
+            "tolerance": 45
+          },
+          {
+            "x": 104,
+            "y": 54,
+            "rgb": [
+              58,
+              131,
+              247
+            ]
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "oklab(0.999994 0.0000455678 0.0000200868 / 0.85)",
+          "opacity": "1",
+          "outline": "oklab(0.999994 0.0000455678 0.0000200868 / 0.85) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "",
+        "aria": "Open profile menu",
+        "role": null,
+        "bbox": {
+          "x": 8,
+          "y": 788,
+          "w": 36,
+          "h": 36
+        },
+        "focusVisible": true,
+        "after": {
+          "outline": "rgb(58, 131, 247) solid 2px",
+          "borderRadius": "12.5px",
+          "boxShadow": "none"
+        },
+        "afterStep": 59,
+        "screenshot": "/sdc-disk/tmp/cgx/f1c/shots/f1c-59.png",
+        "pixels": [
+          {
+            "x": 26,
+            "y": 787,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 45
+          }
+        ],
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      }
+    ],
+    "requests": [],
+    "requestScope": "Mutating app-server requests; reads and route1 host services are excluded."
+  },
+  "limits": [
+    "The skip link belongs to F1d. Sidebar section action buttons do not exist in this port and require a separate sidebar source file beyond the six-file cap."
+  ]
+}

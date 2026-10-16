@@ -6,6 +6,10 @@
 //! User-message controls appear on hover or focus without moving the transcript.
 //! Copy writes plain text and HTML on macOS and shows a checkmark for 1500 ms.
 //! Answer text is selectable by drag (`thread/select.rs`); `Copy` writes the selection.
+//! The last text message opens an inline editor. Send reverts that turn before resending it.
+//! Response copy adds HTML. Response actions use the shared delayed tooltip.
+//! A failed resume or revert leaves the draft open and shows `Failed to edit message`.
+//! A failed resend restores the edited text to the docked composer and retains its existing draft.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -42,7 +46,7 @@ mod markdown;
 mod select;
 
 use actions::action_row;
-pub use actions::{ForkThread, RevertTurn};
+pub use actions::{EditMessage, ForkThread, RevertTurn};
 use items::{activity, diff_card, disclosure, user_bubble, wrap_row};
 use markdown::{markdown, tones};
 pub use select::Selection;
@@ -93,6 +97,9 @@ pub struct ThreadView {
     /// Focused while the transcript holds the text selection: `Copy` then copies it.
     focus: Option<gpui::FocusHandle>,
     carets: Carets,
+    /// What was focused when the current press began (the inline message editor keeps a
+    /// press that focuses it).
+    press_focus: Option<gpui::FocusHandle>,
 }
 
 /// Where the last frame laid out each turn, in the scroller's content (top, height), and the
@@ -127,6 +134,7 @@ impl ThreadView {
             laid_out: Rc::default(),
             focus: None,
             carets: Carets::default(),
+            press_focus: None,
         }
     }
 
@@ -156,6 +164,25 @@ impl ThreadView {
         } else {
             cx.propagate();
         }
+    }
+
+    /// Only the last user message is editable, and only when its later turns have stopped.
+    /// Non-text content stays read-only because `UserInput::Other` cannot retain attachments.
+    pub fn can_edit(&self, turn_id: &str) -> bool {
+        for turn in self.turns.iter().rev() {
+            if turn.status == TurnStatus::InProgress {
+                return false;
+            }
+            for item in &turn.items {
+                if let ThreadItem::UserMessage { content, .. } = item {
+                    return turn.id == turn_id
+                        && content
+                            .iter()
+                            .all(|input| matches!(input, UserInput::Text { .. }));
+                }
+            }
+        }
+        false
     }
 
     /// Commands still running after their turn ended (background terminals), oldest first:
@@ -467,6 +494,8 @@ impl ThreadView {
             col = col.child(actions::UserMessage {
                 id: format!("user-message-{}", turn.id).into(),
                 message: user.into(),
+                thread_id: self.thread_id.clone(),
+                editable_turn: self.can_edit(&turn.id).then(|| turn.id.clone()),
                 sent_at: turn.started_at.and_then(|at| {
                     chrono::DateTime::from_timestamp(at + self.clock.utc_offset, 0)
                         .map(|at| at.format("%A %-I:%M %p").to_string())
@@ -727,10 +756,17 @@ impl Render for ThreadView {
                     .track_focus(&focus)
                     .on_action(cx.listener(Self::copy_selection))
                     // A press on the transcript collapses the selection to a caret, takes the
-                    // focus from the editor, and starts a drag (TH-127). Buttons stop it.
+                    // focus from the editor, and starts a drag (TH-127). Buttons stop it; a
+                    // control that took the focus during the press (the inline editor) keeps it.
+                    .capture_any_mouse_down(cx.listener(|view, _, window, cx| {
+                        view.press_focus = window.focused(cx);
+                    }))
                     .on_mouse_down(
                         gpui::MouseButton::Left,
                         cx.listener(move |view, e: &gpui::MouseDownEvent, window, cx| {
+                            if window.focused(cx) != view.press_focus {
+                                return;
+                            }
                             window.focus(&focus, cx);
                             view.carets.press(e.position, cx);
                             cx.notify();
