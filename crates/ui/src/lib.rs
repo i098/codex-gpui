@@ -48,8 +48,6 @@ actions!(
         OpenChangesPanel,
         /// Thread summary ▸ `Background processes` row: the command's terminal tab.
         OpenBackgroundTerminal,
-        /// Side panel tab strip `Hide tabs`: close the side panel.
-        CloseSidePanel,
         /// `⌘K`, `⌘⇧P`, sidebar `Search`: the command menu.
         OpenCommandMenu,
     ]
