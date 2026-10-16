@@ -1132,10 +1132,9 @@ impl Root {
             .turns
             .iter()
             .any(|turn| turn.status == TurnStatus::InProgress);
-        let roots = vec![thread.cwd.clone()];
         self.thread_composer.update(cx, |c, cx| {
             c.set_running(running, cx);
-            c.set_search_roots(roots);
+            c.set_search_roots(vec![thread.cwd.clone()]);
         });
         let route = Route::Thread(thread.id.clone());
         let clock = Clock {

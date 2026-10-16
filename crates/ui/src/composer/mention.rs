@@ -3,7 +3,6 @@
 //! `fuzzyFileSearch/sessionStart` + `sessionUpdate` return (notifications `sessionUpdated`,
 //! `sessionCompleted`). S020 owns the keyboard rows and the mention chip, S018 the `+` button.
 //! `cargo test -p app --test s019` replays the original's list, requests and colors.
-use super::slash::Trigger;
 use super::*;
 use crate::screens::settings::AppServer;
 use serde_json::json;
@@ -66,12 +65,6 @@ const ACTIONS: &[Action] = &[
 
 /// One section of [`Composer::mention_state`]: heading and rows `(text, highlighted)`.
 pub type MentionSection = (Option<&'static str>, Vec<(String, bool)>);
-
-/// Rows of the ranked list (`oYc` caps at 8).
-const MAX_RESULTS: usize = 8;
-const EMPTY_QUERY: &str = "Type to search for files";
-const SEARCHING: &str = "Searching…";
-const NO_RESULTS: &str = "No results";
 
 struct FileHit {
     name: String,
@@ -139,10 +132,6 @@ impl Composer {
         self.slash.search.roots = roots;
     }
 
-    fn action_available(&self, action: &Action) -> bool {
-        !(action.home_only && self.docked)
-    }
-
     /// Fills `matches` for the `@` token with `query` (raw text after `@`) and drives the file
     /// search session.
     pub(super) fn refresh_mention(&mut self, query: &str, cx: &mut Context<Self>) {
@@ -180,9 +169,12 @@ impl Composer {
             .chain(files)
             .filter(|&(_, _, degree, _)| degree > 0)
             .collect();
-        ranked
-            .sort_by(|a, b| (a.1, b.2, a.3.len(), a.3, a.0).cmp(&(b.1, a.2, b.3.len(), b.3, b.0)));
-        self.slash.matches = ranked.iter().take(MAX_RESULTS).map(|r| r.0).collect();
+        // Stable sort keeps the chain's index order among equal keys.
+        ranked.sort_by_key(|&(_, kind, degree, title)| {
+            (kind, std::cmp::Reverse(degree), title.len(), title)
+        });
+        // `oYc` caps the ranked rows at 8.
+        self.slash.matches = ranked.iter().take(8).map(|r| r.0).collect();
     }
 
     /// `sessionStart` on the first query of a token, then one `sessionUpdate` per query.
@@ -254,7 +246,7 @@ impl Composer {
                 })
                 .collect();
         }
-        if self.slash.open && self.slash.trigger == Trigger::Mention {
+        if self.slash.open && self.slash.mention {
             self.refresh_slash(cx);
         }
     }
@@ -296,18 +288,14 @@ impl Composer {
         cx.notify();
     }
 
-    fn mention_query(&self) -> &str {
-        &self.content[self.slash.range.start + 1..self.slash.range.end]
-    }
-
     /// The list's sections: `Add` and `Files` for an empty query, else the ranked rows or
     /// one note (`Searching…`, `No results`).
     fn sections(&self) -> Vec<(Option<&'static str>, Vec<Row>)> {
-        if self.mention_query().is_empty() {
+        if self.content[self.slash.range.start + 1..self.slash.range.end].is_empty() {
             let add = ACTIONS
                 .iter()
                 .enumerate()
-                .filter(|(_, a)| self.action_available(a))
+                .filter(|(_, a)| !(a.home_only && self.docked))
                 .map(
                     |(i, _)| match self.slash.matches.iter().position(|&m| m == i) {
                         Some(selected) => Row::Item(selected, i),
@@ -317,17 +305,16 @@ impl Composer {
                 .collect();
             let mut sections = vec![(Some("Add"), add)];
             if !self.slash.search.roots.is_empty() {
-                sections.push((Some("Files"), vec![Row::Note(EMPTY_QUERY)]));
+                sections.push((Some("Files"), vec![Row::Note("Type to search for files")]));
             }
             return sections;
         }
         let rows = if self.slash.matches.is_empty() {
-            let text = if self.slash.search.searching {
-                SEARCHING
+            vec![Row::Note(if self.slash.search.searching {
+                "Searching…"
             } else {
-                NO_RESULTS
-            };
-            vec![Row::Note(text)]
+                "No results"
+            })]
         } else {
             self.slash
                 .matches
@@ -341,7 +328,7 @@ impl Composer {
 
     /// Sections `(heading, rows (text, highlighted))` of the open `@` list, for the tests.
     pub fn mention_state(&self) -> Option<Vec<MentionSection>> {
-        if !self.slash.open || self.slash.trigger != Trigger::Mention {
+        if !self.slash.open || !self.slash.mention {
             return None;
         }
         let text = |index: usize| {
@@ -373,11 +360,12 @@ impl Composer {
     /// The list's content, 13/18.57 text: headings at 50%, notes at 50% in a row's height,
     /// disabled rows (`Attach appshot`) at 50% over 50%.
     pub(super) fn mention_list(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
+        let dim = |s: SharedString| text(s, 13., 18.5714, 400., t.text.opacity(0.5));
         let mut list = div().flex().flex_col();
         for (n, (heading, rows)) in self.sections().into_iter().enumerate() {
             if let Some(heading) = heading {
                 list = list.child(
-                    text(heading, 13., 18.5714, 400., t.text.opacity(0.5))
+                    dim(heading.into())
                         .px(px(8.))
                         .pt(px(if n == 0 { 4. } else { 8. }))
                         .pb(px(4.)),
@@ -389,22 +377,14 @@ impl Composer {
                     Row::Item(selected, i) => self
                         .suggestion_row(t, selected, i, self.mention_label(i), cx)
                         .into_any_element(),
-                    Row::Note(note) => plain
-                        .child(text(note, 13., 18.5714, 400., t.text.opacity(0.5)))
-                        .into_any_element(),
+                    Row::Note(note) => plain.child(dim(note.into())).into_any_element(),
                     Row::Disabled(i) => {
                         let (title, _, icon_name) = self.mention_label(i);
                         plain
                             .gap(px(8.))
                             .opacity(0.5)
                             .child(icon(icon_name, 16., t.text.opacity(0.5)))
-                            .child(text(
-                                title.to_owned(),
-                                13.,
-                                18.5714,
-                                400.,
-                                t.text.opacity(0.5),
-                            ))
+                            .child(dim(title.to_owned().into()))
                             .into_any_element()
                     }
                 });

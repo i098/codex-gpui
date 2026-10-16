@@ -193,18 +193,11 @@ pub(super) struct Skill {
     pub(super) description: String,
 }
 
-/// Which character opened the list.
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub(super) enum Trigger {
-    #[default]
-    Slash,
-    Mention,
-}
-
 #[derive(Default)]
 pub(super) struct Slash {
     pub open: bool,
-    pub(super) trigger: Trigger,
+    /// `@` opened the list (else `/`).
+    pub(super) mention: bool,
     pub(super) range: Range<usize>,
     pub(super) dismissed: Option<usize>,
     pub(super) selected: usize,
@@ -286,9 +279,9 @@ impl Composer {
         let slash = before
             .rfind('/')
             .filter(|&at| !before[at + 1..].contains(char::is_whitespace));
-        let (trigger, start) = match (mention, slash) {
-            (Some(at), _) => (Trigger::Mention, at),
-            (None, Some(at)) => (Trigger::Slash, at),
+        let (mention, start) = match (mention, slash) {
+            (Some(at), _) => (true, at),
+            (None, Some(at)) => (false, at),
             (None, None) => {
                 self.slash.open = false;
                 self.slash.dismissed = None;
@@ -300,16 +293,16 @@ impl Composer {
         if self.slash.dismissed == Some(range.start) {
             return;
         }
-        if trigger != Trigger::Mention {
+        if !mention {
             self.end_search(cx);
         }
-        self.slash.trigger = trigger;
+        self.slash.mention = mention;
         let query = self.content[range.start + 1..range.end].to_lowercase();
         let empty = self.content[..range.start].trim().is_empty()
             && self.content[range.end..].trim().is_empty()
             && self.attachments.is_empty();
         self.slash.matches.clear();
-        if trigger == Trigger::Mention {
+        if mention {
             let query = self.content[range.start + 1..range.end].to_owned();
             self.refresh_mention(&query, cx);
         } else {
@@ -414,7 +407,7 @@ impl Composer {
     }
 
     pub fn slash_state(&self) -> Option<(Vec<String>, Option<usize>)> {
-        (self.slash.open && self.slash.trigger == Trigger::Slash).then(|| {
+        (self.slash.open && !self.slash.mention).then(|| {
             (
                 self.slash
                     .matches
@@ -437,7 +430,7 @@ impl Composer {
         let Some(&index) = self.slash.matches.get(self.slash.selected) else {
             return;
         };
-        if self.slash.trigger == Trigger::Mention {
+        if self.slash.mention {
             self.activate_mention(index, cx);
             return;
         }
@@ -525,7 +518,7 @@ impl Composer {
             .when(height > 310., |d| d.pr(px(10.)))
             .flex()
             .flex_col();
-        if self.slash.trigger == Trigger::Mention {
+        if self.slash.mention {
             list = list.child(self.mention_list(t, cx));
         } else {
             let mut skills_heading = false;
@@ -555,11 +548,7 @@ impl Composer {
             }
         }
         // Gap to the card: 8 px for `/` (rec 07), 4 px for `@` (s019.json).
-        let gap = if self.slash.trigger == Trigger::Mention {
-            4.
-        } else {
-            8.
-        };
+        let gap = if self.slash.mention { 4. } else { 8. };
         deferred(
             div()
                 .absolute()
