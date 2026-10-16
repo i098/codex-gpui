@@ -1,0 +1,388 @@
+{
+  "name": "s033-escape-closes-menu-and-type-anywhere-focuses-composer",
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 1,
+    "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+    "theme": "dark",
+    "hoverEmulated": true
+  },
+  "source": {
+    "app": "Codex 26.1007.30912",
+    "transport": "route1 Linux, shared Chrome :9522, isolated CDP context"
+  },
+  "steps": [
+    {
+      "type": "click",
+      "at": {
+        "x": 1030,
+        "y": 790
+      },
+      "target": {
+        "selector": "button[aria-haspopup=menu]",
+        "text": "GPT-6 Astra",
+        "bbox": {
+          "x": 956,
+          "y": 776,
+          "w": 148,
+          "h": 28
+        }
+      },
+      "note": "Click opens the model picker ([role=menu])."
+    },
+    {
+      "type": "key",
+      "key": "Escape",
+      "note": "Escape closes the picker; record the focused element after the close."
+    },
+    {
+      "type": "key",
+      "key": "Escape",
+      "note": "Nothing open: Escape leaves the editor (focus on the body); not asserted by the port's test (composer Escape is CP-111/S024)."
+    },
+    {
+      "type": "click",
+      "at": {
+        "x": 522.5,
+        "y": 790
+      },
+      "target": {
+        "selector": "button[aria-label=\"Change permissions\"]",
+        "bbox": {
+          "x": 482,
+          "y": 776,
+          "w": 81,
+          "h": 28
+        }
+      },
+      "note": "Click opens the permissions menu."
+    },
+    {
+      "type": "key",
+      "key": "Escape",
+      "note": "Escape closes the permissions menu; record the focused element."
+    },
+    {
+      "type": "click",
+      "at": {
+        "x": 800,
+        "y": 200
+      },
+      "target": {
+        "text": "What should we build?",
+        "bbox": {
+          "x": 340,
+          "y": 44,
+          "w": 936,
+          "h": 600
+        }
+      },
+      "note": "Click on the empty hero area: focus goes to the body."
+    },
+    {
+      "type": "key",
+      "key": " ",
+      "note": "Space outside an editable is not redirected."
+    },
+    {
+      "type": "key",
+      "key": "a",
+      "note": "The first printable key focuses the composer and types into it."
+    },
+    {
+      "type": "key",
+      "key": "b"
+    },
+    {
+      "type": "key",
+      "key": "c"
+    }
+  ],
+  "result": {
+    "dom": [
+      {
+        "menuOpen": true,
+        "menus": 1,
+        "editorText": "",
+        "active": {
+          "tag": "div",
+          "text": "GPT-6 Astra\nLight\nGPT-6 Astra Light, 1 of 5.\nUse Left and Right arrow keys to adjust power\nSelect model\nLocked, opens access options\nDefault\nRecommended set of ",
+          "aria": null,
+          "role": "menu",
+          "bbox": {
+            "x": 902,
+            "y": 671,
+            "w": 254,
+            "h": 96
+          },
+          "computed": {
+            "backgroundColor": "oklab(0.297161 0.0000135154 0.00000594556 / 0.9)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(255, 255, 255, 0.082) 0px 0px 0px 0.5px, rgba(255, 255, 255, 0.082) 0px 0px 0px 0.5px, rgba(0, 0, 0, 0.12) 0px 8px 16px -4px",
+            "cursor": "auto"
+          },
+          "editor": false,
+          "body": false
+        }
+      },
+      {
+        "menuOpen": false,
+        "menus": 0,
+        "editorText": "",
+        "active": {
+          "tag": "div",
+          "text": "",
+          "aria": "Do anything",
+          "role": "textbox",
+          "bbox": {
+            "x": 453,
+            "y": 728,
+            "w": 712,
+            "h": 44
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          },
+          "editor": true,
+          "body": false
+        }
+      },
+      {
+        "menuOpen": false,
+        "menus": 0,
+        "editorText": "",
+        "active": {
+          "tag": "body",
+          "text": "Skip to content\nHome\nSpace\nScheduled\nPlugins\nExplore\nCode Review\nSites\nCodex\nNew chat\nYour dot\nProjects\nNo projects\nRecents\nChange the greeting in hello.py to \"",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 0,
+            "y": 0,
+            "w": 1280,
+            "h": 832
+          },
+          "computed": {
+            "backgroundColor": "rgb(20, 20, 20)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          },
+          "editor": false,
+          "body": true
+        }
+      },
+      {
+        "menuOpen": true,
+        "menus": 1,
+        "editorText": "",
+        "active": {
+          "tag": "div",
+          "text": "How should ChatGPT actions be approved?\nLearn more\nAsk for approval\nAlways ask to edit external files and use the internet\nApprove for me\nOnly ask for actions d",
+          "aria": null,
+          "role": "menu",
+          "bbox": {
+            "x": 483,
+            "y": 570,
+            "w": 417,
+            "h": 204
+          },
+          "computed": {
+            "backgroundColor": "oklab(0.297161 0.0000135154 0.00000594556 / 0.9)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(255, 255, 255, 0.082) 0px 0px 0px 0.5px, rgba(255, 255, 255, 0.082) 0px 0px 0px 0.5px, rgba(0, 0, 0, 0.12) 0px 8px 16px -4px",
+            "cursor": "auto"
+          },
+          "editor": false,
+          "body": false
+        }
+      },
+      {
+        "menuOpen": false,
+        "menus": 0,
+        "editorText": "",
+        "active": {
+          "tag": "button",
+          "text": "Custom",
+          "aria": "Change permissions",
+          "role": null,
+          "bbox": {
+            "x": 482,
+            "y": 776,
+            "w": 81,
+            "h": 28
+          },
+          "computed": {
+            "backgroundColor": "rgba(255, 255, 255, 0.08)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+            "cursor": "default"
+          },
+          "editor": false,
+          "body": false
+        }
+      },
+      {
+        "menuOpen": false,
+        "menus": 0,
+        "editorText": "",
+        "active": {
+          "tag": "main",
+          "text": "What should we build?\nChoose project\nThis computer\n\n\n\n\nCustom\nGPT-6 Astra\nLight\nNone\nMinimal\nLight\nMedium\nHigh\nExtra High\nMax\nUltra\nPersistent",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 340,
+            "y": 44,
+            "w": 936,
+            "h": 784
+          },
+          "computed": {
+            "backgroundColor": "rgb(24, 24, 24)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          },
+          "editor": false,
+          "body": false
+        }
+      },
+      {
+        "menuOpen": false,
+        "menus": 0,
+        "editorText": "",
+        "active": {
+          "tag": "main",
+          "text": "What should we build?\nChoose project\nThis computer\n\n\n\n\nCustom\nGPT-6 Astra\nLight\nNone\nMinimal\nLight\nMedium\nHigh\nExtra High\nMax\nUltra\nPersistent",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 340,
+            "y": 44,
+            "w": 936,
+            "h": 784
+          },
+          "computed": {
+            "backgroundColor": "rgb(24, 24, 24)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          },
+          "editor": false,
+          "body": false
+        }
+      },
+      {
+        "menuOpen": false,
+        "menus": 0,
+        "editorText": "a",
+        "active": {
+          "tag": "div",
+          "text": "a",
+          "aria": "Do anything",
+          "role": "textbox",
+          "bbox": {
+            "x": 453,
+            "y": 728,
+            "w": 712,
+            "h": 44
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          },
+          "editor": true,
+          "body": false
+        }
+      },
+      {
+        "menuOpen": false,
+        "menus": 0,
+        "editorText": "ab",
+        "active": {
+          "tag": "div",
+          "text": "ab",
+          "aria": "Do anything",
+          "role": "textbox",
+          "bbox": {
+            "x": 453,
+            "y": 728,
+            "w": 712,
+            "h": 44
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          },
+          "editor": true,
+          "body": false
+        }
+      },
+      {
+        "menuOpen": false,
+        "menus": 0,
+        "editorText": "abc",
+        "active": {
+          "tag": "div",
+          "text": "abc",
+          "aria": "Do anything",
+          "role": "textbox",
+          "bbox": {
+            "x": 453,
+            "y": 728,
+            "w": 712,
+            "h": 44
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          },
+          "editor": true,
+          "body": false
+        }
+      }
+    ],
+    "requests": [],
+    "requestFilter": "Only app-server requests; background reads (config/read, app/*, mcpServerStatus/list, thread/attachment/list, externalAgentConfig/import/readHistories) and host services excluded.",
+    "screenshot": "s033-original-final.png (scratch; not checked in)"
+  },
+  "scope": {
+    "covered": [
+      "SH-158 (model picker, nothing open)",
+      "HC-033"
+    ],
+    "notes": [
+      "SH-098 (Edit > Cut/Copy/Paste) is an Electron main-process menu: not recordable in route1; the port test drives the menu actions directly."
+    ]
+  }
+}
