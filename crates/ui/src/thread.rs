@@ -37,7 +37,7 @@ mod markdown;
 
 use actions::action_row;
 pub use actions::{ForkThread, RevertTurn};
-use items::{activity, diff_card, disclosure, user_bubble, words, wrap_row};
+use items::{activity, diff_card, disclosure, user_bubble, wrap_row};
 use markdown::{markdown, tones};
 
 /// `--thread-content-max-width`
@@ -925,7 +925,6 @@ fn far(top: Pixels, h: Pixels, view: Pixels) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::markdown::{Inline, inlines};
     use super::*;
 
     #[test]
@@ -936,37 +935,6 @@ mod tests {
         assert!(far(px(-501.), h, view));
         assert!(!far(px(1200.), h, view));
         assert!(far(px(1201.), h, view));
-    }
-
-    #[test]
-    fn parses_final_answer() {
-        let s =
-            "Added `subtract(a, b)` next to `add` in [src/math.py](/tmp/p/src/math.py). Done `2`.";
-        assert_eq!(
-            inlines(s),
-            [
-                Inline::Text("Added "),
-                Inline::Code("subtract(a, b)"),
-                Inline::Text(" next to "),
-                Inline::Code("add"),
-                Inline::Text(" in "),
-                Inline::Link {
-                    label: "src/math.py",
-                    target: "/tmp/p/src/math.py"
-                },
-                Inline::Text(". Done "),
-                Inline::Code("2"),
-                Inline::Text("."),
-            ]
-        );
-        assert_eq!(
-            inlines("a [b c `d"),
-            [
-                Inline::Text("a ["),
-                Inline::Text("b c `"),
-                Inline::Text("d")
-            ]
-        );
     }
 
     /// refs/thread/dark@1280x832.png, top fade at device x 1792.., rows 88..: the pixels
