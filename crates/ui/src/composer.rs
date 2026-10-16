@@ -618,6 +618,14 @@ impl Composer {
         }
     }
 
+    /// Enter: `approval.approve` accepts a pending request, and a draft still sends.
+    fn enter(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
+        if self.approval.is_some() && !self.slash.has_selection() {
+            self.decide(ApprovalDecision::Accept, window, cx);
+        }
+        self.submit(&Submit, window, cx);
+    }
+
     fn submit(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
         if self.slash.has_selection() {
             self.activate_slash(window, cx);
@@ -695,6 +703,9 @@ impl Composer {
         if self.menu.take().is_some() {
             self.menu_focus.restore(window, cx);
             cx.notify();
+        } else if self.approval.is_some() {
+            // `approval.decline` (Escape), unless a menu has focus.
+            self.decide(ApprovalDecision::Decline, window, cx);
         } else if !self.edit_pending
             && let Some(cancel) = self.on_cancel_edit.clone()
         {
@@ -968,7 +979,7 @@ impl Render for Composer {
                 d.key_context(KEY_CONTEXT)
             })
             .track_focus(&self.focus_handle)
-            .on_action(cx.listener(Self::submit))
+            .on_action(cx.listener(Self::enter))
             .on_action(cx.listener(Self::newline))
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))
