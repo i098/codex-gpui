@@ -39,7 +39,6 @@ const FLOWS: &[(&str, Flow)] = &[
     ("cmd_n_new_chat", cmd_n_new_chat),
     ("editor_click_focuses", editor_click_focuses),
     ("model_picker_popover", model_picker_popover),
-    ("permissions_popover", permissions_popover),
     ("composer_button_hover", composer_button_hover),
     ("model_list_loading", model_list_loading),
     ("submit_enter_starts_thread", submit_enter_starts_thread),
@@ -377,10 +376,6 @@ fn popover(target: &str, region: [f32; 4]) -> Result<String> {
 
 fn model_picker_popover() -> Result<String> {
     popover("GPT-6 Astra", [800., 300., 476., 460.])
-}
-
-fn permissions_popover() -> Result<String> {
-    popover("Custom", [400., 300., 500., 460.])
 }
 
 /// With no `model/list` models the picker reads `Loading model…` (composer.rs): its pill

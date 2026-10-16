@@ -13,7 +13,7 @@ fn proxy() {
 }
 
 #[test]
-fn home_menu_matches_original() -> Result<()> {
+fn permissions_popover() -> Result<()> {
     if !cfg!(target_os = "macos") {
         return Ok(());
     }
