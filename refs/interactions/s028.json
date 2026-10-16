@@ -1,0 +1,393 @@
+{
+  "name": "s028-live-diff-and-find",
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 1,
+    "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+    "theme": "dark",
+    "hoverEmulated": true
+  },
+  "steps": [
+    {
+      "type": "click",
+      "target": {
+        "text": "Add a subtract",
+        "bbox": {
+          "x": 68,
+          "y": 326,
+          "w": 256,
+          "h": 20
+        }
+      }
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "View changes",
+        "bbox": {
+          "x": 1061,
+          "y": 360,
+          "w": 104,
+          "h": 28
+        }
+      }
+    },
+    {
+      "type": "bridge",
+      "method": "turn/started",
+      "params": {
+        "threadId": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f",
+        "turn": {
+          "id": "s028-turn",
+          "items": [],
+          "status": "inProgress",
+          "error": null
+        }
+      },
+      "expect": {
+        "text": "Last Turn\n+4\n-0\n../../../private/tmp/cgx-mac/proj/src/math.py\n+4\n-0",
+        "viewport": {
+          "w": 1280,
+          "h": 832
+        }
+      }
+    },
+    {
+      "type": "bridge",
+      "method": "item/started",
+      "params": {
+        "threadId": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f",
+        "turnId": "s028-turn",
+        "item": {
+          "id": "s028-edit",
+          "type": "fileChange",
+          "status": "inProgress",
+          "changes": [
+            {
+              "path": "/tmp/cgx-mac/proj/src/live.py",
+              "kind": {
+                "type": "add"
+              },
+              "diff": "@@ -0,0 +1,2 @@\n+def live():\n+    return 1"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "text": "Last Turn\n+3\n-0\nsrc/live.py\n+3\n-0",
+        "viewport": {
+          "w": 1280,
+          "h": 832
+        }
+      }
+    },
+    {
+      "type": "bridge",
+      "method": "turn/diff/updated",
+      "params": {
+        "threadId": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f",
+        "turnId": "s028-turn",
+        "diff": "diff --git a/src/live.py b/src/live.py\nnew file mode 100644\n--- /dev/null\n+++ b/src/live.py\n@@ -0,0 +1,2 @@\n+def live():\n+    return 1\n"
+      },
+      "expect": {
+        "text": "Last Turn\n+2\n-0\nsrc/live.py\n+2\n-0",
+        "viewport": {
+          "w": 1280,
+          "h": 832
+        }
+      }
+    },
+    {
+      "type": "click",
+      "target": {
+        "selector": "[role=tabpanel]",
+        "bbox": {
+          "x": 852,
+          "y": 214,
+          "w": 20,
+          "h": 20
+        }
+      }
+    },
+    {
+      "type": "key",
+      "key": "cmd-f",
+      "message": {
+        "type": "find-in-thread"
+      },
+      "note": "Electron native Find dispatch; raw Meta+F did not open the bar in the Linux renderer."
+    },
+    {
+      "type": "type",
+      "text": "def",
+      "expect": {
+        "input": {
+          "tag": "input",
+          "text": "",
+          "aria": "Find in diff",
+          "role": null,
+          "bbox": {
+            "x": 965,
+            "y": 19,
+            "w": 197,
+            "h": 24
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 2px",
+            "boxShadow": "none",
+            "cursor": "text"
+          },
+          "value": "def",
+          "placeholder": "Search diff…",
+          "focused": true
+        },
+        "bar": {
+          "tag": "div",
+          "text": "Find in diff\n1 / 1 results",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 924,
+            "y": 8,
+            "w": 340,
+            "h": 82
+          },
+          "computed": {
+            "backgroundColor": "rgb(20, 20, 20)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0.12) 0px 8px 16px -4px",
+            "cursor": "auto"
+          }
+        },
+        "marks": [
+          {
+            "tag": "mark",
+            "text": "def",
+            "aria": null,
+            "role": null,
+            "bbox": {
+              "x": 723,
+              "y": 135,
+              "w": 22,
+              "h": 15
+            },
+            "computed": {
+              "backgroundColor": "rgb(251, 106, 34)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "pointer"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "bridge",
+      "method": "turn/diff/updated",
+      "params": {
+        "threadId": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f",
+        "turnId": "s028-turn",
+        "diff": "diff --git a/src/live.py b/src/live.py\nnew file mode 100644\n--- /dev/null\n+++ b/src/live.py\n@@ -0,0 +1,4 @@\n+def live():\n+    return 1\n+def second():\n+    return 2\n"
+      },
+      "expect": {
+        "text": "Last Turn\n+4\n-0\nsrc/live.py\n+4\n-0",
+        "viewport": {
+          "w": 1280,
+          "h": 832
+        },
+        "find": {
+          "input": {
+            "tag": "input",
+            "text": "",
+            "aria": "Find in diff",
+            "role": null,
+            "bbox": {
+              "x": 965,
+              "y": 19,
+              "w": 197,
+              "h": 24
+            },
+            "computed": {
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(238, 238, 238) none 2px",
+              "boxShadow": "none",
+              "cursor": "text"
+            },
+            "value": "def",
+            "placeholder": "Search diff…",
+            "focused": true
+          },
+          "bar": {
+            "tag": "div",
+            "text": "Find in diff\n1 / 2 results",
+            "aria": null,
+            "role": null,
+            "bbox": {
+              "x": 924,
+              "y": 8,
+              "w": 340,
+              "h": 82
+            },
+            "computed": {
+              "backgroundColor": "rgb(20, 20, 20)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0.12) 0px 8px 16px -4px",
+              "cursor": "auto"
+            }
+          },
+          "marks": [
+            {
+              "tag": "mark",
+              "text": "def",
+              "aria": null,
+              "role": null,
+              "bbox": {
+                "x": 723,
+                "y": 135,
+                "w": 22,
+                "h": 15
+              },
+              "computed": {
+                "backgroundColor": "rgb(251, 106, 34)",
+                "color": "rgb(255, 255, 255)",
+                "opacity": "1",
+                "outline": "rgb(255, 255, 255) none 3px",
+                "boxShadow": "none",
+                "cursor": "pointer"
+              }
+            },
+            {
+              "tag": "mark",
+              "text": "def",
+              "aria": null,
+              "role": null,
+              "bbox": {
+                "x": 723,
+                "y": 178,
+                "w": 22,
+                "h": 15
+              },
+              "computed": {
+                "backgroundColor": "rgb(255, 210, 64)",
+                "color": "rgb(255, 255, 255)",
+                "opacity": "1",
+                "outline": "rgb(255, 255, 255) none 3px",
+                "boxShadow": "none",
+                "cursor": "pointer"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "result": {
+    "input": {
+      "tag": "input",
+      "text": "",
+      "aria": "Find in diff",
+      "role": null,
+      "bbox": {
+        "x": 965,
+        "y": 19,
+        "w": 197,
+        "h": 24
+      },
+      "computed": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(255, 255, 255)",
+        "opacity": "1",
+        "outline": "rgb(238, 238, 238) none 2px",
+        "boxShadow": "none",
+        "cursor": "text"
+      },
+      "value": "def",
+      "placeholder": "Search diff…",
+      "focused": true
+    },
+    "bar": {
+      "tag": "div",
+      "text": "Find in diff\n1 / 2 results",
+      "aria": null,
+      "role": null,
+      "bbox": {
+        "x": 924,
+        "y": 8,
+        "w": 340,
+        "h": 82
+      },
+      "computed": {
+        "backgroundColor": "rgb(20, 20, 20)",
+        "color": "rgb(255, 255, 255)",
+        "opacity": "1",
+        "outline": "rgb(255, 255, 255) none 3px",
+        "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0.12) 0px 8px 16px -4px",
+        "cursor": "auto"
+      }
+    },
+    "marks": [
+      {
+        "tag": "mark",
+        "text": "def",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 723,
+          "y": 135,
+          "w": 22,
+          "h": 15
+        },
+        "computed": {
+          "backgroundColor": "rgb(251, 106, 34)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(255, 255, 255) none 3px",
+          "boxShadow": "none",
+          "cursor": "pointer"
+        }
+      },
+      {
+        "tag": "mark",
+        "text": "def",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 723,
+          "y": 178,
+          "w": 22,
+          "h": 15
+        },
+        "computed": {
+          "backgroundColor": "rgb(255, 210, 64)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(255, 255, 255) none 3px",
+          "boxShadow": "none",
+          "cursor": "pointer"
+        }
+      }
+    ],
+    "requests": [],
+    "screenshot": "/tmp/cgx-s028/original.png"
+  },
+  "initial": {
+    "text": "Last Turn\n+4\n-0\n../../../private/tmp/cgx-mac/proj/src/math.py\n+4\n-0",
+    "viewport": {
+      "w": 1280,
+      "h": 832
+    }
+  },
+  "requestScope": "Diff search only. Last Turn search ran in memory; bootstrap and thread-opening traffic are omitted."
+}
