@@ -33,7 +33,9 @@ use ui::screens::diff::panel::{
 };
 use ui::screens::home::HomeMain;
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
-use ui::screens::sidebar::{ArchiveThread, CommandMenu, CommandMenuEvent, HomeSidebar, OpenThread};
+use ui::screens::sidebar::{
+    ArchiveThread, CommandMenu, CommandMenuEvent, HomeSidebar, OpenThread, UnpinThread,
+};
 use ui::screens::terminal::Xterm;
 use ui::screens::thread::view::{Clock, EditMessage, ForkThread, RevertTurn, ThreadView};
 use ui::screens::{automations, mobile};
@@ -1271,6 +1273,36 @@ impl Root {
         log_err(task, cx);
     }
 
+    fn unpin(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(thread) = self.threads.iter_mut().find(|thread| thread.id == id) else {
+            return;
+        };
+        let old_section = thread.section.take();
+        self.sidebar
+            .update(cx, |s, cx| s.set_threads(&self.threads, cx));
+        let bridge = self.bridge.clone();
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let done = bridge
+                .request::<_, Value>(
+                    "thread/section/move",
+                    json!({ "threadId": id, "sectionId": null, "beforeThreadId": null }),
+                )
+                .await;
+            this.update(cx, |this, cx| {
+                if done.is_err() {
+                    if let Some(thread) = this.threads.iter_mut().find(|thread| thread.id == id) {
+                        thread.section = old_section;
+                    }
+                    this.sidebar
+                        .update(cx, |s, cx| s.set_threads(&this.threads, cx));
+                    this.toast(Toast::danger("Couldn't save your changes. Try again"), cx);
+                }
+            })?;
+            done.map(drop)
+        });
+        log_err(task, cx);
+    }
+
     /// `thread/archive`: the Recents row leaves at once (an archived open chat leaves for Home),
     /// then `Archived chat` offers View and Undo; a refused write puts the row back with
     /// `Failed to archive chat`.
@@ -1750,6 +1782,11 @@ impl Render for Root {
             .on_action(cx.listener(|this, a: &ArchiveThread, window, cx| {
                 this.archive(a.0.clone(), window, cx)
             }))
+            .on_action(
+                cx.listener(|this, a: &UnpinThread, window, cx| {
+                    this.unpin(a.0.clone(), window, cx)
+                }),
+            )
             .on_action(cx.listener(|this, a: &ForkThread, window, cx| this.fork(&a.0, window, cx)))
             .on_action(cx.listener(|this, edit: &EditMessage, window, cx| {
                 this.edit_message(edit.clone(), window, cx)
