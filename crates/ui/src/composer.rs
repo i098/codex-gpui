@@ -1,6 +1,6 @@
-//! The prompt composer (`_ComposerLayoutRoot`): a multi-line editor, attachment chips, the
-//! permissions and model menus, and approval prompts for server approval requests. All
-//! numbers are the CSS px of refs/home and refs/composer.
+//! The prompt composer: a multi-line editor, attachment chips, slash commands,
+//! permission and model menus, and approval prompts.
+//! Numbers use the CSS pixels of refs/home and refs/composer.
 //! Clipboard text of at least 5,000 UTF-16 units becomes a saved text attachment.
 //! Clipboard images retain their bytes and show a thumbnail.
 
@@ -41,6 +41,9 @@ actions!(
         LineEnd,
         /// Close the open menu.
         Dismiss,
+        CompleteCommand,
+        NextCommand,
+        PreviousCommand,
     ]
 );
 
@@ -106,6 +109,8 @@ mod menu {
     }
 }
 mod menus;
+mod slash;
+pub use slash::SlashCommand;
 
 const KEY_CONTEXT: &str = "Composer";
 /// `@container composer-footer` (the card's width, CSS px) at or below which the footer hides
@@ -138,6 +143,9 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-left", LineStart, c),
         KeyBinding::new("cmd-right", LineEnd, c),
         KeyBinding::new("escape", Dismiss, c),
+        KeyBinding::new("tab", CompleteCommand, c),
+        KeyBinding::new("ctrl-n", NextCommand, c),
+        KeyBinding::new("ctrl-p", PreviousCommand, c),
     ]);
 }
 
@@ -370,6 +378,7 @@ pub struct Composer {
     fast: bool,
     permission: Permission,
     menu: Option<Menu>,
+    slash: slash::Slash,
     menu_focus: menu::MenuFocus,
     permissions_focus: FocusHandle,
     model_focus: FocusHandle,
@@ -415,6 +424,7 @@ impl Composer {
             fast: false,
             permission: Permission::Custom,
             menu: None,
+            slash: slash::Slash::default(),
             menu_focus: menu::MenuFocus::new(cx),
             permissions_focus: cx.focus_handle(),
             model_focus: cx.focus_handle(),
@@ -497,6 +507,7 @@ impl Composer {
         self.content = s.into();
         self.selected_range = s.len()..s.len();
         self.marked_range = None;
+        self.slash.reset();
         cx.notify();
     }
 
@@ -520,6 +531,10 @@ impl Composer {
     }
 
     fn submit(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
+        if self.slash.has_selection() {
+            self.activate_slash(window, cx);
+            return;
+        }
         if self.pending_attachments > 0
             || (self.content.trim().is_empty() && self.attachments.is_empty())
         {
@@ -539,6 +554,7 @@ impl Composer {
         self.selected_range = 0..0;
         self.marked_range = None;
         self.menu = None;
+        self.slash.reset();
         cx.notify();
         if let Some(f) = self.on_submit.clone() {
             f(&submission, window, cx);
@@ -554,6 +570,7 @@ impl Composer {
     }
 
     fn toggle_menu(&mut self, menu: Menu, window: &mut Window, cx: &mut Context<Self>) {
+        self.slash.reset();
         if self.menu == Some(menu) {
             self.dismiss(&Dismiss, window, cx);
         } else {
@@ -574,6 +591,10 @@ impl Composer {
     }
 
     fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
+        if self.slash.open {
+            self.close_slash(cx);
+            return;
+        }
         if self.menu.take().is_some() {
             self.menu_focus.restore(window, cx);
             cx.notify();
@@ -830,6 +851,9 @@ impl Render for Composer {
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(Self::paste))
             .on_action(cx.listener(Self::dismiss))
+            .on_action(cx.listener(Self::complete_command))
+            .on_action(cx.listener(Self::next_command))
+            .on_action(cx.listener(Self::previous_command))
             .relative()
             .flex()
             .flex_col()
@@ -847,6 +871,7 @@ impl Render for Composer {
                     .child(self.editor(cx))
                     .child(self.footer(&t, cx)),
             );
+        let card = card.when(self.slash.open, |d| d.child(self.slash_menu(&t, cx)));
         div()
             .w_full()
             .flex()
