@@ -95,7 +95,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-c", Copy, None),
         KeyBinding::new("cmd-v", Paste, None),
         KeyBinding::new("cmd-a", SelectAll, None),
-        KeyBinding::new("cmd-f", FindInThread, Some("Thread")),
+        KeyBinding::new("cmd-f", FindInThread, None),
         KeyBinding::new("cmd-g", FindNext, None),
         KeyBinding::new("cmd-shift-g", FindPrevious, None),
         KeyBinding::new("cmd-shift-s", ToggleSidebar, None),
@@ -1484,16 +1484,6 @@ impl Render for Root {
             .relative()
             .font_family(ui::SANS)
             .track_focus(&self.focus)
-            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
-                if event.keystroke.modifiers.platform
-                    && event.keystroke.key == "f"
-                    && matches!(this.state.route, Route::Thread(_))
-                    && let Some(thread) = &this.thread
-                {
-                    thread.update(cx, |thread, cx| thread.open_find(window, cx));
-                    cx.stop_propagation();
-                }
-            }))
             .on_action(cx.listener(|this, _: &FindInThread, window, cx| {
                 if matches!(this.state.route, Route::Thread(_))
                     && let Some(thread) = &this.thread

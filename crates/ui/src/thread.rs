@@ -1175,7 +1175,6 @@ impl Render for ThreadView {
         );
         div()
             .size_full()
-            .key_context("Thread")
             .relative()
             .overflow_hidden()
             .bg(t.surface)
