@@ -1,0 +1,103 @@
+{
+  "schema": 1,
+  "motion": "MO-36",
+  "source": "Codex 26.1007.30912 original CSS in route1, shared Linux Chrome incognito context",
+  "origin": "Synthetic markdown spans appended inside the loaded original page, using its unmodified CSS-module classes. No live model turn or token-to-segment policy is claimed.",
+  "viewport": {
+    "width": 1280,
+    "height": 832,
+    "dpr": 1
+  },
+  "method": "Pause each original CSSAnimation and seek currentTime; read getComputedStyle opacity. Keep the first span mounted while appending the second.",
+  "durationMs": 700,
+  "easing": "cubic-bezier(0.37, 0.55, 0.86, 0.88)",
+  "steps": [
+    {
+      "delta": "Alpha ",
+      "samples": [
+        {
+          "ms": 0,
+          "alpha": 0
+        },
+        {
+          "ms": 100,
+          "alpha": 0.1952
+        },
+        {
+          "ms": 200,
+          "alpha": 0.363749
+        },
+        {
+          "ms": 300,
+          "alpha": 0.51314
+        },
+        {
+          "ms": 400,
+          "alpha": 0.64796
+        },
+        {
+          "ms": 500,
+          "alpha": 0.771443
+        },
+        {
+          "ms": 600,
+          "alpha": 0.886557
+        },
+        {
+          "ms": 700,
+          "alpha": 1
+        }
+      ]
+    },
+    {
+      "delta": "Beta",
+      "samples": [
+        {
+          "ms": 0,
+          "alpha": 0,
+          "olderAlpha": 1
+        },
+        {
+          "ms": 100,
+          "alpha": 0.1952,
+          "olderAlpha": 1
+        },
+        {
+          "ms": 200,
+          "alpha": 0.363749,
+          "olderAlpha": 1
+        },
+        {
+          "ms": 300,
+          "alpha": 0.51314,
+          "olderAlpha": 1
+        },
+        {
+          "ms": 400,
+          "alpha": 0.64796,
+          "olderAlpha": 1
+        },
+        {
+          "ms": 500,
+          "alpha": 0.771443,
+          "olderAlpha": 1
+        },
+        {
+          "ms": 600,
+          "alpha": 0.886557,
+          "olderAlpha": 1
+        },
+        {
+          "ms": 700,
+          "alpha": 1,
+          "olderAlpha": 1
+        }
+      ]
+    }
+  ],
+  "reduced": {
+    "delta": "Gamma",
+    "alpha": 1,
+    "duration": "0s"
+  }
+}

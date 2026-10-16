@@ -17,10 +17,12 @@ harness = false
 [dependencies]
 anyhow.workspace = true
 async-channel = "2"
+base64 = "0.22"
 bridge = { path = "../bridge" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 gpui.workspace = true
 gpui_platform.workspace = true
+pollster = "0.4"
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -28,6 +30,8 @@ tempfile = "3"
 toml = "0.8"
 theme = { path = "../theme" }
 ui = { path = "../ui" }
+ureq = "3"
+url = "2"
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

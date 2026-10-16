@@ -1,8 +1,11 @@
 use anyhow::Result;
-use app::host::{Host, LocalHost, ReplayHost, Request, json_body};
+use app::host::{CloudHost, Credentials, Host, LocalHost, ReplayHost, Request, json_body};
+use parking_lot::Mutex;
 use rusqlite::Connection;
 use serde_json::{Value, json};
 use std::fs;
+use std::io::Write as _;
+use std::sync::Arc;
 
 const RECORDING: &str = include_str!("../../../refs/interactions/host.json");
 const ORACLE: &str = include_str!("../../../tools/route1/oracle.json");
@@ -237,6 +240,325 @@ fn local_definitions_use_matching_schedule_metadata_not_another_accounts_cache()
     Ok(())
 }
 
+/// One HTTP/1.1 request the mock backend received.
+struct Received {
+    method: String,
+    path: String,
+    headers: Vec<(String, String)>,
+}
+
+impl Received {
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+}
+
+/// A loopback backend answering `answers` in order; never leaves the machine.
+fn mock_backend(answers: Vec<(u16, &'static str, String)>) -> (String, Arc<Mutex<Vec<Received>>>) {
+    use std::io::{BufRead as _, BufReader, Read as _};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}/backend-api", listener.local_addr().unwrap());
+    let received = Arc::new(Mutex::new(Vec::new()));
+    let log = received.clone();
+    std::thread::spawn(move || {
+        for (status, extra_headers, body) in answers {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let mut parts = line.split_whitespace();
+            let method = parts.next().unwrap().to_owned();
+            let path = parts.next().unwrap().to_owned();
+            let mut headers = Vec::new();
+            loop {
+                line.clear();
+                reader.read_line(&mut line).unwrap();
+                let Some((k, v)) = line.trim_end().split_once(':') else {
+                    break;
+                };
+                headers.push((k.to_owned(), v.trim().to_owned()));
+            }
+            let length: usize = headers
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+                .map_or(0, |(_, v)| v.parse().unwrap());
+            let mut request_body = vec![0; length];
+            reader.read_exact(&mut request_body).unwrap();
+            log.lock().push(Received {
+                method,
+                path,
+                headers,
+            });
+            let mut stream = reader.into_inner();
+            write!(
+                stream,
+                "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\n{extra_headers}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        }
+    });
+    (base, received)
+}
+
+/// A ChatGPT-style token whose claims name `account` and `user`; the signature is fake.
+fn token(account: &str, user: &str, suffix: &str) -> String {
+    use base64::Engine as _;
+    let claims = json!({"https://api.openai.com/auth": {
+        "chatgpt_account_id": account, "chatgpt_user_id": user
+    }});
+    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claims.to_string());
+    format!("eyJhbGciOiJSUzI1NiJ9.{payload}.signature-{suffix}")
+}
+
+fn recorded_http(url_fragment: &str) -> Value {
+    let recording: Value = serde_json::from_str(RECORDING).unwrap();
+    recording["exchanges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| {
+            e["request"]["transport"] == "http"
+                && e["request"]["request"]["url"]
+                    .as_str()
+                    .is_some_and(|u| u.contains(url_fragment))
+        })
+        .unwrap()["request"]["request"]
+        .clone()
+}
+
+#[test]
+fn cloud_requests_replay_the_recorded_endpoints_with_the_original_auth_headers() -> Result<()> {
+    let replay = ReplayHost::from_recording(RECORDING)?;
+    let endpoints = [
+        "/wham/usage",
+        "/beacons/home?",
+        "/automations?filter=scheduled",
+        "/suggested_automations",
+    ];
+    let requests: Vec<Value> = endpoints.iter().map(|e| recorded_http(e)).collect();
+    let answers = requests
+        .iter()
+        .map(|request| {
+            let body = replay.fetch(&Request::Http(request.clone())).unwrap();
+            let body = body["value"]["response"]["__response"]["body"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            (200, "", body)
+        })
+        .collect();
+    let (base, received) = mock_backend(answers);
+    let account = "00000000-0000-4000-8000-000000000000";
+    let token = token(account, "user-000000000000000000000000", "live");
+    let source_token = token.clone();
+    let cloud = CloudHost::new(
+        LocalHost::new(tempfile::tempdir()?.path()),
+        Box::new(move |_| {
+            Ok(Some(Credentials {
+                token: source_token.clone(),
+                backend_origin: None,
+                routing_override: Some("us".into()),
+            }))
+        }),
+        base,
+    );
+    for request in &requests {
+        let request = Request::Http(request.clone());
+        assert_eq!(
+            json_body(&cloud.fetch(&request)?)?,
+            json_body(&replay.fetch(&request)?)?
+        );
+    }
+    let received = received.lock();
+    assert_eq!(received.len(), endpoints.len());
+    for (received, endpoint) in received.iter().zip(endpoints) {
+        assert_eq!(received.method, "GET");
+        assert!(
+            received
+                .path
+                .starts_with(&format!("/backend-api{endpoint}"))
+        );
+        assert_eq!(
+            received.header("Authorization"),
+            Some(format!("Bearer {token}").as_str())
+        );
+        assert_eq!(received.header("ChatGPT-Account-Id"), Some(account));
+        assert_eq!(
+            received.header("X-OpenAI-Account-Routing-Override"),
+            Some("us")
+        );
+        assert_eq!(received.header("OAI-Language"), Some("en-US"));
+        assert!(
+            received
+                .headers
+                .iter()
+                .all(|(k, _)| !k.to_ascii_lowercase().starts_with("x-openai-attach-"))
+        );
+    }
+    assert_eq!(received[0].header("originator"), Some("Codex Desktop"));
+    assert_eq!(received[0].header("OAI-App-Brand"), Some("chatgpt"));
+    assert_eq!(
+        received[1].header("User-Agent"),
+        Some("Codex Desktop/26.1007.30912 (Mac OS; arm64)")
+    );
+    assert_eq!(
+        received[3].header("X-OpenAI-Task-Suggestions-Surface"),
+        Some("scheduled_page")
+    );
+    Ok(())
+}
+
+const CONFLICT: &str = r#"{"detail":"The Codex session changed. Reopen Code Review"}"#;
+
+#[test]
+fn cloud_errors_retry_once_after_401_and_never_expose_the_token() -> Result<()> {
+    let (base, received) = mock_backend(vec![
+        (401, "", r#"{"detail":"expired"}"#.to_owned()),
+        (
+            200,
+            "X-OAI-IS-Update: ois1.a.b.c\r\n",
+            r#"{"items":[],"cursor":null}"#.to_owned(),
+        ),
+        (409, "", CONFLICT.to_owned()),
+        (409, "", CONFLICT.to_owned()),
+        (200, "", "{}".to_owned()),
+        (200, "", r#"{"conduit_token":"c"}"#.to_owned()),
+    ]);
+    let stale = token("acct", "user", "stale");
+    let fresh = token("acct", "user", "fresh");
+    let refreshes = Arc::new(Mutex::new(Vec::new()));
+    let (log, s, f) = (refreshes.clone(), stale.clone(), fresh.clone());
+    let cloud = CloudHost::new(
+        LocalHost::new(tempfile::tempdir()?.path()),
+        Box::new(move |refresh| {
+            log.lock().push(refresh);
+            Ok(Some(Credentials {
+                token: if refresh { f.clone() } else { s.clone() },
+                backend_origin: None,
+                routing_override: None,
+            }))
+        }),
+        base.clone(),
+    );
+    let automations = Request::Http(recorded_http("/automations?filter=scheduled"));
+    let body = json_body(&cloud.fetch(&automations)?)?;
+    assert_eq!(body, json!({"items": [], "cursor": null}));
+    assert_eq!(*refreshes.lock(), vec![false, true]);
+    {
+        let received = received.lock();
+        assert_eq!(
+            received[0].header("Authorization"),
+            Some(format!("Bearer {stale}").as_str())
+        );
+        assert_eq!(
+            received[1].header("Authorization"),
+            Some(format!("Bearer {fresh}").as_str())
+        );
+        assert_eq!(received[0].header("X-OAI-IS"), None);
+    }
+    // A 409 with `returnErrorResponse` is delivered; without it, it becomes the error object.
+    let mut conflict = recorded_http("/wham/github/connections");
+    let error = json_body(&cloud.fetch(&Request::Http(conflict.clone()))?).unwrap_err();
+    assert!(error.to_string().contains("409"), "{error}");
+    conflict["returnErrorResponse"] = json!(false);
+    let response = cloud.fetch(&Request::Http(conflict))?;
+    assert_eq!(response["value"]["responseType"], "error");
+    assert_eq!(response["value"]["responseStatus"], 409);
+    assert_eq!(response["value"]["error"], CONFLICT);
+    // The accepted integrity update rides along on the next integrity-state request.
+    cloud.fetch(&automations)?;
+    assert_eq!(
+        received.lock().last().unwrap().header("X-OAI-IS"),
+        Some("ois1.a.b.c")
+    );
+    // The suggestion card's guided conversation start: the webview client's POST with a JSON
+    // body and the identity it expects, like `/f/conversation/prepare` in the original.
+    let prepare = json!({
+        "url": "/f/conversation/prepare", "method": "POST",
+        "body": r#"{"client_prepare_source":"suggested_automation"}"#,
+        "headers": {"x-openai-web-frontend": "codex_webview", "OAI-Language": "en-US",
+            "X-OpenAI-Attach-Auth": "1", "X-OpenAI-Attach-Desktop-Surface": "1",
+            "X-OpenAI-Attach-Integrity-State": "1", "ChatGPT-Account-ID": "acct"},
+        "expectedIdentity": {"accountId": "acct", "userId": "user"},
+        "returnErrorResponse": true
+    });
+    assert_eq!(
+        json_body(&cloud.fetch(&Request::Http(prepare))?)?,
+        json!({"conduit_token": "c"})
+    );
+    {
+        let received = received.lock();
+        let prepare = received.last().unwrap();
+        assert_eq!(prepare.method, "POST");
+        assert_eq!(prepare.path, "/backend-api/f/conversation/prepare");
+        assert_eq!(prepare.header("Content-Type"), Some("application/json"));
+        assert_eq!(prepare.header("Content-Length"), Some("48"));
+        assert_eq!(prepare.header("originator"), Some("Codex Desktop"));
+        assert_eq!(prepare.header("X-OAI-IS"), Some("ois1.a.b.c"));
+        assert_eq!(
+            prepare.header("Authorization"),
+            Some(format!("Bearer {fresh}").as_str())
+        );
+    }
+    // Identity guards and refusals answer before any request leaves.
+    let count = received.lock().len();
+    let mut moved = recorded_http("/wham/usage");
+    moved["expectedIdentity"] = json!({"accountId": "other", "userId": "user"});
+    let response = cloud.fetch(&Request::Http(moved))?;
+    assert_eq!(response["value"]["status"], 499);
+    assert_eq!(
+        response["value"]["error"],
+        "Authenticated principal changed"
+    );
+    let elsewhere = json!({"url": "https://example.com/x", "method": "GET",
+        "headers": {"X-OpenAI-Attach-Auth": "1"}});
+    let response = cloud.fetch(&Request::Http(elsewhere))?;
+    assert_eq!(response["value"]["status"], 400);
+    assert_eq!(received.lock().len(), count);
+    // Nothing observable carries the token: refusals, transport failures, credential
+    // failures. `CloudHost` and `Credentials` have no `Debug`, so logging cannot print it.
+    let mut observed = vec![response.to_string()];
+    let closed = CloudHost::new(
+        LocalHost::new(tempfile::tempdir()?.path()),
+        Box::new(move |_| {
+            Ok(Some(Credentials {
+                token: fresh.clone(),
+                backend_origin: None,
+                routing_override: None,
+            }))
+        }),
+        "http://127.0.0.1:1/backend-api",
+    );
+    let response = closed.fetch(&Request::Http(recorded_http("/wham/usage")))?;
+    assert_eq!(response["value"]["responseType"], "error");
+    assert_eq!(response["value"]["status"], 500);
+    observed.push(response.to_string());
+    let failing = CloudHost::new(
+        LocalHost::new(tempfile::tempdir()?.path()),
+        Box::new(|_| anyhow::bail!("app-server said: {}", token("a", "b", "leak"))),
+        base,
+    );
+    let response = failing.fetch(&Request::Http(recorded_http("/wham/usage")))?;
+    assert_eq!(response["value"]["status"], 432);
+    assert_eq!(
+        response["value"]["error"],
+        "Failed to retrieve authentication token"
+    );
+    observed.push(response.to_string());
+    for text in observed {
+        assert!(!text.contains("signature-"), "token leaked: {text}");
+        assert!(
+            !text.contains("eyJhbGciOiJSUzI1NiJ9"),
+            "token leaked: {text}"
+        );
+    }
+    Ok(())
+}
+
 #[cfg(target_os = "macos")]
 #[path = "common/mod.rs"]
 mod common;
@@ -244,8 +566,6 @@ mod common;
 #[cfg(target_os = "macos")]
 #[test]
 fn scheduled_navigation_loads_the_original_host_response() -> Result<()> {
-    use parking_lot::Mutex;
-    use std::sync::Arc;
     struct Captured {
         replay: ReplayHost,
         requests: Mutex<Vec<Request>>,

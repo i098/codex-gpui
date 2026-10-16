@@ -5,6 +5,7 @@
 //!
 //! User-message controls appear on hover or focus without moving the transcript.
 //! Copy writes plain text and HTML on macOS and shows a checkmark for 1500 ms.
+//! Answer text is selectable by drag (`thread/select.rs`); `Copy` writes the selection.
 //! Find searches user and agent messages, including collapsed activity, without server requests.
 //! The last text message opens an inline editor. Send reverts that turn before resending it.
 //! Response copy adds HTML. Response actions use the shared delayed tooltip.
@@ -17,7 +18,7 @@ use std::hash::{DefaultHasher, Hash as _, Hasher as _};
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::{Arc, LazyLock, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bridge::Event;
 use bridge::types::{
@@ -27,11 +28,13 @@ use bridge::types::{
 use gpui::{
     Action, AnyView, App, Bounds, ClipboardItem, Context, Corners, Div, FontWeight, Hsla, Image,
     ImageFormat, IntoElement, ParentElement, Pixels, Render, Rgba, ScrollHandle, SharedString,
-    Size, Styled, Task, TextRun, Window, div, font, prelude::*, px, relative, rgb, rgba, white,
+    Size, Styled, Task, TextRun, TransformationMatrix, Window, canvas, div, font, prelude::*, px,
+    radians, relative, rgb, rgba, white,
 };
 use theme::{ActiveTheme as _, Appearance, Theme};
 
 use crate::icon::icon;
+use crate::motion::{self, HoverFade};
 use crate::screens::sidebar::title;
 use crate::{MONO, SANS, composer::shadow, icon_button, layout_color, over, text};
 
@@ -43,14 +46,30 @@ mod header;
 mod items;
 #[path = "thread/markdown.rs"]
 mod markdown;
+#[path = "thread/menu.rs"]
+mod menu;
+#[path = "thread/select.rs"]
+mod select;
 
 use actions::action_row;
 pub use actions::{EditMessage, ForkThread, RevertTurn};
 use items::{activity, diff_card, disclosure, user_bubble, wrap_row};
 use markdown::{markdown, tones};
+pub use select::Selection;
+use select::{Carets, block_end, frame_start, highlight};
 
 /// `--thread-content-max-width`
 const CONTENT_MAX_WIDTH: Pixels = px(768.);
+
+/// One turn's `Worked for` disclosure (`refs/interactions/ms6a.json`): the chevron rotates
+/// 0 -> 90 deg in 150 ms `ease-in-out`; the content clips its height, fades and slides 8 px
+/// over 300 ms `ease-enter` on open and 150 ms `ease-enter-snappy` on close (instant under
+/// reduced motion). `height` is the content's measured natural height.
+struct Disclosure {
+    chevron: HoverFade,
+    content: HoverFade,
+    height: Rc<Cell<f32>>,
+}
 
 /// Wall clock for timestamps: the local UTC offset and, for fixture screens, a pinned "now".
 #[derive(Clone, Copy)]
@@ -86,13 +105,27 @@ pub struct ThreadView {
     clock: Clock,
     composer: AnyView,
     _tick: Option<Task<()>>,
+    stream_fades: HashMap<String, Vec<StreamSegment>>,
     /// Open disclosures: turns whose `Worked for` is expanded, by turn id, and activity groups
     /// whose rows show, by the id of their first item.
     expanded: HashSet<String>,
     scroll: ScrollHandle,
     /// The turns as last laid out, to stand in for the ones far off screen.
     laid_out: Rc<RefCell<LaidOut>>,
+    /// Focused while the transcript holds the text selection: `Copy` then copies it.
+    focus: Option<gpui::FocusHandle>,
+    carets: Carets,
+    /// What was focused when the current press began (the inline message editor keeps a
+    /// press that focuses it).
+    press_focus: Option<gpui::FocusHandle>,
     find: Option<FindState>,
+    menu: Option<menu::LinkMenu>,
+}
+
+struct StreamSegment {
+    range: std::ops::Range<usize>,
+    started_at: Instant,
+    alpha: f32,
 }
 
 /// Where the last frame laid out each turn, in the scroller's content (top, height), and the
@@ -217,10 +250,15 @@ impl ThreadView {
             clock,
             composer,
             _tick: None,
+            stream_fades: HashMap::new(),
             expanded: HashSet::new(),
             scroll: ScrollHandle::new(),
             laid_out: Rc::default(),
+            focus: None,
+            carets: Carets::default(),
+            press_focus: None,
             find: None,
+            menu: None,
         }
     }
 
@@ -235,6 +273,21 @@ impl ThreadView {
 
     pub fn turns(&self) -> &[Turn] {
         &self.turns
+    }
+
+    /// The selected answer text (TH-127), as Chrome's `Selection.toString` joins it.
+    pub fn selected_text(&self, window: &Window, cx: &App) -> Option<String> {
+        self.carets.range()?;
+        Some(cx.global::<Selection>().text(window)).filter(|s| !s.is_empty())
+    }
+
+    /// `Copy` (⌘C) with a transcript selection: writes it as plain text (SH-132, TH-128).
+    fn copy_selection(&mut self, _: &crate::Copy, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(text) = self.selected_text(window, cx) {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        } else {
+            cx.propagate();
+        }
     }
 
     /// The activity texts of turn `turn_id`, as drawn under its `Worked for` disclosure: each
@@ -608,7 +661,6 @@ impl ThreadView {
         )
         .with_priority(3)
     }
-
     /// Only the last user message is editable, and only when its later turns have stopped.
     /// Non-text content stays read-only because `UserInput::Other` cannot retain attachments.
     pub fn can_edit(&self, turn_id: &str) -> bool {
@@ -862,7 +914,17 @@ impl ThreadView {
                     .iter_mut()
                     .find(|i| id.is_some() && item_id(i) == id.as_deref())
                 {
-                    Some(item) => *item = n.item,
+                    Some(item) => {
+                        if let (
+                            ThreadItem::AgentMessage { id, text: before },
+                            ThreadItem::AgentMessage { text: after, .. },
+                        ) = (&*item, &n.item)
+                            && before != after
+                        {
+                            self.stream_fades.remove(id);
+                        }
+                        *item = n.item;
+                    }
                     None => turn.items.push(n.item),
                 }
             }
@@ -872,7 +934,21 @@ impl ThreadView {
                     return;
                 };
                 match self.item_mut(&n.item_id) {
-                    Some(ThreadItem::AgentMessage { text, .. }) => text.push_str(&n.delta),
+                    Some(ThreadItem::AgentMessage { text, .. }) => {
+                        let start = text.len();
+                        text.push_str(&n.delta);
+                        let end = text.len();
+                        if start != end && !cx.reduce_motion() {
+                            self.stream_fades
+                                .entry(n.item_id)
+                                .or_default()
+                                .push(StreamSegment {
+                                    range: start..end,
+                                    started_at: cx.background_executor().now(),
+                                    alpha: 0.,
+                                });
+                        }
+                    }
                     Some(ThreadItem::CommandExecution {
                         aggregated_output, ..
                     }) => aggregated_output.get_or_insert_default().push_str(&n.delta),
@@ -917,7 +993,14 @@ impl ThreadView {
         }));
     }
 
-    fn turn(&self, turn: &Turn, last: bool, window: &Window, t: &Theme, cx: &Context<Self>) -> Div {
+    fn turn(
+        &self,
+        turn: &Turn,
+        last: bool,
+        window: &mut Window,
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let group = SharedString::from(format!("turn-{}", turn.id));
         let mut col = div().group(group.clone()).flex().flex_col();
         let user = turn.items.iter().find_map(|i| match i {
@@ -962,26 +1045,84 @@ impl ThreadView {
                     })
                 });
             let id = turn.id.clone();
+            let state = window.use_keyed_state(group.clone(), cx, |_, cx| {
+                let settled = open as u8 as f32;
+                (
+                    cx.background_executor().now(),
+                    Disclosure {
+                        chevron: HoverFade::settled(settled),
+                        content: HoverFade::settled(settled),
+                        height: Rc::default(),
+                    },
+                )
+            });
+            let (angle, progress, height) = {
+                let (epoch, d) = state.read(cx);
+                let now = cx.background_executor().now() - *epoch;
+                if d.chevron.is_animating(now) || d.content.is_animating(now) {
+                    window.request_animation_frame();
+                }
+                (
+                    d.chevron.value(now) * 90.,
+                    d.content.value(now),
+                    d.height.clone(),
+                )
+            };
             col = col.child(div().h(px(16.))).child(
-                disclosure(format!("Worked for {}", duration(secs)), open, window, t)
+                disclosure(format!("Worked for {}", duration(secs)), angle, window, t)
                     .id(group.clone())
+                    // `select-none` in the original: a press here leaves the text selection.
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |view, _, _, cx| {
-                        if !view.expanded.remove(&id) {
+                        let open = !view.expanded.remove(&id);
+                        if open {
                             view.expanded.insert(id.clone());
                         }
+                        let instant = motion::reduced(cx);
+                        state.update(cx, |(epoch, d), cx| {
+                            let now = cx.background_executor().now() - *epoch;
+                            let target = open as u8 as f32;
+                            d.chevron
+                                .transition(target, now, motion::BASIC, motion::EASE_IN_OUT);
+                            let (duration, ease) = match (instant, open) {
+                                (true, _) => (Duration::ZERO, motion::EASE_ENTER),
+                                (false, true) => (motion::RELAXED, motion::EASE_ENTER),
+                                (false, false) => (motion::BASIC, motion::EASE_ENTER_SNAPPY),
+                            };
+                            d.content.transition(target, now, duration, ease);
+                        });
                         cx.notify();
                     })),
             );
-            if open {
-                col = col
+            if progress > 0. {
+                let natural = height.get();
+                let content = div()
+                    .relative()
+                    .child(
+                        canvas(
+                            move |b, _, _| height.set(b.size.height.into()),
+                            |_, (), _, _| {},
+                        )
+                        .absolute()
+                        .size_full(),
+                    )
                     .child(div().h(px(16.)))
                     .child(self.activity(work, false, window, t, cx));
+                col = col.child(if progress < 1. {
+                    div()
+                        .overflow_hidden()
+                        .h(px(natural * progress))
+                        .child(content.mt(px(-8. * (1. - progress))).opacity(progress))
+                } else {
+                    content
+                });
             }
             col = col.child(div().h(px(16.))).child(markdown::with_find(
                 answer,
                 window,
                 t,
                 self.find_paint(item).as_ref(),
+                self.fades(item),
             ));
             if let Some(card) = diff_card(&turn.id, &turn.items, window, t) {
                 col = col.child(div().mt(px(12.)).pb(px(8.)).child(card));
@@ -994,7 +1135,7 @@ impl ThreadView {
                 .child(div().h(px(16.)))
                 .child(disclosure(
                     format!("Working for {}", duration(secs)),
-                    false,
+                    0.,
                     window,
                     t,
                 ))
@@ -1002,6 +1143,14 @@ impl ThreadView {
         }
         let running = turn.status == TurnStatus::InProgress;
         col.child(self.activity(work, running, window, t, cx))
+    }
+
+    /// The still-fading streamed segments of agent message `item`.
+    fn fades(&self, item: &str) -> &[StreamSegment] {
+        self.stream_fades
+            .get(item)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
     }
 
     /// [`activity`], with find highlights painted over the agent messages while find has
@@ -1019,7 +1168,15 @@ impl ThreadView {
             .as_ref()
             .is_none_or(|find| find.matches.is_empty())
         {
-            return activity(items, running, &self.expanded, window, t, cx);
+            return activity(
+                items,
+                running,
+                &self.expanded,
+                &self.stream_fades,
+                window,
+                t,
+                cx,
+            );
         }
         let mut column = div().flex().flex_col().gap(px(16.));
         let mut start = 0;
@@ -1030,6 +1187,7 @@ impl ThreadView {
                         &items[start..index],
                         running,
                         &self.expanded,
+                        &self.stream_fades,
                         window,
                         t,
                         cx,
@@ -1040,6 +1198,7 @@ impl ThreadView {
                     window,
                     t,
                     self.find_paint(id).as_ref(),
+                    self.fades(id),
                 ));
                 start = index + 1;
             }
@@ -1049,6 +1208,7 @@ impl ThreadView {
                 &items[start..],
                 running,
                 &self.expanded,
+                &self.stream_fades,
                 window,
                 t,
                 cx,
@@ -1081,6 +1241,20 @@ impl ThreadView {
 
 impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let now = cx.background_executor().now();
+        self.stream_fades.retain(|_, segments| {
+            segments.retain_mut(|segment| {
+                let elapsed = now.saturating_duration_since(segment.started_at);
+                segment.alpha = crate::motion::EASE_STREAMING(
+                    elapsed.as_secs_f32() / crate::motion::STREAMING_TEXT.as_secs_f32(),
+                );
+                !cx.reduce_motion() && elapsed < crate::motion::STREAMING_TEXT
+            });
+            !segments.is_empty()
+        });
+        if !self.stream_fades.is_empty() {
+            window.request_animation_frame();
+        }
         self.refresh_find();
         let t = cx.theme().clone();
         let n = self.turns.len();
@@ -1089,7 +1263,12 @@ impl Render for ThreadView {
         }
         // Turns more than half a viewport above or below it stand in as empty boxes of their
         // last height while the window size and side panel stay as they were laid out; the
-        // last turn (and a running one) can still grow, so it always renders.
+        // last turn (and a running one) can still grow, so it always renders. A text selection
+        // needs every word registered, so it lays out every turn.
+        // ponytail: full layout while a selection exists; keep stand-ins outside the range if
+        // long selected threads lag.
+        let selecting = self.carets.range().is_some();
+        self.carets.publish(cx);
         let key = (window.viewport_size(), self.clip_right);
         let (view, offset) = (self.scroll.bounds().size.height, self.scroll.offset().y);
         let laid_out = self.laid_out.borrow();
@@ -1104,6 +1283,7 @@ impl Render for ThreadView {
                         .as_ref()
                         .is_none_or(|find| find.matches.is_empty())
                     && i + 1 < n
+                    && !selecting
                     && turn.status != TurnStatus::InProgress)
                     .then(|| laid_out.turns.get(&turn.id))
                     .flatten()
@@ -1226,20 +1406,81 @@ impl Render for ThreadView {
             true,
             scale,
         );
+        let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
+        let drag_focus = focus.clone();
+        let this = cx.entity().downgrade();
+        // While a drag runs, every move and release in the window reaches the view, also past
+        // the scroller. A press that moves focus elsewhere (the editor, a button) ends it.
+        let tracker = self.carets.dragging.then(|| {
+            gpui::canvas(
+                |_, _, _| (),
+                move |_, (), window, _| {
+                    let (moved, released) = (this.clone(), this.clone());
+                    window.on_mouse_event(move |e: &gpui::MouseMoveEvent, phase, window, cx| {
+                        if phase == gpui::DispatchPhase::Bubble {
+                            moved
+                                .update(cx, |view, cx| {
+                                    if drag_focus.is_focused(window) {
+                                        view.carets.drag(e.position, cx);
+                                    } else {
+                                        view.carets.dragging = false;
+                                    }
+                                    cx.notify();
+                                })
+                                .ok();
+                        }
+                    });
+                    window.on_mouse_event(move |_: &gpui::MouseUpEvent, phase, _, cx| {
+                        if phase == gpui::DispatchPhase::Bubble {
+                            released
+                                .update(cx, |view, cx| {
+                                    view.carets.dragging = false;
+                                    cx.notify();
+                                })
+                                .ok();
+                        }
+                    });
+                },
+            )
+            .absolute()
+            .size_0()
+        });
         div()
             .size_full()
             .relative()
             .overflow_hidden()
             .bg(t.surface)
+            .on_mouse_down(gpui::MouseButton::Right, cx.listener(Self::right_click))
             .child(
                 div()
                     .id("conversation")
                     .size_full()
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll)
+                    .track_focus(&focus)
+                    .on_action(cx.listener(Self::copy_selection))
+                    // A press on the transcript collapses the selection to a caret, takes the
+                    // focus from the editor, and starts a drag (TH-127). Buttons stop it; a
+                    // control that took the focus during the press (the inline editor) keeps it.
+                    .capture_any_mouse_down(cx.listener(|view, _, window, cx| {
+                        view.press_focus = window.focused(cx);
+                    }))
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(move |view, e: &gpui::MouseDownEvent, window, cx| {
+                            if window.focused(cx) != view.press_focus {
+                                return;
+                            }
+                            window.focus(&focus, cx);
+                            view.carets.press(e.position, cx);
+                            cx.notify();
+                        }),
+                    )
                     // The scroller's contents are a composited layer (transparent tile).
                     .layer()
                     .pt(px(32.))
+                    .child(frame_start(self.scroll.clone()).absolute().size_0())
+                    .children(tracker)
                     .child(
                         div()
                             .mx_auto()
@@ -1273,6 +1514,9 @@ impl Render for ThreadView {
                     .right_0()
                     .bottom_0()
                     .when(t.appearance == Appearance::Light, |d| d.pt(px(84.)))
+                    // The band covers the transcript: a press on it (the editor) is not a
+                    // transcript press.
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .layer()
                     .child(
                         div()
@@ -1294,6 +1538,9 @@ impl Render for ThreadView {
                     ),
             )
             .when(self.find.is_some(), |d| d.child(self.find_bar(window, cx)))
+            .when(self.menu.is_some(), |d| {
+                d.child(self.menu_overlay(window, cx))
+            })
     }
 }
 

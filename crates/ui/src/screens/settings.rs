@@ -7,7 +7,9 @@ use crate::{
     composer::{popover, shadow},
     fixture,
     icon::icon,
-    in_layer, layout_color, over, rounded_clip, sidebar_section, text,
+    in_layer, layout_color,
+    motion::{self, HoverFade},
+    over, rounded_clip, sidebar_section, text,
 };
 use bridge::Bridge;
 use bridge::types::{AccountReadResponse, ConfigReadResponse};
@@ -1094,17 +1096,10 @@ fn description(s: &'static str, t: &Theme) -> Div {
 
 /// `Switch`: 32×20 track, 16 px thumb. `disabled` is the control's `opacity: .6`: Chromium
 /// paints the track and thumb into one `saveLayerAlpha(153)`.
+/// Toggling moves the thumb 2 px -> 14 px and fades the track colour, both 150 ms `ease-out`
+/// (`refs/interactions/ms6a.json`); the tracks stay active under reduced motion.
 fn switch(id: &'static str, on: bool, disabled: bool, t: &Theme) -> Stateful<Div> {
-    let track = surface(
-        9999.,
-        Round,
-        if on {
-            t.switch_track_checked
-        } else {
-            t.switch_track
-        },
-        None,
-    );
+    let (track_off, track_on) = (t.switch_track, t.switch_track_checked);
     let thumb = shapes::Decoration {
         radius: Corners::all(px(9999.)),
         fill: Some(t.control_thumb),
@@ -1112,11 +1107,33 @@ fn switch(id: &'static str, on: bool, disabled: bool, t: &Theme) -> Stateful<Div
         shadows: vec![shadow(t.shadow_sm, 1., 2., -1., false)],
         ..Default::default()
     };
-    let x = if on { 14. } else { 2. };
     div().id(id).flex_none().w(px(32.)).h(px(20.)).child(
         canvas(
-            |_, _, _| {},
-            move |b, (), window, cx| {
+            move |_, window, cx| {
+                let state = window.use_keyed_state("switch-motion", cx, |_, cx| {
+                    (
+                        cx.background_executor().now(),
+                        HoverFade::settled(on as u8 as f32),
+                    )
+                });
+                let (progress, animating) = state.update(cx, |(epoch, fade), cx| {
+                    let now = cx.background_executor().now() - *epoch;
+                    fade.transition(on as u8 as f32, now, motion::BASIC, motion::EASE_OUT);
+                    (fade.value(now), fade.is_animating(now))
+                });
+                if animating {
+                    window.request_animation_frame();
+                }
+                progress
+            },
+            move |b, progress, window, cx| {
+                let fill = match progress {
+                    p if p <= 0. => track_off,
+                    p if p >= 1. => track_on,
+                    p => motion::mix_oklab(track_off.into(), track_on.into(), p).into(),
+                };
+                let track = surface(9999., Round, fill, None);
+                let x = 2. + 12. * progress;
                 let paint = |window: &mut Window| {
                     shapes::paint(&track, None, b, window, cx);
                     let at = Bounds::new(b.origin + point(px(x), px(2.)), size(px(16.), px(16.)));
