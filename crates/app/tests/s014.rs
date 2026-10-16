@@ -18,14 +18,14 @@ fn proxy() {
     common::proxy_child();
 }
 
-fn center(value: &Value) -> (f32, f32) {
-    let n = |key| value[key].as_f64().unwrap() as f32;
-    (n("x") + n("w") / 2., n("y") + n("h") / 2.)
-}
-
 fn rect(value: &Value) -> [f32; 4] {
     let n = |key| value[key].as_f64().unwrap() as f32;
     [n("x"), n("y"), n("w"), n("h")]
+}
+
+fn center(value: &Value) -> (f32, f32) {
+    let [x, y, w, h] = rect(value);
+    (x + w / 2., y + h / 2.)
 }
 
 fn texts(rows: &Value) -> Vec<String> {

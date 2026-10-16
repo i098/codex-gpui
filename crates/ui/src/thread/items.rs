@@ -94,7 +94,7 @@ pub(super) fn diff_card(
         })
         .collect();
     let first = changes.first()?;
-    let (added, removed) = diff_counts(&changes);
+    let (added, removed) = diff_counts(changes.iter().copied());
     let mut files: Vec<&str> = changes.iter().map(|c| c.path.as_str()).collect();
     files.dedup();
     let title = match files.len() {
@@ -216,10 +216,10 @@ pub(super) fn diff_card(
 }
 
 /// Added and removed line counts of `changes`' unified diffs.
-fn diff_counts(changes: &[&FileUpdateChange]) -> (usize, usize) {
+fn diff_counts<'a>(changes: impl Iterator<Item = &'a FileUpdateChange> + Clone) -> (usize, usize) {
     let lines = |prefix: char| {
         changes
-            .iter()
+            .clone()
             .flat_map(|c| c.diff.lines())
             .filter(|l| l.starts_with(prefix) && !l.starts_with("+++") && !l.starts_with("---"))
             .count()
@@ -372,7 +372,6 @@ fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
             }
             ThreadItem::FileChange { changes, .. } => {
                 files += changes.len();
-                let changes: Vec<&FileUpdateChange> = changes.iter().collect();
                 let Some(first) = changes.first() else {
                     continue;
                 };
@@ -381,22 +380,18 @@ fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
                     icon: "pencil",
                     verb: "Edited".into(),
                     file: Some(name.to_owned()),
-                    stats: Some(diff_counts(&changes)),
+                    stats: Some(diff_counts(changes.iter())),
                 });
             }
             _ => {}
         }
     }
-    let count = |n: usize, one: &str, many: &str| match n {
-        0 => None,
-        1 => Some(one.to_owned()),
-        _ => Some(many.to_owned()),
-    };
-    let parts: Vec<(String, &'static str)> = [
-        (count(files, "Edited a file", "Edited files"), "pencil"),
-        (count(reads, "Read files", "Read files"), "thread-read"),
+    let count = |n: usize, one, many| (n > 0).then_some(if n == 1 { one } else { many });
+    let parts: Vec<(&str, &'static str)> = [
+        (count(files, "edited a file", "edited files"), "pencil"),
+        (count(reads, "read files", "read files"), "thread-read"),
         (
-            count(commands, "Ran a command", "Ran commands"),
+            count(commands, "ran a command", "ran commands"),
             "thread-terminal",
         ),
     ]
@@ -404,15 +399,8 @@ fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
     .filter_map(|(part, icon)| Some((part?, icon)))
     .collect();
     let icon = parts.first()?.1;
-    let summary = parts
-        .iter()
-        .enumerate()
-        .map(|(i, (part, _))| match i {
-            0 => part.clone(),
-            _ => part[..1].to_lowercase() + &part[1..],
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
+    let mut summary = parts.iter().map(|p| p.0).collect::<Vec<_>>().join(", ");
+    summary[..1].make_ascii_uppercase();
     Some(Activity::Group {
         key,
         summary,
