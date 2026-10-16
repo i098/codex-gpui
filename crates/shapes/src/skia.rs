@@ -1050,7 +1050,7 @@ fn raster(
                 // RGBA bytes (macOS N32).
                 let i = (y - rect[1]) as usize * seen[0].1 + (x - rect[0]) as usize * 4;
                 let mut buf = [[0; 3]; 5];
-                for (v, s) in buf.iter_mut().zip(seen) {
+                for (v, s) in buf.iter_mut().zip(&seen) {
                     *v = [s.0[i], s.0[i + 1], s.0[i + 2]];
                 }
                 let px = &buf[..n];
