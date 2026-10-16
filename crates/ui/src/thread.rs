@@ -56,7 +56,6 @@ const CONTENT_MAX_WIDTH: Pixels = px(768.);
 /// 0 -> 90 deg in 150 ms `ease-in-out`; the content clips its height, fades and slides 8 px
 /// over 300 ms `ease-enter` on open and 150 ms `ease-enter-snappy` on close (instant under
 /// reduced motion). `height` is the content's measured natural height.
-#[derive(Default)]
 struct Disclosure {
     chevron: HoverFade,
     content: HoverFade,

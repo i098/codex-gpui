@@ -74,6 +74,13 @@ fn within(observed: f64, (low, high): (f64, f64), eps: f64) -> bool {
     (low - eps..=high + eps).contains(&observed)
 }
 
+/// The samples of the track of `property` in a step's `tracks`.
+fn track<'a>(tracks: &'a Value, property: &str) -> &'a [Value] {
+    let mut tracks = tracks.as_array().unwrap().iter();
+    let track = tracks.find(|t| t["property"] == property).unwrap();
+    track["samples"].as_array().unwrap()
+}
+
 // --- Switch ---
 
 /// `Show ChatGPT in the menu bar` on Settings > General at 1280x832 (refs/settings spec
@@ -96,14 +103,8 @@ fn thumb_inset(image: &RgbaImage) -> f64 {
     (sum / n - TRACK_LEFT) / 2. - 8.
 }
 
-/// `color` (`[r, g, b, a]` 0-255, alpha 0-1) over `card`.
-fn over(color: &Value, card: [f64; 3]) -> [f64; 3] {
-    let c = color.as_array().unwrap();
-    let a = c[3].as_f64().unwrap();
-    [0, 1, 2].map(|i| card[i] * (1. - a) + c[i].as_f64().unwrap() * a)
-}
-
-/// Premultiplied sRGB mix of `from` to `to` at `p`, over `card`.
+/// Premultiplied sRGB mix of `from` to `to` (`[r, g, b, a]` 0-255, alpha 0-1) at `p`, over
+/// `card`.
 fn mix(from: &Value, to: &Value, p: f64, card: [f64; 3]) -> [f64; 3] {
     let (f, t) = (from.as_array().unwrap(), to.as_array().unwrap());
     let (fa, ta) = (f[3].as_f64().unwrap(), t[3].as_f64().unwrap());
@@ -120,16 +121,7 @@ fn switch_follows_recorded_tracks() -> Result<()> {
     let switch = &recording["switch"];
     let steps = switch["steps"].as_array().unwrap();
     let off = &steps.iter().find(|s| s["step"] == "click-off").unwrap()["tracks"];
-    let tracks = off.as_array().unwrap();
-    let translate = &tracks
-        .iter()
-        .find(|t| t["property"] == "translate")
-        .unwrap()["samples"];
-    let color = &tracks
-        .iter()
-        .find(|t| t["property"] == "background-color")
-        .unwrap()["samples"];
-    let (translate, color) = (translate.as_array().unwrap(), color.as_array().unwrap());
+    let (translate, color) = (track(off, "translate"), track(off, "background-color"));
     let (blue, grey) = (&color[0][1], &color[color.len() - 1][1]);
     for reduced in [false, true] {
         let mut fx = Fx::new()?;
@@ -169,10 +161,8 @@ fn switch_follows_recorded_tracks() -> Result<()> {
                         if mirror {
                             mix(grey, blue, (14. - value(s)) / 12., card)
                         } else {
-                            over(
-                                &color[translate.iter().position(|t| t == s).unwrap()][1],
-                                card,
-                            )
+                            let c = &color[translate.iter().position(|t| t == s).unwrap()][1];
+                            mix(c, c, 0., card)
                         }
                     };
                     for channel in 0..3 {
@@ -203,26 +193,21 @@ fn axis_angle(image: &RgbaImage, window: [u32; 4], bg: [f64; 3]) -> f64 {
         let d = (0..3).map(|i| (p[i] - bg[i]).abs()).sum::<f64>() / 3.;
         if d > 24. { d } else { 0. }
     };
-    let pixels = || {
-        (window[1]..window[1] + window[3])
-            .flat_map(|y| (window[0]..window[0] + window[2]).map(move |x| (x, y)))
-    };
-    let (mut m00, mut m10, mut m01) = (0., 0., 0.);
-    for (x, y) in pixels() {
-        let w = weight(x, y);
-        m00 += w;
-        m10 += w * x as f64;
-        m01 += w * y as f64;
+    let mut m = [0.; 6];
+    for y in window[1]..window[1] + window[3] {
+        for x in window[0]..window[0] + window[2] {
+            let (w, x, y) = (weight(x, y), x as f64, y as f64);
+            for (i, v) in [1., x, y, x * x, y * y, x * y].iter().enumerate() {
+                m[i] += w * v;
+            }
+        }
     }
-    let (cx, cy) = (m10 / m00, m01 / m00);
-    let (mut u20, mut u02, mut u11) = (0., 0., 0.);
-    for (x, y) in pixels() {
-        let w = weight(x, y);
-        let (dx, dy) = (x as f64 - cx, y as f64 - cy);
-        u20 += w * dx * dx;
-        u02 += w * dy * dy;
-        u11 += w * dx * dy;
-    }
+    let [m00, m10, m01, m20, m02, m11] = m;
+    let (u20, u02, u11) = (
+        m20 - m10 * m10 / m00,
+        m02 - m01 * m01 / m00,
+        m11 - m10 * m01 / m00,
+    );
     (0.5 * (2. * u11).atan2(u20 - u02)).to_degrees()
 }
 
@@ -335,13 +320,22 @@ fn disclosure_follows_recorded_tracks() -> Result<()> {
         {
             let name = step["step"].as_str().unwrap();
             let open = name.contains("open");
-            let tracks = step["tracks"].as_array().unwrap();
-            let angles = &tracks.iter().find(|t| t["property"] == "rotate").unwrap()["samples"];
-            let content = &tracks.iter().find(|t| t["property"] == "opacity").unwrap()["samples"];
-            let (angles, content) = (angles.as_array().unwrap(), content.as_array().unwrap());
+            let (angles, content) = (
+                track(&step["tracks"], "rotate"),
+                track(&step["tracks"], "opacity"),
+            );
             fx.click(at)?;
             let height = |fx: &mut Fx| -> Result<f64> {
                 Ok(strip_offset(&rest, &fx.shot()?, strip, max) as f64)
+            };
+            let check_content = |h: f64, index: usize, sample: &Value| -> Result<()> {
+                let range = bracket(content, index, 1, |s| value(s) * natural);
+                ensure!(
+                    within(h, range, 1.5),
+                    "{name} at {:?}: content {h} device px, expected {range:?}",
+                    ms(sample)
+                );
+                Ok(())
             };
             if reduced {
                 let h = height(&mut fx)?;
@@ -361,13 +355,11 @@ fn disclosure_follows_recorded_tracks() -> Result<()> {
                     ms(sample)
                 );
                 if !reduced {
-                    let h = strip_offset(&rest, &image, strip, max) as f64;
-                    let range = bracket(content, index, 1, |s| value(s) * natural);
-                    ensure!(
-                        within(h, range, 1.5),
-                        "{name} at {:?}: content {h} device px, expected {range:?}",
-                        ms(sample)
-                    );
+                    check_content(
+                        strip_offset(&rest, &image, strip, max) as f64,
+                        index,
+                        sample,
+                    )?;
                 }
                 Ok(())
             })?;
@@ -376,14 +368,7 @@ fn disclosure_follows_recorded_tracks() -> Result<()> {
                 if reduced {
                     return Ok(());
                 }
-                let h = height(fx)?;
-                let range = bracket(content, index, 1, |s| value(s) * natural);
-                ensure!(
-                    within(h, range, 1.5),
-                    "{name} at {:?}: content {h} device px, expected {range:?}",
-                    ms(sample)
-                );
-                Ok(())
+                check_content(height(fx)?, index, sample)
             })?;
             let h = height(&mut fx)?;
             ensure!(

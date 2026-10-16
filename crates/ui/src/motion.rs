@@ -128,15 +128,8 @@ pub fn mix_oklab(from: Rgba, to: Rgba, p: f32) -> Rgba {
         ]
     }
     let (a0, a1) = (from.a, to.a);
+    // Transparent at both ends stays transparent black (0 / MIN_POSITIVE).
     let a = a0 + (a1 - a0) * p;
-    if a == 0. {
-        return Rgba {
-            r: 0.,
-            g: 0.,
-            b: 0.,
-            a,
-        };
-    }
     let (f, t) = (oklab(from), oklab(to));
     let [lab_l, lab_a, lab_b] = [0, 1, 2].map(|i| (f[i] * a0 * (1. - p) + t[i] * a1 * p) / a);
     let l = (lab_l + 0.396_337_78 * lab_a + 0.215_803_76 * lab_b).powi(3);
@@ -210,10 +203,6 @@ impl HoverFade {
         self.started = now;
         self.duration = duration;
         self.ease = ease;
-    }
-
-    pub fn target(&self) -> f32 {
-        self.target
     }
 
     pub fn value(&self, now: Duration) -> f32 {
