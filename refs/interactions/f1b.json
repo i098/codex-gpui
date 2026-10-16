@@ -1,0 +1,2430 @@
+{
+  "name": "f1b",
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 1,
+    "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+    "theme": "dark",
+    "hoverEmulated": true
+  },
+  "rows": [
+    "RS-011",
+    "RS-045",
+    "RS-060",
+    "RS-088",
+    "RS-107"
+  ],
+  "steps": [
+    {
+      "type": "click",
+      "target": {
+        "text": "Home",
+        "bbox": {
+          "x": 8,
+          "y": 52,
+          "w": 36,
+          "h": 36
+        }
+      }
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "shift": true,
+      "portKey": "shift-tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "Recents",
+        "bbox": {
+          "x": 64,
+          "y": 259,
+          "w": 202,
+          "h": 25
+        }
+      }
+    },
+    {
+      "type": "key",
+      "key": "Enter"
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "Projects",
+        "bbox": {
+          "x": 64,
+          "y": 172,
+          "w": 202,
+          "h": 25
+        }
+      }
+    },
+    {
+      "type": "key",
+      "key": "Enter"
+    },
+    {
+      "type": "click",
+      "phase": "down",
+      "target": {
+        "text": "First chat row",
+        "bbox": {
+          "x": 60,
+          "y": 290,
+          "w": 272,
+          "h": 30
+        }
+      },
+      "note": "Pointer down focuses the row. Release outside to cancel navigation, then use Tab."
+    },
+    {
+      "type": "click",
+      "phase": "up",
+      "target": {
+        "text": "Empty content",
+        "bbox": {
+          "x": 800,
+          "y": 250,
+          "w": 1,
+          "h": 1
+        }
+      },
+      "note": "Cancel the row click by releasing outside before keyboard navigation."
+    },
+    {
+      "type": "hover",
+      "target": {
+        "text": "Empty content",
+        "bbox": {
+          "x": 800,
+          "y": 250,
+          "w": 1,
+          "h": 1
+        }
+      }
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "shift": true,
+      "portKey": "shift-tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "hover",
+      "target": {
+        "text": "Empty content",
+        "bbox": {
+          "x": 800,
+          "y": 250,
+          "w": 1,
+          "h": 1
+        }
+      },
+      "waitMs": 400
+    },
+    {
+      "type": "hover",
+      "target": {
+        "text": "View activity",
+        "bbox": {
+          "x": 268,
+          "y": 56,
+          "w": 28,
+          "h": 28
+        }
+      },
+      "waitMs": 800
+    },
+    {
+      "type": "hover",
+      "target": {
+        "text": "First chat row",
+        "bbox": {
+          "x": 60,
+          "y": 290,
+          "w": 272,
+          "h": 30
+        }
+      },
+      "waitMs": 250
+    },
+    {
+      "type": "hover",
+      "target": {
+        "text": "Pin chat",
+        "bbox": {
+          "x": 276,
+          "y": 295,
+          "w": 20,
+          "h": 20
+        }
+      },
+      "waitMs": 800
+    },
+    {
+      "type": "hover",
+      "target": {
+        "text": "Archive chat",
+        "bbox": {
+          "x": 304,
+          "y": 295,
+          "w": 20,
+          "h": 20
+        }
+      },
+      "waitMs": 800
+    }
+  ],
+  "result": {
+    "dom": [
+      {
+        "afterStep": 0,
+        "focus": {
+          "tag": "button",
+          "text": "Home",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 8,
+            "y": 52,
+            "w": 36,
+            "h": 36
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": false,
+          "outlineOffset": "0px",
+          "radius": "12.5px",
+          "corner": "superellipse(1.5)",
+          "pseudo": {
+            "outline": "rgb(255, 255, 255) none 3px",
+            "outlineOffset": "0px",
+            "radius": "12.5px",
+            "corner": "superellipse(1.5)"
+          }
+        },
+        "actions": null,
+        "tooltip": null,
+        "pixels": [
+          {
+            "x": 8,
+            "y": 70,
+            "rgb": [
+              53,
+              53,
+              53
+            ],
+            "tolerance": 1
+          }
+        ]
+      },
+      {
+        "afterStep": 1,
+        "focus": {
+          "tag": "button",
+          "text": "Space",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 8,
+            "y": 96,
+            "w": 36,
+            "h": 36
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": true,
+          "outlineOffset": "0px",
+          "radius": "12.5px",
+          "corner": "superellipse(1.5)",
+          "pseudo": {
+            "outline": "rgb(58, 131, 247) solid 2px",
+            "outlineOffset": "-1px",
+            "radius": "12.5px",
+            "corner": "superellipse(1.5)"
+          }
+        },
+        "actions": null,
+        "tooltip": {
+          "text": "Space",
+          "label": "Space",
+          "kbd": null,
+          "bbox": {
+            "x": 46,
+            "y": 99,
+            "w": 64,
+            "h": 30
+          },
+          "side": "right",
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.2) 0px 8px 18px 0px",
+            "cursor": "auto"
+          }
+        },
+        "pixels": [
+          {
+            "x": 8,
+            "y": 114,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 1
+          }
+        ]
+      },
+      {
+        "afterStep": 2,
+        "focus": {
+          "tag": "button",
+          "text": "Home",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 8,
+            "y": 52,
+            "w": 36,
+            "h": 36
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": true,
+          "outlineOffset": "0px",
+          "radius": "12.5px",
+          "corner": "superellipse(1.5)",
+          "pseudo": {
+            "outline": "rgb(58, 131, 247) solid 2px",
+            "outlineOffset": "-1px",
+            "radius": "12.5px",
+            "corner": "superellipse(1.5)"
+          }
+        },
+        "actions": null,
+        "tooltip": {
+          "text": "Home",
+          "label": "Home",
+          "kbd": null,
+          "bbox": {
+            "x": 46,
+            "y": 55,
+            "w": 62,
+            "h": 30
+          },
+          "side": "right",
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.2) 0px 8px 18px 0px",
+            "cursor": "auto"
+          }
+        },
+        "pixels": [
+          {
+            "x": 8,
+            "y": 70,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 1
+          }
+        ]
+      },
+      {
+        "afterStep": 3,
+        "focus": {
+          "tag": "button",
+          "text": "Space",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 8,
+            "y": 96,
+            "w": 36,
+            "h": 36
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": true,
+          "outlineOffset": "0px",
+          "radius": "12.5px",
+          "corner": "superellipse(1.5)",
+          "pseudo": {
+            "outline": "rgb(58, 131, 247) solid 2px",
+            "outlineOffset": "-1px",
+            "radius": "12.5px",
+            "corner": "superellipse(1.5)"
+          }
+        },
+        "actions": null,
+        "tooltip": {
+          "text": "Space",
+          "label": "Space",
+          "kbd": null,
+          "bbox": {
+            "x": 46,
+            "y": 99,
+            "w": 64,
+            "h": 30
+          },
+          "side": "right",
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.2) 0px 8px 18px 0px",
+            "cursor": "auto"
+          }
+        },
+        "pixels": [
+          {
+            "x": 8,
+            "y": 114,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 1
+          }
+        ]
+      },
+      {
+        "afterStep": 4,
+        "focus": {
+          "tag": "button",
+          "text": "Scheduled",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 8,
+            "y": 140,
+            "w": 36,
+            "h": 36
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": true,
+          "outlineOffset": "0px",
+          "radius": "12.5px",
+          "corner": "superellipse(1.5)",
+          "pseudo": {
+            "outline": "rgb(58, 131, 247) solid 2px",
+            "outlineOffset": "-1px",
+            "radius": "12.5px",
+            "corner": "superellipse(1.5)"
+          }
+        },
+        "actions": null,
+        "tooltip": {
+          "text": "Scheduled",
+          "label": "Scheduled",
+          "kbd": null,
+          "bbox": {
+            "x": 46,
+            "y": 143,
+            "w": 90,
+            "h": 30
+          },
+          "side": "right",
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.2) 0px 8px 18px 0px",
+            "cursor": "auto"
+          }
+        },
+        "pixels": [
+          {
+            "x": 8,
+            "y": 158,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 1
+          }
+        ]
+      },
+      {
+        "afterStep": 5,
+        "focus": {
+          "tag": "button",
+          "text": "Plugins",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 8,
+            "y": 184,
+            "w": 36,
+            "h": 36
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": true,
+          "outlineOffset": "0px",
+          "radius": "12.5px",
+          "corner": "superellipse(1.5)",
+          "pseudo": {
+            "outline": "rgb(58, 131, 247) solid 2px",
+            "outlineOffset": "-1px",
+            "radius": "12.5px",
+            "corner": "superellipse(1.5)"
+          }
+        },
+        "actions": null,
+        "tooltip": {
+          "text": "Plugins",
+          "label": "Plugins",
+          "kbd": null,
+          "bbox": {
+            "x": 46,
+            "y": 187,
+            "w": 70,
+            "h": 30
+          },
+          "side": "right",
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.2) 0px 8px 18px 0px",
+            "cursor": "auto"
+          }
+        },
+        "pixels": [
+          {
+            "x": 8,
+            "y": 202,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 1
+          }
+        ]
+      },
+      {
+        "afterStep": 6,
+        "focus": {
+          "tag": "button",
+          "text": "Explore",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 8,
+            "y": 228,
+            "w": 36,
+            "h": 36
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": true,
+          "outlineOffset": "0px",
+          "radius": "12.5px",
+          "corner": "superellipse(1.5)",
+          "pseudo": {
+            "outline": "rgb(58, 131, 247) solid 2px",
+            "outlineOffset": "-1px",
+            "radius": "12.5px",
+            "corner": "superellipse(1.5)"
+          }
+        },
+        "actions": null,
+        "tooltip": null,
+        "pixels": [
+          {
+            "x": 8,
+            "y": 246,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 1
+          }
+        ]
+      },
+      {
+        "afterStep": 7,
+        "focus": {
+          "tag": "button",
+          "text": "Code Review",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 8,
+            "y": 281,
+            "w": 36,
+            "h": 36
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": true,
+          "outlineOffset": "0px",
+          "radius": "12.5px",
+          "corner": "superellipse(1.5)",
+          "pseudo": {
+            "outline": "rgb(58, 131, 247) solid 2px",
+            "outlineOffset": "-1px",
+            "radius": "12.5px",
+            "corner": "superellipse(1.5)"
+          }
+        },
+        "actions": null,
+        "tooltip": {
+          "text": "Code Review",
+          "label": "Code Review",
+          "kbd": null,
+          "bbox": {
+            "x": 46,
+            "y": 284,
+            "w": 104,
+            "h": 30
+          },
+          "side": "right",
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.2) 0px 8px 18px 0px",
+            "cursor": "auto"
+          }
+        },
+        "pixels": [
+          {
+            "x": 8,
+            "y": 299,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 1
+          }
+        ]
+      },
+      {
+        "afterStep": 8,
+        "focus": {
+          "tag": "button",
+          "text": "Sites",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 8,
+            "y": 325,
+            "w": 36,
+            "h": 36
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": true,
+          "outlineOffset": "0px",
+          "radius": "12.5px",
+          "corner": "superellipse(1.5)",
+          "pseudo": {
+            "outline": "rgb(58, 131, 247) solid 2px",
+            "outlineOffset": "-1px",
+            "radius": "12.5px",
+            "corner": "superellipse(1.5)"
+          }
+        },
+        "actions": null,
+        "tooltip": {
+          "text": "Sites",
+          "label": "Sites",
+          "kbd": null,
+          "bbox": {
+            "x": 46,
+            "y": 328,
+            "w": 56,
+            "h": 30
+          },
+          "side": "right",
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.2) 0px 8px 18px 0px",
+            "cursor": "auto"
+          }
+        },
+        "pixels": [
+          {
+            "x": 8,
+            "y": 343,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 1
+          }
+        ]
+      },
+      {
+        "afterStep": 9,
+        "focus": {
+          "tag": "button",
+          "text": "",
+          "aria": "Open profile menu",
+          "role": null,
+          "bbox": {
+            "x": 8,
+            "y": 788,
+            "w": 36,
+            "h": 36
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": true,
+          "outlineOffset": "0px",
+          "radius": "12.5px",
+          "corner": "superellipse(1.5)",
+          "pseudo": {
+            "outline": "rgb(58, 131, 247) solid 2px",
+            "outlineOffset": "-1px",
+            "radius": "12.5px",
+            "corner": "superellipse(1.5)"
+          }
+        },
+        "actions": null,
+        "tooltip": null,
+        "pixels": [
+          {
+            "x": 8,
+            "y": 806,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 1
+          }
+        ]
+      },
+      {
+        "afterStep": 10,
+        "focus": {
+          "tag": "button",
+          "text": "Recents",
+          "aria": null,
+          "role": "button",
+          "bbox": {
+            "x": 64,
+            "y": 259,
+            "w": 202,
+            "h": 25
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": false,
+          "outlineOffset": "0px",
+          "radius": "10px",
+          "corner": "superellipse(1.5)",
+          "pseudo": {
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "outlineOffset": "0px",
+            "radius": "0px",
+            "corner": "superellipse(1)"
+          }
+        },
+        "actions": null,
+        "tooltip": null,
+        "pixels": []
+      },
+      {
+        "afterStep": 11,
+        "focus": {
+          "tag": "button",
+          "text": "Recents",
+          "aria": null,
+          "role": "button",
+          "bbox": {
+            "x": 64,
+            "y": 259,
+            "w": 202,
+            "h": 25
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgb(58, 131, 247) solid 2px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": true,
+          "outlineOffset": "0px",
+          "radius": "10px",
+          "corner": "superellipse(1.5)",
+          "pseudo": {
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "outlineOffset": "0px",
+            "radius": "0px",
+            "corner": "superellipse(1)"
+          }
+        },
+        "actions": null,
+        "tooltip": null,
+        "pixels": [
+          {
+            "x": 63,
+            "y": 271,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 1
+          },
+          {
+            "x": 267,
+            "y": 271,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 1
+          }
+        ]
+      },
+      {
+        "afterStep": 12,
+        "focus": {
+          "tag": "button",
+          "text": "Projects",
+          "aria": null,
+          "role": "button",
+          "bbox": {
+            "x": 64,
+            "y": 172,
+            "w": 202,
+            "h": 25
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": false,
+          "outlineOffset": "0px",
+          "radius": "10px",
+          "corner": "superellipse(1.5)",
+          "pseudo": {
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "outlineOffset": "0px",
+            "radius": "0px",
+            "corner": "superellipse(1)"
+          }
+        },
+        "actions": null,
+        "tooltip": null,
+        "pixels": []
+      },
+      {
+        "afterStep": 13,
+        "focus": {
+          "tag": "button",
+          "text": "Projects",
+          "aria": null,
+          "role": "button",
+          "bbox": {
+            "x": 64,
+            "y": 172,
+            "w": 202,
+            "h": 25
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgb(58, 131, 247) solid 2px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": true,
+          "outlineOffset": "0px",
+          "radius": "10px",
+          "corner": "superellipse(1.5)",
+          "pseudo": {
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "outlineOffset": "0px",
+            "radius": "0px",
+            "corner": "superellipse(1)"
+          }
+        },
+        "actions": null,
+        "tooltip": null,
+        "pixels": [
+          {
+            "x": 63,
+            "y": 184,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 1
+          },
+          {
+            "x": 267,
+            "y": 184,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 1
+          }
+        ]
+      },
+      {
+        "afterStep": 14,
+        "focus": {
+          "tag": "div",
+          "text": "Change the greeting in hello.py to \"Hello, Codex\".",
+          "aria": "Change the greeting in hello.py to \"Hello, Codex\".",
+          "role": "button",
+          "bbox": {
+            "x": 60,
+            "y": 290,
+            "w": 272,
+            "h": 30
+          },
+          "computed": {
+            "backgroundColor": "rgba(255, 255, 255, 0.08)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": false,
+          "outlineOffset": "0px",
+          "radius": "12.5px",
+          "corner": "superellipse(1.5)",
+          "pseudo": {
+            "outline": "rgb(255, 255, 255) none 3px",
+            "outlineOffset": "0px",
+            "radius": "0px",
+            "corner": "superellipse(1)"
+          }
+        },
+        "actions": [
+          {
+            "label": "Pin chat",
+            "bbox": {
+              "x": 276,
+              "y": 295,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          },
+          {
+            "label": "Archive chat",
+            "bbox": {
+              "x": 304,
+              "y": 295,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          }
+        ],
+        "tooltip": null,
+        "pixels": []
+      },
+      {
+        "afterStep": 15,
+        "focus": {
+          "tag": "div",
+          "text": "Change the greeting in hello.py to \"Hello, Codex\".",
+          "aria": "Change the greeting in hello.py to \"Hello, Codex\".",
+          "role": "button",
+          "bbox": {
+            "x": 60,
+            "y": 290,
+            "w": 272,
+            "h": 30
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": false,
+          "outlineOffset": "0px",
+          "radius": "12.5px",
+          "corner": "superellipse(1.5)",
+          "pseudo": {
+            "outline": "rgb(255, 255, 255) none 3px",
+            "outlineOffset": "0px",
+            "radius": "0px",
+            "corner": "superellipse(1)"
+          }
+        },
+        "actions": [
+          {
+            "label": "Pin chat",
+            "bbox": {
+              "x": 276,
+              "y": 295,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          },
+          {
+            "label": "Archive chat",
+            "bbox": {
+              "x": 304,
+              "y": 295,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          }
+        ],
+        "tooltip": null,
+        "pixels": []
+      },
+      {
+        "afterStep": 16,
+        "focus": {
+          "tag": "div",
+          "text": "Change the greeting in hello.py to \"Hello, Codex\".",
+          "aria": "Change the greeting in hello.py to \"Hello, Codex\".",
+          "role": "button",
+          "bbox": {
+            "x": 60,
+            "y": 290,
+            "w": 272,
+            "h": 30
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": false,
+          "outlineOffset": "0px",
+          "radius": "12.5px",
+          "corner": "superellipse(1.5)",
+          "pseudo": {
+            "outline": "rgb(255, 255, 255) none 3px",
+            "outlineOffset": "0px",
+            "radius": "0px",
+            "corner": "superellipse(1)"
+          }
+        },
+        "actions": [
+          {
+            "label": "Pin chat",
+            "bbox": {
+              "x": 276,
+              "y": 295,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          },
+          {
+            "label": "Archive chat",
+            "bbox": {
+              "x": 304,
+              "y": 295,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          }
+        ],
+        "tooltip": null,
+        "pixels": []
+      },
+      {
+        "afterStep": 17,
+        "focus": {
+          "tag": "button",
+          "text": "",
+          "aria": "Pin chat",
+          "role": null,
+          "bbox": {
+            "x": 276,
+            "y": 295,
+            "w": 20,
+            "h": 20
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": true,
+          "outlineOffset": "0px",
+          "radius": "9999px",
+          "corner": "superellipse(1)",
+          "pseudo": {
+            "outline": "rgb(58, 131, 247) solid 2px",
+            "outlineOffset": "-1px",
+            "radius": "9999px",
+            "corner": "superellipse(1)"
+          }
+        },
+        "actions": [
+          {
+            "label": "Pin chat",
+            "bbox": {
+              "x": 276,
+              "y": 295,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          },
+          {
+            "label": "Archive chat",
+            "bbox": {
+              "x": 304,
+              "y": 295,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          }
+        ],
+        "tooltip": {
+          "text": "Pin chat",
+          "label": "Pin chat",
+          "kbd": null,
+          "bbox": {
+            "x": 249,
+            "y": 263,
+            "w": 75,
+            "h": 30
+          },
+          "side": "top",
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.2) 0px 8px 18px 0px",
+            "cursor": "auto"
+          }
+        },
+        "pixels": [
+          {
+            "x": 275,
+            "y": 305,
+            "rgb": [
+              52,
+              119,
+              226
+            ],
+            "tolerance": 24
+          }
+        ]
+      },
+      {
+        "afterStep": 18,
+        "focus": {
+          "tag": "div",
+          "text": "Change the greeting in hello.py to \"Hello, Codex\".",
+          "aria": "Change the greeting in hello.py to \"Hello, Codex\".",
+          "role": "button",
+          "bbox": {
+            "x": 60,
+            "y": 290,
+            "w": 272,
+            "h": 30
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(58, 131, 247) solid 2px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": true,
+          "outlineOffset": "-2px",
+          "radius": "12.5px",
+          "corner": "superellipse(1.5)",
+          "pseudo": {
+            "outline": "rgb(255, 255, 255) none 3px",
+            "outlineOffset": "0px",
+            "radius": "0px",
+            "corner": "superellipse(1)"
+          }
+        },
+        "actions": [
+          {
+            "label": "Pin chat",
+            "bbox": {
+              "x": 276,
+              "y": 295,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          },
+          {
+            "label": "Archive chat",
+            "bbox": {
+              "x": 304,
+              "y": 295,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          }
+        ],
+        "tooltip": null,
+        "pixels": [
+          {
+            "x": 60,
+            "y": 305,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 1
+          }
+        ],
+        "assertActions": [
+          {
+            "label": "Pin chat",
+            "bbox": {
+              "x": 276,
+              "y": 295,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1",
+            "brightest": 141
+          },
+          {
+            "label": "Archive chat",
+            "bbox": {
+              "x": 304,
+              "y": 295,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1",
+            "brightest": 141
+          }
+        ]
+      },
+      {
+        "afterStep": 19,
+        "focus": {
+          "tag": "button",
+          "text": "",
+          "aria": "Pin chat",
+          "role": null,
+          "bbox": {
+            "x": 276,
+            "y": 295,
+            "w": 20,
+            "h": 20
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": true,
+          "outlineOffset": "0px",
+          "radius": "9999px",
+          "corner": "superellipse(1)",
+          "pseudo": {
+            "outline": "rgb(58, 131, 247) solid 2px",
+            "outlineOffset": "-1px",
+            "radius": "9999px",
+            "corner": "superellipse(1)"
+          }
+        },
+        "actions": [
+          {
+            "label": "Pin chat",
+            "bbox": {
+              "x": 276,
+              "y": 295,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          },
+          {
+            "label": "Archive chat",
+            "bbox": {
+              "x": 304,
+              "y": 295,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          }
+        ],
+        "tooltip": {
+          "text": "Pin chat",
+          "label": "Pin chat",
+          "kbd": null,
+          "bbox": {
+            "x": 249,
+            "y": 263,
+            "w": 75,
+            "h": 30
+          },
+          "side": "top",
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.2) 0px 8px 18px 0px",
+            "cursor": "auto"
+          }
+        },
+        "pixels": [
+          {
+            "x": 275,
+            "y": 305,
+            "rgb": [
+              52,
+              119,
+              226
+            ],
+            "tolerance": 24
+          }
+        ]
+      },
+      {
+        "afterStep": 20,
+        "focus": {
+          "tag": "button",
+          "text": "",
+          "aria": "Archive chat",
+          "role": null,
+          "bbox": {
+            "x": 304,
+            "y": 295,
+            "w": 20,
+            "h": 20
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": true,
+          "outlineOffset": "0px",
+          "radius": "9999px",
+          "corner": "superellipse(1)",
+          "pseudo": {
+            "outline": "rgb(58, 131, 247) solid 2px",
+            "outlineOffset": "-1px",
+            "radius": "9999px",
+            "corner": "superellipse(1)"
+          }
+        },
+        "actions": [
+          {
+            "label": "Pin chat",
+            "bbox": {
+              "x": 276,
+              "y": 295,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          },
+          {
+            "label": "Archive chat",
+            "bbox": {
+              "x": 304,
+              "y": 295,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          }
+        ],
+        "tooltip": {
+          "text": "Archive chat",
+          "label": "Archive chat",
+          "kbd": null,
+          "bbox": {
+            "x": 263,
+            "y": 263,
+            "w": 101,
+            "h": 30
+          },
+          "side": "top",
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.2) 0px 8px 18px 0px",
+            "cursor": "auto"
+          }
+        },
+        "pixels": [
+          {
+            "x": 303,
+            "y": 305,
+            "rgb": [
+              52,
+              119,
+              226
+            ],
+            "tolerance": 24
+          }
+        ]
+      },
+      {
+        "afterStep": 21,
+        "focus": {
+          "tag": "div",
+          "text": "Add a subtract(a, b) function to src/math.py next to add, then run python3 -c '\u2026",
+          "aria": "Add a subtract(a, b) function to src/math.py next to add, then run python3 -c '\u2026",
+          "role": "button",
+          "bbox": {
+            "x": 60,
+            "y": 321,
+            "w": 272,
+            "h": 30
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(58, 131, 247) solid 2px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": true,
+          "outlineOffset": "-2px",
+          "radius": "12.5px",
+          "corner": "superellipse(1.5)",
+          "pseudo": {
+            "outline": "rgb(255, 255, 255) none 3px",
+            "outlineOffset": "0px",
+            "radius": "0px",
+            "corner": "superellipse(1)"
+          }
+        },
+        "actions": [
+          {
+            "label": "Pin chat",
+            "bbox": {
+              "x": 276,
+              "y": 326,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          },
+          {
+            "label": "Archive chat",
+            "bbox": {
+              "x": 304,
+              "y": 326,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          }
+        ],
+        "tooltip": null,
+        "pixels": [
+          {
+            "x": 60,
+            "y": 336,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 1
+          }
+        ],
+        "assertActions": [
+          {
+            "label": "Pin chat",
+            "bbox": {
+              "x": 276,
+              "y": 326,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1",
+            "brightest": 141
+          },
+          {
+            "label": "Archive chat",
+            "bbox": {
+              "x": 304,
+              "y": 326,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1",
+            "brightest": 141
+          }
+        ]
+      },
+      {
+        "afterStep": 22,
+        "focus": {
+          "tag": "button",
+          "text": "",
+          "aria": "Pin chat",
+          "role": null,
+          "bbox": {
+            "x": 276,
+            "y": 326,
+            "w": 20,
+            "h": 20
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": true,
+          "outlineOffset": "0px",
+          "radius": "9999px",
+          "corner": "superellipse(1)",
+          "pseudo": {
+            "outline": "rgb(58, 131, 247) solid 2px",
+            "outlineOffset": "-1px",
+            "radius": "9999px",
+            "corner": "superellipse(1)"
+          }
+        },
+        "actions": [
+          {
+            "label": "Pin chat",
+            "bbox": {
+              "x": 276,
+              "y": 326,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          },
+          {
+            "label": "Archive chat",
+            "bbox": {
+              "x": 304,
+              "y": 326,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          }
+        ],
+        "tooltip": {
+          "text": "Pin chat",
+          "label": "Pin chat",
+          "kbd": null,
+          "bbox": {
+            "x": 249,
+            "y": 294,
+            "w": 75,
+            "h": 30
+          },
+          "side": "top",
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.2) 0px 8px 18px 0px",
+            "cursor": "auto"
+          }
+        },
+        "pixels": [
+          {
+            "x": 275,
+            "y": 336,
+            "rgb": [
+              52,
+              119,
+              226
+            ],
+            "tolerance": 24
+          }
+        ]
+      },
+      {
+        "afterStep": 23,
+        "focus": {
+          "tag": "button",
+          "text": "",
+          "aria": "Archive chat",
+          "role": null,
+          "bbox": {
+            "x": 304,
+            "y": 326,
+            "w": 20,
+            "h": 20
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": true,
+          "outlineOffset": "0px",
+          "radius": "9999px",
+          "corner": "superellipse(1)",
+          "pseudo": {
+            "outline": "rgb(58, 131, 247) solid 2px",
+            "outlineOffset": "-1px",
+            "radius": "9999px",
+            "corner": "superellipse(1)"
+          }
+        },
+        "actions": [
+          {
+            "label": "Pin chat",
+            "bbox": {
+              "x": 276,
+              "y": 326,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          },
+          {
+            "label": "Archive chat",
+            "bbox": {
+              "x": 304,
+              "y": 326,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          }
+        ],
+        "tooltip": {
+          "text": "Archive chat",
+          "label": "Archive chat",
+          "kbd": null,
+          "bbox": {
+            "x": 263,
+            "y": 294,
+            "w": 101,
+            "h": 30
+          },
+          "side": "top",
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.2) 0px 8px 18px 0px",
+            "cursor": "auto"
+          }
+        },
+        "pixels": [
+          {
+            "x": 303,
+            "y": 336,
+            "rgb": [
+              52,
+              119,
+              226
+            ],
+            "tolerance": 24
+          }
+        ]
+      },
+      {
+        "afterStep": 24,
+        "focus": {
+          "tag": "div",
+          "text": "In two sentences, what does this repository contain?",
+          "aria": "In two sentences, what does this repository contain?",
+          "role": "button",
+          "bbox": {
+            "x": 60,
+            "y": 352,
+            "w": 272,
+            "h": 30
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(58, 131, 247) solid 2px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": true,
+          "outlineOffset": "-2px",
+          "radius": "12.5px",
+          "corner": "superellipse(1.5)",
+          "pseudo": {
+            "outline": "rgb(255, 255, 255) none 3px",
+            "outlineOffset": "0px",
+            "radius": "0px",
+            "corner": "superellipse(1)"
+          }
+        },
+        "actions": [
+          {
+            "label": "Pin chat",
+            "bbox": {
+              "x": 276,
+              "y": 357,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          },
+          {
+            "label": "Archive chat",
+            "bbox": {
+              "x": 304,
+              "y": 357,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          }
+        ],
+        "tooltip": null,
+        "pixels": [
+          {
+            "x": 60,
+            "y": 367,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 1
+          }
+        ],
+        "assertActions": [
+          {
+            "label": "Pin chat",
+            "bbox": {
+              "x": 276,
+              "y": 357,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1",
+            "brightest": 141
+          },
+          {
+            "label": "Archive chat",
+            "bbox": {
+              "x": 304,
+              "y": 357,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1",
+            "brightest": 141
+          }
+        ]
+      },
+      {
+        "afterStep": 25,
+        "focus": {
+          "tag": "div",
+          "text": "In two sentences, what does this repository contain?",
+          "aria": "In two sentences, what does this repository contain?",
+          "role": "button",
+          "bbox": {
+            "x": 60,
+            "y": 352,
+            "w": 272,
+            "h": 30
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(58, 131, 247) solid 2px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": true,
+          "outlineOffset": "-2px",
+          "radius": "12.5px",
+          "corner": "superellipse(1.5)",
+          "pseudo": {
+            "outline": "rgb(255, 255, 255) none 3px",
+            "outlineOffset": "0px",
+            "radius": "0px",
+            "corner": "superellipse(1)"
+          }
+        },
+        "actions": [
+          {
+            "label": "Pin chat",
+            "bbox": {
+              "x": 276,
+              "y": 357,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          },
+          {
+            "label": "Archive chat",
+            "bbox": {
+              "x": 304,
+              "y": 357,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          }
+        ],
+        "tooltip": null,
+        "pixels": [
+          {
+            "x": 60,
+            "y": 367,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 1
+          }
+        ],
+        "assertActions": [
+          {
+            "label": "Pin chat",
+            "bbox": {
+              "x": 276,
+              "y": 357,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1",
+            "brightest": 141
+          },
+          {
+            "label": "Archive chat",
+            "bbox": {
+              "x": 304,
+              "y": 357,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1",
+            "brightest": 141
+          }
+        ]
+      },
+      {
+        "afterStep": 26,
+        "focus": {
+          "tag": "div",
+          "text": "In two sentences, what does this repository contain?",
+          "aria": "In two sentences, what does this repository contain?",
+          "role": "button",
+          "bbox": {
+            "x": 60,
+            "y": 352,
+            "w": 272,
+            "h": 30
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(58, 131, 247) solid 2px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": true,
+          "outlineOffset": "-2px",
+          "radius": "12.5px",
+          "corner": "superellipse(1.5)",
+          "pseudo": {
+            "outline": "rgb(255, 255, 255) none 3px",
+            "outlineOffset": "0px",
+            "radius": "0px",
+            "corner": "superellipse(1)"
+          }
+        },
+        "actions": [
+          {
+            "label": "Pin chat",
+            "bbox": {
+              "x": 276,
+              "y": 357,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          },
+          {
+            "label": "Archive chat",
+            "bbox": {
+              "x": 304,
+              "y": 357,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          }
+        ],
+        "tooltip": {
+          "text": "View activity\n\u2325\u2318U",
+          "label": "View activity",
+          "kbd": "\u2325\u2318U",
+          "bbox": {
+            "x": 207,
+            "y": 86,
+            "w": 149,
+            "h": 30
+          },
+          "side": "bottom",
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.2) 0px 8px 18px 0px",
+            "cursor": "auto"
+          }
+        },
+        "pixels": [
+          {
+            "x": 60,
+            "y": 367,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 1
+          },
+          {
+            "x": 213,
+            "y": 101,
+            "rgb": [
+              45,
+              45,
+              45
+            ],
+            "tolerance": 1
+          }
+        ],
+        "assertTooltip": {
+          "text": "View activity\n\u2325\u2318U",
+          "label": "View activity",
+          "kbd": "\u2325\u2318U",
+          "bbox": {
+            "x": 207,
+            "y": 86,
+            "w": 149,
+            "h": 30
+          },
+          "side": "bottom",
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.2) 0px 8px 18px 0px",
+            "cursor": "auto"
+          }
+        }
+      },
+      {
+        "afterStep": 27,
+        "focus": {
+          "tag": "div",
+          "text": "In two sentences, what does this repository contain?",
+          "aria": "In two sentences, what does this repository contain?",
+          "role": "button",
+          "bbox": {
+            "x": 60,
+            "y": 352,
+            "w": 272,
+            "h": 30
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(58, 131, 247) solid 2px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": true,
+          "outlineOffset": "-2px",
+          "radius": "12.5px",
+          "corner": "superellipse(1.5)",
+          "pseudo": {
+            "outline": "rgb(255, 255, 255) none 3px",
+            "outlineOffset": "0px",
+            "radius": "0px",
+            "corner": "superellipse(1)"
+          }
+        },
+        "actions": [
+          {
+            "label": "Pin chat",
+            "bbox": {
+              "x": 276,
+              "y": 357,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          },
+          {
+            "label": "Archive chat",
+            "bbox": {
+              "x": 304,
+              "y": 357,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          }
+        ],
+        "tooltip": null,
+        "pixels": [
+          {
+            "x": 60,
+            "y": 367,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 1
+          }
+        ]
+      },
+      {
+        "afterStep": 28,
+        "focus": {
+          "tag": "div",
+          "text": "In two sentences, what does this repository contain?",
+          "aria": "In two sentences, what does this repository contain?",
+          "role": "button",
+          "bbox": {
+            "x": 60,
+            "y": 352,
+            "w": 272,
+            "h": 30
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(58, 131, 247) solid 2px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": true,
+          "outlineOffset": "-2px",
+          "radius": "12.5px",
+          "corner": "superellipse(1.5)",
+          "pseudo": {
+            "outline": "rgb(255, 255, 255) none 3px",
+            "outlineOffset": "0px",
+            "radius": "0px",
+            "corner": "superellipse(1)"
+          }
+        },
+        "actions": [
+          {
+            "label": "Pin chat",
+            "bbox": {
+              "x": 276,
+              "y": 357,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          },
+          {
+            "label": "Archive chat",
+            "bbox": {
+              "x": 304,
+              "y": 357,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          }
+        ],
+        "tooltip": {
+          "text": "Pin chat",
+          "label": "Pin chat",
+          "kbd": null,
+          "bbox": {
+            "x": 249,
+            "y": 263,
+            "w": 75,
+            "h": 30
+          },
+          "side": "top",
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.2) 0px 8px 18px 0px",
+            "cursor": "auto"
+          }
+        },
+        "pixels": [
+          {
+            "x": 60,
+            "y": 367,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 1
+          },
+          {
+            "x": 255,
+            "y": 278,
+            "rgb": [
+              45,
+              45,
+              45
+            ],
+            "tolerance": 1
+          }
+        ],
+        "assertTooltip": {
+          "text": "Pin chat",
+          "label": "Pin chat",
+          "kbd": null,
+          "bbox": {
+            "x": 249,
+            "y": 263,
+            "w": 75,
+            "h": 30
+          },
+          "side": "top",
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.2) 0px 8px 18px 0px",
+            "cursor": "auto"
+          }
+        }
+      },
+      {
+        "afterStep": 29,
+        "focus": {
+          "tag": "div",
+          "text": "In two sentences, what does this repository contain?",
+          "aria": "In two sentences, what does this repository contain?",
+          "role": "button",
+          "bbox": {
+            "x": 60,
+            "y": 352,
+            "w": 272,
+            "h": 30
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(58, 131, 247) solid 2px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "visible": true,
+          "outlineOffset": "-2px",
+          "radius": "12.5px",
+          "corner": "superellipse(1.5)",
+          "pseudo": {
+            "outline": "rgb(255, 255, 255) none 3px",
+            "outlineOffset": "0px",
+            "radius": "0px",
+            "corner": "superellipse(1)"
+          }
+        },
+        "actions": [
+          {
+            "label": "Pin chat",
+            "bbox": {
+              "x": 276,
+              "y": 357,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          },
+          {
+            "label": "Archive chat",
+            "bbox": {
+              "x": 304,
+              "y": 357,
+              "w": 20,
+              "h": 20
+            },
+            "opacity": "1"
+          }
+        ],
+        "tooltip": {
+          "text": "Archive chat",
+          "label": "Archive chat",
+          "kbd": null,
+          "bbox": {
+            "x": 263,
+            "y": 263,
+            "w": 101,
+            "h": 30
+          },
+          "side": "top",
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.2) 0px 8px 18px 0px",
+            "cursor": "auto"
+          }
+        },
+        "pixels": [
+          {
+            "x": 60,
+            "y": 367,
+            "rgb": [
+              58,
+              131,
+              247
+            ],
+            "tolerance": 1
+          },
+          {
+            "x": 269,
+            "y": 278,
+            "rgb": [
+              45,
+              45,
+              45
+            ],
+            "tolerance": 1
+          }
+        ],
+        "assertTooltip": {
+          "text": "Archive chat",
+          "label": "Archive chat",
+          "kbd": null,
+          "bbox": {
+            "x": 263,
+            "y": 263,
+            "w": 101,
+            "h": 30
+          },
+          "side": "top",
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.2) 0px 8px 18px 0px",
+            "cursor": "auto"
+          }
+        }
+      }
+    ],
+    "requests": [],
+    "requestScope": "App-server writes during the focus and tooltip sequence; startup reads and section persistence are outside F1b.",
+    "pixelNotes": "Solid focus borders and tooltip fills use tolerance 1. Circle edges use 24 because the recording is 1x and Metal is 2x. Action visibility compares the brightest neutral glyph pixel inside each icon, with tolerance 16."
+  }
+}
