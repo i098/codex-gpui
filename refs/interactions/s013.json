@@ -1,0 +1,1156 @@
+{
+  "name": "s013",
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 1,
+    "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+    "theme": "dark",
+    "hoverEmulated": true
+  },
+  "steps": [
+    {
+      "type": "click",
+      "target": {
+        "text": "Add a subtract",
+        "bbox": {
+          "x": 60,
+          "y": 321,
+          "w": 272,
+          "h": 30
+        }
+      },
+      "waitThread": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f"
+    },
+    {
+      "type": "key",
+      "message": {
+        "type": "run-command",
+        "id": "findInThread"
+      },
+      "portKey": "cmd-f",
+      "key": "Meta+F",
+      "note": "The original native shortcut is delivered through the recorded run-command message. The port dispatches cmd-f."
+    },
+    {
+      "type": "type",
+      "text": "subtract"
+    },
+    {
+      "type": "key",
+      "key": "Enter"
+    },
+    {
+      "type": "key",
+      "key": "Shift+Enter"
+    },
+    {
+      "type": "key",
+      "key": "Shift+Enter"
+    },
+    {
+      "type": "click",
+      "target": {
+        "selector": "[aria-label=\"Next result\"]",
+        "bbox": {
+          "x": 969,
+          "y": 64,
+          "w": 16,
+          "h": 16
+        }
+      }
+    },
+    {
+      "type": "click",
+      "target": {
+        "selector": "[aria-label=\"Previous result\"]",
+        "bbox": {
+          "x": 941,
+          "y": 64,
+          "w": 16,
+          "h": 16
+        }
+      }
+    },
+    {
+      "type": "click",
+      "target": {
+        "selector": "[aria-label=\"Find in chat\"]",
+        "bbox": {
+          "x": 965,
+          "y": 19,
+          "w": 245,
+          "h": 24
+        }
+      }
+    },
+    {
+      "type": "key",
+      "key": "Control+A",
+      "portKey": "cmd-a"
+    },
+    {
+      "type": "type",
+      "text": "SuBtRaCt"
+    },
+    {
+      "type": "key",
+      "key": "Control+A",
+      "portKey": "cmd-a"
+    },
+    {
+      "type": "type",
+      "text": "no-match-xyz"
+    },
+    {
+      "type": "key",
+      "key": "Control+A",
+      "portKey": "cmd-a"
+    },
+    {
+      "type": "key",
+      "key": "Backspace"
+    }
+  ],
+  "result": {
+    "requests": [],
+    "screenshot": "/sdc-disk/tmp/cgx/s013/shots/s013-matches.png",
+    "checkpoints": [
+      {
+        "note": "typed",
+        "query": "subtract",
+        "focused": true,
+        "counter": "1 / 5 results",
+        "marks": [
+          {
+            "text": "subtract",
+            "active": true,
+            "bbox": {
+              "x": 719,
+              "y": 140,
+              "w": 56,
+              "h": 17
+            },
+            "computed": {
+              "backgroundColor": "rgb(251, 106, 34)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "text": "subtract",
+            "active": false,
+            "bbox": {
+              "x": 903,
+              "y": 163,
+              "w": 56,
+              "h": 17
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 210, 64)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "text": "subtract",
+            "active": false,
+            "bbox": {
+              "x": 1003,
+              "y": 163,
+              "w": 56,
+              "h": 17
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 210, 64)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "text": "subtract",
+            "active": false,
+            "bbox": {
+              "x": 495,
+              "y": 310,
+              "w": 64,
+              "h": 15
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 210, 64)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "text": "subtract",
+            "active": false,
+            "bbox": {
+              "x": 494,
+              "y": 387,
+              "w": 64,
+              "h": 15
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 210, 64)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          }
+        ],
+        "buttons": [
+          {
+            "label": "Previous result",
+            "disabled": false,
+            "bbox": {
+              "x": 941,
+              "y": 64,
+              "w": 16,
+              "h": 16
+            }
+          },
+          {
+            "label": "Next result",
+            "disabled": false,
+            "bbox": {
+              "x": 969,
+              "y": 64,
+              "w": 16,
+              "h": 16
+            }
+          },
+          {
+            "label": "Close find",
+            "disabled": false,
+            "bbox": {
+              "x": 1225,
+              "y": 19,
+              "w": 24,
+              "h": 24
+            }
+          }
+        ],
+        "afterStep": 2
+      },
+      {
+        "note": "next",
+        "query": "subtract",
+        "focused": true,
+        "counter": "2 / 5 results",
+        "marks": [
+          {
+            "text": "subtract",
+            "active": false,
+            "bbox": {
+              "x": 719,
+              "y": 140,
+              "w": 56,
+              "h": 17
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 210, 64)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "text": "subtract",
+            "active": true,
+            "bbox": {
+              "x": 903,
+              "y": 163,
+              "w": 56,
+              "h": 17
+            },
+            "computed": {
+              "backgroundColor": "rgb(251, 106, 34)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "text": "subtract",
+            "active": false,
+            "bbox": {
+              "x": 1003,
+              "y": 163,
+              "w": 56,
+              "h": 17
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 210, 64)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "text": "subtract",
+            "active": false,
+            "bbox": {
+              "x": 495,
+              "y": 310,
+              "w": 64,
+              "h": 15
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 210, 64)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "text": "subtract",
+            "active": false,
+            "bbox": {
+              "x": 494,
+              "y": 387,
+              "w": 64,
+              "h": 15
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 210, 64)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          }
+        ],
+        "buttons": [
+          {
+            "label": "Previous result",
+            "disabled": false,
+            "bbox": {
+              "x": 941,
+              "y": 64,
+              "w": 16,
+              "h": 16
+            }
+          },
+          {
+            "label": "Next result",
+            "disabled": false,
+            "bbox": {
+              "x": 969,
+              "y": 64,
+              "w": 16,
+              "h": 16
+            }
+          },
+          {
+            "label": "Close find",
+            "disabled": false,
+            "bbox": {
+              "x": 1225,
+              "y": 19,
+              "w": 24,
+              "h": 24
+            }
+          }
+        ],
+        "afterStep": 3
+      },
+      {
+        "note": "previous",
+        "query": "subtract",
+        "focused": true,
+        "counter": "1 / 5 results",
+        "marks": [
+          {
+            "text": "subtract",
+            "active": true,
+            "bbox": {
+              "x": 719,
+              "y": 140,
+              "w": 56,
+              "h": 17
+            },
+            "computed": {
+              "backgroundColor": "rgb(251, 106, 34)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "text": "subtract",
+            "active": false,
+            "bbox": {
+              "x": 903,
+              "y": 163,
+              "w": 56,
+              "h": 17
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 210, 64)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "text": "subtract",
+            "active": false,
+            "bbox": {
+              "x": 1003,
+              "y": 163,
+              "w": 56,
+              "h": 17
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 210, 64)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "text": "subtract",
+            "active": false,
+            "bbox": {
+              "x": 495,
+              "y": 310,
+              "w": 64,
+              "h": 15
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 210, 64)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "text": "subtract",
+            "active": false,
+            "bbox": {
+              "x": 494,
+              "y": 387,
+              "w": 64,
+              "h": 15
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 210, 64)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          }
+        ],
+        "buttons": [
+          {
+            "label": "Previous result",
+            "disabled": false,
+            "bbox": {
+              "x": 941,
+              "y": 64,
+              "w": 16,
+              "h": 16
+            }
+          },
+          {
+            "label": "Next result",
+            "disabled": false,
+            "bbox": {
+              "x": 969,
+              "y": 64,
+              "w": 16,
+              "h": 16
+            }
+          },
+          {
+            "label": "Close find",
+            "disabled": false,
+            "bbox": {
+              "x": 1225,
+              "y": 19,
+              "w": 24,
+              "h": 24
+            }
+          }
+        ],
+        "afterStep": 4
+      },
+      {
+        "note": "wrap previous",
+        "query": "subtract",
+        "focused": true,
+        "counter": "5 / 5 results",
+        "marks": [
+          {
+            "text": "subtract",
+            "active": false,
+            "bbox": {
+              "x": 719,
+              "y": 140,
+              "w": 56,
+              "h": 17
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 210, 64)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "text": "subtract",
+            "active": false,
+            "bbox": {
+              "x": 903,
+              "y": 163,
+              "w": 56,
+              "h": 17
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 210, 64)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "text": "subtract",
+            "active": false,
+            "bbox": {
+              "x": 1003,
+              "y": 163,
+              "w": 56,
+              "h": 17
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 210, 64)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "text": "subtract",
+            "active": false,
+            "bbox": {
+              "x": 495,
+              "y": 310,
+              "w": 64,
+              "h": 15
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 210, 64)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "text": "subtract",
+            "active": true,
+            "bbox": {
+              "x": 494,
+              "y": 387,
+              "w": 64,
+              "h": 15
+            },
+            "computed": {
+              "backgroundColor": "rgb(251, 106, 34)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          }
+        ],
+        "buttons": [
+          {
+            "label": "Previous result",
+            "disabled": false,
+            "bbox": {
+              "x": 941,
+              "y": 64,
+              "w": 16,
+              "h": 16
+            }
+          },
+          {
+            "label": "Next result",
+            "disabled": false,
+            "bbox": {
+              "x": 969,
+              "y": 64,
+              "w": 16,
+              "h": 16
+            }
+          },
+          {
+            "label": "Close find",
+            "disabled": false,
+            "bbox": {
+              "x": 1225,
+              "y": 19,
+              "w": 24,
+              "h": 24
+            }
+          }
+        ],
+        "afterStep": 5
+      },
+      {
+        "note": "next button wraps",
+        "query": "subtract",
+        "focused": false,
+        "counter": "1 / 5 results",
+        "marks": [
+          {
+            "text": "subtract",
+            "active": true,
+            "bbox": {
+              "x": 719,
+              "y": 140,
+              "w": 56,
+              "h": 17
+            },
+            "computed": {
+              "backgroundColor": "rgb(251, 106, 34)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "text": "subtract",
+            "active": false,
+            "bbox": {
+              "x": 903,
+              "y": 163,
+              "w": 56,
+              "h": 17
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 210, 64)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "text": "subtract",
+            "active": false,
+            "bbox": {
+              "x": 1003,
+              "y": 163,
+              "w": 56,
+              "h": 17
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 210, 64)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "text": "subtract",
+            "active": false,
+            "bbox": {
+              "x": 495,
+              "y": 310,
+              "w": 64,
+              "h": 15
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 210, 64)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "text": "subtract",
+            "active": false,
+            "bbox": {
+              "x": 494,
+              "y": 387,
+              "w": 64,
+              "h": 15
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 210, 64)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          }
+        ],
+        "buttons": [
+          {
+            "label": "Previous result",
+            "disabled": false,
+            "bbox": {
+              "x": 941,
+              "y": 64,
+              "w": 16,
+              "h": 16
+            }
+          },
+          {
+            "label": "Next result",
+            "disabled": false,
+            "bbox": {
+              "x": 969,
+              "y": 64,
+              "w": 16,
+              "h": 16
+            }
+          },
+          {
+            "label": "Close find",
+            "disabled": false,
+            "bbox": {
+              "x": 1225,
+              "y": 19,
+              "w": 24,
+              "h": 24
+            }
+          }
+        ],
+        "afterStep": 6
+      },
+      {
+        "note": "previous button",
+        "query": "subtract",
+        "focused": false,
+        "counter": "5 / 5 results",
+        "marks": [
+          {
+            "text": "subtract",
+            "active": false,
+            "bbox": {
+              "x": 719,
+              "y": 140,
+              "w": 56,
+              "h": 17
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 210, 64)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "text": "subtract",
+            "active": false,
+            "bbox": {
+              "x": 903,
+              "y": 163,
+              "w": 56,
+              "h": 17
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 210, 64)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "text": "subtract",
+            "active": false,
+            "bbox": {
+              "x": 1003,
+              "y": 163,
+              "w": 56,
+              "h": 17
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 210, 64)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "text": "subtract",
+            "active": false,
+            "bbox": {
+              "x": 495,
+              "y": 310,
+              "w": 64,
+              "h": 15
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 210, 64)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "text": "subtract",
+            "active": true,
+            "bbox": {
+              "x": 494,
+              "y": 387,
+              "w": 64,
+              "h": 15
+            },
+            "computed": {
+              "backgroundColor": "rgb(251, 106, 34)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          }
+        ],
+        "buttons": [
+          {
+            "label": "Previous result",
+            "disabled": false,
+            "bbox": {
+              "x": 941,
+              "y": 64,
+              "w": 16,
+              "h": 16
+            }
+          },
+          {
+            "label": "Next result",
+            "disabled": false,
+            "bbox": {
+              "x": 969,
+              "y": 64,
+              "w": 16,
+              "h": 16
+            }
+          },
+          {
+            "label": "Close find",
+            "disabled": false,
+            "bbox": {
+              "x": 1225,
+              "y": 19,
+              "w": 24,
+              "h": 24
+            }
+          }
+        ],
+        "afterStep": 7
+      },
+      {
+        "note": "case insensitive",
+        "query": "SuBtRaCt",
+        "focused": true,
+        "counter": "5 / 5 results",
+        "marks": [
+          {
+            "text": "subtract",
+            "active": false,
+            "bbox": {
+              "x": 719,
+              "y": 140,
+              "w": 56,
+              "h": 17
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 210, 64)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "text": "subtract",
+            "active": false,
+            "bbox": {
+              "x": 903,
+              "y": 163,
+              "w": 56,
+              "h": 17
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 210, 64)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "text": "subtract",
+            "active": false,
+            "bbox": {
+              "x": 1003,
+              "y": 163,
+              "w": 56,
+              "h": 17
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 210, 64)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "text": "subtract",
+            "active": false,
+            "bbox": {
+              "x": 495,
+              "y": 310,
+              "w": 64,
+              "h": 15
+            },
+            "computed": {
+              "backgroundColor": "rgb(255, 210, 64)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "text": "subtract",
+            "active": true,
+            "bbox": {
+              "x": 494,
+              "y": 387,
+              "w": 64,
+              "h": 15
+            },
+            "computed": {
+              "backgroundColor": "rgb(251, 106, 34)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          }
+        ],
+        "buttons": [
+          {
+            "label": "Previous result",
+            "disabled": false,
+            "bbox": {
+              "x": 941,
+              "y": 64,
+              "w": 16,
+              "h": 16
+            }
+          },
+          {
+            "label": "Next result",
+            "disabled": false,
+            "bbox": {
+              "x": 969,
+              "y": 64,
+              "w": 16,
+              "h": 16
+            }
+          },
+          {
+            "label": "Close find",
+            "disabled": false,
+            "bbox": {
+              "x": 1225,
+              "y": 19,
+              "w": 24,
+              "h": 24
+            }
+          }
+        ],
+        "afterStep": 10
+      },
+      {
+        "note": "no matches",
+        "query": "no-match-xyz",
+        "focused": true,
+        "counter": "0 results",
+        "marks": [],
+        "buttons": [
+          {
+            "label": "Previous result",
+            "disabled": true,
+            "bbox": {
+              "x": 941,
+              "y": 64,
+              "w": 16,
+              "h": 16
+            }
+          },
+          {
+            "label": "Next result",
+            "disabled": true,
+            "bbox": {
+              "x": 969,
+              "y": 64,
+              "w": 16,
+              "h": 16
+            }
+          },
+          {
+            "label": "Close find",
+            "disabled": false,
+            "bbox": {
+              "x": 1225,
+              "y": 19,
+              "w": 24,
+              "h": 24
+            }
+          }
+        ],
+        "afterStep": 12
+      },
+      {
+        "note": "empty",
+        "query": "",
+        "focused": true,
+        "counter": "Find in chat",
+        "marks": [],
+        "buttons": [
+          {
+            "label": "Previous result",
+            "disabled": true,
+            "bbox": {
+              "x": 941,
+              "y": 37,
+              "w": 16,
+              "h": 16
+            }
+          },
+          {
+            "label": "Next result",
+            "disabled": true,
+            "bbox": {
+              "x": 969,
+              "y": 37,
+              "w": 16,
+              "h": 16
+            }
+          },
+          {
+            "label": "Close find",
+            "disabled": false,
+            "bbox": {
+              "x": 1225,
+              "y": 19,
+              "w": 24,
+              "h": 24
+            }
+          }
+        ],
+        "afterStep": 14
+      }
+    ],
+    "dom": [
+      {
+        "selector": "Find in chat container",
+        "bbox": {
+          "x": 924,
+          "y": 8,
+          "w": 340,
+          "h": 82
+        },
+        "computed": {
+          "backgroundColor": "rgb(20, 20, 20)"
+        },
+        "afterStep": 2
+      }
+    ]
+  },
+  "shortWindow": {
+    "steps": [
+      {"type": "resize", "viewport": "1280x400"},
+      {"type": "key", "key": "Shift+Enter"}
+    ],
+    "initialQuery": "subtract",
+    "initialActive": 0,
+    "result": {
+      "counter": "5 / 5 results",
+      "active": {"x": 494, "y": 148, "w": 64, "h": 15},
+      "scrollTop": -46,
+      "scrollHeight": 637,
+      "clientHeight": 352,
+      "backgroundColor": "rgb(251, 106, 34)"
+    },
+    "note": "The original centers the active match above the composer. Its reverse-column scroller reports negative scrollTop."
+  },
+  "notes": [
+    "Recorded from the original Codex renderer with route1 on Linux in an isolated fleet Chrome context.",
+    "The native find command opens the bar; Linux Control+A maps to port cmd-a.",
+    "Each type step uses CDP Input.insertText. The S013 test replays each step as one Paste action, not separate keystrokes.",
+    "Search includes collapsed agent messages and opens their activity group. Background thread-resume and host traffic are excluded."
+  ]
+}

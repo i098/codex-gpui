@@ -1,0 +1,822 @@
+{
+  "name": "s021-composer-slash",
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 1,
+    "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+    "theme": "dark",
+    "hoverEmulated": true
+  },
+  "source": {
+    "renderer": "Codex 26.1007.30912",
+    "transport": "route1 Linux; shared Chrome :9522; isolated CDP browser context"
+  },
+  "steps": [
+    {
+      "type": "click",
+      "target": {
+        "selector": ".ProseMirror",
+        "bbox": {
+          "x": 453,
+          "y": 728,
+          "w": 712,
+          "h": 44
+        }
+      },
+      "portReference": {
+        "screen": "home",
+        "text": "Do anything"
+      },
+      "expect": {
+        "text": "",
+        "focused": true,
+        "menu": null,
+        "fast": false
+      }
+    },
+    {
+      "type": "type",
+      "text": "/",
+      "expect": {
+        "text": "/",
+        "focused": true,
+        "menu": {
+          "bbox": {
+            "x": 441,
+            "y": 386,
+            "w": 736,
+            "h": 320
+          },
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          },
+          "commands": [
+            {
+              "text": "Fast\n1.5x speed, increased usage",
+              "selected": true
+            },
+            {
+              "text": "Feedback\nSend feedback about this chat",
+              "selected": false
+            },
+            {
+              "text": "Goal\nSet a goal to keep pursuing",
+              "selected": false
+            },
+            {
+              "text": "MCP\nShow MCP server status",
+              "selected": false
+            },
+            {
+              "text": "Model",
+              "selected": false
+            },
+            {
+              "text": "Pet\nWake or tuck away the desktop pet",
+              "selected": false
+            },
+            {
+              "text": "Plan mode\nTurn plan mode on",
+              "selected": false
+            },
+            {
+              "text": "Reasoning\nLight",
+              "selected": false
+            },
+            {
+              "text": "Sketch\nDraw a sketch",
+              "selected": false
+            },
+            {
+              "text": "Status\nShow chat ID, context usage, and rate limits",
+              "selected": false
+            },
+            {
+              "text": "Ultrafast\nThe fastest available responses for latency-sensitive work.",
+              "selected": false
+            },
+            {
+              "text": "Usage & billing\nOpen usage and billing settings",
+              "selected": false
+            },
+            {
+              "text": "Work in a project\nChoose project for new chats",
+              "selected": false
+            }
+          ],
+          "selected": {
+            "tag": "button",
+            "text": "Fast\n1.5x speed, increased usage",
+            "aria": null,
+            "role": null,
+            "bbox": {
+              "x": 446,
+              "y": 391,
+              "w": 716,
+              "h": 29
+            },
+            "computed": {
+              "backgroundColor": "rgba(255, 255, 255, 0.08)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "default"
+            }
+          },
+          "empty": false,
+          "skills": true
+        },
+        "fast": false
+      }
+    },
+    {
+      "type": "key",
+      "key": "ArrowDown",
+      "portKey": "down",
+      "expect": {
+        "text": "/",
+        "focused": true,
+        "menu": {
+          "bbox": {
+            "x": 441,
+            "y": 386,
+            "w": 736,
+            "h": 320
+          },
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          },
+          "commands": [
+            {
+              "text": "Fast\n1.5x speed, increased usage",
+              "selected": false
+            },
+            {
+              "text": "Feedback\nSend feedback about this chat",
+              "selected": true
+            },
+            {
+              "text": "Goal\nSet a goal to keep pursuing",
+              "selected": false
+            },
+            {
+              "text": "MCP\nShow MCP server status",
+              "selected": false
+            },
+            {
+              "text": "Model",
+              "selected": false
+            },
+            {
+              "text": "Pet\nWake or tuck away the desktop pet",
+              "selected": false
+            },
+            {
+              "text": "Plan mode\nTurn plan mode on",
+              "selected": false
+            },
+            {
+              "text": "Reasoning\nLight",
+              "selected": false
+            },
+            {
+              "text": "Sketch\nDraw a sketch",
+              "selected": false
+            },
+            {
+              "text": "Status\nShow chat ID, context usage, and rate limits",
+              "selected": false
+            },
+            {
+              "text": "Ultrafast\nThe fastest available responses for latency-sensitive work.",
+              "selected": false
+            },
+            {
+              "text": "Usage & billing\nOpen usage and billing settings",
+              "selected": false
+            },
+            {
+              "text": "Work in a project\nChoose project for new chats",
+              "selected": false
+            }
+          ],
+          "selected": {
+            "tag": "button",
+            "text": "Feedback\nSend feedback about this chat",
+            "aria": null,
+            "role": null,
+            "bbox": {
+              "x": 446,
+              "y": 420,
+              "w": 716,
+              "h": 29
+            },
+            "computed": {
+              "backgroundColor": "rgba(255, 255, 255, 0.08)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "default"
+            }
+          },
+          "empty": false,
+          "skills": true
+        },
+        "fast": false
+      }
+    },
+    {
+      "type": "key",
+      "key": "ArrowUp",
+      "portKey": "up",
+      "expect": {
+        "text": "/",
+        "focused": true,
+        "menu": {
+          "bbox": {
+            "x": 441,
+            "y": 386,
+            "w": 736,
+            "h": 320
+          },
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          },
+          "commands": [
+            {
+              "text": "Fast\n1.5x speed, increased usage",
+              "selected": true
+            },
+            {
+              "text": "Feedback\nSend feedback about this chat",
+              "selected": false
+            },
+            {
+              "text": "Goal\nSet a goal to keep pursuing",
+              "selected": false
+            },
+            {
+              "text": "MCP\nShow MCP server status",
+              "selected": false
+            },
+            {
+              "text": "Model",
+              "selected": false
+            },
+            {
+              "text": "Pet\nWake or tuck away the desktop pet",
+              "selected": false
+            },
+            {
+              "text": "Plan mode\nTurn plan mode on",
+              "selected": false
+            },
+            {
+              "text": "Reasoning\nLight",
+              "selected": false
+            },
+            {
+              "text": "Sketch\nDraw a sketch",
+              "selected": false
+            },
+            {
+              "text": "Status\nShow chat ID, context usage, and rate limits",
+              "selected": false
+            },
+            {
+              "text": "Ultrafast\nThe fastest available responses for latency-sensitive work.",
+              "selected": false
+            },
+            {
+              "text": "Usage & billing\nOpen usage and billing settings",
+              "selected": false
+            },
+            {
+              "text": "Work in a project\nChoose project for new chats",
+              "selected": false
+            }
+          ],
+          "selected": {
+            "tag": "button",
+            "text": "Fast\n1.5x speed, increased usage",
+            "aria": null,
+            "role": null,
+            "bbox": {
+              "x": 446,
+              "y": 391,
+              "w": 716,
+              "h": 29
+            },
+            "computed": {
+              "backgroundColor": "rgba(255, 255, 255, 0.08)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "default"
+            }
+          },
+          "empty": false,
+          "skills": true
+        },
+        "fast": false
+      }
+    },
+    {
+      "type": "type",
+      "text": "zzzzzzzz",
+      "expect": {
+        "text": "/zzzzzzzz",
+        "focused": true,
+        "menu": {
+          "bbox": {
+            "x": 441,
+            "y": 667,
+            "w": 736,
+            "h": 39
+          },
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          },
+          "commands": [],
+          "selected": null,
+          "empty": true,
+          "skills": false
+        },
+        "fast": false
+      }
+    },
+    {
+      "type": "key",
+      "key": "Escape",
+      "portKey": "escape",
+      "expect": {
+        "text": "/zzzzzzzz",
+        "focused": true,
+        "menu": null,
+        "fast": false
+      }
+    },
+    {
+      "type": "key",
+      "key": "a",
+      "modifiers": [
+        "ctrl"
+      ],
+      "portKey": "cmd-a",
+      "expect": {
+        "text": "/zzzzzzzz",
+        "focused": true,
+        "menu": null,
+        "fast": false
+      }
+    },
+    {
+      "type": "key",
+      "key": "Backspace",
+      "portKey": "backspace",
+      "expect": {
+        "text": "",
+        "focused": true,
+        "menu": null,
+        "fast": false
+      }
+    },
+    {
+      "type": "type",
+      "text": "/fast",
+      "expect": {
+        "text": "/fast",
+        "focused": true,
+        "menu": {
+          "bbox": {
+            "x": 441,
+            "y": 639,
+            "w": 736,
+            "h": 67
+          },
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          },
+          "commands": [
+            {
+              "text": "Fast\n1.5x speed, increased usage",
+              "selected": true
+            },
+            {
+              "text": "Ultrafast\nThe fastest available responses for latency-sensitive work.",
+              "selected": false
+            }
+          ],
+          "selected": {
+            "tag": "button",
+            "text": "Fast\n1.5x speed, increased usage",
+            "aria": null,
+            "role": null,
+            "bbox": {
+              "x": 446,
+              "y": 644,
+              "w": 726,
+              "h": 29
+            },
+            "computed": {
+              "backgroundColor": "rgba(255, 255, 255, 0.08)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "default"
+            }
+          },
+          "empty": false,
+          "skills": false
+        },
+        "fast": false
+      }
+    },
+    {
+      "type": "key",
+      "key": "Enter",
+      "portKey": "enter",
+      "expect": {
+        "text": "",
+        "focused": true,
+        "menu": null,
+        "fast": false
+      }
+    },
+    {
+      "type": "type",
+      "text": "/fast",
+      "expect": {
+        "text": "/fast",
+        "focused": true,
+        "menu": {
+          "bbox": {
+            "x": 441,
+            "y": 639,
+            "w": 736,
+            "h": 67
+          },
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          },
+          "commands": [
+            {
+              "text": "Fast\n1.5x speed, increased usage",
+              "selected": true
+            },
+            {
+              "text": "Ultrafast\nThe fastest available responses for latency-sensitive work.",
+              "selected": false
+            }
+          ],
+          "selected": {
+            "tag": "button",
+            "text": "Fast\n1.5x speed, increased usage",
+            "aria": null,
+            "role": null,
+            "bbox": {
+              "x": 446,
+              "y": 644,
+              "w": 726,
+              "h": 29
+            },
+            "computed": {
+              "backgroundColor": "rgba(255, 255, 255, 0.08)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "default"
+            }
+          },
+          "empty": false,
+          "skills": false
+        },
+        "fast": false
+      }
+    },
+    {
+      "type": "key",
+      "key": "ArrowUp",
+      "portKey": "up",
+      "expect": {
+        "text": "/fast",
+        "focused": true,
+        "menu": {
+          "bbox": {
+            "x": 441,
+            "y": 639,
+            "w": 736,
+            "h": 67
+          },
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          },
+          "commands": [
+            {
+              "text": "Fast\n1.5x speed, increased usage",
+              "selected": false
+            },
+            {
+              "text": "Ultrafast\nThe fastest available responses for latency-sensitive work.",
+              "selected": true
+            }
+          ],
+          "selected": {
+            "tag": "button",
+            "text": "Ultrafast\nThe fastest available responses for latency-sensitive work.",
+            "aria": null,
+            "role": null,
+            "bbox": {
+              "x": 446,
+              "y": 672,
+              "w": 726,
+              "h": 29
+            },
+            "computed": {
+              "backgroundColor": "rgba(255, 255, 255, 0.08)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "default"
+            }
+          },
+          "empty": false,
+          "skills": false
+        },
+        "fast": false
+      }
+    },
+    {
+      "type": "key",
+      "key": "ArrowDown",
+      "portKey": "down",
+      "expect": {
+        "text": "/fast",
+        "focused": true,
+        "menu": {
+          "bbox": {
+            "x": 441,
+            "y": 639,
+            "w": 736,
+            "h": 67
+          },
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          },
+          "commands": [
+            {
+              "text": "Fast\n1.5x speed, increased usage",
+              "selected": true
+            },
+            {
+              "text": "Ultrafast\nThe fastest available responses for latency-sensitive work.",
+              "selected": false
+            }
+          ],
+          "selected": {
+            "tag": "button",
+            "text": "Fast\n1.5x speed, increased usage",
+            "aria": null,
+            "role": null,
+            "bbox": {
+              "x": 446,
+              "y": 644,
+              "w": 726,
+              "h": 29
+            },
+            "computed": {
+              "backgroundColor": "rgba(255, 255, 255, 0.08)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "default"
+            }
+          },
+          "empty": false,
+          "skills": false
+        },
+        "fast": false
+      }
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "portKey": "tab",
+      "expect": {
+        "text": "",
+        "focused": true,
+        "menu": null,
+        "fast": false
+      }
+    },
+    {
+      "type": "type",
+      "text": "draft /",
+      "expect": {
+        "text": "draft /",
+        "focused": true,
+        "menu": {
+          "bbox": {
+            "x": 441,
+            "y": 386,
+            "w": 736,
+            "h": 320
+          },
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          },
+          "commands": [
+            {
+              "text": "Fast\n1.5x speed, increased usage",
+              "selected": true
+            },
+            {
+              "text": "Feedback\nSend feedback about this chat",
+              "selected": false
+            },
+            {
+              "text": "Goal\nSet a goal to keep pursuing",
+              "selected": false
+            },
+            {
+              "text": "MCP\nShow MCP server status",
+              "selected": false
+            },
+            {
+              "text": "Model",
+              "selected": false
+            },
+            {
+              "text": "Pet\nWake or tuck away the desktop pet",
+              "selected": false
+            },
+            {
+              "text": "Plan mode\nTurn plan mode on",
+              "selected": false
+            },
+            {
+              "text": "Reasoning\nLight",
+              "selected": false
+            },
+            {
+              "text": "Sketch\nDraw a sketch",
+              "selected": false
+            },
+            {
+              "text": "Status\nShow chat ID, context usage, and rate limits",
+              "selected": false
+            },
+            {
+              "text": "Ultrafast\nThe fastest available responses for latency-sensitive work.",
+              "selected": false
+            },
+            {
+              "text": "Usage & billing\nOpen usage and billing settings",
+              "selected": false
+            },
+            {
+              "text": "Work in a project\nChoose project for new chats",
+              "selected": false
+            }
+          ],
+          "selected": {
+            "tag": "button",
+            "text": "Fast\n1.5x speed, increased usage",
+            "aria": null,
+            "role": null,
+            "bbox": {
+              "x": 446,
+              "y": 391,
+              "w": 716,
+              "h": 29
+            },
+            "computed": {
+              "backgroundColor": "rgba(255, 255, 255, 0.08)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "default"
+            }
+          },
+          "empty": false,
+          "skills": true
+        },
+        "fast": false
+      }
+    },
+    {
+      "type": "key",
+      "key": "Escape",
+      "portKey": "escape",
+      "expect": {
+        "text": "draft /",
+        "focused": true,
+        "menu": null,
+        "fast": false
+      }
+    }
+  ],
+  "result": {
+    "dom": {
+      "text": "draft /",
+      "focused": true,
+      "menu": null,
+      "fast": false
+    },
+    "requests": [
+      {
+        "type": "mcp-request",
+        "method": "config/batchWrite",
+        "params": {
+          "edits": [
+            {
+              "keyPath": "service_tier",
+              "value": "priority",
+              "mergeStrategy": "upsert"
+            }
+          ],
+          "filePath": null,
+          "expectedVersion": null,
+          "reloadUserConfig": true
+        }
+      },
+      {
+        "type": "mcp-request",
+        "method": "config/batchWrite",
+        "params": {
+          "edits": [
+            {
+              "keyPath": "service_tier",
+              "value": "priority",
+              "mergeStrategy": "upsert"
+            }
+          ],
+          "filePath": null,
+          "expectedVersion": null,
+          "reloadUserConfig": true
+        }
+      }
+    ],
+    "screenshot": "/sdc-disk/tmp/cgx/s021/shots/s021-home-slash-final.png"
+  },
+  "notes": [
+    "Enter and Tab activate Fast. Route1 refuses config writes, so both requests set service_tier to priority.",
+    "ArrowUp wraps from Fast to Ultrafast in the filtered list. Escape retains the editor text and focus.",
+    "Command bodies and submenus assigned to S058/S059 remain out of scope by firstmate approval.",
+    "The replay compares command rows. Skill catalogs also contain host-provided entries outside the app-server fixture."
+  ]
+}
