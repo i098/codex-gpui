@@ -343,13 +343,13 @@ A settings row reports its change to `Root`: `desktop.*` and `features.*` rows p
 
 ## 15.1 Automations ("Scheduled")
 
-`Root` opens the page on rail `Scheduled` and on the command menu's `Manage scheduled tasks`. The page data comes from host fetches (`list-automations`, `inbox-items`, `automation-*`) that need the original's Electron host; the port has no host process, so the page shows the empty state with the landing examples.
+`Root` opens the page on rail `Scheduled` and on the command menu's `Manage scheduled tasks`. The page data comes from host fetches (`list-automations`, `inbox-items`, `automation-*`); `CloudHost` (`crates/app/src/host.rs`) serves the local ones from `CODEX_HOME` and the ChatGPT backend ones (`/wham/usage`, `/beacons/home`, `/automations?filter=scheduled`, `/suggested_automations`, the suggestion card's conversation start) with the sign-in that `codex app-server` holds. The page shows the empty state with the landing examples until the UI reads those answers.
 
 Slice S035 proves suggestion hover (AM-037) with `refs/interactions/s035.json` and `crates/app/tests/s035.rs`.
 The test replays pointer entry and exit on the existing fixture screen with the original server suggestions.
 It checks the card fill, the adjacent card, and the icon colors against the Linux route1 recording.
 The existing hover implementation already matches; no production code changes are needed.
-Suggestion click (AM-036) waits for F4b authenticated cloud transport.
+Suggestion click (AM-036) has its transport (`CloudHost`); the guided conversation UI is not wired.
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|

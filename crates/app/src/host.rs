@@ -6,21 +6,34 @@
 //! run metadata from `sqlite/codex.db` under `CODEX_HOME` (default: `~/.codex`).
 //! It never migrates the original database or reads another account's automation rows.
 //! Definition writes are atomic; scheduling and execution remain the original host's job.
-//! Authenticated HTTP services (usage, beacons, hosted automations) are explicitly unsupported.
+//! `CloudHost` adds the original's `httpFetch` service for ChatGPT backend requests (usage,
+//! beacons, hosted automations, suggested-task conversations): it consumes the renderer's
+//! `X-OpenAI-Attach-*` headers, attaches the token that `codex app-server` holds
+//! (`getAuthStatus` with `includeToken`) plus the account route from `account/read`, retries once
+//! after a 401 with a refreshed token, and answers the original wire shapes, including errors.
+//! The token never reaches logs, errors, or `Debug` output.
 //! Local fetches support `list-automations`, `inbox-items`, and `paths-exist`; other endpoints return errors.
 //! `Root` loads the automation list off the UI thread when the Scheduled route opens.
 //! Consumers read the result through `Root::automations`; this service slice does not change the static screens.
 //!
 //! Storage evidence: Codex 26.1007.30912, `src-BJv5Mk7n.js` functions `jF`, `NF`, `QF`,
-//! `Z$`, `Q$`, and `$$`. The checked-in recording retains the original oracle responses.
+//! `Z$`, `Q$`, and `$$`. HTTP evidence: `main-CqEoQDOU.js` `performDesktopFetch`, `fetchHttp`,
+//! `A_`, `j_`, `M_`; `bootstrap-CooIJpZm.js` `on`, `rn`, `Xt`; `src-BJv5Mk7n.js` `Kn`, `qn`,
+//! `getAuthToken`. The checked-in recording retains the original oracle responses.
 
 use anyhow::{Context as _, Result, bail, ensure};
+use base64::Engine as _;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+use bridge::Bridge;
 use rusqlite::{Connection, OpenFlags, OptionalExtension as _, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
+use url::Url;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "transport", content = "request", rename_all = "kebab-case")]
@@ -362,6 +375,469 @@ impl Host for LocalHost {
             "headers": {"content-type": "application/json"}, "bodyJsonString": body.to_string()}),
         )
     }
+}
+
+/// The sign-in the cloud transport attaches: the ChatGPT token and the workspace route.
+#[derive(Clone)]
+pub struct Credentials {
+    pub token: String,
+    /// `account/read.workspaceRouting.backendOrigin`; `None` keeps the configured base URL.
+    pub backend_origin: Option<String>,
+    /// `accountRoutingOverride` unless it is `NO_CONSTRAINT`.
+    pub routing_override: Option<String>,
+}
+
+/// Loads the sign-in; `true` asks for a refreshed token. `None` means no ChatGPT sign-in.
+pub type CredentialSource = Box<dyn Fn(bool) -> Result<Option<Credentials>> + Send + Sync>;
+
+/// The token and workspace route that `codex app-server` holds, read like the original's
+/// `getAuthToken` (`getAuthStatus` with `includeToken`) and `getBackendRequestAuth`
+/// (`account/read`). API-key and signed-out accounts yield `None`.
+pub fn app_server_credentials(bridge: Arc<Bridge>) -> CredentialSource {
+    Box::new(move |refresh| {
+        pollster::block_on(async {
+            let params = json!({"includeToken": true, "refreshToken": refresh});
+            let status: Value = bridge.request("getAuthStatus", params).await?;
+            if !matches!(
+                status["authMethod"].as_str(),
+                Some("chatgpt" | "chatgptAuthTokens")
+            ) {
+                return Ok(None);
+            }
+            let Some(token) = status["authToken"].as_str() else {
+                return Ok(None);
+            };
+            let account: Value = bridge
+                .request("account/read", json!({"refreshToken": false}))
+                .await?;
+            let routing = &account["workspaceRouting"];
+            Ok(Some(Credentials {
+                token: token.to_owned(),
+                backend_origin: routing["backendOrigin"].as_str().map(str::to_owned),
+                routing_override: routing["accountRoutingOverride"]
+                    .as_str()
+                    .filter(|o| *o != "NO_CONSTRAINT")
+                    .map(str::to_owned),
+            }))
+        })
+    })
+}
+
+type Headers = Vec<(String, String)>;
+/// An `httpFetch` failure the original reports as an error response: `(status, message)`.
+type Refusal = (u16, String);
+
+/// `LocalHost` plus the original's `httpFetch` service for the ChatGPT backend.
+pub struct CloudHost {
+    local: LocalHost,
+    credentials: CredentialSource,
+    cached: Mutex<Option<Credentials>>,
+    base_url: String,
+    // ponytail: in memory; the original persists it in global state across runs.
+    integrity_state: Mutex<Option<String>>,
+    agent: ureq::Agent,
+}
+
+impl CloudHost {
+    /// `base_url` is the ChatGPT backend root, like `https://chatgpt.com/backend-api`.
+    pub fn new(
+        local: LocalHost,
+        credentials: CredentialSource,
+        base_url: impl Into<String>,
+    ) -> Self {
+        // No overall deadline, like `fetchHttp`: a suggested-task conversation start streams
+        // its answer, and the reply is only complete once the stream closes.
+        let agent = ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .timeout_connect(Some(Duration::from_secs(30)))
+            .build()
+            .into();
+        Self {
+            local,
+            credentials,
+            cached: Mutex::new(None),
+            base_url: base_url.into(),
+            integrity_state: Mutex::new(None),
+            agent,
+        }
+    }
+
+    /// `$CODEX_API_BASE_URL`, else the production backend, like the original's `$t`.
+    pub fn from_env(credentials: CredentialSource) -> Self {
+        let base = std::env::var("CODEX_API_BASE_URL")
+            .ok()
+            .filter(|u| !u.trim().is_empty())
+            .unwrap_or_else(|| "https://chatgpt.com/backend-api".into());
+        Self::new(LocalHost::from_env(), credentials, base)
+    }
+
+    /// Cached sign-in, reloaded on `refresh`. Failures carry the original's messages only.
+    fn credentials(&self, refresh: bool) -> std::result::Result<Credentials, Refusal> {
+        let mut cached = self.cached.lock().unwrap_or_else(PoisonError::into_inner);
+        if !refresh && let Some(credentials) = cached.as_ref() {
+            return Ok(credentials.clone());
+        }
+        let loaded = (self.credentials)(refresh).map_err(|_| {
+            if refresh {
+                (401, "Failed to refresh authentication token".to_owned())
+            } else {
+                (432, "Failed to retrieve authentication token".to_owned())
+            }
+        })?;
+        cached.clone_from(&loaded);
+        loaded.ok_or_else(|| (500, "No authenticated workspace is available".to_owned()))
+    }
+
+    /// The original's `fetchHttp`: wire problems become error responses, not `Err`.
+    fn http(&self, request: &Value) -> Result<Value> {
+        let url = request["url"].as_str().context("HTTP request has no url")?;
+        let value = match self.send(url, request) {
+            Ok(value) => value,
+            Err((status, error)) => json!({
+                "type": "fetch-response", "responseType": "error",
+                "status": status, "error": error, "responseStatus": null
+            }),
+        };
+        Ok(json!({"value": value, "fn": false, "calls": []}))
+    }
+
+    /// The original's `performDesktopFetch` for one request, with its single 401 retry.
+    fn send(&self, url: &str, request: &Value) -> std::result::Result<Value, Refusal> {
+        let method = request["method"]
+            .as_str()
+            .unwrap_or("GET")
+            .to_ascii_uppercase();
+        let body = request["body"].as_str().map(str::to_owned);
+        let mut headers: Headers = request["headers"]
+            .as_object()
+            .map(|h| {
+                h.iter()
+                    .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_owned())))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let resolved = if url.starts_with("http://") || url.starts_with("https://") {
+            url.to_owned()
+        } else {
+            format!(
+                "{}/{}",
+                self.base_url.trim_end_matches('/'),
+                url.trim_start_matches('/')
+            )
+        };
+        let target = Url::parse(&resolved).map_err(|e| (400, format!("Invalid URL: {e}")))?;
+        let attach_auth = take_flag(&mut headers, "X-OpenAI-Attach-Auth");
+        let surface = take_flag(&mut headers, "X-OpenAI-Attach-Desktop-Surface");
+        let device_check = take_flag(&mut headers, "X-OpenAI-Attach-DeviceCheck-Token");
+        let integrity = take_flag(&mut headers, "X-OpenAI-Attach-Integrity-State");
+        let expected_account = take_header(&mut headers, "X-OpenAI-Expected-Account-Id");
+        take_header(&mut headers, "X-OpenAI-Account-Routing-Override");
+        let allowed = auth_allowed(&target, &self.base_url);
+        let attach_auth = (attach_auth || (allowed && infers_auth(target.path())))
+            && !has_header(&headers, "Authorization");
+        let refusals = [
+            (
+                attach_auth && !allowed,
+                "Refusing to attach authentication to non-OpenAI URL",
+            ),
+            (
+                surface && !allowed,
+                "Refusing to attach desktop surface to non-OpenAI URL",
+            ),
+            (
+                device_check,
+                "DeviceCheck tokens are unavailable on this host",
+            ),
+            (
+                integrity && !allowed,
+                "Refusing to attach integrity state to non-OpenAI URL",
+            ),
+        ];
+        if let Some((_, message)) = refusals.into_iter().find(|(refused, _)| *refused) {
+            return Err((400, message.into()));
+        }
+        if let Some(body) = &body
+            && !has_header(&headers, "Content-Type")
+            && body.trim_start().starts_with(['{', '['])
+            && serde_json::from_str::<Value>(body).is_ok()
+        {
+            set_header(&mut headers, "Content-Type", "application/json");
+        }
+        if surface {
+            if !has_header(&headers, "originator") {
+                set_header(&mut headers, "originator", "Codex Desktop");
+            }
+            if !has_header(&headers, "User-Agent") {
+                set_header(&mut headers, "User-Agent", user_agent());
+            }
+        }
+        let return_error_response = request["returnErrorResponse"] == true;
+        let expected_identity = request.get("expectedIdentity").filter(|v| v.is_object());
+        let mut retry = request["retry"] != "never";
+        let mut credentials = attach_auth.then(|| self.credentials(false)).transpose()?;
+        loop {
+            let mut headers = headers.clone();
+            let mut target = target.clone();
+            if let Some(credentials) = &credentials {
+                let claims = claims(&credentials.token);
+                if let Some(expected) = &expected_account
+                    && claims.account_id.as_deref() != Some(expected)
+                {
+                    return Err((
+                        409,
+                        "The authenticated account changed before the request could be sent."
+                            .into(),
+                    ));
+                }
+                if let Some(identity) = expected_identity
+                    && (identity["accountId"].as_str() != claims.principal_account.as_deref()
+                        || identity["userId"].as_str() != claims.user_id.as_deref())
+                {
+                    return Err((499, "Authenticated principal changed".into()));
+                }
+                set_header(
+                    &mut headers,
+                    "Authorization",
+                    format!("Bearer {}", credentials.token),
+                );
+                if let Some(account) = &claims.account_id {
+                    set_header(&mut headers, "ChatGPT-Account-Id", account);
+                }
+                if claims.fedramp {
+                    set_header(&mut headers, "X-OpenAI-Fedramp", "true");
+                } else {
+                    take_header(&mut headers, "X-OpenAI-Fedramp");
+                }
+                if let Some(origin) = &credentials.backend_origin {
+                    let query = target.query().map(|q| format!("?{q}")).unwrap_or_default();
+                    target = Url::parse(&format!("{origin}{}{query}", target.path()))
+                        .map_err(|e| (400, format!("Invalid workspace route: {e}")))?;
+                }
+                if let Some(route) = &credentials.routing_override {
+                    set_header(&mut headers, "X-OpenAI-Account-Routing-Override", route);
+                }
+            }
+            let state = integrity
+                .then(|| {
+                    self.integrity_state
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .clone()
+                })
+                .flatten();
+            if let Some(state) = &state {
+                set_header(&mut headers, "X-OAI-IS", state);
+            }
+            let mut builder = ureq::http::Request::builder()
+                .method(method.as_str())
+                .uri(target.as_str());
+            for (name, value) in &headers {
+                builder = builder.header(name.as_str(), value.as_str());
+            }
+            let bad = |e: ureq::http::Error| (400, e.to_string());
+            let response = match &body {
+                Some(body) => self.agent.run(builder.body(body.clone()).map_err(bad)?),
+                None => self.agent.run(builder.body(()).map_err(bad)?),
+            }
+            .map_err(|e| (500, e.to_string()))?;
+            if integrity {
+                self.store_integrity_update(&response, state.as_deref());
+            }
+            if response.status() == 401 && credentials.is_some() && retry {
+                retry = false;
+                credentials = Some(self.credentials(true)?);
+                continue;
+            }
+            return wire(response, return_error_response);
+        }
+    }
+
+    /// Keeps `X-OAI-IS-Update` only when the state it answers is the one this host sent.
+    fn store_integrity_update(
+        &self,
+        response: &ureq::http::Response<ureq::Body>,
+        sent: Option<&str>,
+    ) {
+        let Some(next) = response
+            .headers()
+            .get("x-oai-is-update")
+            .and_then(|v| v.to_str().ok())
+            .filter(|s| valid_integrity_state(s))
+        else {
+            return;
+        };
+        let mut current = self
+            .integrity_state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if current.as_deref().filter(|s| valid_integrity_state(s)) == sent {
+            *current = Some(next.to_owned());
+        }
+    }
+}
+
+impl Host for CloudHost {
+    fn fetch(&self, request: &Request) -> Result<Value> {
+        match request {
+            Request::Http(http) => self.http(http),
+            Request::Fetch { .. } => self.local.fetch(request),
+        }
+    }
+}
+
+/// The recorded wire shape: `__response` for deliverable responses, else the error object.
+fn wire(
+    mut response: ureq::http::Response<ureq::Body>,
+    return_error_response: bool,
+) -> std::result::Result<Value, Refusal> {
+    let status = response.status().as_u16();
+    let text = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .is_none_or(|t| {
+            ["json", "text", "xml", "javascript"]
+                .iter()
+                .any(|k| t.contains(k))
+        });
+    let mut headers: Vec<(String, String)> = response
+        .headers()
+        .iter()
+        .map(|(k, v)| {
+            (
+                k.to_string(),
+                String::from_utf8_lossy(v.as_bytes()).into_owned(),
+            )
+        })
+        .collect();
+    headers.sort();
+    let bytes = response
+        .body_mut()
+        .read_to_vec()
+        .map_err(|e| (500, e.to_string()))?;
+    if (200..300).contains(&status) || status == 304 || return_error_response {
+        let mut wire = json!({"status": status, "statusText": "", "headers": headers});
+        if text {
+            wire["body"] = String::from_utf8_lossy(&bytes).into_owned().into();
+        } else {
+            wire["base64"] = STANDARD.encode(&bytes).into();
+        }
+        return Ok(json!({"response": {"__response": wire}}));
+    }
+    let error = if bytes.is_empty() {
+        format!("Request failed with status {status}")
+    } else {
+        String::from_utf8_lossy(&bytes).into_owned()
+    };
+    Ok(json!({
+        "type": "fetch-response", "responseType": "error",
+        "status": status, "error": error, "responseStatus": status
+    }))
+}
+
+/// The token's `https://api.openai.com/auth` claims (`Kn` and `qn` in the original).
+struct Claims {
+    /// `chatgpt_account_id`: the `ChatGPT-Account-Id` header and expected-account check.
+    account_id: Option<String>,
+    /// `chatgpt_account_id`, else `account_id`: the authenticated principal.
+    principal_account: Option<String>,
+    /// `chatgpt_user_id`, else `user_id`.
+    user_id: Option<String>,
+    fedramp: bool,
+}
+
+fn claims(token: &str) -> Claims {
+    let json = token
+        .split('.')
+        .nth(1)
+        .and_then(|payload| URL_SAFE_NO_PAD.decode(payload).ok())
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .unwrap_or_default();
+    let auth = &json["https://api.openai.com/auth"];
+    let text = |key: &str| auth[key].as_str().map(str::to_owned);
+    Claims {
+        account_id: text("chatgpt_account_id"),
+        principal_account: text("chatgpt_account_id").or_else(|| text("account_id")),
+        user_id: text("chatgpt_user_id").or_else(|| text("user_id")),
+        fedramp: auth["chatgpt_account_is_fedramp"] == true,
+    }
+}
+
+/// `isDesktopAuthAllowedUrl`: OpenAI hosts, the configured backend, and local development.
+fn auth_allowed(url: &Url, base_url: &str) -> bool {
+    if !matches!(url.scheme(), "http" | "https") {
+        return false;
+    }
+    let host = url.host_str().unwrap_or_default();
+    if host == "localhost" && matches!(url.port(), None | Some(8000)) {
+        return true;
+    }
+    if host == "status.openai.com" {
+        return false;
+    }
+    host == "openai.com"
+        || host.ends_with(".openai.com")
+        || Url::parse(base_url).is_ok_and(|base| base.origin() == url.origin())
+        || host == "chatgpt.com"
+        || (host.ends_with(".chatgpt.com") && !host.starts_with("ab."))
+}
+
+/// `shouldInferCodexApiAuth`: Codex API paths are authenticated without the attach header.
+fn infers_auth(path: &str) -> bool {
+    let path = path.trim_end_matches('/');
+    [
+        "/wham",
+        "/api/wham",
+        "/backend-api/wham",
+        "/backend-api/estuary/content",
+    ]
+    .iter()
+    .any(|root| path == *root || path.starts_with(&format!("{root}/")))
+}
+
+fn valid_integrity_state(state: &str) -> bool {
+    let parts: Vec<&str> = state.split('.').collect();
+    state.len() <= 2048
+        && parts.len() == 4
+        && parts[0] == "ois1"
+        && parts[1..].iter().all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+        })
+}
+
+fn user_agent() -> String {
+    let os = match std::env::consts::OS {
+        "macos" => "Mac OS",
+        "windows" => "Windows",
+        "linux" => "Linux",
+        other => other,
+    };
+    let version = env!("CARGO_PKG_VERSION");
+    format!("Codex Desktop/{version} ({os}; {})", std::env::consts::ARCH)
+}
+
+fn has_header(headers: &[(String, String)], name: &str) -> bool {
+    headers.iter().any(|(k, _)| k.eq_ignore_ascii_case(name))
+}
+
+fn take_header(headers: &mut Headers, name: &str) -> Option<String> {
+    let index = headers
+        .iter()
+        .position(|(k, _)| k.eq_ignore_ascii_case(name))?;
+    Some(headers.remove(index).1)
+}
+
+/// The original's `pc`: present and not `0`/`false`.
+fn take_flag(headers: &mut Headers, name: &str) -> bool {
+    take_header(headers, name).is_some_and(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+}
+
+fn set_header(headers: &mut Headers, name: &str, value: impl Into<String>) {
+    take_header(headers, name);
+    headers.push((name.to_owned(), value.into()));
 }
 
 fn definition(id: &str, contents: &str) -> Result<Value> {
