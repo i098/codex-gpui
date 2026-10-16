@@ -447,7 +447,7 @@ impl Composer {
 
     fn new(placeholder: &'static str, docked: bool, cx: &mut Context<Self>) -> Self {
         Self {
-            focus_handle: cx.focus_handle(),
+            focus_handle: cx.focus_handle().tab_stop(true),
             placeholder: placeholder.into(),
             docked,
             content: String::new(),
@@ -469,8 +469,8 @@ impl Composer {
             menu: None,
             slash: slash::Slash::default(),
             menu_focus: menu::MenuFocus::new(cx),
-            permissions_focus: cx.focus_handle(),
-            model_focus: cx.focus_handle(),
+            permissions_focus: cx.focus_handle().tab_stop(true),
+            model_focus: cx.focus_handle().tab_stop(true),
             footer_width: f32::INFINITY,
             menu_trigger_hovered: false,
             approval: None,

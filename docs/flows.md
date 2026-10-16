@@ -315,6 +315,12 @@ A settings row reports its change to `Root`: `desktop.*` and `features.*` rows p
 
 `Root` opens the page on rail `Scheduled` and on the command menu's `Manage scheduled tasks`. The page data comes from host fetches (`list-automations`, `inbox-items`, `automation-*`) that need the original's Electron host; the port has no host process, so the page shows the empty state with the landing examples.
 
+Slice S035 proves suggestion hover (AM-037) with `refs/interactions/s035.json` and `crates/app/tests/s035.rs`.
+The test replays pointer entry and exit on the existing fixture screen with the original server suggestions.
+It checks the card fill, the adjacent card, and the icon colors against the Linux route1 recording.
+The existing hover implementation already matches; no production code changes are needed.
+Suggestion click (AM-036) waits for F4b authenticated cloud transport.
+
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Rail `Scheduled` | entry | Automations page, `ScheduledSidebar`. | `Route::Scheduled` with `ScheduledSidebar` and the page. | PASS (`rail_scheduled`, `parity_automations`) |
@@ -327,7 +333,7 @@ A settings row reports its change to `Root`: `desktop.*` and `features.*` rows p
 | 8 | Row actions | click | Edit, Run now, Pause, Delete. | — | NOT WIRED (no host: `automation-update`, `automation-delete`) |
 | 9 | Editor fields | focus | Name, Prompt, schedule. | — | NOT WIRED (no host: `automation-create`) |
 | 10 | Previous runs | click | Run chat, mark read, archive. | — | NOT WIRED (no host: `inbox-items`, `automation-run-archive`) |
-| 11 | Row hover | hover | Row highlight. | No task rows; the suggestion cards' hover fill shows (152887 px repainted). | FAIL (no task rows without the host; card hover checked by `scheduled_card_hover`) |
+| 11 | Row hover | hover | Row highlight. | No task rows; suggestion hover matches the original recording. | FAIL (no task rows; suggestion hover passes `s035::suggestion_hover_matches_original`) |
 | 12 | Focus ring | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/screens/automations.rs`) |
 | 13 | No tasks | empty | `No scheduled tasks`, suggestions. | `No scheduled tasks` and the landing examples (no `/suggested_automations` backend). | PASS (`rail_scheduled`, `parity_automations`) |
 | 14 | Loading | loading | `Loading scheduled tasks…`. | — | NOT WIRED (no host: `list-automations`) |
