@@ -668,7 +668,12 @@ fn form_encode(s: &str) -> String {
                 out.push(b as char)
             }
             b' ' => out.push('+'),
-            _ => out.push_str(&format!("%{b:02X}")),
+            _ => {
+                const HEX: &[u8; 16] = b"0123456789ABCDEF";
+                out.push('%');
+                out.push(HEX[(b >> 4) as usize] as char);
+                out.push(HEX[(b & 15) as usize] as char);
+            }
         }
     }
     out
