@@ -757,7 +757,7 @@ impl SplitScreen {
                     cx.notify();
                 }))
                 .when(!selected, |d| {
-                    d.on_click(dispatch_ix::<ActivateSideTab>(ix))
+                    d.on_click(dispatch_action(ActivateSideTab(ix)))
                 })
                 // `_SelectedSurface`: its own squircle layer under the tab button, with a 0.5 px
                 // `border-hairline`. Chromium composites it (its rect: the ink of
@@ -827,7 +827,7 @@ impl SplitScreen {
                             .items_center()
                             .justify_center()
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .on_click(dispatch_ix::<CloseSideTab>(ix))
+                            .on_click(dispatch_action(CloseSideTab(ix)))
                             .child(icon("diff-tab-close", 14., t.text_tertiary)),
                     )
                 })
@@ -901,23 +901,9 @@ impl SplitScreen {
     }
 }
 
-/// Click handler dispatching `A(ix)`.
-fn dispatch_ix<A: Action + From<usize>>(
-    ix: usize,
-) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
-    move |_, window, cx| window.dispatch_action(Box::new(A::from(ix)), cx)
-}
-
-impl From<usize> for ActivateSideTab {
-    fn from(ix: usize) -> Self {
-        Self(ix)
-    }
-}
-
-impl From<usize> for CloseSideTab {
-    fn from(ix: usize) -> Self {
-        Self(ix)
-    }
+/// Click handler dispatching `action`.
+fn dispatch_action(action: impl Action) -> impl Fn(&ClickEvent, &mut Window, &mut App) {
+    move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx)
 }
 
 /// Main panel of a thread with a side panel open: the thread, then the panel behind its 1 px
