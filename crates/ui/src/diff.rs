@@ -3,7 +3,7 @@
 //! changes. All numbers are the spec's CSS px.
 
 use crate::{
-    MONO, SANS, Shell, composer::shadow, fixture, icon::icon, layout_color, over,
+    MONO, SANS, Shell, composer::shadow, drag_layer, fixture, icon::icon, layout_color, over,
     screens::thread::view::ThreadView, text,
 };
 use bridge::{
@@ -11,11 +11,12 @@ use bridge::{
     types::{ThreadItem, ThreadReadResponse, ThreadStartResponse, Turn},
 };
 use gpui::{
-    Action, AnyView, App, AppContext as _, ClickEvent, ClipboardItem, Context, Corners, Div,
-    Entity, FocusHandle, Font, FontFeatures, FontWeight, HighlightStyle, Hsla, InteractiveElement,
-    IntoElement, KeyDownEvent, MouseButton, ParentElement, Pixels, Render, Rgba, ScrollHandle,
-    SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun, Window, black,
-    combine_highlights, deferred, div, font, prelude::FluentBuilder as _, px, rgb, white,
+    Action, AnyView, App, AppContext as _, ClickEvent, ClipboardItem, Context, Corners,
+    CursorStyle, Div, Entity, FocusHandle, Font, FontFeatures, FontWeight, Global, HighlightStyle,
+    Hsla, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
+    ParentElement, Pixels, Render, Rgba, ScrollHandle, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, StyledText, TextRun, Window, black, combine_highlights,
+    deferred, div, font, prelude::FluentBuilder as _, px, rgb, white,
 };
 use shapes::Decoration;
 use std::{cell::Cell, ops::Range, sync::Arc};
@@ -34,13 +35,27 @@ const CODE_LINE: f32 = 21.6;
 /// Menlo advance at 12 px (0.602em); `--diffs-min-number-column-width` is 4ch.
 const CH: f32 = 7.224;
 
-/// Panel width for the current window, as the original clamps its stored width.
+/// The panel width the user last dragged the divider to (DT-056); `STORED_WIDTH` until then.
+#[derive(Clone, Copy)]
+pub struct PanelWidth(pub Pixels);
+
+impl Global for PanelWidth {}
+
+/// Panel width for the current window, as the original clamps its stored width: at least
+/// `MIN_CHAT`, and the chat keeps `MIN_CHAT` beside it.
 /// ponytail: assumes the sidebar is open; a collapsed sidebar only leaves the chat wider.
-pub fn panel_width(window: &Window) -> Pixels {
-    // Main panel inner width: window minus sidebar, the main panel's 0.5 px hairline and 4 px
-    // inset.
+pub fn panel_width(window: &Window, cx: &App) -> Pixels {
+    let stored = cx
+        .try_global::<PanelWidth>()
+        .map_or(px(STORED_WIDTH), |w| w.0);
+    stored.clamp(px(MIN_CHAT), panel_max(window))
+}
+
+/// The widest panel: the main panel's inner width (window minus sidebar, the main panel's
+/// 0.5 px hairline and 4 px inset) less the chat's `MIN_CHAT`.
+fn panel_max(window: &Window) -> Pixels {
     let main = window.viewport_size().width - Theme::SIDEBAR_WIDTH - px(4.5);
-    px(STORED_WIDTH).min((main - px(MIN_CHAT)).max(px(MIN_CHAT)))
+    (main - px(MIN_CHAT)).max(px(MIN_CHAT))
 }
 
 /// The panel at its clamped width (the chat at `MIN_CHAT`): with `Shell::main_layer`,
@@ -56,8 +71,8 @@ pub fn panel_width(window: &Window) -> Pixels {
 /// (`kRoundedCorner`) when a nested shader-based rounded clip sits under the surface's clip
 /// with no non-conditional render surface between (`SynthesizeCcEffectsForClipsIfNeeded` in
 /// property_tree_manager.cc), so some rounded clip in the chat is composited only at 1280.
-pub fn panel_clamped(window: &Window) -> bool {
-    panel_width(window) < px(STORED_WIDTH)
+pub fn panel_clamped(window: &Window, cx: &App) -> bool {
+    panel_width(window, cx) < px(STORED_WIDTH)
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -579,7 +594,7 @@ impl DiffPanel {
 impl Render for DiffPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
-        let wide = panel_width(window) - px(1.) >= px(625.);
+        let wide = panel_width(window, cx) - px(1.) >= px(625.);
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
         let ordinal = Cell::new(0);
         let line_index = Cell::new(0);
@@ -665,7 +680,7 @@ impl Render for DiffPanel {
                                 ..Default::default()
                             })),
                     )
-                    .child(self.header(&t, wide, panel_clamped(window))),
+                    .child(self.header(&t, wide, panel_clamped(window, cx))),
             )
             .child(
                 div()
@@ -907,22 +922,28 @@ fn dispatch_action(action: impl Action) -> impl Fn(&ClickEvent, &mut Window, &mu
 }
 
 /// Main panel of a thread with a side panel open: the thread, then the panel behind its 1 px
-/// `border-l`, ending at the main panel's right edge.
+/// `border-l`, ending at the main panel's right edge. The divider (`Resize workspace panes`,
+/// a 16 px hit area on the panel side of the border) drags the panel's width live, edge
+/// `left`: width = width at press - pointer travel, clamped so both panes keep `MIN_CHAT`.
 struct SplitMain {
     thread: AnyView,
     panel: AnyView,
+    /// Width at press plus the pointer x at press, while the divider is dragged.
+    drag_anchor: Option<Pixels>,
 }
 
 impl Render for SplitMain {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
+        let width = panel_width(window, cx);
         div()
             .size_full()
+            .relative()
             .flex()
             .child(div().flex_1().min_w_0().child(self.thread.clone()))
             .child(
                 div()
-                    .w(panel_width(window))
+                    .w(width)
                     .flex_none()
                     .border_l_1()
                     // The panel content's `[contain:layout_paint]`.
@@ -930,6 +951,43 @@ impl Render for SplitMain {
                     .border_color(over(t.border, t.surface))
                     .child(self.panel.clone()),
             )
+            .child(
+                div()
+                    .id("panel-resize")
+                    .role(gpui::Role::Splitter)
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .right(width - px(16.))
+                    .w(px(16.))
+                    .cursor(CursorStyle::ResizeLeftRight)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, e: &MouseDownEvent, _, cx| {
+                            this.drag_anchor = Some(width + e.position.x);
+                            cx.stop_propagation();
+                            cx.notify();
+                        }),
+                    ),
+            )
+            .when_some(self.drag_anchor, |d, anchor| {
+                let released = cx.entity().downgrade();
+                d.child(drag_layer(
+                    move |x, window, cx| {
+                        let width = (anchor - x).clamp(px(MIN_CHAT), panel_max(window));
+                        cx.set_global(PanelWidth(width));
+                        window.refresh();
+                    },
+                    move |cx| {
+                        released
+                            .update(cx, |this, cx| {
+                                this.drag_anchor = None;
+                                cx.notify();
+                            })
+                            .ok();
+                    },
+                ))
+            })
     }
 }
 
@@ -950,7 +1008,7 @@ impl Render for SplitScreen {
         // The panel ends at the main panel's right edge, 4 px
         // (`--app-shell-page-inline-end-inset`) from the window's.
         let left = (!self.tabs.is_empty())
-            .then(|| window.viewport_size().width - px(4.) - panel_width(window));
+            .then(|| window.viewport_size().width - px(4.) - panel_width(window, cx));
         // ponytail: like refs/thread, the header only follows the open-sidebar titlebar layout.
         let open = self.shell.read(cx).sidebar_open;
         let sidebar_width = self.shell.read(cx).sidebar_width;
@@ -1048,6 +1106,7 @@ pub fn with_side_tabs(
             .new(|_| SplitMain {
                 thread: thread.clone().into(),
                 panel: panel.clone(),
+                drag_anchor: None,
             })
             .into(),
         None => thread.clone().into(),
@@ -1287,7 +1346,7 @@ impl Render for FileView {
                     .flex_none()
                     .border_b_1()
                     .border_color(t.border)
-                    .child(self.header(&t, panel_clamped(window))),
+                    .child(self.header(&t, panel_clamped(window, cx))),
             )
             .child(body)
     }
