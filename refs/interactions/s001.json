@@ -1,0 +1,208 @@
+{
+  "name": "s001",
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 1,
+    "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+    "theme": "dark",
+    "hoverEmulated": true
+  },
+  "initial": {
+    "pinnedThread": "01a13de9-c48a-7b20-8382-db900881cb99",
+    "sectionId": "01984de2-8f74-7c91-a3b2-5c5e937cf318"
+  },
+  "notes": [
+    "The original renderer uses fixture-backed pinnedThreads.set/list and localThreadCatalog queries. The app-server fixture honors section and archived filters. Pin click is deferred under firstmate instruction 001.",
+    "thread/archive returns success in the isolated fixture. No live account or session is changed. Native pinnedThreads.set(false) sends thread/section/move with sectionId:null and beforeThreadId:null, confirmed from the Electron host engine."
+  ],
+  "steps": [
+    {
+      "type": "click",
+      "target": {
+        "selector": "[aria-label=\"Unpin chat\"]",
+        "bbox": {
+          "x": 276,
+          "y": 208,
+          "w": 20,
+          "h": 20
+        }
+      },
+      "waitMs": 300
+    },
+    {
+      "type": "hover",
+      "target": {
+        "text": "Change the greeting in hello.py to \"Hello, Codex\".",
+        "bbox": {
+          "x": 68,
+          "y": 295,
+          "w": 256,
+          "h": 20
+        }
+      },
+      "waitMs": 150
+    },
+    {
+      "type": "hover",
+      "target": {
+        "selector": "[aria-label=\"Archive chat\"]",
+        "bbox": {
+          "x": 304,
+          "y": 295,
+          "w": 20,
+          "h": 20
+        }
+      },
+      "waitMs": 150
+    },
+    {
+      "type": "click",
+      "target": {
+        "selector": "[aria-label=\"Archive chat\"]",
+        "bbox": {
+          "x": 304,
+          "y": 295,
+          "w": 20,
+          "h": 20
+        }
+      },
+      "waitMs": 1000
+    }
+  ],
+  "result": {
+    "dom": [
+      {
+        "after": "rest",
+        "unpin": {
+          "tag": "button",
+          "text": "",
+          "aria": "Unpin chat",
+          "role": null,
+          "bbox": {
+            "x": 276,
+            "y": 208,
+            "w": 20,
+            "h": 20
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        }
+      },
+      {
+        "after": "unpin",
+        "body": "Skip to content\nHome\nSpace\nScheduled\nPlugins\nExplore\nCode Review\nSites\nCodex\nNew chat\nYour dot\nProjects\nNo projects\nRecents\nChange the greeting in hello.py to \"Hello, Codex\".\nAdd a subtract(a, b) function to src/math.py next to add, then run python3 -c '\u2026\nIn two sentences, what does this repository contain?\nWhat should we build?\nChoose project\nThis computer\n\n\n\n\nCustom\nGPT-6 Astra\nLight\nNone\nMinimal\nLight\nMedium\nHigh\nExtra High\nMax\nUltra\nPersistent",
+        "toast": null
+      },
+      {
+        "after": "archive-hover",
+        "button": {
+          "tag": "button",
+          "text": "",
+          "aria": "Archive chat",
+          "role": null,
+          "bbox": {
+            "x": 304,
+            "y": 295,
+            "w": 20,
+            "h": 20
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "oklab(0.999994 0.0000455678 0.0000200868 / 0.85)",
+            "opacity": "1",
+            "outline": "oklab(0.999994 0.0000455678 0.0000200868 / 0.85) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        }
+      },
+      {
+        "after": "archive",
+        "body": "Skip to content\nHome\nSpace\nScheduled\nPlugins\nExplore\nCode Review\nSites\nCodex\nNew chat\nYour dot\nProjects\nNo projects\nRecents\nAdd a subtract(a, b) function to src/math.py next to add, then run python3 -c '\u2026\nIn two sentences, what does this repository contain?\nWhat should we build?\nChoose project\nThis computer\n\n\n\n\nCustom\nGPT-6 Astra\nLight\nNone\nMinimal\nLight\nMedium\nHigh\nExtra High\nMax\nUltra\nPersistent\nArchived chat\nView\nUndo",
+        "toast": {
+          "tag": "li",
+          "text": "Archived chat\nView\nUndo",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 496,
+            "y": 48,
+            "w": 289,
+            "h": 42
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 0px",
+            "boxShadow": "none",
+            "cursor": "auto"
+          }
+        }
+      }
+    ],
+    "requests": [
+      {
+        "type": "host",
+        "service": "pinnedThreads",
+        "method": "set",
+        "params": {
+          "threadId": "01a13de9-c48a-7b20-8382-db900881cb99",
+          "pinned": false,
+          "hostId": "local",
+          "useAppServerPins": true
+        }
+      },
+      {
+        "type": "mcp-request",
+        "method": "thread/archive",
+        "params": {
+          "threadId": "01a13de9-c48a-7b20-8382-db900881cb99"
+        }
+      },
+      {
+        "type": "host",
+        "service": "pinnedThreads",
+        "method": "set",
+        "params": {
+          "threadId": "01a13de9-c48a-7b20-8382-db900881cb99",
+          "pinned": false
+        }
+      }
+    ],
+    "screenshot": "/sdc-disk/tmp/cgx/s001/shots/s001-success.png",
+    "pixels": [
+      {
+        "at": {
+          "x": 305,
+          "y": 296
+        },
+        "rgba": [
+          45,
+          45,
+          45,
+          255
+        ],
+        "backdrop": {
+          "at": { "x": 335, "y": 296 },
+          "rgba": [28, 28, 28, 255]
+        }
+      }
+    ],
+    "state": {
+      "route": "home",
+      "recents": [
+        "01a13de9-6fff-78e1-84fc-ebb3a2dc873f",
+        "01a13de9-35ed-7c72-a36a-68eeb2f4e1ee"
+      ],
+      "toast": "Archived chat"
+    }
+  }
+}

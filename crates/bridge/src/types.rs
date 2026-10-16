@@ -23,11 +23,17 @@ pub struct Thread {
     pub cwd: String,
     pub created_at: i64,
     pub updated_at: i64,
+    pub section: Option<ThreadSection>,
     pub status: ThreadStatus,
     pub git_info: Option<Value>,
     /// Filled only by `thread/read` with `includeTurns`, `thread/resume` and `thread/fork`.
     #[serde(default)]
     pub turns: Vec<Turn>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ThreadSection {
+    pub id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -103,6 +109,10 @@ pub enum ThreadItem {
         aggregated_output: Option<String>,
         exit_code: Option<i32>,
         duration_ms: Option<i64>,
+        /// The server's parse of `command`: `read` / `search` / `list_files` actions name the
+        /// file (`Read math.py`); anything else is `unknown`.
+        #[serde(default)]
+        command_actions: Vec<CommandAction>,
     },
     FileChange {
         id: String,
@@ -139,6 +149,17 @@ pub struct FileUpdateChange {
     /// `{"type": "add" | "delete" | "update", "move_path"?}`
     pub kind: Value,
     pub diff: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandAction {
+    /// `read` | `search` | `list_files` | `format` | `lint` | `noop` | `test` | `unknown`
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub command: String,
+    /// File name of a `read`.
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
