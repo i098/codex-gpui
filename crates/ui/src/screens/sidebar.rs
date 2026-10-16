@@ -16,11 +16,13 @@ use gpui::{
     Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun, Window, div, point,
     prelude::FluentBuilder as _, px, relative, rgba,
 };
-use std::{ops::Range, path::Path};
+use std::{collections::HashSet, ops::Range, path::Path};
 use theme::{ActiveTheme as _, Appearance, Theme};
 
 /// `.sidebar-item`: `--radius-lg` (12.5 px) with `corner-shape: superellipse(1.5)`.
 const RADIUS_ROW: Pixels = px(12.5);
+
+const PINNED_SECTION_ID: &str = "01984de2-8f74-7c91-a3b2-5c5e937cf318";
 
 /// Recents row label: the thread name, else its preview cut to 80 chars with `…`.
 pub(crate) fn title(thread: &Thread) -> SharedString {
@@ -40,7 +42,8 @@ pub struct HomeSidebar {
     threads: Vec<(String, SharedString)>,
     selected: Option<String>,
     /// `Projects`, `Recents` collapsed by a click on their header.
-    collapsed: [bool; 2],
+    collapsed: [bool; 3],
+    pinned: HashSet<String>,
     /// Threads whose rows carry the unread dot; any lights the header's bell.
     pub unread: Vec<String>,
     /// The sections' scroller (Projects and Recents under the header).
@@ -57,13 +60,32 @@ impl EventEmitter<OpenThread> for HomeSidebar {}
 #[action(namespace = sidebar, no_json)]
 pub struct ArchiveThread(pub String);
 
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = sidebar, no_json)]
+pub struct UnpinThread(pub String);
+
+fn is_pinned(t: &Thread) -> bool {
+    t.section
+        .as_ref()
+        .is_some_and(|s| s.id == PINNED_SECTION_ID)
+}
+
+fn pinned_ids(threads: &[Thread]) -> HashSet<String> {
+    threads
+        .iter()
+        .filter(|t| is_pinned(t))
+        .map(|t| t.id.clone())
+        .collect()
+}
+
 impl HomeSidebar {
     /// Recents from a live `thread/list`; `selected` is the open thread, highlighted.
     pub fn new(threads: &[Thread], selected: Option<&str>) -> Self {
         Self {
             threads: threads.iter().map(|t| (t.id.clone(), title(t))).collect(),
             selected: selected.map(str::to_owned),
-            collapsed: [false; 2],
+            collapsed: [false; 3],
+            pinned: pinned_ids(threads),
             unread: Vec::new(),
             scroll: ScrollHandle::new(),
         }
@@ -71,12 +93,18 @@ impl HomeSidebar {
 
     pub fn set_threads(&mut self, threads: &[Thread], cx: &mut Context<Self>) {
         self.threads = threads.iter().map(|t| (t.id.clone(), title(t))).collect();
+        self.pinned = pinned_ids(threads);
         cx.notify();
     }
 
     /// Puts `thread` at the top of Recents (`thread/started`), keeping its current label
     /// while the thread has no title yet.
     pub fn add_thread(&mut self, thread: &Thread, cx: &mut Context<Self>) {
+        if is_pinned(thread) {
+            self.pinned.insert(thread.id.clone());
+        } else {
+            self.pinned.remove(&thread.id);
+        }
         let old = self.threads.iter().position(|(id, _)| *id == thread.id);
         let old = old.map(|i| self.threads.remove(i).1);
         let label = match (title(thread), old) {
@@ -91,6 +119,46 @@ impl HomeSidebar {
         self.selected = id.map(str::to_owned);
         cx.notify();
     }
+
+    fn rows(&self, pinned: bool, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let rows = self
+            .threads
+            .iter()
+            .filter(|(id, _)| self.pinned.contains(id) == pinned);
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(1.))
+            .children(rows.map(|(id, label)| {
+                let open = id.clone();
+                let row_focus = focus::handle(
+                    SharedString::from(format!("thread-row-{id}")),
+                    0,
+                    window,
+                    cx,
+                );
+                let pin_focus =
+                    focus::handle(SharedString::from(format!("pin-chat-{id}")), 0, window, cx);
+                let archive_focus = focus::handle(
+                    SharedString::from(format!("archive-chat-{id}")),
+                    0,
+                    window,
+                    cx,
+                );
+                let focused = row_focus.read(cx).handle.contains_focused(window, cx);
+                thread_row(
+                    id,
+                    label.clone(),
+                    self.selected.as_ref() == Some(id),
+                    self.unread.contains(id),
+                    cx,
+                    (focused, pinned),
+                    [&row_focus, &pin_focus, &archive_focus],
+                )
+                .on_click(cx.listener(move |_, _, _, cx| cx.emit(OpenThread(open.clone()))))
+            }))
+            .into_any_element()
+    }
 }
 
 /// The Home sidebar with Recents from the fixture `thread/list`; `selected_thread` is the id of
@@ -103,44 +171,12 @@ pub fn home_sidebar(cx: &mut App, selected_thread: Option<&str>) -> AnyView {
 
 impl Render for HomeSidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let recents = if self.threads.is_empty() {
+        let recents = if self.threads.iter().all(|(id, _)| self.pinned.contains(id)) {
             sidebar_empty("No chats", cx).into_any_element()
         } else {
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(1.))
-                .children(self.threads.iter().map(|(id, label)| {
-                    let open = id.clone();
-                    let unread = self.unread.contains(id);
-                    let row_focus = focus::handle(
-                        SharedString::from(format!("thread-row-{id}")),
-                        0,
-                        window,
-                        cx,
-                    );
-                    let pin_focus =
-                        focus::handle(SharedString::from(format!("pin-chat-{id}")), 0, window, cx);
-                    let archive_focus = focus::handle(
-                        SharedString::from(format!("archive-chat-{id}")),
-                        0,
-                        window,
-                        cx,
-                    );
-                    let focused = row_focus.read(cx).handle.contains_focused(window, cx);
-                    thread_row(
-                        id,
-                        label.clone(),
-                        self.selected.as_ref() == Some(id),
-                        unread,
-                        cx,
-                        focused,
-                        [&row_focus, &pin_focus, &archive_focus],
-                    )
-                    .on_click(cx.listener(move |_, _, _, cx| cx.emit(OpenThread(open.clone()))))
-                }))
-                .into_any_element()
+            self.rows(false, window, cx)
         };
+        let pinned = (!self.pinned.is_empty()).then(|| self.rows(true, window, cx));
         // A header click collapses or expands its section (`group/nav-section`).
         let section = |i: usize,
                        title: &'static str,
@@ -184,6 +220,7 @@ impl Render for HomeSidebar {
             cx,
         );
         let recents = section(1, "Recents", recents, window, cx);
+        let pinned = pinned.map(|rows| section(2, "Pinned", rows, window, cx));
         div()
             .size_full()
             .flex()
@@ -204,6 +241,7 @@ impl Render for HomeSidebar {
                     .gap(px(16.))
                     .pt(px(4.))
                     .pb(px(16.))
+                    .children(pinned)
                     .child(projects)
                     .child(recents),
             )
@@ -220,7 +258,7 @@ fn thread_row(
     selected: bool,
     unread: bool,
     cx: &App,
-    focused: bool,
+    (focused, pinned): (bool, bool),
     handles: [&gpui::Entity<focus::ControlFocus>; 3],
 ) -> Stateful<Div> {
     let t = cx.theme();
@@ -245,6 +283,12 @@ fn thread_row(
                 .items_center()
                 .justify_center()
                 .rounded(px(6.))
+                .opacity(if focused || (pinned && id == "pin-chat") {
+                    1.
+                } else {
+                    0.
+                })
+                .group_hover(group.clone(), |s| s.opacity(1.))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(crate::motion::ButtonVisual {
                     glyph: icon(name, 14., t.text_tertiary),
@@ -283,7 +327,8 @@ fn thread_row(
                     .absolute()
                     .left_0()
                     .top(px(5.))
-                    .w(px(if focused { 216. } else { 264. - clip }))
+                    .w(px(if focused || pinned { 216. } else { 264. - clip }))
+                    .group_hover(group.clone(), |s| s.w(px(216.)))
                     .h(px(20.))
                     .pl(px(8.))
                     .overflow_hidden()
@@ -319,19 +364,26 @@ fn thread_row(
                     .items_center()
                     .justify_end()
                     .gap(px(8.))
-                    .opacity(if focused { 1. } else { 0. })
-                    .group_hover(group.clone(), |s| s.opacity(1.))
-                    .child(tooltip(
-                        action("pin-chat", "sidebar-pin"),
-                        "Pin chat",
-                        None,
-                        Side::Top,
-                    ))
+                    .child({
+                        let id = id.to_owned();
+                        tooltip(
+                            action("pin-chat", "sidebar-pin").on_click(move |_, window, cx| {
+                                cx.stop_propagation();
+                                if pinned {
+                                    window.dispatch_action(Box::new(UnpinThread(id.clone())), cx);
+                                }
+                            }),
+                            if pinned { "Unpin chat" } else { "Pin chat" },
+                            None,
+                            Side::Top,
+                        )
+                    })
                     .child({
                         let id = id.to_owned();
                         tooltip(
                             action("archive-chat", "sidebar-archive").on_click(
                                 move |_, window, cx| {
+                                    cx.stop_propagation();
                                     window.dispatch_action(Box::new(ArchiveThread(id.clone())), cx)
                                 },
                             ),
