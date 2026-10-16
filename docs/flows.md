@@ -372,3 +372,16 @@ A row above that names a `crates/ui` owner needs that change first. The changes 
 2. `crates/ui/src/diff.rs`: the Changes header controls (source selector, file tree, layout, wrap, refresh), empty, loading and error states.
 3. `crates/ui/src/screens/mobile.rs`: the allow-host, pairing and connected steps (`remoteControl/*`).
 4. Focus-visible rings on the shared buttons (`icon_button`, `pill`, rail items), and tooltips on the composer and sidebar row buttons.
+
+## S016: Thread header
+
+`crates/app/tests/s016.rs` replays `refs/interactions/s016.json` on the Mac headless app.
+The test opens a chat, opens and dismisses `Chat actions`, and checks the header tooltips.
+It checks the title, menu labels, menu pixels, tooltip position, and outgoing thread requests.
+The menu uses the original labels, icons, separators, and shortcuts.
+The `Toggle summary` tooltip stays inside the window.
+The recorded `Chat actions` button has no tooltip.
+
+This slice covers TH-011, TH-013, and TH-036.
+Menu command activation, submenus, and arrow-key navigation belong to the later header slices.
+The recording also retains the delayed `Add scheduled task…` item as an observation of host-dependent state.
