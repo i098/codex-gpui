@@ -21,13 +21,15 @@ use std::{cell::RefCell, collections::HashMap, sync::Arc};
 
 /// A box with a backdrop filter, device px: its contour, blur sigma and layer ops; `gradient`:
 /// its fill is a one-color `linear-gradient()` image of this color (8-bit, as Blink passes it:
-/// an alpha of 0.96 is 245, whose premultiplied white the dither leaves at 245).
+/// an alpha of 0.96 is 245, whose premultiplied white the dither leaves at 245); `gap_row`: see
+/// [`crate::backdrop_blur`].
 #[derive(Clone, Debug)]
 struct Filtered {
     contour: Contour,
     sigma: f32,
     ops: Vec<(Op, Color4f)>,
     gradient: Option<Color4f>,
+    gap_row: bool,
 }
 
 /// A backdrop-filtered box painted at the root: its backdrop is the first `below` painted
@@ -85,6 +87,7 @@ pub(crate) fn record(ops: &[(Op, Hsla)], window: &Window) {
 pub(crate) fn paint(
     blur: Pixels,
     fill: Fill,
+    gap_row: bool,
     d: &Decoration,
     bounds: Bounds<Pixels>,
     window: &mut Window,
@@ -106,6 +109,7 @@ pub(crate) fn paint(
             })
             .collect(),
         gradient,
+        gap_row,
     };
     let size = Layer::new(window, None).window;
     // A nested box paints only its own rect: its outer box's children painted since must stay.
@@ -256,8 +260,9 @@ impl Pixmap {
         }
     }
 
-    fn sub(&self, r: [i32; 4]) -> Self {
-        let mut out = Self::new(r);
+    /// The pixels of `r` on a transparent pixmap of `area` (which holds `r`).
+    fn sub(&self, r: [i32; 4], area: [i32; 4]) -> Self {
+        let mut out = Self::new(area);
         for y in r[1]..r[3] {
             for x in r[0]..r[2] {
                 let i = out.index(x, y);
@@ -288,23 +293,26 @@ fn over(s: [u8; 4], d: [u8; 4]) -> [u8; 4] {
 
 /// Applies `f`'s backdrop filter to `target`, then blends `f`'s own layer over it.
 fn filter(target: &mut Pixmap, f: &Filtered) {
-    blur_backdrop(target, &f.contour, f.sigma);
+    blur_backdrop(target, f);
     draw_layer(target, f);
 }
 
-/// The backdrop filter of a box with contour `contour`: `target` blurred in the box's rect
-/// (clamped to `target`'s region), masked by the contour and blended back onto `target`.
-fn blur_backdrop(target: &mut Pixmap, contour: &Contour, sigma: f32) {
+/// The backdrop filter of `f`: `target` blurred in the box's rect (clamped to `target`'s
+/// region; with `gap_row`, plus a transparent row below), masked by the contour and blended
+/// back onto `target`.
+fn blur_backdrop(target: &mut Pixmap, f: &Filtered) {
+    let (contour, sigma) = (&f.contour, f.sigma);
     let rect = intersect(snapped(contour), target.r);
     if rect[0] < rect[2] && rect[1] < rect[3] {
-        let (w, h) = (rect[2] - rect[0], rect[3] - rect[1]);
+        let src = [rect[0], rect[1], rect[2], rect[3] + i32::from(f.gap_row)];
+        let (w, h) = (src[2] - src[0], src[3] - src[1]);
         // In the draw's local space: window device px.
-        let crop = Rect::from_xywh(rect[0] as f32, rect[1] as f32, w as f32, h as f32);
+        let crop = Rect::from_xywh(src[0] as f32, src[1] as f32, w as f32, h as f32);
         let blur = image_filters::blur((sigma, sigma), TileMode::Mirror, None, Some(crop.into()))
             .expect("blur filter");
         let mut paint = Paint::default();
         paint.set_image_filter(blur);
-        let source = target.sub(rect).image();
+        let source = target.sub(rect, src).image();
         let blurred = Pixmap::draw(rect, Color::TRANSPARENT, |c| {
             c.draw_image(&source, (rect[0] as f32, rect[1] as f32), Some(&paint));
         });
@@ -333,17 +341,15 @@ fn draw_layer(target: &mut Pixmap, f: &Filtered) {
     if f.ops.is_empty() {
         return;
     }
-    // The layer rasterizes from the box's origin (Skia's dither matrix is anchored there): a
-    // surface origin congruent to it modulo the 8 px matrix, at or before the region.
-    let b = snapped(&f.contour);
-    let align = |v: i32, min: i32| v - ((v - min).max(0) + 7) / 8 * 8;
-    let o = [align(b[0], target.r[0]), align(b[1], target.r[1])];
+    // Chromium rasters the box's composited layer: Skia's dither matrix and the shadow's mask
+    // blur (cut at the device edge) start at its origin.
+    let r = layer_rect(f);
     let mut layer = Pixmap::new(target.r);
     layer.blit(
-        target.r,
+        intersect(r, target.r),
         Color::TRANSPARENT,
-        o,
-        None,
+        [r[0], r[1]],
+        Some((r[2] - r[0], r[3] - r[1])),
         ColorSpace::new_srgb(),
         |c| {
             for &(op, color) in &f.ops {
@@ -379,6 +385,25 @@ fn draw_layer(target: &mut Pixmap, f: &Filtered) {
     for (d, s) in target.px.iter_mut().zip(&layer.px) {
         *d = over(*s, *d);
     }
+}
+
+/// The box's composited layer, device px: its rect and its shadows' ink overflow (Blink's
+/// `ShadowData::RectOutsets`: three sigmas plus the spread, moved by the offset).
+fn layer_rect(f: &Filtered) -> [i32; 4] {
+    let mut r = snapped(&f.contour);
+    for (op, _) in &f.ops {
+        if let Op::Shadow { border, s, .. } = op {
+            let e = 1.5 * s[2] + s[3];
+            let [x, y, w, h] = border.rr.r;
+            r = [
+                r[0].min((x - e + s[0]).floor() as i32),
+                r[1].min((y - e + s[1]).floor() as i32),
+                r[2].max((x + w + e + s[0]).ceil() as i32),
+                r[3].max((y + h + e + s[1]).ceil() as i32),
+            ];
+        }
+    }
+    r
 }
 
 /// The surface's final pixels over `out` (inside `region`) as a BGRA image: transparent where
@@ -420,7 +445,7 @@ fn compose(
     for n in &s.nested {
         filter(&mut layer, n);
     }
-    blur_backdrop(&mut root, &s.filtered.contour, s.filtered.sigma);
+    blur_backdrop(&mut root, &s.filtered);
     let mut image = RgbaImage::new((out[2] - out[0]) as u32, (out[3] - out[1]) as u32);
     for (x, y, p) in image.enumerate_pixels_mut() {
         let i = root.index(out[0] + x as i32, out[1] + y as i32);
