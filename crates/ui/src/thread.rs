@@ -43,6 +43,8 @@ mod header;
 mod items;
 #[path = "thread/markdown.rs"]
 mod markdown;
+#[path = "thread/menu.rs"]
+mod menu;
 
 use actions::action_row;
 pub use actions::{EditMessage, ForkThread, RevertTurn};
@@ -92,6 +94,7 @@ pub struct ThreadView {
     /// The turns as last laid out, to stand in for the ones far off screen.
     laid_out: Rc<RefCell<LaidOut>>,
     find: Option<FindState>,
+    menu: Option<menu::LinkMenu>,
 }
 
 /// Where the last frame laid out each turn, in the scroller's content (top, height), and the
@@ -220,6 +223,7 @@ impl ThreadView {
             scroll: ScrollHandle::new(),
             laid_out: Rc::default(),
             find: None,
+            menu: None,
         }
     }
 
@@ -1203,6 +1207,7 @@ impl Render for ThreadView {
             .relative()
             .overflow_hidden()
             .bg(t.surface)
+            .on_mouse_down(gpui::MouseButton::Right, cx.listener(Self::right_click))
             .child(
                 div()
                     .id("conversation")
@@ -1266,6 +1271,9 @@ impl Render for ThreadView {
                     ),
             )
             .when(self.find.is_some(), |d| d.child(self.find_bar(window, cx)))
+            .when(self.menu.is_some(), |d| {
+                d.child(self.menu_overlay(window, cx))
+            })
     }
 }
 

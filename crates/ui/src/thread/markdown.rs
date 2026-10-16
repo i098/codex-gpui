@@ -435,6 +435,7 @@ impl Markdown<'_> {
                                 .when(external, |d| {
                                     let url = dest_url.to_string();
                                     let middle_url = url.clone();
+                                    let menu_url = url.clone();
                                     d.tab_index(0)
                                         .role(gpui::Role::Link)
                                         .hover(|s| s.underline())
@@ -445,6 +446,9 @@ impl Markdown<'_> {
                                                 cx.open_url(&middle_url);
                                                 cx.stop_propagation();
                                             }
+                                        })
+                                        .on_mouse_down(MouseButton::Right, move |_, _, _| {
+                                            super::menu::note_right_clicked_link(menu_url.clone())
                                         })
                                 })
                                 .when(!external, |d| {
