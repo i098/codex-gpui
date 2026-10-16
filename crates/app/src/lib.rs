@@ -1208,16 +1208,12 @@ impl Root {
             .rev()
             .find(|turn| turn.status == TurnStatus::InProgress)
             .map(|turn| turn.id.clone());
-        let Some(turn_id) = running else {
-            let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-                resume_if(resume, &bridge, &this, &id, cx).await?;
-                turn_start(&bridge, &id, &s).await
-            });
-            return log_err(task, cx);
-        };
         let queue = self.config["desktop"]["followUpQueueMode"] == "queue";
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             resume_if(resume, &bridge, &this, &id, cx).await?;
+            let Some(turn_id) = running else {
+                return turn_start(&bridge, &id, &s).await;
+            };
             let input = json!([{ "type": "text", "text": s.text, "text_elements": [] }]);
             let (method, params) = if queue {
                 let params = json!({
@@ -1795,12 +1791,8 @@ impl Root {
 /// ponytail: not a CSPRNG; the `uuid` crate if a collision ever matters.
 fn uuid_v4() -> String {
     use std::collections::hash_map::RandomState;
-    use std::hash::{BuildHasher, Hasher};
-    let word = |salt: u64| {
-        let mut h = RandomState::new().build_hasher();
-        h.write_u64(salt);
-        h.finish()
-    };
+    use std::hash::BuildHasher;
+    let word = |salt: u64| RandomState::new().hash_one(salt);
     let (a, b) = (word(1), word(2));
     format!(
         "{:08x}-{:04x}-4{:03x}-{:04x}-{:012x}",

@@ -1208,23 +1208,20 @@ impl Render for Composer {
             );
         let card = card.when(self.slash.open, |d| d.child(self.slash_menu(&t, cx)));
         // The queued-follow-up tray (`bg-surface-elevated-secondary`, border-x border-t) sits
-        // on the card's top edge, 13 px in from its sides; each row: handle, then the text.
-        // ponytail: rows show the text only; the original's Steer, Delete and actions menu on
-        // a row are not implemented.
+        // on the card's top edge, 13 px in from its sides; rows (handle, then the text) are
+        // 32 px with a 1 px gap. ponytail: rows show the text only; the original's Steer,
+        // Delete and actions menu on a row are not implemented.
         let tray = (!self.queued.is_empty()).then(|| {
             div()
                 .mx(px(13.))
-                .h(px(33.))
                 .border_t_1()
-                .border_l_1()
-                .border_r_1()
+                .border_x_1()
                 .border_color(t.border)
-                .rounded_tl(px(12.))
-                .rounded_tr(px(12.))
+                .rounded_t(px(12.))
                 .bg(t.surface_elevated_secondary)
-                .overflow_hidden()
                 .flex()
                 .flex_col()
+                .gap(px(1.))
                 .children(self.queued.iter().map(|row| {
                     div()
                         .h(px(32.))
@@ -1244,7 +1241,7 @@ impl Render for Composer {
             .when_some(self.approval.clone(), |d, a| {
                 d.child(self.approval_card(&a, &t, cx))
             })
-            .child(div().flex().flex_col().children(tray).child(card))
+            .child(div().children(tray).child(card))
     }
 }
 

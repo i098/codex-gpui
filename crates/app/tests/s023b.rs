@@ -128,10 +128,11 @@ fn steer_sends_the_message_into_the_running_turn() -> Result<()> {
     let requests = sent(&mut fx, "turn/steer")?;
     assert_eq!(requests.len(), 1, "{requests:?}");
     assert_eq!(core(&requests[0]["params"]), core(&want["params"]));
-    assert_eq!(label(&mut fx), rec["result"]["submit"]["button"]["aria"]);
     assert!(fx.composer_focused()?);
-    // The refused message comes back to the composer (the original keeps it as a failed row).
+    // The refused message comes back to the composer, so the button names the mode again
+    // (the original keeps the message as a failed row with Retry and shows Stop).
     assert_eq!(fx.composer_text()?, "more");
+    assert_eq!(label(&mut fx), "Steer");
     fx.shot()?
         .save(Path::new(env!("CARGO_TARGET_TMPDIR")).join("s023b-steer.png"))?;
     Ok(())
@@ -159,14 +160,16 @@ fn queue_adds_a_row_until_the_server_starts_it() -> Result<()> {
         "thread/queue/add",
         json!({"queuedSubmission": submission}),
     ));
-    lines.extend(exchange(
-        "thread/queue/list",
-        json!({"data": [submission], "nextCursor": null}),
-    ));
-    lines.extend(exchange(
-        "thread/queue/list",
-        json!({"data": [], "nextCursor": null}),
-    ));
+    // readback.jsonl holds an empty `thread/queue/list` per thread; these match the port's
+    // params exactly and so win over the recording-order fallback.
+    for data in [json!([submission]), json!([])] {
+        let mut list = exchange(
+            "thread/queue/list",
+            json!({"data": data, "nextCursor": null}),
+        );
+        list[0]["msg"]["params"] = json!({"threadId": SUBTRACT, "cursor": null});
+        lines.extend(list);
+    }
     let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
     let rest = fx.shot()?;
     submit_while_running(&mut fx, steps, "Queue")?;
