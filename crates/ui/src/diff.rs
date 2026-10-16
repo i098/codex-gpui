@@ -146,7 +146,7 @@ impl DiffPanel {
         Self { files }
     }
 
-    fn header(&self, t: &Theme, wide: bool) -> Div {
+    fn header(&self, t: &Theme, wide: bool, clamped: bool) -> Div {
         let added = self.files.iter().map(|f| f.added).sum();
         let removed = self.files.iter().map(|f| f.removed).sum();
         let tool = |name| round_icon(name, 28., t);
@@ -155,6 +155,7 @@ impl DiffPanel {
             shapes::backdrop_blur(
                 px(24.),
                 shapes::Fill::Color,
+                false,
                 Decoration {
                     radius: Corners::all(px(14.)),
                     ..Default::default()
@@ -181,7 +182,7 @@ impl DiffPanel {
             .justify_between()
             .gap(px(8.))
             .child(
-                capsule(t)
+                capsule(t, clamped)
                     .child(
                         div()
                             .relative()
@@ -198,7 +199,7 @@ impl DiffPanel {
                     .child(stats(added, removed, 14., t).mr(px(4.))),
             )
             .child(
-                capsule(t)
+                capsule(t, clamped)
                     .child(tool("diff-more"))
                     .child(tool("diff-jump-to-file"))
                     // `@container review-header (min-width: 625px)`
@@ -264,7 +265,7 @@ impl Render for DiffPanel {
                                 ..Default::default()
                             })),
                     )
-                    .child(self.header(&t, wide)),
+                    .child(self.header(&t, wide, panel_clamped(window))),
             )
             .child(
                 div()
@@ -609,8 +610,9 @@ fn round_icon(name: &str, size: f32, t: &Theme) -> Div {
         .child(icon(name, 16., t.text_tertiary))
 }
 
-/// `_capsule _controlSurface`: 32 px pill holding the header controls.
-fn capsule(t: &Theme) -> Div {
+/// `_capsule _controlSurface`: 32 px pill holding the header controls; `clamped`: see
+/// [`panel_clamped`] (the backdrop's `gap_row`).
+fn capsule(t: &Theme, clamped: bool) -> Div {
     let (fill, shadows) = match t.appearance {
         Appearance::Dark => (
             t.control_background,
@@ -640,6 +642,7 @@ fn capsule(t: &Theme) -> Div {
         .child(shapes::backdrop_blur(
             px(24.),
             shapes::Fill::Gradient,
+            clamped,
             Decoration {
                 // `rounded-full`, constrained to the 32 px box's half height.
                 radius: Corners::all(px(16.)),

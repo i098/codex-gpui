@@ -1165,6 +1165,7 @@ pub(crate) fn popover(t: &Theme, width: f32, content: impl FnOnce(Div) -> Div) -
         .child(shapes::backdrop_blur(
             px(8.),
             shapes::Fill::Color,
+            false,
             shapes::Decoration {
                 radius: d.radius,
                 corner: shapes::Corner::Squircle,

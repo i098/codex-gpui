@@ -226,7 +226,6 @@ impl Element for Icon {
                         flip_x,
                         color,
                         composited.or(own_layer.then_some(bounds.origin)),
-                        false,
                         window,
                         cx,
                     )
