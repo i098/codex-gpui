@@ -1,0 +1,134 @@
+{
+  "name": "s023-stop",
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 1,
+    "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+    "theme": "dark",
+    "hoverEmulated": true
+  },
+  "scope": {
+    "implemented": [
+      "CP-110"
+    ],
+    "deferred": [
+      "CP-108"
+    ],
+    "authorization": "Firstmate instruction 001: ship Stop if the authorized steer retry fails.",
+    "steerRetry": {
+      "settingsRead": {
+        "configured": "steer",
+        "effective": "steer"
+      },
+      "setGlobalStateResponse": {
+        "success": true
+      },
+      "observed": "The original wrote queued-follow-ups but emitted no turn/steer; thread/resume returned no recorded response."
+    }
+  },
+  "setup": {
+    "threadId": "01a13de9-c48a-7b20-8382-db900881cb99",
+    "note": "Open the fixture thread and wait for hydration. The stub holds the synthetic turn in progress."
+  },
+  "steps": [
+    {
+      "type": "click",
+      "target": {
+        "text": "Change the greeting in hello.py to \"Hello, Codex\"."
+      }
+    },
+    {
+      "type": "bridge",
+      "message": {
+        "type": "mcp-notification",
+        "hostId": "local",
+        "method": "turn/started",
+        "params": {
+          "threadId": "01a13de9-c48a-7b20-8382-db900881cb99",
+          "turn": {
+            "id": "s023-stop",
+            "items": [],
+            "status": "inProgress",
+            "error": null
+          }
+        }
+      }
+    },
+    {
+      "type": "click",
+      "target": {
+        "selector": "button[aria-label=\"Stop\"]",
+        "bbox": {
+          "x": 1141,
+          "y": 776,
+          "w": 28,
+          "h": 28
+        }
+      }
+    },
+    {
+      "type": "bridge",
+      "message": {
+        "type": "mcp-notification",
+        "hostId": "local",
+        "method": "turn/completed",
+        "params": {
+          "threadId": "01a13de9-c48a-7b20-8382-db900881cb99",
+          "turn": {
+            "id": "s023-stop",
+            "items": [],
+            "status": "interrupted",
+            "error": null
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "dom": [
+      {
+        "selector": "button[aria-label=\"Stop\"]",
+        "bbox": {
+          "x": 1141,
+          "y": 776,
+          "w": 28,
+          "h": 28
+        },
+        "computed": {
+          "backgroundColor": "rgb(255, 255, 255)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(255, 255, 255) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        },
+        "icon": {
+          "width": 16,
+          "height": 16,
+          "color": "rgb(0, 0, 0)",
+          "viewBox": "0 0 20 20",
+          "path": "M4.5 5.75C4.5 5.05964 5.05964 4.5 5.75 4.5H14.25C14.9404 4.5 15.5 5.05964 15.5 5.75V14.25C15.5 14.9404 14.9404 15.5 14.25 15.5H5.75C5.05964 15.5 4.5 14.9404 4.5 14.25V5.75Z"
+        },
+        "note": "Present during the running turn; absent after turn/completed."
+      }
+    ],
+    "requests": [
+      {
+        "type": "mcp-request",
+        "method": "turn/interrupt",
+        "params": {
+          "threadId": "01a13de9-c48a-7b20-8382-db900881cb99",
+          "turnId": "s023-stop"
+        }
+      }
+    ],
+    "completion": {
+      "status": "interrupted",
+      "stopVisible": false
+    },
+    "errorToast": "Failed to stop chat",
+    "note": "route1 refuses turn/interrupt. The failure toast is recorded; the final bridge step supplies the interrupted completion separately.",
+    "screenshot": "/sdc-disk/tmp/cgx/cgx-s023/recorder/stop-completed.png"
+  }
+}

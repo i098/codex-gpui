@@ -78,6 +78,7 @@ impl Composer {
                 d.child(self.anchored_menu(self.models_menu(t, cx), Some(EFFORT_MENU_SLOT), cx))
             });
         let has_input = !self.content.is_empty() || !self.attachments.is_empty();
+        let stopping = self.running && !has_input;
         // The docked body is a cc layer: its icons blend onto its transparent tile, not onto
         // the card as the home composer's do (whose fitted pixels those are).
         let docked = self.docked;
@@ -124,6 +125,56 @@ impl Composer {
                         d.child(self.anchored_menu(self.permissions_menu(t, cx), None, cx))
                     }),
             );
+        let send = div()
+            .id("send")
+            .tab_index(0)
+            .rounded(Theme::RADIUS_FULL)
+            .focus_visible(move |style| {
+                style.shadow(vec![gpui::BoxShadow {
+                    color: voice_ring,
+                    offset: point(px(0.), px(0.)),
+                    blur_radius: px(0.),
+                    spread_radius: px(2.),
+                    inset: false,
+                }])
+            })
+            .ml(px(8.))
+            .size(px(28.))
+            .p(px(2.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .relative()
+            .child(shapes::decoration(deco(9999., t.composer_primary, vec![])))
+            .when(stopping, |d| {
+                d.child(
+                    div()
+                        .size(px(8.8))
+                        .rounded(px(1.))
+                        .bg(t.text_composer_primary),
+                )
+            })
+            .when(!stopping, |d| {
+                d.child(
+                    icon(
+                        if has_input {
+                            "composer-arrow-up"
+                        } else {
+                            "voice"
+                        },
+                        16.,
+                        t.text_composer_primary,
+                    )
+                    .when(docked, |i| i.runtime()),
+                )
+            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if stopping {
+                    window.dispatch_action(Box::new(Stop), cx);
+                } else {
+                    this.submit(&Submit, window, cx);
+                }
+            }));
         let right = div()
             .flex()
             .items_center()
@@ -136,43 +187,7 @@ impl Composer {
                     .justify_center()
                     .child(footer_icon("mic", t.text)),
             )
-            .child(
-                div()
-                    .id("send")
-                    .tab_index(0)
-                    .rounded(Theme::RADIUS_FULL)
-                    .focus_visible(move |style| {
-                        style.shadow(vec![gpui::BoxShadow {
-                            color: voice_ring,
-                            offset: point(px(0.), px(0.)),
-                            blur_radius: px(0.),
-                            spread_radius: px(2.),
-                            inset: false,
-                        }])
-                    })
-                    .ml(px(8.))
-                    .size(px(28.))
-                    .p(px(2.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .relative()
-                    .child(shapes::decoration(deco(9999., t.composer_primary, vec![])))
-                    // Over the disc in the docked body's layer, without the page's clips.
-                    .child(
-                        icon(
-                            if has_input {
-                                "composer-arrow-up"
-                            } else {
-                                "voice"
-                            },
-                            16.,
-                            t.text_composer_primary,
-                        )
-                        .when(docked, |i| i.runtime()),
-                    )
-                    .on_click(cx.listener(|this, _, window, cx| this.submit(&Submit, window, cx))),
-            );
+            .child(send);
         div()
             .flex()
             .items_center()
