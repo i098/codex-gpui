@@ -7,7 +7,7 @@ mod features;
 pub mod host;
 pub mod host_settings;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use async_channel::Receiver;
 use bridge::types::{
     ApprovalDecision, CommandApprovalRequest, ConfigReadResponse, FileChangeApprovalRequest,
@@ -359,6 +359,8 @@ pub struct Root {
     automation_load: Option<Task<()>>,
     /// The Scheduled routes' sidebar, fed the host's list when the read completes.
     scheduled: Option<Entity<automations::ScheduledSidebar>>,
+    /// The Scheduled empty page: its suggestion cards start guided conversations.
+    suggestions: Option<Entity<automations::AutomationsPage>>,
     cwd: String,
     config: Value,
     skills: Value,
@@ -524,6 +526,7 @@ impl Root {
             automations: None,
             automation_load: None,
             scheduled: None,
+            suggestions: None,
             cwd,
             config: Value::Null,
             skills: Value::Null,
@@ -725,6 +728,42 @@ impl Root {
             .map_or_else(Vec::new, automations::tasks)
     }
 
+    /// The Scheduled empty page, when the route shows it.
+    pub fn suggestions(&self) -> Option<&Entity<automations::AutomationsPage>> {
+        self.suggestions.as_ref()
+    }
+
+    /// A suggestion card click (`refs/interactions/s035b.json`): the card is already
+    /// `Starting…` and every card disabled. The original's guided start first reads the TPP
+    /// models through the desktop host, then prepares and streams the conversation and
+    /// navigates into it; when any step fails it shows `Couldn’t start this suggested task`
+    /// and re-enables the cards.
+    fn start_suggested_task(&mut self, cx: &mut Context<Self>) {
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move {
+            let identity = host.identity().context("no ChatGPT sign-in")?;
+            host.fetch(&host::tpp_models(&identity))
+                .and_then(|response| host::json_body(&response))
+        });
+        cx.spawn(async move |this, cx| {
+            let result = read.await;
+            this.update(cx, |this, cx| {
+                if let Some(page) = &this.suggestions {
+                    page.update(cx, |page, cx| page.set_pending(None, cx));
+                }
+                // ponytail: with the models in hand the original prepares the ChatGPT
+                // conversation (`/f/conversation/prepare`) and streams it; neither is recorded
+                // (the oracle refuses the start), so the port stops here and reports it.
+                if result.is_ok() {
+                    eprintln!("codex-gpui: suggested task: the conversation stream is not wired");
+                }
+                this.toast(Toast::danger("Couldn’t start this suggested task"), cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     fn set_threads(&mut self, threads: &[Thread], cx: &mut Context<Self>) {
         self.threads = threads.to_vec();
         self.sidebar.update(cx, |s, cx| s.set_threads(threads, cx));
@@ -835,8 +874,9 @@ impl Root {
             Route::Scheduled => {
                 let tasks = self.tasks();
                 self.load_automations(cx);
-                let (shell, sidebar) = automations::shell(tasks, None, utc_offset(), cx);
+                let (shell, sidebar, page) = automations::shell(tasks, None, utc_offset(), cx);
                 self.scheduled = Some(sidebar);
+                self.suggestions = page;
                 Some(shell)
             }
             Route::Automation(id) => {
@@ -849,8 +889,9 @@ impl Root {
                     let composer: AnyView = cx.new(|cx| Composer::automation(window, cx)).into();
                     (task, composer)
                 });
-                let (shell, sidebar) = automations::shell(tasks, selected, utc_offset(), cx);
+                let (shell, sidebar, page) = automations::shell(tasks, selected, utc_offset(), cx);
                 self.scheduled = Some(sidebar);
+                self.suggestions = page;
                 Some(shell)
             }
             Route::Mobile => Some(mobile::shell(cx)),
@@ -1800,6 +1841,11 @@ impl Render for Root {
             .on_action(cx.listener(|this, _: &automations::NewTask, window, cx| {
                 this.open_dialog(DialogKind::ScheduleTask, window, cx)
             }))
+            .on_action(
+                cx.listener(|this, _: &automations::StartSuggestedTask, _, cx| {
+                    this.start_suggested_task(cx)
+                }),
+            )
             .on_action(cx.listener(|this, _: &OpenMobileSetup, window, cx| {
                 this.navigate(Route::Mobile, window, cx)
             }))
