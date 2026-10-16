@@ -11,8 +11,8 @@ use anyhow::Result;
 use async_channel::Receiver;
 use bridge::types::{
     ApprovalDecision, CommandApprovalRequest, ConfigReadResponse, FileChangeApprovalRequest,
-    Thread, ThreadItem, ThreadReadResponse, ThreadStartResponse, ThreadStartedNotification,
-    TurnStatus,
+    Thread, ThreadItem, ThreadReadResponse, ThreadSection, ThreadStartResponse,
+    ThreadStartedNotification, TurnStatus,
 };
 use bridge::{Bridge, Event};
 use gpui::{
@@ -34,7 +34,8 @@ use ui::screens::diff::panel::{
 use ui::screens::home::HomeMain;
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
 use ui::screens::sidebar::{
-    ArchiveThread, CommandMenu, CommandMenuEvent, HomeSidebar, OpenThread, UnpinThread,
+    self, ArchiveThread, CommandMenu, CommandMenuEvent, HomeSidebar, OpenThread, PinThread,
+    RenameThread, UnpinThread,
 };
 use ui::screens::terminal::Xterm;
 use ui::screens::thread::view::{Clock, EditMessage, ForkThread, RevertTurn, ThreadView};
@@ -1040,11 +1041,15 @@ impl Root {
     }
 
     fn open_dialog(&mut self, kind: DialogKind, window: &mut Window, cx: &mut Context<Self>) {
+        let dialog = cx.new(|cx| Dialog::new(kind, cx));
+        self.show_dialog(dialog, window, cx);
+    }
+
+    fn show_dialog(&mut self, dialog: Entity<Dialog>, window: &mut Window, cx: &mut Context<Self>) {
         if self.dialog.is_some() {
             return;
         }
         self.command_menu = None;
-        let dialog = cx.new(|cx| Dialog::new(kind, cx));
         cx.subscribe_in(&dialog, window, |this, _, outcome, window, cx| {
             this.dialog = None;
             match outcome {
@@ -1056,6 +1061,10 @@ impl Root {
                         this.state.save();
                     }
                     window.remove_window();
+                }
+                DialogOutcome::Rename { thread, name } => {
+                    window.focus(&this.focus, cx);
+                    this.rename(thread.clone(), name.clone(), window, cx);
                 }
             }
             cx.notify();
@@ -1340,11 +1349,30 @@ impl Root {
         log_err(task, cx);
     }
 
+    /// The row menu's `Pin`: the row moves to `Pinned` at once, `thread/section/move` into
+    /// the pinned section follows; a refused write moves it back.
+    fn pin(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.move_section(id, Some(sidebar::PINNED_SECTION_ID), window, cx);
+    }
+
     fn unpin(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.move_section(id, None, window, cx);
+    }
+
+    fn move_section(
+        &mut self,
+        id: String,
+        section: Option<&'static str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(thread) = self.threads.iter_mut().find(|thread| thread.id == id) else {
             return;
         };
-        let old_section = thread.section.take();
+        let old_section = std::mem::replace(
+            &mut thread.section,
+            section.map(|id| ThreadSection { id: id.to_owned() }),
+        );
         self.sidebar
             .update(cx, |s, cx| s.set_threads(&self.threads, cx));
         let bridge = self.bridge.clone();
@@ -1352,7 +1380,7 @@ impl Root {
             let done = bridge
                 .request::<_, Value>(
                     "thread/section/move",
-                    json!({ "threadId": id, "sectionId": null, "beforeThreadId": null }),
+                    json!({ "threadId": id, "sectionId": section, "beforeThreadId": null }),
                 )
                 .await;
             this.update(cx, |this, cx| {
@@ -1364,6 +1392,29 @@ impl Root {
                         .update(cx, |s, cx| s.set_threads(&this.threads, cx));
                     this.toast(Toast::danger("Couldn't save your changes. Try again"), cx);
                 }
+            })?;
+            done.map(drop)
+        });
+        log_err(task, cx);
+    }
+
+    /// `Rename chat`'s Save: `thread/name/set`; the row (and the open chat's header) take the
+    /// name once the write succeeds, else `Couldn't save your changes. Try again`.
+    fn rename(&mut self, id: String, name: String, window: &mut Window, cx: &mut Context<Self>) {
+        let bridge = self.bridge.clone();
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let done = bridge
+                .request::<_, Value>("thread/name/set", json!({ "threadId": id, "name": name }))
+                .await;
+            this.update(cx, |this, cx| match &done {
+                Ok(_) => {
+                    if let Some(thread) = this.threads.iter_mut().find(|thread| thread.id == id) {
+                        thread.name = Some(name);
+                    }
+                    this.sidebar
+                        .update(cx, |s, cx| s.set_threads(&this.threads, cx));
+                }
+                Err(_) => this.toast(Toast::danger("Couldn't save your changes. Try again"), cx),
             })?;
             done.map(drop)
         });
@@ -1863,6 +1914,19 @@ impl Render for Root {
                     this.unpin(a.0.clone(), window, cx)
                 }),
             )
+            .on_action(
+                cx.listener(|this, a: &PinThread, window, cx| this.pin(a.0.clone(), window, cx)),
+            )
+            .on_action(cx.listener(|this, a: &RenameThread, window, cx| {
+                let title = this
+                    .threads
+                    .iter()
+                    .find(|t| t.id == a.0)
+                    .map(sidebar::title);
+                let title = title.unwrap_or_default().to_string();
+                let dialog = cx.new(|cx| Dialog::rename(a.0.clone(), title, cx));
+                this.show_dialog(dialog, window, cx);
+            }))
             .on_action(cx.listener(|this, a: &ForkThread, window, cx| this.fork(&a.0, window, cx)))
             .on_action(cx.listener(|this, edit: &EditMessage, window, cx| {
                 this.edit_message(edit.clone(), window, cx)

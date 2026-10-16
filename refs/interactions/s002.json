@@ -1,0 +1,492 @@
+{
+ "name": "s002",
+ "rows": [
+  "RS-090",
+  "RS-091"
+ ],
+ "viewport": {
+  "w": 1280,
+  "h": 832,
+  "dpr": 1,
+  "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+  "theme": "dark",
+  "hoverEmulated": true
+ },
+ "notes": [
+  "RS-090: a right-click on a Recents row opens a NATIVE menu through electronBridge.showContextMenu (no DOM menu); nativeContextMenu holds the items the renderer passed (icons dropped).",
+  "RS-091: the recorder answers showContextMenu with {id:'rename-thread'} (nativeMenuPick) which opens the Rename chat dialog; the port opens its drawn menu and clicks the Rename row instead.",
+  "Writes are refused by route1 (thread/name/set answers an error), so Enter and Save show the toast and leave the row title unchanged.",
+  "Steps 1 and 3 and 6 repeat the right-click with the pick; step 2 Escape cancels; steps 4 and 5 type a new title and press Enter; step 7 clicks Save with the prefilled title.",
+  "result.requests is empty for the generic replay (crates/app/tests/replay.rs cannot answer a native menu pick); s002.rs checks afterEnter.requests and afterSave.requests, and the input's pixels from renameDialog.input."
+ ],
+ "steps": [
+  {
+   "type": "click",
+   "button": "right",
+   "target": {
+    "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Change the greeting\"]",
+    "bbox": {
+     "x": 60,
+     "y": 290,
+     "w": 272,
+     "h": 30
+    }
+   },
+   "at": {
+    "x": 150,
+    "y": 305
+   },
+   "note": "opens the native thread row menu"
+  },
+  {
+   "type": "click",
+   "button": "right",
+   "target": {
+    "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Change the greeting\"]",
+    "bbox": {
+     "x": 60,
+     "y": 290,
+     "w": 272,
+     "h": 30
+    }
+   },
+   "at": {
+    "x": 150,
+    "y": 305
+   },
+   "nativeMenuPick": "rename-thread",
+   "note": "the recorder answers showContextMenu with {id:'rename-thread'} (window.__ctxPick)"
+  },
+  {
+   "type": "key",
+   "key": "Escape",
+   "note": "cancels the dialog"
+  },
+  {
+   "type": "click",
+   "button": "right",
+   "target": {
+    "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Change the greeting\"]",
+    "bbox": {
+     "x": 60,
+     "y": 290,
+     "w": 272,
+     "h": 30
+    }
+   },
+   "at": {
+    "x": 150,
+    "y": 305
+   },
+   "nativeMenuPick": "rename-thread"
+  },
+  {
+   "type": "type",
+   "text": "Greeting change",
+   "note": "replaces the selected title"
+  },
+  {
+   "type": "key",
+   "key": "Enter",
+   "note": "Save: sends thread/name/set; route1 refuses the write"
+  },
+  {
+   "type": "click",
+   "button": "right",
+   "target": {
+    "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Change the greeting\"]",
+    "bbox": {
+     "x": 60,
+     "y": 290,
+     "w": 272,
+     "h": 30
+    }
+   },
+   "at": {
+    "x": 150,
+    "y": 305
+   },
+   "nativeMenuPick": "rename-thread"
+  },
+  {
+   "type": "click",
+   "target": {
+    "selector": "[role=dialog] button",
+    "text": "Save",
+    "bbox": {
+     "x": 764,
+     "y": 457,
+     "w": 66,
+     "h": 32
+    }
+   },
+   "note": "Save with the prefilled title"
+  }
+ ],
+ "result": {
+  "dom": [
+   {
+    "selector": "[role=menu]",
+    "count": 0,
+    "afterStep": 0,
+    "note": "no DOM menu: the renderer calls electronBridge.showContextMenu(items, {x,y}) and Electron shows a NATIVE menu"
+   }
+  ],
+  "nativeContextMenu": {
+   "afterStep": 0,
+   "pos": {
+    "x": 150,
+    "y": 305
+   },
+   "items": [
+    {
+     "id": "rename-thread",
+     "label": "Rename",
+     "icon": "<svg>",
+     "accelerator": "CmdOrCtrl+Alt+R",
+     "enabled": true
+    },
+    {
+     "id": "pin-thread",
+     "label": "Pin",
+     "icon": "<svg>",
+     "accelerator": "CmdOrCtrl+Alt+P",
+     "enabled": true
+    },
+    {
+     "id": "mark-thread-unread",
+     "label": "Mark as unread",
+     "icon": "<svg>",
+     "accelerator": "CmdOrCtrl+Shift+U",
+     "enabled": true
+    },
+    {
+     "id": "move-to-custom-section",
+     "label": "Section",
+     "icon": "<svg>",
+     "enabled": true,
+     "submenu": [
+      {
+       "id": "new-custom-section",
+       "label": "New section…",
+       "icon": "<svg>",
+       "enabled": true
+      }
+     ]
+    },
+    {
+     "id": "continuation-separator",
+     "type": "separator",
+     "label": "",
+     "enabled": true
+    },
+    {
+     "id": "fork",
+     "label": "Fork",
+     "icon": "<svg>",
+     "enabled": true,
+     "submenu": [
+      {
+       "id": "fork-into-local",
+       "label": "Fork chat",
+       "icon": "<svg>",
+       "enabled": true
+      }
+     ]
+    },
+    {
+     "id": "copy-separator",
+     "type": "separator",
+     "label": "",
+     "enabled": true
+    },
+    {
+     "id": "share-thread",
+     "label": "Share",
+     "icon": "<svg>",
+     "enabled": true
+    },
+    {
+     "id": "copy-actions",
+     "label": "Copy",
+     "icon": "<svg>",
+     "enabled": true,
+     "submenu": [
+      {
+       "id": "copy-deeplink",
+       "label": "Copy deeplink",
+       "icon": "<svg>",
+       "accelerator": "CmdOrCtrl+Alt+L",
+       "enabled": true
+      },
+      {
+       "id": "copy-conversation-markdown",
+       "label": "Copy as Markdown",
+       "icon": "<svg>",
+       "enabled": true
+      },
+      {
+       "id": "copy-working-directory",
+       "label": "Copy working directory",
+       "icon": "<svg>",
+       "accelerator": "CmdOrCtrl+Shift+C",
+       "enabled": true
+      }
+     ]
+    },
+    {
+     "id": "window-separator",
+     "type": "separator",
+     "label": "",
+     "enabled": true
+    },
+    {
+     "id": "open-in-new-window",
+     "label": "Open in new window",
+     "icon": "<svg>",
+     "enabled": true
+    },
+    {
+     "id": "lifecycle-separator",
+     "type": "separator",
+     "label": "",
+     "enabled": true
+    },
+    {
+     "id": "archive-thread",
+     "label": "Archive",
+     "icon": "<svg>",
+     "accelerator": "CmdOrCtrl+Shift+A",
+     "enabled": true
+    },
+    {
+     "id": "delete-thread",
+     "label": "Permanently delete",
+     "icon": "<svg>",
+     "enabled": true
+    }
+   ]
+  },
+  "renameDialog": {
+   "afterStep": 1,
+   "dialog": {
+    "tag": "div",
+    "text": "Rename chat | Keep it short and recognizable | Cancel | Save | Close dialog",
+    "bbox": {
+     "x": 430,
+     "y": 324,
+     "w": 420,
+     "h": 185
+    },
+    "computed": {
+     "backgroundColor": "oklab(0.297161 0.0000135154 0.00000594556 / 0.9)",
+     "color": "rgb(255, 255, 255)",
+     "opacity": "1",
+     "outline": "rgb(255, 255, 255) none 3px",
+     "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(255, 255, 255, 0.082) 0px 0px 0px 0.5px, rgba(0, 0, 0, 0.1) 0px 4px 8px -2px",
+     "cursor": "auto",
+     "borderColor": "rgb(255, 255, 255)",
+     "borderRadius": "25px",
+     "fontSize": "16px",
+     "lineHeight": "24px",
+     "fontWeight": "430"
+    }
+   },
+   "texts": [
+    {
+     "tag": "h2",
+     "text": "Rename chat",
+     "bbox": {
+      "x": 450,
+      "y": 344,
+      "w": 380,
+      "h": 28
+     },
+     "computed": {
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "color": "rgb(255, 255, 255)",
+      "opacity": "1",
+      "outline": "rgb(255, 255, 255) none 3px",
+      "boxShadow": "none",
+      "cursor": "auto",
+      "borderColor": "rgb(255, 255, 255)",
+      "borderRadius": "0px",
+      "fontSize": "20px",
+      "lineHeight": "28px",
+      "fontWeight": "600"
+     }
+    },
+    {
+     "tag": "p",
+     "text": "Keep it short and recognizable",
+     "bbox": {
+      "x": 450,
+      "y": 376,
+      "w": 380,
+      "h": 21
+     },
+     "computed": {
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "color": "rgba(255, 255, 255, 0.498)",
+      "opacity": "1",
+      "outline": "rgba(255, 255, 255, 0.498) none 3px",
+      "boxShadow": "none",
+      "cursor": "auto",
+      "borderColor": "rgba(255, 255, 255, 0.498)",
+      "borderRadius": "0px",
+      "fontSize": "14px",
+      "lineHeight": "21px",
+      "fontWeight": "430"
+     }
+    }
+   ],
+   "input": {
+    "tag": "input",
+    "text": "",
+    "aria": "Chat title",
+    "bbox": {
+     "x": 450,
+     "y": 409,
+     "w": 380,
+     "h": 36
+    },
+    "computed": {
+     "backgroundColor": "rgba(45, 45, 45, 0.96)",
+     "color": "rgb(255, 255, 255)",
+     "opacity": "1",
+     "outline": "rgb(238, 238, 238) none 2px",
+     "boxShadow": "none",
+     "cursor": "text",
+     "borderColor": "rgb(58, 131, 247)",
+     "borderRadius": "10px",
+     "fontSize": "13px",
+     "lineHeight": "18.5714px",
+     "fontWeight": "430"
+    },
+    "value": "Change the greeting in hello.py to \"Hello, Codex\".",
+    "placeholder": "Add a title…",
+    "focused": true,
+    "selection": [
+     0,
+     50
+    ]
+   },
+   "buttons": [
+    {
+     "tag": "button",
+     "text": "Cancel",
+     "bbox": {
+      "x": 673,
+      "y": 457,
+      "w": 80,
+      "h": 32
+     },
+     "computed": {
+      "backgroundColor": "rgba(255, 255, 255, 0.03)",
+      "color": "rgb(255, 255, 255)",
+      "opacity": "1",
+      "outline": "rgb(255, 255, 255) none 3px",
+      "boxShadow": "none",
+      "cursor": "default",
+      "borderColor": "rgba(255, 255, 255, 0.082)",
+      "borderRadius": "12.5px",
+      "fontSize": "14px",
+      "lineHeight": "18px",
+      "fontWeight": "430"
+     }
+    },
+    {
+     "tag": "button",
+     "text": "Save",
+     "bbox": {
+      "x": 764,
+      "y": 457,
+      "w": 66,
+      "h": 32
+     },
+     "computed": {
+      "backgroundColor": "rgb(255, 255, 255)",
+      "color": "rgb(45, 45, 45)",
+      "opacity": "1",
+      "outline": "rgb(45, 45, 45) none 3px",
+      "boxShadow": "none",
+      "cursor": "default",
+      "borderColor": "rgba(255, 255, 255, 0.082)",
+      "borderRadius": "12.5px",
+      "fontSize": "14px",
+      "lineHeight": "18px",
+      "fontWeight": "430"
+     }
+    },
+    {
+     "tag": "button",
+     "text": "Close dialog",
+     "bbox": {
+      "x": 810,
+      "y": 340,
+      "w": 24,
+      "h": 24
+     },
+     "computed": {
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "color": "oklab(0.999994 0.0000455677 0.0000200868 / 0.8)",
+      "opacity": "1",
+      "outline": "oklab(0.999994 0.0000455677 0.0000200868 / 0.8) none 3px",
+      "boxShadow": "none",
+      "cursor": "default",
+      "borderColor": "oklab(0.999994 0.0000455677 0.0000200868 / 0.8)",
+      "borderRadius": "4px",
+      "fontSize": "16px",
+      "lineHeight": "16px",
+      "fontWeight": "430"
+     }
+    }
+   ]
+  },
+  "afterEscape": {
+   "afterStep": 2,
+   "dialogs": 0,
+   "activeElement": "body",
+   "requests": []
+  },
+  "afterType": {
+   "afterStep": 4,
+   "input": {
+    "value": "Greeting change",
+    "selection": [
+     15,
+     15
+    ]
+   }
+  },
+  "afterEnter": {
+   "afterStep": 5,
+   "dialogs": 0,
+   "toast": "Couldn't save your changes. Try again",
+   "rowTitle": "Change the greeting in hello.py to \"Hello, Codex\".",
+   "requests": [
+    {
+     "type": "mcp-request",
+     "method": "thread/name/set",
+     "params": "{\"threadId\":\"01a13de9-c48a-7b20-8382-db900881cb99\",\"name\":\"Greeting change\"}"
+    }
+   ]
+  },
+  "afterSave": {
+   "afterStep": 7,
+   "dialogs": 0,
+   "toast": "Couldn't save your changes. Try again",
+   "requests": [
+    {
+     "type": "mcp-request",
+     "method": "thread/name/set",
+     "params": "{\"threadId\":\"01a13de9-c48a-7b20-8382-db900881cb99\",\"name\":\"Change the greeting in hello.py to \\\"Hello, Codex\\\".\"}"
+    }
+   ]
+  },
+  "state": {
+   "route": "home"
+  },
+  "requests": []
+ }
+}
