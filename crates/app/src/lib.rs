@@ -1132,8 +1132,10 @@ impl Root {
             .turns
             .iter()
             .any(|turn| turn.status == TurnStatus::InProgress);
-        self.thread_composer
-            .update(cx, |c, cx| c.set_running(running, cx));
+        self.thread_composer.update(cx, |c, cx| {
+            c.set_running(running, cx);
+            c.set_search_roots(vec![thread.cwd.clone()]);
+        });
         let route = Route::Thread(thread.id.clone());
         let clock = Clock {
             utc_offset: utc_offset(),
@@ -1614,6 +1616,11 @@ impl Root {
                 }
                 // Recents rows show the thread preview, known once a turn ran.
                 "turn/completed" => self.refresh_threads(cx),
+                "fuzzyFileSearch/sessionUpdated" | "fuzzyFileSearch/sessionCompleted" => {
+                    let completed = method == "fuzzyFileSearch/sessionCompleted";
+                    self.thread_composer
+                        .update(cx, |c, cx| c.apply_file_search(completed, &params, cx));
+                }
                 "account/login/completed" if params["success"] == true => {
                     self.login = None;
                     cx.notify();

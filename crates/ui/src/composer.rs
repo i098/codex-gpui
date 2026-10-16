@@ -150,6 +150,7 @@ mod menu {
         }])
     }
 }
+mod mention;
 mod menus;
 mod slash;
 pub use slash::SlashCommand;
@@ -604,6 +605,7 @@ impl Composer {
         self.selected_range = s.len()..s.len();
         self.marked_range = None;
         self.slash.reset();
+        self.end_search(cx);
         cx.notify();
     }
 
@@ -676,6 +678,7 @@ impl Composer {
             self.marked_range = None;
             self.menu = None;
             self.slash.reset();
+            self.end_search(cx);
         }
         cx.notify();
         if let Some(f) = self.on_submit.clone() {
@@ -693,6 +696,7 @@ impl Composer {
 
     fn toggle_menu(&mut self, menu: Menu, window: &mut Window, cx: &mut Context<Self>) {
         self.slash.reset();
+        self.end_search(cx);
         if self.menu == Some(menu) {
             self.dismiss(&Dismiss, window, cx);
         } else {
