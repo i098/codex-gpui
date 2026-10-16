@@ -13,8 +13,8 @@ use bridge::{
 use gpui::{
     Action, AnyView, App, AppContext as _, ClickEvent, ClipboardItem, Context, Corners, Div,
     Entity, FocusHandle, Font, FontFeatures, FontWeight, HighlightStyle, Hsla, InteractiveElement,
-    IntoElement, KeyDownEvent, MouseButton, ParentElement, Pixels, Render, Rgba, SharedString,
-    Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun, Window, black,
+    IntoElement, KeyDownEvent, MouseButton, ParentElement, Pixels, Render, Rgba, ScrollHandle,
+    SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun, Window, black,
     combine_highlights, deferred, div, font, prelude::FluentBuilder as _, px, rgb, white,
 };
 use shapes::Decoration;
@@ -1079,6 +1079,218 @@ pub fn with_side_tabs(
             hovered: None,
         }
     })
+}
+
+/// A file link in an answer (`data-file-reference`): open the file viewer tab at `line`.
+/// `path` is as written in the markdown; a relative one is under the thread's cwd.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = shell, no_json)]
+pub struct OpenFile {
+    pub path: String,
+    pub line: Option<u32>,
+}
+
+/// The side panel's file viewer (`review-file-source-tab`): the breadcrumb header and the
+/// file's lines, scrolled to the cited line.
+pub struct FileView {
+    /// Absolute path.
+    pub path: String,
+    /// The workspace folder name, then every path segment under it.
+    pub crumbs: Vec<SharedString>,
+    pub line: Option<u32>,
+    /// `None` while the host reads; `Err` shows `Could not open file`.
+    pub contents: Option<Result<String, String>>,
+    scroll: ScrollHandle,
+}
+
+impl FileView {
+    /// `workspace` is the thread's cwd; the server reports it canonicalized
+    /// (`/private/tmp/...`) while links carry the written path, so the crumbs start at the
+    /// first segment named like the workspace folder.
+    pub fn new(workspace: &str, path: String, line: Option<u32>) -> Self {
+        let root = workspace.trim_end_matches('/');
+        let name = root.rsplit('/').next().unwrap_or(root);
+        let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+        let start = segments.iter().position(|s| *s == name).unwrap_or(0);
+        let crumbs = segments[start..]
+            .iter()
+            .map(|s| SharedString::from((*s).to_owned()))
+            .collect();
+        Self {
+            path,
+            crumbs,
+            line,
+            contents: None,
+            scroll: ScrollHandle::new(),
+        }
+    }
+
+    pub fn name(&self) -> SharedString {
+        self.crumbs.last().cloned().unwrap_or_default()
+    }
+
+    /// The tab strip icon: the Python sprite for `.py`, else the file change card's file glyph.
+    pub fn tab_icon(&self) -> &'static str {
+        if self.path.ends_with(".py") {
+            "diff-file-python"
+        } else {
+            "thread-file-diff"
+        }
+    }
+
+    /// The host's answer; the cited line scrolls to the third row of the viewport.
+    /// ponytail: a fixed top offset, not the original's centring, which was not measured.
+    pub fn set_contents(&mut self, contents: Result<String, String>, cx: &mut Context<Self>) {
+        if let (Ok(_), Some(line)) = (&contents, self.line) {
+            let top = line.saturating_sub(3) as f32 * CODE_LINE;
+            self.scroll.set_offset(gpui::point(px(0.), -px(top)));
+        }
+        self.contents = Some(contents);
+        cx.notify();
+    }
+
+    fn header(&self, t: &Theme, clamped: bool) -> Div {
+        let last = self.crumbs.len().saturating_sub(1);
+        let crumbs = self.crumbs.iter().enumerate().flat_map(|(i, crumb)| {
+            let color = if i == last { t.text } else { t.text_secondary };
+            (i > 0)
+                .then(|| icon("thread-chevron-right", 12., t.text_tertiary).into_any_element())
+                .into_iter()
+                .chain(std::iter::once(
+                    text(crumb.clone(), 13., 19., 430., color).into_any_element(),
+                ))
+        });
+        div()
+            .h(px(48.))
+            .flex_none()
+            .p(px(8.))
+            .flex()
+            .justify_between()
+            .gap(px(8.))
+            .child(
+                capsule(t, clamped).child(
+                    div()
+                        .id("file-path")
+                        .role(gpui::Role::Group)
+                        .aria_label("File path")
+                        .h(px(28.))
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .px(px(8.))
+                        .children(crumbs),
+                ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap(px(6.))
+                    .child(
+                        capsule(t, clamped)
+                            .child(
+                                round_icon("diff-jump-to-file", 28., t)
+                                    .id("file-search")
+                                    .aria_label("Search in files"),
+                            )
+                            .child(
+                                round_icon("diff-show-files", 28., t)
+                                    .id("file-tree")
+                                    .aria_label("Toggle file tree"),
+                            ),
+                    )
+                    .child(
+                        capsule(t, clamped).child(
+                            div()
+                                .h(px(28.))
+                                .flex()
+                                .items_center()
+                                .gap(px(4.))
+                                .pl(px(12.))
+                                .pr(px(6.))
+                                .child(text("Open", 13., 20., 430., t.text))
+                                .child(icon("diff-chevron-down", 12., t.text)),
+                        ),
+                    ),
+            )
+    }
+}
+
+impl Render for FileView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.theme().clone();
+        let body = match &self.contents {
+            None => div().flex_1().into_any_element(),
+            Some(Err(_)) => div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(text("Could not open file", 13., 20., 430., t.text_tertiary))
+                .into_any_element(),
+            Some(Ok(contents)) => {
+                let syntax = Syntax::of(&t);
+                let python = self.path.ends_with(".py");
+                let lines: Vec<_> = contents.lines().collect();
+                let gutter = px(CH * lines.len().to_string().len().max(4) as f32 + 16.);
+                let cited = over(t.info_solid.opacity(0.12), t.surface);
+                div()
+                    .id("file-lines")
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
+                    .flex()
+                    .flex_col()
+                    .py(px(8.))
+                    .font_family(MONO)
+                    .text_size(px(CODE_SIZE))
+                    .line_height(px(CODE_LINE))
+                    .text_color(t.text)
+                    .children(lines.into_iter().enumerate().map(|(i, line)| {
+                        let number = i as u32 + 1;
+                        let bg = if Some(number) == self.line {
+                            cited
+                        } else {
+                            t.surface
+                        };
+                        let text: SharedString = line.to_owned().into();
+                        let content = if python {
+                            StyledText::new(text.clone()).with_highlights(highlight(&text, &syntax))
+                        } else {
+                            StyledText::new(text)
+                        };
+                        div()
+                            .h(px(CODE_LINE))
+                            .flex()
+                            .bg(bg)
+                            .child(
+                                div()
+                                    .w(gutter)
+                                    .flex_none()
+                                    .flex()
+                                    .justify_end()
+                                    .items_center()
+                                    .pr(px(8.))
+                                    .text_color(t.text_tertiary)
+                                    .child(number.to_string()),
+                            )
+                            .child(div().flex_1().pl(px(8.)).whitespace_nowrap().child(content))
+                    }))
+                    .into_any_element()
+            }
+        };
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .flex_none()
+                    .border_b_1()
+                    .border_color(t.border)
+                    .child(self.header(&t, panel_clamped(window))),
+            )
+            .child(body)
+    }
 }
 
 /// A `rounded-full` `size` px box around a 16 px tertiary icon.
