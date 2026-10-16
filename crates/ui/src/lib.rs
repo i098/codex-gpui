@@ -15,6 +15,7 @@ use theme::{ActiveTheme as _, Theme};
 pub mod composer;
 pub mod fixture;
 pub mod icon;
+pub mod motion;
 pub mod screens;
 
 actions!(
