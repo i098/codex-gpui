@@ -1,6 +1,9 @@
 //! App shell: the window chrome every screen shares (titlebar, navigation rail, sidebar
 //! frame, main panel), reproduced from `refs/home/dark@1280x832.spec.json`. All numbers are
 //! the spec's CSS px.
+//!
+//! Tab groups follow the original DOM order, not the paint order: rail, sidebar,
+//! titlebar, then main content. `refs/interactions/f1c.json` records both directions.
 
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, Bounds, ClickEvent, ContentMask, Context,
@@ -461,6 +464,17 @@ pub fn home_shell(_: &mut Window, cx: &mut App) -> AnyView {
 /// `New chat` and `Your dot` rows. With `unread` chats the bell carries the blue dot.
 pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
     let t = cx.theme();
+    let keyboard_ring = |inset| {
+        move |style: gpui::StyleRefinement| {
+            style.shadow(vec![gpui::BoxShadow {
+                color: gpui::rgb(0x3a83f7).into(),
+                offset: point(px(0.), px(0.)),
+                blur_radius: px(0.),
+                spread_radius: px(2.),
+                inset,
+            }])
+        }
+    };
     // Chromium squashes the search button's `_ButtonInner` and the rows below into one
     // transparent overlap layer, from the rows' left edge and the button's top.
     let overlap = point(RAIL_WIDTH + px(8.), Theme::TITLEBAR_HEIGHT + px(12.));
@@ -468,6 +482,8 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
         let hover_bg = t.list_hover;
         div()
             .id(id)
+            .tab_index(0)
+            .focus_visible(keyboard_ring(true))
             .h(px(30.))
             .flex()
             .items_center()
@@ -499,6 +515,8 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
                 .child(
                     div()
                         .id("mode-switch")
+                        .tab_index(0)
+                        .focus_visible(keyboard_ring(true))
                         .h(px(32.))
                         .px(px(6.))
                         .flex()
@@ -523,7 +541,9 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
                             t.text_tertiary,
                         ),
                         t,
-                    ),
+                    )
+                    .tab_index(0)
+                    .focus_visible(keyboard_ring(false)),
                     "View activity",
                     Some("⌥⌘U"),
                     Side::Bottom,
@@ -535,6 +555,8 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
                         icon::icon("search", 16., t.text_tertiary).own_layer(Some(overlap)),
                         t,
                     )
+                    .tab_index(0)
+                    .focus_visible(keyboard_ring(false))
                     .on_click(dispatch::<OpenCommandMenu>),
                     "Search",
                     Some("⌘K"),
@@ -649,6 +671,9 @@ impl Shell {
         let rail_tip =
             |item: Stateful<Div>, label: &'static str| tooltip(item, label, None, Side::Right);
         div()
+            .tab_group()
+            .tab_index(0)
+            .tab_stop(false)
             .absolute()
             .left_0()
             .top(Theme::TITLEBAR_HEIGHT)
@@ -786,6 +811,9 @@ impl Shell {
     fn sidebar_panel(&self, t: &Theme) -> Div {
         let r = Theme::RADIUS_XL_BASE;
         div()
+            .tab_group()
+            .tab_index(1)
+            .tab_stop(false)
             .absolute()
             .left(RAIL_WIDTH)
             .top(Theme::TITLEBAR_HEIGHT)
@@ -815,6 +843,9 @@ impl Shell {
         let open = self.sidebar_open;
         let r = Theme::RADIUS_XL_BASE;
         let panel = div()
+            .tab_group()
+            .tab_index(3)
+            .tab_stop(false)
             .absolute()
             .top(Theme::TITLEBAR_HEIGHT)
             .right(PAGE_INSET)
@@ -853,12 +884,21 @@ impl Shell {
             })
     }
 
-    fn titlebar(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
-        // Disabled (`opacity: .4`, no hover) when there is no history in that direction. The
-        // opacity goes on the icon itself so `icon::icon` finds its fitted image.
-        let nav = |id: &'static str, glyph: icon::Icon, enabled: bool| {
+    fn titlebar(&self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        // Disabled history controls do not participate in keyboard navigation.
+        let mut nav = |id: &'static str, glyph: icon::Icon, enabled: bool| {
             if enabled {
-                icon_button(id, glyph, t)
+                let focus = focus::handle(id, 0, window, cx);
+                focus::ring(
+                    icon_button(id, glyph, t),
+                    &focus,
+                    RADIUS_BUTTON_MD,
+                    px(2.),
+                    cx,
+                )
+                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                    focus.read(cx).handle.clone().focus(window, cx);
+                })
             } else {
                 div()
                     .id(id)
@@ -874,7 +914,14 @@ impl Shell {
         let back = icon::icon("arrow-left", 16., t.text_tertiary);
         // Forward is the Back glyph mirrored (`-scale-x-100`).
         let forward = icon::icon("arrow-left", 16., t.text_tertiary).flip_x();
+        let back = nav("back", back, self.can_go_back);
+        let forward = nav("forward", forward, self.can_go_forward);
+        let sidebar_focus = focus::handle("toggle-sidebar", 0, window, cx);
+        let new_tab_focus = focus::handle("new-tab", 0, window, cx);
         div()
+            .tab_group()
+            .tab_index(2)
+            .tab_stop(false)
             .absolute()
             .top_0()
             .left_0()
@@ -888,31 +935,36 @@ impl Shell {
                 }
             })
             .child(tooltip(
-                nav("back", back, self.can_go_back)
-                    .left(px(88.))
-                    .on_click(dispatch::<GoBack>),
+                back.left(px(88.)).on_click(dispatch::<GoBack>),
                 "Back",
                 Some("⌘["),
                 Side::Bottom,
             ))
             .child(tooltip(
-                nav("forward", forward, self.can_go_forward)
-                    .left(px(122.))
-                    .on_click(dispatch::<GoForward>),
+                forward.left(px(122.)).on_click(dispatch::<GoForward>),
                 "Forward",
                 Some("⌘]"),
                 Side::Bottom,
             ))
             .when(self.chat_chrome, |d| {
                 d.child(tooltip(
-                    icon_button(
-                        "toggle-sidebar",
-                        icon::icon("sidebar", 16., t.text_tertiary),
-                        t,
+                    focus::ring(
+                        icon_button(
+                            "toggle-sidebar",
+                            icon::icon("sidebar", 16., t.text_tertiary),
+                            t,
+                        ),
+                        &sidebar_focus,
+                        RADIUS_BUTTON_MD,
+                        px(2.),
+                        cx,
                     )
                     .absolute()
                     .left(px(156.))
                     .top(px(8.))
+                    .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                        sidebar_focus.read(cx).handle.clone().focus(window, cx);
+                    })
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
                     "Toggle sidebar",
                     Some("⇧⌘S"),
@@ -921,7 +973,7 @@ impl Shell {
             })
             .when(self.new_tab, |d| {
                 d.child(
-                    div()
+                    focus::ring(div().id("new-tab"), &new_tab_focus, px(8.), px(2.), cx)
                         .absolute()
                         .top(px(8.))
                         .right(px(8.))
@@ -929,6 +981,10 @@ impl Shell {
                         .flex()
                         .items_center()
                         .justify_center()
+                        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                            new_tab_focus.read(cx).handle.clone().focus(window, cx);
+                            cx.stop_propagation();
+                        })
                         .child(icon::icon("new-tab", 16., t.text_tertiary)),
                 )
             })
@@ -1187,7 +1243,7 @@ impl Render for Shell {
                 d.child(corners)
             })
             .child(self.rail(&t, window, cx))
-            .child(self.titlebar(&t, cx))
+            .child(self.titlebar(&t, window, cx))
             .when(self.profile_menu, |d| d.child(self.profile_menu(&t, cx)))
     }
 }
