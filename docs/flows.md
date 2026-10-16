@@ -24,7 +24,7 @@ The rows were not clicked again on the original through `tools/route1`: its `ser
 |---|---|---|---|---|
 | App shell: shortcuts, menu bar, window | 20 | 13 | 3 | 4 |
 | 14.1 Left rail | 12 | 4 | 1 | 7 |
-| 14.2 Sidebar | 23 | 11 | 4 | 8 |
+| 14.2 Sidebar | 23 | 12 | 4 | 7 |
 | 14.3 Home | 21 | 10 | 3 | 8 |
 | 14.4 Thread view | 20 | 6 | 3 | 11 |
 | 14.5 Composer | 20 | 6 | 5 | 9 |
@@ -33,7 +33,7 @@ The rows were not clicked again on the original through `tools/route1`: its `ser
 | 15.1 Automations | 16 | 2 | 2 | 12 |
 | 15.2 Background terminal | 10 | 2 | 2 | 6 |
 | 15.3 Mobile setup | 10 | 2 | 1 | 7 |
-| **All** | **192** | **65** | **33** | **94** |
+| **All** | **192** | **66** | **33** | **93** |
 
 Before round 5 (F2Flows): 57 PASS, 33 FAIL, 102 NOT WIRED. Before round 4 (F1Flows): 42 PASS, 25 FAIL, 125 NOT WIRED.
 
@@ -159,12 +159,12 @@ Numbers from the round 4 run (F1Flows); the screen builder column is a run of th
 | 14 | `⌘1`…`⌘9` | shortcut | Go to chat N. | Opens Recents row N; `⌘9` past the end does nothing. | PASS (`cmd_digit_goes_to_chat`) |
 | 15 | `⌘⇧[` / `⌘⇧]` | shortcut | Previous / next chat. | Previous / next Recents row. | PASS (`previous_next_chat`, `menu_bar_actions`) |
 | 16 | `⌘⇧S` / `⌘B` | shortcut | Toggle sidebar. | Toggles. | PASS (`sidebar_toggle_keys`) |
-| 17 | Titlebar `Hide sidebar` | click | Collapses the left panel; label changes to `Show sidebar`. | Toggles; tooltip `Toggle sidebar ⇧⌘S` below the button (also `Back ⌘[`, `Forward ⌘]` and the sidebar's `Search ⌘K`). | PASS (`sidebar_toggle_titlebar`; tooltips: `crates/app/tests/f1a.rs`) |
+| 17 | Titlebar `Hide sidebar` | click | Collapses the left panel; label changes to `Show sidebar`. | Toggles and updates the accessible label; the recorded tooltip stays `Toggle sidebar ⇧⌘S` in both states. | PASS (`sidebar_toggle_titlebar`; `crates/app/tests/s004.rs`) |
 | 18 | Row focus | focus ring | 2 px ring, offset -2 px. | No tab stops. | NOT WIRED (`crates/ui/src/screens/sidebar.rs` `thread_row`) |
 | 19 | Empty lists | empty | `No projects`, `No chats`; activity `Nothing needs attention`. | Empty `thread/list` gives no Recents (`No chats` branch); `No projects` always. No activity view. | PASS (`sidebar_empty_lists`) |
 | 20 | Lists loading | loading | Activity: `Checking unread chats…`. | — | NOT WIRED (`crates/ui/src/screens/sidebar.rs`: no activity view or loading state) |
 | 21 | Load error | error | `Projects couldn't be loaded` + `Retry`; `Could not load chats`. | A `thread/list` error stops `Root::connect`, so no route shows. | FAIL (`crates/app/src/lib.rs` `connect` treats it as fatal; `crates/ui/src/screens/sidebar.rs` has no error state) |
-| 22 | Sidebar drag-resize | resize | Width 240…min(520, window − 240), stored. | Fixed 288 px panel. | NOT WIRED (`crates/ui/src/lib.rs` `Shell`, `SIDEBAR_PANEL_WIDTH`) |
+| 22 | Sidebar drag-resize | resize | The recorded edge clamps to 290…520 px; dragging below 145 px collapses it. | The 16 px handle resizes the sidebar and main surface, retains the width on toggle, and saves it on release. | PASS (`crates/app/tests/s004.rs`, `refs/interactions/s004.json`) |
 | 23 | Resize | resize | Below 768 px the panel is hidden; it opens as an overlay. | Hidden at 767 and 600 px, shown at 1280 px; the user's choice is kept. `⌘B` opens it docked, not as an overlay. | FAIL (overlay: `crates/ui/src/lib.rs` `Shell`; hide/show checked by `resize_three_widths`) |
 
 S001 replays `refs/interactions/s001.json` with `cargo test -p app --test s001` on macOS.
@@ -174,6 +174,11 @@ The native host translates `pinnedThreads.set(false)` to `thread/section/move` w
 The original shows no toast for this Unpin action.
 Pin click remains deferred after the recorder failure, as approved by firstmate.
 Running-chat and scheduled-task archive confirmation still need a dialog extension outside this six-file slice.
+
+The S004 recording uses the original renderer through the Linux route1 stack in an isolated Chrome context.
+Its twelve actions check resize limits, collapse, restored width, titlebar toggles, tooltips, boundary pixels, and no app-server requests.
+The current original tooltip is `Toggle sidebar ⇧⌘S`, not the inventory's `⌘B` label.
+The static parity gate retains all 36 baseline counts.
 
 ## 14.3 Home
 
@@ -268,6 +273,16 @@ Run `tools/mac.sh -l s028 'cargo test -p app --test s028 -- --nocapture'`.
 The open panel keeps its state across streamed updates and uses `turn/diff/updated` as the authoritative diff.
 Search scope switching and repository-watch sources remain separate inventory slices.
 
+`refs/interactions/s027.json` records the original diff menus, text selection, clipboard writes, and line hover.
+`s027::diff_selection_and_hover_replay` checks forward and reverse text selection and `Cmd+C` without line numbers.
+The original does not change a line's background on hover in this state, despite the DT-014 inventory claim.
+The test compares the port's pixels before and after the same hover.
+The header menu copies the displayed path and collapses or expands the file.
+The body menu copies selected text, absolute paths, or displayed relative paths.
+The body menu also wraps long code lines without changing the copied text.
+The editor entry stays disabled until the native `openIn` service exists.
+Comment actions (S075/S082), file tabs (S186), and external targets remain outside this slice, as firstmate approved.
+
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
@@ -276,15 +291,15 @@ Search scope switching and repository-watch sources remain separate inventory sl
 | 3 | Source selector | click | Uncommitted / Staged / … | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 4 | Show / Hide files | click | Toggles the file tree. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 5 | File tree filter | focus | `Filter files…`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Header click collapses or expands the file; no Copy path or Open. | FAIL (Copy path, Open: `crates/ui/src/diff.rs` `file_header`; collapse checked by `diff_file_header_toggle`) |
+| 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Copy path and Collapse/Expand work. Open in editor remains disabled pending host services. | PARTIAL (`s027::diff_selection_and_hover_replay`) |
 | 7 | Hunk revert / stage | click | Revert, Stage / Unstage hunk. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 8 | Revert all | click | `Revert changes?` dialog. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 9 | Split / unified toggle | click | Switch diff layout. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 10 | Word wrap | click | Toggles wrap. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
+| 10 | Word wrap | click | Toggles wrap. | The body context menu toggles wrap; the header control remains separate work. | PARTIAL (`s027::diff_selection_and_hover_replay`) |
 | 11 | Mark as viewed | click | Collapses, persists. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 12 | `⌘F` in diff | shortcut | `Search diff…`. | Focus the panel, open find, and type a query; matches highlight and update with the diff. | PASS (`s028::streamed_diff_and_find_replay`) |
 | 13 | `⌘L` | shortcut | Go to line. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 14 | Line hover | hover | Line hover background. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
+| 14 | Line hover | hover | No background change in the recorded Last Turn state; no `data-hovered` attribute. | No background change. | PASS (`s027::diff_selection_and_hover_replay`; corrects DT-014) |
 | 15 | No changes | empty | `No file changes yet`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 16 | Not a git repo | empty | `Create a Git repository`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 17 | Loading | loading | `Loading diff`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
