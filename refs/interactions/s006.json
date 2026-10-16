@@ -1,0 +1,367 @@
+{
+  "name": "s006",
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 1,
+    "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+    "theme": "dark",
+    "hoverEmulated": true
+  },
+  "steps": [
+    {
+      "type": "click",
+      "target": {
+        "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Add a subtract\"]",
+        "bbox": {
+          "x": 60,
+          "y": 321,
+          "w": 272,
+          "h": 30
+        }
+      }
+    },
+    {
+      "type": "hover",
+      "target": {
+        "bbox": {
+          "x": 677,
+          "y": 140,
+          "w": 448,
+          "h": 63
+        }
+      }
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "Edit message",
+        "bbox": {
+          "x": 1147,
+          "y": 220,
+          "w": 26,
+          "h": 26
+        }
+      }
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "Cancel",
+        "bbox": {
+          "x": 1048,
+          "y": 189,
+          "w": 60,
+          "h": 28
+        }
+      }
+    },
+    {
+      "type": "hover",
+      "target": {
+        "selector": "button[aria-label=\"Copy\"]",
+        "bbox": {
+          "x": 437,
+          "y": 420,
+          "w": 26,
+          "h": 26
+        }
+      },
+      "waitMs": 850
+    },
+    {
+      "type": "hover",
+      "target": {
+        "selector": "button[aria-label=\"Rate response\"]",
+        "bbox": {
+          "x": 493,
+          "y": 420,
+          "w": 26,
+          "h": 26
+        }
+      },
+      "waitMs": 850
+    },
+    {
+      "type": "hover",
+      "target": {
+        "selector": "button[aria-label=\"Fork chat from here\"]",
+        "bbox": {
+          "x": 521,
+          "y": 420,
+          "w": 26,
+          "h": 26
+        }
+      },
+      "waitMs": 850
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "Copy",
+        "bbox": {
+          "x": 437,
+          "y": 420,
+          "w": 26,
+          "h": 26
+        }
+      }
+    },
+    {
+      "type": "hover",
+      "target": {
+        "bbox": {
+          "x": 677,
+          "y": 140,
+          "w": 448,
+          "h": 63
+        }
+      }
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "Edit message",
+        "bbox": {
+          "x": 1147,
+          "y": 220,
+          "w": 26,
+          "h": 26
+        }
+      }
+    },
+    {
+      "type": "type",
+      "text": " Show the result."
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "Send",
+        "bbox": {
+          "x": 1114,
+          "y": 189,
+          "w": 49,
+          "h": 28
+        }
+      },
+      "waitMs": 1500
+    }
+  ],
+  "result": {
+    "dom": [
+      {
+        "selector": "[aria-label=\"Edit message\"][contenteditable]",
+        "text": "Add a subtract(a, b) function to src/math.py next to add, then run python3 -c 'from src.math import subtract; print(subtract(5, 3))' to check it.",
+        "bbox": {
+          "x": 454,
+          "y": 141,
+          "w": 710,
+          "h": 40
+        },
+        "focused": true,
+        "parents": [
+          {
+            "tag": "DIV",
+            "class": "text-size-chat *:text-size-chat in-[[data-composer-body]:has([data-composer-expand-toggle])]:pe-10 in-[[data-composer-body]:has([data-expanded-composer])]:box-border in-[[data-composer-body]:has([data-expanded-composer])]:h-full in-[[data-composer-body]:has([data-expanded-composer])]:max-h-none box-content h-auto overflow-y-auto p-[var(--composer-editor-padding,0px)] leading-[var(--composer-editor-line-height,1.35)] *:min-h-[var(--composer-editor-min-height,2.5rem)] max-h-[min(25dvh,var(--composer-editor-max-height,25dvh))] min-h-[var(--composer-editor-min-height,2.5rem)] _RichTextInput_juri1_1 _composer_ilwj8_1 _composerTables_ilwj8_49 _composerHorizontalRules_x01ph_1 vertical-scroll-fade-mask font-content text-base",
+            "bbox": {
+              "x": 454,
+              "y": 141,
+              "w": 710,
+              "h": 40
+            },
+            "computed": {
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "tag": "DIV",
+            "class": "mb-2 flex-grow overflow-y-auto px-3 pt-3",
+            "bbox": {
+              "x": 442,
+              "y": 129,
+              "w": 734,
+              "h": 52
+            },
+            "computed": {
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          },
+          {
+            "tag": "DIV",
+            "class": "relative z-10 flex min-h-0 flex-1 flex-col",
+            "bbox": {
+              "x": 442,
+              "y": 129,
+              "w": 734,
+              "h": 100
+            },
+            "computed": {
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "auto"
+            }
+          }
+        ]
+      }
+    ],
+    "requests": [],
+    "cancel": {
+      "editorRemoved": true
+    },
+    "tooltips": [
+      {
+        "aria": "Copy",
+        "tag": "button",
+        "text": "",
+        "role": null,
+        "bbox": {
+          "x": 437,
+          "y": 420,
+          "w": 26,
+          "h": 26
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        },
+        "tooltip": [
+          {
+            "text": "Copy response",
+            "bbox": {
+              "x": 391,
+              "y": 388,
+              "w": 116,
+              "h": 30
+            },
+            "computed": {
+              "backgroundColor": "rgb(45, 45, 45)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.2) 0px 8px 18px 0px",
+              "cursor": "auto"
+            }
+          }
+        ]
+      },
+      {
+        "aria": "Rate response",
+        "tag": "button",
+        "text": "",
+        "role": null,
+        "bbox": {
+          "x": 493,
+          "y": 420,
+          "w": 26,
+          "h": 26
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        },
+        "tooltip": [
+          {
+            "text": "Rate response",
+            "bbox": {
+              "x": 449,
+              "y": 388,
+              "w": 112,
+              "h": 30
+            },
+            "computed": {
+              "backgroundColor": "rgb(45, 45, 45)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.2) 0px 8px 18px 0px",
+              "cursor": "auto"
+            }
+          }
+        ]
+      },
+      {
+        "aria": "Fork chat from here",
+        "tag": "button",
+        "text": "",
+        "role": null,
+        "bbox": {
+          "x": 521,
+          "y": 420,
+          "w": 26,
+          "h": 26
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        },
+        "tooltip": [
+          {
+            "text": "Branch in new chat",
+            "bbox": {
+              "x": 463,
+              "y": 388,
+              "w": 141,
+              "h": 30
+            },
+            "computed": {
+              "backgroundColor": "rgb(45, 45, 45)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.2) 0px 8px 18px 0px",
+              "cursor": "auto"
+            }
+          }
+        ]
+      }
+    ],
+    "clipboard": [
+      {
+        "text/plain": "Added `subtract(a, b)` next to `add` in [src/math.py](/tmp/cgx-mac/proj/src/math.py). Your check ran successfully and printed `2`.",
+        "text/html": "<p><span>Added </span><code dir=\"ltr\">subtract(a, b)</code><span> next to </span><code dir=\"ltr\">add</code><span> in </span><span data-prompt-link-label=\"src/math.py\" data-prompt-link-href=\"/tmp/cgx-mac/proj/src/math.py\">[src/math.py](/tmp/cgx-mac/proj/src/math.py)</span><span>. Your check ran successfully and printed </span><code dir=\"ltr\">2</code><span>.</span></p>"
+      }
+    ],
+    "edited": "Add a subtract(a, b) function to src/math.py next to add, then run python3 -c 'from src.math import subtract; print(subtract(5, 3))' to check it. Show the result.",
+    "failure": {
+      "text": "Failed to edit message",
+      "draft": "Add a subtract(a, b) function to src/math.py next to add, then run python3 -c 'from src.math import subtract; print(subtract(5, 3))' to check it. Show the result."
+    },
+    "editorSurface": {
+      "source": "screenshot",
+      "at": {"x": 500, "y": 190},
+      "rgba": [44, 44, 44, 255]
+    },
+    "screenshot": "/sdc-disk/tmp/cgx/s006/shots/s006-original-edit-failure.png"
+  },
+  "notes": [
+    "The route1 bridge refuses thread/resume, so the original has no owner and rejects Send before a rollback request.",
+    "ClipboardItem payloads were captured at navigator.clipboard.write without accessing the shared system clipboard.",
+    "The Linux renderer wraps the prompt on three lines. The Mac reference uses two. Replay maps message controls through the Mac reference bounds."
+  ]
+}

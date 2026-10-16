@@ -342,6 +342,7 @@ enum Menu {
 }
 
 type SubmitHandler = Rc<dyn Fn(&Submission, &mut Window, &mut App)>;
+type CancelEditHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 type ApprovalHandler = Rc<dyn Fn(ApprovalDecision, &mut Window, &mut App)>;
 /// `(model id, effort)` after the user picks them.
 type ModelHandler = Rc<dyn Fn(&str, &str, &mut App)>;
@@ -378,6 +379,8 @@ pub struct Composer {
     menu_trigger_hovered: bool,
     approval: Option<Approval>,
     on_submit: Option<SubmitHandler>,
+    on_cancel_edit: Option<CancelEditHandler>,
+    edit_pending: bool,
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
 }
@@ -422,9 +425,29 @@ impl Composer {
             menu_trigger_hovered: false,
             approval: None,
             on_submit: None,
+            on_cancel_edit: None,
+            edit_pending: false,
             on_approval: None,
             on_model: None,
         }
+    }
+
+    pub fn message_edit(
+        message: &str,
+        cancel: impl Fn(&mut Window, &mut App) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut editor = Self::new("Edit message", false, cx);
+        editor.set_text(message, cx);
+        editor.on_cancel_edit = Some(Rc::new(cancel));
+        editor.focus_handle.focus(window, cx);
+        editor
+    }
+
+    pub fn edit_failed(&mut self, cx: &mut Context<Self>) {
+        self.edit_pending = false;
+        cx.notify();
     }
 
     /// Models from `model/list` and the selection from `config/read` (`model`,
@@ -520,13 +543,18 @@ impl Composer {
     }
 
     fn submit(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
-        if self.pending_attachments > 0
+        if self.edit_pending
+            || self.pending_attachments > 0
             || (self.content.trim().is_empty() && self.attachments.is_empty())
         {
             return;
         }
         let submission = Submission {
-            text: std::mem::take(&mut self.content),
+            text: if self.on_cancel_edit.is_some() {
+                self.content.clone()
+            } else {
+                std::mem::take(&mut self.content)
+            },
             attachments: self.attachments.drain(..).map(|a| a.path).collect(),
             model: self
                 .current_model()
@@ -536,9 +564,13 @@ impl Composer {
             permission: self.permission,
             fast: self.fast,
         };
-        self.selected_range = 0..0;
-        self.marked_range = None;
-        self.menu = None;
+        if self.on_cancel_edit.is_some() {
+            self.edit_pending = true;
+        } else {
+            self.selected_range = 0..0;
+            self.marked_range = None;
+            self.menu = None;
+        }
         cx.notify();
         if let Some(f) = self.on_submit.clone() {
             f(&submission, window, cx);
@@ -577,6 +609,10 @@ impl Composer {
         if self.menu.take().is_some() {
             self.menu_focus.restore(window, cx);
             cx.notify();
+        } else if !self.edit_pending
+            && let Some(cancel) = self.on_cancel_edit.clone()
+        {
+            cancel(window, cx);
         }
     }
 
@@ -804,6 +840,7 @@ const EFFORT_MENU_SLOT: f32 = 258.5;
 
 impl Render for Composer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let editing = self.on_cancel_edit.is_some();
         let t = cx.theme().clone();
         let card = div()
             .id("composer")
@@ -828,24 +865,101 @@ impl Render for Composer {
             .on_action(cx.listener(Self::select_all))
             .on_action(cx.listener(Self::copy))
             .on_action(cx.listener(Self::cut))
-            .on_action(cx.listener(Self::paste))
+            .on_action(cx.listener(|this, action: &crate::Paste, window, cx| {
+                if this.on_cancel_edit.is_some() {
+                    if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                        this.insert(&text, window, cx);
+                    }
+                } else {
+                    this.paste(action, window, cx);
+                }
+            }))
             .on_action(cx.listener(Self::dismiss))
             .relative()
             .flex()
             .flex_col()
-            .child(shapes::decoration(card_decoration(&t)))
+            .child(shapes::decoration(if editing {
+                shapes::Decoration {
+                    radius: Corners::all(px(24.)),
+                    fill: Some(match t.appearance {
+                        Appearance::Dark => t.control_background.opacity(0.95),
+                        Appearance::Light => t.text_alpha_5,
+                    }),
+                    ..Default::default()
+                }
+            } else {
+                card_decoration(&t)
+            }))
             // See `docked`: the docked body is a transparent cc layer over the card.
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .when(self.docked, |d| d.layer())
-                    .child(self.attachments_row(&t, cx))
+                    .when(!editing, |d| d.child(self.attachments_row(&t, cx)))
                     .when_some(self.attachment_error, |d, error| {
                         d.child(label(error, t.text))
                     })
-                    .child(self.editor(cx))
-                    .child(self.footer(&t, cx)),
+                    .child(
+                        self.editor(cx)
+                            .when(editing, |d| d.pt(px(12.)).pb_0().min_h(px(52.))),
+                    )
+                    .child(if editing {
+                        let cancel = self.on_cancel_edit.clone().expect("edit callback");
+                        let enabled = !self.edit_pending && !self.content.trim().is_empty();
+                        div()
+                            .flex()
+                            .justify_end()
+                            .gap(px(6.))
+                            .px(px(12.))
+                            .pt(px(8.))
+                            .pb(px(12.))
+                            .child(
+                                div()
+                                    .id("cancel-message-edit")
+                                    .h(px(28.))
+                                    .px(px(10.))
+                                    .role(gpui::Role::Button)
+                                    .aria_label("Cancel")
+                                    .focusable()
+                                    .tab_index(0)
+                                    .focus_visible(|s| {
+                                        s.border_2().border_color(gpui::rgb(0x3a83f7))
+                                    })
+                                    .rounded(px(6.))
+                                    .border_1()
+                                    .border_color(t.border)
+                                    .child(text("Cancel", 13., 26., 400., t.text))
+                                    .when(!self.edit_pending, |d| {
+                                        d.on_click(move |_, window, cx| cancel(window, cx))
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .id("send-message-edit")
+                                    .h(px(28.))
+                                    .px(px(10.))
+                                    .role(gpui::Role::Button)
+                                    .aria_label("Send")
+                                    .focusable()
+                                    .tab_index(0)
+                                    .focus_visible(|s| {
+                                        s.border_2().border_color(gpui::rgb(0x3a83f7))
+                                    })
+                                    .rounded(px(6.))
+                                    .bg(t.text)
+                                    .opacity(if enabled { 1. } else { 0.4 })
+                                    .child(text("Send", 13., 28., 400., t.surface_elevated))
+                                    .when(enabled, |d| {
+                                        d.on_click(cx.listener(|this, _, window, cx| {
+                                            this.submit(&Submit, window, cx)
+                                        }))
+                                    }),
+                            )
+                            .into_any_element()
+                    } else {
+                        self.footer(&t, cx).into_any_element()
+                    }),
             );
         div()
             .w_full()
