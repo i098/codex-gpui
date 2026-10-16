@@ -66,14 +66,11 @@ impl EventEmitter<OpenThread> for HomeSidebar {}
 #[action(namespace = sidebar, no_json)]
 pub struct ArchiveThread(pub String);
 
+/// A row's `Pin chat` / `Unpin chat`: `thread/section/move` of the thread (its id) into the
+/// Pinned section (`true`) or out of it (`false`).
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = sidebar, no_json)]
-pub struct UnpinThread(pub String);
-
-/// The row menu's `Pin`: `thread/section/move` into the pinned section.
-#[derive(Clone, PartialEq, Action)]
-#[action(namespace = sidebar, no_json)]
-pub struct PinThread(pub String);
+pub struct PinThread(pub String, pub bool);
 
 /// The row menu's `Rename`: opens the `Rename chat` dialog for the thread (its id).
 #[derive(Clone, PartialEq, Action)]
@@ -308,11 +305,7 @@ fn thread_row(
                 .items_center()
                 .justify_center()
                 .rounded(px(6.))
-                .opacity(if focused || (pinned && id == "pin-chat") {
-                    1.
-                } else {
-                    0.
-                })
+                .opacity(if focused { 1. } else { 0. })
                 .group_hover(group.clone(), |s| s.opacity(1.))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(crate::motion::ButtonVisual {
@@ -352,7 +345,7 @@ fn thread_row(
                     .absolute()
                     .left_0()
                     .top(px(5.))
-                    .w(px(if focused || pinned { 216. } else { 264. - clip }))
+                    .w(px(if focused { 216. } else { 264. - clip }))
                     .group_hover(group.clone(), |s| s.w(px(216.)))
                     .h(px(20.))
                     .pl(px(8.))
@@ -394,9 +387,8 @@ fn thread_row(
                         tooltip(
                             action("pin-chat", "sidebar-pin").on_click(move |_, window, cx| {
                                 cx.stop_propagation();
-                                if pinned {
-                                    window.dispatch_action(Box::new(UnpinThread(id.clone())), cx);
-                                }
+                                window
+                                    .dispatch_action(Box::new(PinThread(id.clone(), !pinned)), cx);
                             }),
                             if pinned { "Unpin chat" } else { "Pin chat" },
                             None,

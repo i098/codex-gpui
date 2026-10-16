@@ -317,10 +317,10 @@ impl HomeSidebar {
         let thread = menu.thread;
         match id {
             "rename-thread" => window.dispatch_action(Box::new(RenameThread(thread)), cx),
-            "pin-thread" if self.pinned.contains(&thread) => {
-                window.dispatch_action(Box::new(UnpinThread(thread)), cx)
+            "pin-thread" => {
+                let pin = !self.pinned.contains(&thread);
+                window.dispatch_action(Box::new(PinThread(thread, pin)), cx)
             }
-            "pin-thread" => window.dispatch_action(Box::new(PinThread(thread)), cx),
             "archive-thread" => window.dispatch_action(Box::new(ArchiveThread(thread)), cx),
             "mark-thread-unread" => match self.unread.iter().position(|id| *id == thread) {
                 Some(i) => {

@@ -34,8 +34,8 @@ use ui::screens::diff::panel::{
 use ui::screens::home::HomeMain;
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
 use ui::screens::sidebar::{
-    self, ArchiveThread, CommandMenu, CommandMenuEvent, HomeSidebar, OpenThread, PinThread,
-    RenameThread, UnpinThread,
+    ArchiveThread, CommandMenu, CommandMenuEvent, HomeSidebar, OpenThread, PINNED_SECTION_ID,
+    PinThread, RenameThread, title as thread_title,
 };
 use ui::screens::terminal::Xterm;
 use ui::screens::thread::view::{Clock, EditMessage, ForkThread, RevertTurn, ThreadView};
@@ -1463,30 +1463,22 @@ impl Root {
         log_err(task, cx);
     }
 
-    /// The row menu's `Pin`: the row moves to `Pinned` at once, `thread/section/move` into
-    /// the pinned section follows; a refused write moves it back.
-    fn pin(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
-        self.move_section(id, Some(sidebar::PINNED_SECTION_ID), window, cx);
-    }
-
-    fn unpin(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
-        self.move_section(id, None, window, cx);
-    }
-
-    fn move_section(
+    /// `thread/section/move` into or out of the Pinned section: the row moves at once (no toast);
+    /// a refused write puts it back, silently, as the original does.
+    fn set_pinned(
         &mut self,
         id: String,
-        section: Option<&'static str>,
+        pinned: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(thread) = self.threads.iter_mut().find(|thread| thread.id == id) else {
             return;
         };
-        let old_section = std::mem::replace(
-            &mut thread.section,
-            section.map(|id| ThreadSection { id: id.to_owned() }),
-        );
+        let section = pinned.then(|| ThreadSection {
+            id: PINNED_SECTION_ID.to_owned(),
+        });
+        let old_section = std::mem::replace(&mut thread.section, section);
         self.sidebar
             .update(cx, |s, cx| s.set_threads(&self.threads, cx));
         let bridge = self.bridge.clone();
@@ -1494,7 +1486,7 @@ impl Root {
             let done = bridge
                 .request::<_, Value>(
                     "thread/section/move",
-                    json!({ "threadId": id, "sectionId": section, "beforeThreadId": null }),
+                    json!({ "threadId": id, "sectionId": pinned.then_some(PINNED_SECTION_ID), "beforeThreadId": null }),
                 )
                 .await;
             this.update(cx, |this, cx| {
@@ -1504,7 +1496,6 @@ impl Root {
                     }
                     this.sidebar
                         .update(cx, |s, cx| s.set_threads(&this.threads, cx));
-                    this.toast(Toast::danger("Couldn't save your changes. Try again"), cx);
                 }
             })?;
             done.map(drop)
@@ -2057,20 +2048,11 @@ impl Render for Root {
             .on_action(cx.listener(|this, a: &ArchiveThread, window, cx| {
                 this.archive(a.0.clone(), window, cx)
             }))
-            .on_action(
-                cx.listener(|this, a: &UnpinThread, window, cx| {
-                    this.unpin(a.0.clone(), window, cx)
-                }),
-            )
-            .on_action(
-                cx.listener(|this, a: &PinThread, window, cx| this.pin(a.0.clone(), window, cx)),
-            )
+            .on_action(cx.listener(|this, a: &PinThread, window, cx| {
+                this.set_pinned(a.0.clone(), a.1, window, cx)
+            }))
             .on_action(cx.listener(|this, a: &RenameThread, window, cx| {
-                let title = this
-                    .threads
-                    .iter()
-                    .find(|t| t.id == a.0)
-                    .map(sidebar::title);
+                let title = this.threads.iter().find(|t| t.id == a.0).map(thread_title);
                 let title = title.unwrap_or_default().to_string();
                 let dialog = cx.new(|cx| Dialog::rename(a.0.clone(), title, cx));
                 this.show_dialog(dialog, window, cx);
