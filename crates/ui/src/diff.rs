@@ -1020,7 +1020,7 @@ pub struct FileView {
     /// Absolute path.
     pub path: String,
     /// The workspace folder name, then every path segment under it.
-    crumbs: Vec<SharedString>,
+    pub crumbs: Vec<SharedString>,
     pub line: Option<u32>,
     /// `None` while the host reads; `Err` shows `Could not open file`.
     pub contents: Option<Result<String, String>>,
@@ -1049,20 +1049,16 @@ impl FileView {
         }
     }
 
-    pub fn crumbs(&self) -> &[SharedString] {
-        &self.crumbs
-    }
-
     pub fn name(&self) -> SharedString {
         self.crumbs.last().cloned().unwrap_or_default()
     }
 
-    /// The tab strip icon: the Python sprite for `.py`, else the plain file.
+    /// The tab strip icon: the Python sprite for `.py`, else the file change card's file glyph.
     pub fn tab_icon(&self) -> &'static str {
         if self.path.ends_with(".py") {
             "diff-file-python"
         } else {
-            "diff-file"
+            "thread-file-diff"
         }
     }
 

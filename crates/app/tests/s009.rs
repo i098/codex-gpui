@@ -108,7 +108,7 @@ fn file_link_opens_the_file_viewer_tab() -> Result<()> {
         let f = r.file_view().unwrap().read(cx);
         (
             f.name().to_string(),
-            f.crumbs().join(" > "),
+            f.crumbs.join(" > "),
             f.path.clone(),
             f.contents.clone(),
         )

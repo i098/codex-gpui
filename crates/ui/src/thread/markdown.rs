@@ -450,12 +450,12 @@ impl Markdown<'_> {
                                 .when(!external, |d| {
                                     // `path:12` cites a line; the thread's cwd resolves a
                                     // relative path.
-                                    let (path, line) = match dest_url.rsplit_once(':') {
-                                        Some((p, n)) if n.parse::<u32>().is_ok() => {
-                                            (p.to_owned(), n.parse().ok())
-                                        }
-                                        _ => (dest_url.to_string(), None),
-                                    };
+                                    let (path, line) = dest_url
+                                        .rsplit_once(':')
+                                        .and_then(|(p, n)| Some((p.to_owned(), n.parse().ok()?)))
+                                        .map_or((dest_url.to_string(), None), |(p, n)| {
+                                            (p, Some(n))
+                                        });
                                     d.on_click(move |_, window, cx| {
                                         window.dispatch_action(
                                             Box::new(crate::screens::diff::panel::OpenFile {
