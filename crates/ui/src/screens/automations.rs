@@ -3,11 +3,11 @@
 //! Host data (`list-automations`, `/suggested_automations`) comes from the recorded answers
 //! in `tools/route1/oracle.json`.
 
-use crate::{Shell, icon::icon, icon_button, text};
+use crate::{Shell, icon::icon, icon_button, motion::ButtonVisual, text};
 use gpui::{
-    Action, AnyView, App, AppContext as _, Context, Corners, Entity, InteractiveElement,
-    IntoElement, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window,
-    actions, canvas, div, img, px,
+    Action, AnyView, App, AppContext as _, Context, Corners, Div, Entity, InteractiveElement,
+    IntoElement, MouseButton, ParentElement, Render, SharedString, StatefulInteractiveElement,
+    Styled, Window, actions, canvas, div, img, prelude::FluentBuilder as _, px,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -31,6 +31,112 @@ actions!(
 #[action(namespace = automations, no_json)]
 pub struct StartSuggestedTask {
     pub prompt: SharedString,
+}
+
+/// A sidebar task row was clicked: `/scheduled?automationId=<id>`.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = automations, no_json)]
+pub struct OpenAutomation {
+    pub id: String,
+}
+
+/// One `list-automations` item, as the sidebar `Upcoming` list and the task thread show it.
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Task {
+    pub id: String,
+    pub name: SharedString,
+    pub prompt: SharedString,
+    #[serde(default)]
+    pub rrule: String,
+    /// Unix ms.
+    #[serde(default)]
+    pub created_at: i64,
+    pub next_run_at: Option<i64>,
+}
+
+/// The items of a `list-automations` body that parse; others are skipped like the original's
+/// malformed definitions.
+pub fn tasks(list: &Value) -> Vec<Task> {
+    list["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| serde_json::from_value(item.clone()).ok())
+        .collect()
+}
+
+/// A squircle `background-color` over the parent's box, blended like Blink (`shapes`), not a
+/// GPUI quad: the fill px match the original to the unit.
+fn fill(radius: gpui::Pixels, color: gpui::Hsla) -> Div {
+    div()
+        .absolute()
+        .inset_0()
+        .child(shapes::decoration(shapes::Decoration {
+            radius: Corners::all(radius),
+            corner: shapes::Corner::Squircle,
+            fill: Some(color),
+            ..Default::default()
+        }))
+}
+
+/// `(day, time)` of a unix-ms instant at the `utc_offset` (seconds) wall clock:
+/// `("Oct 17", "9:00 AM")`.
+fn day_time(at_ms: i64, utc_offset: i64) -> (String, String) {
+    let t = chrono::DateTime::from_timestamp(at_ms / 1000 + utc_offset, 0).unwrap_or_default();
+    (
+        t.format("%b %-d").to_string(),
+        t.format("%-I:%M %p").to_string(),
+    )
+}
+
+impl Task {
+    fn rule(&self, key: &str) -> Option<&str> {
+        self.rrule
+            .split(';')
+            .find_map(|part| part.strip_prefix(key)?.strip_prefix('='))
+    }
+
+    /// Sidebar cadence: `scheduled.sidebar.weekly` / `.daily`.
+    /// ponytail: the original's `pr()` labels every rrule shape; the port covers the
+    /// `New task` dialog's weekly and daily rules and reads everything else as daily.
+    fn cadence(&self) -> &'static str {
+        match self.rule("FREQ") {
+            Some("WEEKLY") => "Weekly",
+            _ => "Daily",
+        }
+    }
+
+    /// Card schedule: `Fridays at 9:00 AM`, `Daily at 8:00 AM`.
+    fn schedule(&self) -> String {
+        let hour: u32 = self
+            .rule("BYHOUR")
+            .and_then(|h| h.parse().ok())
+            .unwrap_or(9);
+        let minute: u32 = self
+            .rule("BYMINUTE")
+            .and_then(|m| m.parse().ok())
+            .unwrap_or(0);
+        let time = format!(
+            "{}:{minute:02} {}",
+            match hour % 12 {
+                0 => 12,
+                h => h,
+            },
+            if hour < 12 { "AM" } else { "PM" }
+        );
+        let day = match self.rule("BYDAY") {
+            Some("MO") => "Mondays",
+            Some("TU") => "Tuesdays",
+            Some("WE") => "Wednesdays",
+            Some("TH") => "Thursdays",
+            Some("FR") => "Fridays",
+            Some("SA") => "Saturdays",
+            Some("SU") => "Sundays",
+            _ => "Daily",
+        };
+        format!("{day} at {time}")
+    }
 }
 
 /// One `/suggested_automations` entry (or a built-in landing example).
@@ -124,40 +230,155 @@ fn cards(mut all: Vec<Suggestion>) -> Vec<Suggestion> {
 pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
     let server = serde_json::from_value(oracle("\"url\":\"/suggested_automations\""))
         .expect("suggested_automations shape");
-    let shell = shell_with(server, cx);
+    let (shell, _) = shell_with(server, Vec::new(), None, 0, cx);
     shell.update(cx, |shell, _| shell.can_go_back = true);
     shell.into()
 }
 
-/// The app's `/scheduled` route: no automations yet. The port has no ChatGPT backend for
-/// `/suggested_automations`, so the cards are the landing examples, as the original shows
-/// them without server suggestions.
-pub fn shell(cx: &mut App) -> Entity<Shell> {
-    shell_with(Vec::new(), cx)
+/// The app's `/scheduled` route with the host's `tasks`: the task thread of `selected`
+/// (`?automationId=`, with the composer docked under it), else the empty page. The port has
+/// no ChatGPT backend for `/suggested_automations`, so the cards are the landing examples, as
+/// the original shows them without server suggestions. Dates show at `utc_offset` seconds.
+pub fn shell(
+    tasks: Vec<Task>,
+    selected: Option<(Task, AnyView)>,
+    utc_offset: i64,
+    cx: &mut App,
+) -> (Entity<Shell>, Entity<ScheduledSidebar>) {
+    shell_with(Vec::new(), tasks, selected, utc_offset, cx)
 }
 
-fn shell_with(server: Vec<Suggestion>, cx: &mut App) -> Entity<Shell> {
-    let sidebar = cx.new(|_| ScheduledSidebar).into();
-    let main = cx
-        .new(|_| AutomationsPage {
-            cards: cards(server),
-        })
-        .into();
-    cx.new(|_| {
-        let mut shell = Shell::new(sidebar, main);
+fn shell_with(
+    server: Vec<Suggestion>,
+    tasks: Vec<Task>,
+    selected: Option<(Task, AnyView)>,
+    utc_offset: i64,
+    cx: &mut App,
+) -> (Entity<Shell>, Entity<ScheduledSidebar>) {
+    let sidebar = cx.new(|_| ScheduledSidebar {
+        tasks,
+        selected: selected.as_ref().map(|(task, _)| task.id.clone()),
+        utc_offset,
+    });
+    let main: AnyView = match selected {
+        Some((task, composer)) => cx
+            .new(|_| AutomationThread {
+                task,
+                composer,
+                utc_offset,
+            })
+            .into(),
+        None => cx
+            .new(|_| AutomationsPage {
+                cards: cards(server),
+            })
+            .into(),
+    };
+    let shell = cx.new(|_| {
+        let mut shell = Shell::new(sidebar.clone().into(), main);
         shell.selected_rail = Some("scheduled");
         shell.new_tab = false;
         shell
-    })
+    });
+    (shell, sidebar)
 }
 
-/// `ScheduledSidebar`: header `Scheduled` + search, `New task`, section `Upcoming`.
-pub struct ScheduledSidebar;
+/// `ScheduledSidebar`: header `Scheduled` + search, `New task`, section `Upcoming` with one
+/// 48 px row per task (`automation-row`): name, `Oct 17 · Weekly`, and on hover the list
+/// fill with the `Scheduled task actions` button fading in. The selected row keeps the fill.
+pub struct ScheduledSidebar {
+    tasks: Vec<Task>,
+    selected: Option<String>,
+    utc_offset: i64,
+}
+
+impl ScheduledSidebar {
+    pub fn set_tasks(&mut self, tasks: Vec<Task>, cx: &mut Context<Self>) {
+        self.tasks = tasks;
+        cx.notify();
+    }
+
+    fn row(&self, task: &Task, t: &Theme) -> impl IntoElement {
+        let fill = fill(px(12.5), t.ghost_hover);
+        let group = SharedString::from(format!("task-row-{}", task.id));
+        let id = task.id.clone();
+        let mut secondary = div().h(px(16.)).pr(px(5.)).flex().items_center();
+        if let Some(next) = task.next_run_at {
+            secondary = secondary
+                .child(text(
+                    day_time(next, self.utc_offset).0,
+                    12.,
+                    16.,
+                    430.,
+                    t.text_tertiary,
+                ))
+                .child(text("·", 12., 16., 430., t.text_tertiary).mx(px(4.)));
+        }
+        div()
+            .id(group.clone())
+            .group(group.clone())
+            .relative()
+            .h(px(48.))
+            .pt(px(5.))
+            .pl(px(8.))
+            .pr(px(5.))
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .child(if self.selected.as_deref() == Some(&task.id) {
+                fill
+            } else {
+                fill.opacity(0.)
+                    .group_hover(group.clone(), |s| s.opacity(1.))
+            })
+            .on_click(move |_, window, cx| {
+                window.dispatch_action(Box::new(OpenAutomation { id: id.clone() }), cx)
+            })
+            .child(
+                text(task.name.clone(), 14., 20., 430., t.text_default_nav)
+                    .overflow_hidden()
+                    .text_ellipsis(),
+            )
+            .child(secondary.child(text(task.cadence(), 12., 16., 430., t.text_tertiary)))
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .right(px(2.))
+                    .h_full()
+                    .w(px(52.))
+                    .pr(px(6.))
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .opacity(0.)
+                    .group_hover(group.clone(), |s| s.opacity(1.))
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("{group}-actions")))
+                            .size(px(28.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(9.375))
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .child(ButtonVisual {
+                                glyph: icon("thread-chat-actions", 16., t.text_tertiary),
+                                radius: px(9.375),
+                                hover: t.ghost_hover,
+                                foreground: t.text.opacity(0.85),
+                                selected: false,
+                            }),
+                    ),
+            )
+    }
+}
 
 impl Render for ScheduledSidebar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
         let hover_bg = t.list_hover;
+        let rows: Vec<_> = self.tasks.iter().map(|task| self.row(task, t)).collect();
         div()
             .size_full()
             .flex()
@@ -230,13 +451,18 @@ impl Render for ScheduledSidebar {
                                 .on_click(crate::dispatch::<FilterTasks>),
                             ),
                     )
-                    .child(div().mt(px(1.)).px(px(8.)).py(px(4.)).child(text(
-                        "No scheduled tasks",
-                        13.,
-                        18.571_428,
-                        430.,
-                        t.text_tertiary,
-                    ))),
+                    .when(rows.is_empty(), |d| {
+                        d.child(div().mt(px(1.)).px(px(8.)).py(px(4.)).child(text(
+                            "No scheduled tasks",
+                            13.,
+                            18.571_428,
+                            430.,
+                            t.text_tertiary,
+                        )))
+                    })
+                    .when(!rows.is_empty(), |d| {
+                        d.child(div().flex().flex_col().gap(px(1.)).children(rows))
+                    }),
             )
     }
 }
@@ -416,6 +642,173 @@ impl Render for AutomationsPage {
                                     ),
                             ),
                     ),
+            )
+    }
+}
+
+/// Main column of `/scheduled?automationId=<id>`: the task's thread as the original shows it
+/// before any run (date separator, the prompt as the user's message, `Your task is
+/// scheduled…` with the automation card) over the docked composer.
+/// ponytail: no scroll fades, corner clip, message hover actions or run items; add with the
+/// run-history rows.
+pub struct AutomationThread {
+    task: Task,
+    composer: AnyView,
+    utc_offset: i64,
+}
+
+impl Render for AutomationThread {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.theme();
+        let created_time = day_time(self.task.created_at, self.utc_offset).1;
+        // `<day>{date}</day> at {time}` with the year: the separator of a thread from another year.
+        let created =
+            chrono::DateTime::from_timestamp(self.task.created_at / 1000 + self.utc_offset, 0)
+                .unwrap_or_default()
+                .format("%b %-d, %Y")
+                .to_string();
+        let next = self
+            .task
+            .next_run_at
+            .map(|at| day_time(at, self.utc_offset))
+            .map_or_else(|| "soon".to_owned(), |(day, time)| format!("{day}, {time}"));
+        let column = |d: gpui::Div| d.mx_auto().w_full().max_w(px(768.)).px(px(16.));
+        div()
+            .size_full()
+            .relative()
+            .overflow_hidden()
+            .bg(t.surface)
+            .child(
+                div()
+                    .id("automation-thread")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .pt(px(32.))
+                    .child(
+                        column(div())
+                            .pb(px(32.))
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .flex()
+                                    .justify_center()
+                                    .py(px(16.))
+                                    .child(text(created, 13., 20., 500., t.text_tertiary))
+                                    .child(text(
+                                        format!(" at {created_time}"),
+                                        13.,
+                                        20.,
+                                        400.,
+                                        t.text_tertiary,
+                                    )),
+                            )
+                            .child(
+                                div().flex().justify_end().child(
+                                    div()
+                                        .relative()
+                                        .max_w(px(576.))
+                                        .px(px(16.))
+                                        .py(px(10.))
+                                        .child(fill(px(22.), t.user_message_background))
+                                        .child(
+                                            text(
+                                                self.task.prompt.clone(),
+                                                14.,
+                                                22.75,
+                                                430.,
+                                                t.text,
+                                            )
+                                            .whitespace_normal(),
+                                        ),
+                                ),
+                            )
+                            // The user message's action row, then the turn gap.
+                            .child(div().h(px(46.)))
+                            .child(
+                                text(
+                                    format!("Your task is scheduled. Its next run is {next}."),
+                                    14.,
+                                    22.75,
+                                    430.,
+                                    t.text,
+                                )
+                                .whitespace_normal(),
+                            )
+                            .child(
+                                div()
+                                    .relative()
+                                    .mt(px(24.))
+                                    .h(px(65.))
+                                    .p(px(12.))
+                                    .child(fill(px(20.), t.surface_elevated_secondary.opacity(0.5)))
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(10.))
+                                    .child(
+                                        div()
+                                            .size(px(40.))
+                                            .flex_none()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .relative()
+                                            .child(fill(
+                                                px(12.5),
+                                                t.surface_secondary.opacity(0.92),
+                                            ))
+                                            .child(icon("scheduled", 24., t.text_secondary)),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .flex()
+                                            .flex_col()
+                                            .child(
+                                                text(
+                                                    self.task.name.clone(),
+                                                    14.,
+                                                    21.,
+                                                    500.,
+                                                    t.text,
+                                                )
+                                                .overflow_hidden()
+                                                .text_ellipsis(),
+                                            )
+                                            .child(text(
+                                                self.task.schedule(),
+                                                13.,
+                                                20.,
+                                                430.,
+                                                t.text_secondary,
+                                            )),
+                                    )
+                                    .child(
+                                        div()
+                                            .h(px(28.))
+                                            .px(px(8.))
+                                            .rounded(px(12.5))
+                                            .border_1()
+                                            .border_color(t.border)
+                                            .flex()
+                                            .items_center()
+                                            .child(text("Open", 14., 18., 430., t.text)),
+                                    ),
+                            ),
+                    )
+                    // Room for the docked composer.
+                    .child(div().h(px(114.))),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .pb(px(16.))
+                    .bg(t.surface)
+                    .child(column(div()).child(self.composer.clone())),
             )
     }
 }
