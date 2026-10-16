@@ -44,6 +44,7 @@ pub struct HeadlessAppContext {
     pub foreground_executor: ForegroundExecutor,
     dispatcher: TestDispatcher,
     text_system: Arc<TextSystem>,
+    platform: Rc<TestPlatform>,
 }
 
 impl HeadlessAppContext {
@@ -88,7 +89,7 @@ impl HeadlessAppContext {
 
         let text_system = Arc::new(TextSystem::new(platform_text_system));
         let http_client = http_client::FakeHttpClient::with_404_response();
-        let app = App::new_app(platform, asset_source, http_client);
+        let app = App::new_app(platform.clone(), asset_source, http_client);
         app.borrow_mut().mode = GpuiMode::test();
 
         Self {
@@ -97,6 +98,7 @@ impl HeadlessAppContext {
             foreground_executor,
             dispatcher,
             text_system,
+            platform,
         }
     }
 
@@ -143,6 +145,11 @@ impl HeadlessAppContext {
     /// Disables parking mode, returning to deterministic test execution.
     pub fn forbid_parking(&self) {
         self.dispatcher.forbid_parking();
+    }
+
+    /// Takes the last URL opened through the test platform.
+    pub fn take_opened_url(&self) -> Option<String> {
+        self.platform.opened_url.borrow_mut().take()
     }
 
     /// Updates app state.
