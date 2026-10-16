@@ -58,21 +58,24 @@ impl Composer {
                 ))
             })
             .child(
-                trigger.on_click(cx.listener(|this, _, _, cx| this.toggle_menu(Menu::Effort, cx))),
+                trigger
+                    .track_focus(&self.model_focus)
+                    .focus_visible(menu::trigger_focus)
+                    .on_hover(cx.listener(|this, hovered: &bool, _, _| {
+                        this.menu_trigger_hovered = *hovered
+                    }))
+                    .on_key_down(cx.listener(|this, event, window, cx| {
+                        this.trigger_key(Menu::Effort, event, window, cx)
+                    }))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle_menu(Menu::Effort, window, cx)
+                    })),
             )
             .when(self.menu == Some(Menu::Effort), |d| {
-                d.child(Self::anchored_menu(
-                    self.effort_menu(t, cx),
-                    Some(EFFORT_MENU_SLOT),
-                    cx,
-                ))
+                d.child(self.anchored_menu(self.effort_menu(t, cx), Some(EFFORT_MENU_SLOT), cx))
             })
             .when(self.menu == Some(Menu::Models), |d| {
-                d.child(Self::anchored_menu(
-                    self.models_menu(t, cx),
-                    Some(EFFORT_MENU_SLOT),
-                    cx,
-                ))
+                d.child(self.anchored_menu(self.models_menu(t, cx), Some(EFFORT_MENU_SLOT), cx))
             });
         let has_input = !self.content.is_empty() || !self.attachments.is_empty();
         let stopping = self.running && !has_input;
@@ -97,18 +100,26 @@ impl Composer {
                     .relative()
                     .child(
                         pill("permissions", t)
+                            .track_focus(&self.permissions_focus)
+                            .focus_visible(menu::trigger_focus)
+                            .on_hover(cx.listener(|this, hovered: &bool, _, _| {
+                                this.menu_trigger_hovered = *hovered
+                            }))
+                            .on_key_down(cx.listener(|this, event, window, cx| {
+                                this.trigger_key(Menu::Permissions, event, window, cx)
+                            }))
                             .px(px(6.))
                             .gap(px(4.))
                             .child(footer_icon("permissions", t.text_tertiary))
                             .when(self.footer_width > SM_WIDTH, |d| {
                                 d.child(label(self.permission.short_label(), t.text_tertiary))
                             })
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.toggle_menu(Menu::Permissions, cx)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.toggle_menu(Menu::Permissions, window, cx)
                             })),
                     )
                     .when(self.menu == Some(Menu::Permissions), |d| {
-                        d.child(Self::anchored_menu(self.permissions_menu(t, cx), None, cx))
+                        d.child(self.anchored_menu(self.permissions_menu(t, cx), None, cx))
                     }),
             );
         let send = div()

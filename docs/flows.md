@@ -28,12 +28,12 @@ The rows were not clicked again on the original through `tools/route1`: its `ser
 | 14.3 Home | 21 | 10 | 3 | 8 |
 | 14.4 Thread view | 20 | 6 | 3 | 11 |
 | 14.5 Composer | 20 | 6 | 5 | 9 |
-| 14.6 Diff view | 20 | 1 | 1 | 18 |
+| 14.6 Diff view | 20 | 2 | 1 | 17 |
 | 14.7 Settings, login and onboarding | 20 | 7 | 8 | 5 |
 | 15.1 Automations | 16 | 2 | 2 | 12 |
 | 15.2 Background terminal | 10 | 2 | 2 | 6 |
 | 15.3 Mobile setup | 10 | 2 | 1 | 7 |
-| **All** | **192** | **64** | **33** | **95** |
+| **All** | **192** | **65** | **33** | **94** |
 
 Before round 5 (F2Flows): 57 PASS, 33 FAIL, 102 NOT WIRED. Before round 4 (F1Flows): 42 PASS, 25 FAIL, 125 NOT WIRED.
 
@@ -251,6 +251,16 @@ Firstmate authorized a separate CP-108 follow-up after the corrected recording s
 
 `Root` opens the Changes panel beside the open thread (`⌥⌘B`, `View changes`, the summary's `Changes` row) through `ui::screens::diff::panel::with_side_panel`, which the `diff` screen builder also uses.
 
+Slice S028 records the original with the Linux route1 recorder in an isolated browser context.
+`refs/interactions/s028.json` records file changes, aggregate diff updates, and the `def` search.
+The native `find-in-thread` message substitutes for the Electron shortcut in the browser.
+The port test uses `Cmd+F` and checks both result counts and highlight colors.
+It resolves `View changes` from the static reference because Linux text layout places that button below the Mac reference.
+Run `tools/mac.sh -l s028 'cargo test -p app --test s028 -- --nocapture'`.
+The open panel keeps its state across streamed updates and uses `turn/diff/updated` as the authoritative diff.
+Search scope switching and repository-watch sources remain separate inventory slices.
+
+
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Open Changes panel | entry | `⌥⌘B` or `View changes`. | Both open it, and so does a file link in an answer; the last turn's diff (`Last Turn` source). | PASS (`changes_panel_keys`, `view_changes_opens_panel`, `file_link_opens_changes`, `parity_diff`) |
@@ -264,7 +274,7 @@ Firstmate authorized a separate CP-108 follow-up after the corrected recording s
 | 9 | Split / unified toggle | click | Switch diff layout. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 10 | Word wrap | click | Toggles wrap. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 11 | Mark as viewed | click | Collapses, persists. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 12 | `⌘F` in diff | shortcut | `Search diff…`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
+| 12 | `⌘F` in diff | shortcut | `Search diff…`. | Focus the panel, open find, and type a query; matches highlight and update with the diff. | PASS (`s028::streamed_diff_and_find_replay`) |
 | 13 | `⌘L` | shortcut | Go to line. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 14 | Line hover | hover | Line hover background. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 15 | No changes | empty | `No file changes yet`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
