@@ -85,12 +85,6 @@ pub struct Decoration {
     pub dashed: bool,
     /// CSS order: the first shadow is the top layer.
     pub shadows: Vec<Shadow>,
-    /// cc partial raster, fitted to a capture: per root-layer tile origin (device px), the
-    /// playback rect (device px) Chromium last rastered that tile through. Skia then starts
-    /// the AA clips and saveLayer devices on that rect, which moves edge px by one or two.
-    /// ponytail: the rects are capture timing (svg reloads invalidate tiles); drop them with a
-    /// deterministic capture.
-    pub playback: &'static [([i32; 2], [i32; 4])],
 }
 
 /// An element covering its parent's box that paints `d`.
@@ -181,14 +175,16 @@ pub enum Fill {
 /// to the box's shape, and composites the box's own layer (`d`, its fill painted as `fill`)
 /// over it. A box inside another `backdrop_blur` box (a nested `backdrop-filter`) blurs that
 /// box's layer instead. Paint it where the box's decoration goes (first child); its text and
-/// children paint on top as usual.
-pub fn backdrop_blur(blur: Pixels, fill: Fill, d: Decoration) -> impl IntoElement {
+/// children paint on top as usual. `gap_row`: Chromium's blur input has one transparent row
+/// below the box (measured on the diff capsules where the main surface's rounded clip owns a
+/// render surface, `screens::diff::panel::panel_clamped`; its source is not found).
+pub fn backdrop_blur(blur: Pixels, fill: Fill, gap_row: bool, d: Decoration) -> impl IntoElement {
     cover(move |bounds, window, _| {
         #[cfg(target_os = "macos")]
-        backdrop::paint(blur, fill, &d, bounds, window);
+        backdrop::paint(blur, fill, gap_row, &d, bounds, window);
         #[cfg(not(target_os = "macos"))]
         {
-            let _ = (blur, fill);
+            let _ = (blur, fill, gap_row);
             quads(&d, bounds, window);
         }
     })
@@ -306,9 +302,7 @@ pub fn with_layer<R>(
 }
 
 /// Paints the svg icon `src` (asset bytes; `key` names it for the cache) into `bounds`,
-/// mirrored horizontally if `flip_x`, in `color`; `layer` as in [`paint`]. `partial`: cc
-/// re-rasters only the icon's box (partial raster of an invalidated tile), so the
-/// [`with_rounded_clip`] clips start on that box and stay anti-aliased in every tile.
+/// mirrored horizontally if `flip_x`, in `color`; `layer` as in [`paint`].
 /// False if this platform or svg is not supported: paint it another way then.
 #[allow(clippy::too_many_arguments)]
 pub fn paint_icon(
@@ -318,15 +312,14 @@ pub fn paint_icon(
     flip_x: bool,
     color: Hsla,
     layer: Option<Point<Pixels>>,
-    partial: bool,
     window: &mut Window,
     cx: &App,
 ) -> bool {
     #[cfg(target_os = "macos")]
-    return skia::paint_icon(src, key, bounds, flip_x, color, layer, partial, window, cx);
+    return skia::paint_icon(src, key, bounds, flip_x, color, layer, window, cx);
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (src, key, bounds, flip_x, color, layer, partial, window, cx);
+        let _ = (src, key, bounds, flip_x, color, layer, window, cx);
         false
     }
 }
