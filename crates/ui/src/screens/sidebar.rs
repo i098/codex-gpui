@@ -9,8 +9,8 @@ use bridge::types::{Thread, ThreadListResponse};
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, Context, Corners, Div, EventEmitter,
     FocusHandle, Focusable, FontWeight, HighlightStyle, Hsla, InteractiveElement, IntoElement,
-    KeyDownEvent, MouseButton, ParentElement, Pixels, Render, Rgba, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, StyledText, TextRun, Window, div, point,
+    KeyDownEvent, MouseButton, ParentElement, Pixels, Render, Rgba, ScrollHandle, SharedString,
+    Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun, Window, div, point,
     prelude::FluentBuilder as _, px, relative, rgba,
 };
 use std::{ops::Range, path::Path};
@@ -40,6 +40,8 @@ pub struct HomeSidebar {
     collapsed: [bool; 2],
     /// Threads whose rows carry the unread dot; any lights the header's bell.
     pub unread: Vec<String>,
+    /// The sections' scroller (Projects and Recents under the header).
+    pub scroll: ScrollHandle,
 }
 
 /// Emitted when a Recents row is clicked, with the thread id.
@@ -60,6 +62,7 @@ impl HomeSidebar {
             selected: selected.map(str::to_owned),
             collapsed: [false; 2],
             unread: Vec::new(),
+            scroll: ScrollHandle::new(),
         }
     }
 
@@ -153,13 +156,20 @@ impl Render for HomeSidebar {
             .flex_col()
             .child(home_sidebar_header(!self.unread.is_empty(), cx))
             .child(
+                // `overflow-y-auto`: the sections scroll under the header and clip at its
+                // bottom edge. The extent ends 16 px past Recents: its wrapper's `pb-4`
+                // (cancelled in layout by `-mb-4`) reaches past the scroller's own 8 px
+                // `pb-row-x`, and Chromium's scrollable overflow takes the farther one.
                 div()
+                    .id("sidebar-sections")
                     .flex_1()
-                    .overflow_hidden()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
                     .flex()
                     .flex_col()
                     .gap(px(16.))
                     .pt(px(4.))
+                    .pb(px(16.))
                     .child(projects)
                     .child(recents),
             )
