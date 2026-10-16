@@ -270,7 +270,8 @@ fn diff_counts<'a>(changes: impl Iterator<Item = &'a FileUpdateChange> + Clone) 
 
 /// One entry of a turn's activity column (`group/agent-activity`), in order.
 pub(super) enum Activity<'a> {
-    Markdown(&'a str),
+    /// An agent message, by its item id and text.
+    Markdown(&'a str, &'a str),
     /// A command still running, by its command line.
     Running(&'a str),
     /// Consecutive finished commands and file changes behind one summary
@@ -311,7 +312,7 @@ impl Activity<'_> {
     /// The texts drawn for this entry: a group's summary, then its rows when `open`.
     pub(super) fn labels(&self, open: &HashSet<String>) -> Vec<String> {
         match self {
-            Activity::Markdown(text) => vec![(*text).to_owned()],
+            Activity::Markdown(_, text) => vec![(*text).to_owned()],
             Activity::Running(command) => vec![(*command).to_owned()],
             Activity::Group {
                 key, summary, rows, ..
@@ -344,9 +345,9 @@ pub(super) fn activities<'a>(items: &'a [ThreadItem], running: bool) -> Vec<Acti
             ThreadItem::CommandExecution { .. } | ThreadItem::FileChange { .. } => {
                 group.push(item);
             }
-            ThreadItem::AgentMessage { text, .. } if !text.is_empty() => {
+            ThreadItem::AgentMessage { id, text } if !text.is_empty() => {
                 flush(&mut out, &mut group);
-                out.push(Activity::Markdown(text));
+                out.push(Activity::Markdown(id, text));
             }
             _ => {}
         }
@@ -458,6 +459,7 @@ pub(super) fn activity(
     items: &[ThreadItem],
     running: bool,
     open: &HashSet<String>,
+    fades: &HashMap<String, Vec<StreamSegment>>,
     window: &Window,
     t: &Theme,
     cx: &Context<ThreadView>,
@@ -483,7 +485,10 @@ pub(super) fn activity(
     let mut col = div().flex().flex_col().gap(px(16.));
     for entry in activities(items, running) {
         col = col.child(match entry {
-            Activity::Markdown(text) => markdown(text, window, t),
+            Activity::Markdown(id, text) => {
+                let segments = fades.get(id).map(Vec::as_slice).unwrap_or_default();
+                markdown(text, window, t, segments)
+            }
             Activity::Running(command) => {
                 row("thread-terminal", plain(label(command.to_owned(), text60)))
             }

@@ -214,7 +214,7 @@ The static parity gate retains all 36 baseline counts.
 | 2 | History loading | loading | `Loading task…`. | The main panel is empty while `thread/read` runs. | NOT WIRED (`crates/ui/src/thread.rs`: no loading view; `crates/app/src/lib.rs` `sync` shows `EmptyMain`) |
 | 3 | History failure | error | `Couldn't load messages` + `Retry`. | The error is logged; the panel stays empty. | FAIL (`crates/app/src/lib.rs` `load_thread` only logs; no error view in `crates/ui/src/thread.rs`) |
 | 4 | Turn render failure | error | `This turn couldn't render`. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
-| 5 | Streaming agent message | loading | Text grows by deltas; `Working` shimmer. | The replayed turn streams into the view to `turn/completed`. Shimmer not checked. | PASS (`submit_enter_starts_thread`) |
+| 5 | Streaming agent message | loading | Text grows by deltas; new segments fade over 700 ms; `Working` shimmer. | New glyphs use the recorded adaptive fade. Later deltas do not restart older glyphs. Reduced motion shows the end state immediately. Shimmer belongs to S5. | PASS (`submit_enter_starts_thread`, `stream_fade`) |
 | 6 | Reasoning item | click | Toggles `Thought for {elapsed}`. | No handler. | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 7 | Command card | click | Expands output; copy buttons. | No handler. | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 8 | File change card | click | `View changes` opens Changes; `Undo` / `Reapply`. | `View changes` opens the Changes side panel; `Undo` sends `thread/revert` (`beforeTurnId`, after `thread/resume` if needed) and shows the reverted thread. No `Reapply`. | FAIL (`Reapply`: the original re-applies through the host git worker; `Undo` checked by `undo_reverts_turn`, `View changes` by `view_changes_opens_panel`) |
@@ -230,6 +230,13 @@ The static parity gate retains all 36 baseline counts.
 | 18 | Usage limit | error | Usage limit banner. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 19 | Focus ring on cards | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 20 | Resize | resize | The side panel yields width before the chat column. | `panel_width` keeps 320 px for the chat; no flow checks the 3 widths with the panel open. | FAIL (no flow; `crates/ui/src/diff.rs` `panel_width` assumes the sidebar open) |
+
+MO-36 uses `refs/interactions/ms4.json`, recorded with the original CSS classes in an isolated route1 Chrome context.
+The recording appends synthetic markdown spans and seeks their animations; it does not measure live model segmentation.
+Run `tools/mac.sh -l ms4 'cargo test -p app --test stream_fade'` for native glyph-alpha checks.
+The test samples each delta from 0 to 700 ms and checks that earlier glyphs remain unchanged.
+Linux uses a no-op text system, so these glyph checks require macOS.
+MO-37 and MO-39 remain with the image and block-renderer slices, as approved for MS4.
 
 ## 14.5 Composer
 

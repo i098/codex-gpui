@@ -17,7 +17,7 @@ use std::hash::{DefaultHasher, Hash as _, Hasher as _};
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::{Arc, LazyLock, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bridge::Event;
 use bridge::types::{
@@ -98,6 +98,7 @@ pub struct ThreadView {
     clock: Clock,
     composer: AnyView,
     _tick: Option<Task<()>>,
+    stream_fades: HashMap<String, Vec<StreamSegment>>,
     /// Open disclosures: turns whose `Worked for` is expanded, by turn id, and activity groups
     /// whose rows show, by the id of their first item.
     expanded: HashSet<String>,
@@ -105,6 +106,12 @@ pub struct ThreadView {
     /// The turns as last laid out, to stand in for the ones far off screen.
     laid_out: Rc<RefCell<LaidOut>>,
     find: Option<FindState>,
+}
+
+struct StreamSegment {
+    range: std::ops::Range<usize>,
+    started_at: Instant,
+    alpha: f32,
 }
 
 /// Where the last frame laid out each turn, in the scroller's content (top, height), and the
@@ -229,6 +236,7 @@ impl ThreadView {
             clock,
             composer,
             _tick: None,
+            stream_fades: HashMap::new(),
             expanded: HashSet::new(),
             scroll: ScrollHandle::new(),
             laid_out: Rc::default(),
@@ -874,7 +882,17 @@ impl ThreadView {
                     .iter_mut()
                     .find(|i| id.is_some() && item_id(i) == id.as_deref())
                 {
-                    Some(item) => *item = n.item,
+                    Some(item) => {
+                        if let (
+                            ThreadItem::AgentMessage { id, text: before },
+                            ThreadItem::AgentMessage { text: after, .. },
+                        ) = (&*item, &n.item)
+                            && before != after
+                        {
+                            self.stream_fades.remove(id);
+                        }
+                        *item = n.item;
+                    }
                     None => turn.items.push(n.item),
                 }
             }
@@ -884,7 +902,21 @@ impl ThreadView {
                     return;
                 };
                 match self.item_mut(&n.item_id) {
-                    Some(ThreadItem::AgentMessage { text, .. }) => text.push_str(&n.delta),
+                    Some(ThreadItem::AgentMessage { text, .. }) => {
+                        let start = text.len();
+                        text.push_str(&n.delta);
+                        let end = text.len();
+                        if start != end && !cx.reduce_motion() {
+                            self.stream_fades
+                                .entry(n.item_id)
+                                .or_default()
+                                .push(StreamSegment {
+                                    range: start..end,
+                                    started_at: cx.background_executor().now(),
+                                    alpha: 0.,
+                                });
+                        }
+                    }
                     Some(ThreadItem::CommandExecution {
                         aggregated_output, ..
                     }) => aggregated_output.get_or_insert_default().push_str(&n.delta),
@@ -1056,6 +1088,7 @@ impl ThreadView {
                 window,
                 t,
                 self.find_paint(item).as_ref(),
+                self.fades(item),
             ));
             if let Some(card) = diff_card(&turn.id, &turn.items, window, t) {
                 col = col.child(div().mt(px(12.)).pb(px(8.)).child(card));
@@ -1078,6 +1111,14 @@ impl ThreadView {
         col.child(self.activity(work, running, window, t, cx))
     }
 
+    /// The still-fading streamed segments of agent message `item`.
+    fn fades(&self, item: &str) -> &[StreamSegment] {
+        self.stream_fades
+            .get(item)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
+
     /// [`activity`], with find highlights painted over the agent messages while find has
     /// matches.
     fn activity(
@@ -1093,7 +1134,15 @@ impl ThreadView {
             .as_ref()
             .is_none_or(|find| find.matches.is_empty())
         {
-            return activity(items, running, &self.expanded, window, t, cx);
+            return activity(
+                items,
+                running,
+                &self.expanded,
+                &self.stream_fades,
+                window,
+                t,
+                cx,
+            );
         }
         let mut column = div().flex().flex_col().gap(px(16.));
         let mut start = 0;
@@ -1104,6 +1153,7 @@ impl ThreadView {
                         &items[start..index],
                         running,
                         &self.expanded,
+                        &self.stream_fades,
                         window,
                         t,
                         cx,
@@ -1114,6 +1164,7 @@ impl ThreadView {
                     window,
                     t,
                     self.find_paint(id).as_ref(),
+                    self.fades(id),
                 ));
                 start = index + 1;
             }
@@ -1123,6 +1174,7 @@ impl ThreadView {
                 &items[start..],
                 running,
                 &self.expanded,
+                &self.stream_fades,
                 window,
                 t,
                 cx,
@@ -1155,6 +1207,20 @@ impl ThreadView {
 
 impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let now = cx.background_executor().now();
+        self.stream_fades.retain(|_, segments| {
+            segments.retain_mut(|segment| {
+                let elapsed = now.saturating_duration_since(segment.started_at);
+                segment.alpha = crate::motion::EASE_STREAMING(
+                    elapsed.as_secs_f32() / crate::motion::STREAMING_TEXT.as_secs_f32(),
+                );
+                !cx.reduce_motion() && elapsed < crate::motion::STREAMING_TEXT
+            });
+            !segments.is_empty()
+        });
+        if !self.stream_fades.is_empty() {
+            window.request_animation_frame();
+        }
         self.refresh_find();
         let t = cx.theme().clone();
         let n = self.turns.len();
