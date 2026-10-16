@@ -141,3 +141,33 @@ fn streamed_glyphs_follow_original_without_restarting_older_text() -> Result<()>
     );
     Ok(())
 }
+
+#[test]
+fn unicode_suffix_and_decoded_markdown_keep_independent_glyph_ages() -> Result<()> {
+    let mut fx = start()?;
+    let empty = frame(&mut fx)?;
+    append(&mut fx, "Caf");
+    fx.cx.advance_clock(Duration::from_millis(700));
+    let before = frame(&mut fx)?;
+    let older = ink(&empty, &before);
+    assert!(older.len() > 10);
+    append(&mut fx, "é &amp; `résumé`");
+    let first = frame(&mut fx)?;
+    fx.cx.advance_clock(Duration::from_millis(100));
+    let middle = frame(&mut fx)?;
+    fx.cx.advance_clock(Duration::from_millis(600));
+    let end = frame(&mut fx)?;
+    let new = ink(&first, &end);
+    assert!(
+        new.len() > 10,
+        "the Unicode suffix and decoded text must fade"
+    );
+    assert!((alpha(&first, &end, &middle, &new) - 0.1952).abs() < 0.015);
+    for p in older {
+        assert_eq!(
+            first[p], before[p],
+            "appending inside a word restarted its prefix"
+        );
+    }
+    Ok(())
+}
