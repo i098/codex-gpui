@@ -1,5 +1,5 @@
 //! Text selection over the answer markdown (TH-127, TH-128, SH-132): the words register
-//! themselves at paint, in reading order, in a per-frame [`Selection`] global; the view keeps
+//! themselves at prepaint, in reading order, in a per-frame [`Selection`] global; the view keeps
 //! the anchor and head carets. Everything is in the scroller's content px, so the selection
 //! stays put while the thread scrolls.
 
@@ -41,12 +41,10 @@ enum Entry {
     Break(usize),
 }
 
-/// This frame's words (written at paint) and the range they highlight (written at render).
+/// This frame's words (written at prepaint) and the range they highlight (written at render).
 #[derive(Default)]
 pub struct Selection {
     entries: Vec<Entry>,
-    /// The last frame's entries: a word being painted finds the word after it there.
-    previous: Vec<Entry>,
     /// Ordered `(start, end)`, when the view has a non-empty selection.
     range: Option<(Caret, Caret)>,
     /// Window y of content y 0 this frame.
@@ -187,41 +185,44 @@ fn run(s: &str, weight: f32, family: Option<&'static str>) -> TextRun {
     }
 }
 
-/// The selection highlight under a word's glyphs: paints the selected span over its line box
-/// (Chrome paints the line box, not the glyph box) and registers the word for [`Selection::text`].
-/// `pad`: where the glyphs start inside the painted bounds.
+/// The selection highlight under a word's glyphs: registers the word for [`Selection::text`]
+/// at prepaint (the whole tree prepaints before it paints, so the word after it is known at
+/// paint) and paints the selected span over its line box (Chrome paints the line box, not the
+/// glyph box). `pad`: where the glyphs start inside the painted bounds.
 pub(super) fn highlight(
     text: SharedString,
     size: f32,
     weight: f32,
     family: Option<&'static str>,
     pad: f32,
-) -> gpui::Canvas<()> {
+) -> gpui::Canvas<usize> {
     canvas(
-        |_, _, _| (),
-        move |bounds, (), window, cx| {
-            let word = Word {
+        move |bounds, _, cx| {
+            let entries = &mut Selection::get(cx).entries;
+            entries.push(Entry::Word(Word {
                 bounds,
                 pad: px(pad),
                 text,
                 size,
                 weight,
                 family,
-            };
+            }));
+            entries.len() - 1
+        },
+        move |bounds, i, window, cx| {
             let sel = Selection::get(cx);
-            // Whether this word ends its line comes from the last frame's layout.
-            let i = sel.entries.len();
-            let wraps = matches!(sel.previous.get(i), Some(Entry::Word(w)) if w.text == word.text)
-                && Selection::wraps(&sel.previous, i);
-            if let Some((_, _, x0, x1)) = sel.span(&word, wraps, window) {
-                let left = bounds.left() + word.pad;
+            let Entry::Word(word) = &sel.entries[i] else {
+                return;
+            };
+            let span = sel.span(word, Selection::wraps(&sel.entries, i), window);
+            if let Some((_, _, x0, x1)) = span {
+                let left = bounds.left() + px(pad);
                 let r = Bounds::from_corners(
                     point(left + x0, bounds.top()),
                     point(left + x1, bounds.bottom()),
                 );
                 window.paint_quad(fill(r, cx.theme().text_selection));
             }
-            Selection::get(cx).entries.push(Entry::Word(word));
         },
     )
 }
@@ -229,20 +230,20 @@ pub(super) fn highlight(
 /// Marks the end of a block in reading order: `newlines` is what Chrome emits after it.
 pub(super) fn block_end(newlines: usize) -> gpui::Canvas<()> {
     canvas(
-        |_, _, _| (),
-        move |_, (), _, cx| Selection::get(cx).entries.push(Entry::Break(newlines)),
+        move |_, _, cx| Selection::get(cx).entries.push(Entry::Break(newlines)),
+        |_, (), _, _| (),
     )
 }
 
-/// Starts the frame's registry: painted first inside the scroller, before any word.
+/// Starts the frame's registry: first inside the scroller, before any word.
 pub(super) fn frame_start(scroll: ScrollHandle) -> gpui::Canvas<()> {
     canvas(
-        |_, _, _| (),
-        move |_, (), _, cx| {
+        move |_, _, cx| {
             let sel = Selection::get(cx);
-            sel.previous = std::mem::take(&mut sel.entries);
+            sel.entries.clear();
             sel.origin = scroll.bounds().top() + scroll.offset().y;
         },
+        |_, (), _, _| (),
     )
 }
 
@@ -331,7 +332,6 @@ mod tests {
                 Entry::Break(2),
                 Entry::Word(word(100.)),
             ],
-            previous: Vec::new(),
             range: None,
             origin: px(0.),
         };

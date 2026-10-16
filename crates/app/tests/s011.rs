@@ -61,15 +61,8 @@ fn selection_and_copy_match_the_original() -> Result<()> {
     let rest = (1270., 820.);
     fx.hover(rest)?;
     let before = fx.shot()?;
-    let paragraph: [f32; 4] = {
-        let b = &steps[1]["target"]["bbox"];
-        [
-            b["x"].as_f64().unwrap() as f32,
-            b["y"].as_f64().unwrap() as f32,
-            b["w"].as_f64().unwrap() as f32,
-            b["h"].as_f64().unwrap() as f32,
-        ]
-    };
+    let paragraph =
+        ["x", "y", "w", "h"].map(|k| steps[1]["target"]["bbox"][k].as_f64().unwrap() as f32);
     let sent = fx.sent()?.len();
 
     // TH-127: the paragraph, from its first glyph into its second line.
