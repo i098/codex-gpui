@@ -38,16 +38,38 @@ impl Composer {
             .justify_center()
             .child(
                 corner("fast-mode", "composer-bolt", bolt)
-                    .track_focus(&self.menu_focus.items[0])
+                    .track_focus(&self.menu_focus.items[SPEED_ITEM])
                     .left_0()
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.activate_menu_item(0, window, cx)),
-                    ),
+                    .hover_listener_mode(gpui::HoverListenerMode::InputModalityIndependent)
+                    .on_hover(cx.listener(|this, hovered: &bool, window, cx| {
+                        if *hovered {
+                            this.hover_speed(window, cx);
+                        } else {
+                            this.speed_timer = None;
+                        }
+                    }))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.activate_menu_item(SPEED_ITEM, window, cx)
+                    }))
+                    .when(self.speed_open, |d| {
+                        // Right of the 32 px trigger plus 5 px, top-aligned with the menu's
+                        // box (4 px above its padding box).
+                        d.child(
+                            deferred(
+                                div()
+                                    .absolute()
+                                    .left(px(37.))
+                                    .top(px(-4.))
+                                    .child(self.speed_menu(t, cx)),
+                            )
+                            .with_priority(2),
+                        )
+                    }),
             )
             .child(
                 div()
                     .id("select-model")
-                    .track_focus(&self.menu_focus.items[1])
+                    .track_focus(&self.menu_focus.items[0])
                     .p(px(4.))
                     .rounded(px(8.))
                     .child(
@@ -84,7 +106,7 @@ impl Composer {
                             ),
                     )
                     .on_click(
-                        cx.listener(|this, _, window, cx| this.activate_menu_item(1, window, cx)),
+                        cx.listener(|this, _, window, cx| this.activate_menu_item(0, window, cx)),
                     ),
             )
             .child(
@@ -202,6 +224,58 @@ impl Composer {
                 ),
         );
         popover(t, 254., |d| d.child(header).child(slider))
+    }
+
+    /// The `Speed` submenu (Radix `MenuSub`): `Standard`, `Fast`, `Ultrafast`, the current one
+    /// checked. Pointer movement focuses an item, as in the permissions menu.
+    fn speed_menu(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
+        let hover = t.menu_item_hover;
+        let current = usize::from(self.fast);
+        popover(t, 233., |d| {
+            d.children(SPEEDS.iter().enumerate().map(|(i, &(title, description))| {
+                div()
+                    .id(("speed", i))
+                    .track_focus(&self.speed_focus.items[i])
+                    .focus(move |s| s.bg(hover))
+                    .on_mouse_move(cx.listener(move |this, _, window, cx| {
+                        this.speed_focus.items[i].focus(window, cx);
+                        cx.stop_propagation();
+                    }))
+                    // The root menu's mouse-down-out guard: the submenu lies outside its box.
+                    .hover_listener_mode(gpui::HoverListenerMode::InputModalityIndependent)
+                    .on_hover(cx.listener(|this, hovered: &bool, _, _| {
+                        this.menu_trigger_hovered = *hovered
+                    }))
+                    .px(px(8.))
+                    .py(px(5.))
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .rounded(px(15.))
+                    .hover(move |s| s.bg(hover))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(text(title, 13., 18.5714, 430., t.text))
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .line_height(px(14.))
+                                    .text_color(t.text_tertiary)
+                                    .child(description),
+                            ),
+                    )
+                    .when(i == current, |d| {
+                        d.child(icon("menu-check", 16., t.text).opacity(0.75))
+                    })
+                    .on_click(
+                        cx.listener(move |this, _, window, cx| this.pick_speed(i, window, cx)),
+                    )
+            }))
+        })
     }
 
     /// `Select model` list.
