@@ -33,7 +33,7 @@ use ui::screens::home::HomeMain;
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
 use ui::screens::sidebar::{ArchiveThread, CommandMenu, CommandMenuEvent, HomeSidebar, OpenThread};
 use ui::screens::terminal::Xterm;
-use ui::screens::thread::view::{Clock, ForkThread, RevertTurn, ThreadView};
+use ui::screens::thread::view::{Clock, EditMessage, ForkThread, RevertTurn, ThreadView};
 use ui::screens::{automations, mobile};
 use ui::toast::{Toast, Toaster};
 use ui::{
@@ -997,6 +997,64 @@ impl Root {
         log_err(task, cx);
     }
 
+    fn edit_message(&mut self, edit: EditMessage, window: &mut Window, cx: &mut Context<Self>) {
+        let valid = self.thread.as_ref().is_some_and(|view| {
+            let view = view.read(cx);
+            view.id() == edit.thread_id && view.can_edit(&edit.turn_id)
+        });
+        if !valid || edit.message.trim().is_empty() {
+            edit.editor.update(cx, |editor, cx| editor.edit_failed(cx));
+            if !valid {
+                self.toast(Toast::danger("Failed to edit message"), cx);
+            }
+            return;
+        }
+        let resume = !self.loaded.contains(&edit.thread_id);
+        let bridge = self.bridge.clone();
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let mut reverted = false;
+            let result =
+                async {
+                    resume_if(resume, &bridge, &this, &edit.thread_id, cx).await?;
+                    let read: ThreadReadResponse = bridge
+                        .request(
+                            "thread/revert",
+                            json!({
+                                "threadId": edit.thread_id, "beforeTurnId": edit.turn_id,
+                            }),
+                        )
+                        .await?;
+                    reverted = true;
+                    let cwd = read.thread.cwd.clone();
+                    this.update_in(cx, |this, window, cx| {
+                        if this.state.route == Route::Thread(edit.thread_id.clone()) {
+                            this.show_thread(read.thread, window, cx);
+                        }
+                    })?;
+                    bridge.request::<_, Value>("turn/start", json!({
+                    "threadId": edit.thread_id,
+                    "turnTrigger": "edit_user_message",
+                    "input": [{"type": "text", "text": edit.message, "text_elements": []}],
+                    "cwd": cwd,
+                })).await?;
+                    Ok::<_, anyhow::Error>(())
+                }
+                .await;
+            if result.is_err() {
+                this.update(cx, |this, cx| {
+                    edit.editor.update(cx, |editor, cx| editor.edit_failed(cx));
+                    if reverted {
+                        this.thread_composer
+                            .update(cx, |composer, cx| composer.restore_text(&edit.message, cx));
+                    }
+                    this.toast(Toast::danger("Failed to edit message"), cx);
+                })?;
+            }
+            result
+        });
+        log_err(task, cx);
+    }
+
     fn stop(&mut self, cx: &mut Context<Self>) {
         let Route::Thread(id) = &self.state.route else {
             return;
@@ -1523,6 +1581,9 @@ impl Render for Root {
                 this.archive(a.0.clone(), window, cx)
             }))
             .on_action(cx.listener(|this, a: &ForkThread, window, cx| this.fork(&a.0, window, cx)))
+            .on_action(cx.listener(|this, edit: &EditMessage, window, cx| {
+                this.edit_message(edit.clone(), window, cx)
+            }))
             .on_action(
                 cx.listener(|this, a: &RevertTurn, window, cx| {
                     this.revert(a.0.clone(), window, cx)
