@@ -135,7 +135,7 @@ fn check(fx: &mut Fx, rec: &Value, after: &str) -> Result<()> {
         "{after}: pixel {got:?}, expected {want:?}"
     );
     let dir = std::path::Path::new("/tmp/cgx-f3b-port");
-    fs::create_dir_all(&dir)?;
+    fs::create_dir_all(dir)?;
     image.save(dir.join(format!("{after}.png")))?;
     Ok(())
 }

@@ -1106,11 +1106,11 @@ impl Root {
     /// `desktop.*` and `features.*` use `config/value/write`.
     /// The close preference persists in window state; other host settings last for the session.
     fn write_setting(&mut self, e: &SettingChanged, cx: &mut Context<Self>) {
-        if e.path == "host.confirm-before-close" {
-            if let Ok(value) = serde_json::from_value(e.value.clone()) {
-                self.state.confirm_before_close = value;
-                self.state.save();
-            }
+        if e.path == "host.confirm-before-close"
+            && let Ok(value) = serde_json::from_value(e.value.clone())
+        {
+            self.state.confirm_before_close = value;
+            self.state.save();
         }
         let (store, key) = e.path.split_once('.').unwrap_or((e.path, ""));
         let value = e.value.clone();
