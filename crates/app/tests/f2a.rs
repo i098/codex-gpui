@@ -157,20 +157,21 @@ fn keyboard_model_selection_and_reset_preserve_the_draft() -> Result<()> {
     let before_requests = fx.sent()?.len();
     fx.type_text("Keep this draft")?;
     fx.click(fx.at("home", "GPT-6 Astra")?)?;
-    fx.keys("down space")?;
+    // `Select model`, `Speed` (its submenu: Standard, Fast, Ultrafast), `Reset`.
+    fx.keys("down down right down enter")?;
     ensure!(
         fx.composer()
             .read_with(&fx.cx, |composer, _| composer.fast_mode()),
-        "Space did not enable fast mode"
+        "Enter on Fast did not enable fast mode"
     );
-    fx.keys("space")?;
+    fx.keys("right enter")?;
     ensure!(
         !fx.composer()
             .read_with(&fx.cx, |composer, _| composer.fast_mode()),
-        "Space did not disable fast mode"
+        "Enter on Standard did not disable fast mode"
     );
 
-    fx.keys("down enter")?;
+    fx.keys("up enter")?;
     fx.keys("down enter")?;
     fx.wait("keyboard model selection", |fx| {
         fx.read(|root, _| root.config()["model"] == first_model)

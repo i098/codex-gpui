@@ -12,12 +12,12 @@ use gpui::{
     Focusable, GlobalElementId, Hsla, InspectorElementId, InteractiveElement, IntoElement,
     KeyBinding, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
     PathPromptOptions, Pixels, Point, Render, SharedString, Size, Stateful,
-    StatefulInteractiveElement, Style, Styled, TextAlign, TextRun, UTF16Selection, UnderlineStyle,
-    Window, WrappedLine, actions, deferred, div, fill, point, prelude::FluentBuilder as _, px,
-    relative, size,
+    StatefulInteractiveElement, Style, Styled, Task, TextAlign, TextRun, UTF16Selection,
+    UnderlineStyle, Window, WrappedLine, actions, deferred, div, fill, point,
+    prelude::FluentBuilder as _, px, relative, size,
 };
 use serde_json::Value;
-use std::{ops::Range, path::PathBuf, rc::Rc};
+use std::{ops::Range, path::PathBuf, rc::Rc, time::Duration};
 use theme::{ActiveTheme as _, Appearance, Theme};
 
 actions!(
@@ -392,6 +392,18 @@ enum Menu {
     Models,
 }
 
+/// Index of the `Speed` sub trigger among the effort menu's items.
+const SPEED_ITEM: usize = 1;
+/// The `Speed` submenu's items: title and description.
+const SPEEDS: [(&str, &str); 3] = [
+    ("Standard", "Default speed"),
+    ("Fast", "1.5x speed, more usage"),
+    (
+        "Ultrafast",
+        "The fastest available responses for latency-sensitive work.",
+    ),
+];
+
 type SubmitHandler = Rc<dyn Fn(&Submission, &mut Window, &mut App)>;
 type CancelEditHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 type ApprovalHandler = Rc<dyn Fn(ApprovalDecision, &mut Window, &mut App)>;
@@ -426,6 +438,11 @@ pub struct Composer {
     menu: Option<Menu>,
     slash: slash::Slash,
     menu_focus: menu::MenuFocus,
+    /// The `Speed` submenu of the effort menu: open state, its items' focus, and the pending
+    /// hover-open timer (Radix opens a sub trigger 100 ms after the pointer enters it).
+    speed_open: bool,
+    speed_focus: menu::MenuFocus,
+    speed_timer: Option<Task<()>>,
     permissions_focus: FocusHandle,
     model_focus: FocusHandle,
     /// The card's (`composer-footer` container's) width, CSS px: see `SM_WIDTH`, `XS_WIDTH`.
@@ -481,6 +498,9 @@ impl Composer {
             menu: None,
             slash: slash::Slash::default(),
             menu_focus: menu::MenuFocus::new(cx),
+            speed_open: false,
+            speed_focus: menu::MenuFocus::new(cx),
+            speed_timer: None,
             permissions_focus: cx.focus_handle().tab_stop(true),
             model_focus: cx.focus_handle().tab_stop(true),
             footer_width: f32::INFINITY,
@@ -696,6 +716,7 @@ impl Composer {
 
     fn toggle_menu(&mut self, menu: Menu, window: &mut Window, cx: &mut Context<Self>) {
         self.slash.reset();
+        self.close_speed();
         self.end_search(cx);
         if self.menu == Some(menu) {
             self.dismiss(&Dismiss, window, cx);
@@ -722,6 +743,7 @@ impl Composer {
             return;
         }
         if self.menu.take().is_some() {
+            self.close_speed();
             self.menu_focus.restore(window, cx);
             cx.notify();
         } else if self.approval.is_some() {
@@ -734,6 +756,15 @@ impl Composer {
         }
     }
 
+    /// The focus set the arrows move in: the open `Speed` submenu, else the menu.
+    fn active_focus(&self) -> &menu::MenuFocus {
+        if self.speed_open {
+            &self.speed_focus
+        } else {
+            &self.menu_focus
+        }
+    }
+
     fn menu_key(
         &mut self,
         event: &gpui::KeyDownEvent,
@@ -743,20 +774,33 @@ impl Composer {
         let key = event.keystroke.key.as_str();
         let modifiers = event.keystroke.modifiers;
         match key {
-            "down" | "up" => self
-                .menu_focus
-                .move_focus(event.keystroke.key == "down", window, cx),
+            "down" | "up" => {
+                self.active_focus()
+                    .move_focus(event.keystroke.key == "down", window, cx)
+            }
             "home" | "end" => {
+                let focus = self.active_focus();
                 let item = if key == "home" {
-                    self.menu_focus.items.first()
+                    focus.items.first()
                 } else {
-                    self.menu_focus.items.last()
+                    focus.items.last()
                 };
                 if let Some(item) = item {
                     item.focus(window, cx);
                 }
             }
             "tab" => {}
+            // `ArrowRight` on the `Speed` sub trigger opens its submenu on the first item;
+            // `ArrowLeft` in the submenu closes it and focuses the trigger.
+            "right" if self.menu == Some(Menu::Effort) && !self.speed_open => {
+                if self.menu_focus.focused_item(window) == Some(SPEED_ITEM) {
+                    self.open_speed(window, cx);
+                }
+            }
+            "left" if self.speed_open => {
+                self.close_speed();
+                self.menu_focus.items[SPEED_ITEM].focus(window, cx);
+            }
             "space" if self.menu == Some(Menu::Permissions) && self.menu_focus.searching() => {
                 self.menu_focus.typeahead(
                     " ",
@@ -766,6 +810,11 @@ impl Composer {
                 );
             }
             "escape" => self.dismiss(&Dismiss, window, cx),
+            "enter" | "space" if self.speed_open => {
+                if let Some(index) = self.speed_focus.focused_item(window) {
+                    self.pick_speed(index, window, cx);
+                }
+            }
             "enter" | "space" => {
                 if let Some(index) = self.menu_focus.focused_item(window) {
                     self.activate_menu_item(index, window, cx);
@@ -787,6 +836,48 @@ impl Composer {
             _ => return,
         }
         cx.stop_propagation();
+        cx.notify();
+    }
+
+    /// Opens the `Speed` submenu with its first item focused (keyboard).
+    fn open_speed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.speed_timer = None;
+        self.speed_open = true;
+        self.speed_focus.prepare(SPEEDS.len(), cx);
+        self.speed_focus.items[0].focus(window, cx);
+    }
+
+    /// Opens the `Speed` submenu 100 ms after the pointer enters its trigger, which keeps
+    /// focus (`hover`).
+    pub(super) fn hover_speed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.menu_focus.items[SPEED_ITEM].focus(window, cx);
+        if self.speed_open || self.speed_timer.is_some() {
+            return;
+        }
+        self.speed_timer = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(100))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.speed_timer = None;
+                this.speed_open = true;
+                this.speed_focus.prepare(SPEEDS.len(), cx);
+                cx.notify();
+            });
+        }));
+    }
+
+    fn close_speed(&mut self) {
+        self.speed_timer = None;
+        self.speed_open = false;
+    }
+
+    /// A speed picked in the submenu closes it and focuses the `Speed` trigger.
+    pub(super) fn pick_speed(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        // ponytail: Ultrafast shares the `fast` flag; add a tier when `turn/start` sends it.
+        self.fast = index > 0;
+        self.close_speed();
+        self.menu_focus.items[SPEED_ITEM].focus(window, cx);
         cx.notify();
     }
 
@@ -823,9 +914,10 @@ impl Composer {
                 self.toggle_menu(Menu::Effort, window, cx);
                 self.picked(cx);
             }
+            // The original's DOM order: `Select model`, `Speed` (sub trigger), `Reset`.
             Some(Menu::Effort) => match index {
-                0 => self.fast = !self.fast,
-                1 => self.toggle_menu(Menu::Models, window, cx),
+                0 => self.toggle_menu(Menu::Models, window, cx),
+                SPEED_ITEM => self.open_speed(window, cx),
                 2 => {
                     (self.model, self.effort) = self.default_selection.clone();
                     self.picked(cx);
@@ -844,6 +936,15 @@ impl Composer {
             self.menu_focus.focused_item(window),
             self.menu_focus.trigger.is_focused(window),
         )
+    }
+
+    /// Returns the `Speed` submenu's open state and focused item for interaction replay.
+    pub fn speed_menu_state(&self, window: &Window) -> (bool, Option<usize>) {
+        (self.speed_open, self.speed_focus.focused_item(window))
+    }
+
+    pub fn model_trigger_focused(&self, window: &Window) -> bool {
+        self.model_focus.is_focused(window)
     }
 
     pub fn permission(&self) -> Permission {
