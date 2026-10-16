@@ -91,20 +91,69 @@ pub(super) fn inlines(mut rest: &str) -> Vec<Inline<'_>> {
 }
 
 /// Agent markdown: paragraphs of words, inline code chips and file links, wrapping at words.
-pub(super) fn markdown(source: &str, window: &Window, t: &Theme) -> Div {
+pub(super) fn markdown(
+    source: &str,
+    window: &Window,
+    t: &Theme,
+    segments: &[StreamSegment],
+) -> Div {
     let tones = tones(t);
     let paragraphs = source
         .split("\n\n")
         .filter(|p| !p.trim().is_empty())
         .map(|p| {
+            let paragraph_start = p.as_ptr() as usize - source.as_ptr() as usize;
             let p = p.replace('\n', " ");
+            let label = |s: &str, size, line_height, weight, color: Hsla, family| {
+                let start = paragraph_start + s.as_ptr() as usize - p.as_ptr() as usize;
+                let end = start + s.len();
+                let first = segments.partition_point(|segment| segment.range.end <= start);
+                let highlights: Vec<_> = segments[first..]
+                    .iter()
+                    .take_while(|segment| segment.range.start < end)
+                    .map(|segment| {
+                        (
+                            segment.range.start.max(start) - start
+                                ..segment.range.end.min(end) - start,
+                            gpui::HighlightStyle {
+                                fade_out: Some(1. - segment.alpha),
+                                ..Default::default()
+                            },
+                        )
+                    })
+                    .collect();
+                if highlights.is_empty() {
+                    return measured(
+                        window,
+                        s.to_owned(),
+                        size,
+                        line_height,
+                        weight,
+                        color,
+                        family,
+                    );
+                }
+                div()
+                    .flex_none()
+                    .w(width(window, s, size, weight, family))
+                    .text_size(px(size))
+                    .line_height(px(line_height))
+                    .font_weight(FontWeight(weight))
+                    .text_color(color)
+                    .whitespace_nowrap()
+                    .when_some(family, |d, family| d.font_family(family))
+                    .child(gpui::StyledText::new(s.to_owned()).with_highlights(highlights))
+            };
             let parts = inlines(&p);
             // Each flex line is as tall as Blink's line box: 22.75 px, or 23.75 px with inline
             // code (the 12.88 px mono font's descent). Items stretch to it.
             let mut row = wrap_row();
             for part in parts {
                 row = match part {
-                    Inline::Text(s) => row.children(words(s, 430., t.text, window)),
+                    Inline::Text(s) => row.children(
+                        s.split_inclusive(' ')
+                            .map(|word| label(word, 14., 22.75, 430., t.text, None)),
+                    ),
                     Inline::Code(code) => row.child(
                         div().pt(px(3.5)).pb(px(3.25)).child(
                             div()
@@ -117,19 +166,14 @@ pub(super) fn markdown(source: &str, window: &Window, t: &Theme) -> Div {
                                     fill: Some(tones.inline_code),
                                     ..Default::default()
                                 }))
-                                .child(measured(
-                                    window,
-                                    code.to_owned(),
-                                    12.88,
-                                    15.,
-                                    430.,
-                                    t.text,
-                                    Some(MONO),
-                                )),
+                                .child(label(code, 12.88, 15., 430., t.text, Some(MONO))),
                         ),
                     ),
                     // A file link opens the Changes panel.
-                    Inline::Link { label, target } => row.child(
+                    Inline::Link {
+                        label: name,
+                        target,
+                    } => row.child(
                         div()
                             .id(SharedString::from(format!("file-link-{target}")))
                             .relative()
@@ -147,15 +191,7 @@ pub(super) fn markdown(source: &str, window: &Window, t: &Theme) -> Div {
                                     )),
                                 )
                             })
-                            .child(measured(
-                                window,
-                                label.to_owned(),
-                                14.,
-                                22.75,
-                                500.,
-                                tones.mention,
-                                None,
-                            )),
+                            .child(label(name, 14., 22.75, 500., tones.mention, None)),
                     ),
                 };
             }

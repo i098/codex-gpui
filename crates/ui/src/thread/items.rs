@@ -32,13 +32,6 @@ pub(super) fn wrap_row() -> Div {
     div().flex().flex_wrap().mr(px(-4.))
 }
 
-/// 14 px words of `s`, each with its trailing space, in 22.75 px line boxes.
-pub(super) fn words(s: &str, weight: f32, color: Hsla, window: &Window) -> Vec<Div> {
-    s.split_inclusive(' ')
-        .map(|word| measured(window, word.to_owned(), 14., 22.75, weight, color, None))
-        .collect()
-}
-
 /// `Worked for 17s ›` over a hairline (collapsed turn disclosure); `open`: the chevron points
 /// down.
 pub(super) fn disclosure(label: String, open: bool, window: &Window, t: &Theme) -> Div {
@@ -221,7 +214,13 @@ pub(super) fn diff_card(
 
 /// A turn's items without a final answer: agent messages and command rows. A running turn
 /// names its running commands; otherwise commands fold into `Ran a command`.
-pub(super) fn activity(items: &[ThreadItem], running: bool, window: &Window, t: &Theme) -> Div {
+pub(super) fn activity(
+    items: &[ThreadItem],
+    running: bool,
+    window: &Window,
+    t: &Theme,
+    fades: &HashMap<String, Vec<StreamSegment>>,
+) -> Div {
     let text60 = t.text_alpha_60;
     let row = |label: String| {
         div()
@@ -250,8 +249,9 @@ pub(super) fn activity(items: &[ThreadItem], running: bool, window: &Window, t: 
                     ran += 1;
                 }
             }
-            ThreadItem::AgentMessage { text, .. } if !text.is_empty() => {
-                col = flush(col, &mut ran).child(markdown(text, window, t));
+            ThreadItem::AgentMessage { id, text } if !text.is_empty() => {
+                let segments = fades.get(id).map(Vec::as_slice).unwrap_or_default();
+                col = flush(col, &mut ran).child(markdown(text, window, t, segments));
             }
             _ => {}
         }

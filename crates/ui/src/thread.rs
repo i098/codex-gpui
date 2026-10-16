@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash as _, Hasher as _};
 use std::rc::Rc;
 use std::sync::{Arc, LazyLock, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bridge::Event;
 use bridge::types::{
@@ -40,7 +40,7 @@ mod markdown;
 
 use actions::action_row;
 pub use actions::{ForkThread, RevertTurn};
-use items::{activity, diff_card, disclosure, user_bubble, words, wrap_row};
+use items::{activity, diff_card, disclosure, user_bubble, wrap_row};
 use markdown::{markdown, tones};
 
 /// `--thread-content-max-width`
@@ -77,11 +77,18 @@ pub struct ThreadView {
     clock: Clock,
     composer: AnyView,
     _tick: Option<Task<()>>,
+    stream_fades: HashMap<String, Vec<StreamSegment>>,
     /// Turns whose `Worked for` disclosure is expanded.
     expanded: HashSet<String>,
     scroll: ScrollHandle,
     /// The turns as last laid out, to stand in for the ones far off screen.
     laid_out: Rc<RefCell<LaidOut>>,
+}
+
+struct StreamSegment {
+    range: std::ops::Range<usize>,
+    started_at: Instant,
+    alpha: f32,
 }
 
 /// Where the last frame laid out each turn, in the scroller's content (top, height), and the
@@ -108,6 +115,7 @@ impl ThreadView {
             clock,
             composer,
             _tick: None,
+            stream_fades: HashMap::new(),
             expanded: HashSet::new(),
             scroll: ScrollHandle::new(),
             laid_out: Rc::default(),
@@ -358,7 +366,17 @@ impl ThreadView {
                     .iter_mut()
                     .find(|i| id.is_some() && item_id(i) == id.as_deref())
                 {
-                    Some(item) => *item = n.item,
+                    Some(item) => {
+                        if let (
+                            ThreadItem::AgentMessage { id, text: before },
+                            ThreadItem::AgentMessage { text: after, .. },
+                        ) = (&*item, &n.item)
+                            && before != after
+                        {
+                            self.stream_fades.remove(id);
+                        }
+                        *item = n.item;
+                    }
                     None => turn.items.push(n.item),
                 }
             }
@@ -368,7 +386,21 @@ impl ThreadView {
                     return;
                 };
                 match self.item_mut(&n.item_id) {
-                    Some(ThreadItem::AgentMessage { text, .. }) => text.push_str(&n.delta),
+                    Some(ThreadItem::AgentMessage { text, .. }) => {
+                        let start = text.len();
+                        text.push_str(&n.delta);
+                        let end = text.len();
+                        if start != end && !cx.reduce_motion() {
+                            self.stream_fades
+                                .entry(n.item_id)
+                                .or_default()
+                                .push(StreamSegment {
+                                    range: start..end,
+                                    started_at: cx.background_executor().now(),
+                                    alpha: 0.,
+                                });
+                        }
+                    }
                     Some(ThreadItem::CommandExecution {
                         aggregated_output, ..
                     }) => aggregated_output.get_or_insert_default().push_str(&n.delta),
@@ -467,13 +499,24 @@ impl ThreadView {
             if open {
                 // The work the disclosure hides: everything before the final answer.
                 let work = &turn.items[..turn.items.len() - 1];
-                col = col
-                    .child(div().h(px(16.)))
-                    .child(activity(work, false, window, t));
+                col = col.child(div().h(px(16.))).child(activity(
+                    work,
+                    false,
+                    window,
+                    t,
+                    &self.stream_fades,
+                ));
             }
+            let fades = turn
+                .items
+                .last()
+                .and_then(item_id)
+                .and_then(|id| self.stream_fades.get(id))
+                .map(Vec::as_slice)
+                .unwrap_or_default();
             col = col
                 .child(div().h(px(16.)))
-                .child(markdown(answer, window, t));
+                .child(markdown(answer, window, t, fades));
             if let Some(card) = diff_card(&turn.id, &turn.items, window, t) {
                 col = col.child(div().mt(px(12.)).pb(px(8.)).child(card));
             }
@@ -492,7 +535,13 @@ impl ThreadView {
                 .child(div().h(px(16.)));
         }
         let running = turn.status == TurnStatus::InProgress;
-        col.child(activity(&turn.items, running, window, t))
+        col.child(activity(
+            &turn.items,
+            running,
+            window,
+            t,
+            &self.stream_fades,
+        ))
     }
 
     /// `Yesterday 9:54 PM` above a turn's user message.
@@ -519,6 +568,20 @@ impl ThreadView {
 
 impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let now = cx.background_executor().now();
+        self.stream_fades.retain(|_, segments| {
+            segments.retain_mut(|segment| {
+                let elapsed = now.saturating_duration_since(segment.started_at);
+                segment.alpha = crate::motion::EASE_STREAMING(
+                    elapsed.as_secs_f32() / crate::motion::STREAMING_TEXT.as_secs_f32(),
+                );
+                !cx.reduce_motion() && elapsed < crate::motion::STREAMING_TEXT
+            });
+            !segments.is_empty()
+        });
+        if !self.stream_fades.is_empty() {
+            window.request_animation_frame();
+        }
         let t = cx.theme().clone();
         let n = self.turns.len();
         // Turns more than half a viewport above or below it stand in as empty boxes of their
