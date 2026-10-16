@@ -229,9 +229,13 @@ fn link_context_menu_and_find_close_match_original() -> Result<()> {
                 "{}: highlights stayed after closing: {orange} active, {yellow} other",
                 expected["close"]
             );
+            // The original's activeElement is the body: nothing of the app, keys still work
+            // (the next Cmd+F reopens the bar). The port's body is the root's focus handle.
             ensure!(
-                after["activeElement"]["tag"] == "body" && !focused(&mut fx)?,
-                "{}: focus did not leave the find input",
+                after["activeElement"]["tag"] == "body"
+                    && focused(&mut fx)?
+                    && !fx.composer_focused()?,
+                "{}: focus did not go to the root",
                 expected["close"]
             );
         } else if let Some(expected) = finds.iter().find(|f| f["beforeStep"] == index + 1) {
