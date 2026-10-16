@@ -1,13 +1,17 @@
 //! App shell: the window chrome every screen shares (titlebar, navigation rail, sidebar
 //! frame, main panel), reproduced from `refs/home/dark@1280x832.spec.json`. All numbers are
 //! the spec's CSS px.
+//!
+//! Tab groups follow the original DOM order, not the paint order: rail, sidebar,
+//! titlebar, then main content. `refs/interactions/f1c.json` records both directions.
 
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, Bounds, ClickEvent, ContentMask, Context,
-    Corners, Div, FontWeight, Hsla, Image, ImageFormat, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, Pixels, Point, Render, Rgba, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, Svg, Window, actions, canvas, div, fill, img, point,
-    prelude::FluentBuilder as _, px, size, svg,
+    Corners, CursorStyle, DispatchPhase, Div, FontWeight, Hsla, Image, ImageFormat,
+    InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement, Pixels, Point, Render, Rgba, SharedString, Stateful, StatefulInteractiveElement,
+    Styled, Svg, Window, actions, canvas, div, fill, img, point, prelude::FluentBuilder as _, px,
+    size, svg,
 };
 use std::sync::{Arc, LazyLock};
 use theme::{ActiveTheme as _, Theme};
@@ -61,8 +65,6 @@ actions!(edit, [Undo, Redo, Cut, Copy, Paste, SelectAll]);
 
 /// `--app-shell-navigation-rail-width`
 pub const RAIL_WIDTH: Pixels = px(52.);
-/// `.sidebar-navigation` panel width (left panel minus the rail).
-pub const SIDEBAR_PANEL_WIDTH: Pixels = px(288.);
 /// `--app-shell-page-inline-end-inset`, also the layout's bottom padding.
 const PAGE_INSET: Pixels = px(4.);
 /// `--border-width-hairline` of `_MainContentLeftBorder`.
@@ -79,6 +81,8 @@ pub const MONO: &str = "Menlo";
 
 pub struct Shell {
     pub sidebar_open: bool,
+    pub sidebar_width: Pixels,
+    sidebar_drag_offset: Option<Pixels>,
     pub can_go_back: bool,
     pub can_go_forward: bool,
     /// Rail item shown as selected (`"home"`, `"scheduled"`, ...); its icon switches to
@@ -139,6 +143,8 @@ impl Shell {
     pub fn new(sidebar: AnyView, main: AnyView) -> Self {
         Self {
             sidebar_open: true,
+            sidebar_width: Theme::SIDEBAR_WIDTH,
+            sidebar_drag_offset: None,
             can_go_back: false,
             can_go_forward: false,
             selected_rail: Some("home"),
@@ -162,6 +168,7 @@ impl Shell {
     }
 
     pub fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
+        self.sidebar_drag_offset = None;
         self.sidebar_open = !self.sidebar_open;
         cx.notify();
     }
@@ -461,6 +468,17 @@ pub fn home_shell(_: &mut Window, cx: &mut App) -> AnyView {
 /// `New chat` and `Your dot` rows. With `unread` chats the bell carries the blue dot.
 pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
     let t = cx.theme();
+    let keyboard_ring = |inset| {
+        move |style: gpui::StyleRefinement| {
+            style.shadow(vec![gpui::BoxShadow {
+                color: gpui::rgb(0x3a83f7).into(),
+                offset: point(px(0.), px(0.)),
+                blur_radius: px(0.),
+                spread_radius: px(2.),
+                inset,
+            }])
+        }
+    };
     // Chromium squashes the search button's `_ButtonInner` and the rows below into one
     // transparent overlap layer, from the rows' left edge and the button's top.
     let overlap = point(RAIL_WIDTH + px(8.), Theme::TITLEBAR_HEIGHT + px(12.));
@@ -468,6 +486,8 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
         let hover_bg = t.list_hover;
         div()
             .id(id)
+            .tab_index(0)
+            .focus_visible(keyboard_ring(true))
             .h(px(30.))
             .flex()
             .items_center()
@@ -499,6 +519,8 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
                 .child(
                     div()
                         .id("mode-switch")
+                        .tab_index(0)
+                        .focus_visible(keyboard_ring(true))
                         .h(px(32.))
                         .px(px(6.))
                         .flex()
@@ -523,7 +545,9 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
                             t.text_tertiary,
                         ),
                         t,
-                    ),
+                    )
+                    .tab_index(0)
+                    .focus_visible(keyboard_ring(false)),
                     "View activity",
                     Some("⌥⌘U"),
                     Side::Bottom,
@@ -535,6 +559,8 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
                         icon::icon("search", 16., t.text_tertiary).own_layer(Some(overlap)),
                         t,
                     )
+                    .tab_index(0)
+                    .focus_visible(keyboard_ring(false))
                     .on_click(dispatch::<OpenCommandMenu>),
                     "Search",
                     Some("⌘K"),
@@ -649,6 +675,9 @@ impl Shell {
         let rail_tip =
             |item: Stateful<Div>, label: &'static str| tooltip(item, label, None, Side::Right);
         div()
+            .tab_group()
+            .tab_index(0)
+            .tab_stop(false)
             .absolute()
             .left_0()
             .top(Theme::TITLEBAR_HEIGHT)
@@ -786,11 +815,14 @@ impl Shell {
     fn sidebar_panel(&self, t: &Theme) -> Div {
         let r = Theme::RADIUS_XL_BASE;
         div()
+            .tab_group()
+            .tab_index(1)
+            .tab_stop(false)
             .absolute()
             .left(RAIL_WIDTH)
             .top(Theme::TITLEBAR_HEIGHT)
             .bottom(PAGE_INSET)
-            .w(SIDEBAR_PANEL_WIDTH)
+            .w(self.sidebar_width - RAIL_WIDTH)
             .flex()
             .flex_col()
             .overflow_hidden()
@@ -815,6 +847,9 @@ impl Shell {
         let open = self.sidebar_open;
         let r = Theme::RADIUS_XL_BASE;
         let panel = div()
+            .tab_group()
+            .tab_index(3)
+            .tab_stop(false)
             .absolute()
             .top(Theme::TITLEBAR_HEIGHT)
             .right(PAGE_INSET)
@@ -823,7 +858,7 @@ impl Shell {
             .child(self.main.clone());
         if self.main_composited {
             return panel.left(if open {
-                Theme::SIDEBAR_WIDTH + MAIN_HAIRLINE
+                self.sidebar_width + MAIN_HAIRLINE
             } else {
                 RAIL_WIDTH
             });
@@ -831,7 +866,7 @@ impl Shell {
         // The `clip-path` box (its left corners under the open sidebar): Skia rasters main's
         // draws under that anti-aliased clip, but not its composited layers.
         let (left, inset) = if open {
-            (Theme::SIDEBAR_WIDTH - r, r + MAIN_HAIRLINE)
+            (self.sidebar_width - r, r + MAIN_HAIRLINE)
         } else {
             (RAIL_WIDTH, px(0.))
         };
@@ -853,12 +888,21 @@ impl Shell {
             })
     }
 
-    fn titlebar(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
-        // Disabled (`opacity: .4`, no hover) when there is no history in that direction. The
-        // opacity goes on the icon itself so `icon::icon` finds its fitted image.
-        let nav = |id: &'static str, glyph: icon::Icon, enabled: bool| {
+    fn titlebar(&self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        // Disabled history controls do not participate in keyboard navigation.
+        let mut nav = |id: &'static str, glyph: icon::Icon, enabled: bool| {
             if enabled {
-                icon_button(id, glyph, t)
+                let focus = focus::handle(id, 0, window, cx);
+                focus::ring(
+                    icon_button(id, glyph, t),
+                    &focus,
+                    RADIUS_BUTTON_MD,
+                    px(2.),
+                    cx,
+                )
+                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                    focus.read(cx).handle.clone().focus(window, cx);
+                })
             } else {
                 div()
                     .id(id)
@@ -874,7 +918,14 @@ impl Shell {
         let back = icon::icon("arrow-left", 16., t.text_tertiary);
         // Forward is the Back glyph mirrored (`-scale-x-100`).
         let forward = icon::icon("arrow-left", 16., t.text_tertiary).flip_x();
+        let back = nav("back", back, self.can_go_back);
+        let forward = nav("forward", forward, self.can_go_forward);
+        let sidebar_focus = focus::handle("toggle-sidebar", 0, window, cx);
+        let new_tab_focus = focus::handle("new-tab", 0, window, cx);
         div()
+            .tab_group()
+            .tab_index(2)
+            .tab_stop(false)
             .absolute()
             .top_0()
             .left_0()
@@ -888,31 +939,42 @@ impl Shell {
                 }
             })
             .child(tooltip(
-                nav("back", back, self.can_go_back)
-                    .left(px(88.))
-                    .on_click(dispatch::<GoBack>),
+                back.left(px(88.)).on_click(dispatch::<GoBack>),
                 "Back",
                 Some("⌘["),
                 Side::Bottom,
             ))
             .child(tooltip(
-                nav("forward", forward, self.can_go_forward)
-                    .left(px(122.))
-                    .on_click(dispatch::<GoForward>),
+                forward.left(px(122.)).on_click(dispatch::<GoForward>),
                 "Forward",
                 Some("⌘]"),
                 Side::Bottom,
             ))
             .when(self.chat_chrome, |d| {
                 d.child(tooltip(
-                    icon_button(
-                        "toggle-sidebar",
-                        icon::icon("sidebar", 16., t.text_tertiary),
-                        t,
+                    focus::ring(
+                        icon_button(
+                            "toggle-sidebar",
+                            icon::icon("sidebar", 16., t.text_tertiary),
+                            t,
+                        ),
+                        &sidebar_focus,
+                        RADIUS_BUTTON_MD,
+                        px(2.),
+                        cx,
                     )
+                    .role(gpui::Role::Button)
+                    .aria_label(if self.sidebar_open {
+                        "Hide sidebar"
+                    } else {
+                        "Show sidebar"
+                    })
                     .absolute()
                     .left(px(156.))
                     .top(px(8.))
+                    .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                        sidebar_focus.read(cx).handle.clone().focus(window, cx);
+                    })
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
                     "Toggle sidebar",
                     Some("⇧⌘S"),
@@ -921,7 +983,7 @@ impl Shell {
             })
             .when(self.new_tab, |d| {
                 d.child(
-                    div()
+                    focus::ring(div().id("new-tab"), &new_tab_focus, px(8.), px(2.), cx)
                         .absolute()
                         .top(px(8.))
                         .right(px(8.))
@@ -929,6 +991,10 @@ impl Shell {
                         .flex()
                         .items_center()
                         .justify_center()
+                        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                            new_tab_focus.read(cx).handle.clone().focus(window, cx);
+                            cx.stop_propagation();
+                        })
                         .child(icon::icon("new-tab", 16., t.text_tertiary)),
                 )
             })
@@ -970,6 +1036,7 @@ impl Render for Shell {
         // `_MainContentSurface` paints into the same layer: its fill and hairline blend onto
         // the layer's translucent pixels too.
         let open = self.sidebar_open;
+        let sidebar_width = self.sidebar_width;
         let composited = self.main_composited;
         let main_layer = composited && self.main_layer;
         let clip_twice = main_layer && screens::diff::panel::panel_clamped(window);
@@ -1019,11 +1086,7 @@ impl Render for Shell {
                 bounds.origin + point(RAIL_WIDTH, Theme::TITLEBAR_HEIGHT),
                 bounds.bottom_right() - point(PAGE_INSET, PAGE_INSET),
             );
-            let main_left = if open {
-                Theme::SIDEBAR_WIDTH
-            } else {
-                RAIL_WIDTH
-            };
+            let main_left = if open { sidebar_width } else { RAIL_WIDTH };
             let mut main = Bounds::from_corners(
                 bounds.origin + point(main_left, Theme::TITLEBAR_HEIGHT),
                 page_surface.bottom_right(),
@@ -1186,8 +1249,71 @@ impl Render for Shell {
             .when(composited || self.main_backgrounds > 0, |d| {
                 d.child(corners)
             })
+            .when(self.sidebar_open, |d| {
+                d.child(
+                    div()
+                        .id("sidebar-resize")
+                        .role(gpui::Role::Splitter)
+                        .absolute()
+                        .left(self.sidebar_width - px(8.))
+                        .top(Theme::TITLEBAR_HEIGHT)
+                        .bottom(PAGE_INSET)
+                        .w(px(16.))
+                        .cursor(CursorStyle::ResizeLeftRight)
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, e: &MouseDownEvent, _, cx| {
+                                this.sidebar_drag_offset = Some(e.position.x - this.sidebar_width);
+                                cx.stop_propagation();
+                                cx.notify();
+                            }),
+                        ),
+                )
+            })
+            .when(self.sidebar_drag_offset.is_some(), |d| {
+                let this = cx.entity().downgrade();
+                d.child(
+                    canvas(
+                        |_, _, _| {},
+                        move |_, (), window, _| {
+                            let moved = this.clone();
+                            window.on_mouse_event(move |e: &MouseMoveEvent, phase, window, cx| {
+                                if phase == DispatchPhase::Capture {
+                                    moved
+                                        .update(cx, |this, _| {
+                                            if let Some(offset) = this.sidebar_drag_offset {
+                                                let width = e.position.x - offset;
+                                                this.sidebar_open = width >= px(145.);
+                                                if this.sidebar_open {
+                                                    this.sidebar_width =
+                                                        width.clamp(px(290.), px(520.));
+                                                }
+                                                window.refresh();
+                                            }
+                                        })
+                                        .ok();
+                                }
+                            });
+                            let released = this.clone();
+                            window.on_mouse_event(move |e: &MouseUpEvent, phase, _, cx| {
+                                if phase == DispatchPhase::Capture && e.button == MouseButton::Left
+                                {
+                                    released
+                                        .update(cx, |this, cx| {
+                                            this.sidebar_drag_offset = None;
+                                            cx.notify();
+                                        })
+                                        .ok();
+                                }
+                            });
+                        },
+                    )
+                    .absolute()
+                    .size_full(),
+                )
+            })
             .child(self.rail(&t, window, cx))
-            .child(self.titlebar(&t, cx))
+            .child(self.titlebar(&t, window, cx))
             .when(self.profile_menu, |d| d.child(self.profile_menu(&t, cx)))
     }
 }
