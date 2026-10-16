@@ -1,0 +1,707 @@
+{
+ "name": "f0a",
+ "runs": [
+  [
+   {
+    "name": "01-sidebar-row-hover",
+    "viewport": {
+     "w": 1280,
+     "h": 832,
+     "dpr": 1,
+     "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+     "theme": "dark",
+     "hoverEmulated": true
+    },
+    "steps": [
+     {
+      "type": "hover",
+      "target": {
+       "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Change the greeting\"]",
+       "bbox": {
+        "x": 60,
+        "y": 290,
+        "w": 272,
+        "h": 30
+       }
+      },
+      "at": {
+       "x": 150,
+       "y": 305
+      }
+     },
+     {
+      "type": "hover",
+      "target": {
+       "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Change the greeting\"] [aria-label=\"Pin chat\"]",
+       "bbox": {
+        "x": 276,
+        "y": 295,
+        "w": 20,
+        "h": 20
+       }
+      }
+     }
+    ],
+    "result": {
+     "dom": [
+      {
+       "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Change the greeting\"]",
+       "state": "rest",
+       "bbox": {
+        "x": 60,
+        "y": 290,
+        "w": 272,
+        "h": 30
+       },
+       "computed": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(255, 255, 255)",
+        "opacity": "1",
+        "cursor": "default"
+       }
+      },
+      {
+       "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Change the greeting\"]",
+       "state": "hover",
+       "bbox": {
+        "x": 60,
+        "y": 290,
+        "w": 272,
+        "h": 30
+       },
+       "computed": {
+        "backgroundColor": "rgba(255, 255, 255, 0.08)",
+        "color": "rgb(255, 255, 255)",
+        "opacity": "1",
+        "cursor": "default"
+       }
+      },
+      {
+       "selector": "row action group",
+       "state": "hover",
+       "opacity": "1",
+       "children": [
+        {
+         "aria": "Pin chat",
+         "bbox": {
+          "x": 276,
+          "y": 295,
+          "w": 20,
+          "h": 20
+         }
+        },
+        {
+         "aria": "Archive chat",
+         "bbox": {
+          "x": 304,
+          "y": 295,
+          "w": 20,
+          "h": 20
+         }
+        }
+       ]
+      },
+      {
+       "selector": "row title track",
+       "state": "hover",
+       "marquee": {
+        "animationName": "_marqueeTextScroll_a3okg_102",
+        "duration": "4.958s"
+       }
+      },
+      {
+       "selector": "[role=tooltip] (row hover card)",
+       "tooltips": [
+        {
+         "text": "Change the greeting in hello.py to \"Hello, Codex\". | 12h | proj",
+         "bbox": {
+          "x": 335,
+          "y": 291,
+          "w": 320,
+          "h": 78
+         }
+        }
+       ]
+      },
+      {
+       "selector": "[role=tooltip] (Pin chat)",
+       "tooltips": [
+        {
+         "text": "Change the greeting in hello.py to \"Hello, Codex\". | 12h | proj",
+         "bbox": {
+          "x": 335,
+          "y": 291,
+          "w": 320,
+          "h": 78
+         }
+        },
+        {
+         "text": "Pin chat",
+         "bbox": {
+          "x": 249,
+          "y": 263,
+          "w": 75,
+          "h": 30
+         }
+        }
+       ]
+      }
+     ],
+     "requests": []
+    }
+   },
+   {
+    "name": "09-sidebar-resize-drag",
+    "viewport": {
+     "w": 1280,
+     "h": 832,
+     "dpr": 1,
+     "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+     "theme": "dark",
+     "hoverEmulated": true
+    },
+    "steps": [
+     {
+      "type": "hover",
+      "target": {
+       "selector": "[role=separator][aria-orientation=vertical]",
+       "bbox": {
+        "x": 332,
+        "y": 44,
+        "w": 16,
+        "h": 784
+       }
+      },
+      "at": {
+       "x": 340,
+       "y": 400
+      }
+     },
+     {
+      "type": "drag",
+      "from": {
+       "x": 340,
+       "y": 400
+      },
+      "to": {
+       "x": 400,
+       "y": 400
+      }
+     },
+     {
+      "type": "drag",
+      "from": {
+       "x": 400,
+       "y": 400
+      },
+      "to": {
+       "x": 110,
+       "y": 400
+      }
+     },
+     {
+      "type": "click",
+      "target": {
+       "text": "Toggle sidebar (titlebar)",
+       "at": {
+        "x": 170,
+        "y": 22
+       }
+      }
+     },
+     {
+      "type": "drag",
+      "from": {
+       "x": 290,
+       "y": 400
+      },
+      "to": {
+       "x": 900,
+       "y": 400
+      }
+     }
+    ],
+    "result": {
+     "dom": [
+      {
+       "selector": "[role=separator][aria-orientation=vertical]",
+       "bbox": {
+        "x": 332,
+        "y": 44,
+        "w": 16,
+        "h": 784
+       },
+       "cursor": "col-resize"
+      },
+      {
+       "selector": ".sidebar-resize-handle-line",
+       "rest": {
+        "opacity": "0",
+        "bg": "rgba(255, 255, 255, 0.157)",
+        "bbox": {
+         "x": 340,
+         "y": 44,
+         "w": 1,
+         "h": 784
+        }
+       },
+       "hover": {
+        "opacity": "1",
+        "bg": "rgba(255, 255, 255, 0.157)",
+        "bbox": {
+         "x": 340,
+         "y": 44,
+         "w": 1,
+         "h": 784
+        }
+       },
+       "dragging": {
+        "opacity": "1",
+        "bg": "rgba(255, 255, 255, 0.157)",
+        "bbox": {
+         "x": 400,
+         "y": 44,
+         "w": 1,
+         "h": 784
+        }
+       }
+      },
+      {
+       "selector": "drag +60",
+       "samples": [
+        {
+         "pointerX": 360,
+         "handleX": 352,
+         "rowW": 292
+        },
+        {
+         "pointerX": 380,
+         "handleX": 372,
+         "rowW": 312
+        },
+        {
+         "pointerX": 400,
+         "handleX": 392,
+         "rowW": 332
+        }
+       ]
+      },
+      {
+       "selector": "min / collapse",
+       "samples": [
+        {
+         "pointerX": 350,
+         "handleX": 342,
+         "rowW": 282
+        },
+        {
+         "pointerX": 300,
+         "handleX": 292,
+         "rowW": 232
+        },
+        {
+         "pointerX": 260,
+         "handleX": 282,
+         "rowW": 222
+        },
+        {
+         "pointerX": 200,
+         "handleX": 282,
+         "rowW": 222
+        },
+        {
+         "pointerX": 110,
+         "handleX": 44,
+         "rowW": 0
+        }
+       ],
+       "collapsed": true
+      },
+      {
+       "selector": "max",
+       "reopenedHandleX": 282,
+       "samples": [
+        {
+         "pointerX": 500,
+         "handleX": 492,
+         "rowW": 432
+        },
+        {
+         "pointerX": 600,
+         "handleX": 512,
+         "rowW": 452
+        },
+        {
+         "pointerX": 900,
+         "handleX": 512,
+         "rowW": 452
+        }
+       ]
+      }
+     ],
+     "requests": [
+      {
+       "type": "persisted-atom-update",
+       "key": "sidebar-width"
+      },
+      {
+       "type": "persisted-atom-update",
+       "key": "sidebar-width"
+      }
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "name": "01-sidebar-row-hover",
+    "viewport": {
+     "w": 1280,
+     "h": 832,
+     "dpr": 1,
+     "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+     "theme": "dark",
+     "hoverEmulated": true
+    },
+    "steps": [
+     {
+      "type": "hover",
+      "target": {
+       "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Change the greeting\"]",
+       "bbox": {
+        "x": 60,
+        "y": 290,
+        "w": 272,
+        "h": 30
+       }
+      },
+      "at": {
+       "x": 150,
+       "y": 305
+      }
+     },
+     {
+      "type": "hover",
+      "target": {
+       "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Change the greeting\"] [aria-label=\"Pin chat\"]",
+       "bbox": {
+        "x": 276,
+        "y": 295,
+        "w": 20,
+        "h": 20
+       }
+      }
+     }
+    ],
+    "result": {
+     "dom": [
+      {
+       "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Change the greeting\"]",
+       "state": "rest",
+       "bbox": {
+        "x": 60,
+        "y": 290,
+        "w": 272,
+        "h": 30
+       },
+       "computed": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(255, 255, 255)",
+        "opacity": "1",
+        "cursor": "default"
+       }
+      },
+      {
+       "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Change the greeting\"]",
+       "state": "hover",
+       "bbox": {
+        "x": 60,
+        "y": 290,
+        "w": 272,
+        "h": 30
+       },
+       "computed": {
+        "backgroundColor": "rgba(255, 255, 255, 0.08)",
+        "color": "rgb(255, 255, 255)",
+        "opacity": "1",
+        "cursor": "default"
+       }
+      },
+      {
+       "selector": "row action group",
+       "state": "hover",
+       "opacity": "1",
+       "children": [
+        {
+         "aria": "Pin chat",
+         "bbox": {
+          "x": 276,
+          "y": 295,
+          "w": 20,
+          "h": 20
+         }
+        },
+        {
+         "aria": "Archive chat",
+         "bbox": {
+          "x": 304,
+          "y": 295,
+          "w": 20,
+          "h": 20
+         }
+        }
+       ]
+      },
+      {
+       "selector": "row title track",
+       "state": "hover",
+       "marquee": {
+        "animationName": "_marqueeTextScroll_a3okg_102",
+        "duration": "4.958s"
+       }
+      },
+      {
+       "selector": "[role=tooltip] (row hover card)",
+       "tooltips": [
+        {
+         "text": "Change the greeting in hello.py to \"Hello, Codex\". | 12h | proj",
+         "bbox": {
+          "x": 335,
+          "y": 291,
+          "w": 320,
+          "h": 78
+         }
+        }
+       ]
+      },
+      {
+       "selector": "[role=tooltip] (Pin chat)",
+       "tooltips": [
+        {
+         "text": "Change the greeting in hello.py to \"Hello, Codex\". | 12h | proj",
+         "bbox": {
+          "x": 335,
+          "y": 291,
+          "w": 320,
+          "h": 78
+         }
+        },
+        {
+         "text": "Pin chat",
+         "bbox": {
+          "x": 249,
+          "y": 263,
+          "w": 75,
+          "h": 30
+         }
+        }
+       ]
+      }
+     ],
+     "requests": []
+    }
+   },
+   {
+    "name": "09-sidebar-resize-drag",
+    "viewport": {
+     "w": 1280,
+     "h": 832,
+     "dpr": 1,
+     "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+     "theme": "dark",
+     "hoverEmulated": true
+    },
+    "steps": [
+     {
+      "type": "hover",
+      "target": {
+       "selector": "[role=separator][aria-orientation=vertical]",
+       "bbox": {
+        "x": 332,
+        "y": 44,
+        "w": 16,
+        "h": 784
+       }
+      },
+      "at": {
+       "x": 340,
+       "y": 400
+      }
+     },
+     {
+      "type": "drag",
+      "from": {
+       "x": 340,
+       "y": 400
+      },
+      "to": {
+       "x": 400,
+       "y": 400
+      }
+     },
+     {
+      "type": "drag",
+      "from": {
+       "x": 400,
+       "y": 400
+      },
+      "to": {
+       "x": 110,
+       "y": 400
+      }
+     },
+     {
+      "type": "click",
+      "target": {
+       "text": "Toggle sidebar (titlebar)",
+       "at": {
+        "x": 170,
+        "y": 22
+       }
+      }
+     },
+     {
+      "type": "drag",
+      "from": {
+       "x": 290,
+       "y": 400
+      },
+      "to": {
+       "x": 900,
+       "y": 400
+      }
+     }
+    ],
+    "result": {
+     "dom": [
+      {
+       "selector": "[role=separator][aria-orientation=vertical]",
+       "bbox": {
+        "x": 332,
+        "y": 44,
+        "w": 16,
+        "h": 784
+       },
+       "cursor": "col-resize"
+      },
+      {
+       "selector": ".sidebar-resize-handle-line",
+       "rest": {
+        "opacity": "0",
+        "bg": "rgba(255, 255, 255, 0.157)",
+        "bbox": {
+         "x": 340,
+         "y": 44,
+         "w": 1,
+         "h": 784
+        }
+       },
+       "hover": {
+        "opacity": "1",
+        "bg": "rgba(255, 255, 255, 0.157)",
+        "bbox": {
+         "x": 340,
+         "y": 44,
+         "w": 1,
+         "h": 784
+        }
+       },
+       "dragging": {
+        "opacity": "1",
+        "bg": "rgba(255, 255, 255, 0.157)",
+        "bbox": {
+         "x": 400,
+         "y": 44,
+         "w": 1,
+         "h": 784
+        }
+       }
+      },
+      {
+       "selector": "drag +60",
+       "samples": [
+        {
+         "pointerX": 360,
+         "handleX": 352,
+         "rowW": 292
+        },
+        {
+         "pointerX": 380,
+         "handleX": 372,
+         "rowW": 312
+        },
+        {
+         "pointerX": 400,
+         "handleX": 392,
+         "rowW": 332
+        }
+       ]
+      },
+      {
+       "selector": "min / collapse",
+       "samples": [
+        {
+         "pointerX": 350,
+         "handleX": 342,
+         "rowW": 282
+        },
+        {
+         "pointerX": 300,
+         "handleX": 292,
+         "rowW": 232
+        },
+        {
+         "pointerX": 260,
+         "handleX": 282,
+         "rowW": 222
+        },
+        {
+         "pointerX": 200,
+         "handleX": 282,
+         "rowW": 222
+        },
+        {
+         "pointerX": 110,
+         "handleX": 44,
+         "rowW": 0
+        }
+       ],
+       "collapsed": true
+      },
+      {
+       "selector": "max",
+       "reopenedHandleX": 282,
+       "samples": [
+        {
+         "pointerX": 500,
+         "handleX": 492,
+         "rowW": 432
+        },
+        {
+         "pointerX": 600,
+         "handleX": 512,
+         "rowW": 452
+        },
+        {
+         "pointerX": 900,
+         "handleX": 512,
+         "rowW": 452
+        }
+       ]
+      }
+     ],
+     "requests": [
+      {
+       "type": "persisted-atom-update",
+       "key": "sidebar-width"
+      },
+      {
+       "type": "persisted-atom-update",
+       "key": "sidebar-width"
+      }
+     ]
+    }
+   }
+  ]
+ ]
+}

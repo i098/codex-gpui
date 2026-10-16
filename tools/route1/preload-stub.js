@@ -66,6 +66,7 @@
     }
     return v && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, dec(x)])) : v;
   };
+  let rpcTarget;
   const callService = async (svc, method, args) => {
     const fns = new Map();
     const wire = args.map((a, i) => (typeof a === "function" ? (fns.set(i, a.dup ? a.dup() : a), "__fn") : a));
@@ -73,11 +74,16 @@
     const { value, fn, calls = [], error } = await res.json();
     if (error) throw new Error(error);
     for (const [i, x] of calls) setTimeout(() => fns.get(i)?.(...x));
-    return fn ? () => {} : dec(value);
+    // register*/subscribe* calls expect a handle back (orbPicker.registerSource -> {update},
+    // browserTabs.subscribeInvalidations -> {unsubscribe}); undefined makes a jotai watch throw.
+    const out = fn ? () => {} : dec(value);
+    if (out == null && rpcTarget && /^(register|subscribe|watch|observe)/.test(method)) return new (class extends rpcTarget { update() {} unsubscribe() {} dispose() {} })();
+    return out;
   };
   window.addEventListener("message", async (e) => {
     if (e.source !== window || e.data?.type !== "connect-app-host") return;
     const { K0t: RpcTarget, Y0t: newMessagePortRpcSession } = await import(cfg.appShared);
+    rpcTarget = RpcTarget;
     const shape = await (await fetch(q("services"))).json();
     const services = {};
     for (const [name, kind] of Object.entries(shape)) {
