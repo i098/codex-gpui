@@ -19,6 +19,9 @@ pub(super) enum Content {
 pub(super) struct Attachment {
     pub path: PathBuf,
     content: Content,
+    /// Written under `$CODEX_HOME/attachments` by [`persist`]: removed with the chip. A
+    /// picked or dropped file stays where the user keeps it.
+    persisted: bool,
 }
 
 impl Attachment {
@@ -26,6 +29,29 @@ impl Attachment {
         Self {
             path,
             content: Content::File,
+            persisted: false,
+        }
+    }
+
+    /// A dropped or picked file: an image shows its thumbnail (its bytes stay where they
+    /// are), anything else its chip.
+    fn dropped(path: PathBuf) -> Self {
+        let format = match path.extension().and_then(|e| e.to_str()) {
+            Some(e) if e.eq_ignore_ascii_case("png") => Some(gpui::ImageFormat::Png),
+            Some(e) if e.eq_ignore_ascii_case("jpg") || e.eq_ignore_ascii_case("jpeg") => {
+                Some(gpui::ImageFormat::Jpeg)
+            }
+            Some(e) if e.eq_ignore_ascii_case("gif") => Some(gpui::ImageFormat::Gif),
+            Some(e) if e.eq_ignore_ascii_case("webp") => Some(gpui::ImageFormat::Webp),
+            _ => None,
+        };
+        match format.and_then(|f| Some((f, fs::read(&path).ok()?))) {
+            Some((format, bytes)) => Self {
+                path,
+                content: Content::Image(Arc::new(gpui::Image::from_bytes(format, bytes))),
+                persisted: false,
+            },
+            None => Self::file(path),
         }
     }
 }
@@ -76,7 +102,11 @@ fn persist(content: Content) -> io::Result<Attachment> {
         let _ = fs::remove_dir(&directory);
         return Err(error);
     }
-    Ok(Attachment { path, content })
+    Ok(Attachment {
+        path,
+        content,
+        persisted: true,
+    })
 }
 
 impl Composer {
@@ -126,6 +156,15 @@ impl Composer {
             }
         })
         .detach();
+    }
+
+    /// Files dropped on the composer's drop target (CP-030): each becomes an attachment at
+    /// its own path.
+    pub fn drop_files(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
+        self.attachments
+            .extend(paths.iter().cloned().map(Attachment::dropped));
+        self.set_drag_active(false, cx);
+        cx.notify();
     }
 
     pub(super) fn attachments_row(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
@@ -221,14 +260,16 @@ impl Composer {
 
     fn remove_paste(&mut self, i: usize, cx: &mut Context<Self>) -> Content {
         let attachment = self.attachments.remove(i);
-        cx.background_executor()
-            .spawn(async move {
-                let _ = fs::remove_file(&attachment.path);
-                if let Some(parent) = attachment.path.parent() {
-                    let _ = fs::remove_dir(parent);
-                }
-            })
-            .detach();
+        if attachment.persisted {
+            cx.background_executor()
+                .spawn(async move {
+                    let _ = fs::remove_file(&attachment.path);
+                    if let Some(parent) = attachment.path.parent() {
+                        let _ = fs::remove_dir(parent);
+                    }
+                })
+                .detach();
+        }
         cx.notify();
         attachment.content
     }
