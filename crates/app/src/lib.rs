@@ -55,6 +55,9 @@ actions!(
         HideOthers,
         ShowAll,
         OpenDocumentation,
+        FindInThread,
+        FindNext,
+        FindPrevious,
         /// The Recents row above the open thread (`previousThread`).
         PreviousChat,
         /// The Recents row below the open thread (`nextThread`).
@@ -94,6 +97,9 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-c", Copy, None),
         KeyBinding::new("cmd-v", Paste, None),
         KeyBinding::new("cmd-a", SelectAll, None),
+        KeyBinding::new("cmd-f", FindInThread, None),
+        KeyBinding::new("cmd-g", FindNext, None),
+        KeyBinding::new("cmd-shift-g", FindPrevious, None),
         KeyBinding::new("cmd-shift-s", ToggleSidebar, None),
         KeyBinding::new("cmd-b", ToggleSidebar, None),
         KeyBinding::new("cmd-[", GoBack, None),
@@ -150,6 +156,10 @@ pub fn menus() -> Vec<Menu> {
             MenuItem::os_action("Copy", Copy, OsAction::Copy),
             MenuItem::os_action("Paste", Paste, OsAction::Paste),
             MenuItem::os_action("Select All", SelectAll, OsAction::SelectAll),
+            MenuItem::separator(),
+            MenuItem::action("Find", FindInThread),
+            MenuItem::action("Find Next", FindNext),
+            MenuItem::action("Find Previous", FindPrevious),
         ]),
         Menu::new("View").items([
             MenuItem::action("Toggle Sidebar", ToggleSidebar),
@@ -179,6 +189,8 @@ pub enum Route {
     Settings,
     /// Rail `Scheduled` (`/scheduled`): the Automations page.
     Scheduled,
+    /// A sidebar task row (`/scheduled?automationId=<id>`): the task's thread.
+    Automation(String),
     /// Profile menu ▸ `Set up mobile` (`/codex-mobile`).
     Mobile,
 }
@@ -285,6 +297,11 @@ pub fn theme_for(appearance: WindowAppearance) -> Theme {
     }
 }
 
+/// The local wall clock's offset from UTC, in seconds.
+fn utc_offset() -> i64 {
+    chrono::Local::now().offset().local_minus_utc().into()
+}
+
 /// Runs `task` to the end and prints its error.
 fn log_err(task: Task<Result<()>>, cx: &App) {
     cx.foreground_executor()
@@ -332,6 +349,8 @@ pub struct Root {
     host: Arc<dyn host::Host>,
     automations: Option<Result<Value, String>>,
     automation_load: Option<Task<()>>,
+    /// The Scheduled routes' sidebar, fed the host's list when the read completes.
+    scheduled: Option<Entity<automations::ScheduledSidebar>>,
     cwd: String,
     config: Value,
     skills: Value,
@@ -469,6 +488,7 @@ impl Root {
             host: Arc::new(host::LocalHost::from_env()),
             automations: None,
             automation_load: None,
+            scheduled: None,
             cwd,
             config: Value::Null,
             skills: Value::Null,
@@ -603,7 +623,7 @@ impl Root {
         self.automation_load = None;
         self.host = host;
         self.automations = None;
-        if self.state.route == Route::Scheduled {
+        if self.scheduled_route() {
             self.load_automations(cx);
         }
         cx.notify();
@@ -612,6 +632,10 @@ impl Root {
     /// The host's automation list, or its error; `None` means that the read has not completed.
     pub fn automations(&self) -> Option<&Result<Value, String>> {
         self.automations.as_ref()
+    }
+
+    fn scheduled_route(&self) -> bool {
+        matches!(self.state.route, Route::Scheduled | Route::Automation(_))
     }
 
     fn load_automations(&mut self, cx: &mut Context<Self>) {
@@ -625,14 +649,28 @@ impl Root {
         self.automation_load = Some(cx.spawn(async move |this, cx| {
             let result = read.await;
             this.update(cx, |this, cx| {
-                if result.is_err() && this.state.route == Route::Scheduled {
+                if result.is_err() && this.scheduled_route() {
                     this.toast(Toast::danger("Failed to load automations"), cx);
+                }
+                let tasks = result
+                    .as_ref()
+                    .map_or_else(|_| Vec::new(), automations::tasks);
+                if let Some(sidebar) = &this.scheduled {
+                    sidebar.update(cx, |sidebar, cx| sidebar.set_tasks(tasks, cx));
                 }
                 this.automations = Some(result);
                 cx.notify();
             })
             .ok();
         }));
+    }
+
+    /// The host's tasks as read so far.
+    fn tasks(&self) -> Vec<automations::Task> {
+        self.automations
+            .as_ref()
+            .and_then(|r| r.as_ref().ok())
+            .map_or_else(Vec::new, automations::tasks)
     }
 
     fn set_threads(&mut self, threads: &[Thread], cx: &mut Context<Self>) {
@@ -714,7 +752,7 @@ impl Root {
     /// persists the state.
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (can_back, can_forward) = (!self.back.is_empty(), !self.forward.is_empty());
-        self.page = match self.state.route {
+        self.page = match self.state.route.clone() {
             Route::Settings => {
                 // The Appearance page shows the theme the app keeps.
                 let mut config = self.config.clone();
@@ -743,8 +781,25 @@ impl Root {
                 Some(shell)
             }
             Route::Scheduled => {
+                let tasks = self.tasks();
                 self.load_automations(cx);
-                Some(automations::shell(cx))
+                let (shell, sidebar) = automations::shell(tasks, None, utc_offset(), cx);
+                self.scheduled = Some(sidebar);
+                Some(shell)
+            }
+            Route::Automation(id) => {
+                // The list is the one the Scheduled page read; a cold start reads it now.
+                if self.automations.is_none() && self.automation_load.is_none() {
+                    self.load_automations(cx);
+                }
+                let tasks = self.tasks();
+                let selected = tasks.iter().find(|t| t.id == id).cloned().map(|task| {
+                    let composer: AnyView = cx.new(|cx| Composer::automation(window, cx)).into();
+                    (task, composer)
+                });
+                let (shell, sidebar) = automations::shell(tasks, selected, utc_offset(), cx);
+                self.scheduled = Some(sidebar);
+                Some(shell)
             }
             Route::Mobile => Some(mobile::shell(cx)),
             Route::Home | Route::Thread(_) => None,
@@ -942,7 +997,7 @@ impl Root {
             .update(cx, |c, cx| c.set_running(running, cx));
         let route = Route::Thread(thread.id.clone());
         let clock = Clock {
-            utc_offset: chrono::Local::now().offset().local_minus_utc().into(),
+            utc_offset: utc_offset(),
             pinned_now: None,
         };
         let composer = self.thread_composer.clone().into();
@@ -1572,6 +1627,23 @@ impl Render for Root {
             .relative()
             .font_family(ui::SANS)
             .track_focus(&self.focus)
+            .on_action(cx.listener(|this, _: &FindInThread, window, cx| {
+                if matches!(this.state.route, Route::Thread(_))
+                    && let Some(thread) = &this.thread
+                {
+                    thread.update(cx, |thread, cx| thread.open_find(window, cx));
+                }
+            }))
+            .on_action(cx.listener(|this, _: &FindNext, _, cx| {
+                if let Some(thread) = &this.thread {
+                    thread.update(cx, |thread, cx| thread.next_find(false, cx));
+                }
+            }))
+            .on_action(cx.listener(|this, _: &FindPrevious, _, cx| {
+                if let Some(thread) = &this.thread {
+                    thread.update(cx, |thread, cx| thread.next_find(true, cx));
+                }
+            }))
             .on_action(cx.listener(|this, _: &NewChat, window, cx| this.new_chat(window, cx)))
             .on_action(cx.listener(|this, _: &ui::composer::Stop, _, cx| this.stop(cx)))
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
@@ -1580,6 +1652,11 @@ impl Render for Root {
             .on_action(cx.listener(|this, _: &OpenScheduled, window, cx| {
                 this.navigate(Route::Scheduled, window, cx)
             }))
+            .on_action(
+                cx.listener(|this, a: &automations::OpenAutomation, window, cx| {
+                    this.navigate(Route::Automation(a.id.clone()), window, cx)
+                }),
+            )
             .on_action(cx.listener(|this, _: &OpenMobileSetup, window, cx| {
                 this.navigate(Route::Mobile, window, cx)
             }))
