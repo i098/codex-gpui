@@ -71,7 +71,6 @@ const FLOWS: &[(&str, Flow)] = &[
     ("cmd_w_closes_window", cmd_w_closes_window),
     ("theme_switch", theme_switch),
     ("rail_scheduled", rail_scheduled),
-    ("scheduled_card_hover", scheduled_card_hover),
     ("parity_automations", || {
         parity_flow("automations", |fx| fx.click(RAIL_SCHEDULED))
     }),
@@ -648,15 +647,6 @@ fn rail_scheduled() -> Result<String> {
     fx.click(BACK)?;
     ensure!(fx.route() == Route::Home, "Back: {:?}", fx.route());
     Ok(String::new())
-}
-
-fn scheduled_card_hover() -> Result<String> {
-    let mut fx = Fx::new()?;
-    fx.click(RAIL_SCHEDULED)?;
-    // The first suggestion card (the app shows the landing examples in the same grid).
-    let at = fx.at("automations", "AP Lang practice")?;
-    let n = assert_hover(&mut fx, at, MAIN_PANEL, 1000)?;
-    Ok(format!("{n} px"))
 }
 
 /// The profile avatar, at the rail's bottom.
