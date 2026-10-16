@@ -12,7 +12,7 @@ use harfbuzz_sys as hb;
 use std::{ffi::c_void, ptr};
 
 /// A HarfBuzz font for one CoreText font at one size, and its AAT `trak` advance (hb units).
-pub struct HbFont(*mut hb::hb_font_t, i32);
+pub struct HbFont(*mut hb::hb_font_t, i64);
 
 // The font is only used under the text system's mutex.
 unsafe impl Send for HbFont {}
@@ -87,8 +87,8 @@ impl HbFont {
         letter_spacing: f32,
         features: &[(u32, u32)],
     ) -> (Vec<(u32, f32, f32, usize)>, f32) {
-        let to_css = |v: i32| v as f32 / 65536. / device_scale;
-        let spacing = (letter_spacing * device_scale * 65536.) as i32;
+        let to_css = |v: i64| v as f32 / 65536. / device_scale;
+        let spacing = (letter_spacing * device_scale * 65536.) as i64;
         let no_ligatures =
             [b"liga", b"clig", b"dlig", b"hlig", b"calt"].map(|tag| (u32::from_be_bytes(*tag), 0));
         let features: Vec<hb::hb_feature_t> = features
@@ -113,10 +113,10 @@ impl HbFont {
 /// (glyph, x, y up, cluster) and the total advance in hb units, `trak` added per cluster.
 fn shape_raw(
     font: *mut hb::hb_font_t,
-    tracking: i32,
+    tracking: i64,
     text: &str,
     features: &[hb::hb_feature_t],
-) -> (Vec<(u32, i32, i32, usize)>, i32) {
+) -> (Vec<(u32, i64, i64, usize)>, i64) {
     unsafe {
         let buffer = hb::hb_buffer_create();
         hb::hb_buffer_add_utf8(
@@ -143,11 +143,11 @@ fn shape_raw(
             .map(|(info, pos)| {
                 let glyph = (
                     info.codepoint,
-                    pen + pos.x_offset,
-                    pos.y_offset,
+                    pen + i64::from(pos.x_offset),
+                    i64::from(pos.y_offset),
                     info.cluster as usize,
                 );
-                pen += pos.x_advance;
+                pen += i64::from(pos.x_advance);
                 if info.cluster != cluster {
                     pen += tracking;
                     cluster = info.cluster;
