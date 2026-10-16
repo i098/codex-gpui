@@ -1,0 +1,399 @@
+{
+  "name": "s034",
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 1,
+    "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+    "theme": "dark",
+    "hoverEmulated": true
+  },
+  "source": {
+    "app": "26.1007.30912",
+    "transport": "route1 on shared Chrome :9522; isolated CDP context",
+    "fixture": "settings.write stores the value and settings.readAll reads it back; other services use the existing oracle",
+    "deferred": "ST-178: signed-out route rendered an empty root in two route1 attempts; excluded by firstmate"
+  },
+  "steps": [
+    {
+      "type": "key",
+      "key": "Meta+,",
+      "portKey": "cmd-,",
+      "bridge": {
+        "type": "run-command",
+        "id": "settings"
+      },
+      "note": "Electron native accelerator, delivered through the for-view bridge in route1."
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "Show ChatGPT in the menu bar",
+        "bbox": {
+          "x": 1119,
+          "y": 709,
+          "w": 32,
+          "h": 20
+        }
+      }
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "Back",
+        "bbox": {
+          "x": 88,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        }
+      }
+    },
+    {
+      "type": "key",
+      "key": "Meta+,",
+      "portKey": "cmd-,",
+      "bridge": {
+        "type": "run-command",
+        "id": "settings"
+      },
+      "note": "Electron native accelerator, delivered through the for-view bridge in route1."
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "Show ChatGPT in the menu bar",
+        "bbox": {
+          "x": 1119,
+          "y": 709,
+          "w": 32,
+          "h": 20
+        }
+      }
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "Back",
+        "bbox": {
+          "x": 88,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        }
+      }
+    }
+  ],
+  "result": {
+    "dom": [
+      {
+        "selector": "[aria-label=\"Show ChatGPT in the menu bar\"]",
+        "tag": "button",
+        "text": "",
+        "aria": "Show ChatGPT in the menu bar",
+        "role": "switch",
+        "bbox": {
+          "x": 1119,
+          "y": 709,
+          "w": 32,
+          "h": 20
+        },
+        "checked": "true",
+        "children": [
+          {
+            "tag": "span",
+            "text": "",
+            "aria": null,
+            "role": null,
+            "bbox": {
+              "x": 1119,
+              "y": 709,
+              "w": 32,
+              "h": 20
+            },
+            "computed": {
+              "backgroundColor": "rgb(58, 131, 247)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "default"
+            }
+          }
+        ],
+        "afterStep": 0,
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(255, 255, 255) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        },
+        "samples": [
+          {
+            "at": [
+              1124,
+              719
+            ],
+            "rgb": [
+              58,
+              131,
+              247
+            ]
+          },
+          {
+            "at": [
+              1144,
+              719
+            ],
+            "rgb": [
+              255,
+              255,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "selector": "[aria-label=\"Show ChatGPT in the menu bar\"]",
+        "tag": "button",
+        "text": "",
+        "aria": "Show ChatGPT in the menu bar",
+        "role": "switch",
+        "bbox": {
+          "x": 1119,
+          "y": 709,
+          "w": 32,
+          "h": 20
+        },
+        "checked": "false",
+        "children": [
+          {
+            "tag": "span",
+            "text": "",
+            "aria": null,
+            "role": null,
+            "bbox": {
+              "x": 1119,
+              "y": 709,
+              "w": 32,
+              "h": 20
+            },
+            "computed": {
+              "backgroundColor": "oklab(0.999994 0.0000455678 0.0000200868 / 0.1)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "default"
+            }
+          }
+        ],
+        "afterStep": 1,
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(255, 255, 255) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        },
+        "samples": [
+          {
+            "at": [
+              1124,
+              719
+            ],
+            "rgb": [
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "at": [
+              1144,
+              719
+            ],
+            "rgb": [
+              57,
+              57,
+              57
+            ]
+          }
+        ]
+      },
+      {
+        "selector": "[aria-label=\"Show ChatGPT in the menu bar\"]",
+        "tag": "button",
+        "text": "",
+        "aria": "Show ChatGPT in the menu bar",
+        "role": "switch",
+        "bbox": {
+          "x": 1119,
+          "y": 709,
+          "w": 32,
+          "h": 20
+        },
+        "checked": "false",
+        "children": [
+          {
+            "tag": "span",
+            "text": "",
+            "aria": null,
+            "role": null,
+            "bbox": {
+              "x": 1119,
+              "y": 709,
+              "w": 32,
+              "h": 20
+            },
+            "computed": {
+              "backgroundColor": "oklab(0.999994 0.0000455678 0.0000200868 / 0.1)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "default"
+            }
+          }
+        ],
+        "afterStep": 3,
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(255, 255, 255) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        },
+        "samples": [
+          {
+            "at": [
+              1124,
+              719
+            ],
+            "rgb": [
+              255,
+              255,
+              255
+            ]
+          },
+          {
+            "at": [
+              1144,
+              719
+            ],
+            "rgb": [
+              57,
+              57,
+              57
+            ]
+          }
+        ]
+      },
+      {
+        "selector": "[aria-label=\"Show ChatGPT in the menu bar\"]",
+        "tag": "button",
+        "text": "",
+        "aria": "Show ChatGPT in the menu bar",
+        "role": "switch",
+        "bbox": {
+          "x": 1119,
+          "y": 709,
+          "w": 32,
+          "h": 20
+        },
+        "checked": "true",
+        "children": [
+          {
+            "tag": "span",
+            "text": "",
+            "aria": null,
+            "role": null,
+            "bbox": {
+              "x": 1119,
+              "y": 709,
+              "w": 32,
+              "h": 20
+            },
+            "computed": {
+              "backgroundColor": "rgb(58, 131, 247)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "none",
+              "cursor": "default"
+            }
+          }
+        ],
+        "afterStep": 4,
+        "originalComputed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(255, 255, 255) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        },
+        "samples": [
+          {
+            "at": [
+              1124,
+              719
+            ],
+            "rgb": [
+              58,
+              131,
+              247
+            ]
+          },
+          {
+            "at": [
+              1144,
+              719
+            ],
+            "rgb": [
+              255,
+              255,
+              255
+            ]
+          }
+        ]
+      }
+    ],
+    "requests": [],
+    "state": {
+      "route": "home"
+    },
+    "hostRequests": [
+      {
+        "svc": "settings",
+        "method": "write",
+        "args": [
+          "mac-menu-bar-enabled",
+          false
+        ]
+      },
+      {
+        "svc": "settings",
+        "method": "write",
+        "args": [
+          "mac-menu-bar-enabled",
+          true
+        ]
+      }
+    ],
+    "routes": [
+      {
+        "afterStep": 2,
+        "route": "home"
+      },
+      {
+        "afterStep": 5,
+        "route": "home"
+      }
+    ]
+  }
+}
