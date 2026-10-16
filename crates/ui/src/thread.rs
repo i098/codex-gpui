@@ -21,8 +21,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bridge::Event;
 use bridge::types::{
-    AgentMessageDeltaNotification, ItemNotification, Thread, ThreadItem, Turn, TurnNotification,
-    TurnStatus, UserInput,
+    AgentMessageDeltaNotification, FileUpdateChange, ItemNotification, Thread, ThreadItem, Turn,
+    TurnNotification, TurnStatus, UserInput,
 };
 use gpui::{
     Action, AnyView, App, Bounds, ClipboardItem, Context, Corners, Div, FontWeight, Hsla, Image,
@@ -86,7 +86,8 @@ pub struct ThreadView {
     clock: Clock,
     composer: AnyView,
     _tick: Option<Task<()>>,
-    /// Turns whose `Worked for` disclosure is expanded.
+    /// Open disclosures: turns whose `Worked for` is expanded, by turn id, and activity groups
+    /// whose rows show, by the id of their first item.
     expanded: HashSet<String>,
     scroll: ScrollHandle,
     /// The turns as last laid out, to stand in for the ones far off screen.
@@ -234,6 +235,19 @@ impl ThreadView {
 
     pub fn turns(&self) -> &[Turn] {
         &self.turns
+    }
+
+    /// The activity texts of turn `turn_id`, as drawn under its `Worked for` disclosure: each
+    /// group's summary, then its rows while the group is open.
+    pub fn activity_labels(&self, turn_id: &str) -> Option<Vec<String>> {
+        let turn = self.turns.iter().find(|t| t.id == turn_id)?;
+        let (work, _) = work(turn);
+        Some(
+            items::activities(work, turn.status == TurnStatus::InProgress)
+                .iter()
+                .flat_map(|a| a.labels(&self.expanded))
+                .collect(),
+        )
     }
 
     pub fn find_state(&self) -> Option<(&str, usize, usize)> {
@@ -936,14 +950,7 @@ impl ThreadView {
                 }),
             });
         }
-        let final_answer = match turn.items.last() {
-            Some(ThreadItem::AgentMessage { id, text, .. })
-                if turn.status != TurnStatus::InProgress =>
-            {
-                Some((id.as_str(), text.as_str()))
-            }
-            _ => None,
-        };
+        let (work, final_answer) = work(turn);
         if let Some((item, answer)) = final_answer {
             let secs = turn.duration_ms.unwrap_or(0) / 1000;
             let open = self.expanded.contains(&turn.id)
@@ -966,11 +973,9 @@ impl ThreadView {
                     })),
             );
             if open {
-                // The work the disclosure hides: everything before the final answer.
-                let work = &turn.items[..turn.items.len() - 1];
                 col = col
                     .child(div().h(px(16.)))
-                    .child(self.activity(work, false, window, t));
+                    .child(self.activity(work, false, window, t, cx));
             }
             col = col.child(div().h(px(16.))).child(markdown::with_find(
                 answer,
@@ -996,23 +1001,39 @@ impl ThreadView {
                 .child(div().h(px(16.)));
         }
         let running = turn.status == TurnStatus::InProgress;
-        col.child(self.activity(&turn.items, running, window, t))
+        col.child(self.activity(work, running, window, t, cx))
     }
 
-    fn activity(&self, items: &[ThreadItem], running: bool, window: &Window, t: &Theme) -> Div {
+    /// [`activity`], with find highlights painted over the agent messages while find has
+    /// matches.
+    fn activity(
+        &self,
+        items: &[ThreadItem],
+        running: bool,
+        window: &Window,
+        t: &Theme,
+        cx: &Context<Self>,
+    ) -> Div {
         if self
             .find
             .as_ref()
             .is_none_or(|find| find.matches.is_empty())
         {
-            return activity(items, running, window, t);
+            return activity(items, running, &self.expanded, window, t, cx);
         }
         let mut column = div().flex().flex_col().gap(px(16.));
         let mut start = 0;
         for (index, item) in items.iter().enumerate() {
             if let ThreadItem::AgentMessage { id, text, .. } = item {
                 if start < index {
-                    column = column.child(activity(&items[start..index], running, window, t));
+                    column = column.child(activity(
+                        &items[start..index],
+                        running,
+                        &self.expanded,
+                        window,
+                        t,
+                        cx,
+                    ));
                 }
                 column = column.child(markdown::with_find(
                     text,
@@ -1024,7 +1045,14 @@ impl ThreadView {
             }
         }
         if start < items.len() {
-            column = column.child(activity(&items[start..], running, window, t));
+            column = column.child(activity(
+                &items[start..],
+                running,
+                &self.expanded,
+                window,
+                t,
+                cx,
+            ));
         }
         column
     }
@@ -1280,6 +1308,19 @@ fn item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::McpToolCall { id, .. }
         | ThreadItem::ContextCompaction { id } => Some(id),
         ThreadItem::Other => None,
+    }
+}
+
+/// A finished turn's items before its final answer, and that answer as `(item id, text)`:
+/// the work its `Worked for` disclosure hides. A running turn is all work.
+fn work(turn: &Turn) -> (&[ThreadItem], Option<(&str, &str)>) {
+    match turn.items.last() {
+        Some(ThreadItem::AgentMessage { id, text, .. })
+            if turn.status != TurnStatus::InProgress =>
+        {
+            (&turn.items[..turn.items.len() - 1], Some((id, text)))
+        }
+        _ => (&turn.items, None),
     }
 }
 
