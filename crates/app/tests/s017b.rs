@@ -236,5 +236,49 @@ fn file_drag_over_the_composer_matches_the_original() -> Result<()> {
         notes.exists() && dot.exists(),
         "dropped files stay where they are"
     );
+
+    // On a thread the whole main panel is the drop target and the docked composer attaches.
+    let thread = &rec["result"]["thread"];
+    fx.click(fx.at("home", "Change the greeting")?)?;
+    fx.wait_thread(common::GREETING)?;
+    fx.hover((800., 400.))?;
+    let thread_rest = fx.shot()?;
+    let overlay = bbox(&thread["overlay"]["bbox"]);
+    let pill = bbox(&thread["overlay"]["pill"]["bbox"]);
+    let page_rest = dominant(&thread_rest, overlay);
+    fx.input(entered(from, std::slice::from_ref(&notes)))?;
+    fx.input(pending(to))?;
+    let dragging = fx.shot()?;
+    dragging.save(proof.join("thread-drag.png"))?;
+    let want_page = over(css(&thread["overlay"]["rgba"]), page_rest);
+    let got_page = dominant(&dragging, overlay);
+    ensure!(
+        close(got_page, want_page),
+        "thread overlay: port {got_page:?}, original {want_page:?}"
+    );
+    let got_pill = dominant(&dragging, pill);
+    ensure!(
+        close(got_pill, [want_pill[0], want_pill[1], want_pill[2]]),
+        "thread pill fill at {pill:?}: port {got_pill:?}, original {want_pill:?}"
+    );
+    let composer = fx.composer();
+    let capture = submitted.clone();
+    composer.update(&mut fx.cx, |c, _| {
+        c.on_submit(move |s, _, _| *capture.borrow_mut() = Some(s.clone()))
+    });
+    fx.input(drop_event(FileDropEvent::Submit {
+        position: point(px(to.0), px(to.1)),
+    }))?;
+    fx.input(drop_event(FileDropEvent::Ended))?;
+    ensure!(
+        dominant(&fx.shot()?, overlay) == page_rest,
+        "thread overlay after the drop"
+    );
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        window.focus(&composer.focus_handle(cx), cx)
+    })?;
+    fx.keys("enter")?;
+    let submission = submitted.borrow_mut().take().context("thread submission")?;
+    assert_eq!(submission.attachments, vec![notes]);
     Ok(())
 }
