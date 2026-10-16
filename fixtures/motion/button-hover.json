@@ -1,0 +1,448 @@
+{
+ "source": "original webview 26.1007.30912 in Linux Chrome 156 headless, 1440x900 @1x, light theme, route1 server with scratch app-server stub (see tools/)",
+ "frame_ms": 16.667,
+ "trigger": "pointer enters / leaves a rail icon button (_Button_eg66f_2)",
+ "tracks": [
+  {
+   "target": "button._Button_eg66f_2.browser:[--button-text-color:var(--color-text-tertiary)].",
+   "pseudo": null,
+   "property": "color",
+   "animation": "CSSTransition",
+   "name": "color",
+   "timing": {
+    "duration": 150,
+    "delay": 0,
+    "easing": "ease",
+    "fill": "backwards",
+    "iterations": 1,
+    "direction": "normal"
+   },
+   "keyframes": [
+    {
+     "offset": 0,
+     "easing": "linear",
+     "composite": "auto",
+     "color": "rgba(26, 28, 31, 0.494)",
+     "computedOffset": 0
+    },
+    {
+     "offset": 1,
+     "easing": "linear",
+     "composite": "auto",
+     "color": "rgb(26, 28, 31)",
+     "computedOffset": 1
+    }
+   ],
+   "samples": [
+    [
+     0,
+     "rgba(26, 28, 31, 0.494)"
+    ],
+    [
+     16.67,
+     "rgba(26, 28, 31, 0.553)"
+    ],
+    [
+     33.33,
+     "rgba(26, 28, 31, 0.67)"
+    ],
+    [
+     50,
+     "rgba(26, 28, 31, 0.784)"
+    ],
+    [
+     66.67,
+     "rgba(26, 28, 31, 0.87)"
+    ],
+    [
+     83.33,
+     "rgba(26, 28, 31, 0.925)"
+    ],
+    [
+     100,
+     "rgba(26, 28, 31, 0.96)"
+    ],
+    [
+     116.67,
+     "rgba(26, 28, 31, 0.984)"
+    ],
+    [
+     133.33,
+     "rgba(26, 28, 31, 0.996)"
+    ],
+    [
+     150,
+     "rgb(26, 28, 31)"
+    ]
+   ]
+  },
+  {
+   "target": "button._Button_eg66f_2.browser:[--button-text-color:var(--color-text-tertiary)].",
+   "pseudo": "::before",
+   "property": "opacity",
+   "animation": "CSSTransition",
+   "name": "opacity",
+   "timing": {
+    "duration": 150,
+    "delay": 0,
+    "easing": "ease",
+    "fill": "backwards",
+    "iterations": 1,
+    "direction": "normal"
+   },
+   "keyframes": [
+    {
+     "offset": 0,
+     "easing": "linear",
+     "composite": "auto",
+     "opacity": "0",
+     "computedOffset": 0
+    },
+    {
+     "offset": 1,
+     "easing": "linear",
+     "composite": "auto",
+     "opacity": "1",
+     "computedOffset": 1
+    }
+   ],
+   "samples": [
+    [
+     0,
+     "0"
+    ],
+    [
+     16.67,
+     "0.11263"
+    ],
+    [
+     33.33,
+     "0.346036"
+    ],
+    [
+     50,
+     "0.575862"
+    ],
+    [
+     66.67,
+     "0.741158"
+    ],
+    [
+     83.33,
+     "0.852283"
+    ],
+    [
+     100,
+     "0.924824"
+    ],
+    [
+     116.67,
+     "0.969409"
+    ],
+    [
+     133.33,
+     "0.992931"
+    ],
+    [
+     150,
+     "1"
+    ]
+   ]
+  },
+  {
+   "target": "button._Button_eg66f_2.browser:[--button-text-color:var(--color-text-tertiary)].",
+   "pseudo": "::before",
+   "property": "transform",
+   "animation": "CSSTransition",
+   "name": "transform",
+   "timing": {
+    "duration": 150,
+    "delay": 0,
+    "easing": "ease",
+    "fill": "backwards",
+    "iterations": 1,
+    "direction": "normal"
+   },
+   "keyframes": [
+    {
+     "offset": 0,
+     "easing": "linear",
+     "composite": "auto",
+     "transform": "none",
+     "computedOffset": 0
+    },
+    {
+     "offset": 1,
+     "easing": "linear",
+     "composite": "auto",
+     "transform": "scale(1)",
+     "computedOffset": 1
+    }
+   ],
+   "samples": [
+    [
+     0,
+     "matrix(1, 0, 0, 1, 0, 0)"
+    ],
+    [
+     16.67,
+     "matrix(1, 0, 0, 1, 0, 0)"
+    ],
+    [
+     33.33,
+     "matrix(1, 0, 0, 1, 0, 0)"
+    ],
+    [
+     50,
+     "matrix(1, 0, 0, 1, 0, 0)"
+    ],
+    [
+     66.67,
+     "matrix(1, 0, 0, 1, 0, 0)"
+    ],
+    [
+     83.33,
+     "matrix(1, 0, 0, 1, 0, 0)"
+    ],
+    [
+     100,
+     "matrix(1, 0, 0, 1, 0, 0)"
+    ],
+    [
+     116.67,
+     "matrix(1, 0, 0, 1, 0, 0)"
+    ],
+    [
+     133.33,
+     "matrix(1, 0, 0, 1, 0, 0)"
+    ],
+    [
+     150,
+     "matrix(1, 0, 0, 1, 0, 0)"
+    ]
+   ]
+  },
+  {
+   "target": "button._Button_eg66f_2.browser:[--button-text-color:var(--color-text-tertiary)].",
+   "pseudo": null,
+   "property": "color",
+   "animation": "CSSTransition",
+   "name": "color",
+   "timing": {
+    "duration": 150,
+    "delay": 0,
+    "easing": "ease",
+    "fill": "backwards",
+    "iterations": 1,
+    "direction": "normal"
+   },
+   "keyframes": [
+    {
+     "offset": 0,
+     "easing": "linear",
+     "composite": "auto",
+     "color": "rgb(26, 28, 31)",
+     "computedOffset": 0
+    },
+    {
+     "offset": 1,
+     "easing": "linear",
+     "composite": "auto",
+     "color": "rgba(26, 28, 31, 0.494)",
+     "computedOffset": 1
+    }
+   ],
+   "samples": [
+    [
+     0,
+     "rgb(26, 28, 31)"
+    ],
+    [
+     16.67,
+     "rgba(26, 28, 31, 0.94)"
+    ],
+    [
+     33.33,
+     "rgba(26, 28, 31, 0.824)"
+    ],
+    [
+     50,
+     "rgba(26, 28, 31, 0.71)"
+    ],
+    [
+     66.67,
+     "rgba(26, 28, 31, 0.624)"
+    ],
+    [
+     83.33,
+     "rgba(26, 28, 31, 0.57)"
+    ],
+    [
+     100,
+     "rgba(26, 28, 31, 0.533)"
+    ],
+    [
+     116.67,
+     "rgba(26, 28, 31, 0.51)"
+    ],
+    [
+     133.33,
+     "rgba(26, 28, 31, 0.498)"
+    ],
+    [
+     150,
+     "rgba(26, 28, 31, 0.494)"
+    ]
+   ],
+   "direction": "out"
+  },
+  {
+   "target": "button._Button_eg66f_2.browser:[--button-text-color:var(--color-text-tertiary)].",
+   "pseudo": "::before",
+   "property": "opacity",
+   "animation": "CSSTransition",
+   "name": "opacity",
+   "timing": {
+    "duration": 150,
+    "delay": 0,
+    "easing": "ease",
+    "fill": "backwards",
+    "iterations": 1,
+    "direction": "normal"
+   },
+   "keyframes": [
+    {
+     "offset": 0,
+     "easing": "linear",
+     "composite": "auto",
+     "opacity": "1",
+     "computedOffset": 0
+    },
+    {
+     "offset": 1,
+     "easing": "linear",
+     "composite": "auto",
+     "opacity": "0",
+     "computedOffset": 1
+    }
+   ],
+   "samples": [
+    [
+     0,
+     "1"
+    ],
+    [
+     16.67,
+     "0.88737"
+    ],
+    [
+     33.33,
+     "0.653964"
+    ],
+    [
+     50,
+     "0.424138"
+    ],
+    [
+     66.67,
+     "0.258842"
+    ],
+    [
+     83.33,
+     "0.147717"
+    ],
+    [
+     100,
+     "0.075176"
+    ],
+    [
+     116.67,
+     "0.0305907"
+    ],
+    [
+     133.33,
+     "0.00706896"
+    ],
+    [
+     150,
+     "0"
+    ]
+   ],
+   "direction": "out"
+  },
+  {
+   "target": "button._Button_eg66f_2.browser:[--button-text-color:var(--color-text-tertiary)].",
+   "pseudo": "::before",
+   "property": "transform",
+   "animation": "CSSTransition",
+   "name": "transform",
+   "timing": {
+    "duration": 150,
+    "delay": 0,
+    "easing": "ease",
+    "fill": "backwards",
+    "iterations": 1,
+    "direction": "normal"
+   },
+   "keyframes": [
+    {
+     "offset": 0,
+     "easing": "linear",
+     "composite": "auto",
+     "transform": "scale(1)",
+     "computedOffset": 0
+    },
+    {
+     "offset": 1,
+     "easing": "linear",
+     "composite": "auto",
+     "transform": "none",
+     "computedOffset": 1
+    }
+   ],
+   "samples": [
+    [
+     0,
+     "matrix(1, 0, 0, 1, 0, 0)"
+    ],
+    [
+     16.67,
+     "matrix(1, 0, 0, 1, 0, 0)"
+    ],
+    [
+     33.33,
+     "matrix(1, 0, 0, 1, 0, 0)"
+    ],
+    [
+     50,
+     "matrix(1, 0, 0, 1, 0, 0)"
+    ],
+    [
+     66.67,
+     "matrix(1, 0, 0, 1, 0, 0)"
+    ],
+    [
+     83.33,
+     "matrix(1, 0, 0, 1, 0, 0)"
+    ],
+    [
+     100,
+     "matrix(1, 0, 0, 1, 0, 0)"
+    ],
+    [
+     116.67,
+     "matrix(1, 0, 0, 1, 0, 0)"
+    ],
+    [
+     133.33,
+     "matrix(1, 0, 0, 1, 0, 0)"
+    ],
+    [
+     150,
+     "none"
+    ]
+   ],
+   "direction": "out"
+  }
+ ]
+}

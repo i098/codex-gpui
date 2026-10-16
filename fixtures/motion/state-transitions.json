@@ -1,0 +1,389 @@
+{
+ "source": "original webview 26.1007.30912 in Linux Chrome 156 headless, 1440x900 @1x, light theme, route1 server with scratch app-server stub (see ../tools/)",
+ "frame_ms": 16.667,
+ "trigger": "style change on an element carrying the original class: chevron rotate, switch thumb, composer multiline height, cmdk list height",
+ "origin": "synthetic element carrying the original CSS-module class(es) in the loaded original page; values are getComputedStyle at Animation.currentTime = t (paused, seeked)",
+ "note": "switch: thumb moves with inset-inline-start (computed as left in LTR); composer-height measured on a synthetic ._AdaptiveFooterInput[data-composer-layout=multiline] 40px->120px",
+ "tracks": [
+  {
+   "case": "chevron-rotate",
+   "animation": "CSSTransition",
+   "name": "rotate",
+   "timing": {
+    "duration": 300,
+    "delay": 0,
+    "easing": "cubic-bezier(0.19, 1, 0.22, 1)",
+    "fill": "backwards",
+    "iterations": 1,
+    "direction": "normal"
+   },
+   "property": "rotate",
+   "samples": [
+    [
+     0,
+     "0deg"
+    ],
+    [
+     16.67,
+     "25.4532deg"
+    ],
+    [
+     33.33,
+     "47.0399deg"
+    ],
+    [
+     50,
+     "62.5178deg"
+    ],
+    [
+     66.67,
+     "72.4503deg"
+    ],
+    [
+     83.33,
+     "78.6647deg"
+    ],
+    [
+     100,
+     "82.6135deg"
+    ],
+    [
+     116.67,
+     "85.179deg"
+    ],
+    [
+     133.33,
+     "86.8742deg"
+    ],
+    [
+     150,
+     "88.0042deg"
+    ],
+    [
+     166.67,
+     "88.7573deg"
+    ],
+    [
+     183.33,
+     "89.2545deg"
+    ],
+    [
+     200,
+     "89.576deg"
+    ],
+    [
+     216.67,
+     "89.7768deg"
+    ],
+    [
+     233.33,
+     "89.8954deg"
+    ],
+    [
+     250,
+     "89.9594deg"
+    ],
+    [
+     266.67,
+     "89.9889deg"
+    ],
+    [
+     283.33,
+     "89.9987deg"
+    ],
+    [
+     300,
+     "90deg"
+    ]
+   ]
+  },
+  {
+   "case": "switch-thumb",
+   "animation": "CSSTransition",
+   "name": "background-color",
+   "timing": {
+    "duration": 175,
+    "delay": 50,
+    "easing": "linear",
+    "fill": "backwards",
+    "iterations": 1,
+    "direction": "normal"
+   },
+   "property": "backgroundColor",
+   "samples": [
+    [
+     0,
+     "rgb(204, 204, 204)"
+    ],
+    [
+     16.67,
+     "rgb(204, 204, 204)"
+    ],
+    [
+     33.33,
+     "rgb(204, 204, 204)"
+    ],
+    [
+     50,
+     "rgb(204, 204, 204)"
+    ],
+    [
+     66.67,
+     "rgb(185, 185, 209)"
+    ],
+    [
+     83.33,
+     "rgb(165, 165, 214)"
+    ],
+    [
+     100,
+     "rgb(146, 146, 219)"
+    ],
+    [
+     116.67,
+     "rgb(126, 126, 223)"
+    ],
+    [
+     133.33,
+     "rgb(107, 107, 228)"
+    ],
+    [
+     150,
+     "rgb(87, 87, 233)"
+    ],
+    [
+     166.67,
+     "rgb(68, 68, 238)"
+    ],
+    [
+     183.33,
+     "rgb(49, 49, 243)"
+    ],
+    [
+     200,
+     "rgb(29, 29, 248)"
+    ],
+    [
+     216.67,
+     "rgb(10, 10, 253)"
+    ],
+    [
+     225,
+     "rgb(0, 0, 255)"
+    ]
+   ]
+  },
+  {
+   "case": "switch-thumb",
+   "animation": "CSSTransition",
+   "name": "left",
+   "timing": {
+    "duration": 250,
+    "delay": 0,
+    "easing": "cubic-bezier(0.65, 0, 0.35, 1)",
+    "fill": "backwards",
+    "iterations": 1,
+    "direction": "normal"
+   },
+   "property": "left",
+   "samples": [
+    [
+     0,
+     "0px"
+    ],
+    [
+     16.67,
+     "0.0760641px"
+    ],
+    [
+     33.33,
+     "0.333154px"
+    ],
+    [
+     50,
+     "0.83071px"
+    ],
+    [
+     66.67,
+     "1.66212px"
+    ],
+    [
+     83.33,
+     "2.98149px"
+    ],
+    [
+     100,
+     "5.04232px"
+    ],
+    [
+     116.67,
+     "8.13169px"
+    ],
+    [
+     133.33,
+     "11.8683px"
+    ],
+    [
+     150,
+     "14.9577px"
+    ],
+    [
+     166.67,
+     "17.0185px"
+    ],
+    [
+     183.33,
+     "18.3379px"
+    ],
+    [
+     200,
+     "19.1693px"
+    ],
+    [
+     216.67,
+     "19.6668px"
+    ],
+    [
+     233.33,
+     "19.9239px"
+    ],
+    [
+     250,
+     "20px"
+    ]
+   ]
+  },
+  {
+   "case": "composer-height",
+   "animation": "CSSTransition",
+   "name": "height",
+   "timing": {
+    "duration": 220,
+    "delay": 0,
+    "easing": "cubic-bezier(0.2, 0, 0, 1)",
+    "fill": "backwards",
+    "iterations": 1,
+    "direction": "normal"
+   },
+   "property": "height",
+   "samples": [
+    [
+     0,
+     "48px"
+    ],
+    [
+     16.67,
+     "53.6406px"
+    ],
+    [
+     33.33,
+     "73.625px"
+    ],
+    [
+     50,
+     "88.5px"
+    ],
+    [
+     66.67,
+     "97.8438px"
+    ],
+    [
+     83.33,
+     "104.297px"
+    ],
+    [
+     100,
+     "108.984px"
+    ],
+    [
+     116.67,
+     "112.469px"
+    ],
+    [
+     133.33,
+     "115.062px"
+    ],
+    [
+     150,
+     "116.984px"
+    ],
+    [
+     166.67,
+     "118.344px"
+    ],
+    [
+     183.33,
+     "119.25px"
+    ],
+    [
+     200,
+     "119.781px"
+    ],
+    [
+     216.67,
+     "119.984px"
+    ],
+    [
+     220,
+     "120px"
+    ]
+   ]
+  },
+  {
+   "case": "cmdk-list-height",
+   "animation": "CSSTransition",
+   "name": "max-height",
+   "timing": {
+    "duration": 150,
+    "delay": 0,
+    "easing": "ease",
+    "fill": "backwards",
+    "iterations": 1,
+    "direction": "normal"
+   },
+   "property": "maxHeight",
+   "samples": [
+    [
+     0,
+     "40px"
+    ],
+    [
+     16.67,
+     "69.2838px"
+    ],
+    [
+     33.33,
+     "129.969px"
+    ],
+    [
+     50,
+     "189.724px"
+    ],
+    [
+     66.67,
+     "232.701px"
+    ],
+    [
+     83.33,
+     "261.594px"
+    ],
+    [
+     100,
+     "280.454px"
+    ],
+    [
+     116.67,
+     "292.046px"
+    ],
+    [
+     133.33,
+     "298.162px"
+    ],
+    [
+     150,
+     "300px"
+    ]
+   ]
+  }
+ ]
+}
