@@ -1,0 +1,648 @@
+{
+  "name": "s016-thread-header",
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 1,
+    "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+    "theme": "dark",
+    "hoverEmulated": true
+  },
+  "steps": [
+    {
+      "type": "click",
+      "target": {
+        "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Change the greeting\"]",
+        "text": "Change the greeting in hello.py to \"Hello, Codex\".",
+        "bbox": {
+          "x": 60,
+          "y": 290,
+          "w": 272,
+          "h": 30
+        }
+      },
+      "note": "Resolve the recorded thread row by title on the port; the fixture project section changes its y position."
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "Chat actions",
+        "bbox": {
+          "x": 1169,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        }
+      }
+    },
+    {
+      "type": "key",
+      "key": "Escape"
+    },
+    {
+      "type": "hover",
+      "target": {
+        "text": "Chat actions",
+        "bbox": {
+          "x": 1169,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        }
+      },
+      "waitMs": 500
+    },
+    {
+      "type": "hover",
+      "target": {
+        "text": "Toggle summary",
+        "bbox": {
+          "x": 1203,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        }
+      },
+      "waitMs": 500
+    },
+    {
+      "type": "click",
+      "target": {
+        "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Add a subtract\"]",
+        "text": "Add a subtract(a, b) function to src/math.py next to add, then run python3 -c '…",
+        "bbox": {
+          "x": 60,
+          "y": 321,
+          "w": 272,
+          "h": 30
+        }
+      },
+      "waitMs": 1500
+    }
+  ],
+  "result": {
+    "longTitle": {
+      "tag": "div",
+      "text": "Add a subtract(a, b) function to src/math.py next to add, then run python3 -c '…",
+      "aria": null,
+      "role": null,
+      "bbox": {
+        "x": 378,
+        "y": 10,
+        "w": 550,
+        "h": 24
+      },
+      "computed": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(255, 255, 255)",
+        "opacity": "1",
+        "outline": "rgb(255, 255, 255) none 3px",
+        "boxShadow": "none",
+        "cursor": "auto"
+      },
+      "textOverflow": "ellipsis"
+    },
+    "title": {
+      "tag": "div",
+      "text": "Change the greeting in hello.py to \"Hello, Codex\".",
+      "aria": null,
+      "role": null,
+      "bbox": {
+        "x": 378,
+        "y": 10,
+        "w": 346,
+        "h": 24
+      },
+      "computed": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(255, 255, 255)",
+        "opacity": "1",
+        "outline": "rgb(255, 255, 255) none 3px",
+        "boxShadow": "none",
+        "cursor": "auto",
+        "textOverflow": "ellipsis",
+        "whiteSpace": "nowrap"
+      }
+    },
+    "menu": {
+      "tag": "div",
+      "text": "Rename\n⌥⌘R\nPin\n⌥⌘P\nNew side chat\n⌥⌘S\nFork\nShare\nCopy\nOpen in new window\nOpen in\nArchive\n⇧⌘A",
+      "aria": null,
+      "role": "menu",
+      "bbox": {
+        "x": 1053,
+        "y": 38,
+        "w": 220,
+        "h": 301
+      },
+      "computed": {
+        "backgroundColor": "oklab(0.297161 0.0000135154 0.00000594556 / 0.9)",
+        "color": "rgb(255, 255, 255)",
+        "opacity": "1",
+        "outline": "rgb(255, 255, 255) none 3px",
+        "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(255, 255, 255, 0.082) 0px 0px 0px 0.5px, rgba(255, 255, 255, 0.082) 0px 0px 0px 0.5px, rgba(0, 0, 0, 0.12) 0px 8px 16px -4px",
+        "cursor": "auto"
+      },
+      "items": [
+        {
+          "tag": "div",
+          "text": "Rename\n⌥⌘R",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 1057,
+            "y": 42,
+            "w": 212,
+            "h": 29
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "disabled": false,
+          "submenu": null
+        },
+        {
+          "tag": "div",
+          "text": "Pin\n⌥⌘P",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 1057,
+            "y": 71,
+            "w": 212,
+            "h": 29
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "disabled": false,
+          "submenu": null
+        },
+        {
+          "tag": "div",
+          "text": "New side chat\n⌥⌘S",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 1057,
+            "y": 108,
+            "w": 212,
+            "h": 29
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "disabled": false,
+          "submenu": null
+        },
+        {
+          "tag": "div",
+          "text": "Fork",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 1057,
+            "y": 137,
+            "w": 212,
+            "h": 29
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "disabled": false,
+          "submenu": "menu"
+        },
+        {
+          "tag": "div",
+          "text": "Share",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 1057,
+            "y": 174,
+            "w": 212,
+            "h": 29
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "disabled": false,
+          "submenu": null
+        },
+        {
+          "tag": "div",
+          "text": "Copy",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 1057,
+            "y": 203,
+            "w": 212,
+            "h": 29
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "disabled": false,
+          "submenu": "menu"
+        },
+        {
+          "tag": "div",
+          "text": "Open in new window",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 1057,
+            "y": 240,
+            "w": 212,
+            "h": 29
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "disabled": false,
+          "submenu": null
+        },
+        {
+          "tag": "div",
+          "text": "Open in",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 1057,
+            "y": 269,
+            "w": 212,
+            "h": 29
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "disabled": false,
+          "submenu": "menu"
+        },
+        {
+          "tag": "div",
+          "text": "Archive\n⇧⌘A",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 1057,
+            "y": 307,
+            "w": 212,
+            "h": 29
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "disabled": false,
+          "submenu": null
+        }
+      ]
+    },
+    "tooltips": [
+      {
+        "afterStep": 3,
+        "tooltip": []
+      },
+      {
+        "afterStep": 4,
+        "tooltip": [
+          {
+            "tag": "div",
+            "text": "Toggle summary",
+            "aria": null,
+            "role": "tooltip",
+            "bbox": {
+              "x": 1146,
+              "y": 38,
+              "w": 126,
+              "h": 30
+            },
+            "computed": {
+              "backgroundColor": "rgb(45, 45, 45)",
+              "color": "rgb(255, 255, 255)",
+              "opacity": "1",
+              "outline": "rgb(255, 255, 255) none 3px",
+              "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.2) 0px 8px 18px 0px",
+              "cursor": "auto"
+            }
+          }
+        ]
+      }
+    ],
+    "requests": [],
+    "menuPixels": [
+      {"x": 1060, "y": 185, "rgba": [43, 43, 43, 255]},
+      {"x": 1150, "y": 190, "rgba": [43, 43, 43, 255]},
+      {"x": 1150, "y": 225, "rgba": [43, 43, 43, 255]}
+    ],
+    "screenshot": "original-menu-initial.png"
+  },
+  "additionalObservations": {
+    "settledMenu": {
+      "tag": "div",
+      "text": "Rename\n⌥⌘R\nPin\n⌥⌘P\nNew side chat\n⌥⌘S\nFork\nAdd scheduled task…\nShare\nCopy\nOpen in new window\nOpen in\nArchive\n⇧⌘A",
+      "aria": null,
+      "role": "menu",
+      "bbox": {
+        "x": 1053,
+        "y": 38,
+        "w": 220,
+        "h": 330
+      },
+      "computed": {
+        "backgroundColor": "oklab(0.297161 0.0000135154 0.00000594556 / 0.9)",
+        "color": "rgb(255, 255, 255)",
+        "opacity": "1",
+        "outline": "rgb(255, 255, 255) none 3px",
+        "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(255, 255, 255, 0.082) 0px 0px 0px 0.5px, rgba(255, 255, 255, 0.082) 0px 0px 0px 0.5px, rgba(0, 0, 0, 0.12) 0px 8px 16px -4px",
+        "cursor": "auto"
+      },
+      "items": [
+        {
+          "tag": "div",
+          "text": "Rename\n⌥⌘R",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 1057,
+            "y": 42,
+            "w": 212,
+            "h": 29
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "disabled": false,
+          "submenu": null
+        },
+        {
+          "tag": "div",
+          "text": "Pin\n⌥⌘P",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 1057,
+            "y": 71,
+            "w": 212,
+            "h": 29
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "disabled": false,
+          "submenu": null
+        },
+        {
+          "tag": "div",
+          "text": "New side chat\n⌥⌘S",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 1057,
+            "y": 108,
+            "w": 212,
+            "h": 29
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "disabled": false,
+          "submenu": null
+        },
+        {
+          "tag": "div",
+          "text": "Fork",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 1057,
+            "y": 137,
+            "w": 212,
+            "h": 29
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "disabled": false,
+          "submenu": "menu"
+        },
+        {
+          "tag": "div",
+          "text": "Add scheduled task…",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 1057,
+            "y": 165,
+            "w": 212,
+            "h": 29
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "disabled": false,
+          "submenu": null
+        },
+        {
+          "tag": "div",
+          "text": "Share",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 1057,
+            "y": 203,
+            "w": 212,
+            "h": 29
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "disabled": false,
+          "submenu": null
+        },
+        {
+          "tag": "div",
+          "text": "Copy",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 1057,
+            "y": 231,
+            "w": 212,
+            "h": 29
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "disabled": false,
+          "submenu": "menu"
+        },
+        {
+          "tag": "div",
+          "text": "Open in new window",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 1057,
+            "y": 269,
+            "w": 212,
+            "h": 29
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "disabled": false,
+          "submenu": null
+        },
+        {
+          "tag": "div",
+          "text": "Open in",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 1057,
+            "y": 298,
+            "w": 212,
+            "h": 29
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "disabled": false,
+          "submenu": "menu"
+        },
+        {
+          "tag": "div",
+          "text": "Archive\n⇧⌘A",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 1057,
+            "y": 335,
+            "w": 212,
+            "h": 29
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "disabled": false,
+          "submenu": null
+        }
+      ]
+    },
+    "requestsDuringSecondMenuOpen": [
+      {
+        "type": "mcp-request",
+        "method": "thread/attachment/list",
+        "params": "{\"threadId\":\"01a13de9-c48a-7b20-8382-db900881cb99\",\"cursor\":null,\"limit\":100}"
+      },
+      {
+        "svc": "windowNavigation.setHistorySwipeNavigationState",
+        "args": "[{\"canGoBack\":true,\"canGoForward\":false,\"overlayBounds\":{\"x\":340,\"y\":44,\"width\":936,\"height\":784},\"overlayColor\":\"#3a83f7\",\"page\":{\"key\":\"mnqtzdcq\",\"backKey\":\"s0inzv15\",\"forwardKey\":null,\"ready\":true,"
+      }
+    ],
+    "notes": [
+      "The first menu snapshot follows thread selection by 1500 ms and menu opening by 400 ms.",
+      "Add scheduled task… appears in the settled menu after background data loads.",
+      "Chat actions has no tooltip portal after 500 ms or 1000 ms of hover. Toggle summary has a tooltip.",
+      "The two buttons in Chat toolbar are Chat actions and Toggle summary.",
+      "The attachment-list request and history update occurred during the second menu opening; causality was not established."
+    ]
+  }
+}

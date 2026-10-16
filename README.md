@@ -152,3 +152,15 @@ Now 36 of 36 cases pass.
 | terminal | light | 0 / 0.171% | 0 / 0.249% |
 | mobile | dark | 0 / 0.468% | 0 / 0.468% |
 | mobile | light | 0 / 0.467% | 0 / 0.467% |
+
+## Permission-menu interaction replay
+
+`refs/interactions/f2b.json` records 16 steps from the original app through route1 on Linux.
+The Mac replay checks hover focus, Home/End, typeahead with a one-second reset, Tab containment, and keyboard opening.
+It compares focus, highlight pixels, and outgoing requests.
+The existing port menu has different dimensions, so the replay maps hover targets to the same item and heading.
+Submenu arrows and model-trigger recording remain outside this replay.
+
+```sh
+tools/mac.sh -l f2b 'cargo test -p app --test f2b -- --test-threads=1'
+```
