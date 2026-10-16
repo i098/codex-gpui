@@ -75,9 +75,15 @@ const NO_RESULTS: &str = "No results";
 
 struct FileHit {
     name: String,
-    /// Directory part of the path, shown after the name (`src`).
-    dir: String,
     path: String,
+}
+
+/// One row of [`Composer::sections`]: a ranked item `(selected, index)`, a disabled item,
+/// or a note.
+enum Row {
+    Item(usize, usize),
+    Disabled(usize),
+    Note(&'static str),
 }
 
 /// One fuzzy file search session per open `@` token with a query.
@@ -243,7 +249,6 @@ impl Composer {
                     let name = f["file_name"].as_str().unwrap_or(path);
                     Some(FileHit {
                         name: name.into(),
-                        dir: path.rsplit_once('/').map_or("", |(dir, _)| dir).into(),
                         path: path.into(),
                     })
                 })
@@ -261,7 +266,9 @@ impl Composer {
             (&skill.title, &skill.description, "sidebar-cmd-create-page")
         } else {
             let file = &self.slash.search.files[index - ACTIONS.len() - self.slash.skills.len()];
-            (&file.name, &file.dir, "diff-jump-to-file")
+            // The directory part shows after the name (`src`).
+            let dir = file.path.rsplit_once('/').map_or("", |(dir, _)| dir);
+            (&file.name, dir, "diff-jump-to-file")
         }
     }
 
@@ -269,31 +276,67 @@ impl Composer {
     /// file inserts its path. ponytail: plain `@path ` text until S020 adds the mention chip;
     /// the other actions (goal, sketch, project, plan mode) belong to their own rows.
     pub(super) fn activate_mention(&mut self, index: usize, cx: &mut Context<Self>) {
+        let files = ACTIONS.len() + self.slash.skills.len();
+        let text = match ACTIONS.get(index) {
+            Some(action) if action.id == "files-and-folders" => String::new(),
+            None if index >= files => format!("@{} ", self.slash.search.files[index - files].path),
+            _ => return,
+        };
         let range = self.slash.range.clone();
-        if let Some(action) = ACTIONS.get(index) {
-            if action.id != "files-and-folders" {
-                return;
-            }
-            self.content.replace_range(range.clone(), "");
-            self.selected_range = range.start..range.start;
-            self.slash.open = false;
-            self.slash.dismissed = None;
-            self.end_search(cx);
-            self.add_files(cx);
-        } else if index >= ACTIONS.len() + self.slash.skills.len() {
-            let file = &self.slash.search.files[index - ACTIONS.len() - self.slash.skills.len()];
-            let text = format!("@{} ", file.path);
-            self.content.replace_range(range.clone(), &text);
-            let end = range.start + text.len();
-            self.selected_range = end..end;
-            self.slash.open = false;
-            self.slash.dismissed = Some(range.start);
-            self.end_search(cx);
-        } else {
-            return;
-        }
+        self.content.replace_range(range.clone(), &text);
+        let end = range.start + text.len();
+        self.selected_range = end..end;
         self.marked_range = None;
+        self.slash.open = false;
+        self.slash.dismissed = (!text.is_empty()).then_some(range.start);
+        self.end_search(cx);
+        if text.is_empty() {
+            self.add_files(cx);
+        }
         cx.notify();
+    }
+
+    fn mention_query(&self) -> &str {
+        &self.content[self.slash.range.start + 1..self.slash.range.end]
+    }
+
+    /// The list's sections: `Add` and `Files` for an empty query, else the ranked rows or
+    /// one note (`Searching…`, `No results`).
+    fn sections(&self) -> Vec<(Option<&'static str>, Vec<Row>)> {
+        if self.mention_query().is_empty() {
+            let add = ACTIONS
+                .iter()
+                .enumerate()
+                .filter(|(_, a)| self.action_available(a))
+                .map(
+                    |(i, _)| match self.slash.matches.iter().position(|&m| m == i) {
+                        Some(selected) => Row::Item(selected, i),
+                        None => Row::Disabled(i),
+                    },
+                )
+                .collect();
+            let mut sections = vec![(Some("Add"), add)];
+            if !self.slash.search.roots.is_empty() {
+                sections.push((Some("Files"), vec![Row::Note(EMPTY_QUERY)]));
+            }
+            return sections;
+        }
+        let rows = if self.slash.matches.is_empty() {
+            let text = if self.slash.search.searching {
+                SEARCHING
+            } else {
+                NO_RESULTS
+            };
+            vec![Row::Note(text)]
+        } else {
+            self.slash
+                .matches
+                .iter()
+                .enumerate()
+                .map(|(selected, &i)| Row::Item(selected, i))
+                .collect()
+        };
+        vec![(None, rows)]
     }
 
     /// Sections `(heading, rows (text, highlighted))` of the open `@` list, for the tests.
@@ -301,7 +344,7 @@ impl Composer {
         if !self.slash.open || self.slash.trigger != Trigger::Mention {
             return None;
         }
-        let row = |index: usize| {
+        let text = |index: usize| {
             let (title, description, _) = self.mention_label(index);
             if description.is_empty() {
                 title.to_owned()
@@ -309,97 +352,63 @@ impl Composer {
                 format!("{title} | {description}")
             }
         };
-        let current = |index| self.slash.matches.get(self.slash.selected) == Some(&index);
-        if self.mention_query().is_empty() {
-            let add = ACTIONS
-                .iter()
-                .enumerate()
-                .filter(|(_, a)| self.action_available(a))
-                .map(|(i, _)| (row(i), current(i)))
-                .collect();
-            let mut sections = vec![(Some("Add"), add)];
-            if !self.slash.search.roots.is_empty() {
-                sections.push((Some("Files"), vec![(EMPTY_QUERY.into(), false)]));
-            }
-            return Some(sections);
-        }
-        let rows: Vec<_> = if self.slash.matches.is_empty() {
-            let text = if self.slash.search.searching {
-                SEARCHING
-            } else {
-                NO_RESULTS
-            };
-            vec![(text.into(), false)]
-        } else {
-            self.slash
-                .matches
-                .iter()
-                .map(|&i| (row(i), current(i)))
-                .collect()
-        };
-        Some(vec![(None, rows)])
+        Some(
+            self.sections()
+                .into_iter()
+                .map(|(heading, rows)| {
+                    let rows = rows
+                        .into_iter()
+                        .map(|row| match row {
+                            Row::Note(note) => (note.to_owned(), false),
+                            Row::Item(selected, i) => (text(i), selected == self.slash.selected),
+                            Row::Disabled(i) => (text(i), false),
+                        })
+                        .collect();
+                    (heading, rows)
+                })
+                .collect(),
+        )
     }
 
-    fn mention_query(&self) -> &str {
-        &self.content[self.slash.range.start + 1..self.slash.range.end]
-    }
-
-    /// The list's content: sections with headings for an empty query, else the ranked rows.
+    /// The list's content, 13/18.57 text: headings at 50%, notes at 50% in a row's height,
+    /// disabled rows (`Attach appshot`) at 50% over 50%.
     pub(super) fn mention_list(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
-        let heading = |s: &'static str, first: bool| {
-            text(s, 13., 18.5714, 400., t.text.opacity(0.5))
-                .px(px(8.))
-                .pt(px(if first { 4. } else { 8. }))
-                .pb(px(4.))
-        };
-        let note = |s: &'static str| {
-            div()
-                .h(px(28.5625))
-                .px(px(8.))
-                .flex()
-                .items_center()
-                .child(text(s, 13., 18.5714, 400., t.text.opacity(0.5)))
-        };
         let mut list = div().flex().flex_col();
-        if self.mention_query().is_empty() {
-            list = list.child(heading("Add", true));
-            for (index, action) in ACTIONS.iter().enumerate() {
-                if !self.action_available(action) {
-                    continue;
-                }
-                let selected = self.slash.matches.iter().position(|&m| m == index);
-                list = list.child(match selected {
-                    Some(selected) => self
-                        .suggestion_row(t, selected, index, self.mention_label(index), cx)
-                        .into_any_element(),
-                    // `Attach appshot`: aria-disabled, 50% text at half opacity.
-                    None => div()
-                        .h(px(28.5625))
+        for (n, (heading, rows)) in self.sections().into_iter().enumerate() {
+            if let Some(heading) = heading {
+                list = list.child(
+                    text(heading, 13., 18.5714, 400., t.text.opacity(0.5))
                         .px(px(8.))
-                        .flex()
-                        .items_center()
-                        .gap(px(8.))
-                        .opacity(0.5)
-                        .child(icon(action.icon, 16., t.text.opacity(0.5)))
-                        .child(text(action.title, 13., 18.5714, 400., t.text.opacity(0.5)))
+                        .pt(px(if n == 0 { 4. } else { 8. }))
+                        .pb(px(4.)),
+                );
+            }
+            for row in rows {
+                let plain = div().h(px(28.5625)).px(px(8.)).flex().items_center();
+                list = list.child(match row {
+                    Row::Item(selected, i) => self
+                        .suggestion_row(t, selected, i, self.mention_label(i), cx)
                         .into_any_element(),
+                    Row::Note(note) => plain
+                        .child(text(note, 13., 18.5714, 400., t.text.opacity(0.5)))
+                        .into_any_element(),
+                    Row::Disabled(i) => {
+                        let (title, _, icon_name) = self.mention_label(i);
+                        plain
+                            .gap(px(8.))
+                            .opacity(0.5)
+                            .child(icon(icon_name, 16., t.text.opacity(0.5)))
+                            .child(text(
+                                title.to_owned(),
+                                13.,
+                                18.5714,
+                                400.,
+                                t.text.opacity(0.5),
+                            ))
+                            .into_any_element()
+                    }
                 });
             }
-            if !self.slash.search.roots.is_empty() {
-                list = list.child(heading("Files", false)).child(note(EMPTY_QUERY));
-            }
-            return list;
-        }
-        if self.slash.matches.is_empty() {
-            return list.child(note(if self.slash.search.searching {
-                SEARCHING
-            } else {
-                NO_RESULTS
-            }));
-        }
-        for (selected, &index) in self.slash.matches.iter().enumerate() {
-            list =
-                list.child(self.suggestion_row(t, selected, index, self.mention_label(index), cx));
         }
         list
     }

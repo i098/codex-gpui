@@ -312,35 +312,26 @@ impl Composer {
         if trigger == Trigger::Mention {
             let query = self.content[range.start + 1..range.end].to_owned();
             self.refresh_mention(&query, cx);
-        }
-        for (index, command) in COMMANDS
-            .iter()
-            .enumerate()
-            .filter(|_| trigger == Trigger::Slash)
-        {
-            let available = match command.id {
-                "archive" | "review-mode" | "compact" | "fork" | "init" | "new" | "pin"
-                | "rename" | "share" | "side" => self.docked,
-                "project" => !self.docked,
-                "fast" | "model" | "plan-mode" | "ultrafast" => self.current_model().is_some(),
-                _ => true,
-            };
-            if available
-                && (!command.requires_empty || empty)
-                && (matches_query(command.title, &query) || matches_query(command.id, &query))
-            {
-                self.slash.matches.push(index);
+        } else {
+            for (index, command) in COMMANDS.iter().enumerate() {
+                let available = match command.id {
+                    "archive" | "review-mode" | "compact" | "fork" | "init" | "new" | "pin"
+                    | "rename" | "share" | "side" => self.docked,
+                    "project" => !self.docked,
+                    "fast" | "model" | "plan-mode" | "ultrafast" => self.current_model().is_some(),
+                    _ => true,
+                };
+                if available
+                    && (!command.requires_empty || empty)
+                    && (matches_query(command.title, &query) || matches_query(command.id, &query))
+                {
+                    self.slash.matches.push(index);
+                }
             }
-        }
-        for (index, skill) in self
-            .slash
-            .skills
-            .iter()
-            .enumerate()
-            .filter(|_| trigger == Trigger::Slash)
-        {
-            if matches_query(&skill.title, &query) || matches_query(&skill.name, &query) {
-                self.slash.matches.push(COMMANDS.len() + index);
+            for (index, skill) in self.slash.skills.iter().enumerate() {
+                if matches_query(&skill.title, &query) || matches_query(&skill.name, &query) {
+                    self.slash.matches.push(COMMANDS.len() + index);
+                }
             }
         }
         self.slash.range = range;
@@ -536,28 +527,32 @@ impl Composer {
             .flex_col();
         if self.slash.trigger == Trigger::Mention {
             list = list.child(self.mention_list(t, cx));
-        }
-        let mut skills_heading = false;
-        for (selected, &index) in self.slash.matches.iter().enumerate() {
-            if self.slash.trigger == Trigger::Mention {
-                break;
+        } else {
+            let mut skills_heading = false;
+            for (selected, &index) in self.slash.matches.iter().enumerate() {
+                if index >= COMMANDS.len() && !skills_heading {
+                    list = list.child(
+                        text("Skills", 12., 20., 500., t.text.opacity(0.5))
+                            .px(px(8.))
+                            .py(px(5.)),
+                    );
+                    skills_heading = true;
+                }
+                list = list.child(self.suggestion_row(
+                    t,
+                    selected,
+                    index,
+                    self.slash_label(index),
+                    cx,
+                ));
             }
-            if index >= COMMANDS.len() && !skills_heading {
+            if self.slash.matches.is_empty() {
                 list = list.child(
-                    text("Skills", 12., 20., 500., t.text.opacity(0.5))
+                    text("No commands", 13., 18.5714, 400., t.text.opacity(0.5))
                         .px(px(8.))
                         .py(px(5.)),
                 );
-                skills_heading = true;
             }
-            list = list.child(self.suggestion_row(t, selected, index, self.slash_label(index), cx));
-        }
-        if self.slash.matches.is_empty() && self.slash.trigger == Trigger::Slash {
-            list = list.child(
-                text("No commands", 13., 18.5714, 400., t.text.opacity(0.5))
-                    .px(px(8.))
-                    .py(px(5.)),
-            );
         }
         // Gap to the card: 8 px for `/` (rec 07), 4 px for `@` (s019.json).
         let gap = if self.slash.trigger == Trigger::Mention {
