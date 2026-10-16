@@ -1,0 +1,3160 @@
+{
+ "slice": "ms6a",
+ "method": "Original route1 renderer (Linux stub, Chrome 156 headless, dark, 1280x832@1); shared Chrome :9522; isolated CDP context. Each step: every CSS transition / WAAPI animation it starts is paused and sampled at 60 Hz (exact values). The disclosure content is also sampled live per requestAnimationFrame (height, opacity, translateY).",
+ "viewport": {
+  "w": 1280,
+  "h": 832,
+  "dpr": 1,
+  "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+  "theme": "dark",
+  "hoverEmulated": true
+ },
+ "tolerance": "one 60 Hz frame (16.67 ms), one 8-bit colour level, 0.5 CSS px",
+ "switch": {
+  "label": "Show ChatGPT in the menu bar",
+  "setting": "host.mac-menu-bar-enabled",
+  "css": "track: transition-colors duration-basic ease-out (background-color 150 ms cubic-bezier(0,0,.2,1)); thumb: transition-transform duration-basic ease-out (translate 150 ms, 14 px checked -> 2 px unchecked). Both utilities are ungated: they run under prefers-reduced-motion too.",
+  "rest": {
+   "checked": "true",
+   "focused": false,
+   "rect": [
+    1118.5,
+    709.09375,
+    32,
+    20
+   ],
+   "track": "rgb(58, 131, 247)",
+   "thumbTranslate": "14px",
+   "thumbX": 1132.5,
+   "dialogs": 0
+  },
+  "controls": {
+   "checkbox": 0,
+   "radio": 0
+  },
+  "note": "The route1 stub refuses the persisted setting write, so about 130 ms after each click the original reverts the switch: the stub-revert-on step is that reversal (CSS reversal shortening: 131.47 ms from the 3.48 px the thumb had reached). The on direction uses the same declaration as the off direction (mirror of click-off); in the real app the toggle persists.",
+  "steps": [
+   {
+    "step": "click-off",
+    "after": {
+     "checked": "false",
+     "focused": true,
+     "rect": [
+      1118.5,
+      709.09375,
+      32,
+      20
+     ],
+     "track": "oklab(0.999994 0.0000455678 0.0000200868 / 0.1)",
+     "thumbTranslate": "2px",
+     "thumbX": 1120.5,
+     "dialogs": 0
+    },
+    "tracks": [
+     {
+      "property": "background-color",
+      "animation": "CSSTransition",
+      "target": "span[data-state=unchecked].relative.inline-flex.shrink-0.items-center.rounded-full.transition-colors.duration-basic.ease-out",
+      "timing": {
+       "duration": 150,
+       "delay": 0,
+       "easing": "cubic-bezier(0, 0, 0.2, 1)",
+       "fill": "backwards"
+      },
+      "keyframes": [
+       {
+        "offset": 0,
+        "backgroundColor": "rgb(58, 131, 247)"
+       },
+       {
+        "offset": 1,
+        "backgroundColor": "oklab(0.999994 0.0000455678 0.0000200868 / 0.1)"
+       }
+      ],
+      "samples": [
+       [
+        0,
+        [
+         58.03,
+         130.99,
+         246.99,
+         1.0
+        ]
+       ],
+       [
+        16.67,
+        [
+         68.27,
+         137.4,
+         248.03,
+         0.703814
+        ]
+       ],
+       [
+        33.33,
+        [
+         80.13,
+         145.03,
+         249.23,
+         0.51773
+        ]
+       ],
+       [
+        50,
+        [
+         95.3,
+         154.92,
+         250.68,
+         0.383416
+        ]
+       ],
+       [
+        66.67,
+        [
+         115.2,
+         167.94,
+         252.38,
+         0.284072
+        ]
+       ],
+       [
+        83.33,
+        [
+         141.34,
+         184.87,
+         254.18,
+         0.211128
+        ]
+       ],
+       [
+        100,
+        [
+         174.29,
+         205.79,
+         255.0,
+         0.159339
+        ]
+       ],
+       [
+        116.67,
+        [
+         211.19,
+         228.62,
+         255.0,
+         0.125158
+        ]
+       ],
+       [
+        133.33,
+        [
+         242.57,
+         247.57,
+         255.0,
+         0.106023
+        ]
+       ],
+       [
+        150,
+        [
+         255.0,
+         254.99,
+         254.98,
+         0.1
+        ]
+       ]
+      ],
+      "unit": "rgba 0-255, alpha 0-1 (oklab values converted to sRGB)"
+     },
+     {
+      "property": "translate",
+      "animation": "CSSTransition",
+      "target": "span[data-state=unchecked].rounded-full.border.shadow-sm.transition-transform.duration-basic.ease-out.data-[state=unchecked]:translate-x-0.border-control-thumb-on-accent",
+      "timing": {
+       "duration": 150,
+       "delay": 0,
+       "easing": "cubic-bezier(0, 0, 0.2, 1)",
+       "fill": "backwards"
+      },
+      "keyframes": [
+       {
+        "offset": 0,
+        "translate": "14px"
+       },
+       {
+        "offset": 1,
+        "translate": "2px"
+       }
+      ],
+      "samples": [
+       [
+        0,
+        14.0
+       ],
+       [
+        16.67,
+        10.0509
+       ],
+       [
+        33.33,
+        7.5697
+       ],
+       [
+        50,
+        5.7789
+       ],
+       [
+        66.67,
+        4.4543
+       ],
+       [
+        83.33,
+        3.4817
+       ],
+       [
+        100,
+        2.7912
+       ],
+       [
+        116.67,
+        2.3354
+       ],
+       [
+        133.33,
+        2.0803
+       ],
+       [
+        150,
+        2.0
+       ]
+      ],
+      "unit": "px (thumb inset from the track left edge)"
+     }
+    ]
+   },
+   {
+    "step": "stub-revert-on",
+    "tracks": [
+     {
+      "property": "background-color",
+      "animation": "CSSTransition",
+      "target": "span[data-state=checked].relative.inline-flex.shrink-0.items-center.rounded-full.transition-colors.duration-basic.ease-out",
+      "timing": {
+       "duration": 131.46989278771915,
+       "delay": 0,
+       "easing": "cubic-bezier(0, 0, 0.2, 1)",
+       "fill": "backwards"
+      },
+      "keyframes": [
+       {
+        "offset": 0,
+        "backgroundColor": "oklab(0.780924 -0.0201373 -0.108349 / 0.211181)"
+       },
+       {
+        "offset": 1,
+        "backgroundColor": "rgb(58, 131, 247)"
+       }
+      ],
+      "samples": [
+       [
+        0,
+        [
+         141.31,
+         184.85,
+         254.18,
+         0.211181
+        ]
+       ],
+       [
+        16.67,
+        [
+         81.92,
+         146.19,
+         249.4,
+         0.497508
+        ]
+       ],
+       [
+        33.33,
+        [
+         69.93,
+         138.46,
+         248.2,
+         0.670797
+        ]
+       ],
+       [
+        50,
+        [
+         64.5,
+         135.02,
+         247.65,
+         0.791624
+        ]
+       ],
+       [
+        66.67,
+        [
+         61.5,
+         133.14,
+         247.34,
+         0.877218
+        ]
+       ],
+       [
+        83.33,
+        [
+         59.72,
+         132.04,
+         247.16,
+         0.936314
+        ]
+       ],
+       [
+        100,
+        [
+         58.69,
+         131.4,
+         247.05,
+         0.974236
+        ]
+       ],
+       [
+        116.67,
+        [
+         58.17,
+         131.08,
+         247.0,
+         0.994576
+        ]
+       ],
+       [
+        131.47,
+        [
+         58.0,
+         131.0,
+         247.0,
+         1.0
+        ]
+       ]
+      ],
+      "unit": "rgba 0-255, alpha 0-1 (oklab values converted to sRGB)"
+     },
+     {
+      "property": "translate",
+      "animation": "CSSTransition",
+      "target": "span[data-state=checked].rounded-full.border.shadow-sm.transition-transform.duration-basic.ease-out.data-[state=unchecked]:translate-x-0.border-control-thumb-on-accent",
+      "timing": {
+       "duration": 131.46989278771915,
+       "delay": 0,
+       "easing": "cubic-bezier(0, 0, 0.2, 1)",
+       "fill": "backwards"
+      },
+      "keyframes": [
+       {
+        "offset": 0,
+        "translate": "3.48241px"
+       },
+       {
+        "offset": 1,
+        "translate": "14px"
+       }
+      ],
+      "samples": [
+       [
+        0,
+        3.4824
+       ],
+       [
+        16.67,
+        7.3001
+       ],
+       [
+        33.33,
+        9.6106
+       ],
+       [
+        50,
+        11.2217
+       ],
+       [
+        66.67,
+        12.3629
+       ],
+       [
+        83.33,
+        13.1508
+       ],
+       [
+        100,
+        13.6565
+       ],
+       [
+        116.67,
+        13.9277
+       ],
+       [
+        131.47,
+        14.0
+       ]
+      ],
+      "unit": "px (thumb inset from the track left edge)"
+     }
+    ]
+   }
+  ],
+  "focus": "The switch is a button: it keeps focus after the click; Space toggles it (switch-space steps of the raw run)."
+ },
+ "disclosure": {
+  "rest": {
+   "expanded": "false",
+   "focused": false,
+   "rect": [
+    440.5,
+    218.5625,
+    111.375,
+    21
+   ],
+   "chevron": {
+    "rect": [
+     537.875,
+     222.0625,
+     14,
+     14
+    ],
+    "rotate": "0deg",
+    "transition": "transform 0.15s cubic-bezier(0.4, 0, 0.2, 1), translate 0.15s cubic-bezier(0.4, 0, 0.2, 1), scale 0.15s cubic-bezier(0.4, 0, 0.2, 1), rotate 0.15s cubic-bezier(0.4, 0, 0.2, 1)"
+   },
+   "content": null,
+   "turnHeight": 27.8125
+  },
+  "css": "chevron svg: transition-transform duration-basic (rotate 150 ms cubic-bezier(.4,0,.2,1), 0 -> 90 deg), ungated. Content div (motion lib, WAAPI): open opacity 0->1, translateY -8->0 px and height 0->natural over 300 ms cubic-bezier(.19,1,.22,1); close reverse over 150 ms cubic-bezier(.23,1,.32,1), unmounted at the end. The live series shows the height follows the opacity track (same timing) within one frame. Motion values are set at once under reduced motion.",
+  "focus": "The disclosure is a button: it keeps focus after the click; Enter and Space toggle it (disclosure-enter-open, disclosure-space-close).",
+  "note": "Under the stub the content mounts 50-450 ms after the click (lazy chunk); the tracks are aligned to the mount. The port starts them at the click.",
+  "steps": [
+   {
+    "step": "click-open-0",
+    "after": {
+     "expanded": "true",
+     "focused": true,
+     "rect": [
+      440.5,
+      218.5625,
+      111.375,
+      21
+     ],
+     "chevron": {
+      "rect": [
+       537.875,
+       222.0625,
+       14,
+       14
+      ],
+      "rotate": "90deg",
+      "transition": "transform 0.15s cubic-bezier(0.4, 0, 0.2, 1), translate 0.15s cubic-bezier(0.4, 0, 0.2, 1), scale 0.15s cubic-bezier(0.4, 0, 0.2, 1), rotate 0.15s cubic-bezier(0.4, 0, 0.2, 1)"
+     },
+     "content": {
+      "height": 67.71875,
+      "y": 244.5625,
+      "opacity": "1",
+      "transform": "matrix(1, 0, 0, 1, 0, 0)",
+      "text": "ChatGPT said:\n\nI\u2019ll update the greeting in hello.py.\n\nEdited a file, read files, ran a command"
+     },
+     "turnHeight": 95.53125
+    },
+    "tracks": [
+     {
+      "property": "rotate",
+      "animation": "CSSTransition",
+      "target": "svg",
+      "timing": {
+       "duration": 150,
+       "delay": 0,
+       "easing": "cubic-bezier(0.4, 0, 0.2, 1)",
+       "fill": "backwards"
+      },
+      "keyframes": [
+       {
+        "offset": 0,
+        "rotate": "0deg"
+       },
+       {
+        "offset": 1,
+        "rotate": "90deg"
+       }
+      ],
+      "samples": [
+       [
+        0,
+        0.0
+       ],
+       [
+        16.67,
+        2.9521
+       ],
+       [
+        33.33,
+        15.7651
+       ],
+       [
+        50,
+        41.1527
+       ],
+       [
+        66.67,
+        62.5711
+       ],
+       [
+        83.33,
+        75.3418
+       ],
+       [
+        100,
+        82.8698
+       ],
+       [
+        116.67,
+        87.1912
+       ],
+       [
+        133.33,
+        89.3666
+       ],
+       [
+        150,
+        90.0
+       ]
+      ],
+      "unit": "deg"
+     },
+     {
+      "property": "opacity",
+      "animation": "Animation",
+      "target": "div.-ms-2.ps-2",
+      "timing": {
+       "duration": 300,
+       "delay": 0,
+       "easing": "cubic-bezier(0.19, 1, 0.22, 1)",
+       "fill": "both"
+      },
+      "keyframes": [
+       {
+        "offset": null,
+        "opacity": "0"
+       },
+       {
+        "offset": null,
+        "opacity": "1"
+       }
+      ],
+      "samples": [
+       [
+        0,
+        0.0
+       ],
+       [
+        16.67,
+        0.282814
+       ],
+       [
+        33.33,
+        0.522666
+       ],
+       [
+        50,
+        0.694642
+       ],
+       [
+        66.67,
+        0.805003
+       ],
+       [
+        83.33,
+        0.874052
+       ],
+       [
+        100,
+        0.917928
+       ],
+       [
+        116.67,
+        0.946433
+       ],
+       [
+        133.33,
+        0.965269
+       ],
+       [
+        150,
+        0.977825
+       ],
+       [
+        166.67,
+        0.986193
+       ],
+       [
+        183.33,
+        0.991716
+       ],
+       [
+        200,
+        0.995289
+       ],
+       [
+        216.67,
+        0.99752
+       ],
+       [
+        233.33,
+        0.998838
+       ],
+       [
+        250,
+        0.999549
+       ],
+       [
+        266.67,
+        0.999876
+       ],
+       [
+        283.33,
+        0.999986
+       ],
+       [
+        300,
+        1.0
+       ]
+      ]
+     },
+     {
+      "property": "transform",
+      "animation": "Animation",
+      "target": "div.-ms-2.ps-2",
+      "timing": {
+       "duration": 300,
+       "delay": 0,
+       "easing": "cubic-bezier(0.19, 1, 0.22, 1)",
+       "fill": "both"
+      },
+      "keyframes": [
+       {
+        "offset": null,
+        "transform": "translateY(-8px)"
+       },
+       {
+        "offset": null,
+        "transform": "translateY(0px)"
+       }
+      ],
+      "samples": [
+       [
+        0,
+        -8.0
+       ],
+       [
+        16.67,
+        -5.7375
+       ],
+       [
+        33.33,
+        -3.8187
+       ],
+       [
+        50,
+        -2.4429
+       ],
+       [
+        66.67,
+        -1.56
+       ],
+       [
+        83.33,
+        -1.0076
+       ],
+       [
+        100,
+        -0.6566
+       ],
+       [
+        116.67,
+        -0.4285
+       ],
+       [
+        133.33,
+        -0.2778
+       ],
+       [
+        150,
+        -0.1774
+       ],
+       [
+        166.67,
+        -0.1105
+       ],
+       [
+        183.33,
+        -0.0663
+       ],
+       [
+        200,
+        -0.0377
+       ],
+       [
+        216.67,
+        -0.0198
+       ],
+       [
+        233.33,
+        -0.0093
+       ],
+       [
+        250,
+        -0.0036
+       ],
+       [
+        266.67,
+        -0.001
+       ],
+       [
+        283.33,
+        -0.0001
+       ],
+       [
+        300,
+        0.0
+       ]
+      ],
+      "unit": "translateY px"
+     }
+    ],
+    "live": {
+     "columns": [
+      "ms since the click",
+      "height px",
+      "opacity",
+      "translateY px"
+     ],
+     "rows": [
+      [
+       114.7,
+       0,
+       0,
+       -8
+      ],
+      [
+       130.8,
+       19.66,
+       0.26399,
+       -5.88808
+      ],
+      [
+       151.5,
+       37.8,
+       0.685397,
+       -2.51682
+      ],
+      [
+       168.6,
+       53.94,
+       0.798853,
+       -1.60918
+      ],
+      [
+       186.5,
+       62.3,
+       1,
+       0
+      ],
+      [
+       201.2,
+       67.72,
+       1,
+       0
+      ],
+      [
+       217.9,
+       70.59,
+       1,
+       0
+      ],
+      [
+       234.6,
+       72.77,
+       1,
+       0
+      ],
+      [
+       252.8,
+       74.13,
+       1,
+       0
+      ],
+      [
+       268.4,
+       75.17,
+       1,
+       0
+      ],
+      [
+       285,
+       75.72,
+       1,
+       0
+      ],
+      [
+       301.3,
+       76.14,
+       1,
+       0
+      ],
+      [
+       318.5,
+       76.39,
+       1,
+       0
+      ],
+      [
+       334.7,
+       76.56,
+       1,
+       0
+      ],
+      [
+       352,
+       76.66,
+       1,
+       0
+      ],
+      [
+       368.3,
+       76.72,
+       1,
+       0
+      ],
+      [
+       385.7,
+       76.73,
+       1,
+       0
+      ],
+      [
+       401.1,
+       76.73,
+       1,
+       0
+      ],
+      [
+       419.7,
+       76.75,
+       1,
+       0
+      ],
+      [
+       434.3,
+       76.75,
+       1,
+       0
+      ],
+      [
+       450.8,
+       76.75,
+       1,
+       0
+      ],
+      [
+       467.8,
+       76.75,
+       1,
+       0
+      ],
+      [
+       484.6,
+       76.75,
+       1,
+       0
+      ],
+      [
+       500.9,
+       76.75,
+       1,
+       0
+      ],
+      [
+       517.1,
+       76.75,
+       1,
+       0
+      ],
+      [
+       534.3,
+       76.75,
+       1,
+       0
+      ],
+      [
+       550.7,
+       76.75,
+       1,
+       0
+      ],
+      [
+       567.5,
+       76.75,
+       1,
+       0
+      ],
+      [
+       584.3,
+       76.75,
+       1,
+       0
+      ],
+      [
+       601,
+       76.75,
+       1,
+       0
+      ],
+      [
+       617.6,
+       76.75,
+       1,
+       0
+      ],
+      [
+       634.1,
+       76.75,
+       1,
+       0
+      ],
+      [
+       650.9,
+       76.75,
+       1,
+       0
+      ],
+      [
+       667.9,
+       76.75,
+       1,
+       0
+      ],
+      [
+       684.3,
+       76.75,
+       1,
+       0
+      ],
+      [
+       701,
+       76.75,
+       1,
+       0
+      ],
+      [
+       717.7,
+       76.75,
+       1,
+       0
+      ],
+      [
+       734.5,
+       76.75,
+       1,
+       0
+      ],
+      [
+       750.9,
+       76.75,
+       1,
+       0
+      ],
+      [
+       767.5,
+       76.75,
+       1,
+       0
+      ],
+      [
+       784.2,
+       76.75,
+       1,
+       0
+      ],
+      [
+       801.3,
+       76.75,
+       1,
+       0
+      ],
+      [
+       817.3,
+       76.75,
+       1,
+       0
+      ],
+      [
+       834.2,
+       76.75,
+       1,
+       0
+      ],
+      [
+       850.6,
+       76.75,
+       1,
+       0
+      ],
+      [
+       873.8,
+       76.75,
+       1,
+       0
+      ],
+      [
+       888,
+       76.75,
+       1,
+       0
+      ],
+      [
+       901.8,
+       76.75,
+       1,
+       0
+      ]
+     ]
+    }
+   },
+   {
+    "step": "click-close-0",
+    "after": {
+     "expanded": "false",
+     "focused": true,
+     "rect": [
+      440.5,
+      218.5625,
+      111.375,
+      21
+     ],
+     "chevron": {
+      "rect": [
+       537.875,
+       222.0625,
+       14,
+       14
+      ],
+      "rotate": "0deg",
+      "transition": "transform 0.15s cubic-bezier(0.4, 0, 0.2, 1), translate 0.15s cubic-bezier(0.4, 0, 0.2, 1), scale 0.15s cubic-bezier(0.4, 0, 0.2, 1), rotate 0.15s cubic-bezier(0.4, 0, 0.2, 1)"
+     },
+     "content": {
+      "height": 3.421875,
+      "y": 236.5625,
+      "opacity": "0",
+      "transform": "matrix(1, 0, 0, 1, 0, -8)",
+      "text": "ChatGPT said:\n\nI\u2019ll update the greeting in hello.py.\n\nEdited a file, read files, ran a command"
+     },
+     "turnHeight": 31.234375
+    },
+    "tracks": [
+     {
+      "property": "rotate",
+      "animation": "CSSTransition",
+      "target": "svg",
+      "timing": {
+       "duration": 150,
+       "delay": 0,
+       "easing": "cubic-bezier(0.4, 0, 0.2, 1)",
+       "fill": "backwards"
+      },
+      "keyframes": [
+       {
+        "offset": 0,
+        "rotate": "90deg"
+       },
+       {
+        "offset": 1,
+        "rotate": "0deg"
+       }
+      ],
+      "samples": [
+       [
+        0,
+        90.0
+       ],
+       [
+        16.67,
+        87.0479
+       ],
+       [
+        33.33,
+        74.2349
+       ],
+       [
+        50,
+        48.8473
+       ],
+       [
+        66.67,
+        27.4289
+       ],
+       [
+        83.33,
+        14.6582
+       ],
+       [
+        100,
+        7.1302
+       ],
+       [
+        116.67,
+        2.8088
+       ],
+       [
+        133.33,
+        0.6334
+       ],
+       [
+        150,
+        0.0
+       ]
+      ],
+      "unit": "deg"
+     },
+     {
+      "property": "opacity",
+      "animation": "Animation",
+      "target": "div.-ms-2.ps-2",
+      "timing": {
+       "duration": 150,
+       "delay": 0,
+       "easing": "cubic-bezier(0.23, 1, 0.32, 1)",
+       "fill": "both"
+      },
+      "keyframes": [
+       {
+        "offset": null,
+        "opacity": "1"
+       },
+       {
+        "offset": null,
+        "opacity": "0"
+       }
+      ],
+      "samples": [
+       [
+        0,
+        1.0
+       ],
+       [
+        16.67,
+        0.563824
+       ],
+       [
+        33.33,
+        0.272963
+       ],
+       [
+        50,
+        0.123102
+       ],
+       [
+        66.67,
+        0.053135
+       ],
+       [
+        83.33,
+        0.02119
+       ],
+       [
+        100,
+        0.007212
+       ],
+       [
+        116.67,
+        0.001772
+       ],
+       [
+        133.33,
+        0.000188
+       ],
+       [
+        150,
+        0.0
+       ]
+      ]
+     },
+     {
+      "property": "transform",
+      "animation": "Animation",
+      "target": "div.-ms-2.ps-2",
+      "timing": {
+       "duration": 150,
+       "delay": 0,
+       "easing": "cubic-bezier(0.23, 1, 0.32, 1)",
+       "fill": "both"
+      },
+      "keyframes": [
+       {
+        "offset": null,
+        "transform": "translateY(0px)"
+       },
+       {
+        "offset": null,
+        "transform": "translateY(-8px)"
+       }
+      ],
+      "samples": [
+       [
+        0,
+        0.0
+       ],
+       [
+        16.67,
+        -3.4894
+       ],
+       [
+        33.33,
+        -5.8163
+       ],
+       [
+        50,
+        -7.0152
+       ],
+       [
+        66.67,
+        -7.5749
+       ],
+       [
+        83.33,
+        -7.8305
+       ],
+       [
+        100,
+        -7.9423
+       ],
+       [
+        116.67,
+        -7.9858
+       ],
+       [
+        133.33,
+        -7.9985
+       ],
+       [
+        150,
+        -8.0
+       ]
+      ],
+      "unit": "translateY px"
+     }
+    ],
+    "live": {
+     "columns": [
+      "ms since the click",
+      "height px",
+      "opacity",
+      "translateY px"
+     ],
+     "rows": [
+      [
+       6.7,
+       76.75,
+       1,
+       0
+      ],
+      [
+       31.2,
+       76.75,
+       1,
+       0
+      ],
+      [
+       41.7,
+       53.64,
+       0.541009,
+       -3.67193
+      ],
+      [
+       58.2,
+       34.73,
+       0.259763,
+       -5.9219
+      ],
+      [
+       73,
+       16.84,
+       0.117211,
+       -7.06231
+      ],
+      [
+       89.8,
+       8.14,
+       0.0503361,
+       -7.59731
+      ],
+      [
+       107.3,
+       3.42,
+       0,
+       -8
+      ],
+      [
+       122.9,
+       1.3,
+       0,
+       -8
+      ],
+      [
+       139.4,
+       0.44,
+       0,
+       -8
+      ],
+      [
+       156.3,
+       0.09,
+       0,
+       -8
+      ],
+      [
+       173.1,
+       0,
+       0,
+       -8
+      ]
+     ]
+    }
+   },
+   {
+    "step": "click-open-1",
+    "after": {
+     "expanded": "true",
+     "focused": true,
+     "rect": [
+      440.5,
+      218.5625,
+      111.375,
+      21
+     ],
+     "chevron": {
+      "rect": [
+       537.875,
+       222.0625,
+       14,
+       14
+      ],
+      "rotate": "90deg",
+      "transition": "transform 0.15s cubic-bezier(0.4, 0, 0.2, 1), translate 0.15s cubic-bezier(0.4, 0, 0.2, 1), scale 0.15s cubic-bezier(0.4, 0, 0.2, 1), rotate 0.15s cubic-bezier(0.4, 0, 0.2, 1)"
+     },
+     "content": {
+      "height": 64.734375,
+      "y": 244.5625,
+      "opacity": "1",
+      "transform": "matrix(1, 0, 0, 1, 0, 0)",
+      "text": "ChatGPT said:\n\nI\u2019ll update the greeting in hello.py.\n\nEdited a file, read files, ran a command"
+     },
+     "turnHeight": 92.546875
+    },
+    "tracks": [
+     {
+      "property": "rotate",
+      "animation": "CSSTransition",
+      "target": "svg",
+      "timing": {
+       "duration": 150,
+       "delay": 0,
+       "easing": "cubic-bezier(0.4, 0, 0.2, 1)",
+       "fill": "backwards"
+      },
+      "keyframes": [
+       {
+        "offset": 0,
+        "rotate": "0deg"
+       },
+       {
+        "offset": 1,
+        "rotate": "90deg"
+       }
+      ],
+      "samples": [
+       [
+        0,
+        0.0
+       ],
+       [
+        16.67,
+        2.9521
+       ],
+       [
+        33.33,
+        15.7651
+       ],
+       [
+        50,
+        41.1527
+       ],
+       [
+        66.67,
+        62.5711
+       ],
+       [
+        83.33,
+        75.3418
+       ],
+       [
+        100,
+        82.8698
+       ],
+       [
+        116.67,
+        87.1912
+       ],
+       [
+        133.33,
+        89.3666
+       ],
+       [
+        150,
+        90.0
+       ]
+      ],
+      "unit": "deg"
+     },
+     {
+      "property": "opacity",
+      "animation": "Animation",
+      "target": "div.-ms-2.ps-2",
+      "timing": {
+       "duration": 300,
+       "delay": 0,
+       "easing": "cubic-bezier(0.19, 1, 0.22, 1)",
+       "fill": "both"
+      },
+      "keyframes": [
+       {
+        "offset": null,
+        "opacity": "0"
+       },
+       {
+        "offset": null,
+        "opacity": "1"
+       }
+      ],
+      "samples": [
+       [
+        0,
+        0.0
+       ],
+       [
+        16.67,
+        0.282814
+       ],
+       [
+        33.33,
+        0.522666
+       ],
+       [
+        50,
+        0.694642
+       ],
+       [
+        66.67,
+        0.805003
+       ],
+       [
+        83.33,
+        0.874052
+       ],
+       [
+        100,
+        0.917928
+       ],
+       [
+        116.67,
+        0.946433
+       ],
+       [
+        133.33,
+        0.965269
+       ],
+       [
+        150,
+        0.977825
+       ],
+       [
+        166.67,
+        0.986193
+       ],
+       [
+        183.33,
+        0.991716
+       ],
+       [
+        200,
+        0.995289
+       ],
+       [
+        216.67,
+        0.99752
+       ],
+       [
+        233.33,
+        0.998838
+       ],
+       [
+        250,
+        0.999549
+       ],
+       [
+        266.67,
+        0.999876
+       ],
+       [
+        283.33,
+        0.999986
+       ],
+       [
+        300,
+        1.0
+       ]
+      ]
+     },
+     {
+      "property": "transform",
+      "animation": "Animation",
+      "target": "div.-ms-2.ps-2",
+      "timing": {
+       "duration": 300,
+       "delay": 0,
+       "easing": "cubic-bezier(0.19, 1, 0.22, 1)",
+       "fill": "both"
+      },
+      "keyframes": [
+       {
+        "offset": null,
+        "transform": "translateY(-8px)"
+       },
+       {
+        "offset": null,
+        "transform": "translateY(0px)"
+       }
+      ],
+      "samples": [
+       [
+        0,
+        -8.0
+       ],
+       [
+        16.67,
+        -5.7375
+       ],
+       [
+        33.33,
+        -3.8187
+       ],
+       [
+        50,
+        -2.4429
+       ],
+       [
+        66.67,
+        -1.56
+       ],
+       [
+        83.33,
+        -1.0076
+       ],
+       [
+        100,
+        -0.6566
+       ],
+       [
+        116.67,
+        -0.4285
+       ],
+       [
+        133.33,
+        -0.2778
+       ],
+       [
+        150,
+        -0.1774
+       ],
+       [
+        166.67,
+        -0.1105
+       ],
+       [
+        183.33,
+        -0.0663
+       ],
+       [
+        200,
+        -0.0377
+       ],
+       [
+        216.67,
+        -0.0198
+       ],
+       [
+        233.33,
+        -0.0093
+       ],
+       [
+        250,
+        -0.0036
+       ],
+       [
+        266.67,
+        -0.001
+       ],
+       [
+        283.33,
+        -0.0001
+       ],
+       [
+        300,
+        0.0
+       ]
+      ],
+      "unit": "translateY px"
+     }
+    ],
+    "live": {
+     "columns": [
+      "ms since the click",
+      "height px",
+      "opacity",
+      "translateY px"
+     ],
+     "rows": [
+      [
+       52.2,
+       0,
+       0,
+       -8
+      ],
+      [
+       63.5,
+       20.86,
+       0.383926,
+       -4.92859
+      ],
+      [
+       81,
+       33.66,
+       0.598837,
+       -3.2093
+      ],
+      [
+       95.4,
+       49.19,
+       0.743912,
+       -2.0487
+      ],
+      [
+       112.1,
+       58.38,
+       0.835941,
+       -1.31247
+      ],
+      [
+       129.3,
+       64.73,
+       1,
+       0
+      ],
+      [
+       186.7,
+       69.22,
+       1,
+       0
+      ],
+      [
+       194.1,
+       75.05,
+       1,
+       0
+      ],
+      [
+       211.9,
+       75.34,
+       1,
+       0
+      ],
+      [
+       228.7,
+       75.92,
+       1,
+       0
+      ],
+      [
+       245.5,
+       76.27,
+       1,
+       0
+      ],
+      [
+       262.1,
+       76.48,
+       1,
+       0
+      ],
+      [
+       278.7,
+       76.61,
+       1,
+       0
+      ],
+      [
+       295.5,
+       76.69,
+       1,
+       0
+      ],
+      [
+       312.2,
+       76.72,
+       1,
+       0
+      ],
+      [
+       328.5,
+       76.73,
+       1,
+       0
+      ],
+      [
+       346,
+       76.73,
+       1,
+       0
+      ],
+      [
+       363.9,
+       76.75,
+       1,
+       0
+      ],
+      [
+       378.3,
+       76.75,
+       1,
+       0
+      ],
+      [
+       394.8,
+       76.75,
+       1,
+       0
+      ],
+      [
+       411.9,
+       76.75,
+       1,
+       0
+      ],
+      [
+       428,
+       76.75,
+       1,
+       0
+      ],
+      [
+       444.9,
+       76.75,
+       1,
+       0
+      ],
+      [
+       461.6,
+       76.75,
+       1,
+       0
+      ],
+      [
+       478.1,
+       76.75,
+       1,
+       0
+      ],
+      [
+       494.7,
+       76.75,
+       1,
+       0
+      ],
+      [
+       511.6,
+       76.75,
+       1,
+       0
+      ],
+      [
+       528.1,
+       76.75,
+       1,
+       0
+      ],
+      [
+       544.8,
+       76.75,
+       1,
+       0
+      ],
+      [
+       561.4,
+       76.75,
+       1,
+       0
+      ],
+      [
+       578.6,
+       76.75,
+       1,
+       0
+      ],
+      [
+       594.8,
+       76.75,
+       1,
+       0
+      ],
+      [
+       611.3,
+       76.75,
+       1,
+       0
+      ],
+      [
+       628.2,
+       76.75,
+       1,
+       0
+      ],
+      [
+       644.9,
+       76.75,
+       1,
+       0
+      ],
+      [
+       661.4,
+       76.75,
+       1,
+       0
+      ],
+      [
+       678.2,
+       76.75,
+       1,
+       0
+      ],
+      [
+       701,
+       76.75,
+       1,
+       0
+      ],
+      [
+       711.4,
+       76.75,
+       1,
+       0
+      ],
+      [
+       728.6,
+       76.75,
+       1,
+       0
+      ],
+      [
+       744.7,
+       76.75,
+       1,
+       0
+      ],
+      [
+       761.7,
+       76.75,
+       1,
+       0
+      ],
+      [
+       778.3,
+       76.75,
+       1,
+       0
+      ],
+      [
+       794.7,
+       76.75,
+       1,
+       0
+      ],
+      [
+       811.6,
+       76.75,
+       1,
+       0
+      ],
+      [
+       828.6,
+       76.75,
+       1,
+       0
+      ],
+      [
+       844.8,
+       76.75,
+       1,
+       0
+      ],
+      [
+       861.7,
+       76.75,
+       1,
+       0
+      ],
+      [
+       878.3,
+       76.75,
+       1,
+       0
+      ],
+      [
+       894.9,
+       76.75,
+       1,
+       0
+      ],
+      [
+       912.3,
+       76.75,
+       1,
+       0
+      ]
+     ]
+    }
+   },
+   {
+    "step": "click-close-1",
+    "after": {
+     "expanded": "false",
+     "focused": true,
+     "rect": [
+      440.5,
+      218.5625,
+      111.375,
+      21
+     ],
+     "chevron": {
+      "rect": [
+       537.875,
+       222.0625,
+       14,
+       14
+      ],
+      "rotate": "0deg",
+      "transition": "transform 0.15s cubic-bezier(0.4, 0, 0.2, 1), translate 0.15s cubic-bezier(0.4, 0, 0.2, 1), scale 0.15s cubic-bezier(0.4, 0, 0.2, 1), rotate 0.15s cubic-bezier(0.4, 0, 0.2, 1)"
+     },
+     "content": {
+      "height": 1.5625,
+      "y": 236.5625,
+      "opacity": "0",
+      "transform": "matrix(1, 0, 0, 1, 0, -8)",
+      "text": "ChatGPT said:\n\nI\u2019ll update the greeting in hello.py.\n\nEdited a file, read files, ran a command"
+     },
+     "turnHeight": 29.375
+    },
+    "tracks": [
+     {
+      "property": "rotate",
+      "animation": "CSSTransition",
+      "target": "svg",
+      "timing": {
+       "duration": 150,
+       "delay": 0,
+       "easing": "cubic-bezier(0.4, 0, 0.2, 1)",
+       "fill": "backwards"
+      },
+      "keyframes": [
+       {
+        "offset": 0,
+        "rotate": "90deg"
+       },
+       {
+        "offset": 1,
+        "rotate": "0deg"
+       }
+      ],
+      "samples": [
+       [
+        0,
+        90.0
+       ],
+       [
+        16.67,
+        87.0479
+       ],
+       [
+        33.33,
+        74.2349
+       ],
+       [
+        50,
+        48.8473
+       ],
+       [
+        66.67,
+        27.4289
+       ],
+       [
+        83.33,
+        14.6582
+       ],
+       [
+        100,
+        7.1302
+       ],
+       [
+        116.67,
+        2.8088
+       ],
+       [
+        133.33,
+        0.6334
+       ],
+       [
+        150,
+        0.0
+       ]
+      ],
+      "unit": "deg"
+     },
+     {
+      "property": "opacity",
+      "animation": "Animation",
+      "target": "div.-ms-2.ps-2",
+      "timing": {
+       "duration": 150,
+       "delay": 0,
+       "easing": "cubic-bezier(0.23, 1, 0.32, 1)",
+       "fill": "both"
+      },
+      "keyframes": [
+       {
+        "offset": null,
+        "opacity": "1"
+       },
+       {
+        "offset": null,
+        "opacity": "0"
+       }
+      ],
+      "samples": [
+       [
+        0,
+        1.0
+       ],
+       [
+        16.67,
+        0.563824
+       ],
+       [
+        33.33,
+        0.272963
+       ],
+       [
+        50,
+        0.123102
+       ],
+       [
+        66.67,
+        0.053135
+       ],
+       [
+        83.33,
+        0.02119
+       ],
+       [
+        100,
+        0.007212
+       ],
+       [
+        116.67,
+        0.001772
+       ],
+       [
+        133.33,
+        0.000188
+       ],
+       [
+        150,
+        0.0
+       ]
+      ]
+     },
+     {
+      "property": "transform",
+      "animation": "Animation",
+      "target": "div.-ms-2.ps-2",
+      "timing": {
+       "duration": 150,
+       "delay": 0,
+       "easing": "cubic-bezier(0.23, 1, 0.32, 1)",
+       "fill": "both"
+      },
+      "keyframes": [
+       {
+        "offset": null,
+        "transform": "translateY(0px)"
+       },
+       {
+        "offset": null,
+        "transform": "translateY(-8px)"
+       }
+      ],
+      "samples": [
+       [
+        0,
+        0.0
+       ],
+       [
+        16.67,
+        -3.4894
+       ],
+       [
+        33.33,
+        -5.8163
+       ],
+       [
+        50,
+        -7.0152
+       ],
+       [
+        66.67,
+        -7.5749
+       ],
+       [
+        83.33,
+        -7.8305
+       ],
+       [
+        100,
+        -7.9423
+       ],
+       [
+        116.67,
+        -7.9858
+       ],
+       [
+        133.33,
+        -7.9985
+       ],
+       [
+        150,
+        -8.0
+       ]
+      ],
+      "unit": "translateY px"
+     }
+    ],
+    "live": {
+     "columns": [
+      "ms since the click",
+      "height px",
+      "opacity",
+      "translateY px"
+     ],
+     "rows": [
+      [
+       1.5,
+       76.75,
+       1,
+       0
+      ],
+      [
+       13,
+       76.75,
+       1,
+       0
+      ],
+      [
+       44.3,
+       76.75,
+       1,
+       0
+      ],
+      [
+       58.8,
+       46.22,
+       0.647063,
+       -2.8235
+      ],
+      [
+       78.7,
+       24.44,
+       0.146706,
+       -6.82635
+      ],
+      [
+       94.5,
+       9.44,
+       0.0642368,
+       -7.4861
+      ],
+      [
+       112.9,
+       4.44,
+       0,
+       -8
+      ],
+      [
+       128.3,
+       1.56,
+       0,
+       -8
+      ],
+      [
+       144.3,
+       0.59,
+       0,
+       -8
+      ],
+      [
+       161.6,
+       0.16,
+       0,
+       -8
+      ],
+      [
+       179.4,
+       0,
+       0,
+       -8
+      ]
+     ]
+    }
+   },
+   {
+    "step": "enter-open",
+    "after": {
+     "expanded": "true",
+     "focused": true,
+     "rect": [
+      440.5,
+      218.5625,
+      111.375,
+      21
+     ],
+     "chevron": {
+      "rect": [
+       537.875,
+       222.0625,
+       14,
+       14
+      ],
+      "rotate": "90deg",
+      "transition": "transform 0.15s cubic-bezier(0.4, 0, 0.2, 1), translate 0.15s cubic-bezier(0.4, 0, 0.2, 1), scale 0.15s cubic-bezier(0.4, 0, 0.2, 1), rotate 0.15s cubic-bezier(0.4, 0, 0.2, 1)"
+     },
+     "content": {
+      "height": 68.796875,
+      "y": 244.5625,
+      "opacity": "1",
+      "transform": "matrix(1, 0, 0, 1, 0, 0)",
+      "text": "ChatGPT said:\n\nI\u2019ll update the greeting in hello.py.\n\nEdited a file, read files, ran a command"
+     },
+     "turnHeight": 96.609375
+    },
+    "tracks": [
+     {
+      "property": "rotate",
+      "animation": "CSSTransition",
+      "target": "svg",
+      "timing": {
+       "duration": 150,
+       "delay": 0,
+       "easing": "cubic-bezier(0.4, 0, 0.2, 1)",
+       "fill": "backwards"
+      },
+      "keyframes": [
+       {
+        "offset": 0,
+        "rotate": "0deg"
+       },
+       {
+        "offset": 1,
+        "rotate": "90deg"
+       }
+      ],
+      "samples": [
+       [
+        0,
+        0.0
+       ],
+       [
+        16.67,
+        2.9521
+       ],
+       [
+        33.33,
+        15.7651
+       ],
+       [
+        50,
+        41.1527
+       ],
+       [
+        66.67,
+        62.5711
+       ],
+       [
+        83.33,
+        75.3418
+       ],
+       [
+        100,
+        82.8698
+       ],
+       [
+        116.67,
+        87.1912
+       ],
+       [
+        133.33,
+        89.3666
+       ],
+       [
+        150,
+        90.0
+       ]
+      ],
+      "unit": "deg"
+     },
+     {
+      "property": "opacity",
+      "animation": "Animation",
+      "target": "div.-ms-2.ps-2",
+      "timing": {
+       "duration": 300,
+       "delay": 0,
+       "easing": "cubic-bezier(0.19, 1, 0.22, 1)",
+       "fill": "both"
+      },
+      "keyframes": [
+       {
+        "offset": null,
+        "opacity": "0"
+       },
+       {
+        "offset": null,
+        "opacity": "1"
+       }
+      ],
+      "samples": [
+       [
+        0,
+        0.0
+       ],
+       [
+        16.67,
+        0.282814
+       ],
+       [
+        33.33,
+        0.522666
+       ],
+       [
+        50,
+        0.694642
+       ],
+       [
+        66.67,
+        0.805003
+       ],
+       [
+        83.33,
+        0.874052
+       ],
+       [
+        100,
+        0.917928
+       ],
+       [
+        116.67,
+        0.946433
+       ],
+       [
+        133.33,
+        0.965269
+       ],
+       [
+        150,
+        0.977825
+       ],
+       [
+        166.67,
+        0.986193
+       ],
+       [
+        183.33,
+        0.991716
+       ],
+       [
+        200,
+        0.995289
+       ],
+       [
+        216.67,
+        0.99752
+       ],
+       [
+        233.33,
+        0.998838
+       ],
+       [
+        250,
+        0.999549
+       ],
+       [
+        266.67,
+        0.999876
+       ],
+       [
+        283.33,
+        0.999986
+       ],
+       [
+        300,
+        1.0
+       ]
+      ]
+     },
+     {
+      "property": "transform",
+      "animation": "Animation",
+      "target": "div.-ms-2.ps-2",
+      "timing": {
+       "duration": 300,
+       "delay": 0,
+       "easing": "cubic-bezier(0.19, 1, 0.22, 1)",
+       "fill": "both"
+      },
+      "keyframes": [
+       {
+        "offset": null,
+        "transform": "translateY(-8px)"
+       },
+       {
+        "offset": null,
+        "transform": "translateY(0px)"
+       }
+      ],
+      "samples": [
+       [
+        0,
+        -8.0
+       ],
+       [
+        16.67,
+        -5.7375
+       ],
+       [
+        33.33,
+        -3.8187
+       ],
+       [
+        50,
+        -2.4429
+       ],
+       [
+        66.67,
+        -1.56
+       ],
+       [
+        83.33,
+        -1.0076
+       ],
+       [
+        100,
+        -0.6566
+       ],
+       [
+        116.67,
+        -0.4285
+       ],
+       [
+        133.33,
+        -0.2778
+       ],
+       [
+        150,
+        -0.1774
+       ],
+       [
+        166.67,
+        -0.1105
+       ],
+       [
+        183.33,
+        -0.0663
+       ],
+       [
+        200,
+        -0.0377
+       ],
+       [
+        216.67,
+        -0.0198
+       ],
+       [
+        233.33,
+        -0.0093
+       ],
+       [
+        250,
+        -0.0036
+       ],
+       [
+        266.67,
+        -0.001
+       ],
+       [
+        283.33,
+        -0.0001
+       ],
+       [
+        300,
+        0.0
+       ]
+      ],
+      "unit": "translateY px"
+     }
+    ],
+    "live": {
+     "columns": [
+      "ms since the click",
+      "height px",
+      "opacity",
+      "translateY px"
+     ],
+     "rows": [
+      [
+       44.7,
+       0,
+       0,
+       -8
+      ],
+      [
+       57.6,
+       22.13,
+       0.260742,
+       -5.91406
+      ],
+      [
+       79.7,
+       36.78,
+       0.682827,
+       -2.53738
+      ],
+      [
+       95.8,
+       54.53,
+       0.797778,
+       -1.61777
+      ],
+      [
+       118.9,
+       62.3,
+       1,
+       0
+      ],
+      [
+       153.7,
+       68.8,
+       1,
+       0
+      ],
+      [
+       165.3,
+       73.52,
+       1,
+       0
+      ],
+      [
+       179.1,
+       74.39,
+       1,
+       0
+      ],
+      [
+       195.6,
+       75.14,
+       1,
+       0
+      ],
+      [
+       211.9,
+       75.72,
+       1,
+       0
+      ],
+      [
+       230.5,
+       76.13,
+       1,
+       0
+      ],
+      [
+       245.7,
+       76.42,
+       1,
+       0
+      ],
+      [
+       262,
+       76.56,
+       1,
+       0
+      ],
+      [
+       279,
+       76.66,
+       1,
+       0
+      ],
+      [
+       295.8,
+       76.7,
+       1,
+       0
+      ],
+      [
+       312.6,
+       76.73,
+       1,
+       0
+      ],
+      [
+       329.2,
+       76.73,
+       1,
+       0
+      ],
+      [
+       347.2,
+       76.75,
+       1,
+       0
+      ],
+      [
+       361.7,
+       76.75,
+       1,
+       0
+      ],
+      [
+       377.9,
+       76.75,
+       1,
+       0
+      ],
+      [
+       394.6,
+       76.75,
+       1,
+       0
+      ],
+      [
+       411.4,
+       76.75,
+       1,
+       0
+      ],
+      [
+       428,
+       76.75,
+       1,
+       0
+      ],
+      [
+       444.9,
+       76.75,
+       1,
+       0
+      ],
+      [
+       461.6,
+       76.75,
+       1,
+       0
+      ],
+      [
+       478.4,
+       76.75,
+       1,
+       0
+      ],
+      [
+       495,
+       76.75,
+       1,
+       0
+      ],
+      [
+       511.8,
+       76.75,
+       1,
+       0
+      ],
+      [
+       529,
+       76.75,
+       1,
+       0
+      ],
+      [
+       545.2,
+       76.75,
+       1,
+       0
+      ],
+      [
+       561.3,
+       76.75,
+       1,
+       0
+      ],
+      [
+       579.2,
+       76.75,
+       1,
+       0
+      ],
+      [
+       594.5,
+       76.75,
+       1,
+       0
+      ],
+      [
+       611.4,
+       76.75,
+       1,
+       0
+      ],
+      [
+       628,
+       76.75,
+       1,
+       0
+      ],
+      [
+       645,
+       76.75,
+       1,
+       0
+      ],
+      [
+       662,
+       76.75,
+       1,
+       0
+      ],
+      [
+       678.8,
+       76.75,
+       1,
+       0
+      ],
+      [
+       694.8,
+       76.75,
+       1,
+       0
+      ],
+      [
+       711.6,
+       76.75,
+       1,
+       0
+      ],
+      [
+       728.6,
+       76.75,
+       1,
+       0
+      ],
+      [
+       745.4,
+       76.75,
+       1,
+       0
+      ],
+      [
+       761.4,
+       76.75,
+       1,
+       0
+      ],
+      [
+       778.6,
+       76.75,
+       1,
+       0
+      ],
+      [
+       795,
+       76.75,
+       1,
+       0
+      ],
+      [
+       811.5,
+       76.75,
+       1,
+       0
+      ],
+      [
+       828.1,
+       76.75,
+       1,
+       0
+      ],
+      [
+       844.8,
+       76.75,
+       1,
+       0
+      ],
+      [
+       861.6,
+       76.75,
+       1,
+       0
+      ],
+      [
+       878.2,
+       76.75,
+       1,
+       0
+      ],
+      [
+       895,
+       76.75,
+       1,
+       0
+      ],
+      [
+       911.9,
+       76.75,
+       1,
+       0
+      ]
+     ]
+    }
+   },
+   {
+    "step": "space-close",
+    "after": {
+     "expanded": "false",
+     "focused": true,
+     "rect": [
+      440.5,
+      218.5625,
+      111.375,
+      21
+     ],
+     "chevron": {
+      "rect": [
+       537.875,
+       222.0625,
+       14,
+       14
+      ],
+      "rotate": "0deg",
+      "transition": "transform 0.15s cubic-bezier(0.4, 0, 0.2, 1), translate 0.15s cubic-bezier(0.4, 0, 0.2, 1), scale 0.15s cubic-bezier(0.4, 0, 0.2, 1), rotate 0.15s cubic-bezier(0.4, 0, 0.2, 1)"
+     },
+     "content": {
+      "height": 1.84375,
+      "y": 236.5625,
+      "opacity": "0",
+      "transform": "matrix(1, 0, 0, 1, 0, -8)",
+      "text": "ChatGPT said:\n\nI\u2019ll update the greeting in hello.py.\n\nEdited a file, read files, ran a command"
+     },
+     "turnHeight": 29.65625
+    },
+    "tracks": [
+     {
+      "property": "rotate",
+      "animation": "CSSTransition",
+      "target": "svg",
+      "timing": {
+       "duration": 150,
+       "delay": 0,
+       "easing": "cubic-bezier(0.4, 0, 0.2, 1)",
+       "fill": "backwards"
+      },
+      "keyframes": [
+       {
+        "offset": 0,
+        "rotate": "90deg"
+       },
+       {
+        "offset": 1,
+        "rotate": "0deg"
+       }
+      ],
+      "samples": [
+       [
+        0,
+        90.0
+       ],
+       [
+        16.67,
+        87.0479
+       ],
+       [
+        33.33,
+        74.2349
+       ],
+       [
+        50,
+        48.8473
+       ],
+       [
+        66.67,
+        27.4289
+       ],
+       [
+        83.33,
+        14.6582
+       ],
+       [
+        100,
+        7.1302
+       ],
+       [
+        116.67,
+        2.8088
+       ],
+       [
+        133.33,
+        0.6334
+       ],
+       [
+        150,
+        0.0
+       ]
+      ],
+      "unit": "deg"
+     },
+     {
+      "property": "opacity",
+      "animation": "Animation",
+      "target": "div.-ms-2.ps-2",
+      "timing": {
+       "duration": 150,
+       "delay": 0,
+       "easing": "cubic-bezier(0.23, 1, 0.32, 1)",
+       "fill": "both"
+      },
+      "keyframes": [
+       {
+        "offset": null,
+        "opacity": "1"
+       },
+       {
+        "offset": null,
+        "opacity": "0"
+       }
+      ],
+      "samples": [
+       [
+        0,
+        1.0
+       ],
+       [
+        16.67,
+        0.563824
+       ],
+       [
+        33.33,
+        0.272963
+       ],
+       [
+        50,
+        0.123102
+       ],
+       [
+        66.67,
+        0.053135
+       ],
+       [
+        83.33,
+        0.02119
+       ],
+       [
+        100,
+        0.007212
+       ],
+       [
+        116.67,
+        0.001772
+       ],
+       [
+        133.33,
+        0.000188
+       ],
+       [
+        150,
+        0.0
+       ]
+      ]
+     },
+     {
+      "property": "transform",
+      "animation": "Animation",
+      "target": "div.-ms-2.ps-2",
+      "timing": {
+       "duration": 150,
+       "delay": 0,
+       "easing": "cubic-bezier(0.23, 1, 0.32, 1)",
+       "fill": "both"
+      },
+      "keyframes": [
+       {
+        "offset": null,
+        "transform": "translateY(0px)"
+       },
+       {
+        "offset": null,
+        "transform": "translateY(-8px)"
+       }
+      ],
+      "samples": [
+       [
+        0,
+        0.0
+       ],
+       [
+        16.67,
+        -3.4894
+       ],
+       [
+        33.33,
+        -5.8163
+       ],
+       [
+        50,
+        -7.0152
+       ],
+       [
+        66.67,
+        -7.5749
+       ],
+       [
+        83.33,
+        -7.8305
+       ],
+       [
+        100,
+        -7.9423
+       ],
+       [
+        116.67,
+        -7.9858
+       ],
+       [
+        133.33,
+        -7.9985
+       ],
+       [
+        150,
+        -8.0
+       ]
+      ],
+      "unit": "translateY px"
+     }
+    ],
+    "live": {
+     "columns": [
+      "ms since the click",
+      "height px",
+      "opacity",
+      "translateY px"
+     ],
+     "rows": [
+      [
+       1.6,
+       76.75,
+       1,
+       0
+      ],
+      [
+       37.4,
+       76.75,
+       1,
+       0
+      ],
+      [
+       48.5,
+       44.39,
+       0.711799,
+       -2.3056
+      ],
+      [
+       69.7,
+       27.94,
+       0.16634,
+       -6.66928
+      ],
+      [
+       84.4,
+       10.41,
+       0.0729751,
+       -7.4162
+      ],
+      [
+       102.6,
+       4.92,
+       0,
+       -8
+      ],
+      [
+       117.5,
+       1.84,
+       0,
+       -8
+      ],
+      [
+       134.2,
+       0.72,
+       0,
+       -8
+      ],
+      [
+       151,
+       0.19,
+       0,
+       -8
+      ],
+      [
+       167.8,
+       0.02,
+       0,
+       -8
+      ],
+      [
+       185,
+       0,
+       0,
+       -8
+      ]
+     ]
+    }
+   }
+  ]
+ }
+}
