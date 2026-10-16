@@ -50,7 +50,7 @@ fn chip(
     cx: &App,
 ) -> Div {
     div().child(
-        focus::ring(pill(id, t), focus, px(13.), px(2.), cx).child(rounded_clip(
+        focus::ring(pill(id, t), focus, Theme::RADIUS_FULL, px(2.), cx).child(rounded_clip(
             px(13.),
             shapes::Corner::Round,
             div()
