@@ -25,6 +25,7 @@ use std::collections::HashSet;
 use std::{fs, path::PathBuf, sync::Arc};
 use theme::Theme;
 use ui::composer::{Approval, Composer, Permission, Submission};
+use ui::dialog::{Dialog, Kind as DialogKind, Outcome as DialogOutcome};
 use ui::screens::diff::panel::{DiffPanel, SplitScreen, with_side_panel};
 use ui::screens::home::HomeMain;
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
@@ -36,7 +37,7 @@ use ui::toast::{Toast, Toaster};
 use ui::{
     CloseSidePanel, Copy, Cut, GoBack, GoForward, NewChat, OpenBackgroundTerminal,
     OpenChangesPanel, OpenCommandMenu, OpenMobileSetup, OpenScheduled, OpenSettings, Paste, Redo,
-    SelectAll, SetTheme, Shell, ToggleChangesPanel, ToggleSidebar, Undo,
+    SelectAll, SetTheme, Shell, ShowKeyboardShortcuts, ToggleChangesPanel, ToggleSidebar, Undo,
 };
 
 actions!(
@@ -82,6 +83,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-n", NewChat, None),
         KeyBinding::new("cmd-shift-o", NewChat, None),
         KeyBinding::new("cmd-w", CloseWindow, None),
+        KeyBinding::new("cmd-/", ShowKeyboardShortcuts, None),
         KeyBinding::new("cmd-z", Undo, None),
         KeyBinding::new("cmd-shift-z", Redo, None),
         KeyBinding::new("cmd-x", Cut, None),
@@ -158,7 +160,10 @@ pub fn menus() -> Vec<Menu> {
             MenuItem::action("Minimize", Minimize),
             MenuItem::action("Zoom", Zoom),
         ]),
-        Menu::new("Help").items([MenuItem::action("Documentation", OpenDocumentation)]),
+        Menu::new("Help").items([
+            MenuItem::action("Documentation", OpenDocumentation),
+            MenuItem::action("Keyboard Shortcuts", ShowKeyboardShortcuts),
+        ]),
     ]
 }
 
@@ -205,7 +210,7 @@ impl ThemeSetting {
     }
 }
 
-/// Window size, sidebar, route and theme, persisted to `path` (none: not persisted).
+/// Window layout, route, theme and close preference, persisted to `path` when set.
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
 pub struct State {
@@ -214,6 +219,7 @@ pub struct State {
     pub sidebar_open: bool,
     pub route: Route,
     pub theme: ThemeSetting,
+    pub confirm_before_close: ConfirmBeforeClose,
     #[serde(skip)]
     pub path: Option<PathBuf>,
 }
@@ -226,6 +232,7 @@ impl Default for State {
             sidebar_open: true,
             route: Route::Home,
             theme: ThemeSetting::System,
+            confirm_before_close: ConfirmBeforeClose::default(),
             path: None,
         }
     }
@@ -254,6 +261,15 @@ impl State {
             eprintln!("codex-gpui: cannot save {}: {err}", path.display());
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ConfirmBeforeClose {
+    Never,
+    #[default]
+    KeyboardOnly,
+    Always,
 }
 
 pub fn theme_for(appearance: WindowAppearance) -> Theme {
@@ -303,6 +319,7 @@ pub struct Root {
     settings_section: Option<&'static str>,
     /// `⌘K` command menu over the window.
     command_menu: Option<Entity<CommandMenu>>,
+    dialog: Option<Entity<Dialog>>,
     /// Signed out: replaces the whole window.
     login: Option<Entity<Login>>,
     bridge: Arc<Bridge>,
@@ -423,6 +440,7 @@ impl Root {
             page: None,
             settings_section: None,
             command_menu: None,
+            dialog: None,
             login: None,
             bridge,
             host: Arc::new(host::LocalHost::from_env()),
@@ -438,6 +456,17 @@ impl Root {
             _events,
             state,
         };
+        let this = cx.weak_entity();
+        window.on_window_should_close(cx, move |window, cx| {
+            this.update(cx, |this, cx| {
+                if this.state.confirm_before_close != ConfirmBeforeClose::Always {
+                    return true;
+                }
+                this.open_dialog(DialogKind::CloseWindow, window, cx);
+                false
+            })
+            .unwrap_or(true)
+        });
         window.focus(&root.focus, cx);
         root.connect(window, cx);
         root
@@ -474,6 +503,9 @@ impl Root {
                     composer.update(cx, |c, cx| c.set_models(&models.data, &config.config, cx));
                 }
                 this.config = config.config;
+                this.config["host"]["confirm-before-close"] =
+                    serde_json::to_value(this.state.confirm_before_close)
+                        .expect("close preference");
                 this.skills = skills;
                 this.ready = true;
                 this.sync(window, cx);
@@ -775,6 +807,48 @@ impl Root {
         window.focus(&menu.focus_handle(cx), cx);
         self.command_menu = Some(menu);
         cx.notify();
+    }
+
+    pub fn dialog(&self) -> Option<&Entity<Dialog>> {
+        self.dialog.as_ref()
+    }
+
+    fn open_dialog(&mut self, kind: DialogKind, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dialog.is_some() {
+            return;
+        }
+        self.command_menu = None;
+        let dialog = cx.new(|cx| Dialog::new(kind, cx));
+        cx.subscribe_in(&dialog, window, |this, _, outcome, window, cx| {
+            this.dialog = None;
+            match outcome {
+                DialogOutcome::Dismiss => window.focus(&this.focus, cx),
+                DialogOutcome::CloseWindow { do_not_ask_again } => {
+                    if *do_not_ask_again {
+                        this.state.confirm_before_close = ConfirmBeforeClose::Never;
+                        this.config["host"]["confirm-before-close"] = "never".into();
+                        this.state.save();
+                    }
+                    window.remove_window();
+                }
+            }
+            cx.notify();
+        })
+        .detach();
+        window.focus(&dialog.focus_handle(cx), cx);
+        self.dialog = Some(dialog);
+        cx.notify();
+    }
+
+    fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dialog.is_some() {
+            return;
+        }
+        if self.state.confirm_before_close == ConfirmBeforeClose::Never {
+            window.remove_window();
+        } else {
+            self.open_dialog(DialogKind::CloseWindow, window, cx);
+        }
     }
 
     /// Closes the command menu and runs its row: a chat opens, `New chat`, `Manage scheduled
@@ -1128,10 +1202,15 @@ impl Root {
         });
     }
 
-    /// A settings row changed: `desktop.*` and `features.*` persist to `config.toml` with
-    /// `config/value/write`; the other stores live for the session. Reopening Settings shows
-    /// the kept value.
+    /// `desktop.*` and `features.*` use `config/value/write`.
+    /// The close preference persists in window state; other host settings last for the session.
     fn write_setting(&mut self, e: &SettingChanged, cx: &mut Context<Self>) {
+        if e.path == "host.confirm-before-close"
+            && let Ok(value) = serde_json::from_value(e.value.clone())
+        {
+            self.state.confirm_before_close = value;
+            self.state.save();
+        }
         let (store, key) = e.path.split_once('.').unwrap_or((e.path, ""));
         let value = e.value.clone();
         let apply = move |config: &mut Value| config[store][key] = value;
@@ -1416,12 +1495,28 @@ impl Render for Root {
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
                 this.shell.update(cx, |shell, cx| shell.toggle_sidebar(cx))
             }))
-            .on_action(|_: &CloseWindow, window, _| window.remove_window())
+            .on_action(cx.listener(|this, _: &ShowKeyboardShortcuts, window, cx| {
+                if this
+                    .dialog
+                    .as_ref()
+                    .is_some_and(|dialog| dialog.read(cx).kind() == DialogKind::Shortcuts)
+                {
+                    this.dialog = None;
+                    window.focus(&this.focus, cx);
+                    cx.notify();
+                } else {
+                    this.open_dialog(DialogKind::Shortcuts, window, cx);
+                }
+            }))
+            .on_action(
+                cx.listener(|this, _: &CloseWindow, window, cx| this.close_window(window, cx)),
+            )
             .on_action(|_: &Minimize, window, _| window.minimize_window())
             .on_action(|_: &Zoom, window, _| window.zoom_window())
             .child(content)
             .children(self.command_menu.clone())
-            .child(self.toaster.clone());
+            .child(self.toaster.clone())
+            .children(self.dialog.clone());
         features::actions(root, cx)
     }
 }

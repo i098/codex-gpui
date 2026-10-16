@@ -268,7 +268,8 @@ pub struct EditMessage {
 
 #[cfg(target_os = "macos")]
 fn response_html(answer: &str) -> String {
-    use super::markdown::{Inline, inlines};
+    use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+    use std::fmt::Write as _;
     let escape = |s: &str| {
         s.replace('&', "&amp;")
             .replace('<', "&lt;")
@@ -276,21 +277,82 @@ fn response_html(answer: &str) -> String {
             .replace('"', "&quot;")
     };
     let mut html = String::new();
-    for paragraph in answer.split("\n\n").filter(|p| !p.trim().is_empty()) {
-        html.push_str("<p>");
-        for inline in inlines(paragraph) {
-            match inline {
-                Inline::Text(s) => html.push_str(&format!("<span>{}</span>", escape(s))),
-                Inline::Code(s) => html.push_str(&format!("<code dir=\"ltr\">{}</code>", escape(s))),
-                Inline::Link { label, target } => html.push_str(&format!(
-                    "<span data-prompt-link-label=\"{}\" data-prompt-link-href=\"{}\">[{}]({})</span>",
-                    escape(label), escape(target), escape(label), escape(target)
-                )),
+    let mut events = Parser::new_ext(
+        answer,
+        Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS,
+    )
+    .into_offset_iter();
+    while let Some((event, range)) = events.next() {
+        match event {
+            Event::Start(Tag::Link { dest_url, .. }) => {
+                let mut label = String::new();
+                for (event, _) in events.by_ref() {
+                    match event {
+                        Event::End(TagEnd::Link) => break,
+                        Event::Text(s) | Event::Code(s) => label.push_str(&s),
+                        _ => {}
+                    }
+                }
+                let _ = write!(
+                    html,
+                    "<span data-prompt-link-label=\"{}\" data-prompt-link-href=\"{}\">{}</span>",
+                    escape(&label),
+                    escape(&dest_url),
+                    escape(&answer[range])
+                );
             }
+            Event::Start(tag) => {
+                if let Some(tag) = response_html_tag(tag.to_end()) {
+                    let _ = write!(html, "<{tag}>");
+                }
+            }
+            Event::End(tag) => {
+                if let Some(tag) = response_html_tag(tag) {
+                    let _ = write!(html, "</{tag}>");
+                }
+            }
+            Event::Code(s) => {
+                let _ = write!(html, "<code dir=\"ltr\">{}</code>", escape(&s));
+            }
+            Event::Text(s) | Event::Html(s) | Event::InlineHtml(s) => {
+                let _ = write!(html, "<span>{}</span>", escape(&s));
+            }
+            Event::SoftBreak | Event::HardBreak => html.push_str("<br>"),
+            Event::Rule => html.push_str("<hr>"),
+            Event::TaskListMarker(checked) => {
+                html.push_str(if checked {
+                    "<input type=\"checkbox\" disabled checked>"
+                } else {
+                    "<input type=\"checkbox\" disabled>"
+                });
+            }
+            _ => {}
         }
-        html.push_str("</p>");
     }
     html
+}
+
+#[cfg(target_os = "macos")]
+fn response_html_tag(tag: pulldown_cmark::TagEnd) -> Option<&'static str> {
+    use pulldown_cmark::{HeadingLevel, TagEnd};
+    Some(match tag {
+        TagEnd::Paragraph => "p",
+        TagEnd::Heading(HeadingLevel::H1) => "h1",
+        TagEnd::Heading(HeadingLevel::H2) => "h2",
+        TagEnd::Heading(HeadingLevel::H3) => "h3",
+        TagEnd::Heading(HeadingLevel::H4) => "h4",
+        TagEnd::Heading(HeadingLevel::H5) => "h5",
+        TagEnd::Heading(HeadingLevel::H6) => "h6",
+        TagEnd::BlockQuote(_) => "blockquote",
+        TagEnd::CodeBlock => "pre",
+        TagEnd::List(true) => "ol",
+        TagEnd::List(false) => "ul",
+        TagEnd::Item => "li",
+        TagEnd::Emphasis => "em",
+        TagEnd::Strong => "strong",
+        TagEnd::Strikethrough => "s",
+        _ => return None,
+    })
 }
 
 /// `Fork chat from here` under a turn: a new chat with the thread up to that turn (its id).
