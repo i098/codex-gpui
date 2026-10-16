@@ -3,6 +3,8 @@
 //! plus the key bindings and menu bar. `main.rs` only opens the window;
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
+mod features;
+
 use anyhow::Result;
 use async_channel::Receiver;
 use bridge::types::{
@@ -103,6 +105,7 @@ pub fn init(cx: &mut App) {
         (1..=6).map(|n| KeyBinding::new(&format!("cmd-alt-{n}"), GoToRecentChat(n - 1), None)),
     );
     ui::composer::bind_keys(cx);
+    features::init(cx);
     cx.on_action(|_: &Quit, cx| cx.quit());
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
@@ -1141,7 +1144,7 @@ impl Render for Root {
             (None, None, Some(split)) => split.clone().into_any_element(),
             (None, None, None) => self.shell.clone().into_any_element(),
         };
-        div()
+        let root = div()
             .size_full()
             .relative()
             .font_family(ui::SANS)
@@ -1211,6 +1214,7 @@ impl Render for Root {
             .on_action(|_: &Minimize, window, _| window.minimize_window())
             .on_action(|_: &Zoom, window, _| window.zoom_window())
             .child(content)
-            .children(self.command_menu.clone())
+            .children(self.command_menu.clone());
+        features::actions(root, cx)
     }
 }

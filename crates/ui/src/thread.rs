@@ -3,8 +3,10 @@
 //! message actions, docked composer), kept live by `item/*` and `turn/*` notifications.
 //! Numbers are the spec's CSS px.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash as _, Hasher as _};
+use std::rc::Rc;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -14,9 +16,9 @@ use bridge::types::{
     TurnStatus, UserInput,
 };
 use gpui::{
-    Action, AnyView, ClipboardItem, Context, Corners, Div, FontWeight, Hsla, Image, ImageFormat,
-    IntoElement, ParentElement, Pixels, Render, Rgba, SharedString, Styled, Task, TextRun, Window,
-    div, font, prelude::*, px, relative, rgb, rgba, white,
+    Action, AnyView, App, Bounds, ClipboardItem, Context, Corners, Div, FontWeight, Hsla, Image,
+    ImageFormat, IntoElement, ParentElement, Pixels, Render, Rgba, ScrollHandle, SharedString,
+    Size, Styled, Task, TextRun, Window, div, font, prelude::*, px, relative, rgb, rgba, white,
 };
 use theme::{ActiveTheme as _, Appearance, Theme};
 
@@ -74,6 +76,20 @@ pub struct ThreadView {
     _tick: Option<Task<()>>,
     /// Turns whose `Worked for` disclosure is expanded.
     expanded: HashSet<String>,
+    scroll: ScrollHandle,
+    /// The turns as last laid out, to stand in for the ones far off screen.
+    laid_out: Rc<RefCell<LaidOut>>,
+}
+
+/// Where the last frame laid out each turn, in the scroller's content (top, height), and the
+/// window size and side panel state it had: a turn far off screen renders as an empty box of
+/// its height, so a long chat lays out and paints only what is near the viewport. The column
+/// keeps every turn's box, so the turns on screen land where a full layout puts them.
+#[derive(Default)]
+struct LaidOut {
+    key: Option<(Size<Pixels>, bool)>,
+    width: Pixels,
+    turns: HashMap<String, (Pixels, Pixels)>,
 }
 
 impl ThreadView {
@@ -90,6 +106,8 @@ impl ThreadView {
             composer,
             _tick: None,
             expanded: HashSet::new(),
+            scroll: ScrollHandle::new(),
+            laid_out: Rc::default(),
         }
     }
 
@@ -493,11 +511,51 @@ impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let n = self.turns.len();
-        let turns = self
+        // Turns more than half a viewport above or below it stand in as empty boxes of their
+        // last height while the window size and side panel stay as they were laid out; the
+        // last turn (and a running one) can still grow, so it always renders.
+        let key = (window.viewport_size(), self.clip_right);
+        let (view, offset) = (self.scroll.bounds().size.height, self.scroll.offset().y);
+        let laid_out = self.laid_out.borrow();
+        let turns: Vec<Div> = self
             .turns
             .iter()
             .enumerate()
-            .map(|(i, turn)| self.turn(turn, i + 1 == n, window, &t, cx));
+            .map(|(i, turn)| {
+                let stand_in = (laid_out.key == Some(key)
+                    && i + 1 < n
+                    && turn.status != TurnStatus::InProgress)
+                    .then(|| laid_out.turns.get(&turn.id))
+                    .flatten()
+                    .filter(|&&(top, h)| far(top + offset, h, view));
+                match stand_in {
+                    Some(&(_, h)) => div().h(h),
+                    None => self.turn(turn, i + 1 == n, window, &t, cx),
+                }
+            })
+            .collect();
+        drop(laid_out);
+        let ids: Vec<String> = self.turns.iter().map(|t| t.id.clone()).collect();
+        let (laid_out, scroll) = (self.laid_out.clone(), self.scroll.clone());
+        let measure = move |bounds: Vec<Bounds<Pixels>>, window: &mut Window, _: &mut App| {
+            let origin = scroll.bounds().top() + scroll.offset().y;
+            let width = bounds.first().map_or(px(0.), |b| b.size.width);
+            let mut l = laid_out.borrow_mut();
+            if l.key == Some(key) && l.width != width {
+                // The column width changed with the window size and side panel unchanged (the
+                // sidebar): the stand-ins' heights are stale, so lay every turn out again.
+                *l = LaidOut::default();
+                window.request_animation_frame();
+                return;
+            }
+            l.key = Some(key);
+            l.width = width;
+            l.turns = ids
+                .iter()
+                .zip(&bounds)
+                .map(|(id, b)| (id.clone(), (b.top() - origin, b.size.height)))
+                .collect();
+        };
         // The thread fills the main panel: window minus titlebar (44) and bottom inset (4).
         let viewport = window.viewport_size();
         let (width, height) = (f32::from(viewport.width), f32::from(viewport.height) - 48.);
@@ -577,6 +635,7 @@ impl Render for ThreadView {
                     .id("conversation")
                     .size_full()
                     .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
                     // The scroller's contents are a composited layer (transparent tile).
                     .layer()
                     .pt(px(32.))
@@ -590,7 +649,8 @@ impl Render for ThreadView {
                             .flex()
                             .flex_col()
                             .gap(px(12.))
-                            .children(turns),
+                            .children(turns)
+                            .on_children_prepainted(measure),
                     )
                     // Room for the docked composer.
                     .child(div().h(px(114.))),
@@ -857,10 +917,26 @@ fn dither(x: u32, y: u32) -> f32 {
     m as f32 * (2. / 128.) - 63. / 128.
 }
 
+/// Whether a box at `top` (scroller viewport px) of height `h` lies more than half a viewport
+/// of height `view` above or below it.
+fn far(top: Pixels, h: Pixels, view: Pixels) -> bool {
+    top + h < -view / 2. || top > view * 1.5
+}
+
 #[cfg(test)]
 mod tests {
     use super::markdown::{Inline, inlines};
     use super::*;
+
+    #[test]
+    fn far_turns_lie_past_half_a_viewport() {
+        let (view, h) = (px(800.), px(100.));
+        assert!(!far(px(0.), h, view));
+        assert!(!far(px(-500.), h, view));
+        assert!(far(px(-501.), h, view));
+        assert!(!far(px(1200.), h, view));
+        assert!(far(px(1201.), h, view));
+    }
 
     #[test]
     fn parses_final_answer() {
