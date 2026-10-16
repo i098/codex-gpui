@@ -70,6 +70,9 @@ pub struct ThreadView {
     /// rounded right corners through the clip (`Shell::main_clips_right`).
     pub clip_right: bool,
     title: SharedString,
+    chat_actions: Option<gpui::FocusHandle>,
+    chat_actions_trigger: Option<gpui::FocusHandle>,
+    chat_actions_hovered: bool,
     turns: Vec<Turn>,
     clock: Clock,
     composer: AnyView,
@@ -97,6 +100,9 @@ impl ThreadView {
     pub fn new(thread: Thread, clock: Clock, composer: AnyView) -> Self {
         Self {
             title: title(&thread),
+            chat_actions: None,
+            chat_actions_trigger: None,
+            chat_actions_hovered: false,
             thread_id: thread.id,
             cwd: thread.cwd,
             summary_open: false,

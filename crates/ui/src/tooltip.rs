@@ -8,8 +8,7 @@
 //! - Closes when the pointer leaves, on a press on the trigger, and on Escape.
 //! - Sits `OFFSET` px off the trigger's edge, centred on it, below it or to its right.
 //!
-//! ponytail: no collision flip or shift at window edges (Radix `avoidCollisions`); every
-//! trigger so far sits well inside the window.
+//! The tooltip stays at least 8 px inside the window, including narrow titlebar layouts.
 
 use gpui::{
     Anchor, App, Bounds, Context, DispatchPhase, Div, ElementId, Entity, Global, Hsla,
@@ -274,6 +273,14 @@ fn bubble(spec: &Spec, side: Side, state: &Entity<TipState>, cx: &App) -> impl I
             point(OFFSET, px(0.)),
         ),
     };
-    deferred(point_on_edge.child(anchored().anchor(anchor).offset(offset).child(pill)))
-        .with_priority(2)
+    deferred(
+        point_on_edge.child(
+            anchored()
+                .anchor(anchor)
+                .offset(offset)
+                .snap_to_window_with_margin(gpui::Edges::all(px(8.)))
+                .child(pill),
+        ),
+    )
+    .with_priority(2)
 }
