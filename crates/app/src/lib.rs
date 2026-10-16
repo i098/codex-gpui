@@ -11,8 +11,8 @@ use anyhow::Result;
 use async_channel::Receiver;
 use bridge::types::{
     ApprovalDecision, CommandApprovalRequest, ConfigReadResponse, FileChangeApprovalRequest,
-    Thread, ThreadItem, ThreadReadResponse, ThreadStartResponse, ThreadStartedNotification,
-    TurnStatus,
+    Thread, ThreadItem, ThreadReadResponse, ThreadSection, ThreadStartResponse,
+    ThreadStartedNotification, TurnStatus,
 };
 use bridge::{Bridge, Event};
 use gpui::{
@@ -34,7 +34,8 @@ use ui::screens::diff::panel::{
 use ui::screens::home::HomeMain;
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
 use ui::screens::sidebar::{
-    ArchiveThread, CommandMenu, CommandMenuEvent, HomeSidebar, OpenThread, UnpinThread,
+    ArchiveThread, CommandMenu, CommandMenuEvent, HomeSidebar, OpenThread, PINNED_SECTION_ID,
+    PinThread,
 };
 use ui::screens::terminal::Xterm;
 use ui::screens::thread::view::{Clock, EditMessage, ForkThread, RevertTurn, ThreadView};
@@ -1340,11 +1341,22 @@ impl Root {
         log_err(task, cx);
     }
 
-    fn unpin(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+    /// `thread/section/move` into or out of the Pinned section: the row moves at once (no toast);
+    /// a refused write puts it back, silently, as the original does.
+    fn set_pinned(
+        &mut self,
+        id: String,
+        pinned: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(thread) = self.threads.iter_mut().find(|thread| thread.id == id) else {
             return;
         };
-        let old_section = thread.section.take();
+        let section = pinned.then(|| ThreadSection {
+            id: PINNED_SECTION_ID.to_owned(),
+        });
+        let old_section = std::mem::replace(&mut thread.section, section);
         self.sidebar
             .update(cx, |s, cx| s.set_threads(&self.threads, cx));
         let bridge = self.bridge.clone();
@@ -1352,7 +1364,7 @@ impl Root {
             let done = bridge
                 .request::<_, Value>(
                     "thread/section/move",
-                    json!({ "threadId": id, "sectionId": null, "beforeThreadId": null }),
+                    json!({ "threadId": id, "sectionId": pinned.then_some(PINNED_SECTION_ID), "beforeThreadId": null }),
                 )
                 .await;
             this.update(cx, |this, cx| {
@@ -1362,7 +1374,6 @@ impl Root {
                     }
                     this.sidebar
                         .update(cx, |s, cx| s.set_threads(&this.threads, cx));
-                    this.toast(Toast::danger("Couldn't save your changes. Try again"), cx);
                 }
             })?;
             done.map(drop)
@@ -1858,11 +1869,9 @@ impl Render for Root {
             .on_action(cx.listener(|this, a: &ArchiveThread, window, cx| {
                 this.archive(a.0.clone(), window, cx)
             }))
-            .on_action(
-                cx.listener(|this, a: &UnpinThread, window, cx| {
-                    this.unpin(a.0.clone(), window, cx)
-                }),
-            )
+            .on_action(cx.listener(|this, a: &PinThread, window, cx| {
+                this.set_pinned(a.0.clone(), a.1, window, cx)
+            }))
             .on_action(cx.listener(|this, a: &ForkThread, window, cx| this.fork(&a.0, window, cx)))
             .on_action(cx.listener(|this, edit: &EditMessage, window, cx| {
                 this.edit_message(edit.clone(), window, cx)

@@ -155,7 +155,7 @@ Numbers from the round 4 run (F1Flows); the screen builder column is a run of th
 | 10 | `Recents` section toggle | click | Collapses or expands. | Same; a collapsed Recents row no longer opens. | PASS (`sidebar_section_collapse`) |
 | 11 | Thread row | click | Opens `/local/:conversationId`. | `OpenThread` → route Thread, `thread/read`, row selected. | PASS (`thread_row_opens_thread`) |
 | 12 | Thread row hover | hover | Row background; Archive / Pin actions appear. | The row reveals its actions. Buttons use the shared 150 ms hover transition. | PASS (`thread_row_hover`, `crates/app/tests/s001.rs`) |
-| 13 | Thread row context menu | click | Pin, Rename, Archive, Mark as unread, Open in new window, Delete. | Archive removes the row without opening the chat. Unpin moves an existing pinned chat to Recents through `thread/section/move`. | FAIL (Pin click and the context menu remain unwired; Archive and Unpin: `crates/app/tests/s001.rs`) |
+| 13 | Thread row context menu | click | Pin, Rename, Archive, Mark as unread, Open in new window, Delete. | Archive removes the row without opening the chat. Pin and Unpin move the chat into or out of `Pinned` through `thread/section/move`, with no toast; a refused move puts the row back silently. The Unpin icon hides at rest like Pin and Archive. | FAIL (the context menu remains unwired; Archive and Unpin: `crates/app/tests/s001.rs`; Pin: `crates/app/tests/s001b.rs`) |
 | 14 | `⌘1`…`⌘9` | shortcut | Go to chat N. | Opens Recents row N; `⌘9` past the end does nothing. | PASS (`cmd_digit_goes_to_chat`) |
 | 15 | `⌘⇧[` / `⌘⇧]` | shortcut | Previous / next chat. | Previous / next Recents row. | PASS (`previous_next_chat`, `menu_bar_actions`) |
 | 16 | `⌘⇧S` / `⌘B` | shortcut | Toggle sidebar. | Toggles. | PASS (`sidebar_toggle_keys`) |
@@ -172,7 +172,7 @@ The recording uses the original renderer with isolated host and app-server fixtu
 The replay checks Unpin, Archive, the Home route, outgoing requests, button timing, and the recorded hover blend.
 The native host translates `pinnedThreads.set(false)` to `thread/section/move` with a null section.
 The original shows no toast for this Unpin action.
-Pin click remains deferred after the recorder failure, as approved by firstmate.
+S001b replays `refs/interactions/s001b.json` with `cargo test -p app --test s001b` on macOS: the Pin click moves the row under `Pinned` at once, sends `thread/section/move` with the fixed Pinned section, shows no toast, hides the Unpin icon at rest, and a refused move puts the row back without a toast.
 Running-chat and scheduled-task archive confirmation still need a dialog extension outside this six-file slice.
 
 The S004 recording uses the original renderer through the Linux route1 stack in an isolated Chrome context.
