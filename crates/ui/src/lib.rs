@@ -17,6 +17,7 @@ use theme::{ActiveTheme as _, Theme};
 use tooltip::{Side, tooltip};
 
 pub mod composer;
+pub mod dialog;
 pub mod fixture;
 pub mod focus;
 pub mod icon;
@@ -35,6 +36,7 @@ actions!(
         GoBack,
         GoForward,
         OpenSettings,
+        ShowKeyboardShortcuts,
         /// Rail `Scheduled`: the Automations page.
         OpenScheduled,
         /// Profile menu ▸ Help ▸ `Set up mobile`.
@@ -787,6 +789,11 @@ impl Shell {
                         t.text_tertiary,
                     )))
                     .child(mobile)
+                    .child(item(
+                        "profile-keyboard-shortcuts",
+                        "Keyboard Shortcuts",
+                        dispatch::<ShowKeyboardShortcuts>,
+                    ))
             }))
     }
 
