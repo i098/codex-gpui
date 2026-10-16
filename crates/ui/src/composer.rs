@@ -25,6 +25,7 @@ actions!(
     [
         /// Send the prompt (Enter).
         Submit,
+        Stop,
         /// Insert a line break (Shift+Enter).
         Newline,
         Backspace,
@@ -418,6 +419,7 @@ pub struct Composer {
     footer_width: f32,
     menu_trigger_hovered: bool,
     approval: Option<Approval>,
+    running: bool,
     on_submit: Option<SubmitHandler>,
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
@@ -462,6 +464,7 @@ impl Composer {
             footer_width: f32::INFINITY,
             menu_trigger_hovered: false,
             approval: None,
+            running: false,
             on_submit: None,
             on_approval: None,
             on_model: None,
@@ -532,6 +535,13 @@ impl Composer {
     pub fn set_approval(&mut self, approval: Option<Approval>, cx: &mut Context<Self>) {
         self.approval = approval;
         cx.notify();
+    }
+
+    pub fn set_running(&mut self, running: bool, cx: &mut Context<Self>) {
+        if self.running != running {
+            self.running = running;
+            cx.notify();
+        }
     }
 
     pub fn set_text(&mut self, s: &str, cx: &mut Context<Self>) {
