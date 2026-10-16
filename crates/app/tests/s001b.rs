@@ -41,17 +41,14 @@ fn proxy() {
     proxy_child();
 }
 
-#[test]
-fn pin_moves_the_row_to_pinned_without_a_toast() -> Result<()> {
+/// The recording, the port after the recorded hover and Pin click (once `thread/section/move`
+/// left), and the screen before the click.
+fn pin(lines: Vec<Value>) -> Result<(Value, Fx, RgbaImage)> {
     let rec: Value =
         serde_json::from_slice(&fs::read(format!("{ROOT}/refs/interactions/s001b.json"))?)?;
     let steps = rec["steps"].as_array().unwrap();
-    let want = &rec["result"]["requests"][2]["params"];
-    let mut lines = script(None, |_| {})?;
-    lines.extend(exchange("thread/section/move", json!({})));
     let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
     let initial = fx.shot()?;
-
     fx.hover(center(&steps[0]["target"]["bbox"]))?;
     fx.advance(Duration::from_millis(300))?;
     fx.click(center(&steps[1]["target"]["bbox"]))?;
@@ -59,6 +56,15 @@ fn pin_moves_the_row_to_pinned_without_a_toast() -> Result<()> {
         fx.sent()
             .is_ok_and(|sent| sent.iter().any(|r| r["method"] == "thread/section/move"))
     })?;
+    Ok((rec, fx, initial))
+}
+
+#[test]
+fn pin_moves_the_row_to_pinned_without_a_toast() -> Result<()> {
+    let mut lines = script(None, |_| {})?;
+    lines.extend(exchange("thread/section/move", json!({})));
+    let (rec, mut fx, initial) = pin(lines)?;
+    let want = &rec["result"]["requests"][2]["params"];
     fx.advance(Duration::from_millis(300))?;
     ensure!(fx.route() == Route::Home, "Pin opened the chat");
     ensure!(
@@ -115,19 +121,8 @@ fn pin_moves_the_row_to_pinned_without_a_toast() -> Result<()> {
 
 #[test]
 fn refused_pin_puts_the_row_back_silently() -> Result<()> {
-    let rec: Value =
-        serde_json::from_slice(&fs::read(format!("{ROOT}/refs/interactions/s001b.json"))?)?;
-    let steps = rec["steps"].as_array().unwrap();
     // No recorded `thread/section/move`: the replay answers an error.
-    let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
-    let initial = fx.shot()?;
-    fx.hover(center(&steps[0]["target"]["bbox"]))?;
-    fx.advance(Duration::from_millis(300))?;
-    fx.click(center(&steps[1]["target"]["bbox"]))?;
-    fx.wait("pin request", |fx| {
-        fx.sent()
-            .is_ok_and(|sent| sent.iter().any(|r| r["method"] == "thread/section/move"))
-    })?;
+    let (_, mut fx, initial) = pin(script(None, |_| {})?)?;
     fx.advance(Duration::from_millis(1000))?;
     let after = fx.shot()?;
     ensure!(
