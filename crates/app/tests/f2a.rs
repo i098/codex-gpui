@@ -190,12 +190,14 @@ fn keyboard_model_selection_and_reset_preserve_the_draft() -> Result<()> {
         fx.read(|root, _| root.config()["model"] == original_model)
     })?;
     fx.keys("escape")?;
+    // The model picker's close focuses the editor (refs/interactions/s033.json step 1).
     ensure!(
         fx.cx.update_window(fx.window, |_, window, cx| composer
             .read(cx)
             .menu_state(window))?
-            == (false, None, true),
-        "Escape did not return focus to the model trigger"
+            == (false, None, false)
+            && fx.composer_focused()?,
+        "Escape did not return focus to the editor"
     );
     ensure!(
         fx.composer_text()? == "Keep this draft",

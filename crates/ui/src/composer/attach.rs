@@ -1,8 +1,16 @@
 use super::*;
-use gpui::StyledImage as _;
+use crate::screens::settings::AppServer;
+use anyhow::{Context as _, Result, anyhow};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use bridge::Bridge;
+use gpui::{StyledImage as _, Task};
+use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::{
     fs,
     io::{self, Write},
+    path::Path,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -19,8 +27,9 @@ pub(super) enum Content {
 pub(super) struct Attachment {
     pub path: PathBuf,
     content: Content,
-    /// Written under `$CODEX_HOME/attachments` by [`persist`]: removed with the chip. A
-    /// picked or dropped file stays where the user keeps it.
+    /// Written under `$CODEX_HOME/attachments`: pasted text through the app-server's `fs/*`
+    /// like the original ([`save_text`]), a pasted image by this process ([`persist`]). Both
+    /// go with the chip. A picked or dropped file stays where the user keeps it.
     persisted: bool,
 }
 
@@ -50,12 +59,117 @@ impl Attachment {
     }
 }
 
-fn persist(content: Content) -> io::Result<Attachment> {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::var_os("CODEX_HOME")
+/// `$CODEX_HOME/attachments` (default `~/.codex`), the original's attachments root: the
+/// recording (`refs/interactions/s017.json`) holds the host's codex home.
+fn attachments_root() -> io::Result<PathBuf> {
+    std::env::var_os("CODEX_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".codex")))
-        .ok_or_else(|| io::Error::other("CODEX_HOME and HOME are unset"))?;
+        .map(|root| root.join("attachments"))
+        .ok_or_else(|| io::Error::other("CODEX_HOME and HOME are unset"))
+}
+
+/// The original's `pasted-text-attachments.json` under the attachments root: every pasted
+/// text file, those waiting for removal and the first 2,000 UTF-16 units of each text. Read
+/// once per process, written through the app-server after every change.
+#[derive(Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Registry {
+    attachment_paths: Vec<String>,
+    pending_removal_paths: Vec<String>,
+    #[serde(default)]
+    text_excerpts_by_path: serde_json::Map<String, Value>,
+}
+
+const REGISTRY_FILE: &str = "pasted-text-attachments.json";
+static REGISTRY: Mutex<Option<Registry>> = Mutex::new(None);
+
+async fn request(bridge: &Bridge, method: &str, params: Value) -> Result<Value> {
+    bridge
+        .request(method, params)
+        .await
+        .context(method.to_owned())
+}
+
+async fn load_registry(bridge: &Bridge, root: &Path) {
+    if REGISTRY.lock().is_some() {
+        return;
+    }
+    // ponytail: every read error counts as a missing registry; the original only ENOENT.
+    let registry = request(
+        bridge,
+        "fs/readFile",
+        json!({ "path": root.join(REGISTRY_FILE) }),
+    )
+    .await
+    .ok()
+    .and_then(|v| BASE64.decode(v["dataBase64"].as_str()?).ok())
+    .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+    .unwrap_or_default();
+    REGISTRY.lock().get_or_insert(registry);
+}
+
+/// Applies `edit` and writes the whole registry, like the original's `writeState`.
+async fn write_registry(
+    bridge: &Bridge,
+    root: &Path,
+    edit: impl FnOnce(&mut Registry),
+) -> Result<()> {
+    let json = {
+        let mut guard = REGISTRY.lock();
+        let registry = guard.get_or_insert_default();
+        edit(registry);
+        serde_json::to_string(registry)?
+    };
+    let params = json!({ "path": root.join(REGISTRY_FILE), "dataBase64": BASE64.encode(json) });
+    request(bridge, "fs/writeFile", params).await.map(drop)
+}
+
+/// The original's `createPastedTextAttachment`: a new directory, the file, the registry.
+async fn save_text(bridge: Arc<Bridge>, text: String) -> Result<Attachment> {
+    let root = attachments_root()?;
+    load_registry(&bridge, &root).await;
+    let directory = root.join(uuid::Uuid::new_v4().to_string());
+    let params = json!({ "path": directory, "recursive": true });
+    request(&bridge, "fs/createDirectory", params).await?;
+    let path = directory.join("Pasted text.txt");
+    let params = json!({ "path": path, "dataBase64": BASE64.encode(&text) });
+    request(&bridge, "fs/writeFile", params).await?;
+    let units: Vec<u16> = text.trim().encode_utf16().take(2000).collect();
+    let excerpt = String::from_utf16_lossy(&units);
+    let key = path.to_string_lossy().into_owned();
+    write_registry(&bridge, &root, |r| {
+        r.attachment_paths.push(key.clone());
+        r.text_excerpts_by_path.insert(key, excerpt.into());
+    })
+    .await?;
+    Ok(Attachment {
+        path,
+        content: Content::Text(text),
+        persisted: true,
+    })
+}
+
+/// The original's `remove`: the path goes pending, the file goes, the path goes.
+async fn remove_text(bridge: Arc<Bridge>, path: PathBuf) -> Result<()> {
+    let root = attachments_root()?;
+    let key = path.to_string_lossy().into_owned();
+    write_registry(&bridge, &root, |r| {
+        r.pending_removal_paths.push(key.clone())
+    })
+    .await?;
+    request(&bridge, "fs/remove", json!({ "path": path, "force": true })).await?;
+    write_registry(&bridge, &root, |r| {
+        r.attachment_paths.retain(|p| *p != key);
+        r.pending_removal_paths.retain(|p| *p != key);
+        r.text_excerpts_by_path.remove(&key);
+    })
+    .await
+}
+
+/// A pasted image, written by this process like the original's `persistImageFileToTemp`.
+fn persist(image: Arc<gpui::Image>) -> io::Result<Attachment> {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
     let unique = format!(
         "{}-{}-{}",
         std::process::id(),
@@ -65,15 +179,7 @@ fn persist(content: Content) -> io::Result<Attachment> {
             .as_nanos(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     );
-    let directory = root.join("attachments").join(unique);
-    let (name, bytes) = match &content {
-        Content::Text(text) => ("Pasted text.txt".to_owned(), text.as_bytes()),
-        Content::Image(image) => (
-            format!("image.{}", image.format.extension()),
-            image.bytes.as_slice(),
-        ),
-        Content::File => unreachable!("only clipboard contents are persisted"),
-    };
+    let directory = attachments_root()?.join(unique);
     let mut builder = fs::DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]
@@ -82,7 +188,7 @@ fn persist(content: Content) -> io::Result<Attachment> {
         builder.mode(0o700);
     }
     builder.create(&directory)?;
-    let path = directory.join(name);
+    let path = directory.join(format!("image.{}", image.format.extension()));
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -91,14 +197,14 @@ fn persist(content: Content) -> io::Result<Attachment> {
         options.mode(0o600);
     }
     let mut file = options.open(&path)?;
-    if let Err(error) = file.write_all(bytes) {
+    if let Err(error) = file.write_all(&image.bytes) {
         let _ = fs::remove_file(&path);
         let _ = fs::remove_dir(&directory);
         return Err(error);
     }
     Ok(Attachment {
         path,
-        content,
+        content: Content::Image(image),
         persisted: true,
     })
 }
@@ -107,13 +213,24 @@ impl Composer {
     pub(super) fn save_paste(&mut self, content: Content, cx: &mut Context<Self>) {
         self.pending_attachments += 1;
         self.attachment_error = None;
-        let error_message = match content {
-            Content::Text(_) => "Large pasted text could not be attached",
-            _ => "Image could not be attached",
+        let (error_message, save): (_, Task<Result<Attachment>>) = match content {
+            Content::Text(text) => (
+                "Large pasted text could not be attached",
+                match cx.try_global::<AppServer>() {
+                    Some(AppServer(bridge)) => {
+                        let bridge = bridge.clone();
+                        cx.foreground_executor().spawn(save_text(bridge, text))
+                    }
+                    None => Task::ready(Err(anyhow!("no app-server"))),
+                },
+            ),
+            Content::Image(image) => (
+                "Image could not be attached",
+                cx.background_executor()
+                    .spawn(async move { persist(image).map_err(Into::into) }),
+            ),
+            Content::File => unreachable!("only clipboard contents are persisted"),
         };
-        let save = cx
-            .background_executor()
-            .spawn(async move { persist(content) });
         cx.spawn(async move |this, cx| {
             let result = save.await;
             let _ = this.update(cx, |this, cx| {
@@ -254,15 +371,31 @@ impl Composer {
 
     fn remove_paste(&mut self, i: usize, cx: &mut Context<Self>) -> Content {
         let attachment = self.attachments.remove(i);
-        if attachment.persisted {
-            cx.background_executor()
-                .spawn(async move {
-                    let _ = fs::remove_file(&attachment.path);
-                    if let Some(parent) = attachment.path.parent() {
-                        let _ = fs::remove_dir(parent);
-                    }
-                })
-                .detach();
+        match (&attachment.content, attachment.persisted) {
+            (Content::Text(_), true) => {
+                if let Some(AppServer(bridge)) = cx.try_global::<AppServer>() {
+                    let (bridge, path) = (bridge.clone(), attachment.path.clone());
+                    cx.foreground_executor()
+                        .spawn(async move {
+                            if let Err(error) = remove_text(bridge, path).await {
+                                eprintln!("codex-gpui: pasted text not removed: {error:#}");
+                            }
+                        })
+                        .detach();
+                }
+            }
+            (Content::Image(_), true) => {
+                let path = attachment.path.clone();
+                cx.background_executor()
+                    .spawn(async move {
+                        let _ = fs::remove_file(&path);
+                        if let Some(parent) = path.parent() {
+                            let _ = fs::remove_dir(parent);
+                        }
+                    })
+                    .detach();
+            }
+            _ => {}
         }
         cx.notify();
         attachment.content

@@ -11,15 +11,16 @@ use anyhow::{Context as _, Result};
 use async_channel::Receiver;
 use bridge::types::{
     ApprovalDecision, CommandApprovalRequest, ConfigReadResponse, FileChangeApprovalRequest,
-    Thread, ThreadItem, ThreadReadResponse, ThreadStartResponse, ThreadStartedNotification,
-    TurnStatus,
+    Thread, ThreadItem, ThreadReadResponse, ThreadSection, ThreadStartResponse,
+    ThreadStartedNotification, TurnStatus,
 };
 use bridge::{Bridge, Event};
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Context, Entity,
-    FocusHandle, Focusable as _, InteractiveElement as _, IntoElement, KeyBinding, Menu, MenuItem,
-    OsAction, ParentElement as _, Pixels, Render, SharedString, Styled as _, SystemMenuType, Task,
-    WeakEntity, Window, WindowAppearance, actions, div, px,
+    EntityInputHandler as _, FocusHandle, Focusable as _, InteractiveElement as _, IntoElement,
+    KeyBinding, KeyDownEvent, Menu, MenuItem, OsAction, ParentElement as _, Pixels, Render,
+    SharedString, Styled as _, SystemMenuType, Task, WeakEntity, Window, WindowAppearance, actions,
+    div, px,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -34,7 +35,8 @@ use ui::screens::diff::panel::{
 use ui::screens::home::HomeMain;
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
 use ui::screens::sidebar::{
-    ArchiveThread, CommandMenu, CommandMenuEvent, HomeSidebar, OpenThread, UnpinThread,
+    ArchiveThread, CommandMenu, CommandMenuEvent, HomeSidebar, OpenThread, PINNED_SECTION_ID,
+    PinThread,
 };
 use ui::screens::terminal::Xterm;
 use ui::screens::thread::view::{Clock, EditMessage, ForkThread, RevertTurn, ThreadView};
@@ -952,6 +954,40 @@ impl Root {
         }
     }
 
+    /// HC-033: a printable key (no ⌘/⌃, not Space) typed outside an editable, with no
+    /// dialog, menu or popover open, goes to the route's composer and focuses it. Popovers
+    /// hold plain focus handles; page controls and the composers are tab stops.
+    fn type_anywhere(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let keystroke = &event.keystroke;
+        let Some(text) = keystroke.key_char.as_deref() else {
+            return;
+        };
+        let printable = text.chars().count() == 1 && !text.chars().all(char::is_whitespace);
+        let in_popover = window
+            .focused(cx)
+            .is_some_and(|focus| !focus.tab_stop && focus != self.focus);
+        let editing = window
+            .context_stack()
+            .iter()
+            .any(|context| context.contains("Composer"));
+        if !printable
+            || keystroke.modifiers.platform
+            || keystroke.modifiers.control
+            || self.dialog.is_some()
+            || self.command_menu.is_some()
+            || self.route_focus(cx) == self.focus
+            || in_popover
+            || editing
+        {
+            return;
+        }
+        self.composer(cx).update(cx, |composer, cx| {
+            composer.focus_handle(cx).focus(window, cx);
+            composer.replace_text_in_range(None, text, window, cx);
+        });
+        cx.stop_propagation();
+    }
+
     /// The strip tab of `side` in the open thread `view`: `(icon, label)`. No terminal tab
     /// without a background command, no file tab without a file viewer.
     fn side_tab(
@@ -1454,11 +1490,22 @@ impl Root {
         log_err(task, cx);
     }
 
-    fn unpin(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+    /// `thread/section/move` into or out of the Pinned section: the row moves at once (no toast);
+    /// a refused write puts it back, silently, as the original does.
+    fn set_pinned(
+        &mut self,
+        id: String,
+        pinned: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(thread) = self.threads.iter_mut().find(|thread| thread.id == id) else {
             return;
         };
-        let old_section = thread.section.take();
+        let section = pinned.then(|| ThreadSection {
+            id: PINNED_SECTION_ID.to_owned(),
+        });
+        let old_section = std::mem::replace(&mut thread.section, section);
         self.sidebar
             .update(cx, |s, cx| s.set_threads(&self.threads, cx));
         let bridge = self.bridge.clone();
@@ -1466,7 +1513,7 @@ impl Root {
             let done = bridge
                 .request::<_, Value>(
                     "thread/section/move",
-                    json!({ "threadId": id, "sectionId": null, "beforeThreadId": null }),
+                    json!({ "threadId": id, "sectionId": pinned.then_some(PINNED_SECTION_ID), "beforeThreadId": null }),
                 )
                 .await;
             this.update(cx, |this, cx| {
@@ -1476,7 +1523,6 @@ impl Root {
                     }
                     this.sidebar
                         .update(cx, |s, cx| s.set_threads(&this.threads, cx));
-                    this.toast(Toast::danger("Couldn't save your changes. Try again"), cx);
                 }
             })?;
             done.map(drop)
@@ -1917,6 +1963,7 @@ impl Render for Root {
             .relative()
             .font_family(ui::SANS)
             .track_focus(&self.focus)
+            .on_key_down(cx.listener(Self::type_anywhere))
             .on_action(cx.listener(|this, _: &FindInThread, window, cx| {
                 if matches!(this.state.route, Route::Thread(_))
                     && let Some(thread) = &this.thread
@@ -2006,11 +2053,9 @@ impl Render for Root {
             .on_action(cx.listener(|this, a: &ArchiveThread, window, cx| {
                 this.archive(a.0.clone(), window, cx)
             }))
-            .on_action(
-                cx.listener(|this, a: &UnpinThread, window, cx| {
-                    this.unpin(a.0.clone(), window, cx)
-                }),
-            )
+            .on_action(cx.listener(|this, a: &PinThread, window, cx| {
+                this.set_pinned(a.0.clone(), a.1, window, cx)
+            }))
             .on_action(cx.listener(|this, a: &ForkThread, window, cx| this.fork(&a.0, window, cx)))
             .on_action(cx.listener(|this, edit: &EditMessage, window, cx| {
                 this.edit_message(edit.clone(), window, cx)

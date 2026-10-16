@@ -756,7 +756,9 @@ impl Composer {
         self.close_speed();
         self.end_search(cx);
         if self.menu == Some(menu) {
-            self.dismiss(&Dismiss, window, cx);
+            self.menu = None;
+            self.menu_focus.restore(window, cx);
+            cx.notify();
         } else {
             self.menu = Some(menu);
             let count = match menu {
@@ -779,9 +781,16 @@ impl Composer {
             self.close_slash(cx);
             return;
         }
-        if self.menu.take().is_some() {
+        if let Some(menu) = self.menu.take() {
+            // Escape returns focus to the trigger of the Radix menus (permissions, the
+            // `Speed` submenu: f2c.json step 24); the model picker's close focuses the editor
+            // (refs/interactions/s033.json).
+            if menu == Menu::Permissions || self.speed_open {
+                self.menu_focus.restore(window, cx);
+            } else {
+                self.focus_handle.focus(window, cx);
+            }
             self.close_speed();
-            self.menu_focus.restore(window, cx);
             cx.notify();
         } else if self.approval.is_some() {
             // `approval.decline` (Escape), unless a menu has focus.
