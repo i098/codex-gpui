@@ -6,15 +6,19 @@ use crate::{
     CloseSidePanel, MONO, SANS, Shell, composer::shadow, dispatch, fixture, icon::icon,
     layout_color, over, screens::thread::view::ThreadView, text,
 };
-use bridge::types::{ThreadItem, ThreadReadResponse, ThreadStartResponse, Turn};
+use bridge::{
+    Event,
+    types::{ThreadItem, ThreadReadResponse, ThreadStartResponse, Turn},
+};
 use gpui::{
-    AnyView, App, AppContext as _, Context, Corners, Div, Entity, Font, FontFeatures, FontWeight,
-    HighlightStyle, Hsla, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels,
-    Render, Rgba, SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun,
-    Window, black, div, font, prelude::FluentBuilder as _, px, rgb, white,
+    AnyView, App, AppContext as _, Context, Corners, Div, Entity, FocusHandle, Font, FontFeatures,
+    FontWeight, HighlightStyle, Hsla, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
+    ParentElement, Pixels, Render, Rgba, SharedString, Stateful, StatefulInteractiveElement,
+    Styled, StyledText, TextRun, Window, black, combine_highlights, deferred, div, font,
+    prelude::FluentBuilder as _, px, rgb, white,
 };
 use shapes::Decoration;
-use std::{ops::Range, sync::Arc};
+use std::{cell::Cell, ops::Range, sync::Arc};
 use theme::{ActiveTheme as _, Appearance, Theme};
 
 /// Panel width the capture had stored (`app-shell:right-panel-width:v3`) before clamping.
@@ -65,6 +69,7 @@ struct Line {
     /// New-file number; old-file number for removed lines.
     number: u32,
     text: SharedString,
+    matches: Vec<Range<usize>>,
 }
 
 struct Hunk {
@@ -75,16 +80,22 @@ struct Hunk {
 
 pub struct FileDiff {
     /// Workspace-relative directory part (tertiary) and file name of the header path.
-    dir: SharedString,
-    name: SharedString,
-    added: usize,
-    removed: usize,
+    pub dir: SharedString,
+    pub name: SharedString,
+    pub added: usize,
+    pub removed: usize,
     hunks: Vec<Hunk>,
     pub open: bool,
 }
 
 pub struct DiffPanel {
     pub files: Vec<FileDiff>,
+    focus: Option<FocusHandle>,
+    query: Option<String>,
+    matches: usize,
+    active_match: usize,
+    selected_query: bool,
+    aggregated_turn: Option<String>,
 }
 
 impl DiffPanel {
@@ -118,7 +129,27 @@ impl DiffPanel {
             let shown = relative(workspace_root, &path);
             let split = shown.rfind('/').map_or(0, |i| i + 1);
             let (dir, name) = shown.split_at(split);
-            let hunks = parse(&change.diff);
+            let hunks = match change.kind["type"].as_str() {
+                Some(kind @ ("add" | "delete")) => vec![Hunk {
+                    separator: None,
+                    lines: change
+                        .diff
+                        .lines()
+                        .enumerate()
+                        .map(|(i, text)| Line {
+                            kind: if kind == "add" {
+                                Kind::Added
+                            } else {
+                                Kind::Removed
+                            },
+                            number: i as u32 + 1,
+                            text: text.to_owned().into(),
+                            matches: Vec::new(),
+                        })
+                        .collect(),
+                }],
+                _ => parse(&change.diff),
+            };
             let count = |k| {
                 hunks
                     .iter()
@@ -143,7 +174,280 @@ impl DiffPanel {
                 }),
             }
         }
-        Self { files }
+        Self {
+            files,
+            focus: None,
+            query: None,
+            matches: 0,
+            active_match: 0,
+            selected_query: false,
+            aggregated_turn: None,
+        }
+    }
+
+    pub fn search(&self) -> Option<(&str, usize)> {
+        self.query.as_deref().map(|query| (query, self.matches))
+    }
+
+    pub fn apply(
+        &mut self,
+        event: &Event,
+        workspace: &str,
+        turns: &[Turn],
+        cx: &mut Context<Self>,
+    ) {
+        let Event::Notification { method, params } = event else {
+            return;
+        };
+        let Some(turn) = turns.last() else { return };
+        if params["turnId"].as_str() != Some(&turn.id) {
+            return;
+        }
+        let files = match method.as_str() {
+            "turn/diff/updated" => {
+                let Some(diff) = params["diff"].as_str() else {
+                    return;
+                };
+                self.aggregated_turn = Some(turn.id.clone());
+                diff.split("diff --git ")
+                    .skip(1)
+                    .filter_map(|part| {
+                        let path = part
+                            .lines()
+                            .find_map(|line| line.strip_prefix("+++ b/"))
+                            .or_else(|| {
+                                part.lines().find_map(|line| line.strip_prefix("--- a/"))
+                            })?;
+                        let split = path.rfind('/').map_or(0, |i| i + 1);
+                        let hunks = parse(part);
+                        let added = hunks
+                            .iter()
+                            .flat_map(|h| &h.lines)
+                            .filter(|l| l.kind == Kind::Added)
+                            .count();
+                        let removed = hunks
+                            .iter()
+                            .flat_map(|h| &h.lines)
+                            .filter(|l| l.kind == Kind::Removed)
+                            .count();
+                        Some(FileDiff {
+                            dir: path[..split].to_owned().into(),
+                            name: path[split..].to_owned().into(),
+                            added,
+                            removed,
+                            hunks,
+                            open: true,
+                        })
+                    })
+                    .collect()
+            }
+            "item/started" | "item/completed"
+                if params["item"]["type"] == "fileChange"
+                    && self.aggregated_turn.as_deref() != Some(&turn.id) =>
+            {
+                Self::last_turn(workspace, workspace, turns).files
+            }
+            _ => return,
+        };
+        self.replace_files(files);
+        cx.notify();
+    }
+
+    fn replace_files(&mut self, mut files: Vec<FileDiff>) {
+        for file in &mut files {
+            if let Some(old) = self
+                .files
+                .iter()
+                .find(|old| old.dir == file.dir && old.name == file.name)
+            {
+                file.open = old.open;
+            }
+        }
+        self.files = files;
+        self.search_changed();
+    }
+
+    fn search_changed(&mut self) {
+        let query = self.query.as_deref().unwrap_or("");
+        self.matches = 0;
+        for file in &mut self.files {
+            let before = self.matches;
+            for line in file.hunks.iter_mut().flat_map(|h| &mut h.lines) {
+                line.matches.clear();
+                if !query.is_empty() {
+                    let mut end = 0;
+                    for (start, _) in line.text.char_indices() {
+                        if start >= end
+                            && line
+                                .text
+                                .get(start..start + query.len())
+                                .is_some_and(|s| s.eq_ignore_ascii_case(query))
+                        {
+                            end = start + query.len();
+                            line.matches.push(start..end);
+                        }
+                    }
+                }
+                self.matches += line.matches.len();
+            }
+            if self.matches > before {
+                file.open = true;
+            }
+        }
+        self.active_match = self.active_match.min(self.matches.saturating_sub(1));
+    }
+
+    fn on_key(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let key = &event.keystroke;
+        if key.modifiers.platform && key.key == "f" {
+            self.query.get_or_insert_default();
+            self.selected_query = true;
+        } else if let Some(query) = &mut self.query {
+            match key.key.as_str() {
+                "escape" => self.query = None,
+                "enter" if self.matches > 0 => {
+                    self.active_match = if key.modifiers.shift {
+                        (self.active_match + self.matches - 1) % self.matches
+                    } else {
+                        (self.active_match + 1) % self.matches
+                    };
+                }
+                "backspace" => {
+                    if self.selected_query {
+                        query.clear();
+                    } else {
+                        query.pop();
+                    }
+                    self.selected_query = false;
+                }
+                _ if !key.modifiers.platform && !key.modifiers.control => {
+                    let Some(text) = &key.key_char else { return };
+                    if self.selected_query {
+                        query.clear();
+                    }
+                    query.push_str(text);
+                    self.selected_query = false;
+                    self.active_match = 0;
+                }
+                _ => return,
+            }
+        } else {
+            return;
+        }
+        self.search_changed();
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    fn find_bar(&self, cx: &Context<Self>) -> impl IntoElement {
+        let t = cx.theme();
+        let query = self.query.as_deref().unwrap_or("");
+        let count = format!(
+            "{} / {} results",
+            if self.matches == 0 {
+                0
+            } else {
+                self.active_match + 1
+            },
+            self.matches
+        );
+        let button = |id, name, label| {
+            round_icon(name, 28., t)
+                .id(id)
+                .role(gpui::Role::Button)
+                .aria_label(label)
+                .cursor_pointer()
+        };
+        deferred(
+            div()
+                .absolute()
+                .top(px(-36.))
+                .right(px(12.))
+                .w(px(340.))
+                .h(px(82.))
+                .rounded(px(20.))
+                .border(px(0.5))
+                .border_color(t.border)
+                .bg(t.surface_secondary)
+                .flex()
+                .flex_col()
+                .font_family(SANS)
+                .child(
+                    div()
+                        .h(px(44.))
+                        .flex()
+                        .items_center()
+                        .pl(px(16.))
+                        .pr(px(12.))
+                        .gap(px(8.))
+                        .child(icon("search", 16., t.text))
+                        .child(
+                            div()
+                                .id("diff-find-input")
+                                .flex_1()
+                                .cursor_text()
+                                .role(gpui::Role::TextInput)
+                                .aria_label("Find in diff")
+                                .aria_placeholder("Search diff…")
+                                .aria_value(query.to_owned())
+                                .aria_active_descendant()
+                                .child(text(
+                                    if query.is_empty() {
+                                        "Search diff…"
+                                    } else {
+                                        query
+                                    },
+                                    14.,
+                                    24.,
+                                    400.,
+                                    if query.is_empty() {
+                                        t.text_tertiary
+                                    } else {
+                                        t.text
+                                    },
+                                )),
+                        )
+                        .child(button("diff-find-close", "close", "Close find").on_click(
+                            cx.listener(|this, _, _, cx| {
+                                this.query = None;
+                                this.search_changed();
+                                cx.notify();
+                            }),
+                        )),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .items_center()
+                        .px(px(8.))
+                        .border_t_1()
+                        .border_color(t.border)
+                        .child(
+                            button("diff-find-previous", "composer-arrow-up", "Previous result")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    if this.matches > 0 {
+                                        this.active_match =
+                                            (this.active_match + this.matches - 1) % this.matches;
+                                    }
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
+                            button("diff-find-next", "diff-chevron-down", "Next result").on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    if this.matches > 0 {
+                                        this.active_match = (this.active_match + 1) % this.matches;
+                                    }
+                                    cx.notify();
+                                }),
+                            ),
+                        )
+                        .child(div().flex_1())
+                        .child(text(count, 12., 20., 400., t.text_tertiary).mr(px(8.))),
+                ),
+        )
+        .with_priority(3)
     }
 
     fn header(&self, t: &Theme, wide: bool, clamped: bool) -> Div {
@@ -223,6 +527,8 @@ impl Render for DiffPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let wide = panel_width(window) - px(1.) >= px(625.);
+        let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
+        let ordinal = Cell::new(0);
         let files = self.files.iter().enumerate().map(|(i, file)| {
             div()
                 .flex()
@@ -234,7 +540,11 @@ impl Render for DiffPanel {
                     })),
                 )
                 .when(file.open, |d| {
-                    d.children(file.hunks.iter().map(|h| hunk(h, &t)))
+                    d.children(
+                        file.hunks
+                            .iter()
+                            .map(|h| hunk(h, &t, &ordinal, self.active_match)),
+                    )
                 })
         });
         // No fill: the main panel's rounded fill (a `shapes` decoration the capsules' backdrop
@@ -243,6 +553,12 @@ impl Render for DiffPanel {
         // do not reach the opaque scroller under it, which Chromium composites in its own layer
         // above them: clip them there.
         div()
+            .relative()
+            .track_focus(&focus)
+            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                window.focus(&focus, cx)
+            })
+            .on_key_down(cx.listener(Self::on_key))
             .size_full()
             .flex()
             .flex_col()
@@ -277,6 +593,7 @@ impl Render for DiffPanel {
                     .pb(px(12.))
                     .children(files),
             )
+            .when(self.query.is_some(), |d| d.child(self.find_bar(cx)))
     }
 }
 
@@ -825,7 +1142,7 @@ fn mix(a: Hsla, b: Hsla, w: f32) -> Hsla {
     .into()
 }
 
-fn hunk(h: &Hunk, t: &Theme) -> Div {
+fn hunk(h: &Hunk, t: &Theme, ordinal: &Cell<usize>, active: usize) -> Div {
     let syntax = Syntax::of(t);
     let digits = h
         .lines
@@ -901,8 +1218,22 @@ fn hunk(h: &Hunk, t: &Theme) -> Div {
                     over(t.diff_deleted, t.surface),
                 ),
             };
-            let content =
-                StyledText::new(l.text.clone()).with_highlights(highlight(&l.text, &syntax));
+            let found = l.matches.iter().map(|range| {
+                let index = ordinal.get();
+                ordinal.set(index + 1);
+                (
+                    range.clone(),
+                    HighlightStyle {
+                        color: Some(t.text),
+                        background_color: Some(
+                            rgb(if index == active { 0xfb6a22 } else { 0xffd240 }).into(),
+                        ),
+                        ..Default::default()
+                    },
+                )
+            });
+            let content = StyledText::new(l.text.clone())
+                .with_highlights(combine_highlights(highlight(&l.text, &syntax), found));
             row(Some(l.number), number_bg, bg, content)
         }))
 }
@@ -953,6 +1284,7 @@ fn parse(diff: &str) -> Vec<Hunk> {
             kind,
             number,
             text: line.get(1..).unwrap_or("").to_string().into(),
+            matches: Vec::new(),
         });
     }
     hunks
