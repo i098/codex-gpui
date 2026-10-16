@@ -14,6 +14,10 @@ fn proxy() {
 
 #[test]
 fn titlebar_drag_moves_the_window_but_its_buttons_do_not() -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        println!("s032: macOS renderer required");
+        return Ok(());
+    }
     let rec: Value = serde_json::from_str(include_str!("../../../refs/interactions/s032.json"))?;
     let mut fx = Fx::scripted(script(None, |_| {})?)?;
     let point = |v: &Value| -> Result<(f32, f32)> {
