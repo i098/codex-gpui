@@ -149,6 +149,8 @@ fn file_link_opens_the_file_viewer_tab() -> Result<()> {
     });
     fx.root
         .update(&mut fx.cx, |root, cx| root.set_host(failing, cx));
+    // The open panel narrowed the chat: close it, so the link is back at the reference spot.
+    fx.action(Box::new(ui::CloseSidePanel))?;
     fx.click(link)?;
     fx.wait("file viewer error", |fx| {
         fx.read(|r, cx| {
