@@ -29,6 +29,7 @@ use ui::screens::sidebar::{ArchiveThread, CommandMenu, CommandMenuEvent, HomeSid
 use ui::screens::terminal::Xterm;
 use ui::screens::thread::view::{Clock, ForkThread, RevertTurn, ThreadView};
 use ui::screens::{automations, mobile};
+use ui::toast::{Toast, Toaster};
 use ui::{
     CloseSidePanel, Copy, Cut, GoBack, GoForward, NewChat, OpenBackgroundTerminal,
     OpenChangesPanel, OpenCommandMenu, OpenMobileSetup, OpenScheduled, OpenSettings, Paste, Redo,
@@ -308,6 +309,8 @@ pub struct Root {
     loaded: HashSet<String>,
     /// Id of the server request the composer's approval card answers.
     approval: Option<Value>,
+    /// The `Notifications` region over the window.
+    toaster: Entity<Toaster>,
     _events: Task<()>,
 }
 
@@ -419,6 +422,7 @@ impl Root {
             ready: false,
             loaded: HashSet::new(),
             approval: None,
+            toaster: cx.new(|_| Toaster::new()),
             _events,
             state,
         };
@@ -742,12 +746,7 @@ impl Root {
                 "Manage scheduled tasks" => self.navigate(Route::Scheduled, window, cx),
                 label => {
                     if let Some(section) = settings::section(label) {
-                        self.settings_section = Some(section);
-                        if self.state.route == Route::Settings {
-                            self.sync(window, cx);
-                        } else {
-                            self.navigate(Route::Settings, window, cx);
-                        }
+                        self.open_settings_section(section, window, cx);
                     }
                 }
             },
@@ -885,23 +884,118 @@ impl Root {
         log_err(task, cx);
     }
 
-    /// `thread/archive`, then drops the Recents row; an archived open chat leaves for Home.
+    /// `thread/archive`: the Recents row leaves at once (an archived open chat leaves for Home),
+    /// then `Archived chat` offers View and Undo; a refused write puts the row back with
+    /// `Failed to archive chat`.
     fn archive(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let at = self.threads.iter().position(|t| t.id == id);
+        let thread = at.map(|i| self.threads.remove(i));
+        self.sidebar
+            .update(cx, |s, cx| s.set_threads(&self.threads, cx));
+        if self.state.route == Route::Thread(id.clone()) {
+            self.new_chat(window, cx);
+        }
         let bridge = self.bridge.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            bridge
+            let done = bridge
                 .request::<_, Value>("thread/archive", json!({ "threadId": id }))
-                .await?;
-            this.update_in(cx, |this, window, cx| {
-                this.threads.retain(|t| t.id != id);
-                this.sidebar
-                    .update(cx, |s, cx| s.set_threads(&this.threads, cx));
-                if this.state.route == Route::Thread(id) {
-                    this.new_chat(window, cx);
+                .await;
+            this.update(cx, |this, cx| match &done {
+                Ok(_) => {
+                    let (view, undo) = (cx.weak_entity(), cx.weak_entity());
+                    let toast = Toast::info("Archived chat")
+                        .icon("sidebar-archive")
+                        .action("View", move |window, cx| {
+                            view.update(cx, |this, cx| this.open_archived_chats(window, cx))
+                                .ok();
+                        })
+                        .action("Undo", move |window, cx| {
+                            let id = id.clone();
+                            undo.update(cx, |this, cx| this.unarchive(id, at, window, cx))
+                                .ok();
+                        });
+                    this.toast(toast, cx);
                 }
-            })
+                Err(_) => {
+                    if let Some(thread) = thread {
+                        this.threads
+                            .insert(at.unwrap_or(0).min(this.threads.len()), thread);
+                        this.sidebar
+                            .update(cx, |s, cx| s.set_threads(&this.threads, cx));
+                    }
+                    this.toast(Toast::danger("Failed to archive chat"), cx);
+                }
+            })?;
+            done.map(drop)
         });
         log_err(task, cx);
+    }
+
+    /// The toast's Undo: `thread/unarchive` puts the row back where it was.
+    fn unarchive(
+        &mut self,
+        id: String,
+        at: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let bridge = self.bridge.clone();
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let done = bridge
+                .request::<_, Value>("thread/unarchive", json!({ "threadId": id }))
+                .await;
+            this.update(cx, |this, cx| {
+                let thread = done
+                    .as_ref()
+                    .ok()
+                    .and_then(|r| serde_json::from_value::<Thread>(r["thread"].clone()).ok());
+                match thread {
+                    Some(thread) => {
+                        this.threads.retain(|t| t.id != thread.id);
+                        this.threads
+                            .insert(at.unwrap_or(0).min(this.threads.len()), thread);
+                        this.sidebar
+                            .update(cx, |s, cx| s.set_threads(&this.threads, cx));
+                    }
+                    None => this.toast(Toast::danger("Failed to unarchive conversation"), cx),
+                }
+            })?;
+            done.map(drop)
+        });
+        log_err(task, cx);
+    }
+
+    /// Shows `toast` in the `Notifications` region.
+    pub fn toast(&mut self, toast: Toast, cx: &mut Context<Self>) {
+        self.toaster.update(cx, |t, cx| t.push(toast, cx));
+    }
+
+    /// Titles of the toasts shown, newest first.
+    pub fn toasts(&self, cx: &App) -> Vec<SharedString> {
+        self.toaster.read(cx).titles()
+    }
+
+    /// Settings at `section`, whether or not Settings is open.
+    fn open_settings_section(
+        &mut self,
+        section: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.settings_section = Some(section);
+        if self.state.route == Route::Settings {
+            self.sync(window, cx);
+        } else {
+            self.navigate(Route::Settings, window, cx);
+        }
+    }
+
+    /// The archive toast's View.
+    /// ponytail: the original's destination is not recorded; Settings ▸ Archived chats lists them.
+    fn open_archived_chats(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(section) = settings::section("Archived chats") {
+            self.open_settings_section(section, window, cx);
+        }
     }
 
     /// `recentThread1..6`: the `n`th chat by last update, newest first.
@@ -1212,5 +1306,6 @@ impl Render for Root {
             .on_action(|_: &Zoom, window, _| window.zoom_window())
             .child(content)
             .children(self.command_menu.clone())
+            .child(self.toaster.clone())
     }
 }

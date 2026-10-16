@@ -16,6 +16,7 @@ pub mod composer;
 pub mod fixture;
 pub mod icon;
 pub mod screens;
+pub mod toast;
 
 actions!(
     shell,
