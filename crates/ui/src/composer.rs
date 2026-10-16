@@ -1,6 +1,8 @@
 //! The prompt composer (`_ComposerLayoutRoot`): a multi-line editor, attachment chips, the
 //! permissions and model menus, and approval prompts for server approval requests. All
 //! numbers are the CSS px of refs/home and refs/composer.
+//! Clipboard text of at least 5,000 UTF-16 units becomes a saved text attachment.
+//! Clipboard images retain their bytes and show a thumbnail.
 
 use crate::{MONO, icon::icon, text};
 use bridge::types::{ApprovalDecision, CommandApprovalRequest, FileChangeApprovalRequest, Model};
@@ -300,7 +302,9 @@ pub struct Composer {
     /// Shaped lines and editor bounds of the last paint, for hit testing.
     lines: Vec<WrappedLine>,
     bounds: Option<Bounds<Pixels>>,
-    attachments: Vec<PathBuf>,
+    attachments: Vec<attach::Attachment>,
+    pending_attachments: usize,
+    attachment_error: Option<&'static str>,
     models: Vec<ModelOption>,
     model: usize,
     effort: String,
@@ -342,6 +346,8 @@ impl Composer {
             lines: Vec::new(),
             bounds: None,
             attachments: Vec::new(),
+            pending_attachments: 0,
+            attachment_error: None,
             models: Vec::new(),
             model: 0,
             effort: "medium".into(),
@@ -446,12 +452,14 @@ impl Composer {
     }
 
     fn submit(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
-        if self.content.trim().is_empty() && self.attachments.is_empty() {
+        if self.pending_attachments > 0
+            || (self.content.trim().is_empty() && self.attachments.is_empty())
+        {
             return;
         }
         let submission = Submission {
             text: std::mem::take(&mut self.content),
-            attachments: std::mem::take(&mut self.attachments),
+            attachments: self.attachments.drain(..).map(|a| a.path).collect(),
             model: self
                 .current_model()
                 .map(|m| m.id.clone())
@@ -665,6 +673,9 @@ impl Render for Composer {
                     .flex_col()
                     .when(self.docked, |d| d.layer())
                     .child(self.attachments_row(&t, cx))
+                    .when_some(self.attachment_error, |d, error| {
+                        d.child(label(error, t.text))
+                    })
                     .child(self.editor(cx))
                     .child(self.footer(&t, cx)),
             );
