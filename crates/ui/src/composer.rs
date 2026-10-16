@@ -417,6 +417,8 @@ pub struct Composer {
     /// (the content) is a `will-change: opacity` layer. On Home the body paints the card.
     docked: bool,
     content: String,
+    /// Mention chips in `content`, in order.
+    mentions: Vec<mention::Mention>,
     selected_range: Range<usize>,
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
@@ -484,6 +486,7 @@ impl Composer {
             placeholder: placeholder.into(),
             docked,
             content: String::new(),
+            mentions: Vec::new(),
             selected_range: 0..0,
             selection_reversed: false,
             marked_range: None,
@@ -657,6 +660,7 @@ impl Composer {
 
     pub fn set_text(&mut self, s: &str, cx: &mut Context<Self>) {
         self.content = s.into();
+        self.mentions.clear();
         self.selected_range = s.len()..s.len();
         self.marked_range = None;
         self.slash.reset();
@@ -712,11 +716,7 @@ impl Composer {
             return;
         }
         let submission = Submission {
-            text: if self.on_cancel_edit.is_some() {
-                self.content.clone()
-            } else {
-                std::mem::take(&mut self.content)
-            },
+            text: self.prompt(),
             attachments: self.attachments.drain(..).map(|a| a.path).collect(),
             model: self
                 .current_model()
@@ -729,6 +729,8 @@ impl Composer {
         if self.on_cancel_edit.is_some() {
             self.edit_pending = true;
         } else {
+            self.content.clear();
+            self.mentions.clear();
             self.selected_range = 0..0;
             self.marked_range = None;
             self.menu = None;

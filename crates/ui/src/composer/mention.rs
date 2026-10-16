@@ -1,8 +1,10 @@
 //! `@` mention list (recorded in refs/interactions/s019.json). An empty query lists the `Add`
 //! actions and the `Files` section; a query ranks actions, skills and the workspace files that
 //! `fuzzyFileSearch/sessionStart` + `sessionUpdate` return (notifications `sessionUpdated`,
-//! `sessionCompleted`). S020 owns the keyboard rows and the mention chip, S018 the `+` button.
-//! `cargo test -p app --test s019` replays the original's list, requests and colors.
+//! `sessionCompleted`). Enter or Tab inserts the highlighted row as a [`Mention`] chip
+//! (refs/interactions/s020.json); S018 owns the `+` button.
+//! `cargo test -p app --test s019` replays the original's list, requests and colors;
+//! `--test s020` its keys, chips and the prompt sent.
 use super::*;
 use crate::screens::settings::AppServer;
 use serde_json::json;
@@ -65,6 +67,19 @@ const ACTIONS: &[Action] = &[
 
 /// One section of [`Composer::mention_state`]: heading and rows `(text, highlighted)`.
 pub type MentionSection = (Option<&'static str>, Vec<(String, bool)>);
+
+/// A mention chip in `content`: `range` holds [`ICON_SLOT`] and the label; the prompt sends
+/// `link` in its place. One atom, like ProseMirror's: the caret never enters it and any edit
+/// that touches it deletes it whole.
+pub struct Mention {
+    pub(super) range: Range<usize>,
+    pub(super) icon: &'static str,
+    link: String,
+}
+
+/// Room for the chip's 16 px icon and 3 px gap: em space + three-per-em space (18.7 px at
+/// 14 px). ponytail: a glyph placeholder instead of an inline box, which textsys lacks.
+pub(super) const ICON_SLOT: &str = "\u{2003}\u{2004}";
 
 struct FileHit {
     name: String,
@@ -265,27 +280,115 @@ impl Composer {
     }
 
     /// Enter, Tab or a click on the highlighted row. `Files and folders` opens the picker; a
-    /// file inserts its path. ponytail: plain `@path ` text until S020 adds the mention chip;
-    /// the other actions (goal, sketch, project, plan mode) belong to their own rows.
+    /// skill or a file becomes a chip followed by a space, the list closes. ponytail: the
+    /// other actions (goal, sketch, project, plan mode) belong to their own rows.
     pub(super) fn activate_mention(&mut self, index: usize, cx: &mut Context<Self>) {
         let files = ACTIONS.len() + self.slash.skills.len();
-        let text = match ACTIONS.get(index) {
-            Some(action) if action.id == "files-and-folders" => String::new(),
-            None if index >= files => format!("@{} ", self.slash.search.files[index - files].path),
-            _ => return,
+        let (label, link, icon) = match ACTIONS.get(index) {
+            Some(action) if action.id == "files-and-folders" => {
+                let range = self.splice(self.slash.range.clone(), "");
+                self.selected_range = range.start..range.start;
+                self.marked_range = None;
+                self.slash.open = false;
+                self.end_search(cx);
+                self.add_files(cx);
+                cx.notify();
+                return;
+            }
+            Some(_) => return,
+            None if index < files => {
+                let skill = &self.slash.skills[index - ACTIONS.len()];
+                let link = format!("[${}]({})", skill.name, skill.path);
+                (skill.title.clone(), link, "sidebar-cmd-create-page")
+            }
+            None => {
+                let file = &self.slash.search.files[index - files];
+                let link = format!("[{}]({})", file.name, file.path);
+                (file.name.clone(), link, "diff-jump-to-file")
+            }
         };
-        let range = self.slash.range.clone();
-        self.content.replace_range(range.clone(), &text);
-        let end = range.start + text.len();
-        self.selected_range = end..end;
+        let range = self.splice(self.slash.range.clone(), &format!("{ICON_SLOT}{label} "));
+        let end = range.start + ICON_SLOT.len() + label.len();
+        let at = self
+            .mentions
+            .partition_point(|m| m.range.start < range.start);
+        self.mentions.insert(
+            at,
+            Mention {
+                range: range.start..end,
+                icon,
+                link,
+            },
+        );
+        self.selected_range = end + 1..end + 1;
         self.marked_range = None;
         self.slash.open = false;
-        self.slash.dismissed = (!text.is_empty()).then_some(range.start);
+        self.slash.dismissed = None;
         self.end_search(cx);
-        if text.is_empty() {
-            self.add_files(cx);
-        }
         cx.notify();
+    }
+
+    /// Replaces `range` of `content` with `text`: a chip the range touches goes whole, the
+    /// chips after it shift. Returns the range replaced.
+    pub(super) fn splice(&mut self, mut range: Range<usize>, text: &str) -> Range<usize> {
+        self.mentions.retain(|m| {
+            let hit = m.range.start < range.end && m.range.end > range.start;
+            if hit {
+                range.start = range.start.min(m.range.start);
+                range.end = range.end.max(m.range.end);
+            }
+            !hit
+        });
+        self.content.replace_range(range.clone(), text);
+        let delta = text.len() as isize - range.len() as isize;
+        for m in &mut self.mentions {
+            if m.range.start >= range.end {
+                let shift = |at: usize| (at as isize + delta) as usize;
+                m.range = shift(m.range.start)..shift(m.range.end);
+            }
+        }
+        range
+    }
+
+    /// `offset` moved out of a chip, to its nearer edge (`forward`: the far edge when inside).
+    pub(super) fn snap(&self, offset: usize, forward: Option<bool>) -> usize {
+        let Some(m) = self
+            .mentions
+            .iter()
+            .find(|m| m.range.start < offset && offset < m.range.end)
+        else {
+            return offset;
+        };
+        match forward {
+            Some(true) => m.range.end,
+            Some(false) => m.range.start,
+            None if offset - m.range.start < m.range.end - offset => m.range.start,
+            None => m.range.end,
+        }
+    }
+
+    /// The prompt the composer sends: `content` with each chip replaced by its markdown link.
+    pub fn prompt(&self) -> String {
+        let mut out = String::with_capacity(self.content.len());
+        let mut at = 0;
+        for m in &self.mentions {
+            out.push_str(&self.content[at..m.range.start]);
+            out.push_str(&m.link);
+            at = m.range.end;
+        }
+        out.push_str(&self.content[at..]);
+        out
+    }
+
+    /// The chips in order: `(label, icon)`, for the tests.
+    pub fn chips(&self) -> Vec<(String, &'static str)> {
+        self.mentions
+            .iter()
+            .map(|m| {
+                let label = &self.content[m.range.start + ICON_SLOT.len()..m.range.end];
+                (label.to_owned(), m.icon)
+            })
+            .collect()
     }
 
     /// The list's sections: `Add` and `Files` for an empty query, else the ranked rows or

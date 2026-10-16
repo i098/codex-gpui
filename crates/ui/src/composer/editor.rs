@@ -1,4 +1,5 @@
 use super::*;
+use gpui::TransformationMatrix;
 
 impl Composer {
     pub(super) fn cursor(&self) -> usize {
@@ -30,19 +31,21 @@ impl Composer {
     }
 
     // ponytail: char boundaries, not grapheme clusters; add unicode-segmentation if
-    // combining sequences need one-step deletion.
+    // combining sequences need one-step deletion. A chip counts as one character.
     pub(super) fn previous_boundary(&self, offset: usize) -> usize {
-        self.content[..offset]
+        let at = self.content[..offset]
             .char_indices()
             .next_back()
-            .map_or(0, |(i, _)| i)
+            .map_or(0, |(i, _)| i);
+        self.snap(at, Some(false))
     }
 
     pub(super) fn next_boundary(&self, offset: usize) -> usize {
-        self.content[offset..]
+        let at = self.content[offset..]
             .chars()
             .next()
-            .map_or(offset, |c| offset + c.len_utf8())
+            .map_or(offset, |c| offset + c.len_utf8());
+        self.snap(at, Some(true))
     }
 
     pub(super) fn insert(&mut self, s: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -241,7 +244,7 @@ impl Composer {
                 let i = line
                     .closest_index_for_position(p, LINE_HEIGHT)
                     .unwrap_or_else(|i| i);
-                return start + i;
+                return self.snap(start + i, None);
             }
             last = start + line.len();
         }
@@ -392,7 +395,7 @@ impl EntityInputHandler for Composer {
             .map(|r| self.range_from_utf16(r))
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
-        self.content.replace_range(range.clone(), new_text);
+        let range = self.splice(range, new_text);
         let end = range.start + new_text.len();
         self.marked_range = (!new_text.is_empty()).then_some(range.start..end);
         self.selected_range = match new_selected_range_utf16 {
@@ -445,11 +448,18 @@ impl IntoElement for Editor {
     }
 }
 
-/// Shapes `content` (or the placeholder) for one paint.
+/// The chip label color: `color-mix(text-info 80%, text 20%)` over `_Mention`.
+pub(super) fn chip_color(t: &Theme) -> Hsla {
+    crate::over(t.text_accent.opacity(0.8), t.text)
+}
+
+/// Shapes `content` (or the placeholder) for one paint: one run per stretch of plain, marked
+/// (underlined) or chip (`chip` color, weight 500) text.
 pub(super) fn shape(
     composer: &Composer,
     color: Hsla,
     placeholder: Hsla,
+    chip: Hsla,
     width: Option<Pixels>,
     window: &Window,
 ) -> Vec<WrappedLine> {
@@ -459,36 +469,38 @@ pub(super) fn shape(
     } else {
         (composer.content.clone(), color)
     };
-    let run = TextRun {
-        len: s.len(),
-        font: style.font(),
-        color,
-        background_color: None,
-        underline: None,
-        strikethrough: None,
-    };
-    let runs = match &composer.marked_range {
-        Some(m) if !composer.content.is_empty() => vec![
+    let marked = composer
+        .marked_range
+        .as_ref()
+        .filter(|_| !composer.content.is_empty());
+    let mut cuts = vec![0, s.len()];
+    cuts.extend(marked.iter().flat_map(|m| [m.start, m.end]));
+    cuts.extend(composer.mentions.iter().flat_map(|m| [m.range.start, m.range.end]));
+    cuts.sort_unstable();
+    cuts.dedup();
+    let runs = cuts
+        .windows(2)
+        .map(|w| {
+            let within = |r: &Range<usize>| r.start <= w[0] && w[1] <= r.end;
+            let in_chip = composer.mentions.iter().any(|m| within(&m.range));
+            let mut font = style.font();
+            if in_chip {
+                font.weight = gpui::FontWeight(500.);
+            }
             TextRun {
-                len: m.start,
-                ..run.clone()
-            },
-            TextRun {
-                len: m.end - m.start,
-                underline: Some(UnderlineStyle {
+                len: w[1] - w[0],
+                font,
+                color: if in_chip { chip } else { color },
+                background_color: None,
+                underline: marked.filter(|m| within(m)).map(|_| UnderlineStyle {
                     color: Some(color),
                     thickness: px(1.),
                     wavy: false,
                 }),
-                ..run.clone()
-            },
-            TextRun {
-                len: s.len() - m.end,
-                ..run
-            },
-        ],
-        _ => vec![run],
-    };
+                strikethrough: None,
+            }
+        })
+        .collect::<Vec<_>>();
     window
         .text_system()
         .shape_text(s.into(), FONT_SIZE, &runs, width, None)
@@ -523,7 +535,8 @@ impl gpui::Element for Editor {
                 AvailableSpace::Definite(w) => Some(w),
                 _ => None,
             });
-            let lines = shape(input.read(cx), gpui::black(), gpui::black(), width, window);
+            let black = gpui::black();
+            let lines = shape(input.read(cx), black, black, black, width, window);
             let height = lines.iter().map(|l| l.size(LINE_HEIGHT).height).sum();
             Size {
                 width: width.unwrap_or_default(),
@@ -547,6 +560,7 @@ impl gpui::Element for Editor {
             self.0.read(cx),
             t.text,
             t.text_tertiary,
+            chip_color(&t),
             Some(bounds.size.width),
             window,
         );
@@ -601,6 +615,12 @@ impl gpui::Element for Editor {
         let caret = (c.selected_range.is_empty() && focus.is_focused(window))
             .then(|| c.point_for_index(c.cursor()))
             .flatten();
+        // Each chip's 16 px icon sits in its slot, 2 px under the line top (`_IconContainer`).
+        let icons: Vec<_> = c
+            .mentions
+            .iter()
+            .filter_map(|m| Some((c.point_for_index(m.range.start)?, m.icon)))
+            .collect();
         let lines = self.0.update(cx, |c, _| std::mem::take(&mut c.lines));
         // Glyphs land on the unsnapped LayoutUnit x, as Blink paints text.
         let x = window.layout_origin_residual_x(*id);
@@ -612,6 +632,20 @@ impl gpui::Element for Editor {
             y += line.size(LINE_HEIGHT).height;
         }
         self.0.update(cx, |c, _| c.lines = lines);
+        let chip = chip_color(cx.theme());
+        for (p, icon) in icons {
+            let r = Bounds::new(bounds.origin + point(p.x, p.y + px(2.)), size(px(16.), px(16.)));
+            window
+                .paint_svg(
+                    r,
+                    format!("icons/{icon}.svg").into(),
+                    None,
+                    TransformationMatrix::unit(),
+                    chip,
+                    cx,
+                )
+                .ok();
+        }
         if let Some(p) = caret {
             let r = Bounds::new(
                 bounds.origin + point(p.x, p.y + px(1.5)),

@@ -191,6 +191,8 @@ pub(super) struct Skill {
     pub(super) name: String,
     pub(super) title: String,
     pub(super) description: String,
+    /// `SKILL.md` path: the `$name` chip's link target.
+    pub(super) path: String,
 }
 
 #[derive(Default)]
@@ -260,6 +262,7 @@ impl Composer {
                     name: name.into(),
                     title,
                     description,
+                    path: skill["path"].as_str().unwrap_or_default().into(),
                 })
             })
             .collect();
