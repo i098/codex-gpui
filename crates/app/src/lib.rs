@@ -517,8 +517,10 @@ impl Root {
             command_menu: None,
             dialog: None,
             login: None,
+            host: Arc::new(host::CloudHost::from_env(host::app_server_credentials(
+                bridge.clone(),
+            ))),
             bridge,
-            host: Arc::new(host::LocalHost::from_env()),
             automations: None,
             automation_load: None,
             scheduled: None,
