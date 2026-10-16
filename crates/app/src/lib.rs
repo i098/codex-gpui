@@ -984,7 +984,7 @@ impl Root {
 
     /// Every server message: streamed into the open thread and the sign-in view, plus
     /// Recents updates and approval prompts.
-    fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
+    pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
         if let Some(view) = &self.thread {
             view.update(cx, |view, cx| {
                 view.apply(&event, cx);

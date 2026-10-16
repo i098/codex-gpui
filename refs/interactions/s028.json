@@ -11,6 +11,7 @@
   "steps": [
     {
       "type": "click",
+      "waitThread": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f",
       "target": {
         "text": "Add a subtract",
         "bbox": {
@@ -23,7 +24,9 @@
     },
     {
       "type": "click",
+      "portReference": {"screen": "thread", "text": "View changes"},
       "target": {
+        "note": "The replay resolves this control from the Mac reference because Linux text layout differs.",
         "text": "View changes",
         "bbox": {
           "x": 1061,
@@ -112,7 +115,8 @@
     },
     {
       "type": "key",
-      "key": "cmd-f",
+      "key": "Meta+f",
+      "portKey": "cmd-f",
       "message": {
         "type": "find-in-thread"
       },
@@ -294,6 +298,18 @@
     }
   ],
   "result": {
+    "state": {
+      "diffFiles": [["src/live.py", 4, 0]],
+      "diffSearch": ["def", 2],
+      "composerFocused": false
+    },
+    "dom": [
+      {
+        "selector": "Find in diff",
+        "bbox": {"x": 924, "y": 8, "w": 340, "h": 82},
+        "computed": {"backgroundColor": "rgb(20, 20, 20)"}
+      }
+    ],
     "input": {
       "tag": "input",
       "text": "",
