@@ -156,7 +156,8 @@ impl Fx {
     }
 
     /// Every message the app sent to the app-server, oldest first, as `{method, params?}`
-    /// (`id` stripped). Needs [`Fx::captured`].
+    /// (`id` stripped) or, for an answer to a server request, `{reply: id, result}`. Needs
+    /// [`Fx::captured`].
     pub fn sent(&mut self) -> Result<Vec<Value>> {
         let log = self.log.as_ref().context("not a captured Fx")?;
         // The proxy handles its stdin in order, so its answer to the barrier means that every
@@ -635,7 +636,10 @@ fn serve_proxy(script: &Path, log: &Path) -> Result<()> {
                     None => bridge.notify(&method, params)?,
                 }
             }
-            (None, Some(id)) => bridge.respond(id.clone(), msg["result"].clone())?,
+            (None, Some(id)) => {
+                writeln!(log, "{}", json!({ "reply": id, "result": msg["result"] }))?;
+                bridge.respond(id.clone(), msg["result"].clone())?;
+            }
             (None, None) => {}
         }
     }

@@ -7,7 +7,7 @@ publish.workspace = true
 
 [dependencies]
 bridge = { path = "../bridge" }
-chrono = { version = "0.4", default-features = false, features = ["alloc"] }
+chrono = { version = "0.4", default-features = false, features = ["alloc", "clock"] }
 gpui.workspace = true
 image.workspace = true
 pulldown-cmark = { version = "0.13", default-features = false }
