@@ -31,6 +31,7 @@ use ui::screens::sidebar::{ArchiveThread, CommandMenu, CommandMenuEvent, HomeSid
 use ui::screens::terminal::Xterm;
 use ui::screens::thread::view::{Clock, ForkThread, RevertTurn, ThreadView};
 use ui::screens::{automations, mobile};
+use ui::toast::{Toast, Toaster};
 use ui::{
     CloseSidePanel, Copy, Cut, GoBack, GoForward, NewChat, OpenBackgroundTerminal,
     OpenChangesPanel, OpenCommandMenu, OpenMobileSetup, OpenScheduled, OpenSettings, Paste, Redo,
@@ -290,6 +291,7 @@ pub struct Root {
     /// Docked under every open thread.
     thread_composer: Entity<Composer>,
     thread: Option<Entity<ThreadView>>,
+    diff: Option<Entity<DiffPanel>>,
     /// The open thread in the main shell, with its side panel if any.
     split: Option<Entity<SplitScreen>>,
     /// Side panel tab of the thread route; kept across threads like the original's panel.
@@ -311,6 +313,8 @@ pub struct Root {
     loaded: HashSet<String>,
     /// Id of the server request the composer's approval card answers.
     approval: Option<Value>,
+    /// The `Notifications` region over the window.
+    toaster: Entity<Toaster>,
     _events: Task<()>,
 }
 
@@ -409,6 +413,7 @@ impl Root {
             }),
             thread_composer,
             thread: None,
+            diff: None,
             split: None,
             side: None,
             page: None,
@@ -422,6 +427,7 @@ impl Root {
             ready: false,
             loaded: HashSet::new(),
             approval: None,
+            toaster: cx.new(|_| Toaster::new()),
             _events,
             state,
         };
@@ -501,6 +507,10 @@ impl Root {
     /// The thread route's side panel tab.
     pub fn side_panel(&self) -> Option<SidePanel> {
         self.side
+    }
+
+    pub fn diff_panel(&self) -> Option<&Entity<DiffPanel>> {
+        self.diff.as_ref()
     }
 
     /// The `⌘K` command menu, while open.
@@ -687,15 +697,11 @@ impl Root {
         cx: &mut Context<Self>,
     ) -> Option<(AnyView, &'static str, SharedString)> {
         match side {
-            SidePanel::Changes => {
-                let v = view.read(cx);
-                let panel = DiffPanel::last_turn(&self.cwd, v.cwd(), v.turns());
-                Some((
-                    cx.new(|_| panel).into(),
-                    "diff-tab-changes",
-                    "Changes".into(),
-                ))
-            }
+            SidePanel::Changes => Some((
+                self.diff.as_ref()?.clone().into(),
+                "diff-tab-changes",
+                "Changes".into(),
+            )),
             SidePanel::Terminal => {
                 let (command, _) = view.read(cx).background_terminals().into_iter().next()?;
                 let xterm = cx.new(|cx| Xterm::new(view.clone(), cx));
@@ -745,12 +751,7 @@ impl Root {
                 "Manage scheduled tasks" => self.navigate(Route::Scheduled, window, cx),
                 label => {
                     if let Some(section) = settings::section(label) {
-                        self.settings_section = Some(section);
-                        if self.state.route == Route::Settings {
-                            self.sync(window, cx);
-                        } else {
-                            self.navigate(Route::Settings, window, cx);
-                        }
+                        self.open_settings_section(section, window, cx);
                     }
                 }
             },
@@ -781,6 +782,7 @@ impl Root {
             pinned_now: None,
         };
         let composer = self.thread_composer.clone().into();
+        self.diff = Some(cx.new(|_| DiffPanel::last_turn(&self.cwd, &thread.cwd, &thread.turns)));
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
         self.thread = Some(view);
         if self.state.route == route {
@@ -888,23 +890,118 @@ impl Root {
         log_err(task, cx);
     }
 
-    /// `thread/archive`, then drops the Recents row; an archived open chat leaves for Home.
+    /// `thread/archive`: the Recents row leaves at once (an archived open chat leaves for Home),
+    /// then `Archived chat` offers View and Undo; a refused write puts the row back with
+    /// `Failed to archive chat`.
     fn archive(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let at = self.threads.iter().position(|t| t.id == id);
+        let thread = at.map(|i| self.threads.remove(i));
+        self.sidebar
+            .update(cx, |s, cx| s.set_threads(&self.threads, cx));
+        if self.state.route == Route::Thread(id.clone()) {
+            self.new_chat(window, cx);
+        }
         let bridge = self.bridge.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            bridge
+            let done = bridge
                 .request::<_, Value>("thread/archive", json!({ "threadId": id }))
-                .await?;
-            this.update_in(cx, |this, window, cx| {
-                this.threads.retain(|t| t.id != id);
-                this.sidebar
-                    .update(cx, |s, cx| s.set_threads(&this.threads, cx));
-                if this.state.route == Route::Thread(id) {
-                    this.new_chat(window, cx);
+                .await;
+            this.update(cx, |this, cx| match &done {
+                Ok(_) => {
+                    let (view, undo) = (cx.weak_entity(), cx.weak_entity());
+                    let toast = Toast::info("Archived chat")
+                        .icon("sidebar-archive")
+                        .action("View", move |window, cx| {
+                            view.update(cx, |this, cx| this.open_archived_chats(window, cx))
+                                .ok();
+                        })
+                        .action("Undo", move |window, cx| {
+                            let id = id.clone();
+                            undo.update(cx, |this, cx| this.unarchive(id, at, window, cx))
+                                .ok();
+                        });
+                    this.toast(toast, cx);
                 }
-            })
+                Err(_) => {
+                    if let Some(thread) = thread {
+                        this.threads
+                            .insert(at.unwrap_or(0).min(this.threads.len()), thread);
+                        this.sidebar
+                            .update(cx, |s, cx| s.set_threads(&this.threads, cx));
+                    }
+                    this.toast(Toast::danger("Failed to archive chat"), cx);
+                }
+            })?;
+            done.map(drop)
         });
         log_err(task, cx);
+    }
+
+    /// The toast's Undo: `thread/unarchive` puts the row back where it was.
+    fn unarchive(
+        &mut self,
+        id: String,
+        at: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let bridge = self.bridge.clone();
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let done = bridge
+                .request::<_, Value>("thread/unarchive", json!({ "threadId": id }))
+                .await;
+            this.update(cx, |this, cx| {
+                let thread = done
+                    .as_ref()
+                    .ok()
+                    .and_then(|r| serde_json::from_value::<Thread>(r["thread"].clone()).ok());
+                match thread {
+                    Some(thread) => {
+                        this.threads.retain(|t| t.id != thread.id);
+                        this.threads
+                            .insert(at.unwrap_or(0).min(this.threads.len()), thread);
+                        this.sidebar
+                            .update(cx, |s, cx| s.set_threads(&this.threads, cx));
+                    }
+                    None => this.toast(Toast::danger("Failed to unarchive conversation"), cx),
+                }
+            })?;
+            done.map(drop)
+        });
+        log_err(task, cx);
+    }
+
+    /// Shows `toast` in the `Notifications` region.
+    pub fn toast(&mut self, toast: Toast, cx: &mut Context<Self>) {
+        self.toaster.update(cx, |t, cx| t.push(toast, cx));
+    }
+
+    /// Titles of the toasts shown, newest first.
+    pub fn toasts(&self, cx: &App) -> Vec<SharedString> {
+        self.toaster.read(cx).titles()
+    }
+
+    /// Settings at `section`, whether or not Settings is open.
+    fn open_settings_section(
+        &mut self,
+        section: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.settings_section = Some(section);
+        if self.state.route == Route::Settings {
+            self.sync(window, cx);
+        } else {
+            self.navigate(Route::Settings, window, cx);
+        }
+    }
+
+    /// The archive toast's View.
+    /// ponytail: the original's destination is not recorded; Settings ▸ Archived chats lists them.
+    fn open_archived_chats(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(section) = settings::section("Archived chats") {
+            self.open_settings_section(section, window, cx);
+        }
     }
 
     /// `recentThread1..6`: the `n`th chat by last update, newest first.
@@ -981,9 +1078,19 @@ impl Root {
 
     /// Every server message: streamed into the open thread and the sign-in view, plus
     /// Recents updates and approval prompts.
-    fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
+    pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
         if let Some(view) = &self.thread {
-            view.update(cx, |view, cx| view.apply(&event, cx));
+            view.update(cx, |view, cx| {
+                view.apply(&event, cx);
+                if let Some(panel) = &self.diff
+                    && let Event::Notification { params, .. } = &event
+                    && params["threadId"].as_str() == Some(view.id())
+                {
+                    panel.update(cx, |panel, cx| {
+                        panel.apply(&event, &self.cwd, view.turns(), cx);
+                    });
+                }
+            });
         }
         if let Some(login) = &self.login {
             login.update(cx, |login, cx| login.apply(&event, cx));
@@ -1214,7 +1321,8 @@ impl Render for Root {
             .on_action(|_: &Minimize, window, _| window.minimize_window())
             .on_action(|_: &Zoom, window, _| window.zoom_window())
             .child(content)
-            .children(self.command_menu.clone());
+            .children(self.command_menu.clone())
+            .child(self.toaster.clone());
         features::actions(root, cx)
     }
 }
