@@ -1,0 +1,332 @@
+{
+  "name": "s035-suggestion-hover",
+  "rows": [
+    "AM-037"
+  ],
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 1,
+    "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+    "theme": "dark",
+    "hoverEmulated": true
+  },
+  "initialScreen": "automations",
+  "note": "The test opens the existing automations fixture screen, which contains the recorded server suggestions. AM-036 waits for F4b authenticated cloud transport.",
+  "steps": [
+    {
+      "type": "hover",
+      "at": {
+        "x": 1270,
+        "y": 820
+      },
+      "target": {
+        "text": "Empty page corner"
+      },
+      "waitMs": 300
+    },
+    {
+      "type": "hover",
+      "at": {
+        "x": 619.5,
+        "y": 395
+      },
+      "target": {
+        "selector": "button[aria-busy].min-h-27",
+        "bbox": {
+          "x": 440,
+          "y": 340,
+          "w": 359,
+          "h": 110
+        }
+      },
+      "waitMs": 300
+    },
+    {
+      "type": "hover",
+      "at": {
+        "x": 1270,
+        "y": 820
+      },
+      "target": {
+        "text": "Empty page corner"
+      },
+      "waitMs": 300
+    }
+  ],
+  "result": {
+    "dom": [
+      {
+        "afterStep": 0,
+        "card": {
+          "tag": "button",
+          "text": "AP Lang practice\nGive me short AP Lang rhetoric and argument practice three times a week",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 440,
+            "y": 340,
+            "w": 359,
+            "h": 110
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        "icon": {
+          "tag": "span",
+          "text": "",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 461,
+            "y": 383,
+            "w": 24,
+            "h": 24
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "colors": [
+            [
+              204,
+              214,
+              221
+            ],
+            [
+              153,
+              170,
+              181
+            ],
+            [
+              244,
+              144,
+              12
+            ]
+          ]
+        },
+        "route": "/",
+        "pixels": [
+          {
+            "x": 450,
+            "y": 395,
+            "rgb": [
+              24,
+              24,
+              24
+            ]
+          },
+          {
+            "x": 790,
+            "y": 395,
+            "rgb": [
+              24,
+              24,
+              24
+            ]
+          },
+          {
+            "x": 820,
+            "y": 395,
+            "rgb": [
+              24,
+              24,
+              24
+            ]
+          }
+        ]
+      },
+      {
+        "afterStep": 1,
+        "card": {
+          "tag": "button",
+          "text": "AP Lang practice\nGive me short AP Lang rhetoric and argument practice three times a week",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 440,
+            "y": 340,
+            "w": 359,
+            "h": 110
+          },
+          "computed": {
+            "backgroundColor": "rgba(255, 255, 255, 0.08)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        "icon": {
+          "tag": "span",
+          "text": "",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 461,
+            "y": 383,
+            "w": 24,
+            "h": 24
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "colors": [
+            [
+              204,
+              214,
+              221
+            ],
+            [
+              153,
+              170,
+              181
+            ],
+            [
+              244,
+              144,
+              12
+            ]
+          ]
+        },
+        "route": "/",
+        "pixels": [
+          {
+            "x": 450,
+            "y": 395,
+            "rgb": [
+              42,
+              42,
+              42
+            ]
+          },
+          {
+            "x": 790,
+            "y": 395,
+            "rgb": [
+              42,
+              42,
+              42
+            ]
+          },
+          {
+            "x": 820,
+            "y": 395,
+            "rgb": [
+              24,
+              24,
+              24
+            ]
+          }
+        ]
+      },
+      {
+        "afterStep": 2,
+        "card": {
+          "tag": "button",
+          "text": "AP Lang practice\nGive me short AP Lang rhetoric and argument practice three times a week",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 440,
+            "y": 340,
+            "w": 359,
+            "h": 110
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        "icon": {
+          "tag": "span",
+          "text": "",
+          "aria": null,
+          "role": null,
+          "bbox": {
+            "x": 461,
+            "y": 383,
+            "w": 24,
+            "h": 24
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          },
+          "colors": [
+            [
+              204,
+              214,
+              221
+            ],
+            [
+              153,
+              170,
+              181
+            ],
+            [
+              244,
+              144,
+              12
+            ]
+          ]
+        },
+        "route": "/",
+        "pixels": [
+          {
+            "x": 450,
+            "y": 395,
+            "rgb": [
+              24,
+              24,
+              24
+            ]
+          },
+          {
+            "x": 790,
+            "y": 395,
+            "rgb": [
+              24,
+              24,
+              24
+            ]
+          },
+          {
+            "x": 820,
+            "y": 395,
+            "rgb": [
+              24,
+              24,
+              24
+            ]
+          }
+        ]
+      }
+    ],
+    "requests": []
+  }
+}
