@@ -57,6 +57,60 @@ use pulldown_cmark::{
 };
 use std::{iter::Peekable, ops::Range};
 
+const OPTIONS: Options = Options::ENABLE_TASKLISTS.union(Options::ENABLE_STRIKETHROUGH);
+
+/// The text of `event` in [`plain`]: block ends and rules become line breaks so that a find
+/// query never matches across blocks.
+fn plain_text<'a>(event: &'a Event<'_>) -> Option<&'a str> {
+    match event {
+        Event::Text(s) | Event::Html(s) | Event::InlineHtml(s) | Event::Code(s) => Some(s),
+        Event::SoftBreak => Some(" "),
+        Event::HardBreak | Event::Rule => Some("\n"),
+        Event::End(end) => (!matches!(
+            end,
+            TagEnd::Emphasis
+                | TagEnd::Strong
+                | TagEnd::Strikethrough
+                | TagEnd::Link
+                | TagEnd::Image
+                | TagEnd::Subscript
+                | TagEnd::Superscript
+        ))
+        .then_some("\n"),
+        _ => None,
+    }
+}
+
+/// The searchable text of an answer: the byte offsets the find matches use.
+pub(super) fn plain(source: &str) -> String {
+    Parser::new_ext(source, OPTIONS)
+        .filter_map(|event| plain_text(&event).map(str::to_owned))
+        .collect()
+}
+
+/// The parser events; `start` is the [`plain`] offset of the last consumed one and `range`
+/// its source bytes.
+struct Events<'a> {
+    inner: Peekable<OffsetIter<'a>>,
+    offset: usize,
+    start: usize,
+    range: Range<usize>,
+}
+
+impl<'a> Events<'a> {
+    fn peek(&mut self) -> Option<&Event<'a>> {
+        self.inner.peek().map(|(event, _)| event)
+    }
+
+    fn next(&mut self) -> Option<Event<'a>> {
+        let (event, range) = self.inner.next()?;
+        self.start = self.offset;
+        self.offset += plain_text(&event).map_or(0, str::len);
+        self.range = range;
+        Some(event)
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Typography {
     size: f32,
@@ -82,21 +136,36 @@ impl Default for Typography {
 
 /// GFM blocks share the existing code chips and file links.
 /// Task markers are read-only, as in the original assistant messages.
+/// `segments` are the still-fading streamed byte ranges of `source`.
 pub(super) fn markdown(
     source: &str,
     window: &Window,
     t: &Theme,
     segments: &[StreamSegment],
 ) -> Div {
+    with_find(source, window, t, None, segments)
+}
+
+/// [`markdown`] with the find matches of this answer highlighted.
+pub(super) fn with_find(
+    source: &str,
+    window: &Window,
+    t: &Theme,
+    find: Option<&FindPaint>,
+    segments: &[StreamSegment],
+) -> Div {
     Markdown {
-        events: Parser::new_ext(
-            source,
-            Options::ENABLE_TASKLISTS | Options::ENABLE_STRIKETHROUGH,
-        )
-        .into_offset_iter()
-        .peekable(),
+        events: Events {
+            inner: Parser::new_ext(source, OPTIONS)
+                .into_offset_iter()
+                .peekable(),
+            offset: 0,
+            start: 0,
+            range: 0..0,
+        },
         window,
         theme: t,
+        find,
         source,
         segments,
         block_index: 0,
@@ -106,9 +175,10 @@ pub(super) fn markdown(
 }
 
 struct Markdown<'a> {
-    events: Peekable<OffsetIter<'a>>,
+    events: Events<'a>,
     window: &'a Window,
     theme: &'a Theme,
+    find: Option<&'a FindPaint>,
     source: &'a str,
     segments: &'a [StreamSegment],
     block_index: usize,
@@ -121,7 +191,7 @@ impl Markdown<'_> {
         let mut bottom: f32 = 0.;
         let mut previous_paragraph = false;
         let mut task = false;
-        while let Some((event, _)) = self.events.peek() {
+        while let Some(event) = self.events.peek() {
             if matches!(event, Event::End(_)) {
                 break;
             }
@@ -207,7 +277,7 @@ impl Markdown<'_> {
                     };
                     self.events.next();
                     let mut code = String::new();
-                    for (event, _) in self.events.by_ref() {
+                    while let Some(event) = self.events.next() {
                         match event {
                             Event::End(TagEnd::CodeBlock) => break,
                             Event::Text(text) => code.push_str(&text),
@@ -266,7 +336,7 @@ impl Markdown<'_> {
 
     fn list(&mut self, mut number: Option<u64>, style: Typography, depth: usize) -> Div {
         let mut list = div().flex().flex_col();
-        while matches!(self.events.peek(), Some((Event::Start(Tag::Item), _))) {
+        while matches!(self.events.peek(), Some(Event::Start(Tag::Item))) {
             self.events.next();
             let (body, task) = self.blocks(style, depth + 1);
             self.events.next();
@@ -275,7 +345,7 @@ impl Markdown<'_> {
                 div()
                     .flex()
                     .justify_end()
-                    .child(self.word(&format!("{n}. "), style, 0..0, None))
+                    .child(self.word(&format!("{n}. "), None, style))
             } else {
                 let size = if depth == 1 { 6. } else { 5. };
                 div().child(
@@ -304,7 +374,7 @@ impl Markdown<'_> {
     fn inline(&mut self, style: Typography) -> (Vec<AnyElement>, bool) {
         let mut row = Vec::new();
         let mut task = false;
-        while let Some((event, _)) = self.events.peek() {
+        while let Some(event) = self.events.peek() {
             match event {
                 Event::End(_)
                 | Event::Start(
@@ -317,17 +387,43 @@ impl Markdown<'_> {
                 | Event::Rule => break,
                 _ => {}
             }
-            let (event, range) = self.events.next().expect("peeked event");
-            match event {
+            match self.events.next().expect("peeked event") {
                 Event::Text(s) | Event::Html(s) | Event::InlineHtml(s) => {
-                    row.extend(s.split_inclusive(' ').map(|word| {
-                        self.word(word, style, range.clone(), None)
-                            .into_any_element()
-                    }));
+                    if self.find.is_none()
+                        && self.segments.is_empty()
+                        && style.size == 14.
+                        && style.line_height == 22.75
+                        && !style.italic
+                        && !style.strike
+                    {
+                        row.extend(
+                            super::items::words(
+                                &s,
+                                style.weight,
+                                style.color.unwrap_or(self.theme.text),
+                                self.window,
+                            )
+                            .into_iter()
+                            .map(IntoElement::into_any_element),
+                        );
+                    } else {
+                        let mut at = self.events.start;
+                        row.extend(s.split_inclusive(' ').map(|s| {
+                            let here = at;
+                            at += s.len();
+                            self.word(s, Some(here), style).into_any_element()
+                        }));
+                    }
                 }
-                Event::SoftBreak => row.push(self.word(" ", style, range, None).into_any_element()),
+                Event::SoftBreak => {
+                    let at = self.events.start;
+                    row.push(self.word(" ", Some(at), style).into_any_element());
+                }
                 Event::HardBreak => row.push(div().w_full().h_0().into_any_element()),
-                Event::Code(code) => row.push(self.code(&code, range).into_any_element()),
+                Event::Code(code) => {
+                    let at = self.events.start;
+                    row.push(self.code(&code, at).into_any_element());
+                }
                 Event::Start(tag) => {
                     let next = match tag {
                         Tag::Strong => Typography {
@@ -435,16 +531,11 @@ impl Markdown<'_> {
         (row, task)
     }
 
-    fn word(
-        &self,
-        s: &str,
-        style: Typography,
-        range: Range<usize>,
-        family: Option<&'static str>,
-    ) -> Div {
-        let highlights = self.highlights(s, range);
+    fn word(&self, s: &str, at: Option<usize>, style: Typography) -> Div {
         let color = style.color.unwrap_or(self.theme.text);
-        if !style.italic && !style.strike && highlights.is_empty() {
+        let find = self.find.zip(at);
+        let fades = self.fades(s);
+        if !style.italic && !style.strike && find.is_none() && fades.is_empty() {
             return measured(
                 self.window,
                 s.to_owned(),
@@ -452,7 +543,7 @@ impl Markdown<'_> {
                 style.line_height,
                 style.weight,
                 color,
-                family,
+                None,
             );
         }
         let font = gpui::Font {
@@ -462,7 +553,7 @@ impl Markdown<'_> {
             } else {
                 gpui::FontStyle::Normal
             },
-            ..font(family.unwrap_or(SANS))
+            ..font(SANS)
         };
         let run = TextRun {
             len: s.len(),
@@ -477,26 +568,19 @@ impl Markdown<'_> {
             .text_system()
             .layout_line(s, px(style.size), &[run], None)
             .width;
-        div().flex_none().w(width).child(
-            div()
-                .text_size(px(style.size))
-                .line_height(px(style.line_height))
-                .font_weight(FontWeight(style.weight))
-                .text_color(color)
-                .whitespace_nowrap()
-                .when_some(family, |d, family| d.font_family(family))
-                .when(style.italic, |d| d.italic())
-                .when(style.strike, |d| d.line_through())
-                .child(gpui::StyledText::new(s.to_owned()).with_highlights(highlights)),
-        )
+        let label = run_style(style.size, style.line_height, style.weight, color)
+            .when(style.italic, |d| d.italic())
+            .when(style.strike, |d| d.line_through());
+        // ponytail: a find highlight replaces the fade of its word; both at once is rare.
+        div().flex_none().w(width).child(match find {
+            Some((find, at)) => label.child(find.text(s, at)),
+            None => label.child(StyledText::new(s.to_owned()).with_highlights(fades)),
+        })
     }
 
-    fn highlights(
-        &self,
-        text: &str,
-        range: Range<usize>,
-    ) -> Vec<(Range<usize>, gpui::HighlightStyle)> {
-        if self.segments.is_empty() || range.is_empty() {
+    /// The fade of each still-streaming part of `text`, by its position in [`Self::source`].
+    fn fades(&self, text: &str) -> Vec<(Range<usize>, gpui::HighlightStyle)> {
+        if self.segments.is_empty() {
             return Vec::new();
         }
         let fade = |alpha| gpui::HighlightStyle {
@@ -524,15 +608,44 @@ impl Markdown<'_> {
                 .collect();
         }
         // Decoded entities and normalized code appear when their final source byte arrives.
+        let range = &self.events.range;
         self.segments
             .iter()
             .rev()
-            .find(|segment| segment.range.contains(&(range.end - 1)))
+            .find(|segment| !range.is_empty() && segment.range.contains(&(range.end - 1)))
             .map(|segment| vec![(0..text.len(), fade(segment.alpha))])
             .unwrap_or_default()
     }
 
-    fn code(&self, code: &str, range: Range<usize>) -> Div {
+    fn code(&self, code: &str, at: usize) -> Div {
+        let fades = self.fades(code);
+        let label = match self.find {
+            Some(find) => div()
+                .flex_none()
+                .w(width(self.window, code, 12.88, 430., Some(MONO)))
+                .child(
+                    run_style(12.88, 15., 430., self.theme.text)
+                        .font_family(MONO)
+                        .child(find.text(code, at)),
+                ),
+            None if !fades.is_empty() => div()
+                .flex_none()
+                .w(width(self.window, code, 12.88, 430., Some(MONO)))
+                .child(
+                    run_style(12.88, 15., 430., self.theme.text)
+                        .font_family(MONO)
+                        .child(StyledText::new(code.to_owned()).with_highlights(fades)),
+                ),
+            None => measured(
+                self.window,
+                code.to_owned(),
+                12.88,
+                15.,
+                430.,
+                self.theme.text,
+                Some(MONO),
+            ),
+        };
         div().pt(px(3.5)).pb(px(3.25)).child(
             div()
                 .relative()
@@ -544,18 +657,19 @@ impl Markdown<'_> {
                     fill: Some(tones(self.theme).inline_code),
                     ..Default::default()
                 }))
-                .child(self.word(
-                    code,
-                    Typography {
-                        size: 12.88,
-                        line_height: 15.,
-                        ..Typography::default()
-                    },
-                    range,
-                    Some(MONO),
-                )),
+                .child(label),
         )
     }
+}
+
+/// The text style of [`text`] without its content: the find highlights go in as `StyledText`.
+fn run_style(size: f32, line_height: f32, weight: f32, color: Hsla) -> Div {
+    div()
+        .text_size(px(size))
+        .line_height(px(line_height))
+        .font_weight(FontWeight(weight))
+        .text_color(color)
+        .whitespace_nowrap()
 }
 
 #[derive(IntoElement)]

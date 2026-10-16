@@ -12,6 +12,7 @@ impl Composer {
     pub(super) fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
         self.selected_range = offset..offset;
         self.selection_reversed = false;
+        self.refresh_slash(cx);
         cx.notify();
     }
 
@@ -85,11 +86,17 @@ impl Composer {
     }
 
     pub(super) fn up(&mut self, _: &Up, _: &mut Window, cx: &mut Context<Self>) {
+        if self.move_slash(false, cx) {
+            return;
+        }
         let to = self.vertical(-1.).unwrap_or(0);
         self.move_to(to, cx);
     }
 
     pub(super) fn down(&mut self, _: &Down, _: &mut Window, cx: &mut Context<Self>) {
+        if self.move_slash(true, cx) {
+            return;
+        }
         let to = self.vertical(1.).unwrap_or(self.content.len());
         self.move_to(to, cx);
     }
@@ -396,6 +403,7 @@ impl EntityInputHandler for Composer {
             None => end..end,
         };
         self.selection_reversed = false;
+        self.refresh_slash(cx);
         cx.notify();
     }
 

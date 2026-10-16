@@ -48,8 +48,6 @@ actions!(
         OpenChangesPanel,
         /// Thread summary ▸ `Background processes` row: the command's terminal tab.
         OpenBackgroundTerminal,
-        /// Side panel tab strip `Hide tabs`: close the side panel.
-        CloseSidePanel,
         /// `⌘K`, `⌘⇧P`, sidebar `Search`: the command menu.
         OpenCommandMenu,
     ]
@@ -889,6 +887,8 @@ impl Shell {
     }
 
     fn titlebar(&self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        // The header is the window drag region (`-webkit-app-region: drag`, macOS hiddenInset);
+        // its buttons are `no-drag`: each stops the press before the move handler below.
         // Disabled history controls do not participate in keyboard navigation.
         let mut nav = |id: &'static str, glyph: icon::Icon, enabled: bool| {
             if enabled {
@@ -902,6 +902,7 @@ impl Shell {
                 )
                 .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                     focus.read(cx).handle.clone().focus(window, cx);
+                    cx.stop_propagation();
                 })
             } else {
                 div()
@@ -911,6 +912,7 @@ impl Shell {
                     .items_center()
                     .justify_center()
                     .child(glyph.opacity(0.4))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             }
             .absolute()
             .top(px(8.))
@@ -974,6 +976,7 @@ impl Shell {
                     .top(px(8.))
                     .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                         sidebar_focus.read(cx).handle.clone().focus(window, cx);
+                        cx.stop_propagation();
                     })
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
                     "Toggle sidebar",

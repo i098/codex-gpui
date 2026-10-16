@@ -107,7 +107,7 @@ Numbers from the round 4 run (F1Flows); the screen builder column is a run of th
 | 4 | `⌘[`, `⌘]` | shortcut | Back, Forward (`navigateBack`, `navigateForward`). | Route history over Home, threads, Settings. | PASS (`back_forward_keys`) |
 | 5 | `⌘⇧[`, `⌘⇧]`, `⌘⌥←`, `⌘⌥→` | shortcut | Previous / next chat. | Previous / next Recents row; no wrap. | PASS (`previous_next_chat`) |
 | 6 | `⌘1`…`⌘9` | shortcut | Go to chat N (`thread1..9`). | Opens Recents row N. | PASS (`cmd_digit_goes_to_chat`) |
-| 7 | `⌘W` | shortcut | Close tab, else close window. | Closes the window (the port has no tabs). | PASS (`cmd_w_closes_window`) |
+| 7 | `⌘W` | shortcut | Close tab, else close window. | Closes the thread route's selected side panel tab, else the window. | PASS (`cmd_w_closes_window`, `s029::panel_tabs_replay`) |
 | 8 | Menu bar: Codex ▸ Settings…, File ▸ New Chat, View ▸ Toggle Sidebar, Toggle Changes Panel, Previous Chat, Next Chat, Back, Forward | click | Same commands as the keys. | `app::menus()` items dispatch their actions. | PASS (`menu_bar_actions`, `changes_panel_keys`) |
 | 9 | System appearance and Settings ▸ Appearance ▸ Theme | click | Light / Dark / System applies at once. | `State.theme` (`ThemeSetting`) is applied on each appearance change and by `Root::set_theme`. | PASS (`theme_switch`) |
 | 10 | `⌘M`, Window ▸ Minimize, Zoom | shortcut | Minimize, zoom. | Bound; `window.minimize_window()`, `zoom_window()`. | FAIL (no headless check: the test window ignores minimize and zoom) |
@@ -116,7 +116,7 @@ Numbers from the round 4 run (F1Flows); the screen builder column is a run of th
 | 13 | Live window resize across 768 px | resize | The sidebar hides below 768 px and comes back above it. | `Root::fit` on `observe_window_bounds`: live resizes to 767, 1280, 600 and 1440 px hide and show the sidebar; a sidebar the user closed stays closed. | PASS (`resize_live`, `resize_three_widths`) |
 | 14 | `⌘K`, `⌘⇧P` | shortcut | Command menu. | `CommandMenu` over live Recents, focused; Escape or a click outside closes it; Enter or a click runs the row (chat, `New chat`, `Manage scheduled tasks`, settings pages). | PASS (`command_menu_keys`, `command_menu_settings_page`) |
 | 15 | `⌘F` | shortcut | Find in chat. | — | NOT WIRED (`crates/ui/src/thread.rs`: no find bar) |
-| 16 | `⌥⌘B` | shortcut | Toggle Changes panel. | The thread route's side panel (`ui::screens::diff::panel::with_side_panel`) shows the last turn's diff; the tab's close button closes it. | PASS (`changes_panel_keys`) |
+| 16 | `⌥⌘B` | shortcut | Toggle Changes panel. | The thread route's side panel (`ui::screens::diff::panel::with_side_tabs`) shows the last turn's diff in a `Changes` tab beside the other open tabs; the tab's close button closes it. | PASS (`changes_panel_keys`) |
 | 17 | `⌘J` | shortcut | Toggle bottom panel. | — | NOT WIRED (`crates/ui/src/lib.rs` `Shell`: no bottom panel) |
 | 18 | `⌘⇧N`, `⌘⌥O` | shortcut | Temporary chat, standalone chat. | — | NOT WIRED (`crates/app/src/lib.rs`: no projects or temporary chats) |
 | 19 | `⌘⌥1`…`⌘⌥6` | shortcut | Go to recent chat N (`recentThread1..6`: the chats by last update, newest first). | `GoToRecentChat`: the Nth Recents thread by `updatedAt`; past the end does nothing. | PASS (`recent_chat_keys`) |
@@ -373,7 +373,7 @@ Suggestion click (AM-036) waits for F4b authenticated cloud transport.
 | 3 | Output streaming | loading | Appends `outputDelta`; `No output yet`. | The tab shows the replayed `outputDelta`; no `No output yet`. | FAIL (no `No output yet`: `crates/ui/src/screens/terminal.rs` `Xterm`; output checked by `parity_terminal`) |
 | 4 | `Stop all background terminals` | click | `thread/backgroundTerminals/clean`. | — | NOT WIRED (`crates/ui/src/thread.rs`: no stop button; no recorded `thread/backgroundTerminals/clean`) |
 | 5 | Stop failure | error | Toast. | — | NOT WIRED (`crates/ui`) |
-| 6 | Tab close | click | Closes the tab; `⌘W`. | The tab's close button closes the side panel; `⌘W` closes the window. | FAIL (`⌘W`: shell row 7; the close button checked by `background_terminal_tab`, `changes_panel_keys`) |
+| 6 | Tab close | click | Closes the tab; `⌘W`. | The tab's `×` or `⌘W` closes the selected tab; the next tab, else the previous, is selected; the last tab closes the panel. | PASS (`s029::panel_tabs_replay`, `background_terminal_tab`, `changes_panel_keys`) |
 | 7 | Tab thumbnail | hover | Thumbnail preview. | — | NOT WIRED (`crates/ui/src/diff.rs` `tab_strip`) |
 | 8 | Command finishes | empty | Leaves the running list; buffer kept. | The tab follows the running list only, so its buffer goes with the command. | NOT WIRED (`crates/ui/src/screens/terminal.rs` `Xterm`: no kept buffer) |
 | 9 | Focus ring | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/diff.rs` `tab_strip`) |
