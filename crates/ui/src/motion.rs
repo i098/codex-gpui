@@ -9,7 +9,7 @@
 
 use gpui::{
     App, Hsla, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, RenderOnce,
-    Rgba, StatefulInteractiveElement, Styled, Window, div,
+    Rgba, SpringConfig, SpringState, StatefulInteractiveElement, Styled, Window, div,
 };
 use std::time::Duration;
 use theme::{ActiveTheme as _, Appearance};
@@ -33,6 +33,25 @@ pub const SPRING_SNAPPY_STOPS: &[f32] = &[
     0.0, 0.086, 0.2539, 0.428, 0.5786, 0.698, 0.7879, 0.8534, 0.8998, 0.9323, 0.9546, 0.9697, 0.98,
     0.9868, 0.9913, 0.9943, 0.9963, 0.9976, 0.9985, 1.0,
 ];
+
+/// Motion's `{type: 'spring', duration: .3, bounce: .1}` as its `findSpring` resolves it:
+/// damping ratio 0.9, natural frequency 28.27 rad/s (`refs/interactions/ms2.json`).
+pub const SPRING_300: SpringConfig = SpringConfig::new(799.16, 50.885, 1.0);
+
+/// [`SPRING_300`] released at rest from `from` toward `target`, `elapsed` later.
+/// Motion ends a duration-resolved spring at its duration and snaps to the target.
+pub fn spring_300(from: f32, target: f32, elapsed: Duration) -> f32 {
+    if elapsed >= RELAXED {
+        return target;
+    }
+    let start = SpringState {
+        position: from,
+        velocity: 0.0,
+    };
+    SPRING_300
+        .step(start, target, elapsed.as_secs_f32())
+        .position
+}
 
 /// CSS cubic-bezier easing on normalized time, clamped to 0..=1.
 /// Control points must be finite; x coordinates must be in 0..=1.

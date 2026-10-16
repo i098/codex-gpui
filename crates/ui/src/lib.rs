@@ -14,6 +14,7 @@ use gpui::{
     size, svg,
 };
 use std::sync::{Arc, LazyLock};
+use std::time::Instant;
 use theme::{ActiveTheme as _, Theme};
 use tooltip::{Side, tooltip};
 
@@ -79,6 +80,9 @@ pub const MONO: &str = "Menlo";
 
 pub struct Shell {
     pub sidebar_open: bool,
+    /// The toggle's spring: its start and the progress it left from
+    /// ([`Shell::sidebar_progress`]). `None` when set without motion.
+    sidebar_motion: Option<(Instant, f32)>,
     pub sidebar_width: Pixels,
     sidebar_drag_offset: Option<Pixels>,
     pub can_go_back: bool,
@@ -141,6 +145,7 @@ impl Shell {
     pub fn new(sidebar: AnyView, main: AnyView) -> Self {
         Self {
             sidebar_open: true,
+            sidebar_motion: None,
             sidebar_width: Theme::SIDEBAR_WIDTH,
             sidebar_drag_offset: None,
             can_go_back: false,
@@ -167,8 +172,23 @@ impl Shell {
 
     pub fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
         self.sidebar_drag_offset = None;
+        let now = cx.background_executor().now();
+        let from = self.sidebar_progress(now);
         self.sidebar_open = !self.sidebar_open;
+        self.sidebar_motion = (!motion::reduced(cx)).then_some((now, from));
         cx.notify();
+    }
+
+    /// How far the sidebar is open at `now`, 0 to 1: the toggle's `MO-01` spring
+    /// ([`motion::spring_300`]) between the states, else the state itself.
+    fn sidebar_progress(&self, now: Instant) -> f32 {
+        let target = if self.sidebar_open { 1. } else { 0. };
+        match self.sidebar_motion {
+            Some((started, from)) => {
+                motion::spring_300(from, target, now.saturating_duration_since(started))
+            }
+            None => target,
+        }
     }
 }
 
@@ -810,7 +830,8 @@ impl Shell {
     /// `.sidebar-navigation`: its left corners come from `clip-path: inset(... round 12px)`.
     /// It is a composited cc layer: its tile holds the translucent background and the content
     /// is blitted onto it before the layer is composited (`.layer()`).
-    fn sidebar_panel(&self, t: &Theme) -> Div {
+    /// While the toggle springs, the content fades with `progress` and slides from -16 px.
+    fn sidebar_panel(&self, t: &Theme, progress: f32) -> Div {
         let r = Theme::RADIUS_XL_BASE;
         div()
             .tab_group()
@@ -834,15 +855,23 @@ impl Shell {
                 fill: Some(t.sidebar_background),
                 ..Default::default()
             }))
-            .child(self.sidebar.clone())
+            .child(
+                div()
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .relative()
+                    .left(px(-16.) * (1. - progress))
+                    .opacity(progress)
+                    .child(self.sidebar.clone()),
+            )
     }
 
     /// `_MainContentSurface`'s content box. Its fill and `_MainContentLeftBorder` hairline
     /// (`background-clip: padding-box`) paint with the page in `render`: with the sidebar open
     /// the left edge is square and the right corners are rounded by its `clip-path`; with it
-    /// closed it is a plain 12 px rounded box.
-    fn main_panel(&self) -> Div {
-        let open = self.sidebar_open;
+    /// closed it is a plain 12 px rounded box. `left` is its edge, `open` its shape.
+    fn main_panel(&self, left: Pixels, open: bool) -> Div {
         let r = Theme::RADIUS_XL_BASE;
         let panel = div()
             .tab_group()
@@ -855,18 +884,14 @@ impl Shell {
             .overflow_hidden()
             .child(self.main.clone());
         if self.main_composited {
-            return panel.left(if open {
-                self.sidebar_width + MAIN_HAIRLINE
-            } else {
-                RAIL_WIDTH
-            });
+            return panel.left(if open { left + MAIN_HAIRLINE } else { left });
         }
         // The `clip-path` box (its left corners under the open sidebar): Skia rasters main's
         // draws under that anti-aliased clip, but not its composited layers.
         let (left, inset) = if open {
-            (self.sidebar_width - r, r + MAIN_HAIRLINE)
+            (left - r, r + MAIN_HAIRLINE)
         } else {
-            (RAIL_WIDTH, px(0.))
+            (left, px(0.))
         };
         div()
             .absolute()
@@ -1038,11 +1063,25 @@ impl Render for Shell {
         };
         // `_MainContentSurface` paints into the same layer: its fill and hairline blend onto
         // the layer's translucent pixels too.
-        let open = self.sidebar_open;
-        let sidebar_width = self.sidebar_width;
+        let now = cx.background_executor().now();
+        if let Some((started, _)) = self.sidebar_motion
+            && now.saturating_duration_since(started) < motion::RELAXED
+        {
+            window.request_animation_frame();
+        }
+        let progress = self.sidebar_progress(now);
+        // The original keeps the page-sidebar shape (`data-app-shell-page-sidebar`) above 0.1
+        // of progress; its hairline fades out over 0.2 to 0.05 while closing.
+        let open = progress > 0.1;
+        let main_left = RAIL_WIDTH + (self.sidebar_width - RAIL_WIDTH) * progress;
+        let hairline_alpha = if self.sidebar_open {
+            1.
+        } else {
+            ((progress - 0.05) / 0.15).clamp(0., 1.)
+        };
         let composited = self.main_composited;
         let main_layer = composited && self.main_layer;
-        let clip_twice = main_layer && screens::diff::panel::panel_clamped(window);
+        let clip_twice = main_layer && screens::diff::panel::panel_clamped(window, cx);
         let clips_right = composited && self.main_clips_right;
         let fills = if composited {
             1
@@ -1070,7 +1109,7 @@ impl Render for Shell {
             ..main_fill.clone()
         };
         let hairline = shapes::Decoration {
-            fill: Some(t.sidebar_divider),
+            fill: Some(t.sidebar_divider.opacity(hairline_alpha)),
             ..Default::default()
         };
         let under = t.background_surface_under;
@@ -1089,7 +1128,6 @@ impl Render for Shell {
                 bounds.origin + point(RAIL_WIDTH, Theme::TITLEBAR_HEIGHT),
                 bounds.bottom_right() - point(PAGE_INSET, PAGE_INSET),
             );
-            let main_left = if open { sidebar_width } else { RAIL_WIDTH };
             let mut main = Bounds::from_corners(
                 bounds.origin + point(main_left, Theme::TITLEBAR_HEIGHT),
                 page_surface.bottom_right(),
@@ -1136,7 +1174,7 @@ impl Render for Shell {
                 let s = window.scale_factor();
                 let dev = |v: Pixels| f32::from(v) * s;
                 let rd = dev(r).round();
-                let (left, top) = (dev(RAIL_WIDTH), dev(Theme::TITLEBAR_HEIGHT));
+                let (left, top) = (dev(main_left), dev(Theme::TITLEBAR_HEIGHT));
                 let right = dev(bounds.size.width - PAGE_INSET);
                 let bottom = dev(bounds.size.height - PAGE_INSET);
                 // Each corner: its point and which way the main panel lies.
@@ -1247,8 +1285,8 @@ impl Render for Shell {
             .font_family(SANS)
             .bg(under)
             .child(page)
-            .when(self.sidebar_open, |d| d.child(self.sidebar_panel(&t)))
-            .child(self.main_panel())
+            .when(progress > 0., |d| d.child(self.sidebar_panel(&t, progress)))
+            .child(self.main_panel(main_left, open))
             .when(composited || self.main_backgrounds > 0, |d| {
                 d.child(corners)
             })
@@ -1273,52 +1311,61 @@ impl Render for Shell {
                         ),
                 )
             })
-            .when(self.sidebar_drag_offset.is_some(), |d| {
-                let this = cx.entity().downgrade();
-                d.child(
-                    canvas(
-                        |_, _, _| {},
-                        move |_, (), window, _| {
-                            let moved = this.clone();
-                            window.on_mouse_event(move |e: &MouseMoveEvent, phase, window, cx| {
-                                if phase == DispatchPhase::Capture {
-                                    moved
-                                        .update(cx, |this, _| {
-                                            if let Some(offset) = this.sidebar_drag_offset {
-                                                let width = e.position.x - offset;
-                                                this.sidebar_open = width >= px(145.);
-                                                if this.sidebar_open {
-                                                    this.sidebar_width =
-                                                        width.clamp(px(290.), px(520.));
-                                                }
-                                                window.refresh();
-                                            }
-                                        })
-                                        .ok();
+            .when_some(self.sidebar_drag_offset, |d, offset| {
+                let moved = cx.entity().downgrade();
+                let released = moved.clone();
+                d.child(drag_layer(
+                    move |x, _, cx| {
+                        moved
+                            .update(cx, |this, _| {
+                                let width = x - offset;
+                                this.sidebar_open = width >= px(145.);
+                                if this.sidebar_open {
+                                    this.sidebar_width = width.clamp(px(290.), px(520.));
                                 }
-                            });
-                            let released = this.clone();
-                            window.on_mouse_event(move |e: &MouseUpEvent, phase, _, cx| {
-                                if phase == DispatchPhase::Capture && e.button == MouseButton::Left
-                                {
-                                    released
-                                        .update(cx, |this, cx| {
-                                            this.sidebar_drag_offset = None;
-                                            cx.notify();
-                                        })
-                                        .ok();
-                                }
-                            });
-                        },
-                    )
-                    .absolute()
-                    .size_full(),
-                )
+                            })
+                            .ok();
+                    },
+                    move |cx| {
+                        released
+                            .update(cx, |this, cx| {
+                                this.sidebar_drag_offset = None;
+                                cx.notify();
+                            })
+                            .ok();
+                    },
+                ))
             })
             .child(self.rail(&t, window, cx))
             .child(self.titlebar(&t, window, cx))
             .when(self.profile_menu, |d| d.child(self.profile_menu(&t, cx)))
     }
+}
+
+/// The window-wide capture layer of a live drag: `on_move` with every pointer x (then a
+/// refresh) until the left button's release, then `on_release`.
+pub(crate) fn drag_layer(
+    on_move: impl Fn(Pixels, &mut Window, &mut App) + 'static,
+    on_release: impl Fn(&mut App) + 'static,
+) -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        move |_, (), window, _| {
+            window.on_mouse_event(move |e: &MouseMoveEvent, phase, window, cx| {
+                if phase == DispatchPhase::Capture {
+                    on_move(e.position.x, window, cx);
+                    window.refresh();
+                }
+            });
+            window.on_mouse_event(move |e: &MouseUpEvent, phase, _, cx| {
+                if phase == DispatchPhase::Capture && e.button == MouseButton::Left {
+                    on_release(cx);
+                }
+            });
+        },
+    )
+    .absolute()
+    .size_full()
 }
 
 #[cfg(test)]
