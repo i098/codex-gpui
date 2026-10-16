@@ -4,6 +4,9 @@
 // with the same threadId, then the most equal top-level params. The recorded result is re-keyed to
 // the live id and the recorded notifications that followed it are emitted. Unknown methods answer
 // a JSON-RPC error. Log: $MOCK_LOG (default /tmp/inv-r1/mock-app-server.log).
+// MOCK_SIGNED_OUT=1: the account reads report no account (the renderer shows the login route)
+// until account/login/start, which answers a ChatGPT login; the recorder pushes account/updated
+// and account/login/completed itself. One login per mock start.
 import fs from "node:fs";
 import path from "node:path";
 import { createInterface } from "node:readline";
@@ -33,6 +36,16 @@ for (const f of files) {
     if (!byMethod.has(msg.method)) byMethod.set(msg.method, []);
     byMethod.get(msg.method).push({ params: msg.params ?? null, reply, notes });
   }
+}
+let signedOut = !!process.env.MOCK_SIGNED_OUT;
+const SIGNED_OUT = {
+  getAuthStatus: { authMethod: null, authToken: null, requiresOpenaiAuth: true },
+  "account/read": { account: null, requiresOpenaiAuth: true },
+};
+if (signedOut) {
+  const loginId = "11111111-1111-4111-8111-111111111111";
+  const authUrl = "https://auth.openai.com/oauth/authorize?client_id=app_EMoamEEZ73f0CkXaXp7hrann&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&response_type=code&scope=openid+profile+email+offline_access&state=s034b-state";
+  byMethod.set("account/login/start", [{ params: { type: "chatgpt" }, reply: { result: { type: "chatgpt", loginId, authUrl } }, notes: [] }]);
 }
 
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -64,6 +77,8 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     return out({ id: m.id, error: { code: -32601, message: `mock: no recording for ${m.method}` } });
   }
   log("hit ", m.method, JSON.stringify(m.params ?? null).slice(0, 120));
+  if (signedOut && SIGNED_OUT[m.method]) return out({ id: m.id, result: SIGNED_OUT[m.method] });
+  if (m.method === "account/login/start") signedOut = false;
   out({ ...adapt(m.params ?? {}, r), id: m.id });
   for (const n of r.notes) out(n);
 });
