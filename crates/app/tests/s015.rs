@@ -7,7 +7,7 @@ use anyhow::{Context as _, Result, ensure};
 use common::{Fx, ROOT, SUBTRACT, changed};
 use image::RgbaImage;
 use serde_json::{Value, json};
-use std::fs;
+use std::{fs, time::Duration};
 
 const RAN: &str = "Ran python3 -c 'from src.math import subtract; print(subtract(5, 3))'";
 /// The transcript above the composer (whose model spinner animates).
@@ -62,6 +62,8 @@ fn open_group(fx: &mut Fx, steps: &[Value]) -> Result<f32> {
         assert_eq!(step["type"], "click");
         let (x, y) = center(&step["target"]["bbox"]);
         fx.click((x, y + dy))?;
+        // The `Worked for` disclosure animates open (motion::RELAXED).
+        fx.advance(Duration::from_millis(400))?;
     }
     fx.hover((1270., 820.))?;
     Ok(dy)
