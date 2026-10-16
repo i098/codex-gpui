@@ -1,0 +1,3546 @@
+{
+  "slice": "ms1",
+  "method": "Original route1 renderer; shared Chrome :9522; isolated CDP context; paused CSS transitions sampled at 60 Hz.",
+  "runs": [
+    {
+      "slice": "ms1",
+      "source": "Codex 26.1007.30912, original route1 renderer",
+      "viewport": {
+        "w": 1280,
+        "h": 832,
+        "dpr": 1,
+        "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+        "theme": "dark",
+        "hoverEmulated": true
+      },
+      "tracks": [
+        {
+          "reduced": false,
+          "action": "hover",
+          "animations": [
+            {
+              "property": "color",
+              "pseudo": null,
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "color": "rgba(255, 255, 255, 0.498)",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "color": "rgb(255, 255, 255)",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "opacity",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "opacity": "0",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "opacity": "1",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "transform",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "none",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "scale(1)",
+                  "computedOffset": 1
+                }
+              ]
+            }
+          ],
+          "samples": [
+            {
+              "ms": 0,
+              "opacity": 0,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.498)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 16.666666666666668,
+              "opacity": 0.11263,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.553)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 33.333333333333336,
+              "opacity": 0.346036,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.67)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 50,
+              "opacity": 0.575862,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.79)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 66.66666666666667,
+              "opacity": 0.741158,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.87)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 83.33333333333333,
+              "opacity": 0.852283,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.925)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 100,
+              "opacity": 0.924824,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.96)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 116.66666666666667,
+              "opacity": 0.969409,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.984)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 133.33333333333334,
+              "opacity": 0.992931,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.996)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 150,
+              "opacity": 1,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            }
+          ]
+        },
+        {
+          "reduced": false,
+          "action": "leave",
+          "animations": [
+            {
+              "property": "color",
+              "pseudo": null,
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "color": "rgb(255, 255, 255)",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "color": "rgba(255, 255, 255, 0.498)",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "opacity",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "opacity": "1",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "opacity": "0",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "transform",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "scale(1)",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "none",
+                  "computedOffset": 1
+                }
+              ]
+            }
+          ],
+          "samples": [
+            {
+              "ms": 0,
+              "opacity": 1,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 16.666666666666668,
+              "opacity": 0.88737,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.945)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 33.333333333333336,
+              "opacity": 0.653964,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.827)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 50,
+              "opacity": 0.424138,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.71)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 66.66666666666667,
+              "opacity": 0.258842,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.627)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 83.33333333333333,
+              "opacity": 0.147717,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.573)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 100,
+              "opacity": 0.075176,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.537)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 116.66666666666667,
+              "opacity": 0.0305907,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.514)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 133.33333333333334,
+              "opacity": 0.00706896,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.5)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 150,
+              "opacity": 0,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.498)",
+              "transform": "none"
+            }
+          ]
+        },
+        {
+          "reduced": false,
+          "action": "hover",
+          "animations": [
+            {
+              "property": "color",
+              "pseudo": null,
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "color": "rgba(255, 255, 255, 0.498)",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "color": "rgb(255, 255, 255)",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "opacity",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "opacity": "0",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "opacity": "1",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "transform",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "none",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "scale(1)",
+                  "computedOffset": 1
+                }
+              ]
+            }
+          ],
+          "samples": [
+            {
+              "ms": 0,
+              "opacity": 0,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.498)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 16.666666666666668,
+              "opacity": 0.11263,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.553)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 33.333333333333336,
+              "opacity": 0.346036,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.67)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 50,
+              "opacity": 0.575862,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.79)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 66.66666666666667,
+              "opacity": 0.741158,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.87)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 83.33333333333333,
+              "opacity": 0.852283,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.925)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 100,
+              "opacity": 0.924824,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.96)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 116.66666666666667,
+              "opacity": 0.969409,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.984)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 133.33333333333334,
+              "opacity": 0.992931,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.996)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 150,
+              "opacity": 1,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            }
+          ]
+        },
+        {
+          "reduced": false,
+          "action": "press",
+          "animations": [
+            {
+              "property": "background-color",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "backgroundColor": "rgba(255, 255, 255, 0.08)",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "backgroundColor": "oklab(0.999994 0.0000455678 0.0000200868 / 0.16)",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "transform",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "scale(1)",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "none",
+                  "computedOffset": 1
+                }
+              ]
+            }
+          ],
+          "samples": [
+            {
+              "ms": 0,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200272 / 0.0784314)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 16.666666666666668,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200394 / 0.0876184)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 33.333333333333336,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200581 / 0.106657)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 50,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.000020071 / 0.125404)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 66.66666666666667,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200781 / 0.138887)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 83.33333333333333,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200821 / 0.147951)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 100,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200845 / 0.153868)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 116.66666666666667,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200859 / 0.157505)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 133.33333333333334,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200866 / 0.159423)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 150,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200868 / 0.16)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "none"
+            }
+          ]
+        },
+        {
+          "reduced": false,
+          "action": "release",
+          "animations": [
+            {
+              "property": "background-color",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "backgroundColor": "oklab(0.999994 0.0000455678 0.0000200868 / 0.16)",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "backgroundColor": "rgba(255, 255, 255, 0.08)",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "transform",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "none",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "scale(1)",
+                  "computedOffset": 1
+                }
+              ]
+            }
+          ],
+          "samples": [
+            {
+              "ms": 0,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200868 / 0.16)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 16.666666666666668,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200833 / 0.150813)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 33.333333333333336,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200745 / 0.131774)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 50,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200629 / 0.113028)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 66.66666666666667,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.000020052 / 0.0995447)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 83.33333333333333,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200427 / 0.0904805)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 100,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200356 / 0.0845634)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 116.66666666666667,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200308 / 0.0809266)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 133.33333333333334,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.000020028 / 0.079008)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 150,
+              "opacity": 1,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            }
+          ]
+        },
+        {
+          "reduced": true,
+          "action": "hover",
+          "animations": [
+            {
+              "property": "color",
+              "pseudo": null,
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "color": "rgba(255, 255, 255, 0.498)",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "color": "rgb(255, 255, 255)",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "opacity",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "opacity": "0",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "opacity": "1",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "transform",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "none",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "scale(1)",
+                  "computedOffset": 1
+                }
+              ]
+            }
+          ],
+          "samples": [
+            {
+              "ms": 0,
+              "opacity": 0,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.498)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 16.666666666666668,
+              "opacity": 0.11263,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.553)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 33.333333333333336,
+              "opacity": 0.346036,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.67)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 50,
+              "opacity": 0.575862,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.79)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 66.66666666666667,
+              "opacity": 0.741158,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.87)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 83.33333333333333,
+              "opacity": 0.852283,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.925)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 100,
+              "opacity": 0.924824,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.96)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 116.66666666666667,
+              "opacity": 0.969409,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.984)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 133.33333333333334,
+              "opacity": 0.992931,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.996)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 150,
+              "opacity": 1,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            }
+          ]
+        },
+        {
+          "reduced": true,
+          "action": "leave",
+          "animations": [
+            {
+              "property": "color",
+              "pseudo": null,
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "color": "rgb(255, 255, 255)",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "color": "rgba(255, 255, 255, 0.498)",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "opacity",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "opacity": "1",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "opacity": "0",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "transform",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "scale(1)",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "none",
+                  "computedOffset": 1
+                }
+              ]
+            }
+          ],
+          "samples": [
+            {
+              "ms": 0,
+              "opacity": 1,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 16.666666666666668,
+              "opacity": 0.88737,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.945)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 33.333333333333336,
+              "opacity": 0.653964,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.827)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 50,
+              "opacity": 0.424138,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.71)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 66.66666666666667,
+              "opacity": 0.258842,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.627)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 83.33333333333333,
+              "opacity": 0.147717,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.573)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 100,
+              "opacity": 0.075176,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.537)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 116.66666666666667,
+              "opacity": 0.0305907,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.514)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 133.33333333333334,
+              "opacity": 0.00706896,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.5)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 150,
+              "opacity": 0,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.498)",
+              "transform": "none"
+            }
+          ]
+        },
+        {
+          "reduced": true,
+          "action": "hover",
+          "animations": [
+            {
+              "property": "color",
+              "pseudo": null,
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "color": "rgba(255, 255, 255, 0.498)",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "color": "rgb(255, 255, 255)",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "opacity",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "opacity": "0",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "opacity": "1",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "transform",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "none",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "scale(1)",
+                  "computedOffset": 1
+                }
+              ]
+            }
+          ],
+          "samples": [
+            {
+              "ms": 0,
+              "opacity": 0,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.498)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 16.666666666666668,
+              "opacity": 0.11263,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.553)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 33.333333333333336,
+              "opacity": 0.346036,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.67)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 50,
+              "opacity": 0.575862,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.79)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 66.66666666666667,
+              "opacity": 0.741158,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.87)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 83.33333333333333,
+              "opacity": 0.852283,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.925)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 100,
+              "opacity": 0.924824,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.96)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 116.66666666666667,
+              "opacity": 0.969409,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.984)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 133.33333333333334,
+              "opacity": 0.992931,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgba(255, 255, 255, 0.996)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 150,
+              "opacity": 1,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            }
+          ]
+        },
+        {
+          "reduced": true,
+          "action": "press",
+          "animations": [
+            {
+              "property": "background-color",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "backgroundColor": "rgba(255, 255, 255, 0.08)",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "backgroundColor": "oklab(0.999994 0.0000455678 0.0000200868 / 0.16)",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "transform",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "scale(1)",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "none",
+                  "computedOffset": 1
+                }
+              ]
+            }
+          ],
+          "samples": [
+            {
+              "ms": 0,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200272 / 0.0784314)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 16.666666666666668,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200394 / 0.0876184)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 33.333333333333336,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200581 / 0.106657)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 50,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.000020071 / 0.125404)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 66.66666666666667,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200781 / 0.138887)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 83.33333333333333,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200821 / 0.147951)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 100,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200845 / 0.153868)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 116.66666666666667,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200859 / 0.157505)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 133.33333333333334,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200866 / 0.159423)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 150,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200868 / 0.16)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "none"
+            }
+          ]
+        },
+        {
+          "reduced": true,
+          "action": "release",
+          "animations": [
+            {
+              "property": "background-color",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "backgroundColor": "oklab(0.999994 0.0000455678 0.0000200868 / 0.16)",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "backgroundColor": "rgba(255, 255, 255, 0.08)",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "transform",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "none",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "scale(1)",
+                  "computedOffset": 1
+                }
+              ]
+            }
+          ],
+          "samples": [
+            {
+              "ms": 0,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200868 / 0.16)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 16.666666666666668,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200833 / 0.150813)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 33.333333333333336,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200745 / 0.131774)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 50,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200629 / 0.113028)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 66.66666666666667,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.000020052 / 0.0995447)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 83.33333333333333,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200427 / 0.0904805)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 100,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200356 / 0.0845634)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 116.66666666666667,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.0000200308 / 0.0809266)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 133.33333333333334,
+              "opacity": 1,
+              "background": "oklab(0.999994 0.0000455678 0.000020028 / 0.079008)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 150,
+              "opacity": 1,
+              "background": "rgba(255, 255, 255, 0.08)",
+              "color": "rgb(255, 255, 255)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            }
+          ]
+        }
+      ],
+      "rest": {
+        "opacity": 0,
+        "background": "rgba(255, 255, 255, 0.08)",
+        "color": "rgba(255, 255, 255, 0.498)",
+        "transform": "none"
+      },
+      "target": {
+        "tag": "button",
+        "text": "Plugins",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 8,
+          "y": 184,
+          "w": 36,
+          "h": 36
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      }
+    },
+    {
+      "slice": "ms1",
+      "source": "Codex 26.1007.30912, original route1 renderer",
+      "viewport": {
+        "w": 1280,
+        "h": 832,
+        "dpr": 1,
+        "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+        "theme": "light",
+        "hoverEmulated": true
+      },
+      "tracks": [
+        {
+          "reduced": false,
+          "action": "hover",
+          "animations": [
+            {
+              "property": "color",
+              "pseudo": null,
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "color": "rgba(26, 28, 31, 0.494)",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "color": "rgb(26, 28, 31)",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "opacity",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "opacity": "0",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "opacity": "1",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "transform",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "none",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "scale(1)",
+                  "computedOffset": 1
+                }
+              ]
+            }
+          ],
+          "samples": [
+            {
+              "ms": 0,
+              "opacity": 0,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.494)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 16.666666666666668,
+              "opacity": 0.11263,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.553)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 33.333333333333336,
+              "opacity": 0.346036,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.67)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 50,
+              "opacity": 0.575862,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.784)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 66.66666666666667,
+              "opacity": 0.741158,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.87)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 83.33333333333333,
+              "opacity": 0.852283,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.925)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 100,
+              "opacity": 0.924824,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.96)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 116.66666666666667,
+              "opacity": 0.969409,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.984)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 133.33333333333334,
+              "opacity": 0.992931,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.996)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 150,
+              "opacity": 1,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            }
+          ]
+        },
+        {
+          "reduced": false,
+          "action": "leave",
+          "animations": [
+            {
+              "property": "color",
+              "pseudo": null,
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "color": "rgb(26, 28, 31)",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "color": "rgba(26, 28, 31, 0.494)",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "opacity",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "opacity": "1",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "opacity": "0",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "transform",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "scale(1)",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "none",
+                  "computedOffset": 1
+                }
+              ]
+            }
+          ],
+          "samples": [
+            {
+              "ms": 0,
+              "opacity": 1,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 16.666666666666668,
+              "opacity": 0.88737,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.94)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 33.333333333333336,
+              "opacity": 0.653964,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.824)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 50,
+              "opacity": 0.424138,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.71)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 66.66666666666667,
+              "opacity": 0.258842,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.624)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 83.33333333333333,
+              "opacity": 0.147717,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.57)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 100,
+              "opacity": 0.075176,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.533)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 116.66666666666667,
+              "opacity": 0.0305907,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.51)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 133.33333333333334,
+              "opacity": 0.00706896,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.498)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 150,
+              "opacity": 0,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.494)",
+              "transform": "none"
+            }
+          ]
+        },
+        {
+          "reduced": false,
+          "action": "hover",
+          "animations": [
+            {
+              "property": "color",
+              "pseudo": null,
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "color": "rgba(26, 28, 31, 0.494)",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "color": "rgb(26, 28, 31)",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "opacity",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "opacity": "0",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "opacity": "1",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "transform",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "none",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "scale(1)",
+                  "computedOffset": 1
+                }
+              ]
+            }
+          ],
+          "samples": [
+            {
+              "ms": 0,
+              "opacity": 0,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.494)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 16.666666666666668,
+              "opacity": 0.11263,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.553)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 33.333333333333336,
+              "opacity": 0.346036,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.67)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 50,
+              "opacity": 0.575862,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.784)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 66.66666666666667,
+              "opacity": 0.741158,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.87)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 83.33333333333333,
+              "opacity": 0.852283,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.925)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 100,
+              "opacity": 0.924824,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.96)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 116.66666666666667,
+              "opacity": 0.969409,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.984)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 133.33333333333334,
+              "opacity": 0.992931,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.996)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 150,
+              "opacity": 1,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            }
+          ]
+        },
+        {
+          "reduced": false,
+          "action": "press",
+          "animations": [
+            {
+              "property": "background-color",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "backgroundColor": "rgba(26, 28, 31, 0.055)",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "backgroundColor": "oklab(0.22559 -0.00131416 -0.00642684 / 0.12)",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "transform",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "scale(1)",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "none",
+                  "computedOffset": 1
+                }
+              ]
+            }
+          ],
+          "samples": [
+            {
+              "ms": 0,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.054902)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 16.666666666666668,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.062234)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 33.333333333333336,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.0774282)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 50,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.0923895)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 66.66666666666667,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.10315)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 83.33333333333333,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.110384)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 100,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.115106)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 116.66666666666667,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.118009)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 133.33333333333334,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.11954)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 150,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.12)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "none"
+            }
+          ]
+        },
+        {
+          "reduced": false,
+          "action": "release",
+          "animations": [
+            {
+              "property": "background-color",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "backgroundColor": "oklab(0.22559 -0.00131416 -0.00642684 / 0.12)",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "backgroundColor": "rgba(26, 28, 31, 0.055)",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "transform",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "none",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "scale(1)",
+                  "computedOffset": 1
+                }
+              ]
+            }
+          ],
+          "samples": [
+            {
+              "ms": 0,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.12)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 16.666666666666668,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.112668)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 33.333333333333336,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.0974738)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 50,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.0825125)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 66.66666666666667,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.071752)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 83.33333333333333,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.0645181)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 100,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.0597958)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 116.66666666666667,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.0568934)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 133.33333333333334,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.0553621)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 150,
+              "opacity": 1,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            }
+          ]
+        },
+        {
+          "reduced": true,
+          "action": "hover",
+          "animations": [
+            {
+              "property": "color",
+              "pseudo": null,
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "color": "rgba(26, 28, 31, 0.494)",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "color": "rgb(26, 28, 31)",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "opacity",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "opacity": "0",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "opacity": "1",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "transform",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "none",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "scale(1)",
+                  "computedOffset": 1
+                }
+              ]
+            }
+          ],
+          "samples": [
+            {
+              "ms": 0,
+              "opacity": 0,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.494)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 16.666666666666668,
+              "opacity": 0.11263,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.553)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 33.333333333333336,
+              "opacity": 0.346036,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.67)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 50,
+              "opacity": 0.575862,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.784)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 66.66666666666667,
+              "opacity": 0.741158,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.87)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 83.33333333333333,
+              "opacity": 0.852283,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.925)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 100,
+              "opacity": 0.924824,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.96)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 116.66666666666667,
+              "opacity": 0.969409,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.984)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 133.33333333333334,
+              "opacity": 0.992931,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.996)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 150,
+              "opacity": 1,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            }
+          ]
+        },
+        {
+          "reduced": true,
+          "action": "leave",
+          "animations": [
+            {
+              "property": "color",
+              "pseudo": null,
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "color": "rgb(26, 28, 31)",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "color": "rgba(26, 28, 31, 0.494)",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "opacity",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "opacity": "1",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "opacity": "0",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "transform",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "scale(1)",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "none",
+                  "computedOffset": 1
+                }
+              ]
+            }
+          ],
+          "samples": [
+            {
+              "ms": 0,
+              "opacity": 1,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 16.666666666666668,
+              "opacity": 0.88737,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.94)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 33.333333333333336,
+              "opacity": 0.653964,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.824)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 50,
+              "opacity": 0.424138,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.71)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 66.66666666666667,
+              "opacity": 0.258842,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.624)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 83.33333333333333,
+              "opacity": 0.147717,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.57)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 100,
+              "opacity": 0.075176,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.533)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 116.66666666666667,
+              "opacity": 0.0305907,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.51)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 133.33333333333334,
+              "opacity": 0.00706896,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.498)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 150,
+              "opacity": 0,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.494)",
+              "transform": "none"
+            }
+          ]
+        },
+        {
+          "reduced": true,
+          "action": "hover",
+          "animations": [
+            {
+              "property": "color",
+              "pseudo": null,
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "color": "rgba(26, 28, 31, 0.494)",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "color": "rgb(26, 28, 31)",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "opacity",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "opacity": "0",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "opacity": "1",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "transform",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "none",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "scale(1)",
+                  "computedOffset": 1
+                }
+              ]
+            }
+          ],
+          "samples": [
+            {
+              "ms": 0,
+              "opacity": 0,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.494)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 16.666666666666668,
+              "opacity": 0.11263,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.553)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 33.333333333333336,
+              "opacity": 0.346036,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.67)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 50,
+              "opacity": 0.575862,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.784)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 66.66666666666667,
+              "opacity": 0.741158,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.87)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 83.33333333333333,
+              "opacity": 0.852283,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.925)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 100,
+              "opacity": 0.924824,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.96)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 116.66666666666667,
+              "opacity": 0.969409,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.984)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 133.33333333333334,
+              "opacity": 0.992931,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgba(26, 28, 31, 0.996)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 150,
+              "opacity": 1,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            }
+          ]
+        },
+        {
+          "reduced": true,
+          "action": "press",
+          "animations": [
+            {
+              "property": "background-color",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "backgroundColor": "rgba(26, 28, 31, 0.055)",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "backgroundColor": "oklab(0.22559 -0.00131416 -0.00642684 / 0.12)",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "transform",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "scale(1)",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "none",
+                  "computedOffset": 1
+                }
+              ]
+            }
+          ],
+          "samples": [
+            {
+              "ms": 0,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.054902)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 16.666666666666668,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.062234)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 33.333333333333336,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.0774282)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 50,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.0923895)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 66.66666666666667,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.10315)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 83.33333333333333,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.110384)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 100,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.115106)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 116.66666666666667,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.118009)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 133.33333333333334,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.11954)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 150,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.12)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "none"
+            }
+          ]
+        },
+        {
+          "reduced": true,
+          "action": "release",
+          "animations": [
+            {
+              "property": "background-color",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "backgroundColor": "oklab(0.22559 -0.00131416 -0.00642684 / 0.12)",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "backgroundColor": "rgba(26, 28, 31, 0.055)",
+                  "computedOffset": 1
+                }
+              ]
+            },
+            {
+              "property": "transform",
+              "pseudo": "::before",
+              "timing": {
+                "delay": 0,
+                "direction": "normal",
+                "duration": 150,
+                "easing": "ease",
+                "endDelay": 0,
+                "fill": "backwards",
+                "iterationStart": 0,
+                "iterations": 1
+              },
+              "keyframes": [
+                {
+                  "offset": 0,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "none",
+                  "computedOffset": 0
+                },
+                {
+                  "offset": 1,
+                  "easing": "linear",
+                  "composite": "auto",
+                  "transform": "scale(1)",
+                  "computedOffset": 1
+                }
+              ]
+            }
+          ],
+          "samples": [
+            {
+              "ms": 0,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.12)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 16.666666666666668,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.112668)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 33.333333333333336,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.0974738)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 50,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.0825125)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 66.66666666666667,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.071752)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 83.33333333333333,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.0645181)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 100,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.0597958)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 116.66666666666667,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.0568934)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 133.33333333333334,
+              "opacity": 1,
+              "background": "oklab(0.22559 -0.00131416 -0.00642684 / 0.0553621)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            },
+            {
+              "ms": 150,
+              "opacity": 1,
+              "background": "rgba(26, 28, 31, 0.055)",
+              "color": "rgb(26, 28, 31)",
+              "transform": "matrix(1, 0, 0, 1, 0, 0)"
+            }
+          ]
+        }
+      ],
+      "rest": {
+        "opacity": 0,
+        "background": "rgba(26, 28, 31, 0.055)",
+        "color": "rgba(26, 28, 31, 0.494)",
+        "transform": "none"
+      },
+      "target": {
+        "tag": "button",
+        "text": "Plugins",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 8,
+          "y": 184,
+          "w": 36,
+          "h": 36
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(26, 28, 31, 0.494)",
+          "opacity": "1",
+          "outline": "rgba(26, 28, 31, 0.494) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      }
+    }
+  ],
+  "variants": [
+    {
+      "theme": "dark",
+      "label": "Plugins",
+      "rest": {
+        "color": "rgba(255, 255, 255, 0.498)",
+        "background": "rgba(0, 0, 0, 0)",
+        "beforeBackground": "rgba(255, 255, 255, 0.08)",
+        "beforeOpacity": "0",
+        "transition": "opacity 0.15s, color 0.15s",
+        "beforeTransition": "opacity 0.15s, background-color 0.15s, transform 0.15s, box-shadow 0.15s, border-color 0.15s"
+      },
+      "hover": {
+        "color": "rgb(255, 255, 255)",
+        "background": "rgba(0, 0, 0, 0)",
+        "beforeBackground": "rgba(255, 255, 255, 0.08)",
+        "beforeOpacity": "1",
+        "transition": "opacity 0.15s, color 0.15s",
+        "beforeTransition": "opacity 0.15s, background-color 0.15s, transform 0.15s, box-shadow 0.15s, border-color 0.15s"
+      },
+      "press": {
+        "color": "rgb(255, 255, 255)",
+        "background": "rgba(0, 0, 0, 0)",
+        "beforeBackground": "oklab(0.999994 0.0000455678 0.0000200868 / 0.16)",
+        "beforeOpacity": "1",
+        "transition": "opacity 0.15s, color 0.15s",
+        "beforeTransition": "opacity 0.15s, background-color 0.15s, transform 0.15s, box-shadow 0.15s, border-color 0.15s"
+      }
+    },
+    {
+      "theme": "dark",
+      "label": "Hide sidebar",
+      "rest": {
+        "color": "rgba(255, 255, 255, 0.498)",
+        "background": "rgba(0, 0, 0, 0)",
+        "beforeBackground": "rgba(255, 255, 255, 0.08)",
+        "beforeOpacity": "0",
+        "transition": "opacity 0.15s, color 0.15s",
+        "beforeTransition": "opacity 0.15s, background-color 0.15s, transform 0.15s, box-shadow 0.15s, border-color 0.15s"
+      },
+      "hover": {
+        "color": "rgba(255, 255, 255, 0.498)",
+        "background": "rgba(0, 0, 0, 0)",
+        "beforeBackground": "rgba(255, 255, 255, 0.08)",
+        "beforeOpacity": "0",
+        "transition": "opacity 0.15s, color 0.15s",
+        "beforeTransition": "opacity 0.15s, background-color 0.15s, transform 0.15s, box-shadow 0.15s, border-color 0.15s"
+      },
+      "press": null
+    },
+    {
+      "theme": "dark",
+      "label": "Search",
+      "rest": {
+        "color": "rgba(255, 255, 255, 0.498)",
+        "background": "rgba(0, 0, 0, 0)",
+        "beforeBackground": "rgba(255, 255, 255, 0.08)",
+        "beforeOpacity": "0",
+        "transition": "opacity 0.15s, color 0.15s",
+        "beforeTransition": "opacity 0.15s, background-color 0.15s, transform 0.15s, box-shadow 0.15s, border-color 0.15s"
+      },
+      "hover": {
+        "color": "oklab(0.999994 0.0000455678 0.0000200868 / 0.85)",
+        "background": "rgba(0, 0, 0, 0)",
+        "beforeBackground": "rgba(255, 255, 255, 0.08)",
+        "beforeOpacity": "1",
+        "transition": "opacity 0.15s, color 0.15s",
+        "beforeTransition": "opacity 0.15s, background-color 0.15s, transform 0.15s, box-shadow 0.15s, border-color 0.15s"
+      },
+      "press": null
+    },
+    {
+      "theme": "dark",
+      "label": "Dictate",
+      "rest": {
+        "color": "rgba(255, 255, 255, 0.498)",
+        "background": "rgba(0, 0, 0, 0)",
+        "beforeBackground": "rgba(0, 0, 0, 0)",
+        "beforeOpacity": "1",
+        "transition": "all",
+        "beforeTransition": "all"
+      },
+      "hover": {
+        "color": "rgba(255, 255, 255, 0.498)",
+        "background": "rgba(255, 255, 255, 0.08)",
+        "beforeBackground": "rgba(0, 0, 0, 0)",
+        "beforeOpacity": "1",
+        "transition": "all",
+        "beforeTransition": "all"
+      },
+      "press": null
+    },
+    {
+      "theme": "dark",
+      "label": "Change permissions",
+      "rest": {
+        "color": "rgba(255, 255, 255, 0.498)",
+        "background": "rgba(0, 0, 0, 0)",
+        "beforeBackground": "rgba(0, 0, 0, 0)",
+        "beforeOpacity": "1",
+        "transition": "all",
+        "beforeTransition": "all"
+      },
+      "hover": {
+        "color": "rgba(255, 255, 255, 0.498)",
+        "background": "rgba(255, 255, 255, 0.08)",
+        "beforeBackground": "rgba(0, 0, 0, 0)",
+        "beforeOpacity": "1",
+        "transition": "all",
+        "beforeTransition": "all"
+      },
+      "press": null
+    },
+    {
+      "theme": "dark",
+      "label": "Pin chat",
+      "rest": {
+        "color": "rgba(255, 255, 255, 0.498)",
+        "background": "rgba(0, 0, 0, 0)",
+        "beforeBackground": "rgba(255, 255, 255, 0.08)",
+        "beforeOpacity": "0",
+        "transition": "opacity 0.15s, color 0.15s",
+        "beforeTransition": "opacity 0.15s, background-color 0.15s, transform 0.15s, box-shadow 0.15s, border-color 0.15s"
+      },
+      "hover": {
+        "color": "oklab(0.999994 0.0000455678 0.0000200868 / 0.85)",
+        "background": "rgba(0, 0, 0, 0)",
+        "beforeBackground": "rgba(255, 255, 255, 0.08)",
+        "beforeOpacity": "1",
+        "transition": "opacity 0.15s, color 0.15s",
+        "beforeTransition": "opacity 0.15s, background-color 0.15s, transform 0.15s, box-shadow 0.15s, border-color 0.15s"
+      },
+      "press": null
+    },
+    {
+      "theme": "light",
+      "label": "Plugins",
+      "rest": {
+        "color": "rgba(26, 28, 31, 0.494)",
+        "background": "rgba(0, 0, 0, 0)",
+        "beforeBackground": "rgba(26, 28, 31, 0.055)",
+        "beforeOpacity": "0",
+        "transition": "opacity 0.15s, color 0.15s",
+        "beforeTransition": "opacity 0.15s, background-color 0.15s, transform 0.15s, box-shadow 0.15s, border-color 0.15s"
+      },
+      "hover": {
+        "color": "rgb(26, 28, 31)",
+        "background": "rgba(0, 0, 0, 0)",
+        "beforeBackground": "rgba(26, 28, 31, 0.055)",
+        "beforeOpacity": "1",
+        "transition": "opacity 0.15s, color 0.15s",
+        "beforeTransition": "opacity 0.15s, background-color 0.15s, transform 0.15s, box-shadow 0.15s, border-color 0.15s"
+      },
+      "press": {
+        "color": "rgb(26, 28, 31)",
+        "background": "rgba(0, 0, 0, 0)",
+        "beforeBackground": "oklab(0.22559 -0.00131416 -0.00642684 / 0.12)",
+        "beforeOpacity": "1",
+        "transition": "opacity 0.15s, color 0.15s",
+        "beforeTransition": "opacity 0.15s, background-color 0.15s, transform 0.15s, box-shadow 0.15s, border-color 0.15s"
+      }
+    },
+    {
+      "theme": "light",
+      "label": "Hide sidebar",
+      "rest": {
+        "color": "rgba(26, 28, 31, 0.494)",
+        "background": "rgba(0, 0, 0, 0)",
+        "beforeBackground": "rgba(26, 28, 31, 0.055)",
+        "beforeOpacity": "0",
+        "transition": "opacity 0.15s, color 0.15s",
+        "beforeTransition": "opacity 0.15s, background-color 0.15s, transform 0.15s, box-shadow 0.15s, border-color 0.15s"
+      },
+      "hover": {
+        "color": "rgba(26, 28, 31, 0.494)",
+        "background": "rgba(0, 0, 0, 0)",
+        "beforeBackground": "rgba(26, 28, 31, 0.055)",
+        "beforeOpacity": "0",
+        "transition": "opacity 0.15s, color 0.15s",
+        "beforeTransition": "opacity 0.15s, background-color 0.15s, transform 0.15s, box-shadow 0.15s, border-color 0.15s"
+      },
+      "press": null
+    },
+    {
+      "theme": "light",
+      "label": "Search",
+      "rest": {
+        "color": "rgba(26, 28, 31, 0.494)",
+        "background": "rgba(0, 0, 0, 0)",
+        "beforeBackground": "rgba(26, 28, 31, 0.055)",
+        "beforeOpacity": "0",
+        "transition": "opacity 0.15s, color 0.15s",
+        "beforeTransition": "opacity 0.15s, background-color 0.15s, transform 0.15s, box-shadow 0.15s, border-color 0.15s"
+      },
+      "hover": {
+        "color": "oklab(0.22559 -0.00131416 -0.00642684 / 0.85)",
+        "background": "rgba(0, 0, 0, 0)",
+        "beforeBackground": "rgba(26, 28, 31, 0.055)",
+        "beforeOpacity": "1",
+        "transition": "opacity 0.15s, color 0.15s",
+        "beforeTransition": "opacity 0.15s, background-color 0.15s, transform 0.15s, box-shadow 0.15s, border-color 0.15s"
+      },
+      "press": null
+    },
+    {
+      "theme": "light",
+      "label": "Dictate",
+      "rest": {
+        "color": "rgba(26, 28, 31, 0.494)",
+        "background": "rgba(0, 0, 0, 0)",
+        "beforeBackground": "rgba(0, 0, 0, 0)",
+        "beforeOpacity": "1",
+        "transition": "all",
+        "beforeTransition": "all"
+      },
+      "hover": {
+        "color": "rgba(26, 28, 31, 0.494)",
+        "background": "rgba(26, 28, 31, 0.055)",
+        "beforeBackground": "rgba(0, 0, 0, 0)",
+        "beforeOpacity": "1",
+        "transition": "all",
+        "beforeTransition": "all"
+      },
+      "press": null
+    },
+    {
+      "theme": "light",
+      "label": "Change permissions",
+      "rest": {
+        "color": "rgba(26, 28, 31, 0.494)",
+        "background": "rgba(0, 0, 0, 0)",
+        "beforeBackground": "rgba(0, 0, 0, 0)",
+        "beforeOpacity": "1",
+        "transition": "all",
+        "beforeTransition": "all"
+      },
+      "hover": {
+        "color": "rgba(26, 28, 31, 0.494)",
+        "background": "rgba(26, 28, 31, 0.055)",
+        "beforeBackground": "rgba(0, 0, 0, 0)",
+        "beforeOpacity": "1",
+        "transition": "all",
+        "beforeTransition": "all"
+      },
+      "press": null
+    },
+    {
+      "theme": "light",
+      "label": "Pin chat",
+      "rest": {
+        "color": "rgba(26, 28, 31, 0.494)",
+        "background": "rgba(0, 0, 0, 0)",
+        "beforeBackground": "rgba(26, 28, 31, 0.055)",
+        "beforeOpacity": "0",
+        "transition": "opacity 0.15s, color 0.15s",
+        "beforeTransition": "opacity 0.15s, background-color 0.15s, transform 0.15s, box-shadow 0.15s, border-color 0.15s"
+      },
+      "hover": {
+        "color": "oklab(0.22559 -0.00131416 -0.00642684 / 0.85)",
+        "background": "rgba(0, 0, 0, 0)",
+        "beforeBackground": "rgba(26, 28, 31, 0.055)",
+        "beforeOpacity": "1",
+        "transition": "opacity 0.15s, color 0.15s",
+        "beforeTransition": "opacity 0.15s, background-color 0.15s, transform 0.15s, box-shadow 0.15s, border-color 0.15s"
+      },
+      "press": null
+    }
+  ],
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 1,
+    "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+    "theme": "dark",
+    "hoverEmulated": true
+  },
+  "steps": [
+    {
+      "type": "hover",
+      "target": {
+        "tag": "button",
+        "text": "Plugins",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 8,
+          "y": 184,
+          "w": 36,
+          "h": 36
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      "waitMs": 150
+    },
+    {
+      "type": "hover",
+      "at": {
+        "x": 640,
+        "y": 22
+      },
+      "waitMs": 150
+    }
+  ],
+  "result": {
+    "dom": [
+      {
+        "selector": "[data-sidebar-destination=\"builtin:customize\"]",
+        "state": "rest",
+        "bbox": {
+          "x": 8,
+          "y": 184,
+          "w": 36,
+          "h": 36
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)"
+        }
+      },
+      {
+        "selector": "[data-sidebar-destination=\"builtin:customize\"]",
+        "state": "leave",
+        "bbox": {
+          "x": 8,
+          "y": 184,
+          "w": 36,
+          "h": 36
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)"
+        }
+      }
+    ]
+  }
+}
