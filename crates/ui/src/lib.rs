@@ -1042,7 +1042,7 @@ impl Render for Shell {
         let sidebar_width = self.sidebar_width;
         let composited = self.main_composited;
         let main_layer = composited && self.main_layer;
-        let clip_twice = main_layer && screens::diff::panel::panel_clamped(window);
+        let clip_twice = main_layer && screens::diff::panel::panel_clamped(window, cx);
         let clips_right = composited && self.main_clips_right;
         let fills = if composited {
             1
@@ -1273,52 +1273,61 @@ impl Render for Shell {
                         ),
                 )
             })
-            .when(self.sidebar_drag_offset.is_some(), |d| {
-                let this = cx.entity().downgrade();
-                d.child(
-                    canvas(
-                        |_, _, _| {},
-                        move |_, (), window, _| {
-                            let moved = this.clone();
-                            window.on_mouse_event(move |e: &MouseMoveEvent, phase, window, cx| {
-                                if phase == DispatchPhase::Capture {
-                                    moved
-                                        .update(cx, |this, _| {
-                                            if let Some(offset) = this.sidebar_drag_offset {
-                                                let width = e.position.x - offset;
-                                                this.sidebar_open = width >= px(145.);
-                                                if this.sidebar_open {
-                                                    this.sidebar_width =
-                                                        width.clamp(px(290.), px(520.));
-                                                }
-                                                window.refresh();
-                                            }
-                                        })
-                                        .ok();
+            .when_some(self.sidebar_drag_offset, |d, offset| {
+                let moved = cx.entity().downgrade();
+                let released = moved.clone();
+                d.child(drag_layer(
+                    move |x, _, cx| {
+                        moved
+                            .update(cx, |this, _| {
+                                let width = x - offset;
+                                this.sidebar_open = width >= px(145.);
+                                if this.sidebar_open {
+                                    this.sidebar_width = width.clamp(px(290.), px(520.));
                                 }
-                            });
-                            let released = this.clone();
-                            window.on_mouse_event(move |e: &MouseUpEvent, phase, _, cx| {
-                                if phase == DispatchPhase::Capture && e.button == MouseButton::Left
-                                {
-                                    released
-                                        .update(cx, |this, cx| {
-                                            this.sidebar_drag_offset = None;
-                                            cx.notify();
-                                        })
-                                        .ok();
-                                }
-                            });
-                        },
-                    )
-                    .absolute()
-                    .size_full(),
-                )
+                            })
+                            .ok();
+                    },
+                    move |cx| {
+                        released
+                            .update(cx, |this, cx| {
+                                this.sidebar_drag_offset = None;
+                                cx.notify();
+                            })
+                            .ok();
+                    },
+                ))
             })
             .child(self.rail(&t, window, cx))
             .child(self.titlebar(&t, window, cx))
             .when(self.profile_menu, |d| d.child(self.profile_menu(&t, cx)))
     }
+}
+
+/// The window-wide capture layer of a live drag: `on_move` with every pointer x (then a
+/// refresh) until the left button's release, then `on_release`.
+pub(crate) fn drag_layer(
+    on_move: impl Fn(Pixels, &mut Window, &mut App) + 'static,
+    on_release: impl Fn(&mut App) + 'static,
+) -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        move |_, (), window, _| {
+            window.on_mouse_event(move |e: &MouseMoveEvent, phase, window, cx| {
+                if phase == DispatchPhase::Capture {
+                    on_move(e.position.x, window, cx);
+                    window.refresh();
+                }
+            });
+            window.on_mouse_event(move |e: &MouseUpEvent, phase, _, cx| {
+                if phase == DispatchPhase::Capture && e.button == MouseButton::Left {
+                    on_release(cx);
+                }
+            });
+        },
+    )
+    .absolute()
+    .size_full()
 }
 
 #[cfg(test)]
