@@ -82,6 +82,7 @@ impl Composer {
         // The docked body is a cc layer: its icons blend onto its transparent tile, not onto
         // the card as the home composer's do (whose fitted pixels those are).
         let docked = self.docked;
+        let voice_ring = t.text;
         let footer_icon =
             move |name: &str, color| icon(name, 16., color).when(docked, |i| i.own_layer(None));
         let left = div()
@@ -90,6 +91,8 @@ impl Composer {
             .gap(px(5.))
             .child(
                 pill("add-files", t)
+                    .tab_index(0)
+                    .focus_visible(menu::trigger_focus)
                     .w(px(28.))
                     .justify_center()
                     .child(footer_icon("plus", t.text))
@@ -124,6 +127,17 @@ impl Composer {
             );
         let send = div()
             .id("send")
+            .tab_index(0)
+            .rounded(Theme::RADIUS_FULL)
+            .focus_visible(move |style| {
+                style.shadow(vec![gpui::BoxShadow {
+                    color: voice_ring,
+                    offset: point(px(0.), px(0.)),
+                    blur_radius: px(0.),
+                    spread_radius: px(2.),
+                    inset: false,
+                }])
+            })
             .ml(px(8.))
             .size(px(28.))
             .p(px(2.))
@@ -167,6 +181,8 @@ impl Composer {
             .child(model_button)
             .child(
                 pill("dictate", t)
+                    .tab_index(0)
+                    .focus_visible(menu::trigger_focus)
                     .w(px(28.))
                     .justify_center()
                     .child(footer_icon("mic", t.text)),
