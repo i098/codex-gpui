@@ -256,6 +256,16 @@ Run `tools/mac.sh -l s028 'cargo test -p app --test s028 -- --nocapture'`.
 The open panel keeps its state across streamed updates and uses `turn/diff/updated` as the authoritative diff.
 Search scope switching and repository-watch sources remain separate inventory slices.
 
+`refs/interactions/s027.json` records the original diff menus, text selection, clipboard writes, and line hover.
+`s027::diff_selection_and_hover_replay` checks forward and reverse text selection and `Cmd+C` without line numbers.
+The original does not change a line's background on hover in this state, despite the DT-014 inventory claim.
+The test compares the port's pixels before and after the same hover.
+The header menu copies the displayed path and collapses or expands the file.
+The body menu copies selected text, absolute paths, or displayed relative paths.
+The body menu also wraps long code lines without changing the copied text.
+The editor entry stays disabled until the native `openIn` service exists.
+Comment actions (S075/S082), file tabs (S186), and external targets remain outside this slice, as firstmate approved.
+
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
@@ -264,15 +274,15 @@ Search scope switching and repository-watch sources remain separate inventory sl
 | 3 | Source selector | click | Uncommitted / Staged / … | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 4 | Show / Hide files | click | Toggles the file tree. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 5 | File tree filter | focus | `Filter files…`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Header click collapses or expands the file; no Copy path or Open. | FAIL (Copy path, Open: `crates/ui/src/diff.rs` `file_header`; collapse checked by `diff_file_header_toggle`) |
+| 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Copy path and Collapse/Expand work. Open in editor remains disabled pending host services. | PARTIAL (`s027::diff_selection_and_hover_replay`) |
 | 7 | Hunk revert / stage | click | Revert, Stage / Unstage hunk. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 8 | Revert all | click | `Revert changes?` dialog. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 9 | Split / unified toggle | click | Switch diff layout. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 10 | Word wrap | click | Toggles wrap. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
+| 10 | Word wrap | click | Toggles wrap. | The body context menu toggles wrap; the header control remains separate work. | PARTIAL (`s027::diff_selection_and_hover_replay`) |
 | 11 | Mark as viewed | click | Collapses, persists. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 12 | `⌘F` in diff | shortcut | `Search diff…`. | Focus the panel, open find, and type a query; matches highlight and update with the diff. | PASS (`s028::streamed_diff_and_find_replay`) |
 | 13 | `⌘L` | shortcut | Go to line. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 14 | Line hover | hover | Line hover background. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
+| 14 | Line hover | hover | No background change in the recorded Last Turn state; no `data-hovered` attribute. | No background change. | PASS (`s027::diff_selection_and_hover_replay`; corrects DT-014) |
 | 15 | No changes | empty | `No file changes yet`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 16 | Not a git repo | empty | `Create a Git repository`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 17 | Loading | loading | `Loading diff`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
