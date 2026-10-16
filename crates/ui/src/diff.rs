@@ -1028,19 +1028,18 @@ pub struct FileView {
 }
 
 impl FileView {
+    /// `workspace` is the thread's cwd; the server reports it canonicalized
+    /// (`/private/tmp/...`) while links carry the written path, so the crumbs start at the
+    /// first segment named like the workspace folder.
     pub fn new(workspace: &str, path: String, line: Option<u32>) -> Self {
         let root = workspace.trim_end_matches('/');
-        let crumbs = match path.strip_prefix(root).and_then(|p| p.strip_prefix('/')) {
-            Some(rest) => std::iter::once(root.rsplit('/').next().unwrap_or(root))
-                .chain(rest.split('/'))
-                .map(|s| SharedString::from(s.to_owned()))
-                .collect(),
-            None => path
-                .split('/')
-                .filter(|s| !s.is_empty())
-                .map(|s| SharedString::from(s.to_owned()))
-                .collect(),
-        };
+        let name = root.rsplit('/').next().unwrap_or(root);
+        let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+        let start = segments.iter().position(|s| *s == name).unwrap_or(0);
+        let crumbs = segments[start..]
+            .iter()
+            .map(|s| SharedString::from((*s).to_owned()))
+            .collect();
         Self {
             path,
             crumbs,
@@ -1048,6 +1047,10 @@ impl FileView {
             contents: None,
             scroll: ScrollHandle::new(),
         }
+    }
+
+    pub fn crumbs(&self) -> &[SharedString] {
+        &self.crumbs
     }
 
     pub fn name(&self) -> SharedString {

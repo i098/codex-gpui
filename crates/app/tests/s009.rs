@@ -104,15 +104,27 @@ fn file_link_opens_the_file_viewer_tab() -> Result<()> {
         "{:?}",
         fx.read(|r, _| r.side_panel())
     );
-    let (name, path, contents) = fx.read(|r, cx| {
+    let (name, crumbs, path, contents) = fx.read(|r, cx| {
         let f = r.file_view().unwrap().read(cx);
-        (f.name().to_string(), f.path.clone(), f.contents.clone())
+        (
+            f.name().to_string(),
+            f.crumbs().join(" > "),
+            f.path.clone(),
+            f.contents.clone(),
+        )
     });
     ensure!(
         name == selected["text"],
         "tab {name:?}, original {}",
         selected["text"]
     );
+    let crumb = &rec["result"]["dom"]
+        .as_array()
+        .context("dom")?
+        .iter()
+        .find(|d| d["selector"] == "[aria-label=\"File path\"]")
+        .context("crumb entry")?["crumbs"][0]["text"];
+    ensure!(crumbs == *crumb, "breadcrumb {crumbs:?}, original {crumb}");
     let recorded_path = rec["fixture"]["path"].as_str().context("fixture path")?;
     ensure!(
         path.rsplit("/proj/").next() == recorded_path.rsplit("/proj/").next(),
