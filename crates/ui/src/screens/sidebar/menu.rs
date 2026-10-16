@@ -216,27 +216,22 @@ impl HomeSidebar {
     /// `None` when no menu is open.
     pub fn context_menu(&self) -> Option<serde_json::Value> {
         self.menu.as_ref()?;
-        let entry = |item: &Item| {
-            let mut v =
-                serde_json::json!({ "id": item.id, "label": self.label(item), "enabled": true });
-            if item.is_separator() {
-                v["type"] = "separator".into();
-            }
-            if let Some(keys) = item.accelerator {
-                v["accelerator"] = keys.into();
-            }
-            if !item.submenu.is_empty() {
-                v["submenu"] = item.submenu.iter().map(|sub| {
-                    let mut v = serde_json::json!({ "id": sub.id, "label": sub.label, "enabled": true });
-                    if let Some(keys) = sub.accelerator {
-                        v["accelerator"] = keys.into();
-                    }
-                    v
-                }).collect();
-            }
-            v
-        };
-        Some(ITEMS.iter().map(entry).collect())
+        Some(ITEMS.iter().map(|item| self.entry(item)).collect())
+    }
+
+    fn entry(&self, item: &Item) -> serde_json::Value {
+        let mut v =
+            serde_json::json!({ "id": item.id, "label": self.label(item), "enabled": true });
+        if item.is_separator() {
+            v["type"] = "separator".into();
+        }
+        if let Some(keys) = item.accelerator {
+            v["accelerator"] = keys.into();
+        }
+        if !item.submenu.is_empty() {
+            v["submenu"] = item.submenu.iter().map(|sub| self.entry(sub)).collect();
+        }
+        v
     }
 
     /// Where the open menu's top-left corner is (the pointer).
