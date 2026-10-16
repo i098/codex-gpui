@@ -871,6 +871,8 @@
       }
     ],
     "requests": [],
+    "requestsExact": true,
+    "state": {"route": "home", "composerFocused": false},
     "screenshot": "/tmp/cgx-f2a/shots/f2a-final.png",
     "bridgeWrites": [
       {
