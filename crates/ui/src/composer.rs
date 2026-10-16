@@ -450,6 +450,11 @@ pub struct Composer {
     menu_trigger_hovered: bool,
     approval: Option<Approval>,
     running: bool,
+    /// `Follow-up behavior` is `Queue`: a submit while a turn runs queues on the app-server
+    /// instead of steering the turn.
+    queue_mode: bool,
+    /// The app-server's queued follow-ups of the open thread, shown in a tray over the card.
+    queued: Vec<SharedString>,
     on_submit: Option<SubmitHandler>,
     on_cancel_edit: Option<CancelEditHandler>,
     edit_pending: bool,
@@ -507,6 +512,8 @@ impl Composer {
             menu_trigger_hovered: false,
             approval: None,
             running: false,
+            queue_mode: false,
+            queued: Vec::new(),
             on_submit: None,
             on_cancel_edit: None,
             edit_pending: false,
@@ -578,6 +585,7 @@ impl Composer {
             .unwrap_or_else(|| "medium".into());
         self.default_selection = (self.model, self.effort.clone());
         self.permission = Permission::from_config(config);
+        self.queue_mode = config["desktop"]["followUpQueueMode"] == "queue";
         if self.menu == Some(Menu::Models) {
             self.menu_focus.prepare(self.models.len(), cx);
         }
@@ -617,6 +625,33 @@ impl Composer {
         if self.running != running {
             self.running = running;
             cx.notify();
+        }
+    }
+
+    pub fn set_queue_mode(&mut self, queue: bool, cx: &mut Context<Self>) {
+        self.queue_mode = queue;
+        cx.notify();
+    }
+
+    pub fn set_queued(&mut self, queued: Vec<SharedString>, cx: &mut Context<Self>) {
+        self.queued = queued;
+        cx.notify();
+    }
+
+    pub fn queued(&self) -> &[SharedString] {
+        &self.queued
+    }
+
+    /// The submit button's accessible label (`composer.submitButtonTooltip.*`): `Stop` while a
+    /// turn runs and the composer is empty, else the follow-up mode (`Queue` or `Steer`) while
+    /// a turn runs, else `Send`. The original shows no tooltip on this button.
+    pub fn send_label(&self) -> &'static str {
+        let has_input = !self.content.is_empty() || !self.attachments.is_empty();
+        match (self.running, has_input, self.queue_mode) {
+            (false, _, _) => "Send",
+            (true, false, _) => "Stop",
+            (true, true, true) => "Queue",
+            (true, true, false) => "Steer",
         }
     }
 
@@ -1286,6 +1321,32 @@ impl Render for Composer {
                     }),
             );
         let card = card.when(self.slash.open, |d| d.child(self.slash_menu(&t, cx)));
+        // The queued-follow-up tray (`bg-surface-elevated-secondary`, border-x border-t) sits
+        // on the card's top edge, 13 px in from its sides; rows (handle, then the text) are
+        // 32 px with a 1 px gap. ponytail: rows show the text only; the original's Steer,
+        // Delete and actions menu on a row are not implemented.
+        let tray = (!self.queued.is_empty()).then(|| {
+            div()
+                .mx(px(13.))
+                .border_t_1()
+                .border_x_1()
+                .border_color(t.border)
+                .rounded_t(px(12.))
+                .bg(t.surface_elevated_secondary)
+                .flex()
+                .flex_col()
+                .gap(px(1.))
+                .children(self.queued.iter().map(|row| {
+                    div()
+                        .h(px(32.))
+                        .px(px(10.))
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(icon("queue-handle", 14., t.text_tertiary))
+                        .child(text(row.clone(), 14., 20., 430., t.text))
+                }))
+        });
         div()
             .w_full()
             .flex()
@@ -1294,7 +1355,7 @@ impl Render for Composer {
             .when_some(self.approval.clone(), |d, a| {
                 d.child(self.approval_card(&a, &t, cx))
             })
-            .child(card)
+            .child(div().children(tray).child(card))
     }
 }
 

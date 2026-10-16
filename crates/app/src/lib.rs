@@ -7,12 +7,12 @@ mod features;
 pub mod host;
 pub mod host_settings;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use async_channel::Receiver;
 use bridge::types::{
     ApprovalDecision, CommandApprovalRequest, ConfigReadResponse, FileChangeApprovalRequest,
-    Thread, ThreadItem, ThreadReadResponse, ThreadStartResponse, ThreadStartedNotification,
-    TurnStatus,
+    Thread, ThreadItem, ThreadReadResponse, ThreadSection, ThreadStartResponse,
+    ThreadStartedNotification, TurnStatus,
 };
 use bridge::{Bridge, Event};
 use gpui::{
@@ -35,7 +35,8 @@ use ui::screens::diff::panel::{
 use ui::screens::home::HomeMain;
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
 use ui::screens::sidebar::{
-    ArchiveThread, CommandMenu, CommandMenuEvent, HomeSidebar, OpenThread, UnpinThread,
+    ArchiveThread, CommandMenu, CommandMenuEvent, HomeSidebar, OpenThread, PINNED_SECTION_ID,
+    PinThread,
 };
 use ui::screens::terminal::Xterm;
 use ui::screens::thread::view::{Clock, EditMessage, ForkThread, RevertTurn, ThreadView};
@@ -360,6 +361,8 @@ pub struct Root {
     automation_load: Option<Task<()>>,
     /// The Scheduled routes' sidebar, fed the host's list when the read completes.
     scheduled: Option<Entity<automations::ScheduledSidebar>>,
+    /// The Scheduled empty page: its suggestion cards start guided conversations.
+    suggestions: Option<Entity<automations::AutomationsPage>>,
     cwd: String,
     config: Value,
     skills: Value,
@@ -525,6 +528,7 @@ impl Root {
             automations: None,
             automation_load: None,
             scheduled: None,
+            suggestions: None,
             cwd,
             config: Value::Null,
             skills: Value::Null,
@@ -726,6 +730,42 @@ impl Root {
             .map_or_else(Vec::new, automations::tasks)
     }
 
+    /// The Scheduled empty page, when the route shows it.
+    pub fn suggestions(&self) -> Option<&Entity<automations::AutomationsPage>> {
+        self.suggestions.as_ref()
+    }
+
+    /// A suggestion card click (`refs/interactions/s035b.json`): the card is already
+    /// `Starting…` and every card disabled. The original's guided start first reads the TPP
+    /// models through the desktop host, then prepares and streams the conversation and
+    /// navigates into it; when any step fails it shows `Couldn’t start this suggested task`
+    /// and re-enables the cards.
+    fn start_suggested_task(&mut self, cx: &mut Context<Self>) {
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move {
+            let identity = host.identity().context("no ChatGPT sign-in")?;
+            host.fetch(&host::tpp_models(&identity))
+                .and_then(|response| host::json_body(&response))
+        });
+        cx.spawn(async move |this, cx| {
+            let result = read.await;
+            this.update(cx, |this, cx| {
+                if let Some(page) = &this.suggestions {
+                    page.update(cx, |page, cx| page.set_pending(None, cx));
+                }
+                // ponytail: with the models in hand the original prepares the ChatGPT
+                // conversation (`/f/conversation/prepare`) and streams it; neither is recorded
+                // (the oracle refuses the start), so the port stops here and reports it.
+                if result.is_ok() {
+                    eprintln!("codex-gpui: suggested task: the conversation stream is not wired");
+                }
+                this.toast(Toast::danger("Couldn’t start this suggested task"), cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     fn set_threads(&mut self, threads: &[Thread], cx: &mut Context<Self>) {
         self.threads = threads.to_vec();
         self.sidebar.update(cx, |s, cx| s.set_threads(threads, cx));
@@ -836,8 +876,9 @@ impl Root {
             Route::Scheduled => {
                 let tasks = self.tasks();
                 self.load_automations(cx);
-                let (shell, sidebar) = automations::shell(tasks, None, utc_offset(), cx);
+                let (shell, sidebar, page) = automations::shell(tasks, None, utc_offset(), cx);
                 self.scheduled = Some(sidebar);
+                self.suggestions = page;
                 Some(shell)
             }
             Route::Automation(id) => {
@@ -850,8 +891,9 @@ impl Root {
                     let composer: AnyView = cx.new(|cx| Composer::automation(window, cx)).into();
                     (task, composer)
                 });
-                let (shell, sidebar) = automations::shell(tasks, selected, utc_offset(), cx);
+                let (shell, sidebar, page) = automations::shell(tasks, selected, utc_offset(), cx);
                 self.scheduled = Some(sidebar);
+                self.suggestions = page;
                 Some(shell)
             }
             Route::Mobile => Some(mobile::shell(cx)),
@@ -1167,8 +1209,10 @@ impl Root {
             .turns
             .iter()
             .any(|turn| turn.status == TurnStatus::InProgress);
+        // The composer is shared: the new thread's queue arrives with `thread/queue/changed`.
         self.thread_composer.update(cx, |c, cx| {
             c.set_running(running, cx);
+            c.set_queued(Vec::new(), cx);
             c.set_search_roots(vec![thread.cwd.clone()]);
         });
         let route = Route::Thread(thread.id.clone());
@@ -1225,15 +1269,86 @@ impl Root {
         log_err(task, cx);
     }
 
-    /// Thread composer: `turn/start` on the open thread, resuming it first if needed.
+    /// Thread composer: `turn/start` on the open thread, resuming it first if needed. While a
+    /// turn runs (CP-108), `Follow-up behavior` decides: `Queue` adds the message to the
+    /// app-server's queue (`thread/queue/add`, drained by the server when the turn ends),
+    /// `Steer` sends it into the turn (`turn/steer`). A refusal shows `Error submitting
+    /// message` and puts the text back.
     fn send(&mut self, s: Submission, window: &mut Window, cx: &mut Context<Self>) {
         let Some(view) = &self.thread else { return };
-        let id = view.read(cx).id().to_owned();
+        let view = view.read(cx);
+        let id = view.id().to_owned();
         let resume = !self.loaded.contains(&id);
         let bridge = self.bridge.clone();
+        let running = view
+            .turns()
+            .iter()
+            .rev()
+            .find(|turn| turn.status == TurnStatus::InProgress)
+            .map(|turn| turn.id.clone());
+        let queue = self.config["desktop"]["followUpQueueMode"] == "queue";
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             resume_if(resume, &bridge, &this, &id, cx).await?;
-            turn_start(&bridge, &id, &s).await
+            let Some(turn_id) = running else {
+                return turn_start(&bridge, &id, &s).await;
+            };
+            let input = json!([{ "type": "text", "text": s.text, "text_elements": [] }]);
+            let (method, params) = if queue {
+                let params = json!({
+                    "threadId": id, "input": input, "clientUserMessageId": uuid_v4(),
+                });
+                ("thread/queue/add", params)
+            } else {
+                let params = json!({ "threadId": id, "input": input, "expectedTurnId": turn_id });
+                ("turn/steer", params)
+            };
+            let result = bridge.request::<_, Value>(method, params).await.map(drop);
+            this.update(cx, |this, cx| match &result {
+                Ok(()) if queue => this.list_queue(id, cx),
+                Ok(()) => {}
+                Err(_) => {
+                    this.thread_composer
+                        .update(cx, |c, cx| c.restore_text(&s.text, cx));
+                    this.toast(Toast::danger("Error submitting message"), cx);
+                }
+            })?;
+            result
+        });
+        log_err(task, cx);
+    }
+
+    /// `thread/queue/list`: the queued follow-ups of thread `id`, shown over the composer.
+    fn list_queue(&self, id: String, cx: &mut Context<Self>) {
+        let bridge = self.bridge.clone();
+        let task = cx.spawn(async move |this, cx| -> Result<()> {
+            let list: Value = bridge
+                .request(
+                    "thread/queue/list",
+                    json!({ "threadId": id, "cursor": null }),
+                )
+                .await?;
+            let rows = list["data"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|row| {
+                    row["input"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|part| part["text"].as_str())
+                        .collect::<String>()
+                        .trim_end()
+                        .to_owned()
+                        .into()
+                })
+                .collect();
+            this.update(cx, |this, cx| {
+                if this.thread.as_ref().is_some_and(|v| v.read(cx).id() == id) {
+                    this.thread_composer
+                        .update(cx, |c, cx| c.set_queued(rows, cx));
+                }
+            })
         });
         log_err(task, cx);
     }
@@ -1375,11 +1490,22 @@ impl Root {
         log_err(task, cx);
     }
 
-    fn unpin(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+    /// `thread/section/move` into or out of the Pinned section: the row moves at once (no toast);
+    /// a refused write puts it back, silently, as the original does.
+    fn set_pinned(
+        &mut self,
+        id: String,
+        pinned: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(thread) = self.threads.iter_mut().find(|thread| thread.id == id) else {
             return;
         };
-        let old_section = thread.section.take();
+        let section = pinned.then(|| ThreadSection {
+            id: PINNED_SECTION_ID.to_owned(),
+        });
+        let old_section = std::mem::replace(&mut thread.section, section);
         self.sidebar
             .update(cx, |s, cx| s.set_threads(&self.threads, cx));
         let bridge = self.bridge.clone();
@@ -1387,7 +1513,7 @@ impl Root {
             let done = bridge
                 .request::<_, Value>(
                     "thread/section/move",
-                    json!({ "threadId": id, "sectionId": null, "beforeThreadId": null }),
+                    json!({ "threadId": id, "sectionId": pinned.then_some(PINNED_SECTION_ID), "beforeThreadId": null }),
                 )
                 .await;
             this.update(cx, |this, cx| {
@@ -1397,7 +1523,6 @@ impl Root {
                     }
                     this.sidebar
                         .update(cx, |s, cx| s.set_threads(&this.threads, cx));
-                    this.toast(Toast::danger("Couldn't save your changes. Try again"), cx);
                 }
             })?;
             done.map(drop)
@@ -1560,6 +1685,11 @@ impl Root {
             }
             return;
         }
+        if e.path == "desktop.followUpQueueMode" {
+            let queue = e.value == "queue";
+            self.thread_composer
+                .update(cx, |c, cx| c.set_queue_mode(queue, cx));
+        }
         let (store, key) = e.path.split_once('.').unwrap_or((e.path, ""));
         if store == "host" {
             let result = if cx.has_global::<host_settings::Settings>() {
@@ -1651,6 +1781,13 @@ impl Root {
                 }
                 // Recents rows show the thread preview, known once a turn ran.
                 "turn/completed" => self.refresh_threads(cx),
+                "thread/queue/changed" => {
+                    if let Some(id) = params["threadId"].as_str()
+                        && self.thread.as_ref().is_some_and(|v| v.read(cx).id() == id)
+                    {
+                        self.list_queue(id.to_owned(), cx);
+                    }
+                }
                 "fuzzyFileSearch/sessionUpdated" | "fuzzyFileSearch/sessionCompleted" => {
                     let completed = method == "fuzzyFileSearch/sessionCompleted";
                     self.thread_composer
@@ -1741,6 +1878,23 @@ impl Root {
         self.state.sidebar_width = self.shell.read(cx).sidebar_width.into();
         self.state.save();
     }
+}
+
+/// A random v4 UUID (`clientUserMessageId`) from the std hasher's per-instance random keys.
+/// ponytail: not a CSPRNG; the `uuid` crate if a collision ever matters.
+fn uuid_v4() -> String {
+    use std::collections::hash_map::RandomState;
+    use std::hash::BuildHasher;
+    let word = |salt: u64| RandomState::new().hash_one(salt);
+    let (a, b) = (word(1), word(2));
+    format!(
+        "{:08x}-{:04x}-4{:03x}-{:04x}-{:012x}",
+        a >> 32,
+        (a >> 16) & 0xffff,
+        a & 0xfff,
+        0x8000 | ((b >> 48) & 0x3fff),
+        b & 0xffff_ffff_ffff
+    )
 }
 
 /// `thread/resume` when this app-server has not loaded thread `id` yet (`resume`).
@@ -1843,6 +1997,11 @@ impl Render for Root {
             .on_action(cx.listener(|this, _: &automations::NewTask, window, cx| {
                 this.open_dialog(DialogKind::ScheduleTask, window, cx)
             }))
+            .on_action(
+                cx.listener(|this, _: &automations::StartSuggestedTask, _, cx| {
+                    this.start_suggested_task(cx)
+                }),
+            )
             .on_action(cx.listener(|this, _: &OpenMobileSetup, window, cx| {
                 this.navigate(Route::Mobile, window, cx)
             }))
@@ -1894,11 +2053,9 @@ impl Render for Root {
             .on_action(cx.listener(|this, a: &ArchiveThread, window, cx| {
                 this.archive(a.0.clone(), window, cx)
             }))
-            .on_action(
-                cx.listener(|this, a: &UnpinThread, window, cx| {
-                    this.unpin(a.0.clone(), window, cx)
-                }),
-            )
+            .on_action(cx.listener(|this, a: &PinThread, window, cx| {
+                this.set_pinned(a.0.clone(), a.1, window, cx)
+            }))
             .on_action(cx.listener(|this, a: &ForkThread, window, cx| this.fork(&a.0, window, cx)))
             .on_action(cx.listener(|this, edit: &EditMessage, window, cx| {
                 this.edit_message(edit.clone(), window, cx)

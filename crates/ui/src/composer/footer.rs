@@ -127,6 +127,8 @@ impl Composer {
             );
         let send = div()
             .id("send")
+            .role(gpui::Role::Button)
+            .aria_label(self.send_label())
             .tab_index(0)
             .rounded(Theme::RADIUS_FULL)
             .focus_visible(move |style| {
