@@ -381,7 +381,23 @@ impl Markdown<'_> {
                                         })
                                 })
                                 .when(!external, |d| {
-                                    d.on_click(crate::dispatch::<crate::OpenChangesPanel>)
+                                    // `path:12` cites a line; the thread's cwd resolves a
+                                    // relative path.
+                                    let (path, line) = match dest_url.rsplit_once(':') {
+                                        Some((p, n)) if n.parse::<u32>().is_ok() => {
+                                            (p.to_owned(), n.parse().ok())
+                                        }
+                                        _ => (dest_url.to_string(), None),
+                                    };
+                                    d.on_click(move |_, window, cx| {
+                                        window.dispatch_action(
+                                            Box::new(crate::screens::diff::panel::OpenFile {
+                                                path: path.clone(),
+                                                line,
+                                            }),
+                                            cx,
+                                        )
+                                    })
                                 })
                                 .when(!external && dest_url.ends_with(".py"), |d| {
                                     d.child(div().w(px(19.))).child(

@@ -355,6 +355,11 @@ impl Host for LocalHost {
                 }
                 json!({"existingPaths": existing})
             }
+            // The file viewer (`vscode://codex/read-file`): `{contents}` of a local text file.
+            "read-file" => {
+                let path = params["path"].as_str().context("read-file needs a path")?;
+                json!({"contents": std::fs::read_to_string(path)?})
+            }
             _ => bail!("unsupported local host endpoint: {endpoint}"),
         };
         Ok(

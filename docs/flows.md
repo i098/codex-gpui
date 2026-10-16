@@ -278,7 +278,7 @@ Comment actions (S075/S082), file tabs (S186), and external targets remain outsi
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
-| 1 | Open Changes panel | entry | `⌥⌘B` or `View changes`. | Both open it, and so does a file link in an answer; the last turn's diff (`Last Turn` source). | PASS (`changes_panel_keys`, `view_changes_opens_panel`, `file_link_opens_changes`, `parity_diff`) |
+| 1 | Open Changes panel | entry | `⌥⌘B` or `View changes`. | Both open it; the last turn's diff (`Last Turn` source). A file link in an answer opens the file viewer tab instead (S009, `file_link_opens_file_viewer`, `s009`). | PASS (`changes_panel_keys`, `view_changes_opens_panel`, `parity_diff`) |
 | 2 | `/diff` window | entry | Single file diff. | — | NOT WIRED (`crates/app/src/main.rs`: one window only) |
 | 3 | Source selector | click | Uncommitted / Staged / … | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 4 | Show / Hide files | click | Toggles the file tree. | — | NOT WIRED (`crates/ui/src/diff.rs`) |

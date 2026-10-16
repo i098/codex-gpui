@@ -28,7 +28,7 @@ use std::{fs, path::PathBuf, sync::Arc};
 use theme::Theme;
 use ui::composer::{Approval, Composer, Permission, Submission};
 use ui::dialog::{Dialog, Kind as DialogKind, Outcome as DialogOutcome};
-use ui::screens::diff::panel::{DiffPanel, SplitScreen, with_side_panel};
+use ui::screens::diff::panel::{DiffPanel, FileView, OpenFile, SplitScreen, with_side_panel};
 use ui::screens::home::HomeMain;
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
 use ui::screens::sidebar::{ArchiveThread, CommandMenu, CommandMenuEvent, HomeSidebar, OpenThread};
@@ -188,6 +188,8 @@ pub enum SidePanel {
     Changes,
     /// The first background command's terminal.
     Terminal,
+    /// A file link in an answer: the file viewer ([`Root::file`]).
+    File,
 }
 
 /// Settings ▸ Appearance ▸ Theme (the original's `appearanceTheme`): follow the system, or
@@ -313,6 +315,8 @@ pub struct Root {
     thread_composer: Entity<Composer>,
     thread: Option<Entity<ThreadView>>,
     diff: Option<Entity<DiffPanel>>,
+    /// The file viewer of [`SidePanel::File`]; cleared with the thread.
+    file: Option<Entity<FileView>>,
     /// The open thread in the main shell, with its side panel if any.
     split: Option<Entity<SplitScreen>>,
     /// Side panel tab of the thread route; kept across threads like the original's panel.
@@ -456,6 +460,7 @@ impl Root {
             thread_composer,
             thread: None,
             diff: None,
+            file: None,
             split: None,
             side: None,
             page: None,
@@ -571,6 +576,11 @@ impl Root {
 
     pub fn diff_panel(&self) -> Option<&Entity<DiffPanel>> {
         self.diff.as_ref()
+    }
+
+    /// The file viewer of the open thread, once a file link was clicked.
+    pub fn file_view(&self) -> Option<&Entity<FileView>> {
+        self.file.as_ref()
     }
 
     /// The `⌘K` command menu, while open.
@@ -821,6 +831,14 @@ impl Root {
                 let xterm = cx.new(|cx| Xterm::new(view.clone(), cx));
                 Some((xterm.into(), "thread-terminal", command.into()))
             }
+            SidePanel::File => {
+                let file = self.file.as_ref()?;
+                let (icon, name) = {
+                    let file = file.read(cx);
+                    (file.tab_icon(), file.name())
+                };
+                Some((file.clone().into(), icon, name))
+            }
         }
     }
 
@@ -830,6 +848,48 @@ impl Root {
             self.side = side;
             self.sync(window, cx);
         }
+    }
+
+    /// A file link in an answer: the file viewer tab, filled by the host's `read-file`.
+    fn open_file(&mut self, action: &OpenFile, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(view) = &self.thread else { return };
+        let cwd = view.read(cx).cwd().trim_end_matches('/').to_owned();
+        let path = if action.path.starts_with('/') {
+            action.path.clone()
+        } else {
+            format!("{cwd}/{}", action.path.trim_start_matches("./"))
+        };
+        let file = cx.new(|_| FileView::new(&cwd, path.clone(), action.line));
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move {
+            host.fetch(&host::Request::post(
+                "read-file",
+                Some(json!({ "hostId": "local", "path": path })),
+            ))
+            .and_then(|response| host::json_body(&response))
+            .and_then(|body| {
+                body["contents"]
+                    .as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| anyhow::anyhow!("read-file answered no contents"))
+            })
+            .map_err(|error| error.to_string())
+        });
+        let target = file.clone();
+        cx.spawn(async move |this, cx| {
+            let contents = read.await;
+            let failed = contents.is_err();
+            target.update(cx, |file, cx| file.set_contents(contents, cx));
+            if failed {
+                this.update(cx, |this, cx| {
+                    this.toast(Toast::danger("Could not open file"), cx)
+                })
+                .ok();
+            }
+        })
+        .detach();
+        self.file = Some(file);
+        self.set_side(Some(SidePanel::File), window, cx);
     }
 
     /// `⌘K`, `⌘⇧P` and the sidebar `Search`: the command menu over live Recents, focused.
@@ -945,6 +1005,10 @@ impl Root {
         };
         let composer = self.thread_composer.clone().into();
         self.diff = Some(cx.new(|_| DiffPanel::last_turn(&self.cwd, &thread.cwd, &thread.turns)));
+        self.file = None;
+        if self.side == Some(SidePanel::File) {
+            self.side = None;
+        }
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
         self.thread = Some(view);
         if self.state.route == route {
@@ -1558,6 +1622,7 @@ impl Render for Root {
             .on_action(cx.listener(|this, _: &OpenChangesPanel, window, cx| {
                 this.set_side(Some(SidePanel::Changes), window, cx)
             }))
+            .on_action(cx.listener(Self::open_file))
             .on_action(cx.listener(|this, _: &OpenBackgroundTerminal, window, cx| {
                 this.set_side(Some(SidePanel::Terminal), window, cx)
             }))
