@@ -11,11 +11,13 @@ use gpui::{
 };
 use std::sync::{Arc, LazyLock};
 use theme::{ActiveTheme as _, Theme};
+use tooltip::{Side, tooltip};
 
 pub mod composer;
 pub mod fixture;
 pub mod icon;
 pub mod screens;
+pub mod tooltip;
 
 actions!(
     shell,
@@ -86,8 +88,6 @@ pub struct Shell {
     /// edge once more. With any, the shell paints those corners itself, over what the main
     /// panel's content painted there.
     pub main_backgrounds: u8,
-    /// The page frame's cc partial rasters (`shapes::Decoration::playback`).
-    pub playback: &'static [([i32; 2], [i32; 4])],
     /// The main surface is a composited layer (thread routes): Chromium clips each layer in
     /// it, so its rounded corners show its own fill and then the content (the thread's top fade
     /// or composer band, or the side panel) at the clip's coverage.
@@ -140,7 +140,6 @@ impl Shell {
             chat_chrome: true,
             new_tab: true,
             main_backgrounds: 0,
-            playback: &[],
             main_composited: false,
             main_layer: false,
             main_clips_right: false,
@@ -518,14 +517,17 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
                     t,
                 ))
                 .child(div().w(px(4.)))
-                .child(
+                .child(tooltip(
                     icon_button(
                         "search",
                         icon::icon("search", 16., t.text_tertiary).own_layer(Some(overlap)),
                         t,
                     )
                     .on_click(dispatch::<OpenCommandMenu>),
-                ),
+                    "Search",
+                    Some("⌘K"),
+                    Side::Bottom,
+                )),
         )
         .child(
             div()
@@ -624,6 +626,8 @@ impl Shell {
                     move || list,
                 ))
         };
+        let rail_tip =
+            |item: Stateful<Div>, label: &'static str| tooltip(item, label, None, Side::Right);
         div()
             .absolute()
             .left_0()
@@ -645,19 +649,23 @@ impl Shell {
                     .items_center()
                     .gap(px(8.))
                     .layer()
-                    .child(
+                    .child(rail_tip(
                         item("home")
                             .when(self.attention, |d| d.child(dot(6.)))
                             .on_click(dispatch::<NewChat>),
-                    )
-                    .child(item("space"))
-                    .child(item("scheduled").on_click(dispatch::<OpenScheduled>))
-                    .child(item("plugins"))
-                    // Explore with its unread dot.
+                        "Home",
+                    ))
+                    .child(rail_tip(item("space"), "Space"))
+                    .child(rail_tip(
+                        item("scheduled").on_click(dispatch::<OpenScheduled>),
+                        "Scheduled",
+                    ))
+                    .child(rail_tip(item("plugins"), "Plugins"))
+                    // Explore with its unread dot; it shows no tooltip.
                     .child(item("explore").child(dot(4.)))
                     .child(div().w(px(24.)).h(px(1.)).bg(t.border))
-                    .child(item("rail-code-review"))
-                    .child(item("sites"))
+                    .child(rail_tip(item("rail-code-review"), "Code Review"))
+                    .child(rail_tip(item("sites"), "Sites"))
                     .child(shapes::top_fade(px(16.))),
             )
             .child(
@@ -838,18 +846,24 @@ impl Shell {
                     window.start_window_move();
                 }
             })
-            .child(
+            .child(tooltip(
                 nav("back", back, self.can_go_back)
                     .left(px(88.))
                     .on_click(dispatch::<GoBack>),
-            )
-            .child(
+                "Back",
+                Some("⌘["),
+                Side::Bottom,
+            ))
+            .child(tooltip(
                 nav("forward", forward, self.can_go_forward)
                     .left(px(122.))
                     .on_click(dispatch::<GoForward>),
-            )
+                "Forward",
+                Some("⌘]"),
+                Side::Bottom,
+            ))
             .when(self.chat_chrome, |d| {
-                d.child(
+                d.child(tooltip(
                     icon_button(
                         "toggle-sidebar",
                         icon::icon("sidebar", 16., t.text_tertiary),
@@ -859,7 +873,10 @@ impl Shell {
                     .left(px(156.))
                     .top(px(8.))
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
-                )
+                    "Toggle sidebar",
+                    Some("⇧⌘S"),
+                    Side::Bottom,
+                ))
             })
             .when(self.new_tab, |d| {
                 d.child(
@@ -887,7 +904,6 @@ impl Render for Shell {
         // transparent-tile blits), and the compositor blends the tile onto the body.
         let layout = shapes::Decoration {
             fill: Some(t.page_surface_layout),
-            playback: self.playback,
             ..Default::default()
         };
         let surface = shapes::Decoration {
@@ -908,7 +924,6 @@ impl Render for Shell {
                     inset: false,
                 },
             ],
-            playback: self.playback,
             ..Default::default()
         };
         // `_MainContentSurface` paints into the same layer: its fill and hairline blend onto
@@ -936,7 +951,6 @@ impl Render for Shell {
         let main_fill = shapes::Decoration {
             radius,
             fill: Some(t.surface),
-            playback: self.playback,
             ..Default::default()
         };
         // A composited main surface's own fill, in its layer: the compositor rounds it.
