@@ -1445,7 +1445,13 @@ impl Render for ThreadView {
             .absolute()
             .size_0()
         });
-        div()
+        // The thread's box is the file drop target of its docked composer.
+        let composer = self
+            .composer
+            .clone()
+            .downcast::<crate::composer::Composer>()
+            .ok();
+        let page = div()
             .size_full()
             .relative()
             .overflow_hidden()
@@ -1536,11 +1542,14 @@ impl Render for ThreadView {
                                     .child(self.composer.clone()),
                             ),
                     ),
-            )
-            .when(self.find.is_some(), |d| d.child(self.find_bar(window, cx)))
-            .when(self.menu.is_some(), |d| {
-                d.child(self.menu_overlay(window, cx))
-            })
+            );
+        page.when_some(composer, |d, composer| {
+            crate::composer::drop_target(d, &composer, cx)
+        })
+        .when(self.find.is_some(), |d| d.child(self.find_bar(window, cx)))
+        .when(self.menu.is_some(), |d| {
+            d.child(self.menu_overlay(window, cx))
+        })
     }
 }
 

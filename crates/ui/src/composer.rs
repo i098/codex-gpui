@@ -8,16 +8,16 @@ use crate::{MONO, icon::icon, text};
 use bridge::types::{ApprovalDecision, CommandApprovalRequest, FileChangeApprovalRequest, Model};
 use gpui::{
     AnyElement, App, AvailableSpace, Bounds, ClipboardItem, Context, Corners, CursorStyle, Div,
-    ElementId, ElementInputHandler, Entity, EntityInputHandler, FocusHandle, Focusable,
-    GlobalElementId, Hsla, InspectorElementId, InteractiveElement, IntoElement, KeyBinding,
-    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
+    ElementId, ElementInputHandler, Entity, EntityInputHandler, ExternalPaths, FocusHandle,
+    Focusable, GlobalElementId, Hsla, InspectorElementId, InteractiveElement, IntoElement,
+    KeyBinding, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
     PathPromptOptions, Pixels, Point, Render, SharedString, Size, Stateful,
-    StatefulInteractiveElement, Style, Styled, TextAlign, TextRun, UTF16Selection, UnderlineStyle,
-    Window, WrappedLine, actions, deferred, div, fill, point, prelude::FluentBuilder as _, px,
-    relative, size,
+    StatefulInteractiveElement, Style, Styled, Task, TextAlign, TextRun, UTF16Selection,
+    UnderlineStyle, Window, WrappedLine, actions, deferred, div, fill, point,
+    prelude::FluentBuilder as _, px, relative, size,
 };
 use serde_json::Value;
-use std::{ops::Range, path::PathBuf, rc::Rc};
+use std::{ops::Range, path::PathBuf, rc::Rc, time::Duration};
 use theme::{ActiveTheme as _, Appearance, Theme};
 
 actions!(
@@ -150,6 +150,7 @@ mod menu {
         }])
     }
 }
+mod mention;
 mod menus;
 mod slash;
 pub use slash::SlashCommand;
@@ -391,6 +392,18 @@ enum Menu {
     Models,
 }
 
+/// Index of the `Speed` sub trigger among the effort menu's items.
+const SPEED_ITEM: usize = 1;
+/// The `Speed` submenu's items: title and description.
+const SPEEDS: [(&str, &str); 3] = [
+    ("Standard", "Default speed"),
+    ("Fast", "1.5x speed, more usage"),
+    (
+        "Ultrafast",
+        "The fastest available responses for latency-sensitive work.",
+    ),
+];
+
 type SubmitHandler = Rc<dyn Fn(&Submission, &mut Window, &mut App)>;
 type CancelEditHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 type ApprovalHandler = Rc<dyn Fn(ApprovalDecision, &mut Window, &mut App)>;
@@ -414,6 +427,8 @@ pub struct Composer {
     attachments: Vec<attach::Attachment>,
     pending_attachments: usize,
     attachment_error: Option<&'static str>,
+    /// A file drag is over the composer's drop target (`data-composer-drag-active`).
+    drag_active: bool,
     models: Vec<ModelOption>,
     model: usize,
     effort: String,
@@ -423,6 +438,11 @@ pub struct Composer {
     menu: Option<Menu>,
     slash: slash::Slash,
     menu_focus: menu::MenuFocus,
+    /// The `Speed` submenu of the effort menu: open state, its items' focus, and the pending
+    /// hover-open timer (Radix opens a sub trigger 100 ms after the pointer enters it).
+    speed_open: bool,
+    speed_focus: menu::MenuFocus,
+    speed_timer: Option<Task<()>>,
     permissions_focus: FocusHandle,
     model_focus: FocusHandle,
     /// The card's (`composer-footer` container's) width, CSS px: see `SM_WIDTH`, `XS_WIDTH`.
@@ -468,6 +488,7 @@ impl Composer {
             attachments: Vec::new(),
             pending_attachments: 0,
             attachment_error: None,
+            drag_active: false,
             models: Vec::new(),
             model: 0,
             effort: "medium".into(),
@@ -477,6 +498,9 @@ impl Composer {
             menu: None,
             slash: slash::Slash::default(),
             menu_focus: menu::MenuFocus::new(cx),
+            speed_open: false,
+            speed_focus: menu::MenuFocus::new(cx),
+            speed_timer: None,
             permissions_focus: cx.focus_handle().tab_stop(true),
             model_focus: cx.focus_handle().tab_stop(true),
             footer_width: f32::INFINITY,
@@ -507,6 +531,20 @@ impl Composer {
     pub fn edit_failed(&mut self, cx: &mut Context<Self>) {
         self.edit_pending = false;
         cx.notify();
+    }
+
+    /// `data-composer-drag-active`: the card surface drops to 50% while a file drag is over
+    /// the drop target. Stale after the drag ends: see [`Self::drag_active`].
+    pub fn set_drag_active(&mut self, active: bool, cx: &mut Context<Self>) {
+        if self.drag_active != active {
+            self.drag_active = active;
+            cx.notify();
+        }
+    }
+
+    /// A file drag is over the drop target now: the overlay and the surface switch show.
+    pub fn drag_active(&self, cx: &App) -> bool {
+        self.drag_active && cx.has_active_drag()
     }
 
     /// Models from `model/list` and the selection from `config/read` (`model`,
@@ -587,6 +625,7 @@ impl Composer {
         self.selected_range = s.len()..s.len();
         self.marked_range = None;
         self.slash.reset();
+        self.end_search(cx);
         cx.notify();
     }
 
@@ -659,6 +698,7 @@ impl Composer {
             self.marked_range = None;
             self.menu = None;
             self.slash.reset();
+            self.end_search(cx);
         }
         cx.notify();
         if let Some(f) = self.on_submit.clone() {
@@ -676,6 +716,8 @@ impl Composer {
 
     fn toggle_menu(&mut self, menu: Menu, window: &mut Window, cx: &mut Context<Self>) {
         self.slash.reset();
+        self.close_speed();
+        self.end_search(cx);
         if self.menu == Some(menu) {
             self.dismiss(&Dismiss, window, cx);
         } else {
@@ -701,6 +743,7 @@ impl Composer {
             return;
         }
         if self.menu.take().is_some() {
+            self.close_speed();
             self.menu_focus.restore(window, cx);
             cx.notify();
         } else if self.approval.is_some() {
@@ -713,6 +756,15 @@ impl Composer {
         }
     }
 
+    /// The focus set the arrows move in: the open `Speed` submenu, else the menu.
+    fn active_focus(&self) -> &menu::MenuFocus {
+        if self.speed_open {
+            &self.speed_focus
+        } else {
+            &self.menu_focus
+        }
+    }
+
     fn menu_key(
         &mut self,
         event: &gpui::KeyDownEvent,
@@ -722,20 +774,33 @@ impl Composer {
         let key = event.keystroke.key.as_str();
         let modifiers = event.keystroke.modifiers;
         match key {
-            "down" | "up" => self
-                .menu_focus
-                .move_focus(event.keystroke.key == "down", window, cx),
+            "down" | "up" => {
+                self.active_focus()
+                    .move_focus(event.keystroke.key == "down", window, cx)
+            }
             "home" | "end" => {
+                let focus = self.active_focus();
                 let item = if key == "home" {
-                    self.menu_focus.items.first()
+                    focus.items.first()
                 } else {
-                    self.menu_focus.items.last()
+                    focus.items.last()
                 };
                 if let Some(item) = item {
                     item.focus(window, cx);
                 }
             }
             "tab" => {}
+            // `ArrowRight` on the `Speed` sub trigger opens its submenu on the first item;
+            // `ArrowLeft` in the submenu closes it and focuses the trigger.
+            "right" if self.menu == Some(Menu::Effort) && !self.speed_open => {
+                if self.menu_focus.focused_item(window) == Some(SPEED_ITEM) {
+                    self.open_speed(window, cx);
+                }
+            }
+            "left" if self.speed_open => {
+                self.close_speed();
+                self.menu_focus.items[SPEED_ITEM].focus(window, cx);
+            }
             "space" if self.menu == Some(Menu::Permissions) && self.menu_focus.searching() => {
                 self.menu_focus.typeahead(
                     " ",
@@ -745,6 +810,11 @@ impl Composer {
                 );
             }
             "escape" => self.dismiss(&Dismiss, window, cx),
+            "enter" | "space" if self.speed_open => {
+                if let Some(index) = self.speed_focus.focused_item(window) {
+                    self.pick_speed(index, window, cx);
+                }
+            }
             "enter" | "space" => {
                 if let Some(index) = self.menu_focus.focused_item(window) {
                     self.activate_menu_item(index, window, cx);
@@ -766,6 +836,48 @@ impl Composer {
             _ => return,
         }
         cx.stop_propagation();
+        cx.notify();
+    }
+
+    /// Opens the `Speed` submenu with its first item focused (keyboard).
+    fn open_speed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.speed_timer = None;
+        self.speed_open = true;
+        self.speed_focus.prepare(SPEEDS.len(), cx);
+        self.speed_focus.items[0].focus(window, cx);
+    }
+
+    /// Opens the `Speed` submenu 100 ms after the pointer enters its trigger, which keeps
+    /// focus (`hover`).
+    pub(super) fn hover_speed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.menu_focus.items[SPEED_ITEM].focus(window, cx);
+        if self.speed_open || self.speed_timer.is_some() {
+            return;
+        }
+        self.speed_timer = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(100))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.speed_timer = None;
+                this.speed_open = true;
+                this.speed_focus.prepare(SPEEDS.len(), cx);
+                cx.notify();
+            });
+        }));
+    }
+
+    fn close_speed(&mut self) {
+        self.speed_timer = None;
+        self.speed_open = false;
+    }
+
+    /// A speed picked in the submenu closes it and focuses the `Speed` trigger.
+    pub(super) fn pick_speed(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        // ponytail: Ultrafast shares the `fast` flag; add a tier when `turn/start` sends it.
+        self.fast = index > 0;
+        self.close_speed();
+        self.menu_focus.items[SPEED_ITEM].focus(window, cx);
         cx.notify();
     }
 
@@ -802,9 +914,10 @@ impl Composer {
                 self.toggle_menu(Menu::Effort, window, cx);
                 self.picked(cx);
             }
+            // The original's DOM order: `Select model`, `Speed` (sub trigger), `Reset`.
             Some(Menu::Effort) => match index {
-                0 => self.fast = !self.fast,
-                1 => self.toggle_menu(Menu::Models, window, cx),
+                0 => self.toggle_menu(Menu::Models, window, cx),
+                SPEED_ITEM => self.open_speed(window, cx),
                 2 => {
                     (self.model, self.effort) = self.default_selection.clone();
                     self.picked(cx);
@@ -823,6 +936,15 @@ impl Composer {
             self.menu_focus.focused_item(window),
             self.menu_focus.trigger.is_focused(window),
         )
+    }
+
+    /// Returns the `Speed` submenu's open state and focused item for interaction replay.
+    pub fn speed_menu_state(&self, window: &Window) -> (bool, Option<usize>) {
+        (self.speed_open, self.speed_focus.focused_item(window))
+    }
+
+    pub fn model_trigger_focused(&self, window: &Window) -> bool {
+        self.model_focus.is_focused(window)
     }
 
     pub fn permission(&self) -> Permission {
@@ -895,6 +1017,59 @@ pub(crate) fn card_decoration(t: &Theme) -> shapes::Decoration {
         ],
     };
     deco(22., t.composer_surface, shadows)
+}
+
+/// `target` as `composer`'s file drop target (the original's drag handlers on the page
+/// column): while a file drag is over its box the card surface switches and the `Drop to
+/// attach` overlay (`bg-codex-drop-overlay/60`, `z-40`: a centred pill on
+/// `bg-codex-drop-prompt`, `rounded-md`, `border-border/50`, `shadow`, 13 px text) covers it;
+/// a drop attaches the files. Call it last: the overlay paints over the children added so far.
+pub fn drop_target(target: Div, composer: &Entity<Composer>, cx: &App) -> Div {
+    let t = cx.theme();
+    let over = composer.read(cx).drag_active(cx);
+    let (moved, dropped) = (composer.clone(), composer.clone());
+    let target = target
+        .relative()
+        .on_drag_move::<ExternalPaths>(move |e, _, cx| {
+            let over = e.bounds.contains(&e.event.position);
+            moved.update(cx, |c, cx| c.set_drag_active(over, cx));
+        })
+        .on_drop::<ExternalPaths>(move |paths, _, cx| {
+            dropped.update(cx, |c, cx| c.drop_files(paths.paths(), cx));
+        });
+    if !over {
+        return target;
+    }
+    let black = |a: u32| -> Hsla { gpui::rgba(a).into() };
+    let pill = shapes::Decoration {
+        border: Some((px(1.), t.border.opacity(0.5))),
+        ..deco(
+            10.,
+            t.background_accent,
+            vec![
+                shadow(black(0x0000001a), 1., 3., 0., false),
+                shadow(black(0x0000001a), 1., 2., -1., false),
+            ],
+        )
+    };
+    target.child(
+        div()
+            .absolute()
+            .inset_0()
+            .bg(t.background_accent.opacity(0.6))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .relative()
+                    // `px-3 py-1` plus the 1 px border, painted by the decoration.
+                    .px(px(13.))
+                    .py(px(5.))
+                    .child(shapes::decoration(pill))
+                    .child(text("Drop to attach", 13., 18.5714, 430., t.text)),
+            ),
+    )
 }
 
 /// Popover surface `width` CSS px wide holding `content`: `--menu-background-color` at 90%
@@ -1020,6 +1195,12 @@ impl Render for Composer {
                         Appearance::Light => t.text_alpha_5,
                     }),
                     ..Default::default()
+                }
+            } else if self.drag_active(cx) {
+                // `[data-composer-drag-active]`: `surface-elevated-secondary` at 50%.
+                shapes::Decoration {
+                    fill: Some(t.surface_elevated_secondary.opacity(0.5)),
+                    ..card_decoration(&t)
                 }
             } else {
                 card_decoration(&t)

@@ -1,6 +1,7 @@
 //! Slash completion keeps keyboard focus in the editor and preserves text outside the command token.
 //! Fast, Archive, New chat, and Usage use existing app handlers.
 //! S058/S059 own the other command bodies and submenus; these entries remain visible but inactive.
+//! The same list state serves the `@` mention trigger (`super::mention`).
 //! `cargo test -p app --test s021` replays the original menu, keys, colors, focus, and requests.
 use super::*;
 
@@ -186,21 +187,24 @@ const COMMANDS: &[Command] = &[
     },
 ];
 
-struct Skill {
-    name: String,
-    title: String,
-    description: String,
+pub(super) struct Skill {
+    pub(super) name: String,
+    pub(super) title: String,
+    pub(super) description: String,
 }
 
 #[derive(Default)]
 pub(super) struct Slash {
     pub open: bool,
-    range: Range<usize>,
-    dismissed: Option<usize>,
-    selected: usize,
-    matches: Vec<usize>,
-    skills: Vec<Skill>,
+    /// `@` opened the list (else `/`).
+    pub(super) mention: bool,
+    pub(super) range: Range<usize>,
+    pub(super) dismissed: Option<usize>,
+    pub(super) selected: usize,
+    pub(super) matches: Vec<usize>,
+    pub(super) skills: Vec<Skill>,
     scroll: gpui::ScrollHandle,
+    pub(super) search: mention::Search,
 }
 
 impl Slash {
@@ -263,45 +267,64 @@ impl Composer {
         self.refresh_slash(cx);
     }
 
+    /// The token before the cursor: `@` at the start or after whitespace (spaces allowed in
+    /// its query, newlines not), else `/` without whitespace in its query.
     pub(super) fn refresh_slash(&mut self, cx: &mut Context<Self>) {
         let cursor = self.cursor();
-        let range = self.content[..cursor]
+        let before = &self.content[..cursor];
+        let mention = before.rfind('@').filter(|&at| {
+            (at == 0 || before[..at].ends_with(char::is_whitespace))
+                && !before[at + 1..].contains('\n')
+        });
+        let slash = before
             .rfind('/')
-            .map(|start| start..cursor)
-            .filter(|range| {
-                !self.content[range.start + 1..range.end].contains(char::is_whitespace)
-            });
-        let Some(range) = range else {
-            self.slash.open = false;
-            self.slash.dismissed = None;
-            return;
+            .filter(|&at| !before[at + 1..].contains(char::is_whitespace));
+        let (mention, start) = match (mention, slash) {
+            (Some(at), _) => (true, at),
+            (None, Some(at)) => (false, at),
+            (None, None) => {
+                self.slash.open = false;
+                self.slash.dismissed = None;
+                self.end_search(cx);
+                return;
+            }
         };
+        let range = start..cursor;
         if self.slash.dismissed == Some(range.start) {
             return;
         }
+        if !mention {
+            self.end_search(cx);
+        }
+        self.slash.mention = mention;
         let query = self.content[range.start + 1..range.end].to_lowercase();
         let empty = self.content[..range.start].trim().is_empty()
             && self.content[range.end..].trim().is_empty()
             && self.attachments.is_empty();
         self.slash.matches.clear();
-        for (index, command) in COMMANDS.iter().enumerate() {
-            let available = match command.id {
-                "archive" | "review-mode" | "compact" | "fork" | "init" | "new" | "pin"
-                | "rename" | "share" | "side" => self.docked,
-                "project" => !self.docked,
-                "fast" | "model" | "plan-mode" | "ultrafast" => self.current_model().is_some(),
-                _ => true,
-            };
-            if available
-                && (!command.requires_empty || empty)
-                && (matches_query(command.title, &query) || matches_query(command.id, &query))
-            {
-                self.slash.matches.push(index);
+        if mention {
+            let query = self.content[range.start + 1..range.end].to_owned();
+            self.refresh_mention(&query, cx);
+        } else {
+            for (index, command) in COMMANDS.iter().enumerate() {
+                let available = match command.id {
+                    "archive" | "review-mode" | "compact" | "fork" | "init" | "new" | "pin"
+                    | "rename" | "share" | "side" => self.docked,
+                    "project" => !self.docked,
+                    "fast" | "model" | "plan-mode" | "ultrafast" => self.current_model().is_some(),
+                    _ => true,
+                };
+                if available
+                    && (!command.requires_empty || empty)
+                    && (matches_query(command.title, &query) || matches_query(command.id, &query))
+                {
+                    self.slash.matches.push(index);
+                }
             }
-        }
-        for (index, skill) in self.slash.skills.iter().enumerate() {
-            if matches_query(&skill.title, &query) || matches_query(&skill.name, &query) {
-                self.slash.matches.push(COMMANDS.len() + index);
+            for (index, skill) in self.slash.skills.iter().enumerate() {
+                if matches_query(&skill.title, &query) || matches_query(&skill.name, &query) {
+                    self.slash.matches.push(COMMANDS.len() + index);
+                }
             }
         }
         self.slash.range = range;
@@ -315,6 +338,7 @@ impl Composer {
     pub(super) fn close_slash(&mut self, cx: &mut Context<Self>) {
         self.slash.open = false;
         self.slash.dismissed = Some(self.slash.range.start);
+        self.end_search(cx);
         cx.notify();
     }
 
@@ -383,7 +407,7 @@ impl Composer {
     }
 
     pub fn slash_state(&self) -> Option<(Vec<String>, Option<usize>)> {
-        self.slash.open.then(|| {
+        (self.slash.open && !self.slash.mention).then(|| {
             (
                 self.slash
                     .matches
@@ -406,6 +430,10 @@ impl Composer {
         let Some(&index) = self.slash.matches.get(self.slash.selected) else {
             return;
         };
+        if self.slash.mention {
+            self.activate_mention(index, cx);
+            return;
+        }
         let Some(command) = COMMANDS.get(index) else {
             return;
         };
@@ -429,6 +457,52 @@ impl Composer {
         cx.notify();
     }
 
+    /// One suggestion row: 28.5625 px, `rounded-xl`, highlighted at 8% text, else 75% opacity.
+    pub(super) fn suggestion_row(
+        &self,
+        t: &Theme,
+        selected: usize,
+        index: usize,
+        (title, description, icon_name): (&str, &str, &str),
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let active = selected == self.slash.selected;
+        div()
+            .id(("suggestion", index))
+            .flex_none()
+            .h(px(28.5625))
+            .px(px(8.))
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .rounded(px(15.))
+            .when(active, |d| d.bg(t.text.opacity(0.08)))
+            .when(!active, |d| d.opacity(0.75))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_hover(cx.listener(move |this, hovered, _, cx| {
+                if *hovered {
+                    this.slash.selected = selected;
+                    cx.notify();
+                }
+            }))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.slash.selected = selected;
+                this.activate_slash(window, cx);
+            }))
+            .child(icon(icon_name, 16., t.text))
+            .child(text(title.to_owned(), 13., 18.5714, 400., t.text).flex_none())
+            .child(
+                text(
+                    description.to_owned(),
+                    13.,
+                    18.5714,
+                    400.,
+                    t.text.opacity(0.5),
+                )
+                .truncate(),
+            )
+    }
+
     pub(super) fn slash_menu(&self, t: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let has_skills = self
             .slash
@@ -444,66 +518,42 @@ impl Composer {
             .when(height > 310., |d| d.pr(px(10.)))
             .flex()
             .flex_col();
-        let mut skills_heading = false;
-        for (selected, &index) in self.slash.matches.iter().enumerate() {
-            if index >= COMMANDS.len() && !skills_heading {
+        if self.slash.mention {
+            list = list.child(self.mention_list(t, cx));
+        } else {
+            let mut skills_heading = false;
+            for (selected, &index) in self.slash.matches.iter().enumerate() {
+                if index >= COMMANDS.len() && !skills_heading {
+                    list = list.child(
+                        text("Skills", 12., 20., 500., t.text.opacity(0.5))
+                            .px(px(8.))
+                            .py(px(5.)),
+                    );
+                    skills_heading = true;
+                }
+                list = list.child(self.suggestion_row(
+                    t,
+                    selected,
+                    index,
+                    self.slash_label(index),
+                    cx,
+                ));
+            }
+            if self.slash.matches.is_empty() {
                 list = list.child(
-                    text("Skills", 12., 20., 500., t.text.opacity(0.5))
+                    text("No commands", 13., 18.5714, 400., t.text.opacity(0.5))
                         .px(px(8.))
                         .py(px(5.)),
                 );
-                skills_heading = true;
             }
-            let (title, description, icon_name) = self.slash_label(index);
-            let active = selected == self.slash.selected;
-            let row = div()
-                .id(("slash-command", selected))
-                .flex_none()
-                .h(px(28.5625))
-                .px(px(8.))
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .rounded(px(15.))
-                .when(active, |d| d.bg(t.text.opacity(0.08)))
-                .when(!active, |d| d.opacity(0.75))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_hover(cx.listener(move |this, hovered, _, cx| {
-                    if *hovered {
-                        this.slash.selected = selected;
-                        cx.notify();
-                    }
-                }))
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.slash.selected = selected;
-                    this.activate_slash(window, cx);
-                }))
-                .child(icon(icon_name, 16., t.text))
-                .child(text(title.to_owned(), 13., 18.5714, 400., t.text).flex_none())
-                .child(
-                    text(
-                        description.to_owned(),
-                        13.,
-                        18.5714,
-                        400.,
-                        t.text.opacity(0.5),
-                    )
-                    .truncate(),
-                );
-            list = list.child(row);
         }
-        if self.slash.matches.is_empty() {
-            list = list.child(
-                text("No commands", 13., 18.5714, 400., t.text.opacity(0.5))
-                    .px(px(8.))
-                    .py(px(5.)),
-            );
-        }
+        // Gap to the card: 8 px for `/` (rec 07), 4 px for `@` (s019.json).
+        let gap = if self.slash.mention { 4. } else { 8. };
         deferred(
             div()
                 .absolute()
                 .bottom(relative(1.))
-                .mb(px(12.))
+                .mb(px(gap))
                 .w_full()
                 .child(
                     div()
