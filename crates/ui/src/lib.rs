@@ -342,26 +342,29 @@ impl IntoElement for RoundedClip {
     }
 }
 
-/// 28 px secondary ghost `_Button`: tertiary icon; on hover a `ghost_hover` fill and white icon.
+/// A 28 px secondary ghost button with a 150 ms hover fill and icon color transition.
 /// `glyph` is a [`icon::icon`] (Chromium-exact) or a plain [`icon`] svg.
 pub fn icon_button(
     id: &'static str,
-    glyph: impl InteractiveElement + IntoElement + 'static,
+    glyph: impl Styled + IntoElement + 'static,
     t: &Theme,
 ) -> Stateful<Div> {
-    let (hover_bg, hover_fg) = (t.ghost_hover, t.text);
     div()
         .id(id)
-        .group(id)
         .flex_none()
         .size(px(28.))
         .flex()
         .items_center()
         .justify_center()
         .rounded(RADIUS_BUTTON_MD)
-        .hover(move |s| s.bg(hover_bg))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .child(glyph.group_hover(id, move |s| s.text_color(hover_fg)))
+        .child(motion::ButtonVisual {
+            glyph,
+            radius: RADIUS_BUTTON_MD,
+            hover: t.ghost_hover,
+            foreground: t.text.opacity(0.85),
+            selected: false,
+        })
 }
 
 /// A sidebar `group/nav-section`: 14 px medium title (`Projects`, `Recents`) over its list.
@@ -605,8 +608,7 @@ impl Shell {
             };
             focus::ring(
                 div()
-                    .id(id.clone())
-                    .group(id.clone())
+                    .id(id)
                     .relative()
                     .flex_none()
                     .size(px(36.))
@@ -615,12 +617,13 @@ impl Shell {
                     .justify_center()
                     .rounded(RADIUS_RAIL)
                     .when(on, |d| d.child(fill(hover_bg)))
-                    .when(!on, |d| d.hover(move |s| s.bg(hover_bg)))
-                    .child(
-                        icon::icon(&glyph, 20., fg)
-                            .composited(Some(list))
-                            .group_hover(id, move |s| s.text_color(hover_fg)),
-                    ),
+                    .child(motion::ButtonVisual {
+                        glyph: icon::icon(&glyph, 20., fg).composited(Some(list)),
+                        radius: RADIUS_RAIL,
+                        hover: hover_bg,
+                        foreground: hover_fg,
+                        selected: on,
+                    }),
                 &focus,
                 RADIUS_RAIL,
                 px(1.),
@@ -706,13 +709,18 @@ impl Shell {
                 .items_center()
                 .justify_center()
                 .rounded(RADIUS_RAIL)
-                .hover(move |s| s.bg(hover_bg))
                 .on_hover(cx.listener(|this, hovered: &bool, _, _| this.avatar_hovered = *hovered))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.profile_menu ^= true;
                     cx.notify();
                 }))
-                .child(avatar()),
+                .child(motion::ButtonVisual {
+                    glyph: div().size(px(24.)).child(avatar()),
+                    radius: RADIUS_RAIL,
+                    hover: hover_bg,
+                    foreground: hover_fg,
+                    selected: false,
+                }),
             )
     }
 

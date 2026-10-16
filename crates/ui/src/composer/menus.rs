@@ -251,6 +251,16 @@ impl Composer {
                     .id(p.short_label())
                     .track_focus(&self.menu_focus.items[i])
                     .focus(move |s| s.bg(hover))
+                    .on_mouse_move(cx.listener(move |this, _, window, cx| {
+                        this.menu_focus.items[i].focus(window, cx);
+                        cx.stop_propagation();
+                    }))
+                    .hover_listener_mode(gpui::HoverListenerMode::InputModalityIndependent)
+                    .on_hover(cx.listener(move |this, hovered: &bool, window, cx| {
+                        if !hovered && this.menu_focus.items[i].is_focused(window) {
+                            this.menu_focus.content.focus(window, cx);
+                        }
+                    }))
                     .px(px(8.))
                     .py(px(6.))
                     .flex()
