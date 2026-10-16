@@ -32,9 +32,66 @@ pub(super) fn wrap_row() -> Div {
     div().flex().flex_wrap().mr(px(-4.))
 }
 
-/// `Worked for 17s ›` over a hairline (collapsed turn disclosure); `open`: the chevron points
-/// down.
-pub(super) fn disclosure(label: String, open: bool, window: &Window, t: &Theme) -> Div {
+/// `Worked for 17s ›` over a hairline (turn disclosure); `angle` turns the chevron clockwise
+/// in degrees (90 = open). At rest it is the fitted icon; while it turns, the svg path is
+/// rotated about its viewBox centre and rasterized like any icon (no clipping: the path stays
+/// 5.5 px from the centre). The sprite fallback (Linux) rotates the mask instead.
+pub(super) fn disclosure(label: String, angle: f32, window: &Window, t: &Theme) -> Div {
+    let color = t.text_tertiary;
+    let chevron = if angle == 0. {
+        icon("thread-chevron-right", 14., color).into_any_element()
+    } else {
+        canvas(
+            |_, _, _| {},
+            move |bounds, (), window, cx| {
+                let path = "icons/thread-chevron-right.svg";
+                let Ok(Some(src)) = cx.asset_source().load(path) else {
+                    return;
+                };
+                // ponytail: one parsed icon per 0.1 deg (at most 900), keyed by the angle.
+                let angle = (angle * 10.).round() / 10.;
+                let (sin, cos) = angle.to_radians().sin_cos();
+                let rotated = String::from_utf8_lossy(&src)
+                    .replacen(
+                        "><path",
+                        &format!(
+                            "><g transform=\"matrix({cos} {sin} {} {cos} {} {})\"><path",
+                            -sin,
+                            10. - 10. * cos + 10. * sin,
+                            10. - 10. * sin - 10. * cos
+                        ),
+                        1,
+                    )
+                    .replacen("</svg>", "</g></svg>", 1);
+                let key = format!("{path}@{angle:.1}");
+                if shapes::paint_icon(
+                    rotated.as_bytes(),
+                    &key,
+                    bounds,
+                    false,
+                    color,
+                    None,
+                    window,
+                    cx,
+                ) {
+                    return;
+                }
+                let scale = window.scale_factor();
+                let center = bounds.center();
+                let matrix = TransformationMatrix::unit()
+                    .translate(center.scale(scale))
+                    .rotate(radians(angle.to_radians()))
+                    .translate(center.scale(-scale));
+                window
+                    .paint_svg(bounds, path.into(), None, matrix, color, cx)
+                    .ok();
+            },
+        )
+        .flex_none()
+        .w(px(14.))
+        .h(px(14.))
+        .into_any_element()
+    };
     div()
         .flex()
         .flex_col()
@@ -44,24 +101,8 @@ pub(super) fn disclosure(label: String, open: bool, window: &Window, t: &Theme) 
                     .flex()
                     .items_center()
                     .gap(px(4.))
-                    .child(measured(
-                        window,
-                        label,
-                        14.,
-                        21.,
-                        430.,
-                        t.text_tertiary,
-                        None,
-                    ))
-                    .child(icon(
-                        if open {
-                            "chevron-down"
-                        } else {
-                            "thread-chevron-right"
-                        },
-                        14.,
-                        t.text_tertiary,
-                    )),
+                    .child(measured(window, label, 14., 21., 430., color, None))
+                    .child(chevron),
             ),
         )
         .child(
@@ -222,7 +263,8 @@ fn diff_counts<'a>(changes: impl Iterator<Item = &'a FileUpdateChange> + Clone) 
 
 /// One entry of a turn's activity column (`group/agent-activity`), in order.
 pub(super) enum Activity<'a> {
-    Markdown(&'a str),
+    /// An agent message, by its item id and text.
+    Markdown(&'a str, &'a str),
     /// A command still running, by its command line.
     Running(&'a str),
     /// Consecutive finished commands and file changes behind one summary
@@ -263,7 +305,7 @@ impl Activity<'_> {
     /// The texts drawn for this entry: a group's summary, then its rows when `open`.
     pub(super) fn labels(&self, open: &HashSet<String>) -> Vec<String> {
         match self {
-            Activity::Markdown(text) => vec![(*text).to_owned()],
+            Activity::Markdown(_, text) => vec![(*text).to_owned()],
             Activity::Running(command) => vec![(*command).to_owned()],
             Activity::Group {
                 key, summary, rows, ..
@@ -296,9 +338,9 @@ pub(super) fn activities<'a>(items: &'a [ThreadItem], running: bool) -> Vec<Acti
             ThreadItem::CommandExecution { .. } | ThreadItem::FileChange { .. } => {
                 group.push(item);
             }
-            ThreadItem::AgentMessage { text, .. } if !text.is_empty() => {
+            ThreadItem::AgentMessage { id, text } if !text.is_empty() => {
                 flush(&mut out, &mut group);
-                out.push(Activity::Markdown(text));
+                out.push(Activity::Markdown(id, text));
             }
             _ => {}
         }
@@ -410,6 +452,7 @@ pub(super) fn activity(
     items: &[ThreadItem],
     running: bool,
     open: &HashSet<String>,
+    fades: &HashMap<String, Vec<StreamSegment>>,
     window: &Window,
     t: &Theme,
     cx: &Context<ThreadView>,
@@ -435,7 +478,10 @@ pub(super) fn activity(
     let mut col = div().flex().flex_col().gap(px(16.));
     for entry in activities(items, running) {
         col = col.child(match entry {
-            Activity::Markdown(text) => markdown(text, window, t),
+            Activity::Markdown(id, text) => {
+                let segments = fades.get(id).map(Vec::as_slice).unwrap_or_default();
+                markdown(text, window, t, segments)
+            }
             Activity::Running(command) => {
                 row("thread-terminal", plain(label(command.to_owned(), text60)))
             }

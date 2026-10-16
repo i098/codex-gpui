@@ -154,8 +154,8 @@ Numbers from the round 4 run (F1Flows); the screen builder column is a run of th
 | 9 | `Projects` section toggle | click | Collapses or expands; chevron rotates. | A header click collapses or expands the section; no chevron. | FAIL (no chevron: `crates/ui/src/lib.rs` `sidebar_section`; collapse checked by `sidebar_section_collapse`) |
 | 10 | `Recents` section toggle | click | Collapses or expands. | Same; a collapsed Recents row no longer opens. | PASS (`sidebar_section_collapse`) |
 | 11 | Thread row | click | Opens `/local/:conversationId`. | `OpenThread` → route Thread, `thread/read`, row selected. | PASS (`thread_row_opens_thread`) |
-| 12 | Thread row hover | hover | Row background; Archive / Pin actions appear. | Fill and actions show (31848 px repainted). | PASS (`thread_row_hover`) |
-| 13 | Thread row context menu | click | Pin, Rename, Archive, Mark as unread, Open in new window, Delete. | The row's `Archive chat` sends `thread/archive` and drops the row. No context menu; `Pin chat` has no handler (the original pins through the host's `set-thread-pinned`). | FAIL (no context menu or pin: `crates/ui/src/screens/sidebar.rs` `thread_row`; Archive checked by `archive_chat`) |
+| 12 | Thread row hover | hover | Row background; Archive / Pin actions appear. | The row reveals its actions. Buttons use the shared 150 ms hover transition. | PASS (`thread_row_hover`, `crates/app/tests/s001.rs`) |
+| 13 | Thread row context menu | click | Pin, Rename, Archive, Mark as unread, Open in new window, Delete. | Archive removes the row without opening the chat. Unpin moves an existing pinned chat to Recents through `thread/section/move`. | FAIL (Pin click and the context menu remain unwired; Archive and Unpin: `crates/app/tests/s001.rs`) |
 | 14 | `⌘1`…`⌘9` | shortcut | Go to chat N. | Opens Recents row N; `⌘9` past the end does nothing. | PASS (`cmd_digit_goes_to_chat`) |
 | 15 | `⌘⇧[` / `⌘⇧]` | shortcut | Previous / next chat. | Previous / next Recents row. | PASS (`previous_next_chat`, `menu_bar_actions`) |
 | 16 | `⌘⇧S` / `⌘B` | shortcut | Toggle sidebar. | Toggles. | PASS (`sidebar_toggle_keys`) |
@@ -166,6 +166,14 @@ Numbers from the round 4 run (F1Flows); the screen builder column is a run of th
 | 21 | Load error | error | `Projects couldn't be loaded` + `Retry`; `Could not load chats`. | A `thread/list` error stops `Root::connect`, so no route shows. | FAIL (`crates/app/src/lib.rs` `connect` treats it as fatal; `crates/ui/src/screens/sidebar.rs` has no error state) |
 | 22 | Sidebar drag-resize | resize | The recorded edge clamps to 290…520 px; dragging below 145 px collapses it. | The 16 px handle resizes the sidebar and main surface, retains the width on toggle, and saves it on release. | PASS (`crates/app/tests/s004.rs`, `refs/interactions/s004.json`) |
 | 23 | Resize | resize | Below 768 px the panel is hidden; it opens as an overlay. | Hidden at 767 and 600 px, shown at 1280 px; the user's choice is kept. `⌘B` opens it docked, not as an overlay. | FAIL (overlay: `crates/ui/src/lib.rs` `Shell`; hide/show checked by `resize_three_widths`) |
+
+S001 replays `refs/interactions/s001.json` with `cargo test -p app --test s001` on macOS.
+The recording uses the original renderer with isolated host and app-server fixtures.
+The replay checks Unpin, Archive, the Home route, outgoing requests, button timing, and the recorded hover blend.
+The native host translates `pinnedThreads.set(false)` to `thread/section/move` with a null section.
+The original shows no toast for this Unpin action.
+Pin click remains deferred after the recorder failure, as approved by firstmate.
+Running-chat and scheduled-task archive confirmation still need a dialog extension outside this six-file slice.
 
 The S004 recording uses the original renderer through the Linux route1 stack in an isolated Chrome context.
 Its twelve actions check resize limits, collapse, restored width, titlebar toggles, tooltips, boundary pixels, and no app-server requests.
@@ -206,7 +214,7 @@ The static parity gate retains all 36 baseline counts.
 | 2 | History loading | loading | `Loading task…`. | The main panel is empty while `thread/read` runs. | NOT WIRED (`crates/ui/src/thread.rs`: no loading view; `crates/app/src/lib.rs` `sync` shows `EmptyMain`) |
 | 3 | History failure | error | `Couldn't load messages` + `Retry`. | The error is logged; the panel stays empty. | FAIL (`crates/app/src/lib.rs` `load_thread` only logs; no error view in `crates/ui/src/thread.rs`) |
 | 4 | Turn render failure | error | `This turn couldn't render`. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
-| 5 | Streaming agent message | loading | Text grows by deltas; `Working` shimmer. | The replayed turn streams into the view to `turn/completed`. Shimmer not checked. | PASS (`submit_enter_starts_thread`) |
+| 5 | Streaming agent message | loading | Text grows by deltas; new segments fade over 700 ms; `Working` shimmer. | New glyphs use the recorded adaptive fade. Later deltas do not restart older glyphs. Reduced motion shows the end state immediately. Shimmer belongs to S5. | PASS (`submit_enter_starts_thread`, `stream_fade`) |
 | 6 | Reasoning item | click | Toggles `Thought for {elapsed}`. | No handler. | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 7 | Command card | click | Expands output; copy buttons. | No handler. | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 8 | File change card | click | `View changes` opens Changes; `Undo` / `Reapply`. | `View changes` opens the Changes side panel; `Undo` sends `thread/revert` (`beforeTurnId`, after `thread/resume` if needed) and shows the reverted thread. No `Reapply`. | FAIL (`Reapply`: the original re-applies through the host git worker; `Undo` checked by `undo_reverts_turn`, `View changes` by `view_changes_opens_panel`) |
@@ -222,6 +230,13 @@ The static parity gate retains all 36 baseline counts.
 | 18 | Usage limit | error | Usage limit banner. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 19 | Focus ring on cards | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 20 | Resize | resize | The side panel yields width before the chat column. | `panel_width` keeps 320 px for the chat; no flow checks the 3 widths with the panel open. | FAIL (no flow; `crates/ui/src/diff.rs` `panel_width` assumes the sidebar open) |
+
+MO-36 uses `refs/interactions/ms4.json`, recorded with the original CSS classes in an isolated route1 Chrome context.
+The recording appends synthetic markdown spans and seeks their animations; it does not measure live model segmentation.
+Run `tools/mac.sh -l ms4 'cargo test -p app --test stream_fade'` for native glyph-alpha checks.
+The test samples each delta from 0 to 700 ms and checks that earlier glyphs remain unchanged.
+Linux uses a no-op text system, so these glyph checks require macOS.
+MO-37 and MO-39 remain with the image and block-renderer slices, as approved for MS4.
 
 ## 14.5 Composer
 

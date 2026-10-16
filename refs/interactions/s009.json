@@ -1,0 +1,852 @@
+{
+ "name": "s009",
+ "viewport": {
+  "w": 1280,
+  "h": 832,
+  "dpr": 1,
+  "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+  "theme": "dark",
+  "hoverEmulated": true
+ },
+ "note": "TH-073: the file link `src/math.py` in the subtract thread's final answer. The original opens the file in a side panel tab titled after the file (`math.py`, selected; a Changes tab is already open from the persisted tab routes), with the breadcrumb `proj > src > math.py` and an `Open` menu. Offline, the host's `read-file` answers nothing: the body says `Could not open file` and a toast repeats it. Recorded on Linux headless Chrome (route1 mock app-server, hover emulated).",
+ "fixture": {
+  "threadId": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f",
+  "cwd": "/tmp/cgx-mac/proj",
+  "path": "/tmp/cgx-mac/proj/src/math.py"
+ },
+ "steps": [
+  {
+   "type": "click",
+   "target": {
+    "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Add a subtract\"]",
+    "bbox": {
+     "x": 60,
+     "y": 321,
+     "w": 272,
+     "h": 30
+    }
+   },
+   "waitMs": 14500,
+   "note": "thread items render after thread/read; the port clicks the Home reference row and waits for the thread",
+   "waitThread": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f",
+   "portReference": {
+    "screen": "home",
+    "text": "Add a subtract"
+   }
+  },
+  {
+   "type": "hover",
+   "target": {
+    "selector": "[data-file-reference=\"true\"]",
+    "bbox": {
+     "x": 383,
+     "y": 446,
+     "w": 99,
+     "h": 17
+    }
+   },
+   "waitMs": 800,
+   "note": "recorded with the Changes tab open (persisted tab routes), which narrows the chat: the port uses the thread reference position of the link",
+   "at": {
+    "x": 771.7,
+    "y": 294.0
+   }
+  },
+  {
+   "type": "click",
+   "target": {
+    "selector": "[data-file-reference=\"true\"]",
+    "bbox": {
+     "x": 383,
+     "y": 446,
+     "w": 99,
+     "h": 17
+    }
+   },
+   "note": "recorded with the Changes tab open (persisted tab routes), which narrows the chat: the port uses the thread reference position of the link",
+   "portReference": {
+    "screen": "thread",
+    "text": "src/math.py"
+   }
+  }
+ ],
+ "result": {
+  "dom": [
+   {
+    "selector": "[data-file-reference=\"true\"]",
+    "state": "rest",
+    "text": "src/math.py",
+    "href": "/tmp/cgx-mac/proj/src/math.py",
+    "label": "src/math.py",
+    "bbox": {
+     "x": 383,
+     "y": 446,
+     "w": 99,
+     "h": 17
+    },
+    "labelBbox": {
+     "x": 402,
+     "y": 446,
+     "w": 80,
+     "h": 17
+    },
+    "textDecoration": "none",
+    "note": "role=button, tabindex=0, data-prompt-link-href = the absolute path",
+    "computedLabel": {
+     "backgroundColor": "rgba(0, 0, 0, 0)",
+     "color": "color(srgb 0.338039 0.523137 0.818039)",
+     "opacity": "1",
+     "outline": "color(srgb 0.338039 0.523137 0.818039) none 3px",
+     "boxShadow": "none",
+     "cursor": "default"
+    }
+   },
+   {
+    "selector": "[data-file-reference=\"true\"]",
+    "state": "hover",
+    "computed": {
+     "backgroundColor": "rgba(0, 0, 0, 0)",
+     "color": "color(srgb 0.338039 0.523137 0.818039)",
+     "opacity": "1",
+     "outline": "color(srgb 0.338039 0.523137 0.818039) none 3px",
+     "boxShadow": "none",
+     "cursor": "default"
+    },
+    "textDecoration": "none",
+    "cursor": "default",
+    "tooltips": [
+     {
+      "text": "/tmp/cgx-mac/proj/src/math.py",
+      "bbox": {
+       "x": 326,
+       "y": 414,
+       "w": 212,
+       "h": 30
+      }
+     }
+    ],
+    "afterStep": 1
+   },
+   {
+    "selector": "[role=tab]",
+    "state": "rest",
+    "tabs": [
+     {
+      "text": "Changes",
+      "selected": "true",
+      "bbox": {
+       "x": 669,
+       "y": 6,
+       "w": 238,
+       "h": 32
+      }
+     }
+    ],
+    "afterStep": 0
+   },
+   {
+    "selector": "[role=tab]",
+    "tabs": [
+     {
+      "text": "Changes",
+      "selected": "false",
+      "bbox": {
+       "x": 669,
+       "y": 6,
+       "w": 238,
+       "h": 32
+      },
+      "fontStyle": "normal",
+      "computed": {
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "color": "rgba(255, 255, 255, 0.498)",
+       "opacity": "1",
+       "outline": "rgba(255, 255, 255, 0.498) none 3px",
+       "boxShadow": "none",
+       "cursor": "default"
+      }
+     },
+     {
+      "text": "math.py",
+      "selected": "true",
+      "bbox": {
+       "x": 909,
+       "y": 6,
+       "w": 238,
+       "h": 32
+      },
+      "fontStyle": "normal",
+      "computed": {
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "outline": "rgb(255, 255, 255) none 3px",
+       "boxShadow": "none",
+       "cursor": "default"
+      }
+     }
+    ],
+    "note": "the file tab is appended and selected; its title renders italic in the screenshot (preview tab). The port shows one tab at a time, so only the file tab."
+   },
+   {
+    "selector": "[role=tabpanel]",
+    "panels": [
+     {
+      "aria": "math.py",
+      "bbox": {
+       "x": 662,
+       "y": 44,
+       "w": 614,
+       "h": 784
+      }
+     }
+    ]
+   },
+   {
+    "selector": "[aria-label=\"File path\"]",
+    "crumbs": [
+     {
+      "text": "proj > src > math.py",
+      "bbox": {
+       "x": 672,
+       "y": 54,
+       "w": 154,
+       "h": 28
+      },
+      "items": [
+       {
+        "text": "proj",
+        "bbox": {
+         "x": 680,
+         "y": 59,
+         "w": 24,
+         "h": 19
+        },
+        "computed": {
+         "backgroundColor": "rgba(0, 0, 0, 0)",
+         "color": "color(srgb 1 1 1 / 0.65)",
+         "opacity": "1",
+         "outline": "color(srgb 1 1 1 / 0.65) none 3px",
+         "boxShadow": "none",
+         "cursor": "auto"
+        }
+       },
+       {
+        "text": "src",
+        "bbox": {
+         "x": 726,
+         "y": 59,
+         "w": 19,
+         "h": 19
+        },
+        "computed": {
+         "backgroundColor": "rgba(0, 0, 0, 0)",
+         "color": "color(srgb 1 1 1 / 0.65)",
+         "opacity": "1",
+         "outline": "color(srgb 1 1 1 / 0.65) none 3px",
+         "boxShadow": "none",
+         "cursor": "auto"
+        }
+       },
+       {
+        "text": "math.py",
+        "bbox": {
+         "x": 767,
+         "y": 59,
+         "w": 51,
+         "h": 19
+        },
+        "computed": {
+         "backgroundColor": "rgba(0, 0, 0, 0)",
+         "color": "rgb(255, 255, 255)",
+         "opacity": "1",
+         "outline": "rgb(255, 255, 255) none 3px",
+         "boxShadow": "none",
+         "cursor": "auto"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "selector": "[role=tabpanel] button",
+    "buttons": [
+     {
+      "text": "",
+      "aria": "Search in files",
+      "bbox": {
+       "x": 1123,
+       "y": 52,
+       "w": 32,
+       "h": 32
+      },
+      "computed": {
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "outline": "rgb(255, 255, 255) none 3px",
+       "boxShadow": "rgba(255, 255, 255, 0.082) 0px 0px 0px 0.5px, rgba(255, 255, 255, 0.082) 0px 0px 0px 0.5px, rgba(0, 0, 0, 0.12) 0px 8px 16px -4px",
+       "cursor": "default"
+      }
+     },
+     {
+      "text": "",
+      "aria": "Toggle file tree",
+      "bbox": {
+       "x": 1161,
+       "y": 52,
+       "w": 32,
+       "h": 32
+      },
+      "computed": {
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "outline": "rgb(255, 255, 255) none 3px",
+       "boxShadow": "rgba(255, 255, 255, 0.082) 0px 0px 0px 0.5px, rgba(255, 255, 255, 0.082) 0px 0px 0px 0.5px, rgba(0, 0, 0, 0.12) 0px 8px 16px -4px",
+       "cursor": "default"
+      }
+     },
+     {
+      "text": "Open",
+      "aria": "Open",
+      "bbox": {
+       "x": 1199,
+       "y": 52,
+       "w": 46,
+       "h": 32
+      },
+      "computed": {
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "outline": "rgb(255, 255, 255) none 3px",
+       "boxShadow": "none",
+       "cursor": "default"
+      }
+     },
+     {
+      "text": "",
+      "aria": "Open options",
+      "bbox": {
+       "x": 1245,
+       "y": 52,
+       "w": 23,
+       "h": 32
+      },
+      "computed": {
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "outline": "rgb(255, 255, 255) none 3px",
+       "boxShadow": "none",
+       "cursor": "default"
+      }
+     }
+    ]
+   },
+   {
+    "selector": "file viewer header",
+    "elements": [
+     {
+      "tag": "div",
+      "text": "proj\nsrc\nmath.py\nOpen",
+      "aria": null,
+      "bbox": {
+       "x": 662,
+       "y": 44,
+       "w": 614,
+       "h": 48
+      },
+      "computed": {
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "outline": "rgb(255, 255, 255) none 3px",
+       "boxShadow": "none",
+       "cursor": "auto"
+      }
+     },
+     {
+      "tag": "div",
+      "text": "proj\nsrc\nmath.py\nOpen",
+      "aria": null,
+      "bbox": {
+       "x": 662,
+       "y": 44,
+       "w": 614,
+       "h": 48
+      },
+      "computed": {
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "outline": "rgb(255, 255, 255) none 3px",
+       "boxShadow": "none",
+       "cursor": "auto"
+      }
+     },
+     {
+      "tag": "header",
+      "text": "proj\nsrc\nmath.py\nOpen",
+      "aria": null,
+      "bbox": {
+       "x": 662,
+       "y": 44,
+       "w": 614,
+       "h": 48
+      },
+      "computed": {
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "outline": "rgb(255, 255, 255) none 3px",
+       "boxShadow": "none",
+       "cursor": "auto"
+      }
+     },
+     {
+      "tag": "div",
+      "text": "proj\nsrc\nmath.py\nOpen",
+      "aria": null,
+      "bbox": {
+       "x": 670,
+       "y": 52,
+       "w": 598,
+       "h": 32
+      },
+      "computed": {
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "outline": "rgb(255, 255, 255) none 3px",
+       "boxShadow": "none",
+       "cursor": "auto"
+      }
+     },
+     {
+      "tag": "div",
+      "text": "proj\nsrc\nmath.py",
+      "aria": null,
+      "bbox": {
+       "x": 670,
+       "y": 52,
+       "w": 447,
+       "h": 32
+      },
+      "computed": {
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "outline": "rgb(255, 255, 255) none 3px",
+       "boxShadow": "none",
+       "cursor": "auto"
+      }
+     },
+     {
+      "tag": "div",
+      "text": "proj\nsrc\nmath.py",
+      "aria": null,
+      "bbox": {
+       "x": 670,
+       "y": 52,
+       "w": 158,
+       "h": 32
+      },
+      "computed": {
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "outline": "rgb(255, 255, 255) none 3px",
+       "boxShadow": "rgba(255, 255, 255, 0.082) 0px 0px 0px 0.5px, rgba(255, 255, 255, 0.082) 0px 0px 0px 0.5px, rgba(0, 0, 0, 0.12) 0px 8px 16px -4px",
+       "cursor": "auto"
+      }
+     },
+     {
+      "tag": "nav",
+      "text": "proj\nsrc\nmath.py",
+      "aria": "File path",
+      "bbox": {
+       "x": 672,
+       "y": 54,
+       "w": 154,
+       "h": 28
+      },
+      "computed": {
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "outline": "rgb(255, 255, 255) none 3px",
+       "boxShadow": "none",
+       "cursor": "auto"
+      }
+     },
+     {
+      "tag": "div",
+      "text": "",
+      "aria": null,
+      "bbox": {
+       "x": 1123,
+       "y": 52,
+       "w": 32,
+       "h": 32
+      },
+      "computed": {
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "outline": "rgb(255, 255, 255) none 3px",
+       "boxShadow": "none",
+       "cursor": "auto"
+      }
+     },
+     {
+      "tag": "button",
+      "text": "",
+      "aria": "Search in files",
+      "bbox": {
+       "x": 1123,
+       "y": 52,
+       "w": 32,
+       "h": 32
+      },
+      "computed": {
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "outline": "rgb(255, 255, 255) none 3px",
+       "boxShadow": "rgba(255, 255, 255, 0.082) 0px 0px 0px 0.5px, rgba(255, 255, 255, 0.082) 0px 0px 0px 0.5px, rgba(0, 0, 0, 0.12) 0px 8px 16px -4px",
+       "cursor": "default"
+      }
+     },
+     {
+      "tag": "div",
+      "text": "Open",
+      "aria": null,
+      "bbox": {
+       "x": 1161,
+       "y": 52,
+       "w": 107,
+       "h": 32
+      },
+      "computed": {
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "outline": "rgb(255, 255, 255) none 3px",
+       "boxShadow": "none",
+       "cursor": "auto"
+      }
+     },
+     {
+      "tag": "div",
+      "text": "Open",
+      "aria": null,
+      "bbox": {
+       "x": 1161,
+       "y": 52,
+       "w": 107,
+       "h": 32
+      },
+      "computed": {
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "outline": "rgb(255, 255, 255) none 3px",
+       "boxShadow": "none",
+       "cursor": "auto"
+      }
+     },
+     {
+      "tag": "button",
+      "text": "",
+      "aria": "Toggle file tree",
+      "bbox": {
+       "x": 1161,
+       "y": 52,
+       "w": 32,
+       "h": 32
+      },
+      "computed": {
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "outline": "rgb(255, 255, 255) none 3px",
+       "boxShadow": "rgba(255, 255, 255, 0.082) 0px 0px 0px 0.5px, rgba(255, 255, 255, 0.082) 0px 0px 0px 0.5px, rgba(0, 0, 0, 0.12) 0px 8px 16px -4px",
+       "cursor": "default"
+      }
+     }
+    ]
+   },
+   {
+    "selector": "Could not open file",
+    "element": {
+     "tag": "div",
+     "text": "Could not open file",
+     "aria": null,
+     "role": null,
+     "bbox": {
+      "x": 576,
+      "y": 57,
+      "w": 127,
+      "h": 24
+     },
+     "computed": {
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "color": "rgb(255, 103, 100)",
+      "opacity": "1",
+      "outline": "rgb(255, 103, 100) none 3px",
+      "boxShadow": "none",
+      "cursor": "auto"
+     }
+    },
+    "toasts": [
+     {
+      "text": "",
+      "bbox": {
+       "x": -1,
+       "y": -1,
+       "w": 1,
+       "h": 1
+      },
+      "computed": {
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "outline": "rgb(255, 255, 255) none 3px",
+       "boxShadow": "none",
+       "cursor": "auto"
+      }
+     },
+     {
+      "text": "",
+      "bbox": {
+       "x": 366,
+       "y": 419,
+       "w": 1,
+       "h": 1
+      },
+      "computed": {
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "outline": "rgb(255, 255, 255) none 3px",
+       "boxShadow": "none",
+       "cursor": "auto"
+      }
+     },
+     {
+      "text": "",
+      "bbox": {
+       "x": 357,
+       "y": 714,
+       "w": 1,
+       "h": 1
+      },
+      "computed": {
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "outline": "rgb(255, 255, 255) none 3px",
+       "boxShadow": "none",
+       "cursor": "auto"
+      }
+     },
+     {
+      "text": "",
+      "bbox": {
+       "x": -1,
+       "y": -1,
+       "w": 1,
+       "h": 1
+      },
+      "computed": {
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "outline": "rgb(255, 255, 255) none 3px",
+       "boxShadow": "none",
+       "cursor": "auto"
+      }
+     },
+     {
+      "text": "Could not open file",
+      "bbox": {
+       "x": 8,
+       "y": 48,
+       "w": 1264,
+       "h": 0
+      },
+      "computed": {
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "outline": "rgb(255, 255, 255) none 3px",
+       "boxShadow": "none",
+       "cursor": "auto"
+      }
+     },
+     {
+      "text": "",
+      "bbox": {
+       "x": -1,
+       "y": -1,
+       "w": 1,
+       "h": 1
+      },
+      "computed": {
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "outline": "rgb(255, 255, 255) none 3px",
+       "boxShadow": "none",
+       "cursor": "auto"
+      }
+     },
+     {
+      "text": "",
+      "bbox": {
+       "x": -1,
+       "y": -1,
+       "w": 1,
+       "h": 1
+      },
+      "computed": {
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "color": "rgb(255, 255, 255)",
+       "opacity": "1",
+       "outline": "rgb(255, 255, 255) none 3px",
+       "boxShadow": "none",
+       "cursor": "auto"
+      }
+     }
+    ]
+   },
+   {
+    "selector": "document.activeElement",
+    "element": {
+     "tag": "div",
+     "text": "proj\nsrc\nmath.py\nOpen\nCould not open file",
+     "aria": "math.py",
+     "role": "tabpanel",
+     "bbox": {
+      "x": 662,
+      "y": 44,
+      "w": 614,
+      "h": 784
+     },
+     "computed": {
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "color": "rgb(255, 255, 255)",
+      "opacity": "1",
+      "outline": "rgb(255, 255, 255) none 3px",
+      "boxShadow": "none",
+      "cursor": "auto"
+     }
+    }
+   }
+  ],
+  "requests": [
+   {
+    "svc": "openIn.getTargets",
+    "args": [
+     {
+      "cwd": "/private/tmp/cgx-mac/proj",
+      "hostId": "local",
+      "path": "/tmp/cgx-mac/proj/src/math.py"
+     }
+    ]
+   },
+   {
+    "type": "fetch",
+    "url": "vscode://codex/read-file-metadata",
+    "body": "{\"contentSampleByteLimit\":4096,\"contentSampleMaxFileBytes\":10485760,\"hostId\":\"local\",\"path\":\"/tmp/cgx-mac/proj/src/math.py\"}",
+    "raw": {
+     "requestId": "aab24465-2d68-4293-8d0a-0598cb2710b9",
+     "method": "POST",
+     "url": "vscode://codex/read-file-metadata",
+     "body": "{\"contentSampleByteLimit\":4096,\"contentSampleMaxFileBytes\":10485760,\"hostId\":\"local\",\"path\":\"/tmp/cgx-mac/proj/src/math.py\"}",
+     "type": "fetch"
+    }
+   },
+   {
+    "svc": "openIn.getTargets",
+    "args": [
+     {
+      "cwd": null,
+      "hostId": "local",
+      "path": "/tmp/cgx-mac/proj/src/math.py"
+     }
+    ]
+   },
+   {
+    "type": "fetch",
+    "url": "vscode://codex/read-file-metadata",
+    "body": "{\"contentSampleByteLimit\":4096,\"contentSampleMaxFileBytes\":20971520,\"hostId\":\"local\",\"path\":\"/tmp/cgx-mac/proj/src/math.py\"}",
+    "raw": {
+     "requestId": "709bbe14-2791-4e3d-95ae-84b6934eedbd",
+     "method": "POST",
+     "url": "vscode://codex/read-file-metadata",
+     "body": "{\"contentSampleByteLimit\":4096,\"contentSampleMaxFileBytes\":20971520,\"hostId\":\"local\",\"path\":\"/tmp/cgx-mac/proj/src/math.py\"}",
+     "type": "fetch"
+    }
+   },
+   {
+    "type": "mcp-request",
+    "params": {
+     "path": "/tmp/cgx-mac/proj/src/math.py",
+     "watchId": "open-file-8a8aca9b-a31f-402e-95dc-29cd1b716866"
+    },
+    "mcp": "fs/watch",
+    "note": "not sent by the port: it does not handle fs/changed"
+   },
+   {
+    "worker": {
+     "type": "worker-request-cancel",
+     "workerId": "git",
+     "id": "b1f9950a-cc3c-46f5-94d0-edfa648f2c17"
+    }
+   },
+   {
+    "worker": {
+     "type": "worker-request-cancel",
+     "workerId": "git",
+     "id": "a6e56801-f6f6-4561-8cd0-227d1f057057"
+    }
+   },
+   {
+    "worker": {
+     "type": "worker-request-cancel",
+     "workerId": "git",
+     "id": "46802379-83ce-431c-9933-d382a6fb426c"
+    }
+   },
+   {
+    "worker": {
+     "type": "worker-request-cancel",
+     "workerId": "git",
+     "id": "12676c42-722d-4f2f-a768-088950ac8079"
+    }
+   },
+   {
+    "worker": {
+     "type": "worker-request-cancel",
+     "workerId": "git",
+     "id": "c55b0d94-0fd1-4d2b-bc7e-befdf659b73a"
+    }
+   },
+   {
+    "worker": {
+     "type": "worker-request-cancel",
+     "workerId": "git",
+     "id": "5b62c93e-be28-4240-abe1-e4d8751c883a"
+    }
+   }
+  ],
+  "screenshot": "s009-after.png",
+  "state": {
+   "route": "thread:01a13de9-6fff-78e1-84fc-ebb3a2dc873f"
+  }
+ }
+}

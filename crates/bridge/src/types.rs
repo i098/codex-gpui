@@ -23,11 +23,17 @@ pub struct Thread {
     pub cwd: String,
     pub created_at: i64,
     pub updated_at: i64,
+    pub section: Option<ThreadSection>,
     pub status: ThreadStatus,
     pub git_info: Option<Value>,
     /// Filled only by `thread/read` with `includeTurns`, `thread/resume` and `thread/fork`.
     #[serde(default)]
     pub turns: Vec<Turn>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ThreadSection {
+    pub id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
