@@ -157,8 +157,7 @@ const EXTERNAL: &str = "Profile";
 /// The original keeps settings in three stores, addressed here by key path:
 /// - `desktop.<key>` and `features.<name>`: `config.toml`, read by `config/read`, written
 ///   with `config/value/write`.
-/// - `host.<kebab-key>`: the Electron host's settings file (`set-setting` host fetch).
-///   The port has no host process, so these keep their value for the session only.
+/// - `host.<kebab-key>`: the desktop host's `settings.write(key, value)` service.
 /// - `session.<name>`: rows whose store the original bundle does not expose by key (Full
 ///   access menu visibility, Bottom panel, Show predictions); session only.
 pub struct SettingsPage {
@@ -206,13 +205,17 @@ impl SettingsPage {
         self.get(path).as_str().unwrap_or(default)
     }
 
-    /// Stores a setting and reports it ([`SettingChanged`]): the app persists config settings
-    /// with `config/value/write` and keeps the others for the session.
+    /// Stores a setting and reports it to the app's config or host settings service.
     fn set(&mut self, path: &'static str, value: Value, cx: &mut Context<Self>) {
         let (store, key) = path.split_once('.').unwrap_or((path, ""));
         // `IndexMut` makes a missing store an object on its first key.
         self.values[store][key] = value.clone();
         cx.emit(SettingChanged { path, value });
+        cx.notify();
+    }
+
+    pub fn refresh_host(&mut self, values: Value, cx: &mut Context<Self>) {
+        self.values["host"] = values;
         cx.notify();
     }
 }
