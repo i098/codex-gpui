@@ -18,7 +18,6 @@ use image::RgbaImage;
 use serde_json::{Value, json};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::Instant;
-use ui::Shell;
 
 type Flow = fn() -> Result<String>;
 
