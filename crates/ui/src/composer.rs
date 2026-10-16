@@ -45,6 +45,8 @@ actions!(
 mod attach;
 mod editor;
 mod footer;
+#[path = "menu.rs"]
+mod menu;
 mod menus;
 
 const KEY_CONTEXT: &str = "Composer";
@@ -308,10 +310,12 @@ pub struct Composer {
     fast: bool,
     permission: Permission,
     menu: Option<Menu>,
+    menu_focus: menu::MenuFocus,
+    permissions_focus: FocusHandle,
+    model_focus: FocusHandle,
     /// The card's (`composer-footer` container's) width, CSS px: see `SM_WIDTH`, `XS_WIDTH`.
     footer_width: f32,
-    /// The pointer is over the open menu (it lies outside the card's hitbox).
-    menu_hovered: bool,
+    menu_trigger_hovered: bool,
     approval: Option<Approval>,
     on_submit: Option<SubmitHandler>,
     on_approval: Option<ApprovalHandler>,
@@ -349,8 +353,11 @@ impl Composer {
             fast: false,
             permission: Permission::Custom,
             menu: None,
+            menu_focus: menu::MenuFocus::new(cx),
+            permissions_focus: cx.focus_handle(),
+            model_focus: cx.focus_handle(),
             footer_width: f32::INFINITY,
-            menu_hovered: false,
+            menu_trigger_hovered: false,
             approval: None,
             on_submit: None,
             on_approval: None,
@@ -389,6 +396,9 @@ impl Composer {
             .unwrap_or_else(|| "medium".into());
         self.default_selection = (self.model, self.effort.clone());
         self.permission = Permission::from_config(config);
+        if self.menu == Some(Menu::Models) {
+            self.menu_focus.prepare(self.models.len(), cx);
+        }
         cx.notify();
     }
 
@@ -431,6 +441,8 @@ impl Composer {
     /// Open the model picker (`Select effort`), as `⌘⇧M`-style commands and the menu do.
     pub fn open_model_picker(&mut self, cx: &mut Context<Self>) {
         self.menu = Some(Menu::Effort);
+        self.menu_focus.prepare(3, cx);
+        self.menu_focus.trigger = self.model_focus.clone();
         cx.notify();
     }
 
@@ -477,14 +489,113 @@ impl Composer {
         }
     }
 
-    fn toggle_menu(&mut self, menu: Menu, cx: &mut Context<Self>) {
-        self.menu = (self.menu != Some(menu)).then_some(menu);
+    fn toggle_menu(&mut self, menu: Menu, window: &mut Window, cx: &mut Context<Self>) {
+        if self.menu == Some(menu) {
+            self.dismiss(&Dismiss, window, cx);
+        } else {
+            self.menu = Some(menu);
+            let count = match menu {
+                Menu::Permissions => Permission::ALL.len(),
+                Menu::Models => self.models.len(),
+                Menu::Effort => 3,
+            };
+            self.menu_focus.prepare(count, cx);
+            self.menu_focus.trigger = match menu {
+                Menu::Permissions => self.permissions_focus.clone(),
+                _ => self.model_focus.clone(),
+            };
+            self.menu_focus.content.focus(window, cx);
+            cx.notify();
+        }
+    }
+
+    fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
+        if self.menu.take().is_some() {
+            self.menu_focus.restore(window, cx);
+            cx.notify();
+        }
+    }
+
+    fn menu_key(
+        &mut self,
+        event: &gpui::KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event.keystroke.key.as_str() {
+            "down" | "up" => self
+                .menu_focus
+                .move_focus(event.keystroke.key == "down", window, cx),
+            "escape" => self.dismiss(&Dismiss, window, cx),
+            "enter" | "space" => {
+                if let Some(index) = self.menu_focus.focused_item(window) {
+                    self.activate_menu_item(index, window, cx);
+                }
+            }
+            _ => return,
+        }
+        cx.stop_propagation();
         cx.notify();
     }
 
-    fn dismiss(&mut self, _: &Dismiss, _: &mut Window, cx: &mut Context<Self>) {
-        self.menu = None;
+    fn trigger_key(
+        &mut self,
+        menu: Menu,
+        event: &gpui::KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(event.keystroke.key.as_str(), "enter" | "space" | "down") {
+            self.toggle_menu(menu, window, cx);
+            if self.menu.is_some() {
+                self.menu_focus.move_focus(true, window, cx);
+            }
+            cx.stop_propagation();
+        }
+    }
+
+    fn activate_menu_item(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        match self.menu {
+            Some(Menu::Permissions) => {
+                self.permission = Permission::ALL[index];
+                self.dismiss(&Dismiss, window, cx);
+            }
+            Some(Menu::Models) => {
+                self.model = index;
+                let efforts = &self.models[index].efforts;
+                if !efforts.contains(&self.effort)
+                    && let Some(first) = efforts.first()
+                {
+                    self.effort = first.clone();
+                }
+                self.toggle_menu(Menu::Effort, window, cx);
+                self.picked(cx);
+            }
+            Some(Menu::Effort) => match index {
+                0 => self.fast = !self.fast,
+                1 => self.toggle_menu(Menu::Models, window, cx),
+                2 => {
+                    (self.model, self.effort) = self.default_selection.clone();
+                    self.picked(cx);
+                }
+                _ => {}
+            },
+            None => {}
+        }
         cx.notify();
+    }
+
+    /// Returns the open state, focused item, and trigger focus for interaction replay.
+    pub fn menu_state(&self, window: &Window) -> (bool, Option<usize>, bool) {
+        (
+            self.menu.is_some(),
+            self.menu_focus.focused_item(window),
+            self.menu_focus.trigger.is_focused(window),
+        )
+    }
+
+    pub fn permission(&self) -> Permission {
+        self.permission
     }
 }
 
@@ -624,11 +735,13 @@ pub(crate) fn popover(t: &Theme, width: f32, content: impl FnOnce(Div) -> Div) -
 const EFFORT_MENU_SLOT: f32 = 258.5;
 
 impl Render for Composer {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let card = div()
             .id("composer")
-            .key_context(KEY_CONTEXT)
+            .when(self.focus_handle.is_focused(window), |d| {
+                d.key_context(KEY_CONTEXT)
+            })
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::submit))
             .on_action(cx.listener(Self::newline))
@@ -649,11 +762,6 @@ impl Render for Composer {
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(Self::paste))
             .on_action(cx.listener(Self::dismiss))
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                if !this.menu_hovered && this.menu.take().is_some() {
-                    cx.notify();
-                }
-            }))
             .relative()
             .flex()
             .flex_col()
