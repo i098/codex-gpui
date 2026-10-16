@@ -87,8 +87,6 @@ pub struct Shell {
     /// edge once more. With any, the shell paints those corners itself, over what the main
     /// panel's content painted there.
     pub main_backgrounds: u8,
-    /// The page frame's cc partial rasters (`shapes::Decoration::playback`).
-    pub playback: &'static [([i32; 2], [i32; 4])],
     /// The main surface is a composited layer (thread routes): Chromium clips each layer in
     /// it, so its rounded corners show its own fill and then the content (the thread's top fade
     /// or composer band, or the side panel) at the clip's coverage.
@@ -141,7 +139,6 @@ impl Shell {
             chat_chrome: true,
             new_tab: true,
             main_backgrounds: 0,
-            playback: &[],
             main_composited: false,
             main_layer: false,
             main_clips_right: false,
@@ -888,7 +885,6 @@ impl Render for Shell {
         // transparent-tile blits), and the compositor blends the tile onto the body.
         let layout = shapes::Decoration {
             fill: Some(t.page_surface_layout),
-            playback: self.playback,
             ..Default::default()
         };
         let surface = shapes::Decoration {
@@ -909,7 +905,6 @@ impl Render for Shell {
                     inset: false,
                 },
             ],
-            playback: self.playback,
             ..Default::default()
         };
         // `_MainContentSurface` paints into the same layer: its fill and hairline blend onto
@@ -937,7 +932,6 @@ impl Render for Shell {
         let main_fill = shapes::Decoration {
             radius,
             fill: Some(t.surface),
-            playback: self.playback,
             ..Default::default()
         };
         // A composited main surface's own fill, in its layer: the compositor rounds it.
