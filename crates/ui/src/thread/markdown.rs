@@ -110,7 +110,7 @@ impl Markdown<'_> {
                     let (row, checked) = self.inline(style);
                     task |= checked;
                     self.events.next();
-                    (wrap_row().children(row), 7., 3.5)
+                    (block(row, 2), 7., 3.5)
                 }
                 Event::Start(Tag::Heading { level, .. }) => {
                     let (size, line_height, top, bottom) = match level {
@@ -130,7 +130,7 @@ impl Markdown<'_> {
                         })
                         .0;
                     self.events.next();
-                    (wrap_row().children(row), top, bottom)
+                    (block(row, 2), top, bottom)
                 }
                 Event::Start(Tag::List(start)) => {
                     let start = *start;
@@ -185,7 +185,7 @@ impl Markdown<'_> {
                 _ => {
                     let (row, checked) = self.inline(style);
                     task |= checked;
-                    (wrap_row().children(row), 0., 0.)
+                    (block(row, 1), 0., 0.)
                 }
             };
             let gap = if first || style.weight == 400. {
@@ -212,10 +212,15 @@ impl Markdown<'_> {
             self.events.next();
             let marker = if let Some(n) = number {
                 number = Some(n + 1);
-                div()
-                    .flex()
-                    .justify_end()
-                    .child(self.word(&format!("{n}. "), style))
+                div().flex().justify_end().child(measured(
+                    self.window,
+                    format!("{n}. "),
+                    style.size,
+                    style.line_height,
+                    style.weight,
+                    style.color.unwrap_or(self.theme.text),
+                    None,
+                ))
             } else {
                 let size = if depth == 1 { 6. } else { 5. };
                 div().child(
@@ -258,31 +263,12 @@ impl Markdown<'_> {
                 _ => {}
             }
             match self.events.next().expect("peeked event") {
-                Event::Text(s) | Event::Html(s) | Event::InlineHtml(s) => {
-                    if style.size == 14.
-                        && style.line_height == 22.75
-                        && !style.italic
-                        && !style.strike
-                    {
-                        row.extend(
-                            super::items::words(
-                                &s,
-                                style.weight,
-                                style.color.unwrap_or(self.theme.text),
-                                self.window,
-                            )
-                            .into_iter()
-                            .map(IntoElement::into_any_element),
-                        );
-                    } else {
-                        row.extend(
-                            s.split_inclusive(' ')
-                                .map(|s| self.word(s, style).into_any_element()),
-                        );
-                    }
-                }
+                Event::Text(s) | Event::Html(s) | Event::InlineHtml(s) => row.extend(
+                    s.split_inclusive(' ')
+                        .map(|s| self.word(s, style).into_any_element()),
+                ),
                 Event::SoftBreak => row.push(self.word(" ", style).into_any_element()),
-                Event::HardBreak => row.push(div().w_full().h_0().into_any_element()),
+                Event::HardBreak => row.push(block_end(1).w_full().h_0().into_any_element()),
                 Event::Code(code) => row.push(self.code(&code).into_any_element()),
                 Event::Start(tag) => {
                     let next = match tag {
@@ -370,10 +356,11 @@ impl Markdown<'_> {
         (row, task)
     }
 
+    /// A word box with its selection highlight.
     fn word(&self, s: &str, style: Typography) -> Div {
         let color = style.color.unwrap_or(self.theme.text);
-        if !style.italic && !style.strike {
-            return measured(
+        let inner = if !style.italic && !style.strike {
+            measured(
                 self.window,
                 s.to_owned(),
                 style.size,
@@ -381,41 +368,51 @@ impl Markdown<'_> {
                 style.weight,
                 color,
                 None,
-            );
-        }
-        let font = gpui::Font {
-            weight: FontWeight(style.weight),
-            style: if style.italic {
-                gpui::FontStyle::Italic
-            } else {
-                gpui::FontStyle::Normal
-            },
-            ..font(SANS)
-        };
-        let run = TextRun {
-            len: s.len(),
-            font,
-            color,
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        };
-        let width = self
-            .window
-            .text_system()
-            .layout_line(s, px(style.size), &[run], None)
-            .width;
-        div().flex_none().w(width).child(
-            text(
-                s.to_owned(),
-                style.size,
-                style.line_height,
-                style.weight,
-                color,
             )
-            .when(style.italic, |d| d.italic())
-            .when(style.strike, |d| d.line_through()),
-        )
+        } else {
+            let font = gpui::Font {
+                weight: FontWeight(style.weight),
+                style: if style.italic {
+                    gpui::FontStyle::Italic
+                } else {
+                    gpui::FontStyle::Normal
+                },
+                ..font(SANS)
+            };
+            let run = TextRun {
+                len: s.len(),
+                font,
+                color,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            let width = self
+                .window
+                .text_system()
+                .layout_line(s, px(style.size), &[run], None)
+                .width;
+            div().flex_none().w(width).child(
+                text(
+                    s.to_owned(),
+                    style.size,
+                    style.line_height,
+                    style.weight,
+                    color,
+                )
+                .when(style.italic, |d| d.italic())
+                .when(style.strike, |d| d.line_through()),
+            )
+        };
+        div()
+            .relative()
+            .flex_none()
+            .child(
+                highlight(s.to_owned().into(), style.size, style.weight, None, 0.)
+                    .absolute()
+                    .inset_0(),
+            )
+            .child(inner)
     }
 
     fn code(&self, code: &str) -> Div {
@@ -430,6 +427,15 @@ impl Markdown<'_> {
                     fill: Some(tones(self.theme).inline_code),
                     ..Default::default()
                 }))
+                // Over the chip's fill, under its glyphs, the height of the line box.
+                .child(
+                    highlight(code.to_owned().into(), 12.88, 430., Some(MONO), 6.)
+                        .absolute()
+                        .left_0()
+                        .right_0()
+                        .top(px(-3.5))
+                        .bottom(px(-3.25)),
+                )
                 .child(measured(
                     self.window,
                     code.to_owned(),
@@ -441,4 +447,10 @@ impl Markdown<'_> {
                 )),
         )
     }
+}
+
+/// A wrapped inline row that ends a block: `newlines` is what Chrome's `Selection.toString`
+/// emits after it (two for paragraphs and headings).
+fn block(row: Vec<AnyElement>, newlines: usize) -> Div {
+    wrap_row().children(row).child(block_end(newlines))
 }

@@ -32,13 +32,6 @@ pub(super) fn wrap_row() -> Div {
     div().flex().flex_wrap().mr(px(-4.))
 }
 
-/// 14 px words of `s`, each with its trailing space, in 22.75 px line boxes.
-pub(super) fn words(s: &str, weight: f32, color: Hsla, window: &Window) -> Vec<Div> {
-    s.split_inclusive(' ')
-        .map(|word| measured(window, word.to_owned(), 14., 22.75, weight, color, None))
-        .collect()
-}
-
 /// `Worked for 17s ›` over a hairline (collapsed turn disclosure); `open`: the chevron points
 /// down.
 pub(super) fn disclosure(label: String, open: bool, window: &Window, t: &Theme) -> Div {

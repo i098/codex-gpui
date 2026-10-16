@@ -5,6 +5,7 @@
 //!
 //! User-message controls appear on hover or focus without moving the transcript.
 //! Copy writes plain text and HTML on macOS and shows a checkmark for 1500 ms.
+//! Answer text is selectable by drag (`thread/select.rs`); `Copy` writes the selection.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -37,11 +38,15 @@ mod header;
 mod items;
 #[path = "thread/markdown.rs"]
 mod markdown;
+#[path = "thread/select.rs"]
+mod select;
 
 use actions::action_row;
 pub use actions::{ForkThread, RevertTurn};
 use items::{activity, diff_card, disclosure, user_bubble, wrap_row};
 use markdown::{markdown, tones};
+pub use select::Selection;
+use select::{Carets, block_end, frame_start, highlight};
 
 /// `--thread-content-max-width`
 const CONTENT_MAX_WIDTH: Pixels = px(768.);
@@ -85,6 +90,9 @@ pub struct ThreadView {
     scroll: ScrollHandle,
     /// The turns as last laid out, to stand in for the ones far off screen.
     laid_out: Rc<RefCell<LaidOut>>,
+    /// Focused while the transcript holds the text selection: `Copy` then copies it.
+    focus: Option<gpui::FocusHandle>,
+    carets: Carets,
 }
 
 /// Where the last frame laid out each turn, in the scroller's content (top, height), and the
@@ -117,6 +125,8 @@ impl ThreadView {
             expanded: HashSet::new(),
             scroll: ScrollHandle::new(),
             laid_out: Rc::default(),
+            focus: None,
+            carets: Carets::default(),
         }
     }
 
@@ -131,6 +141,21 @@ impl ThreadView {
 
     pub fn turns(&self) -> &[Turn] {
         &self.turns
+    }
+
+    /// The selected answer text (TH-127), as Chrome's `Selection.toString` joins it.
+    pub fn selected_text(&self, window: &Window, cx: &App) -> Option<String> {
+        self.carets.range()?;
+        Some(cx.global::<Selection>().text(window)).filter(|s| !s.is_empty())
+    }
+
+    /// `Copy` (⌘C) with a transcript selection: writes it as plain text (SH-132, TH-128).
+    fn copy_selection(&mut self, _: &crate::Copy, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(text) = self.selected_text(window, cx) {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        } else {
+            cx.propagate();
+        }
     }
 
     /// Commands still running after their turn ended (background terminals), oldest first:
@@ -463,6 +488,8 @@ impl ThreadView {
             col = col.child(div().h(px(16.))).child(
                 disclosure(format!("Worked for {}", duration(secs)), open, window, t)
                     .id(group.clone())
+                    // `select-none` in the original: a press here leaves the text selection.
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |view, _, _, cx| {
                         if !view.expanded.remove(&id) {
                             view.expanded.insert(id.clone());
@@ -529,7 +556,12 @@ impl Render for ThreadView {
         let n = self.turns.len();
         // Turns more than half a viewport above or below it stand in as empty boxes of their
         // last height while the window size and side panel stay as they were laid out; the
-        // last turn (and a running one) can still grow, so it always renders.
+        // last turn (and a running one) can still grow, so it always renders. A text selection
+        // needs every word registered, so it lays out every turn.
+        // ponytail: full layout while a selection exists; keep stand-ins outside the range if
+        // long selected threads lag.
+        let selecting = self.carets.range().is_some();
+        self.carets.publish(cx);
         let key = (window.viewport_size(), self.clip_right);
         let (view, offset) = (self.scroll.bounds().size.height, self.scroll.offset().y);
         let laid_out = self.laid_out.borrow();
@@ -540,6 +572,7 @@ impl Render for ThreadView {
             .map(|(i, turn)| {
                 let stand_in = (laid_out.key == Some(key)
                     && i + 1 < n
+                    && !selecting
                     && turn.status != TurnStatus::InProgress)
                     .then(|| laid_out.turns.get(&turn.id))
                     .flatten()
@@ -641,6 +674,45 @@ impl Render for ThreadView {
             true,
             scale,
         );
+        let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
+        let drag_focus = focus.clone();
+        let this = cx.entity().downgrade();
+        // While a drag runs, every move and release in the window reaches the view, also past
+        // the scroller. A press that moves focus elsewhere (the editor, a button) ends it.
+        let tracker = self.carets.dragging.then(|| {
+            gpui::canvas(
+                |_, _, _| (),
+                move |_, (), window, _| {
+                    let (moved, released) = (this.clone(), this.clone());
+                    window.on_mouse_event(move |e: &gpui::MouseMoveEvent, phase, window, cx| {
+                        if phase == gpui::DispatchPhase::Bubble {
+                            moved
+                                .update(cx, |view, cx| {
+                                    if drag_focus.is_focused(window) {
+                                        view.carets.drag(e.position, cx);
+                                    } else {
+                                        view.carets.dragging = false;
+                                    }
+                                    cx.notify();
+                                })
+                                .ok();
+                        }
+                    });
+                    window.on_mouse_event(move |_: &gpui::MouseUpEvent, phase, _, cx| {
+                        if phase == gpui::DispatchPhase::Bubble {
+                            released
+                                .update(cx, |view, cx| {
+                                    view.carets.dragging = false;
+                                    cx.notify();
+                                })
+                                .ok();
+                        }
+                    });
+                },
+            )
+            .absolute()
+            .size_0()
+        });
         div()
             .size_full()
             .relative()
@@ -652,9 +724,23 @@ impl Render for ThreadView {
                     .size_full()
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll)
+                    .track_focus(&focus)
+                    .on_action(cx.listener(Self::copy_selection))
+                    // A press on the transcript collapses the selection to a caret, takes the
+                    // focus from the editor, and starts a drag (TH-127). Buttons stop it.
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(move |view, e: &gpui::MouseDownEvent, window, cx| {
+                            window.focus(&focus, cx);
+                            view.carets.press(e.position, cx);
+                            cx.notify();
+                        }),
+                    )
                     // The scroller's contents are a composited layer (transparent tile).
                     .layer()
                     .pt(px(32.))
+                    .child(frame_start(self.scroll.clone()).absolute().size_0())
+                    .children(tracker)
                     .child(
                         div()
                             .mx_auto()
@@ -688,6 +774,9 @@ impl Render for ThreadView {
                     .right_0()
                     .bottom_0()
                     .when(t.appearance == Appearance::Light, |d| d.pt(px(84.)))
+                    // The band covers the transcript: a press on it (the editor) is not a
+                    // transcript press.
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .layer()
                     .child(
                         div()
