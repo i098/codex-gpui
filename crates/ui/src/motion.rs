@@ -7,8 +7,12 @@
 //! Native frame checks use `repeat_synced` for GPUI's test clock.
 //! Unsynced GPUI animations use wall time; `HoverFade` accepts caller-supplied time.
 
-use gpui::App;
+use gpui::{
+    App, Hsla, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, RenderOnce,
+    Rgba, StatefulInteractiveElement, Styled, Window, div,
+};
 use std::time::Duration;
+use theme::{ActiveTheme as _, Appearance};
 
 pub const BASIC: Duration = Duration::from_millis(150);
 pub const MODERATE: Duration = Duration::from_millis(200);
@@ -149,5 +153,93 @@ impl HoverFade {
         } else {
             (now.saturating_sub(self.started).as_secs_f32() / duration).min(1.0)
         }
+    }
+}
+
+/// The visual child of an icon button. The outer button keeps its actions and tooltip.
+/// Hover and press use separate CSS tracks, including reversal shortening.
+/// These tracks stay active under reduced motion, as recorded in `refs/interactions/ms1.json`.
+#[derive(IntoElement)]
+pub(crate) struct ButtonVisual<E: Styled + IntoElement + 'static> {
+    pub glyph: E,
+    pub radius: Pixels,
+    pub hover: Hsla,
+    pub foreground: Hsla,
+    pub selected: bool,
+}
+
+impl<E: Styled + IntoElement + 'static> RenderOnce for ButtonVisual<E> {
+    fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let state = window.use_keyed_state("button-fade", cx, |_, cx| {
+            (
+                cx.background_executor().now(),
+                HoverFade::default(),
+                HoverFade::default(),
+            )
+        });
+        let (epoch, hover, press) = state.read(cx);
+        let now = cx.background_executor().now() - *epoch;
+        let progress = hover.value(now);
+        let pressed = press.value(now);
+        if hover.is_animating(now) || press.is_animating(now) {
+            window.request_animation_frame();
+        }
+        if progress > 0.0 && !self.selected {
+            let from = Rgba::from(self.glyph.style().text.color.unwrap_or(self.foreground));
+            let to = Rgba::from(self.foreground);
+            self.glyph = self.glyph.text_color(Rgba {
+                r: from.r + (to.r - from.r) * progress,
+                g: from.g + (to.g - from.g) * progress,
+                b: from.b + (to.b - from.b) * progress,
+                a: from.a + (to.a - from.a) * progress,
+            });
+        }
+        let active_alpha = match cx.theme().appearance {
+            Appearance::Dark => 0.16,
+            Appearance::Light => 0.12,
+        };
+        let mut fill = self.hover;
+        fill.a = if self.selected {
+            (active_alpha - fill.a) / (1.0 - fill.a) * pressed
+        } else {
+            (fill.a + (active_alpha - fill.a) * pressed) * progress
+        };
+        div()
+            .id("button-visual")
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(self.radius)
+            .bg(fill)
+            .on_hover({
+                let state = state.clone();
+                move |hovered, _, cx| {
+                    state.update(cx, |(epoch, hover, press), cx| {
+                        let now = cx.background_executor().now() - *epoch;
+                        hover.set_hovered(*hovered, now);
+                        if !hovered {
+                            press.set_hovered(false, now);
+                        }
+                        cx.notify();
+                    })
+                }
+            })
+            .on_mouse_down(MouseButton::Left, {
+                let state = state.clone();
+                move |_, _, cx| {
+                    state.update(cx, |(epoch, _, press), cx| {
+                        press.set_hovered(true, cx.background_executor().now() - *epoch);
+                        cx.notify();
+                    })
+                }
+            })
+            .on_mouse_up(MouseButton::Left, move |_, _, cx| {
+                state.update(cx, |(epoch, _, press), cx| {
+                    press.set_hovered(false, cx.background_executor().now() - *epoch);
+                    cx.notify();
+                })
+            })
+            .child(self.glyph)
     }
 }

@@ -5,12 +5,14 @@
 
 mod features;
 pub mod host;
+pub mod host_settings;
 
 use anyhow::Result;
 use async_channel::Receiver;
 use bridge::types::{
     ApprovalDecision, CommandApprovalRequest, ConfigReadResponse, FileChangeApprovalRequest,
     Thread, ThreadItem, ThreadReadResponse, ThreadStartResponse, ThreadStartedNotification,
+    TurnStatus,
 };
 use bridge::{Bridge, Event};
 use gpui::{
@@ -351,6 +353,18 @@ impl Root {
     ) -> Self {
         let bridge = Arc::new(bridge);
         cx.set_global(AppServer(bridge.clone()));
+        if !cx.has_global::<host_settings::Settings>() {
+            let settings = match state.path.as_ref() {
+                Some(path) => {
+                    host_settings::Settings::load(path.with_file_name("host-settings.json"))
+                }
+                None => Ok(host_settings::Settings::default()),
+            };
+            match settings {
+                Ok(settings) => cx.set_global(settings),
+                Err(error) => eprintln!("codex-gpui: cannot load host settings: {error:#}"),
+            }
+        }
         let this = cx.weak_entity();
         // Both pickers write the user's `config.toml`, like the original's `writeModel`.
         let on_model = |this: WeakEntity<Self>| {
@@ -695,12 +709,26 @@ impl Root {
             Route::Settings => {
                 // The Appearance page shows the theme the app keeps.
                 let mut config = self.config.clone();
+                config["host"] = cx
+                    .try_global::<host_settings::Settings>()
+                    .map(|settings| Value::Object(settings.read_all().clone()))
+                    .unwrap_or(Value::Null);
                 let (store, key) = settings::THEME.split_once('.').expect("store.key");
                 config[store][key] = json!(self.state.theme);
+                config["host"]["confirm-before-close"] = json!(self.state.confirm_before_close);
                 let section = self.settings_section.take();
                 let (shell, page) = settings::shell(&config, &self.skills, section, cx);
-                cx.subscribe(&page, |this, _, e: &SettingChanged, cx| {
-                    this.write_setting(e, cx)
+                cx.subscribe(&page, |this, page, e: &SettingChanged, cx| {
+                    this.write_setting(e, cx);
+                    if e.path.starts_with("host.") && e.path != settings::THEME {
+                        let mut values = cx
+                            .try_global::<host_settings::Settings>()
+                            .map(|settings| Value::Object(settings.read_all().clone()))
+                            .unwrap_or(Value::Null);
+                        values["appearance-theme"] = json!(this.state.theme);
+                        values["confirm-before-close"] = json!(this.state.confirm_before_close);
+                        page.update(cx, |page, cx| page.refresh_host(values, cx));
+                    }
                 })
                 .detach();
                 Some(shell)
@@ -897,6 +925,12 @@ impl Root {
     }
 
     fn show_thread(&mut self, thread: Thread, window: &mut Window, cx: &mut Context<Self>) {
+        let running = thread
+            .turns
+            .iter()
+            .any(|turn| turn.status == TurnStatus::InProgress);
+        self.thread_composer
+            .update(cx, |c, cx| c.set_running(running, cx));
         let route = Route::Thread(thread.id.clone());
         let clock = Clock {
             utc_offset: chrono::Local::now().offset().local_minus_utc().into(),
@@ -1014,6 +1048,37 @@ impl Root {
                             .update(cx, |composer, cx| composer.restore_text(&edit.message, cx));
                     }
                     this.toast(Toast::danger("Failed to edit message"), cx);
+                })?;
+            }
+            result
+        });
+        log_err(task, cx);
+    }
+
+    fn stop(&mut self, cx: &mut Context<Self>) {
+        let Route::Thread(id) = &self.state.route else {
+            return;
+        };
+        let Some(view) = &self.thread else { return };
+        let view = view.read(cx);
+        if view.id() != id {
+            return;
+        }
+        let Some(turn) = view
+            .turns()
+            .iter()
+            .rev()
+            .find(|turn| turn.status == TurnStatus::InProgress)
+        else {
+            return;
+        };
+        let (thread_id, turn_id) = (id.clone(), turn.id.clone());
+        let bridge = self.bridge.clone();
+        let task = cx.spawn(async move |this, cx| -> Result<()> {
+            let result = bridge.turn_interrupt(&thread_id, &turn_id).await;
+            if result.is_err() {
+                this.update(cx, |this, cx| {
+                    this.toast(Toast::danger("Failed to stop chat"), cx)
                 })?;
             }
             result
@@ -1211,16 +1276,33 @@ impl Root {
         });
     }
 
-    /// `desktop.*` and `features.*` use `config/value/write`.
-    /// The close preference persists in window state; other host settings last for the session.
+    /// Window preferences keep their state storage; other host settings use the desktop service.
     fn write_setting(&mut self, e: &SettingChanged, cx: &mut Context<Self>) {
-        if e.path == "host.confirm-before-close"
-            && let Ok(value) = serde_json::from_value(e.value.clone())
-        {
-            self.state.confirm_before_close = value;
-            self.state.save();
+        if e.path == settings::THEME {
+            return;
+        }
+        if e.path == "host.confirm-before-close" {
+            if let Ok(value) = serde_json::from_value(e.value.clone()) {
+                self.state.confirm_before_close = value;
+                self.config["host"]["confirm-before-close"] = e.value.clone();
+                self.state.save();
+            }
+            return;
         }
         let (store, key) = e.path.split_once('.').unwrap_or((e.path, ""));
+        if store == "host" {
+            let result = if cx.has_global::<host_settings::Settings>() {
+                cx.global_mut::<host_settings::Settings>()
+                    .write(key, e.value.clone())
+            } else {
+                Err(anyhow::anyhow!("host settings could not be loaded"))
+            };
+            if let Err(error) = result {
+                eprintln!("codex-gpui: settings.write({key}): {error:#}");
+                self.toast(Toast::danger("Couldn't save your changes. Try again"), cx);
+            }
+            return;
+        }
         let value = e.value.clone();
         let apply = move |config: &mut Value| config[store][key] = value;
         if !matches!(store, "desktop" | "features") {
@@ -1275,6 +1357,16 @@ impl Root {
                     });
                 }
             });
+            if matches!(&event, Event::Notification { method, .. } if matches!(method.as_str(), "turn/started" | "turn/completed"))
+            {
+                let running = view
+                    .read(cx)
+                    .turns()
+                    .iter()
+                    .any(|turn| turn.status == TurnStatus::InProgress);
+                self.thread_composer
+                    .update(cx, |c, cx| c.set_running(running, cx));
+            }
         }
         if let Some(login) = &self.login {
             login.update(cx, |login, cx| login.apply(&event, cx));
@@ -1441,6 +1533,7 @@ impl Render for Root {
             .font_family(ui::SANS)
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &NewChat, window, cx| this.new_chat(window, cx)))
+            .on_action(cx.listener(|this, _: &ui::composer::Stop, _, cx| this.stop(cx)))
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
                 this.navigate(Route::Settings, window, cx)
             }))

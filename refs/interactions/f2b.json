@@ -1,0 +1,593 @@
+{
+  "name": "f2b-permission-menu-focus",
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 1,
+    "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+    "theme": "dark",
+    "hoverEmulated": true
+  },
+  "source": {
+    "app": "Codex 26.1007.30912",
+    "transport": "route1 Linux, shared Chrome :9522, isolated CDP context"
+  },
+  "steps": [
+    {
+      "type": "click",
+      "target": {
+        "selector": "[aria-label=\"Change permissions\"]",
+        "bbox": {
+          "x": 482,
+          "y": 776,
+          "w": 81,
+          "h": 28
+        }
+      }
+    },
+    {
+      "type": "hover",
+      "target": {
+        "text": "Full access",
+        "bbox": {
+          "x": 487,
+          "y": 685,
+          "w": 409,
+          "h": 43
+        }
+      }
+    },
+    {
+      "type": "hover",
+      "target": {
+        "selector": "[role=menu]",
+        "bbox": {
+          "x": 483,
+          "y": 570,
+          "w": 417,
+          "h": 28
+        }
+      },
+      "note": "Move to the non-item menu heading."
+    },
+    {
+      "type": "key",
+      "key": "End"
+    },
+    {
+      "type": "key",
+      "key": "Home"
+    },
+    {
+      "type": "key",
+      "key": "f"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "modifiers": [
+        "shift"
+      ]
+    },
+    {
+      "type": "key",
+      "key": "c",
+      "waitMs": 100,
+      "note": "The previous search expires after 1000 ms.",
+      "beforeMs": 1100
+    },
+    {
+      "type": "key",
+      "key": "Escape"
+    },
+    {
+      "type": "key",
+      "key": "Enter"
+    },
+    {
+      "type": "key",
+      "key": "Escape"
+    },
+    {
+      "type": "key",
+      "key": "Space"
+    },
+    {
+      "type": "key",
+      "key": "Escape"
+    },
+    {
+      "type": "key",
+      "key": "ArrowDown"
+    },
+    {
+      "type": "key",
+      "key": "Escape"
+    }
+  ],
+  "result": {
+    "dom": [
+      {
+        "open": true,
+        "active": {
+          "tag": "div",
+          "text": "How should ChatGPT actions be approved?\nLearn more\nAsk for approval\nAlways ask to edit external files and use the internet\nApprove for me\nOnly ask for actions d",
+          "aria": null,
+          "role": "menu",
+          "bbox": {
+            "x": 483,
+            "y": 570,
+            "w": 417,
+            "h": 204
+          },
+          "computed": {
+            "backgroundColor": "oklab(0.297161 0.0000135154 0.00000594556 / 0.9)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(255, 255, 255, 0.082) 0px 0px 0px 0.5px, rgba(255, 255, 255, 0.082) 0px 0px 0px 0.5px, rgba(0, 0, 0, 0.12) 0px 8px 16px -4px",
+            "cursor": "auto"
+          }
+        },
+        "focusedItem": -1,
+        "highlighted": [
+          false,
+          false,
+          false,
+          false
+        ]
+      },
+      {
+        "open": true,
+        "active": {
+          "tag": "div",
+          "text": "Full access\nUnrestricted access to the internet and any file on your computer",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 487,
+            "y": 685,
+            "w": 409,
+            "h": 43
+          },
+          "computed": {
+            "backgroundColor": "rgba(255, 255, 255, 0.08)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        "focusedItem": 2,
+        "highlighted": [
+          false,
+          false,
+          true,
+          false
+        ]
+      },
+      {
+        "open": true,
+        "active": {
+          "tag": "div",
+          "text": "How should ChatGPT actions be approved?\nLearn more\nAsk for approval\nAlways ask to edit external files and use the internet\nApprove for me\nOnly ask for actions d",
+          "aria": null,
+          "role": "menu",
+          "bbox": {
+            "x": 483,
+            "y": 570,
+            "w": 417,
+            "h": 204
+          },
+          "computed": {
+            "backgroundColor": "oklab(0.297161 0.0000135154 0.00000594556 / 0.9)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(255, 255, 255, 0.082) 0px 0px 0px 0.5px, rgba(255, 255, 255, 0.082) 0px 0px 0px 0.5px, rgba(0, 0, 0, 0.12) 0px 8px 16px -4px",
+            "cursor": "auto"
+          }
+        },
+        "focusedItem": -1,
+        "highlighted": [
+          false,
+          false,
+          false,
+          false
+        ]
+      },
+      {
+        "open": true,
+        "active": {
+          "tag": "div",
+          "text": "Custom (config.toml)\nUses permissions defined in config.toml",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 487,
+            "y": 728,
+            "w": 409,
+            "h": 43
+          },
+          "computed": {
+            "backgroundColor": "rgba(255, 255, 255, 0.08)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        "focusedItem": 3,
+        "highlighted": [
+          false,
+          false,
+          false,
+          true
+        ]
+      },
+      {
+        "open": true,
+        "active": {
+          "tag": "div",
+          "text": "Ask for approval\nAlways ask to edit external files and use the internet",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 487,
+            "y": 600,
+            "w": 409,
+            "h": 43
+          },
+          "computed": {
+            "backgroundColor": "rgba(255, 255, 255, 0.08)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        "focusedItem": 0,
+        "highlighted": [
+          true,
+          false,
+          false,
+          false
+        ]
+      },
+      {
+        "open": true,
+        "active": {
+          "tag": "div",
+          "text": "Full access\nUnrestricted access to the internet and any file on your computer",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 487,
+            "y": 685,
+            "w": 409,
+            "h": 43
+          },
+          "computed": {
+            "backgroundColor": "rgba(255, 255, 255, 0.08)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        "focusedItem": 2,
+        "highlighted": [
+          false,
+          false,
+          true,
+          false
+        ]
+      },
+      {
+        "open": true,
+        "active": {
+          "tag": "div",
+          "text": "Full access\nUnrestricted access to the internet and any file on your computer",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 487,
+            "y": 685,
+            "w": 409,
+            "h": 43
+          },
+          "computed": {
+            "backgroundColor": "rgba(255, 255, 255, 0.08)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        "focusedItem": 2,
+        "highlighted": [
+          false,
+          false,
+          true,
+          false
+        ]
+      },
+      {
+        "open": true,
+        "active": {
+          "tag": "div",
+          "text": "Full access\nUnrestricted access to the internet and any file on your computer",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 487,
+            "y": 685,
+            "w": 409,
+            "h": 43
+          },
+          "computed": {
+            "backgroundColor": "rgba(255, 255, 255, 0.08)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        "focusedItem": 2,
+        "highlighted": [
+          false,
+          false,
+          true,
+          false
+        ]
+      },
+      {
+        "open": true,
+        "active": {
+          "tag": "div",
+          "text": "Custom (config.toml)\nUses permissions defined in config.toml",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 487,
+            "y": 728,
+            "w": 409,
+            "h": 43
+          },
+          "computed": {
+            "backgroundColor": "rgba(255, 255, 255, 0.08)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        "focusedItem": 3,
+        "highlighted": [
+          false,
+          false,
+          false,
+          true
+        ]
+      },
+      {
+        "open": false,
+        "active": {
+          "tag": "button",
+          "text": "Custom",
+          "aria": "Change permissions",
+          "role": null,
+          "bbox": {
+            "x": 482,
+            "y": 776,
+            "w": 81,
+            "h": 28
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+            "cursor": "default"
+          }
+        },
+        "focusedItem": -1,
+        "highlighted": []
+      },
+      {
+        "open": true,
+        "active": {
+          "tag": "div",
+          "text": "Ask for approval\nAlways ask to edit external files and use the internet",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 487,
+            "y": 600,
+            "w": 409,
+            "h": 43
+          },
+          "computed": {
+            "backgroundColor": "rgba(255, 255, 255, 0.08)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        "focusedItem": 0,
+        "highlighted": [
+          true,
+          false,
+          false,
+          false
+        ]
+      },
+      {
+        "open": false,
+        "active": {
+          "tag": "button",
+          "text": "Custom",
+          "aria": "Change permissions",
+          "role": null,
+          "bbox": {
+            "x": 482,
+            "y": 776,
+            "w": 81,
+            "h": 28
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+            "cursor": "default"
+          }
+        },
+        "focusedItem": -1,
+        "highlighted": []
+      },
+      {
+        "open": true,
+        "active": {
+          "tag": "div",
+          "text": "Ask for approval\nAlways ask to edit external files and use the internet",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 487,
+            "y": 600,
+            "w": 409,
+            "h": 43
+          },
+          "computed": {
+            "backgroundColor": "rgba(255, 255, 255, 0.08)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        "focusedItem": 0,
+        "highlighted": [
+          true,
+          false,
+          false,
+          false
+        ]
+      },
+      {
+        "open": false,
+        "active": {
+          "tag": "button",
+          "text": "Custom",
+          "aria": "Change permissions",
+          "role": null,
+          "bbox": {
+            "x": 482,
+            "y": 776,
+            "w": 81,
+            "h": 28
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+            "cursor": "default"
+          }
+        },
+        "focusedItem": -1,
+        "highlighted": []
+      },
+      {
+        "open": true,
+        "active": {
+          "tag": "div",
+          "text": "Ask for approval\nAlways ask to edit external files and use the internet",
+          "aria": null,
+          "role": "menuitem",
+          "bbox": {
+            "x": 487,
+            "y": 600,
+            "w": 409,
+            "h": 43
+          },
+          "computed": {
+            "backgroundColor": "rgba(255, 255, 255, 0.08)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        "focusedItem": 0,
+        "highlighted": [
+          true,
+          false,
+          false,
+          false
+        ]
+      },
+      {
+        "open": false,
+        "active": {
+          "tag": "button",
+          "text": "Custom",
+          "aria": "Change permissions",
+          "role": null,
+          "bbox": {
+            "x": 482,
+            "y": 776,
+            "w": 81,
+            "h": 28
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgb(238, 238, 238) none 1px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+            "cursor": "default"
+          }
+        },
+        "focusedItem": -1,
+        "highlighted": []
+      }
+    ],
+    "requests": [],
+    "requestFilter": "Exclude background reads (config/read, app/read, app/list, thread/attachment/list, externalAgentConfig/import/readHistories) and host services. No interaction sends an app-server request.",
+    "screenshot": "/sdc-disk/tmp/cgx/cgx-f2b/shots/f2b-hover-original.png"
+  },
+  "scope": {
+    "covered": [
+      "HC-097",
+      "HC-098",
+      "HC-100",
+      "HC-103",
+      "HC-105 (permissions trigger)"
+    ],
+    "deferred": [
+      "HC-104 (submenu arrows)",
+      "HC-105 (model trigger)"
+    ],
+    "decision": "Firstmate message 002 limits this slice to the recorded permission menu."
+  }
+}
