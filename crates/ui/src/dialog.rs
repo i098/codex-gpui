@@ -1,10 +1,11 @@
-//! Modal surfaces recorded in `refs/interactions/f3b.json`.
-use crate::{Copy, Cut, Paste, SelectAll, icon::icon, text};
+//! Modal surfaces recorded in `refs/interactions/f3b.json`; the Scheduled sidebar's `New task`
+//! create dialog in `refs/interactions/s036.json`.
+use crate::{Copy, Cut, Paste, SelectAll, icon::icon, motion::ButtonVisual, text};
 use gpui::{
     App, Context, Corners, Div, EventEmitter, FocusHandle, Focusable, InteractiveElement as _,
-    IntoElement, KeyDownEvent, MouseButton, ParentElement as _, Render, ScrollHandle, Stateful,
-    StatefulInteractiveElement as _, Styled as _, Window, div, point, prelude::FluentBuilder as _,
-    px, rgba,
+    IntoElement, KeyDownEvent, MouseButton, ParentElement as _, Render, ScrollHandle, SharedString,
+    Stateful, StatefulInteractiveElement as _, Styled as _, Window, div, point,
+    prelude::FluentBuilder as _, px, rgba,
 };
 use theme::{ActiveTheme as _, Theme};
 
@@ -14,6 +15,8 @@ type Shortcut = (&'static str, &'static str, &'static [&'static str]);
 pub enum Kind {
     Shortcuts,
     CloseWindow,
+    /// `Schedule a task`: the Scheduled sidebar's `New task` create editor (AM-005).
+    ScheduleTask,
 }
 #[derive(Clone, Copy)]
 pub enum Outcome {
@@ -64,6 +67,9 @@ impl Dialog {
             (Kind::CloseWindow, 0) => "Cancel",
             (Kind::CloseWindow, 1) => "Close Window",
             (Kind::CloseWindow, _) => "Do not ask me again",
+            (Kind::ScheduleTask, 0) => "Instructions…",
+            (Kind::ScheduleTask, 1) => "Cancel",
+            (Kind::ScheduleTask, _) => "Close dialog",
         }
     }
     fn visible(&self) -> impl Iterator<Item = &'static Shortcut> + '_ {
@@ -238,6 +244,164 @@ impl Dialog {
                     .child(self.button(1, "Close Window", 128., t, cx)),
             )
     }
+    /// `Schedule a task` (editor-dialog chunk): instructions editor, the `Repeat` / `Time`
+    /// field group, `Advanced`, `Cancel` and the disabled `Create`. Only the open and close
+    /// paths of AM-005 live here; the fields' menus and typing are other rows.
+    fn schedule_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        let label = t.text.opacity(0.65);
+        let field = |name: &'static str, value: SharedString, width: f32| {
+            div()
+                .h(px(48.))
+                .px(px(20.))
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(text(name, 14., 20., 400., t.text))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .child(
+                            text(value, 14., 20., 400., label)
+                                .w(px(width))
+                                .flex()
+                                .justify_end(),
+                        )
+                        .child(div().size(px(20.)).ml(px(8.)).child(icon(
+                            "chevron-down",
+                            20.,
+                            label,
+                        ))),
+                )
+        };
+        div()
+            .p(px(20.))
+            .flex()
+            .flex_col()
+            .child(text("Schedule a task", 16., 26., 590., t.text))
+            .child(
+                div()
+                    .id("schedule-instructions")
+                    .role(gpui::Role::TextInput)
+                    .aria_label("Instructions…")
+                    .track_focus(&self.controls[0])
+                    .mt(px(20.))
+                    .h(px(122.))
+                    .rounded(px(20.))
+                    .border_1()
+                    .border_color(t.border)
+                    .px(px(18.))
+                    .py(px(16.))
+                    .cursor_text()
+                    .child(text("Instructions…", 14., 20., 400., t.text_tertiary))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.selected = 0;
+                        this.controls[0].focus(window, cx);
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    .mt(px(16.))
+                    .h(px(98.))
+                    .rounded(px(20.))
+                    .border_1()
+                    .border_color(t.border_strong)
+                    .bg(t.surface_elevated_secondary.opacity(0.96))
+                    .flex()
+                    .flex_col()
+                    .child(
+                        field("Repeat", "Daily".into(), 32.).relative().child(
+                            div()
+                                .absolute()
+                                .bottom_0()
+                                .left(px(16.))
+                                .right(px(16.))
+                                .h(px(1.))
+                                .bg(t.border),
+                        ),
+                    )
+                    .child(field("Time", schedule_time().into(), 115.)),
+            )
+            .child(
+                div().mt(px(16.)).h(px(28.)).flex().child(
+                    div()
+                        .h(px(28.))
+                        .px(px(8.))
+                        .rounded(px(10.))
+                        .flex()
+                        .items_center()
+                        .child(text("Advanced", 14., 18., 400., label))
+                        .child(div().size(px(20.)).ml(px(4.)).child(icon(
+                            "chevron-down",
+                            20.,
+                            label,
+                        ))),
+                ),
+            )
+            .child(
+                div()
+                    .mt(px(20.))
+                    .h(px(36.))
+                    .flex()
+                    .justify_end()
+                    .gap(px(12.))
+                    .child(
+                        div()
+                            .id("schedule-cancel")
+                            .role(gpui::Role::Button)
+                            .aria_label("Cancel")
+                            .track_focus(&self.controls[1])
+                            .w(px(80.))
+                            .h(px(36.))
+                            .rounded(px(18.))
+                            .bg(t.text_alpha_5)
+                            .hover(|s| s.bg(t.text_alpha_10))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(text("Cancel", 14., 20., 500., t.text))
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(Outcome::Dismiss))),
+                    )
+                    .child(
+                        div()
+                            .id("schedule-create")
+                            .role(gpui::Role::Button)
+                            .aria_label("Create")
+                            .aria_disabled(true)
+                            .w(px(79.))
+                            .h(px(36.))
+                            .rounded(px(18.))
+                            .bg(t.text)
+                            .border_1()
+                            .border_color(t.border)
+                            .opacity(0.4)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(text("Create", 14., 20., 500., t.surface_elevated_secondary)),
+                    ),
+            )
+            .child(
+                div()
+                    .id("schedule-close")
+                    .role(gpui::Role::Button)
+                    .aria_label("Close dialog")
+                    .track_focus(&self.controls[2])
+                    .absolute()
+                    .right(px(14.))
+                    .top(px(16.))
+                    .size(px(32.))
+                    .child(ButtonVisual {
+                        glyph: icon("close", 20., t.text_tertiary),
+                        radius: px(16.),
+                        hover: t.ghost_hover,
+                        foreground: t.text,
+                        selected: false,
+                    })
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(Outcome::Dismiss))),
+            )
+    }
     fn shortcuts_content(&self, visible: &[&Shortcut], t: &Theme, cx: &Context<Self>) -> Div {
         let mut list = div().flex().flex_col().pr(px(22.));
         let mut heading = "";
@@ -363,6 +527,23 @@ impl Dialog {
             )
     }
 }
+
+/// The editor's default `Time`: 9:00 AM in the local zone, named like the original's
+/// `Intl` short zone name (`PT`, `GMT+2`).
+/// ponytail: US zones by offset, else `GMT±N`; a tz database lookup if other names matter.
+fn schedule_time() -> String {
+    let hours = chrono::Local::now().offset().local_minus_utc() / 3600;
+    let zone = match hours {
+        -8 | -7 => "PT".into(),
+        -6 => "MT".into(),
+        -5 => "CT".into(),
+        -4 => "ET".into(),
+        0 => "GMT".into(),
+        h => format!("GMT{h:+}"),
+    };
+    format!("9:00 AM {zone}")
+}
+
 impl Render for Dialog {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
@@ -382,22 +563,35 @@ impl Render for Dialog {
         }
         let shortcuts_height =
             (124. + visible.len() as f32 * 36. + sections as f32 * 40.).clamp(520., 560.);
-        let (width, height): (f32, f32) = if self.kind == Kind::Shortcuts {
-            (600., shortcuts_height)
-        } else {
-            (420., 171.)
+        let schedule = self.kind == Kind::ScheduleTask;
+        let (width, height): (f32, f32) = match self.kind {
+            Kind::Shortcuts => (600., shortcuts_height),
+            Kind::CloseWindow => (420., 171.),
+            Kind::ScheduleTask => (680., 422.),
         };
         let width = width.min(f32::from(viewport.width) * 0.92);
         let height = height.min(f32::from(viewport.height) * 0.92);
         let content = match self.kind {
             Kind::Shortcuts => self.shortcuts_content(&visible, t, cx),
             Kind::CloseWindow => self.close_content(t, cx),
+            Kind::ScheduleTask => self.schedule_content(t, cx),
+        };
+        // `codex-dialog-overlay`: the schedule dialog's `_dimmedOverlay` is rgba(0,0,0,.5) with
+        // blur(1px); the blur is not drawn (flat fills are unchanged by it).
+        let top = if schedule {
+            83.
+        } else {
+            (f32::from(viewport.height) - height) / 2.
         };
         div()
             .absolute()
             .inset_0()
             .occlude()
-            .bg(rgba(0x00000022))
+            .bg(if schedule {
+                t.dialog_backdrop
+            } else {
+                rgba(0x00000022).into()
+            })
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|_, _, _, cx| cx.emit(Outcome::Dismiss)),
@@ -406,10 +600,10 @@ impl Render for Dialog {
                 div()
                     .id("modal-dialog")
                     .role(gpui::Role::Dialog)
-                    .aria_label(if self.kind == Kind::Shortcuts {
-                        "Keyboard shortcuts"
-                    } else {
-                        "Are you sure you want to close the window?"
+                    .aria_label(match self.kind {
+                        Kind::Shortcuts => "Keyboard shortcuts",
+                        Kind::CloseWindow => "Are you sure you want to close the window?",
+                        Kind::ScheduleTask => "Schedule a task",
                     })
                     .on_key_down(cx.listener(Self::key))
                     .on_action(cx.listener(|this, _: &SelectAll, _, cx| {
@@ -444,34 +638,37 @@ impl Render for Dialog {
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .absolute()
                     .left(px((f32::from(viewport.width) - width) / 2.))
-                    .top(px((f32::from(viewport.height) - height) / 2.))
+                    .top(px(top))
                     .w(px(width))
                     .h(px(height))
-                    .rounded(px(24.))
+                    .rounded(px(if schedule { 30. } else { 24. }))
                     .overflow_hidden()
-                    .child(shapes::backdrop_blur(
-                        px(24.),
-                        shapes::Fill::Color,
-                        false,
-                        shapes::Decoration {
-                            radius: Corners::all(px(24.)),
-                            fill: Some(gpui::Hsla {
-                                a: 0.9,
-                                ..t.menu_background
-                            }),
-                            shadows: vec![
-                                crate::composer::shadow(t.border, 0., 0., 0.5, false),
-                                crate::composer::shadow(
-                                    rgba(0x0000001a).into(),
-                                    4.,
-                                    8.,
-                                    -2.,
-                                    false,
-                                ),
-                            ],
-                            ..Default::default()
-                        },
-                    ))
+                    .when(schedule, |d| d.bg(t.surface_elevated_secondary))
+                    .when(!schedule, |d| {
+                        d.child(shapes::backdrop_blur(
+                            px(24.),
+                            shapes::Fill::Color,
+                            false,
+                            shapes::Decoration {
+                                radius: Corners::all(px(24.)),
+                                fill: Some(gpui::Hsla {
+                                    a: 0.9,
+                                    ..t.menu_background
+                                }),
+                                shadows: vec![
+                                    crate::composer::shadow(t.border, 0., 0., 0.5, false),
+                                    crate::composer::shadow(
+                                        rgba(0x0000001a).into(),
+                                        4.,
+                                        8.,
+                                        -2.,
+                                        false,
+                                    ),
+                                ],
+                                ..Default::default()
+                            },
+                        ))
+                    })
                     .child(content),
             )
     }
