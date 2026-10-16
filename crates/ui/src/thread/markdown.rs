@@ -1,4 +1,5 @@
 use super::*;
+use gpui::AnyElement;
 
 /// Colors the original mixes in CSS that have no theme token.
 pub(super) struct Tones {
@@ -43,159 +44,445 @@ pub(super) fn tones(t: &Theme) -> Tones {
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub(super) enum Inline<'a> {
-    Text(&'a str),
-    Code(&'a str),
-    Link { label: &'a str, target: &'a str },
+use pulldown_cmark::{Event, HeadingLevel, OffsetIter, Options, Parser, Tag};
+use std::{iter::Peekable, ops::Range};
+
+#[derive(Clone, Copy)]
+struct Typography {
+    size: f32,
+    line_height: f32,
+    weight: f32,
+    italic: bool,
+    strike: bool,
+    color: Option<Hsla>,
 }
 
-/// Inline markdown the answers use: `code` spans and [label](target) links.
-pub(super) fn inlines(mut rest: &str) -> Vec<Inline<'_>> {
-    let mut out = Vec::new();
-    while let Some(i) = rest.find(['`', '[']) {
-        let (head, tail) = rest.split_at(i);
-        let parsed = if let Some(code) = tail.strip_prefix('`') {
-            code.find('`')
-                .map(|j| (Inline::Code(&code[..j]), &code[j + 1..]))
-        } else {
-            tail.find("](").and_then(|j| {
-                let after = &tail[j + 2..];
-                after.find(')').map(|k| {
-                    let link = Inline::Link {
-                        label: &tail[1..j],
-                        target: &after[..k],
-                    };
-                    (link, &after[k + 1..])
-                })
-            })
-        };
-        match parsed {
-            Some((inline, next)) => {
-                if !head.is_empty() {
-                    out.push(Inline::Text(head));
-                }
-                out.push(inline);
-                rest = next;
-            }
-            None => {
-                out.push(Inline::Text(&rest[..=i]));
-                rest = &rest[i + 1..];
-            }
+impl Default for Typography {
+    fn default() -> Self {
+        Self {
+            size: 14.,
+            line_height: 22.75,
+            weight: 430.,
+            italic: false,
+            strike: false,
+            color: None,
         }
     }
-    if !rest.is_empty() {
-        out.push(Inline::Text(rest));
-    }
-    out
 }
 
-/// Agent markdown: paragraphs of words, inline code chips and file links, wrapping at words.
+/// GFM blocks share the existing code chips and file links.
+/// Task markers are read-only, as in the original assistant messages.
 pub(super) fn markdown(
     source: &str,
     window: &Window,
     t: &Theme,
     segments: &[StreamSegment],
 ) -> Div {
-    let tones = tones(t);
-    let paragraphs = source
-        .split("\n\n")
-        .filter(|p| !p.trim().is_empty())
-        .map(|p| {
-            let paragraph_start = p.as_ptr() as usize - source.as_ptr() as usize;
-            let p = p.replace('\n', " ");
-            let label = |s: &str, size, line_height, weight, color: Hsla, family| {
-                let start = paragraph_start + s.as_ptr() as usize - p.as_ptr() as usize;
-                let end = start + s.len();
-                let first = segments.partition_point(|segment| segment.range.end <= start);
-                let highlights: Vec<_> = segments[first..]
-                    .iter()
-                    .take_while(|segment| segment.range.start < end)
-                    .map(|segment| {
-                        (
-                            segment.range.start.max(start) - start
-                                ..segment.range.end.min(end) - start,
-                            gpui::HighlightStyle {
-                                fade_out: Some(1. - segment.alpha),
-                                ..Default::default()
+    Markdown {
+        events: Parser::new_ext(
+            source,
+            Options::ENABLE_TASKLISTS | Options::ENABLE_STRIKETHROUGH,
+        )
+        .into_offset_iter()
+        .peekable(),
+        window,
+        theme: t,
+        source,
+        segments,
+    }
+    .blocks(Typography::default(), 0)
+    .0
+}
+
+struct Markdown<'a> {
+    events: Peekable<OffsetIter<'a>>,
+    window: &'a Window,
+    theme: &'a Theme,
+    source: &'a str,
+    segments: &'a [StreamSegment],
+}
+
+impl Markdown<'_> {
+    fn blocks(&mut self, style: Typography, depth: usize) -> (Div, bool) {
+        let mut column = div().flex().flex_col();
+        let mut first = true;
+        let mut bottom: f32 = 0.;
+        let mut previous_paragraph = false;
+        let mut task = false;
+        while let Some((event, _)) = self.events.peek() {
+            if matches!(event, Event::End(_)) {
+                break;
+            }
+            let paragraph = matches!(event, Event::Start(Tag::Paragraph));
+            let (view, top, next_bottom) = match event {
+                Event::Start(Tag::Paragraph) => {
+                    self.events.next();
+                    let (row, checked) = self.inline(style);
+                    task |= checked;
+                    self.events.next();
+                    (wrap_row().children(row), 7., 3.5)
+                }
+                Event::Start(Tag::Heading { level, .. }) => {
+                    let (size, line_height, top, bottom) = match level {
+                        HeadingLevel::H1 => (21., 28., 21., 7.),
+                        HeadingLevel::H2 => (17.5, 24.5, 14., 3.5),
+                        HeadingLevel::H3 => (15.75, 24.5, 14., 3.5),
+                        HeadingLevel::H4 => (14., 21., 14., 0.),
+                        HeadingLevel::H5 | HeadingLevel::H6 => (14., 22.75, 0., 0.),
+                    };
+                    self.events.next();
+                    let row = self
+                        .inline(Typography {
+                            size,
+                            line_height,
+                            weight: 600.,
+                            ..style
+                        })
+                        .0;
+                    self.events.next();
+                    (wrap_row().children(row), top, bottom)
+                }
+                Event::Start(Tag::List(start)) => {
+                    let start = *start;
+                    self.events.next();
+                    (self.list(start, style, depth), 0., 0.)
+                }
+                Event::Start(Tag::BlockQuote(_)) => {
+                    self.events.next();
+                    let quote = self
+                        .blocks(
+                            Typography {
+                                weight: 400.,
+                                ..style
                             },
+                            depth,
                         )
-                    })
-                    .collect();
-                if highlights.is_empty() {
-                    return measured(
-                        window,
-                        s.to_owned(),
-                        size,
-                        line_height,
-                        weight,
-                        color,
-                        family,
+                        .0;
+                    self.events.next();
+                    let rule = div()
+                        .absolute()
+                        .left_0()
+                        .top(px(7.))
+                        .bottom(px(7.))
+                        .w(px(3.5))
+                        .rounded(px(1.75))
+                        .bg(self.theme.border_strong);
+                    (
+                        div()
+                            .relative()
+                            .py(px(7.))
+                            .pl(px(21.))
+                            .child(rule)
+                            .child(quote),
+                        0.,
+                        7.,
+                    )
+                }
+                Event::Rule => {
+                    self.events.next();
+                    (
+                        div().h(px(1.)).w_full().bg(self.theme.border_strong),
+                        24.5,
+                        24.5,
+                    )
+                }
+                Event::Start(_) => {
+                    self.events.next();
+                    let child = self.blocks(style, depth).0;
+                    self.events.next();
+                    (child, 0., 0.)
+                }
+                _ => {
+                    let (row, checked) = self.inline(style);
+                    task |= checked;
+                    (wrap_row().children(row), 0., 0.)
+                }
+            };
+            let gap = if first || style.weight == 400. {
+                0.
+            } else if paragraph && previous_paragraph {
+                // Keep the established spacing of plain answer paragraphs.
+                12.
+            } else {
+                bottom.max(top)
+            };
+            column = column.child(div().mt(px(gap)).child(view));
+            first = false;
+            bottom = next_bottom;
+            previous_paragraph = paragraph;
+        }
+        (column, task)
+    }
+
+    fn list(&mut self, mut number: Option<u64>, style: Typography, depth: usize) -> Div {
+        let mut list = div().flex().flex_col();
+        while matches!(self.events.peek(), Some((Event::Start(Tag::Item), _))) {
+            self.events.next();
+            let (body, task) = self.blocks(style, depth + 1);
+            self.events.next();
+            let marker = if let Some(n) = number {
+                number = Some(n + 1);
+                div()
+                    .flex()
+                    .justify_end()
+                    .child(self.word(&format!("{n}. "), style, 0..0, None))
+            } else {
+                let size = if depth == 1 { 6. } else { 5. };
+                div().child(
+                    div()
+                        .ml(px(6.25))
+                        .mt(px(8.75))
+                        .size(px(size))
+                        .when(depth < 2, |d| d.rounded_full())
+                        .when(depth == 1, |d| d.border_1().border_color(self.theme.text))
+                        .when(depth != 1, |d| d.bg(self.theme.text)),
+                )
+            };
+            list = list.child(if task {
+                body
+            } else {
+                div()
+                    .flex()
+                    .child(marker.w(px(22.75)).flex_none())
+                    .child(div().pl(px(5.25)).flex_1().min_w_0().child(body))
+            });
+        }
+        self.events.next();
+        list
+    }
+
+    fn inline(&mut self, style: Typography) -> (Vec<AnyElement>, bool) {
+        let mut row = Vec::new();
+        let mut task = false;
+        while let Some((event, _)) = self.events.peek() {
+            match event {
+                Event::End(_)
+                | Event::Start(
+                    Tag::List(_)
+                    | Tag::BlockQuote(_)
+                    | Tag::Paragraph
+                    | Tag::Heading { .. }
+                    | Tag::CodeBlock(_),
+                )
+                | Event::Rule => break,
+                _ => {}
+            }
+            let (event, range) = self.events.next().expect("peeked event");
+            match event {
+                Event::Text(s) | Event::Html(s) | Event::InlineHtml(s) => {
+                    row.extend(s.split_inclusive(' ').map(|word| {
+                        self.word(word, style, range.clone(), None)
+                            .into_any_element()
+                    }));
+                }
+                Event::SoftBreak => row.push(self.word(" ", style, range, None).into_any_element()),
+                Event::HardBreak => row.push(div().w_full().h_0().into_any_element()),
+                Event::Code(code) => row.push(self.code(&code, range).into_any_element()),
+                Event::Start(tag) => {
+                    let next = match tag {
+                        Tag::Strong => Typography {
+                            weight: 600.,
+                            ..style
+                        },
+                        Tag::Emphasis => Typography {
+                            italic: true,
+                            ..style
+                        },
+                        Tag::Strikethrough => Typography {
+                            strike: true,
+                            ..style
+                        },
+                        _ => style,
+                    };
+                    if let Tag::Link { dest_url, .. } = tag {
+                        let label = self
+                            .inline(Typography {
+                                weight: 500.,
+                                color: Some(tones(self.theme).mention),
+                                ..style
+                            })
+                            .0;
+                        row.push(
+                            div()
+                                .id(SharedString::from(format!("file-link-{dest_url}")))
+                                .relative()
+                                .flex()
+                                .on_click(crate::dispatch::<crate::OpenChangesPanel>)
+                                .when(dest_url.ends_with(".py"), |d| {
+                                    d.child(div().w(px(19.))).child(
+                                        div().absolute().left_0().bottom(px(3.37)).child(icon(
+                                            "thread-lang-python",
+                                            16.,
+                                            tones(self.theme).mention,
+                                        )),
+                                    )
+                                })
+                                .children(label)
+                                .into_any_element(),
+                        );
+                    } else {
+                        let (children, checked) = self.inline(next);
+                        row.extend(children);
+                        task |= checked;
+                    }
+                    self.events.next();
+                }
+                Event::TaskListMarker(checked) => {
+                    task = true;
+                    row.push(
+                        div()
+                            .w(px(20.))
+                            .h(px(style.line_height))
+                            .pt(px(if checked { 5. } else { 4. }))
+                            .flex_none()
+                            .child(
+                                div()
+                                    .size(px(14.))
+                                    .rounded(px(5.))
+                                    .border_1()
+                                    .border_color(self.theme.border_strong)
+                                    .when(checked, |d| {
+                                        d.bg(Hsla {
+                                            a: 0.96,
+                                            ..self.theme.control_background
+                                        })
+                                        .child(text(
+                                            "✓",
+                                            12.,
+                                            12.,
+                                            430.,
+                                            self.theme.text,
+                                        ))
+                                    }),
+                            )
+                            .into_any_element(),
                     );
                 }
-                div()
-                    .flex_none()
-                    .w(width(window, s, size, weight, family))
-                    .text_size(px(size))
-                    .line_height(px(line_height))
-                    .font_weight(FontWeight(weight))
-                    .text_color(color)
-                    .whitespace_nowrap()
-                    .when_some(family, |d, family| d.font_family(family))
-                    .child(gpui::StyledText::new(s.to_owned()).with_highlights(highlights))
-            };
-            let parts = inlines(&p);
-            // Each flex line is as tall as Blink's line box: 22.75 px, or 23.75 px with inline
-            // code (the 12.88 px mono font's descent). Items stretch to it.
-            let mut row = wrap_row();
-            for part in parts {
-                row = match part {
-                    Inline::Text(s) => row.children(
-                        s.split_inclusive(' ')
-                            .map(|word| label(word, 14., 22.75, 430., t.text, None)),
-                    ),
-                    Inline::Code(code) => row.child(
-                        div().pt(px(3.5)).pb(px(3.25)).child(
-                            div()
-                                .relative()
-                                .h(px(17.))
-                                .py(px(1.))
-                                .px(px(6.))
-                                .child(shapes::decoration(shapes::Decoration {
-                                    radius: Corners::all(px(6.)),
-                                    fill: Some(tones.inline_code),
-                                    ..Default::default()
-                                }))
-                                .child(label(code, 12.88, 15., 430., t.text, Some(MONO))),
-                        ),
-                    ),
-                    // A file link opens the Changes panel.
-                    Inline::Link {
-                        label: name,
-                        target,
-                    } => row.child(
-                        div()
-                            .id(SharedString::from(format!("file-link-{target}")))
-                            .relative()
-                            .flex()
-                            .on_click(crate::dispatch::<crate::OpenChangesPanel>)
-                            // ponytail: only the Python language icon is bundled; other files show
-                            // the bare label until their icons are added.
-                            .when(target.ends_with(".py"), |d| {
-                                // The icon box is bottom-aligned in the line box.
-                                d.child(div().w(px(19.))).child(
-                                    div().absolute().left_0().bottom(px(3.37)).child(icon(
-                                        "thread-lang-python",
-                                        16.,
-                                        tones.mention,
-                                    )),
-                                )
-                            })
-                            .child(label(name, 14., 22.75, 500., tones.mention, None)),
-                    ),
-                };
+                _ => {}
             }
-            row
-        });
-    div().flex().flex_col().gap(px(12.)).children(paragraphs)
+        }
+        (row, task)
+    }
+
+    fn word(
+        &self,
+        s: &str,
+        style: Typography,
+        range: Range<usize>,
+        family: Option<&'static str>,
+    ) -> Div {
+        let highlights = self.highlights(s, range);
+        let color = style.color.unwrap_or(self.theme.text);
+        if !style.italic && !style.strike && highlights.is_empty() {
+            return measured(
+                self.window,
+                s.to_owned(),
+                style.size,
+                style.line_height,
+                style.weight,
+                color,
+                family,
+            );
+        }
+        let font = gpui::Font {
+            weight: FontWeight(style.weight),
+            style: if style.italic {
+                gpui::FontStyle::Italic
+            } else {
+                gpui::FontStyle::Normal
+            },
+            ..font(family.unwrap_or(SANS))
+        };
+        let run = TextRun {
+            len: s.len(),
+            font,
+            color,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let width = self
+            .window
+            .text_system()
+            .layout_line(s, px(style.size), &[run], None)
+            .width;
+        div().flex_none().w(width).child(
+            div()
+                .text_size(px(style.size))
+                .line_height(px(style.line_height))
+                .font_weight(FontWeight(style.weight))
+                .text_color(color)
+                .whitespace_nowrap()
+                .when_some(family, |d, family| d.font_family(family))
+                .when(style.italic, |d| d.italic())
+                .when(style.strike, |d| d.line_through())
+                .child(gpui::StyledText::new(s.to_owned()).with_highlights(highlights)),
+        )
+    }
+
+    fn highlights(
+        &self,
+        text: &str,
+        range: Range<usize>,
+    ) -> Vec<(Range<usize>, gpui::HighlightStyle)> {
+        if self.segments.is_empty() || range.is_empty() {
+            return Vec::new();
+        }
+        let fade = |alpha| gpui::HighlightStyle {
+            fade_out: Some(1. - alpha),
+            ..Default::default()
+        };
+        // Borrowed parser text retains its source offsets, including code and Unicode words.
+        if let Some(start) = (text.as_ptr() as usize).checked_sub(self.source.as_ptr() as usize)
+            && start <= self.source.len()
+            && text.len() <= self.source.len() - start
+        {
+            let end = start + text.len();
+            let first = self
+                .segments
+                .partition_point(|segment| segment.range.end <= start);
+            return self.segments[first..]
+                .iter()
+                .take_while(|segment| segment.range.start < end)
+                .map(|segment| {
+                    (
+                        segment.range.start.max(start) - start..segment.range.end.min(end) - start,
+                        fade(segment.alpha),
+                    )
+                })
+                .collect();
+        }
+        // Decoded entities and normalized code appear when their final source byte arrives.
+        self.segments
+            .iter()
+            .rev()
+            .find(|segment| segment.range.contains(&(range.end - 1)))
+            .map(|segment| vec![(0..text.len(), fade(segment.alpha))])
+            .unwrap_or_default()
+    }
+
+    fn code(&self, code: &str, range: Range<usize>) -> Div {
+        div().pt(px(3.5)).pb(px(3.25)).child(
+            div()
+                .relative()
+                .h(px(17.))
+                .py(px(1.))
+                .px(px(6.))
+                .child(shapes::decoration(shapes::Decoration {
+                    radius: Corners::all(px(6.)),
+                    fill: Some(tones(self.theme).inline_code),
+                    ..Default::default()
+                }))
+                .child(self.word(
+                    code,
+                    Typography {
+                        size: 12.88,
+                        line_height: 15.,
+                        ..Typography::default()
+                    },
+                    range,
+                    Some(MONO),
+                )),
+        )
+    }
 }

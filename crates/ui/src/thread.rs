@@ -73,6 +73,9 @@ pub struct ThreadView {
     /// rounded right corners through the clip (`Shell::main_clips_right`).
     pub clip_right: bool,
     title: SharedString,
+    chat_actions: Option<gpui::FocusHandle>,
+    chat_actions_trigger: Option<gpui::FocusHandle>,
+    chat_actions_hovered: bool,
     turns: Vec<Turn>,
     clock: Clock,
     composer: AnyView,
@@ -107,6 +110,9 @@ impl ThreadView {
     pub fn new(thread: Thread, clock: Clock, composer: AnyView) -> Self {
         Self {
             title: title(&thread),
+            chat_actions: None,
+            chat_actions_trigger: None,
+            chat_actions_hovered: false,
             thread_id: thread.id,
             cwd: thread.cwd,
             summary_open: false,
@@ -998,7 +1004,6 @@ fn far(top: Pixels, h: Pixels, view: Pixels) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::markdown::{Inline, inlines};
     use super::*;
 
     #[test]
@@ -1009,37 +1014,6 @@ mod tests {
         assert!(far(px(-501.), h, view));
         assert!(!far(px(1200.), h, view));
         assert!(far(px(1201.), h, view));
-    }
-
-    #[test]
-    fn parses_final_answer() {
-        let s =
-            "Added `subtract(a, b)` next to `add` in [src/math.py](/tmp/p/src/math.py). Done `2`.";
-        assert_eq!(
-            inlines(s),
-            [
-                Inline::Text("Added "),
-                Inline::Code("subtract(a, b)"),
-                Inline::Text(" next to "),
-                Inline::Code("add"),
-                Inline::Text(" in "),
-                Inline::Link {
-                    label: "src/math.py",
-                    target: "/tmp/p/src/math.py"
-                },
-                Inline::Text(". Done "),
-                Inline::Code("2"),
-                Inline::Text("."),
-            ]
-        );
-        assert_eq!(
-            inlines("a [b c `d"),
-            [
-                Inline::Text("a ["),
-                Inline::Text("b c `"),
-                Inline::Text("d")
-            ]
-        );
     }
 
     /// refs/thread/dark@1280x832.png, top fade at device x 1792.., rows 88..: the pixels
