@@ -46,6 +46,8 @@ mod header;
 mod items;
 #[path = "thread/markdown.rs"]
 mod markdown;
+#[path = "thread/menu.rs"]
+mod menu;
 #[path = "thread/select.rs"]
 mod select;
 
@@ -117,6 +119,7 @@ pub struct ThreadView {
     /// press that focuses it).
     press_focus: Option<gpui::FocusHandle>,
     find: Option<FindState>,
+    menu: Option<menu::LinkMenu>,
 }
 
 struct StreamSegment {
@@ -255,6 +258,7 @@ impl ThreadView {
             carets: Carets::default(),
             press_focus: None,
             find: None,
+            menu: None,
         }
     }
 
@@ -1446,6 +1450,7 @@ impl Render for ThreadView {
             .relative()
             .overflow_hidden()
             .bg(t.surface)
+            .on_mouse_down(gpui::MouseButton::Right, cx.listener(Self::right_click))
             .child(
                 div()
                     .id("conversation")
@@ -1533,6 +1538,9 @@ impl Render for ThreadView {
                     ),
             )
             .when(self.find.is_some(), |d| d.child(self.find_bar(window, cx)))
+            .when(self.menu.is_some(), |d| {
+                d.child(self.menu_overlay(window, cx))
+            })
     }
 }
 

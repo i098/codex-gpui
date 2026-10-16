@@ -544,6 +544,10 @@ impl Root {
             .unwrap_or(true)
         });
         window.focus(&root.focus, cx);
+        // The DOM's body: when the focused element goes (a closed find bar or menu blurs, a
+        // node leaves the tree), the root takes focus so the key bindings keep working.
+        cx.on_focus_lost(window, |this, window, cx| window.focus(&this.focus, cx))
+            .detach();
         root.connect(window, cx);
         root
     }
