@@ -70,19 +70,15 @@ fn close(got: [u8; 3], want: [f32; 3]) -> bool {
         .all(|(g, w)| (*g as f32 - w).abs() <= 2.)
 }
 
-fn drop_event(event: FileDropEvent) -> PlatformInput {
-    PlatformInput::FileDrop(event)
-}
-
 fn entered(at: (f32, f32), paths: &[PathBuf]) -> PlatformInput {
-    drop_event(FileDropEvent::Entered {
+    PlatformInput::FileDrop(FileDropEvent::Entered {
         position: point(px(at.0), px(at.1)),
         paths: ExternalPaths(paths.iter().cloned().collect()),
     })
 }
 
 fn pending(at: (f32, f32)) -> PlatformInput {
-    drop_event(FileDropEvent::Pending {
+    PlatformInput::FileDrop(FileDropEvent::Pending {
         position: point(px(at.0), px(at.1)),
     })
 }
@@ -189,8 +185,8 @@ fn file_drag_over_the_composer_matches_the_original() -> Result<()> {
         dominant(&fx.shot()?, overlay) != page_rest,
         "overlay comes back"
     );
-    fx.input(drop_event(FileDropEvent::Exited))?;
-    fx.input(drop_event(FileDropEvent::Ended))?;
+    fx.input(PlatformInput::FileDrop(FileDropEvent::Exited))?;
+    fx.input(PlatformInput::FileDrop(FileDropEvent::Ended))?;
     let exited = fx.shot()?;
     ensure!(
         dominant(&exited, overlay) == page_rest,
@@ -211,10 +207,10 @@ fn file_drag_over_the_composer_matches_the_original() -> Result<()> {
         let to = point_of(&step["to"]);
         fx.input(entered(point_of(&step["from"]), std::slice::from_ref(path)))?;
         fx.input(pending(to))?;
-        fx.input(drop_event(FileDropEvent::Submit {
+        fx.input(PlatformInput::FileDrop(FileDropEvent::Submit {
             position: point(px(to.0), px(to.1)),
         }))?;
-        fx.input(drop_event(FileDropEvent::Ended))?;
+        fx.input(PlatformInput::FileDrop(FileDropEvent::Ended))?;
         let dropped = fx.shot()?;
         ensure!(
             dominant(&dropped, overlay) == page_rest,
@@ -266,10 +262,10 @@ fn file_drag_over_the_composer_matches_the_original() -> Result<()> {
     composer.update(&mut fx.cx, |c, _| {
         c.on_submit(move |s, _, _| *capture.borrow_mut() = Some(s.clone()))
     });
-    fx.input(drop_event(FileDropEvent::Submit {
+    fx.input(PlatformInput::FileDrop(FileDropEvent::Submit {
         position: point(px(to.0), px(to.1)),
     }))?;
-    fx.input(drop_event(FileDropEvent::Ended))?;
+    fx.input(PlatformInput::FileDrop(FileDropEvent::Ended))?;
     ensure!(
         dominant(&fx.shot()?, overlay) == page_rest,
         "thread overlay after the drop"

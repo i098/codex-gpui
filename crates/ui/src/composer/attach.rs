@@ -36,15 +36,9 @@ impl Attachment {
     /// A dropped or picked file: an image shows its thumbnail (its bytes stay where they
     /// are), anything else its chip.
     fn dropped(path: PathBuf) -> Self {
-        let format = match path.extension().and_then(|e| e.to_str()) {
-            Some(e) if e.eq_ignore_ascii_case("png") => Some(gpui::ImageFormat::Png),
-            Some(e) if e.eq_ignore_ascii_case("jpg") || e.eq_ignore_ascii_case("jpeg") => {
-                Some(gpui::ImageFormat::Jpeg)
-            }
-            Some(e) if e.eq_ignore_ascii_case("gif") => Some(gpui::ImageFormat::Gif),
-            Some(e) if e.eq_ignore_ascii_case("webp") => Some(gpui::ImageFormat::Webp),
-            _ => None,
-        };
+        let format = path.extension().and_then(|e| e.to_str()).and_then(|e| {
+            gpui::ImageFormat::from_mime_type(&format!("image/{}", e.to_ascii_lowercase()))
+        });
         match format.and_then(|f| Some((f, fs::read(&path).ok()?))) {
             Some((format, bytes)) => Self {
                 path,
