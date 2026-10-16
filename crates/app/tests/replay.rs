@@ -14,7 +14,8 @@
 //!
 //! Steps carry a position (`at`, else the centre of `target.bbox`); `key` steps may carry a
 //! `portKey` (gpui syntax, e.g. `cmd-a`) where the recorder's Linux Chrome used another chord.
-//! `REPLAY=<substring>` runs only the recordings whose file name contains it.
+//! `REPLAY=<stem>` selects one exact file stem (e.g. `f2a`); unset or empty runs all scripts.
+//! Recorder determinism fixtures contain `runs` instead of `steps` and report `SKIP`.
 
 mod common;
 
@@ -46,14 +47,15 @@ fn recordings() {
         .expect("refs/interactions")
         .map(|e| e.expect("dir entry").path())
         .filter(|p| p.extension().is_some_and(|e| e == "json"))
-        .filter(|p| p.to_string_lossy().contains(&filter))
+        .filter(|p| matches_recording(p, &filter))
         .collect();
     files.sort();
     let mut failed = Vec::new();
     for file in &files {
         let name = file.file_stem().unwrap().to_string_lossy();
         match run(file) {
-            Ok(note) => println!("PASS {name} {note}"),
+            Ok(Some(note)) => println!("PASS {name} {note}"),
+            Ok(None) => println!("SKIP {name}: recorder determinism fixture"),
             Err(err) => {
                 println!("FAIL {name}: {err:#}");
                 failed.push(format!("{name}: {err:#}"));
@@ -68,6 +70,39 @@ fn recordings() {
     );
 }
 
+fn matches_recording(path: &Path, filter: &str) -> bool {
+    filter.is_empty() || path.file_stem().is_some_and(|stem| stem == filter)
+}
+
+#[test]
+fn recording_filter_matches_only_the_exact_stem() {
+    let files = [
+        Path::new("/lanes/f2a/refs/interactions/f0a.json"),
+        Path::new("/lanes/f2a/refs/interactions/f2a.json"),
+        Path::new("/lanes/f2a/refs/interactions/f2a-extra.json"),
+    ];
+    let selected: Vec<_> = files
+        .iter()
+        .copied()
+        .filter(|p| matches_recording(p, "f2a"))
+        .collect();
+    assert_eq!(selected, vec![files[1]]);
+    assert!(files.iter().all(|p| matches_recording(p, "")));
+    assert!(!matches_recording(files[1], "/f2a.json"));
+}
+
+#[test]
+fn recorder_determinism_fixture_is_skipped() {
+    assert_eq!(
+        run(Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../refs/interactions/f0a.json"
+        )))
+        .unwrap(),
+        None
+    );
+}
+
 /// A `result.dom` entry whose background colour the port must show.
 struct Pixels {
     selector: String,
@@ -78,8 +113,12 @@ struct Pixels {
     backdrop: Option<[u8; 3]>,
 }
 
-fn run(path: &Path) -> Result<String> {
+fn run(path: &Path) -> Result<Option<String>> {
     let rec: Value = serde_json::from_slice(&fs::read(path)?)?;
+    if rec.get("steps").is_none() && rec["runs"].is_array() {
+        return Ok(None);
+    }
+    let steps = rec["steps"].as_array().context("no steps")?;
     let view = &rec["viewport"];
     let size = |key, default| view[key].as_f64().map_or(default, |v| v as f32);
     let theme = if view["theme"] == "light" {
@@ -92,7 +131,6 @@ fn run(path: &Path) -> Result<String> {
         (size("w", 1280.), size("h", 832.)),
         script(None, |_| {})?,
     )?;
-    let steps = rec["steps"].as_array().context("no steps")?;
     let checks = pixel_checks(&rec, steps.len())?;
 
     let rest = fx.shot()?;
@@ -105,11 +143,11 @@ fn run(path: &Path) -> Result<String> {
     check_state(&mut fx, &rec["result"]["state"])?;
     let sent = fx.sent()?.split_off(before);
     check_requests(&rec["result"], &sent)?;
-    Ok(format!(
+    Ok(Some(format!(
         "{} steps, {} pixel checks",
         steps.len(),
         checks.len()
-    ))
+    )))
 }
 
 // --- Steps ---
