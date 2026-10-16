@@ -1,0 +1,560 @@
+{
+  "name": "s005",
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 1,
+    "theme": "dark",
+    "hoverEmulated": true
+  },
+  "rows": [
+    "TH-054",
+    "TH-055"
+  ],
+  "steps": [
+    {
+      "type": "click",
+      "target": {
+        "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Change the greeting\"]",
+        "bbox": {
+          "x": 60,
+          "y": 290,
+          "w": 272,
+          "h": 30
+        }
+      }
+    },
+    {
+      "type": "hover",
+      "target": {
+        "selector": "[class~=\"group/user-message\"]",
+        "bbox": {
+          "x": 441,
+          "y": 128,
+          "w": 736,
+          "h": 73
+        }
+      },
+      "at": {
+        "x": 1000,
+        "y": 150
+      }
+    },
+    {
+      "type": "hover",
+      "target": {
+        "selector": "button[aria-label=\"Copy message\"]",
+        "bbox": {
+          "x": 1119,
+          "y": 175,
+          "w": 26,
+          "h": 26
+        }
+      },
+      "waitMs": 250
+    },
+    {
+      "type": "click",
+      "target": {
+        "selector": "button[aria-label=\"Copy message\"]",
+        "bbox": {
+          "x": 1119,
+          "y": 175,
+          "w": 26,
+          "h": 26
+        }
+      }
+    },
+    {
+      "type": "hover",
+      "at": {
+        "x": 1132,
+        "y": 188
+      },
+      "waitMs": 1600
+    },
+    {
+      "type": "hover",
+      "at": {
+        "x": 1270,
+        "y": 820
+      }
+    },
+    {
+      "type": "key",
+      "key": "Enter",
+      "waitMs": 1600
+    },
+    {
+      "type": "click",
+      "at": {
+        "x": 1240,
+        "y": 600
+      }
+    }
+  ],
+  "result": {
+    "dom": [
+      {
+        "state": "rest",
+        "selector": "user message actions",
+        "bbox": {
+          "x": 993,
+          "y": 175,
+          "w": 180,
+          "h": 26
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0",
+          "outline": "rgb(255, 255, 255) none 3px",
+          "boxShadow": "none",
+          "cursor": "auto"
+        },
+        "text": "Wednesday 9:54 PM",
+        "buttons": [
+          {
+            "tag": "button",
+            "text": "",
+            "aria": "Copy message",
+            "role": null,
+            "bbox": {
+              "x": 1119,
+              "y": 175,
+              "w": 26,
+              "h": 26
+            },
+            "computed": {
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "color": "rgba(255, 255, 255, 0.498)",
+              "opacity": "1",
+              "outline": "rgba(255, 255, 255, 0.498) none 3px",
+              "boxShadow": "none",
+              "cursor": "default"
+            }
+          },
+          {
+            "tag": "button",
+            "text": "",
+            "aria": "Edit message",
+            "role": null,
+            "bbox": {
+              "x": 1147,
+              "y": 175,
+              "w": 26,
+              "h": 26
+            },
+            "computed": {
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "color": "rgba(255, 255, 255, 0.498)",
+              "opacity": "1",
+              "outline": "rgba(255, 255, 255, 0.498) none 3px",
+              "boxShadow": "none",
+              "cursor": "default"
+            }
+          }
+        ]
+      },
+      {
+        "afterStep": 1,
+        "selector": "user message actions",
+        "bbox": {
+          "x": 993,
+          "y": 175,
+          "w": 180,
+          "h": 26
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1",
+          "outline": "rgb(255, 255, 255) none 3px",
+          "boxShadow": "none",
+          "cursor": "auto"
+        },
+        "text": "Wednesday 9:54 PM",
+        "buttons": [
+          {
+            "tag": "button",
+            "text": "",
+            "aria": "Copy message",
+            "role": null,
+            "bbox": {
+              "x": 1119,
+              "y": 175,
+              "w": 26,
+              "h": 26
+            },
+            "computed": {
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "color": "rgba(255, 255, 255, 0.498)",
+              "opacity": "1",
+              "outline": "rgba(255, 255, 255, 0.498) none 3px",
+              "boxShadow": "none",
+              "cursor": "default"
+            }
+          },
+          {
+            "tag": "button",
+            "text": "",
+            "aria": "Edit message",
+            "role": null,
+            "bbox": {
+              "x": 1147,
+              "y": 175,
+              "w": 26,
+              "h": 26
+            },
+            "computed": {
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "color": "rgba(255, 255, 255, 0.498)",
+              "opacity": "1",
+              "outline": "rgba(255, 255, 255, 0.498) none 3px",
+              "boxShadow": "none",
+              "cursor": "default"
+            }
+          }
+        ]
+      },
+      {
+        "afterStep": 2,
+        "tag": "button",
+        "text": "",
+        "aria": "Copy message",
+        "role": null,
+        "bbox": {
+          "x": 1119,
+          "y": 175,
+          "w": 26,
+          "h": 26
+        },
+        "computed": {
+          "backgroundColor": "rgba(255, 255, 255, 0.08)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      }
+    ],
+    "requests": [],
+    "copied": {
+      "selector": "user message actions",
+      "bbox": {
+        "x": 993,
+        "y": 175,
+        "w": 180,
+        "h": 26
+      },
+      "computed": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(255, 255, 255)",
+        "opacity": "1",
+        "outline": "rgb(255, 255, 255) none 3px",
+        "boxShadow": "none",
+        "cursor": "auto"
+      },
+      "text": "Wednesday 9:54 PM",
+      "buttons": [
+        {
+          "tag": "button",
+          "text": "",
+          "aria": "Copied",
+          "role": null,
+          "bbox": {
+            "x": 1119,
+            "y": 175,
+            "w": 26,
+            "h": 26
+          },
+          "computed": {
+            "backgroundColor": "rgba(255, 255, 255, 0.08)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        {
+          "tag": "button",
+          "text": "",
+          "aria": "Edit message",
+          "role": null,
+          "bbox": {
+            "x": 1147,
+            "y": 175,
+            "w": 26,
+            "h": 26
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        }
+      ]
+    },
+    "clipboard": [
+      {
+        "types": [
+          "text/plain",
+          "text/html"
+        ],
+        "values": {
+          "text/plain": "Change the greeting in hello.py to \"Hello, Codex\".",
+          "text/html": "<div><p><span>Change the greeting in hello.py to \"Hello, Codex\".</span></p></div>"
+        }
+      }
+    ],
+    "beforeReset": {
+      "elapsedMs": 1371,
+      "selector": "user message actions",
+      "bbox": {
+        "x": 993,
+        "y": 175,
+        "w": 180,
+        "h": 26
+      },
+      "computed": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(255, 255, 255)",
+        "opacity": "1",
+        "outline": "rgb(255, 255, 255) none 3px",
+        "boxShadow": "none",
+        "cursor": "auto"
+      },
+      "text": "Wednesday 9:54 PM",
+      "buttons": [
+        {
+          "tag": "button",
+          "text": "",
+          "aria": "Copied",
+          "role": null,
+          "bbox": {
+            "x": 1119,
+            "y": 175,
+            "w": 26,
+            "h": 26
+          },
+          "computed": {
+            "backgroundColor": "rgba(255, 255, 255, 0.08)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        {
+          "tag": "button",
+          "text": "",
+          "aria": "Edit message",
+          "role": null,
+          "bbox": {
+            "x": 1147,
+            "y": 175,
+            "w": 26,
+            "h": 26
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        }
+      ]
+    },
+    "afterReset": {
+      "elapsedMs": 1626,
+      "selector": "user message actions",
+      "bbox": {
+        "x": 993,
+        "y": 175,
+        "w": 180,
+        "h": 26
+      },
+      "computed": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(255, 255, 255)",
+        "opacity": "1",
+        "outline": "rgb(255, 255, 255) none 3px",
+        "boxShadow": "none",
+        "cursor": "auto"
+      },
+      "text": "Wednesday 9:54 PM",
+      "buttons": [
+        {
+          "tag": "button",
+          "text": "",
+          "aria": "Copy message",
+          "role": null,
+          "bbox": {
+            "x": 1119,
+            "y": 175,
+            "w": 26,
+            "h": 26
+          },
+          "computed": {
+            "backgroundColor": "rgba(255, 255, 255, 0.08)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        {
+          "tag": "button",
+          "text": "",
+          "aria": "Edit message",
+          "role": null,
+          "bbox": {
+            "x": 1147,
+            "y": 175,
+            "w": 26,
+            "h": 26
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        }
+      ]
+    },
+    "focusedAway": {
+      "selector": "user message actions",
+      "bbox": {
+        "x": 993,
+        "y": 175,
+        "w": 180,
+        "h": 26
+      },
+      "computed": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(255, 255, 255)",
+        "opacity": "1",
+        "outline": "rgb(255, 255, 255) none 3px",
+        "boxShadow": "none",
+        "cursor": "auto"
+      },
+      "text": "Wednesday 9:54 PM",
+      "buttons": [
+        {
+          "tag": "button",
+          "text": "",
+          "aria": "Copy message",
+          "role": null,
+          "bbox": {
+            "x": 1119,
+            "y": 175,
+            "w": 26,
+            "h": 26
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        {
+          "tag": "button",
+          "text": "",
+          "aria": "Edit message",
+          "role": null,
+          "bbox": {
+            "x": 1147,
+            "y": 175,
+            "w": 26,
+            "h": 26
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        }
+      ]
+    },
+    "unfocused": {
+      "selector": "user message actions",
+      "bbox": {
+        "x": 993,
+        "y": 175,
+        "w": 180,
+        "h": 26
+      },
+      "computed": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(255, 255, 255)",
+        "opacity": "0",
+        "outline": "rgb(255, 255, 255) none 3px",
+        "boxShadow": "none",
+        "cursor": "auto"
+      },
+      "text": "Wednesday 9:54 PM",
+      "buttons": [
+        {
+          "tag": "button",
+          "text": "",
+          "aria": "Copy message",
+          "role": null,
+          "bbox": {
+            "x": 1119,
+            "y": 175,
+            "w": 26,
+            "h": 26
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        {
+          "tag": "button",
+          "text": "",
+          "aria": "Edit message",
+          "role": null,
+          "bbox": {
+            "x": 1147,
+            "y": 175,
+            "w": 26,
+            "h": 26
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        }
+      ]
+    },
+    "requestsNote": "Copy invokes navigator.clipboard.write, with no app-server request. Clipboard payloads were captured after the real write succeeded.",
+    "screenshot": "/sdc-disk/tmp/cgx/cgx-s005/shots/s005-hover.png"
+  }
+}
