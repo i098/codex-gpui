@@ -8,9 +8,9 @@ use crate::{MONO, icon::icon, text};
 use bridge::types::{ApprovalDecision, CommandApprovalRequest, FileChangeApprovalRequest, Model};
 use gpui::{
     AnyElement, App, AvailableSpace, Bounds, ClipboardItem, Context, Corners, CursorStyle, Div,
-    ElementId, ElementInputHandler, Entity, EntityInputHandler, FocusHandle, Focusable,
-    GlobalElementId, Hsla, InspectorElementId, InteractiveElement, IntoElement, KeyBinding,
-    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
+    ElementId, ElementInputHandler, Entity, EntityInputHandler, ExternalPaths, FocusHandle,
+    Focusable, GlobalElementId, Hsla, InspectorElementId, InteractiveElement, IntoElement,
+    KeyBinding, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
     PathPromptOptions, Pixels, Point, Render, SharedString, Size, Stateful,
     StatefulInteractiveElement, Style, Styled, TextAlign, TextRun, UTF16Selection, UnderlineStyle,
     Window, WrappedLine, actions, deferred, div, fill, point, prelude::FluentBuilder as _, px,
@@ -414,6 +414,8 @@ pub struct Composer {
     attachments: Vec<attach::Attachment>,
     pending_attachments: usize,
     attachment_error: Option<&'static str>,
+    /// A file drag is over the composer's drop target (`data-composer-drag-active`).
+    drag_active: bool,
     models: Vec<ModelOption>,
     model: usize,
     effort: String,
@@ -468,6 +470,7 @@ impl Composer {
             attachments: Vec::new(),
             pending_attachments: 0,
             attachment_error: None,
+            drag_active: false,
             models: Vec::new(),
             model: 0,
             effort: "medium".into(),
@@ -507,6 +510,20 @@ impl Composer {
     pub fn edit_failed(&mut self, cx: &mut Context<Self>) {
         self.edit_pending = false;
         cx.notify();
+    }
+
+    /// `data-composer-drag-active`: the card surface drops to 50% while a file drag is over
+    /// the drop target. Stale after the drag ends: see [`Self::drag_active`].
+    pub fn set_drag_active(&mut self, active: bool, cx: &mut Context<Self>) {
+        if self.drag_active != active {
+            self.drag_active = active;
+            cx.notify();
+        }
+    }
+
+    /// A file drag is over the drop target now: the overlay and the surface switch show.
+    pub fn drag_active(&self, cx: &App) -> bool {
+        self.drag_active && cx.has_active_drag()
     }
 
     /// Models from `model/list` and the selection from `config/read` (`model`,
@@ -897,6 +914,59 @@ pub(crate) fn card_decoration(t: &Theme) -> shapes::Decoration {
     deco(22., t.composer_surface, shadows)
 }
 
+/// `target` as `composer`'s file drop target (the original's drag handlers on the page
+/// column): while a file drag is over its box the card surface switches and the `Drop to
+/// attach` overlay (`bg-codex-drop-overlay/60`, `z-40`: a centred pill on
+/// `bg-codex-drop-prompt`, `rounded-md`, `border-border/50`, `shadow`, 13 px text) covers it;
+/// a drop attaches the files. Call it last: the overlay paints over the children added so far.
+pub fn drop_target(target: Div, composer: &Entity<Composer>, cx: &App) -> Div {
+    let t = cx.theme();
+    let over = composer.read(cx).drag_active(cx);
+    let (moved, dropped) = (composer.clone(), composer.clone());
+    let target = target
+        .relative()
+        .on_drag_move::<ExternalPaths>(move |e, _, cx| {
+            let over = e.bounds.contains(&e.event.position);
+            moved.update(cx, |c, cx| c.set_drag_active(over, cx));
+        })
+        .on_drop::<ExternalPaths>(move |paths, _, cx| {
+            dropped.update(cx, |c, cx| c.drop_files(paths.paths(), cx));
+        });
+    if !over {
+        return target;
+    }
+    let black = |a: u32| -> Hsla { gpui::rgba(a).into() };
+    let pill = shapes::Decoration {
+        border: Some((px(1.), t.border.opacity(0.5))),
+        ..deco(
+            10.,
+            t.background_accent,
+            vec![
+                shadow(black(0x0000001a), 1., 3., 0., false),
+                shadow(black(0x0000001a), 1., 2., -1., false),
+            ],
+        )
+    };
+    target.child(
+        div()
+            .absolute()
+            .inset_0()
+            .bg(t.background_accent.opacity(0.6))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .relative()
+                    // `px-3 py-1` plus the 1 px border, painted by the decoration.
+                    .px(px(13.))
+                    .py(px(5.))
+                    .child(shapes::decoration(pill))
+                    .child(text("Drop to attach", 13., 18.5714, 430., t.text)),
+            ),
+    )
+}
+
 /// Popover surface `width` CSS px wide holding `content`: `--menu-background-color` at 90%
 /// over the `backdrop-filter: blur(8px)` backdrop, `--menu-corner-shape`. Chromium composites
 /// it as its own layer: the blurred backdrop, then the layer (shadows, fill and content
@@ -1020,6 +1090,12 @@ impl Render for Composer {
                         Appearance::Light => t.text_alpha_5,
                     }),
                     ..Default::default()
+                }
+            } else if self.drag_active(cx) {
+                // `[data-composer-drag-active]`: `surface-elevated-secondary` at 50%.
+                shapes::Decoration {
+                    fill: Some(t.surface_elevated_secondary.opacity(0.5)),
+                    ..card_decoration(&t)
                 }
             } else {
                 card_decoration(&t)
