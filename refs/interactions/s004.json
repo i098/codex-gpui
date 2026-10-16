@@ -1,0 +1,959 @@
+{
+  "name": "s004-sidebar-resize",
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 1,
+    "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+    "theme": "dark",
+    "hoverEmulated": true
+  },
+  "steps": [
+    {
+      "type": "drag",
+      "from": {
+        "x": 340,
+        "y": 400
+      },
+      "to": {
+        "x": 420,
+        "y": 400
+      },
+      "moves": 10
+    },
+    {
+      "type": "drag",
+      "from": {
+        "x": 420,
+        "y": 400
+      },
+      "to": {
+        "x": 900,
+        "y": 400
+      },
+      "moves": 10
+    },
+    {
+      "type": "drag",
+      "from": {
+        "x": 520,
+        "y": 400
+      },
+      "to": {
+        "x": 200,
+        "y": 400
+      },
+      "moves": 10
+    },
+    {
+      "type": "drag",
+      "from": {
+        "x": 290,
+        "y": 400
+      },
+      "to": {
+        "x": 150,
+        "y": 400
+      },
+      "moves": 10
+    },
+    {
+      "type": "drag",
+      "from": {
+        "x": 290,
+        "y": 400
+      },
+      "to": {
+        "x": 149,
+        "y": 400
+      },
+      "moves": 10
+    },
+    {
+      "type": "drag",
+      "from": {
+        "x": 290,
+        "y": 400
+      },
+      "to": {
+        "x": 120,
+        "y": 400
+      },
+      "moves": 10
+    },
+    {
+      "type": "click",
+      "target": {
+        "selector": "button[aria-label=\"Show sidebar\"]",
+        "bbox": {
+          "x": 156,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        }
+      }
+    },
+    {
+      "type": "click",
+      "target": {
+        "selector": "button[aria-label=\"Hide sidebar\"]",
+        "bbox": {
+          "x": 156,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        }
+      }
+    },
+    {
+      "type": "click",
+      "target": {
+        "selector": "button[aria-label=\"Show sidebar\"]",
+        "bbox": {
+          "x": 156,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        }
+      }
+    },
+    {
+      "type": "hover",
+      "at": {
+        "x": 170,
+        "y": 22
+      },
+      "waitMs": 800
+    },
+    {
+      "type": "click",
+      "target": {
+        "selector": "button[aria-label=\"Hide sidebar\"]",
+        "bbox": {
+          "x": 156,
+          "y": 8,
+          "w": 28,
+          "h": 28
+        }
+      }
+    },
+    {
+      "type": "hover",
+      "at": {
+        "x": 170,
+        "y": 22
+      },
+      "waitMs": 800
+    }
+  ],
+  "result": {
+    "dom": [
+      {
+        "state": "rest",
+        "handle": {
+          "tag": "div",
+          "text": "",
+          "aria": null,
+          "role": "separator",
+          "bbox": {
+            "x": 332,
+            "y": 44,
+            "w": 16,
+            "h": 784
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "col-resize"
+          }
+        },
+        "toggle": {
+          "tag": "button",
+          "text": "",
+          "aria": "Hide sidebar",
+          "role": null,
+          "bbox": {
+            "x": 156,
+            "y": 8,
+            "w": 28,
+            "h": 28
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        "pixels": [
+          {
+            "x": 328,
+            "y": 810,
+            "rgba": [
+              28,
+              28,
+              28,
+              255
+            ]
+          },
+          {
+            "x": 352,
+            "y": 810,
+            "rgba": [
+              24,
+              24,
+              24,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "afterStep": 0,
+        "handle": {
+          "tag": "div",
+          "text": "",
+          "aria": null,
+          "role": "separator",
+          "bbox": {
+            "x": 412,
+            "y": 44,
+            "w": 16,
+            "h": 784
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "col-resize"
+          }
+        },
+        "toggle": {
+          "tag": "button",
+          "text": "",
+          "aria": "Hide sidebar",
+          "role": null,
+          "bbox": {
+            "x": 156,
+            "y": 8,
+            "w": 28,
+            "h": 28
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        "pixels": [
+          {
+            "x": 408,
+            "y": 810,
+            "rgba": [
+              28,
+              28,
+              28,
+              255
+            ]
+          },
+          {
+            "x": 432,
+            "y": 810,
+            "rgba": [
+              24,
+              24,
+              24,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "afterStep": 1,
+        "handle": {
+          "tag": "div",
+          "text": "",
+          "aria": null,
+          "role": "separator",
+          "bbox": {
+            "x": 512,
+            "y": 44,
+            "w": 16,
+            "h": 784
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "col-resize"
+          }
+        },
+        "toggle": {
+          "tag": "button",
+          "text": "",
+          "aria": "Hide sidebar",
+          "role": null,
+          "bbox": {
+            "x": 156,
+            "y": 8,
+            "w": 28,
+            "h": 28
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        "pixels": [
+          {
+            "x": 508,
+            "y": 810,
+            "rgba": [
+              28,
+              28,
+              28,
+              255
+            ]
+          },
+          {
+            "x": 532,
+            "y": 810,
+            "rgba": [
+              24,
+              24,
+              24,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "afterStep": 2,
+        "handle": {
+          "tag": "div",
+          "text": "",
+          "aria": null,
+          "role": "separator",
+          "bbox": {
+            "x": 282,
+            "y": 44,
+            "w": 16,
+            "h": 784
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "col-resize"
+          }
+        },
+        "toggle": {
+          "tag": "button",
+          "text": "",
+          "aria": "Hide sidebar",
+          "role": null,
+          "bbox": {
+            "x": 156,
+            "y": 8,
+            "w": 28,
+            "h": 28
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        "pixels": [
+          {
+            "x": 278,
+            "y": 810,
+            "rgba": [
+              28,
+              28,
+              28,
+              255
+            ]
+          },
+          {
+            "x": 302,
+            "y": 810,
+            "rgba": [
+              24,
+              24,
+              24,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "afterStep": 3,
+        "handle": {
+          "tag": "div",
+          "text": "",
+          "aria": null,
+          "role": "separator",
+          "bbox": {
+            "x": 282,
+            "y": 44,
+            "w": 16,
+            "h": 784
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "col-resize"
+          }
+        },
+        "toggle": {
+          "tag": "button",
+          "text": "",
+          "aria": "Hide sidebar",
+          "role": null,
+          "bbox": {
+            "x": 156,
+            "y": 8,
+            "w": 28,
+            "h": 28
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        "pixels": [
+          {
+            "x": 278,
+            "y": 810,
+            "rgba": [
+              28,
+              28,
+              28,
+              255
+            ]
+          },
+          {
+            "x": 302,
+            "y": 810,
+            "rgba": [
+              24,
+              24,
+              24,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "afterStep": 4,
+        "handle": {
+          "tag": "div",
+          "text": "",
+          "aria": null,
+          "role": "separator",
+          "bbox": {
+            "x": 282,
+            "y": 44,
+            "w": 16,
+            "h": 784
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "col-resize"
+          }
+        },
+        "toggle": {
+          "tag": "button",
+          "text": "",
+          "aria": "Hide sidebar",
+          "role": null,
+          "bbox": {
+            "x": 156,
+            "y": 8,
+            "w": 28,
+            "h": 28
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        "pixels": [
+          {
+            "x": 278,
+            "y": 810,
+            "rgba": [
+              28,
+              28,
+              28,
+              255
+            ]
+          },
+          {
+            "x": 302,
+            "y": 810,
+            "rgba": [
+              24,
+              24,
+              24,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "afterStep": 5,
+        "handle": null,
+        "toggle": {
+          "tag": "button",
+          "text": "",
+          "aria": "Show sidebar",
+          "role": null,
+          "bbox": {
+            "x": 156,
+            "y": 8,
+            "w": 28,
+            "h": 28
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        "pixels": [
+          {
+            "x": 40,
+            "y": 810,
+            "rgba": [
+              36,
+              36,
+              36,
+              255
+            ]
+          },
+          {
+            "x": 64,
+            "y": 810,
+            "rgba": [
+              24,
+              24,
+              24,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "afterStep": 6,
+        "handle": {
+          "tag": "div",
+          "text": "",
+          "aria": null,
+          "role": "separator",
+          "bbox": {
+            "x": 282,
+            "y": 44,
+            "w": 16,
+            "h": 784
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "col-resize"
+          }
+        },
+        "toggle": {
+          "tag": "button",
+          "text": "",
+          "aria": "Hide sidebar",
+          "role": null,
+          "bbox": {
+            "x": 156,
+            "y": 8,
+            "w": 28,
+            "h": 28
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        "pixels": [
+          {
+            "x": 278,
+            "y": 810,
+            "rgba": [
+              28,
+              28,
+              28,
+              255
+            ]
+          },
+          {
+            "x": 302,
+            "y": 810,
+            "rgba": [
+              24,
+              24,
+              24,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "afterStep": 7,
+        "handle": null,
+        "toggle": {
+          "tag": "button",
+          "text": "",
+          "aria": "Show sidebar",
+          "role": null,
+          "bbox": {
+            "x": 156,
+            "y": 8,
+            "w": 28,
+            "h": 28
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        "pixels": [
+          {
+            "x": 40,
+            "y": 810,
+            "rgba": [
+              36,
+              36,
+              36,
+              255
+            ]
+          },
+          {
+            "x": 64,
+            "y": 810,
+            "rgba": [
+              24,
+              24,
+              24,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "afterStep": 8,
+        "handle": {
+          "tag": "div",
+          "text": "",
+          "aria": null,
+          "role": "separator",
+          "bbox": {
+            "x": 282,
+            "y": 44,
+            "w": 16,
+            "h": 784
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "col-resize"
+          }
+        },
+        "toggle": {
+          "tag": "button",
+          "text": "",
+          "aria": "Hide sidebar",
+          "role": null,
+          "bbox": {
+            "x": 156,
+            "y": 8,
+            "w": 28,
+            "h": 28
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        "pixels": [
+          {
+            "x": 278,
+            "y": 810,
+            "rgba": [
+              28,
+              28,
+              28,
+              255
+            ]
+          },
+          {
+            "x": 302,
+            "y": 810,
+            "rgba": [
+              24,
+              24,
+              24,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "afterStep": 9,
+        "handle": {
+          "tag": "div",
+          "text": "",
+          "aria": null,
+          "role": "separator",
+          "bbox": {
+            "x": 282,
+            "y": 44,
+            "w": 16,
+            "h": 784
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "none",
+            "cursor": "col-resize"
+          }
+        },
+        "toggle": {
+          "tag": "button",
+          "text": "",
+          "aria": "Hide sidebar",
+          "role": null,
+          "bbox": {
+            "x": 156,
+            "y": 8,
+            "w": 28,
+            "h": 28
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        "pixels": [
+          {
+            "x": 278,
+            "y": 810,
+            "rgba": [
+              28,
+              28,
+              28,
+              255
+            ]
+          },
+          {
+            "x": 302,
+            "y": 810,
+            "rgba": [
+              24,
+              24,
+              24,
+              255
+            ]
+          }
+        ],
+        "tooltip": {
+          "text": "Toggle sidebar\n⇧⌘S",
+          "bbox": {
+            "x": 90,
+            "y": 38,
+            "w": 161,
+            "h": 30
+          },
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.2) 0px 8px 18px 0px",
+            "cursor": "auto"
+          }
+        }
+      },
+      {
+        "afterStep": 10,
+        "handle": null,
+        "toggle": {
+          "tag": "button",
+          "text": "",
+          "aria": "Show sidebar",
+          "role": null,
+          "bbox": {
+            "x": 156,
+            "y": 8,
+            "w": 28,
+            "h": 28
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        "pixels": [
+          {
+            "x": 40,
+            "y": 810,
+            "rgba": [
+              36,
+              36,
+              36,
+              255
+            ]
+          },
+          {
+            "x": 64,
+            "y": 810,
+            "rgba": [
+              24,
+              24,
+              24,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "afterStep": 11,
+        "handle": null,
+        "toggle": {
+          "tag": "button",
+          "text": "",
+          "aria": "Show sidebar",
+          "role": null,
+          "bbox": {
+            "x": 156,
+            "y": 8,
+            "w": 28,
+            "h": 28
+          },
+          "computed": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgba(255, 255, 255, 0.498)",
+            "opacity": "1",
+            "outline": "rgba(255, 255, 255, 0.498) none 3px",
+            "boxShadow": "none",
+            "cursor": "default"
+          }
+        },
+        "pixels": [
+          {
+            "x": 40,
+            "y": 810,
+            "rgba": [
+              36,
+              36,
+              36,
+              255
+            ]
+          },
+          {
+            "x": 64,
+            "y": 810,
+            "rgba": [
+              24,
+              24,
+              24,
+              255
+            ]
+          }
+        ],
+        "tooltip": {
+          "text": "Toggle sidebar\n⇧⌘S",
+          "bbox": {
+            "x": 90,
+            "y": 38,
+            "w": 161,
+            "h": 30
+          },
+          "computed": {
+            "backgroundColor": "rgb(45, 45, 45)",
+            "color": "rgb(255, 255, 255)",
+            "opacity": "1",
+            "outline": "rgb(255, 255, 255) none 3px",
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(15, 23, 42, 0.2) 0px 8px 18px 0px",
+            "cursor": "auto"
+          }
+        }
+      }
+    ],
+    "requests": [],
+    "requestScope": "Sidebar actions send no app-server mutations. Startup reads, telemetry, persisted-atom updates, and window geometry notifications are excluded.",
+    "note": "The current original shows Toggle sidebar / ⇧⌘S in both states; its accessible label changes between Hide sidebar and Show sidebar."
+  }
+}

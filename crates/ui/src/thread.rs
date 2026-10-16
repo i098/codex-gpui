@@ -5,6 +5,10 @@
 //!
 //! User-message controls appear on hover or focus without moving the transcript.
 //! Copy writes plain text and HTML on macOS and shows a checkmark for 1500 ms.
+//! The last text message opens an inline editor. Send reverts that turn before resending it.
+//! Response copy adds HTML. Response actions use the shared delayed tooltip.
+//! A failed resume or revert leaves the draft open and shows `Failed to edit message`.
+//! A failed resend restores the edited text to the docked composer and retains its existing draft.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -39,7 +43,7 @@ mod items;
 mod markdown;
 
 use actions::action_row;
-pub use actions::{ForkThread, RevertTurn};
+pub use actions::{EditMessage, ForkThread, RevertTurn};
 use items::{activity, diff_card, disclosure, user_bubble, wrap_row};
 use markdown::{markdown, tones};
 
@@ -139,6 +143,25 @@ impl ThreadView {
 
     pub fn turns(&self) -> &[Turn] {
         &self.turns
+    }
+
+    /// Only the last user message is editable, and only when its later turns have stopped.
+    /// Non-text content stays read-only because `UserInput::Other` cannot retain attachments.
+    pub fn can_edit(&self, turn_id: &str) -> bool {
+        for turn in self.turns.iter().rev() {
+            if turn.status == TurnStatus::InProgress {
+                return false;
+            }
+            for item in &turn.items {
+                if let ThreadItem::UserMessage { content, .. } = item {
+                    return turn.id == turn_id
+                        && content
+                            .iter()
+                            .all(|input| matches!(input, UserInput::Text { .. }));
+                }
+            }
+        }
+        false
     }
 
     /// Commands still running after their turn ended (background terminals), oldest first:
@@ -474,6 +497,8 @@ impl ThreadView {
             col = col.child(actions::UserMessage {
                 id: format!("user-message-{}", turn.id).into(),
                 message: user.into(),
+                thread_id: self.thread_id.clone(),
+                editable_turn: self.can_edit(&turn.id).then(|| turn.id.clone()),
                 sent_at: turn.started_at.and_then(|at| {
                     chrono::DateTime::from_timestamp(at + self.clock.utc_offset, 0)
                         .map(|at| at.format("%A %-I:%M %p").to_string())
