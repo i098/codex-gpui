@@ -1,42 +1,18 @@
 //! TH-073 (S009): a file link in an answer opens the file viewer side tab, as the original
 //! recorded in refs/interactions/s009.json. The original's host could not read the file
-//! offline (`Could not open file`); the port replays both outcomes: a host that answers
-//! `read-file` fills the viewer, a host that fails shows the message and the toast.
+//! offline (`Could not open file`); the port replays both outcomes: the fixture file on the
+//! Mac (`/tmp/cgx-mac/proj/src/math.py`, the subtract session's result) fills the viewer, a
+//! missing file shows the message and the toast.
 mod common;
 
 use anyhow::{Context as _, Result, ensure};
 use app::SidePanel;
-use app::host::{Host, Request};
 use common::*;
-use parking_lot::Mutex;
-use serde_json::{Value, json};
-use std::sync::Arc;
+use serde_json::Value;
+use ui::screens::diff::panel::{CloseSideTab, OpenFile};
 
 const MATH_PY: &str =
     "def add(a, b):\n    return a + b\n\n\ndef subtract(a, b):\n    return a - b\n";
-
-/// Answers `read-file` with [`MATH_PY`] when `ok`, else fails; records every request.
-struct FileHost {
-    ok: bool,
-    requests: Mutex<Vec<Value>>,
-}
-
-impl Host for FileHost {
-    fn fetch(&self, request: &Request) -> Result<Value> {
-        let Request::Fetch { url, body, .. } = request else {
-            anyhow::bail!("unexpected request");
-        };
-        self.requests
-            .lock()
-            .push(json!({ "url": url, "body": serde_json::from_str::<Value>(body)? }));
-        ensure!(self.ok && url == "vscode://codex/read-file", "no such file");
-        Ok(
-            json!({"type": "fetch-response", "responseType": "success", "status": 200,
-            "headers": {"content-type": "application/json"},
-            "bodyJsonString": json!({ "contents": MATH_PY }).to_string()}),
-        )
-    }
-}
 
 #[test]
 fn proxy() {
@@ -59,13 +35,6 @@ fn file_link_opens_the_file_viewer_tab() -> Result<()> {
         ),
         script(None, |_| {})?,
     )?;
-    let host = Arc::new(FileHost {
-        ok: true,
-        requests: Mutex::new(Vec::new()),
-    });
-    fx.root
-        .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
-
     // Step 0: the Recents row; the port's row sits where the Home reference has it.
     fx.click(fx.at("home", "Add a subtract")?)?;
     fx.wait_thread(SUBTRACT)?;
@@ -131,13 +100,6 @@ fn file_link_opens_the_file_viewer_tab() -> Result<()> {
         "{path:?} vs {recorded_path:?}"
     );
     ensure!(contents == Some(Ok(MATH_PY.into())), "{contents:?}");
-    let requests = host.requests.lock().clone();
-    ensure!(
-        requests.len() == 1
-            && requests[0]["url"] == "vscode://codex/read-file"
-            && requests[0]["body"]["path"] == path,
-        "{requests:?}"
-    );
     // The panel (the original's tabpanel box) now shows the viewer instead of the chat.
     let panel = &rec["result"]["dom"]
         .as_array()
@@ -154,17 +116,13 @@ fn file_link_opens_the_file_viewer_tab() -> Result<()> {
     let diff = changed(&before, &after, rect);
     ensure!(diff > 20_000, "panel region changed by only {diff} px");
 
-    // The original's outcome offline: the host fails, the viewer says so, and a toast repeats it.
-    let failing = Arc::new(FileHost {
-        ok: false,
-        requests: Mutex::new(Vec::new()),
-    });
-    fx.root
-        .update(&mut fx.cx, |root, cx| root.set_host(failing, cx));
-    // The open panel narrowed the chat: close its only tab, so the link is back at the
-    // reference spot.
-    fx.action(Box::new(ui::screens::diff::panel::CloseSideTab(0)))?;
-    fx.click(link)?;
+    // The original's outcome offline: the read fails, the viewer says so, and a toast repeats
+    // it. The port reads a file that does not exist, from the link's own action.
+    fx.action(Box::new(CloseSideTab(0)))?;
+    fx.action(Box::new(OpenFile {
+        path: "src/missing.py".into(),
+        line: None,
+    }))?;
     fx.wait("file viewer error", |fx| {
         fx.read(|r, cx| {
             r.file_view()

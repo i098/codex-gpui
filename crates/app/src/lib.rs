@@ -978,7 +978,7 @@ impl Root {
         self.sync(window, cx);
     }
 
-    /// A file link in an answer: the file viewer tab, filled by the host's `read-file`.
+    /// A file link in an answer: the file viewer tab, filled with the local file.
     fn open_file(&mut self, action: &OpenFile, window: &mut Window, cx: &mut Context<Self>) {
         let Some(view) = &self.thread else { return };
         let cwd = view.read(cx).cwd().trim_end_matches('/').to_owned();
@@ -988,20 +988,10 @@ impl Root {
             format!("{cwd}/{}", action.path.trim_start_matches("./"))
         };
         let file = cx.new(|_| FileView::new(&cwd, path.clone(), action.line));
-        let host = self.host.clone();
+        // The original asks its Electron main for `vscode://codex/read-file`; the port's local
+        // host is this process, so it reads the file itself.
         let read = cx.background_spawn(async move {
-            host.fetch(&host::Request::post(
-                "read-file",
-                Some(json!({ "hostId": "local", "path": path })),
-            ))
-            .and_then(|response| host::json_body(&response))
-            .and_then(|body| {
-                body["contents"]
-                    .as_str()
-                    .map(str::to_owned)
-                    .ok_or_else(|| anyhow::anyhow!("read-file answered no contents"))
-            })
-            .map_err(|error| error.to_string())
+            std::fs::read_to_string(&path).map_err(|error| error.to_string())
         });
         let target = file.clone();
         cx.spawn(async move |this, cx| {

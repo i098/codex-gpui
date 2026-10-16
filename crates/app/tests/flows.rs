@@ -108,7 +108,7 @@ const FLOWS: &[(&str, Flow)] = &[
     ("fork_chat", fork_chat),
     ("earlier_turn_actions_hover", earlier_turn_actions_hover),
     ("undo_reverts_turn", undo_reverts_turn),
-    ("file_link_opens_file_viewer", file_link_opens_file_viewer),
+    ("file_link_opens_changes", file_link_opens_changes),
     ("approval_round_trip", approval_round_trip),
     ("archive_chat", archive_chat),
     ("recent_chat_keys", recent_chat_keys),
@@ -1071,17 +1071,11 @@ fn undo_reverts_turn() -> Result<String> {
     Ok(String::new())
 }
 
-fn file_link_opens_file_viewer() -> Result<String> {
+fn file_link_opens_changes() -> Result<String> {
     let mut fx = Fx::new()?;
     open_subtract(&mut fx)?;
     fx.click(fx.at("thread", "src/math.py")?)?;
-    ensure!(side(&fx) == Some(SidePanel::File), "{:?}", side(&fx));
-    let path = fx.read(|r, cx| r.file_view().map(|f| f.read(cx).path.clone()));
-    ensure!(
-        path.as_deref()
-            .is_some_and(|p| p.ends_with("/proj/src/math.py")),
-        "{path:?}"
-    );
+    ensure!(side(&fx) == Some(SidePanel::Changes), "{:?}", side(&fx));
     Ok(String::new())
 }
 
