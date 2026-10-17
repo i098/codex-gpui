@@ -9,7 +9,7 @@ use std::sync::Arc;
 #[cfg(target_os = "macos")]
 mod mac;
 #[cfg(target_os = "macos")]
-pub use mac::SkiaMatchedTextSystem;
+pub use mac::{SkiaMatchedTextSystem, show_definition};
 
 #[cfg(target_os = "macos")]
 pub fn text_system() -> Arc<dyn PlatformTextSystem> {

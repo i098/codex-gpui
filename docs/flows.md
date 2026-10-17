@@ -254,7 +254,7 @@ MO-37 and MO-39 remain with the image and block-renderer slices, as approved for
 | 3 | Enter | shortcut | Sends; `⌘ + Enter` modes per setting. | Enter sends; no `Send shortcut` setting. | PASS (`submit_enter_starts_thread`) |
 | 4 | Shift+Enter | shortcut | New line. | New line in the Home and thread composers. | PASS (`shift_enter_newline`) |
 | 5 | `@` | shortcut | Mention list. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
-| 6 | `/` | shortcut | Slash command menu. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
+| 6 | `/` | shortcut | Slash command menu. | Matches the recorded menu, filtering, selected row, editor focus, arrows, Escape, Enter, and Tab. | PASS (`s021::slash_menu_keyboard_replay`) |
 | 7 | Paste large text | click | `Pasted text.txt` chip. | Paste inserts the text. | NOT WIRED (`crates/ui/src/composer.rs` `paste`) |
 | 8 | Drag file over composer | hover | `Drop to attach`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 9 | Attachment chip remove | click | Removes the attachment. | Handler exists (`remove-attachment`). | FAIL (no flow: attachments come only from the system file picker, which the headless window does not answer) |
@@ -270,6 +270,15 @@ MO-37 and MO-39 remain with the image and block-renderer slices, as approved for
 | 19 | Focus ring | focus ring | Send button ring. | — | NOT WIRED (`crates/ui/src/composer.rs`: no `focus_visible` ring) |
 | 20 | Resize | resize | Below 40rem the editor and footer stack. | Only the 475 px compact footer. | FAIL (`crates/ui/src/composer.rs`) |
 
+S021 replays all 16 original steps from `refs/interactions/s021.json` for CP-054 and CP-055.
+The surface check covers the menu's top and bottom padding across its width, outside the rounded corners.
+Filtered selected rows cover the former scrollbar gutter, so that gutter cannot identify the menu background.
+The original ArrowDown counterfactual changes the old sample without changing the menu bounds, draft, or focus.
+The replay retains the selected-row color, command order, focus, and exact request checks.
+Run `tools/mac.sh -l s021-repair 'cargo test -p app --test s021 --test s019 --test s020 --test s022 -- --test-threads=1'`.
+The neighboring checks retain command draft rules, mention navigation, atomic chips, undo, and editor input.
+Other command bodies and the plus Add menu remain outside S021.
+
 The S023 test replays `refs/interactions/s023.json`, recorded from the original renderer with the isolated Linux route1 stub.
 It checks the Stop pixels, request, error toast, focus, completion, and inactive click.
 Firstmate authorized a separate CP-108 follow-up after the corrected recording stub still emitted no `turn/steer` request.
@@ -281,9 +290,11 @@ Firstmate authorized a separate CP-108 follow-up after the corrected recording s
 Slice S028 records the original with the Linux route1 recorder in an isolated browser context.
 `refs/interactions/s028.json` records file changes, aggregate diff updates, and the `def` search.
 The native `find-in-thread` message substitutes for the Electron shortcut in the browser.
-The port test uses `Cmd+F` and checks both result counts and highlight colors.
+The port test checks `Cmd+F`, the native Find action, both result counts, and the recorded highlight colors.
+The app routes Find to the focused Changes panel before thread find.
+The replay checks that diff find never opens thread find.
 It resolves `View changes` from the static reference because Linux text layout places that button below the Mac reference.
-Run `tools/mac.sh -l s028 'cargo test -p app --test s028 -- --nocapture'`.
+Run `tools/mac.sh -l s028-repair 'cargo test -p app --test s028 -- --nocapture --test-threads=1'`.
 The open panel keeps its state across streamed updates and uses `turn/diff/updated` as the authoritative diff.
 Search scope switching and repository-watch sources remain separate inventory slices.
 
@@ -491,3 +502,21 @@ Set `REPLAY=<stem>` to select one exact recording, such as `REPLAY=selftest`.
 An incomplete `portReference` returns a field error instead of panicking.
 The regression check passes the same incomplete object that panicked before the repair.
 No original recording, product behavior, or pixel threshold changes.
+
+## S014: Grouped activity and completed reasoning
+
+`crates/app/tests/s014.rs` replays `refs/interactions/s014.json` on the Mac headless app.
+The replay advances the test clock by the recorded 800 ms after the `Worked for` click.
+Without that wait, the disclosure remains at animation progress zero when the screenshot runs.
+The legacy `worked_for_expands` check uses the same recorded wait after each disclosure click.
+Both checks keep their original pixel assertions.
+
+The replay checks the summary box, hover text, chevron, expanded row icons, row text, collapse, and request count.
+The original hides the completed reasoning fixture and draws no `Thought` header.
+The port retains that state.
+No product code, probe coordinates, fixture responses, or pixel gates change.
+
+The fresh original input replay matches the recorded disclosure and activity row boxes exactly.
+It also checks the original hover color, expanded rows, collapse, and hidden completed reasoning.
+[Original screenshot](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/003c2454a49370802469ed64320fe26f160b4da61215578a/original-group-expanded.png).
+[Port screenshot](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/003c2454a49370802469ed64320fe26f160b4da61215578a/s014-group-expanded.png).

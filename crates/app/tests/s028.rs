@@ -62,6 +62,13 @@ fn check_find(fx: &mut Fx, expected: &Value) -> Result<()> {
         search(fx)
     );
     ensure!(!fx.composer_focused()?, "find must own keyboard focus");
+    ensure!(
+        fx.read(|root, cx| root
+            .thread()
+            .and_then(|thread| thread.read(cx).find_state())
+            .is_none()),
+        "diff find must not open thread find"
+    );
     let image = fx.shot()?;
     let bar = &expected["bar"]["bbox"];
     let scale = image.width() / 1280;
@@ -144,6 +151,10 @@ fn streamed_diff_and_find_replay() -> Result<()> {
             Some("key") => {
                 before_find = fx.sent()?.len();
                 fx.keys(step["portKey"].as_str().context("port key")?)?;
+                ensure!(
+                    search(&fx) == Some((String::new(), 0)),
+                    "Cmd+F must open diff find before typing"
+                );
             }
             Some("type") => fx.type_text(step["text"].as_str().context("text")?)?,
             other => anyhow::bail!("unknown step: {other:?}"),
@@ -191,5 +202,15 @@ fn streamed_diff_and_find_replay() -> Result<()> {
     fx.click(center(&panel_click["target"]["bbox"])?)?;
     fx.keys("escape")?;
     ensure!(search(&fx).is_none(), "Escape must close find");
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        window.dispatch_action(Box::new(app::FindInThread), cx);
+    })?;
+    fx.cx.run_until_parked();
+    fx.type_text("def")?;
+    check_find(&mut fx, &recording["result"])?;
+    ensure!(
+        fx.sent()?.len() == before_find,
+        "native diff find must not send app-server requests"
+    );
     Ok(())
 }
