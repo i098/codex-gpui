@@ -614,7 +614,7 @@ The tests cover both primary responses, the secondary button, Escape, Close, out
 
 The primary action writes the model and reasoning effort with `config/batchWrite`.
 A rejected write keeps the current model and shows the original error message.
-Both outcomes remember the announcement.
+`Root` stores the model ID for both outcomes.
 `seen-model-upgrade-list` uses the existing global host-settings store.
 Each dismissal test reads the resulting file and starts a new app context without changing that file.
 The new context does not show the same announcement.
@@ -623,6 +623,12 @@ The shared replay uses the recording's empty initial history.
 Ordinary replay data keeps the original baseline history from `tools/route1/oracle.json`.
 The ordinary checks use the separate fixture-preparation prerequisite.
 No original profile, sign-in flow, or legacy dialog assertion changes.
+
+[Original announcement](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ddae05ee78165eadfc0a754e40daeb9a03ee71e3bb4b0d16/original-announcement.png).
+[Port announcement](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ddae05ee78165eadfc0a754e40daeb9a03ee71e3bb4b0d16/announcement-open.png).
+The retained port image uses the same dialog source as the integrated feature.
+The [strict static report](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ddae05ee78165eadfc0a754e40daeb9a03ee71e3bb4b0d16/report.html) passes all 36 cases with zero outside-text differences.
+The scoped issue is [SH-142](https://github.com/i098/codex-gpui/issues/184).
 
 ## Shared tooltip side offset
 
