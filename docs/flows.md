@@ -122,6 +122,20 @@ Numbers from the round 4 run (F1Flows); the screen builder column is a run of th
 | 19 | `⌘⌥1`…`⌘⌥6` | shortcut | Go to recent chat N (`recentThread1..6`: the chats by last update, newest first). | `GoToRecentChat`: the Nth Recents thread by `updatedAt`; past the end does nothing. | PASS (`recent_chat_keys`) |
 | 20 | `⌘+`, `⌘-`, `⌘0` | shortcut | Zoom in, zoom out, actual size. | — | NOT WIRED (`crates/ui/src/lib.rs`: no UI scale) |
 
+F1d covers SH-020 and SH-135 with `refs/interactions/f1d.json` and `cargo test -p app --test f1d`.
+The original Mac recording proves a native 1280×832 viewport at scale 2.
+Shift-Tab from the Home rail button reveals `Skip to content`.
+Enter or a click moves focus to the main content.
+The next Tab reaches `Choose project`.
+The shared focus handles retain the main container outside the normal Tab stops.
+Command titles open their full-label tooltip after 2000 ms only when the measured title exceeds its viewport.
+The tooltip wraps within 320 px and closes when the pointer leaves.
+Fitting command titles and the profile avatar have no tooltip.
+The original sidebar hover card also opens for fitting titles, so F1d does not replace that card.
+The shared replay passes all 15 recorded inputs, and F1a, F1b, F1c, and all 36 strict parity cases pass.
+F1d retains the failing Home project-ring probe at `(455.5, 695)` after both activation methods.
+The Home chip/fade painter needs a separate repair before the full F1d check can pass.
+
 ## 14.1 Left rail
 
 | # | Item | Kind | Original | Port | Status |
