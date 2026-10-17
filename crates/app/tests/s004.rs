@@ -84,10 +84,11 @@ fn sidebar_resize_and_toggle_match_original() -> Result<()> {
             "hover" => {
                 fx.hover((640., 22.))?;
                 fx.hover(point(&step["at"]))?;
-                fx.cx.advance_clock(std::time::Duration::from_millis(800));
-                fx.cx.run_until_parked();
             }
             other => anyhow::bail!("unsupported step {other}"),
+        }
+        if let Some(ms) = step["waitMs"].as_u64() {
+            fx.advance(std::time::Duration::from_millis(ms))?;
         }
         check(&mut fx, &samples[i + 1])?;
     }

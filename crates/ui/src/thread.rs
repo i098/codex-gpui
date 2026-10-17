@@ -71,20 +71,29 @@ struct Disclosure {
     height: Rc<Cell<f32>>,
 }
 
-/// Wall clock for timestamps: the local UTC offset and, for fixture screens, a pinned "now".
+/// Timestamp clock: live wall time, a fixed fixture time, or a base plus monotonic elapsed time.
 #[derive(Clone, Copy)]
 pub struct Clock {
     pub utc_offset: i64,
     pub pinned_now: Option<i64>,
+    /// Advances `pinned_now` from this origin; `None` keeps the fixture time fixed.
+    pub elapsed_since: Option<Instant>,
 }
 
 impl Clock {
     fn now(&self) -> i64 {
-        self.pinned_now.unwrap_or_else(|| {
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs() as i64)
-        })
+        self.pinned_now.map_or_else(
+            || {
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs() as i64)
+            },
+            |base| {
+                base + self
+                    .elapsed_since
+                    .map_or(0, |origin| origin.elapsed().as_secs() as i64)
+            },
+        )
     }
 }
 
@@ -1798,6 +1807,32 @@ fn far(top: Pixels, h: Pixels, view: Pixels) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clock_keeps_live_fixed_and_elapsed_time() {
+        let wall_now = || {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64
+        };
+        let mut clock = Clock {
+            utc_offset: -25_200,
+            pinned_now: None,
+            elapsed_since: None,
+        };
+        let before = wall_now();
+        let live = clock.now();
+        assert!((before..=wall_now()).contains(&live));
+        clock.pinned_now = Some(1_792_083_600);
+        assert_eq!(clock.now(), 1_792_083_600);
+        let origin = Instant::now() - Duration::from_millis(1234);
+        clock.elapsed_since = Some(origin);
+        let before = origin.elapsed().as_secs() as i64;
+        let elapsed = clock.now() - 1_792_083_600;
+        assert!((before..=origin.elapsed().as_secs() as i64).contains(&elapsed));
+        assert!(elapsed >= 1);
+    }
 
     #[test]
     fn find_ranges_preserve_unicode_offsets_and_nonoverlapping_matches() {

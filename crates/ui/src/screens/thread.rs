@@ -9,10 +9,11 @@ use view::{Clock, ThreadView};
 
 use super::{diff::panel::split_screen, sidebar::home_sidebar};
 
-/// The refs were captured on 2026-10-15 08:00 in America/Los_Angeles (tools/route1).
+/// The static fixture clock stays fixed in America/Los_Angeles.
 pub const CAPTURE_CLOCK: Clock = Clock {
     utc_offset: -7 * 3600,
     pinned_now: Some(1_792_080_000),
+    elapsed_since: None,
 };
 
 pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
