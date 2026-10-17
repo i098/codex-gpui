@@ -14,7 +14,11 @@ core-foundation = "0.10"
 core-graphics = "0.24"
 core-text = "21"
 harfbuzz-sys = { version = "0.8", default-features = false, features = ["bundled"] }
+objc2 = "0.6"
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSResponder", "NSView"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSAttributedString", "NSGeometry", "NSString"] }
 parking_lot = "0.12"
+raw-window-handle = { version = "0.6", features = ["std"] }
 
 [dev-dependencies]
 anyhow.workspace = true
