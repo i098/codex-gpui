@@ -1104,7 +1104,7 @@ impl Root {
             (None, _) => self.home.clone().into(),
         };
         window.focus(&self.route_focus(cx), cx);
-        let home = self.state.route == Route::Home;
+        let home = matches!(self.state.route, Route::Home | Route::Thread(_));
         self.shell.update(cx, |shell, cx| {
             shell.selected_rail = home.then_some("home");
             shell.can_go_back = can_back;
