@@ -198,8 +198,12 @@ pub(super) struct Skill {
 #[derive(Default)]
 pub(super) struct Slash {
     pub open: bool,
-    /// `@` opened the list (else `/`).
+    /// `@` or `+` opened the list (else `/`).
     pub(super) mention: bool,
+    /// The `+` query starts at this cursor position without a literal `@`.
+    pub(super) add: Option<usize>,
+    /// Preserve the trigger state across the popup's capture-phase outside dismissal.
+    pub(super) add_mouse_open: bool,
     pub(super) range: Range<usize>,
     pub(super) dismissed: Option<usize>,
     pub(super) selected: usize,
@@ -212,6 +216,8 @@ pub(super) struct Slash {
 impl Slash {
     pub(super) fn reset(&mut self) {
         self.open = false;
+        self.add = None;
+        self.add_mouse_open = false;
         self.dismissed = None;
         self.matches.clear();
     }
@@ -271,6 +277,12 @@ impl Composer {
     pub(super) fn refresh_slash(&mut self, cx: &mut Context<Self>) {
         let cursor = self.cursor();
         let before = &self.content[..cursor];
+        self.slash.add = self.slash.add.filter(|&start| {
+            self.slash.open
+                && before
+                    .get(start..)
+                    .is_some_and(|query| !query.contains('\n'))
+        });
         let mention = before.rfind('@').filter(|&at| {
             (at == 0 || before[..at].ends_with(char::is_whitespace))
                 && !before[at + 1..].contains('\n')
@@ -278,10 +290,11 @@ impl Composer {
         let slash = before
             .rfind('/')
             .filter(|&at| !before[at + 1..].contains(char::is_whitespace));
-        let (mention, start) = match (mention, slash) {
-            (Some(at), _) => (true, at),
-            (None, Some(at)) => (false, at),
-            (None, None) => {
+        let (mention, start) = match (self.slash.add, mention, slash) {
+            (Some(start), _, _) => (true, start),
+            (None, Some(at), _) => (true, at),
+            (None, None, Some(at)) => (false, at),
+            (None, None, None) => {
                 self.slash.open = false;
                 self.slash.dismissed = None;
                 self.end_search(cx);
@@ -296,15 +309,16 @@ impl Composer {
             self.end_search(cx);
         }
         self.slash.mention = mention;
-        let query = self.content[range.start + 1..range.end].to_lowercase();
         let empty = self.content[..range.start].trim().is_empty()
             && self.content[range.end..].trim().is_empty()
             && self.attachments.is_empty();
         self.slash.matches.clear();
         if mention {
-            let query = self.content[range.start + 1..range.end].to_owned();
+            let start = range.start + usize::from(self.slash.add.is_none());
+            let query = self.content[start..range.end].to_owned();
             self.refresh_mention(&query, cx);
         } else {
+            let query = self.content[range.start + 1..range.end].to_lowercase();
             for (index, command) in COMMANDS.iter().enumerate() {
                 let available = match command.id {
                     "archive" | "review-mode" | "compact" | "fork" | "init" | "new" | "pin"
@@ -336,7 +350,8 @@ impl Composer {
 
     pub(super) fn close_slash(&mut self, cx: &mut Context<Self>) {
         self.slash.open = false;
-        self.slash.dismissed = Some(self.slash.range.start);
+        self.slash.dismissed = self.slash.add.is_none().then_some(self.slash.range.start);
+        self.slash.add = None;
         self.end_search(cx);
         cx.notify();
     }
