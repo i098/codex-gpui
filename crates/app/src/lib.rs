@@ -6,6 +6,7 @@
 mod features;
 pub mod host;
 pub mod host_settings;
+pub mod qa;
 
 use anyhow::{Context as _, Result};
 use async_channel::Receiver;
@@ -370,6 +371,7 @@ pub struct Root {
     config: Value,
     skills: Value,
     ready: bool,
+    qa_work_started: bool,
     /// Threads started or resumed by this app-server; others need `thread/resume` first.
     loaded: HashSet<String>,
     /// Id of the server request the composer's approval card answers.
@@ -495,6 +497,11 @@ impl Root {
         .detach();
         cx.observe_window_appearance(window, |this, window, cx| this.apply_theme(window, cx))
             .detach();
+        // ponytail: defer used sessions until manual close; prove state restoration before relaxing this guard.
+        cx.observe_window_activation(window, |this, window, _| {
+            this.qa_work_started |= window.is_window_active();
+        })
+        .detach();
         let _events = cx.spawn(async move |this, cx| {
             while let Ok(event) = events.recv().await {
                 if this
@@ -542,6 +549,7 @@ impl Root {
             config: Value::Null,
             skills: Value::Null,
             ready: false,
+            qa_work_started: false,
             loaded: HashSet::new(),
             approval: None,
             toaster: cx.new(|_| Toaster::new()),
@@ -617,6 +625,29 @@ impl Root {
     /// `initialize` and the startup reads are done and the route is showing.
     pub fn ready(&self) -> bool {
         self.ready
+    }
+
+    pub fn qa_restart_ready(&self, window: &Window, cx: &App) -> bool {
+        self.ready
+            && !window.is_window_active()
+            && !self.qa_work_started
+            && self.state.route == Route::Home
+            && self.loaded.is_empty()
+            && self
+                .threads
+                .iter()
+                .all(|thread| thread.status != ThreadStatus::Active)
+            && self.dialog.is_none()
+            && self.command_menu.is_none()
+            && self.approval.is_none()
+            && self.automation_load.is_none()
+            && self.state.confirm_before_close != ConfirmBeforeClose::Always
+            && self.home.read(cx).composer.read(cx).restart_ready()
+            && self.thread_composer.read(cx).restart_ready()
+            && self
+                .login
+                .as_ref()
+                .is_none_or(|login| login.read(cx).restart_ready())
     }
 
     /// The open thread's view.
@@ -1343,6 +1374,7 @@ impl Root {
     /// Home composer: `thread/start` with the chosen model and permissions, open it, then
     /// `turn/start`; the turn streams in through [`Self::on_event`].
     fn start_thread(&mut self, s: Submission, window: &mut Window, cx: &mut Context<Self>) {
+        self.qa_work_started = true;
         let (bridge, cwd) = (self.bridge.clone(), self.cwd.clone());
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let mut params = json!({ "cwd": cwd, "model": model(&s) });
@@ -1372,6 +1404,7 @@ impl Root {
     /// `Steer` sends it into the turn (`turn/steer`). A refusal shows `Error submitting
     /// message` and puts the text back.
     fn send(&mut self, s: Submission, window: &mut Window, cx: &mut Context<Self>) {
+        self.qa_work_started = true;
         let Some(view) = &self.thread else { return };
         let view = view.read(cx);
         let id = view.id().to_owned();
@@ -1841,12 +1874,13 @@ impl Root {
 
     /// Sends a config write and, once the server took it, applies it to the kept config.
     fn write_config(
-        &self,
+        &mut self,
         method: &'static str,
         params: Value,
         cx: &mut Context<Self>,
         apply: impl FnOnce(&mut Value) + 'static,
     ) {
+        self.qa_work_started = true;
         let bridge = self.bridge.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {
             bridge.request::<_, Value>(method, params).await?;
@@ -1866,6 +1900,11 @@ impl Root {
     /// Every server message: streamed into the open thread and the sign-in view, plus
     /// Recents updates and approval prompts.
     pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        if matches!(&event, Event::Notification { method, .. } if method == "turn/started")
+            || matches!(&event, Event::Request { .. })
+        {
+            self.qa_work_started = true;
+        }
         if let Some(view) = &self.thread {
             view.update(cx, |view, cx| {
                 view.apply(&event, cx);

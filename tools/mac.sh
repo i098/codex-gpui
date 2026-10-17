@@ -7,5 +7,6 @@ lane=main
 if [[ ${1:-} == -l ]]; then lane=$2; shift 2; fi
 root=$(git rev-parse --show-toplevel)
 remote=/tmp/cgx-mac
-rsync -a --delete --exclude target --exclude .git "$root/" "mac:$remote/src/$lane/"
-ssh mac "export RUSTUP_HOME=$remote/rustup CARGO_HOME=$remote/cargo CARGO_TARGET_DIR=$remote/target/$lane CARGO_NET_GIT_FETCH_WITH_CLI=true PATH=$remote/cargo/bin:\$HOME/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin; [ -d \$CARGO_TARGET_DIR ] || { mkdir -p \$CARGO_TARGET_DIR && cp -Rc $remote/target/debug \$CARGO_TARGET_DIR/ 2>/dev/null; }; cd $remote/src/$lane && $*"
+ssh_options="-o BatchMode=yes -o ControlMaster=no -o ControlPath=none -o ConnectTimeout=15"
+rsync -a --delete -e "ssh $ssh_options" --exclude target --exclude .git "$root/" "mac:$remote/src/$lane/"
+ssh -T $ssh_options mac "export RUSTUP_HOME=$remote/rustup CARGO_HOME=$remote/cargo CARGO_TARGET_DIR=$remote/target/$lane CARGO_NET_GIT_FETCH_WITH_CLI=true PATH=$remote/cargo/bin:\$HOME/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin; [ -d \$CARGO_TARGET_DIR ] || { mkdir -p \$CARGO_TARGET_DIR && cp -Rc $remote/target/debug \$CARGO_TARGET_DIR/ 2>/dev/null; }; cd $remote/src/$lane && $*"
