@@ -1,5 +1,5 @@
 //! Replays each interaction recording through its dedicated state, pixel, and request checks.
-//! `selftest.json` uses the shared step contract below.
+//! `selftest.json` uses the shared step contract below with the recorded baseline host history.
 //! `REPLAY=<stem>` selects one exact recording; unset or empty checks every recording.
 //! Unknown contracts and failed adapters fail the combined result.
 
