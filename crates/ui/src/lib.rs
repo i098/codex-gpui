@@ -623,6 +623,7 @@ impl Shell {
     fn rail(&self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let (hover_bg, hover_fg) = (t.ghost_hover, t.text);
         let selected = self.selected_rail;
+        let home = self.main.entity_type() == std::any::TypeId::of::<screens::home::HomeMain>();
         // The list (`[6, 50, 40, 732]`) is a composited scroller: its items paint into the
         // layer's transparent tiles, which `vertical-scroll-fade-mask` fades over the top 16 px
         // (the scroll timeline is inactive, so `--top-fade` is 1rem) before the compositor
@@ -720,7 +721,7 @@ impl Shell {
                         item("home")
                             .when(self.attention, |d| d.child(dot(6.)))
                             .on_click(move |_, window, cx| {
-                                let focus = window.focused(cx).filter(|_| selected == Some("home"));
+                                let focus = window.focused(cx).filter(|_| home);
                                 window.dispatch_action(Box::new(NewChat), cx);
                                 window.defer(cx, move |window, cx| {
                                     if let Some(focus) = focus {

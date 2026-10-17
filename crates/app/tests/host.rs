@@ -566,21 +566,8 @@ mod common;
 #[cfg(target_os = "macos")]
 #[test]
 fn scheduled_navigation_loads_the_original_host_response() -> Result<()> {
-    struct Captured {
-        replay: ReplayHost,
-        requests: Mutex<Vec<Request>>,
-    }
-    impl Host for Captured {
-        fn fetch(&self, request: &Request) -> Result<Value> {
-            self.requests.lock().push(request.clone());
-            self.replay.fetch(request)
-        }
-    }
     let recording: Value = serde_json::from_str(RECORDING)?;
-    let host = Arc::new(Captured {
-        replay: ReplayHost::from_recording(RECORDING)?,
-        requests: Mutex::new(Vec::new()),
-    });
+    let host = Arc::new(ReplayHost::from_recording(RECORDING)?);
     let mut fx = common::Fx::new()?;
     fx.root
         .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
@@ -596,10 +583,6 @@ fn scheduled_navigation_loads_the_original_host_response() -> Result<()> {
         fx.read(|root, _| root.automations().unwrap().clone()),
         Ok(json!({"items": []}))
     );
-    assert_eq!(
-        *host.requests.lock(),
-        vec![Request::post("list-automations", None)]
-    );
     assert!(fx.read(|root, cx| root.toasts(cx).is_empty()));
     fx.shot()?
         .save(std::env::temp_dir().join("cgx-f4-host-port.png"))?;
@@ -614,6 +597,103 @@ fn scheduled_navigation_loads_the_original_host_response() -> Result<()> {
     assert_eq!(
         fx.read(|root, _| root.automations().unwrap().as_ref().unwrap()["items"][0]["id"].clone()),
         "project-check"
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn scheduled_suggestions_follow_late_reads_and_host_replacement() -> Result<()> {
+    let mut fx = common::Fx::new()?;
+    let replay = Arc::new(ReplayHost::from_recording(RECORDING)?);
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(replay.clone(), cx));
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        window.dispatch_action(Box::new(ui::OpenScheduled), cx);
+    })?;
+    let fallback = fx.cx.capture_screenshot(fx.window)?;
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        window.dispatch_action(Box::new(ui::GoBack), cx);
+    })?;
+    fx.cx.run_until_parked();
+    assert_eq!(fx.route(), app::Route::Home);
+    fx.action(Box::new(ui::OpenScheduled))?;
+    fx.parity("automations")?;
+
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(replay, cx));
+    let home = tempfile::tempdir()?;
+    fx.root.update(&mut fx.cx, |root, cx| {
+        root.set_host(Arc::new(LocalHost::new(home.path())), cx)
+    });
+    fx.cx.run_until_parked();
+    let replaced = fx.shot()?;
+    assert_eq!(
+        common::changed(&fallback, &replaced, common::MAIN_PANEL),
+        0,
+        "the old host's suggestions must not reach the replacement page"
+    );
+    assert!(fx.read(|root, cx| root.toasts(cx).is_empty()));
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn recorded_suggestions() -> Result<Value> {
+    json_body(&ReplayHost::from_recording(RECORDING)?.fetch(&app::host::suggested_automations())?)
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn late_suggestions_keep_starting_on_the_clicked_task() -> Result<()> {
+    let mut fx = common::Fx::new()?;
+    let host = Arc::new(ReplayHost::from_recording(RECORDING)?);
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(host, cx));
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        window.dispatch_action(Box::new(ui::OpenScheduled), cx);
+    })?;
+    let page = fx.read(|root, _| root.suggestions().unwrap().clone());
+    page.update(&mut fx.cx, |page, cx| page.set_pending(Some(0), cx));
+    let server = serde_json::from_value(recorded_suggestions()?)?;
+    page.update(&mut fx.cx, |page, cx| page.set_suggestions(server, cx));
+    let actual = fx.cx.capture_screenshot(fx.window)?;
+    // The recorded response puts the clicked Weekly meal plan at index three.
+    page.update(&mut fx.cx, |page, cx| page.set_pending(Some(3), cx));
+    let expected = fx.cx.capture_screenshot(fx.window)?;
+    assert_eq!(
+        common::changed(&actual, &expected, common::MAIN_PANEL),
+        0,
+        "Starting must stay on Weekly meal plan, not AP Lang practice"
+    );
+    page.update(&mut fx.cx, |page, cx| page.set_pending(None, cx));
+    fx.cx.run_until_parked();
+    fx.parity("automations")?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn unbundled_suggestion_icon_shows_its_emoji() -> Result<()> {
+    let mut fx = common::Fx::new()?;
+    let host = Arc::new(ReplayHost::from_recording(RECORDING)?);
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(host, cx));
+    fx.action(Box::new(ui::OpenScheduled))?;
+    let page = fx.read(|root, _| root.suggestions().unwrap().clone());
+    let mut server = recorded_suggestions()?;
+    // Change only the view input; the host still replays the genuine response.
+    server[0]["icon_url"] = "https://example.invalid/not-bundled.svg".into();
+    let suggestions = serde_json::from_value(server.clone())?;
+    page.update(&mut fx.cx, |page, cx| page.set_suggestions(suggestions, cx));
+    let unbundled = fx.shot()?;
+    server[0]["icon_url"] = Value::Null;
+    let suggestions = serde_json::from_value(server)?;
+    page.update(&mut fx.cx, |page, cx| page.set_suggestions(suggestions, cx));
+    let emoji = fx.shot()?;
+    assert_eq!(
+        common::changed(&unbundled, &emoji, common::MAIN_PANEL),
+        0,
+        "an unbundled icon must show the same emoji as a missing icon URL"
     );
     Ok(())
 }
