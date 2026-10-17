@@ -40,6 +40,15 @@ actions!(
         SelectDown,
         LineStart,
         LineEnd,
+        /// Option+Arrow: the caret moves by word; Shift extends the selection.
+        WordLeft,
+        WordRight,
+        SelectWordLeft,
+        SelectWordRight,
+        /// Option+Backspace, Option+Delete, Command+Backspace.
+        DeleteWordBackward,
+        DeleteWordForward,
+        DeleteToLineStart,
         /// Close the open menu.
         Dismiss,
         CompleteCommand,
@@ -185,6 +194,13 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("end", LineEnd, c),
         KeyBinding::new("cmd-left", LineStart, c),
         KeyBinding::new("cmd-right", LineEnd, c),
+        KeyBinding::new("alt-left", WordLeft, c),
+        KeyBinding::new("alt-right", WordRight, c),
+        KeyBinding::new("alt-shift-left", SelectWordLeft, c),
+        KeyBinding::new("alt-shift-right", SelectWordRight, c),
+        KeyBinding::new("alt-backspace", DeleteWordBackward, c),
+        KeyBinding::new("alt-delete", DeleteWordForward, c),
+        KeyBinding::new("cmd-backspace", DeleteToLineStart, c),
         KeyBinding::new("escape", Dismiss, c),
         KeyBinding::new("tab", CompleteCommand, c),
         KeyBinding::new("ctrl-n", NextCommand, c),
@@ -420,6 +436,9 @@ pub struct Composer {
     selected_range: Range<usize>,
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
+    history: editor::History,
+    /// The right-click menu (Electron's native editable-field menu).
+    context_menu: Option<crate::screens::thread::view::menu::ContextMenu>,
     is_selecting: bool,
     /// Shaped lines and editor bounds of the last paint, for hit testing.
     lines: Vec<WrappedLine>,
@@ -487,6 +506,8 @@ impl Composer {
             selected_range: 0..0,
             selection_reversed: false,
             marked_range: None,
+            history: editor::History::default(),
+            context_menu: None,
             is_selecting: false,
             lines: Vec::new(),
             bounds: None,
@@ -642,6 +663,12 @@ impl Composer {
         &self.queued
     }
 
+    /// The empty editor's text (`Work with Codex` under a thread, also while a turn runs:
+    /// `Working…` belongs to the original's compact floating composer only).
+    pub fn placeholder(&self) -> &str {
+        &self.placeholder
+    }
+
     /// The submit button's accessible label (`composer.submitButtonTooltip.*`): `Stop` while a
     /// turn runs and the composer is empty, else the follow-up mode (`Queue` or `Steer`) while
     /// a turn runs, else `Send`. The original shows no tooltip on this button.
@@ -659,6 +686,7 @@ impl Composer {
         self.content = s.into();
         self.selected_range = s.len()..s.len();
         self.marked_range = None;
+        self.history = editor::History::default();
         self.slash.reset();
         self.end_search(cx);
         cx.notify();
@@ -1213,17 +1241,18 @@ impl Render for Composer {
             .on_action(cx.listener(Self::line_start))
             .on_action(cx.listener(Self::line_end))
             .on_action(cx.listener(Self::select_all))
+            .on_action(cx.listener(Self::word_left))
+            .on_action(cx.listener(Self::word_right))
+            .on_action(cx.listener(Self::select_word_left))
+            .on_action(cx.listener(Self::select_word_right))
+            .on_action(cx.listener(Self::delete_word_backward))
+            .on_action(cx.listener(Self::delete_word_forward))
+            .on_action(cx.listener(Self::delete_to_line_start))
+            .on_action(cx.listener(Self::undo))
+            .on_action(cx.listener(Self::redo))
             .on_action(cx.listener(Self::copy))
             .on_action(cx.listener(Self::cut))
-            .on_action(cx.listener(|this, action: &crate::Paste, window, cx| {
-                if this.on_cancel_edit.is_some() {
-                    if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                        this.insert(&text, window, cx);
-                    }
-                } else {
-                    this.paste(action, window, cx);
-                }
-            }))
+            .on_action(cx.listener(|this, _: &crate::Paste, window, cx| this.paste(window, cx)))
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::complete_command))
             .on_action(cx.listener(Self::next_command))
@@ -1356,6 +1385,16 @@ impl Render for Composer {
                 d.child(self.approval_card(&a, &t, cx))
             })
             .child(div().children(tray).child(card))
+            .when_some(self.context_menu.as_ref(), |d, menu| {
+                d.child(menu.overlay(
+                    "composer-menu",
+                    "Edit actions",
+                    |this| &mut this.context_menu,
+                    Self::activate_context_item,
+                    window,
+                    cx,
+                ))
+            })
     }
 }
 

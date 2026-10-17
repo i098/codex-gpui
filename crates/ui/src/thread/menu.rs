@@ -1,11 +1,288 @@
-//! Link context menu: a right-click on an external link in the transcript shows the
-//! renderer's link menu (`electronBridge.showContextMenu`, refs/interactions/s012.json),
-//! native in Electron, drawn here like the chat actions menu (`header.rs`): `Open in`
-//! heading, its destinations, a separator, `Copy link` and `Save link as…`. A right-click on
-//! plain text opens nothing: Electron's default template is empty without a selection.
+//! Context menus drawn in place of Electron's native ones, like the chat actions menu
+//! (`header.rs`): [`ContextMenu`] holds the items, the anchor and keyboard focus for any view;
+//! the transcript's link menu (`electronBridge.showContextMenu`, refs/interactions/s012.json)
+//! is built on it here, the composer's editing menu in `composer.rs`. A right-click on plain
+//! text opens nothing: Electron's default template is empty without a selection.
 use super::*;
 use gpui::{Anchor, FocusHandle, KeyDownEvent, MouseButton, Point, Role, anchored, deferred};
 use std::path::PathBuf;
+
+/// One row: Electron's `{id, label, enabled, icon?, accelerator?}` or a separator.
+#[derive(Default)]
+pub(crate) struct Item {
+    pub id: &'static str,
+    pub label: SharedString,
+    pub enabled: bool,
+    pub icon: Option<&'static [u8]>,
+    /// Shown at the right, as the native menu shows `⌘X`.
+    pub accelerator: Option<&'static str>,
+    pub separator: bool,
+}
+
+impl Item {
+    pub fn new(id: &'static str, label: impl Into<SharedString>, enabled: bool) -> Self {
+        Self {
+            id,
+            label: label.into(),
+            enabled,
+            ..Self::default()
+        }
+    }
+
+    pub fn separator(id: &'static str) -> Self {
+        Self {
+            id,
+            separator: true,
+            ..Self::default()
+        }
+    }
+}
+
+pub(crate) struct ContextMenu {
+    pub items: Vec<Item>,
+    /// What the menu is about: the link's URL, the editor's selected text.
+    pub subject: String,
+    /// The pointer: the menu's top-left corner.
+    pub position: Point<Pixels>,
+    pub active: Option<usize>,
+    focus: FocusHandle,
+    return_focus: Option<FocusHandle>,
+}
+
+/// What a key did to the open menu.
+pub(crate) enum Outcome {
+    Moved,
+    Close,
+    Activate(usize),
+}
+
+impl ContextMenu {
+    /// Opens at `position` and takes keyboard focus; `close` returns it.
+    pub fn open(
+        items: Vec<Item>,
+        subject: String,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
+        let return_focus = window.focused(cx);
+        let focus = cx.focus_handle();
+        window.focus(&focus, cx);
+        Self {
+            items,
+            subject,
+            position,
+            active: None,
+            return_focus,
+            focus,
+        }
+    }
+
+    /// Returns keyboard focus to where it was.
+    pub fn close(self, window: &mut Window, cx: &mut App) {
+        if let Some(focus) = self.return_focus {
+            window.focus(&focus, cx);
+        }
+    }
+
+    /// The items as `(id, label, enabled)`.
+    pub fn rows(&self) -> impl ExactSizeIterator<Item = (&str, &str, bool)> {
+        self.items
+            .iter()
+            .map(|item| (item.id, item.label.as_ref(), item.enabled))
+    }
+
+    /// Escape closes; Enter and Space activate; arrows, Home and End move over enabled items
+    /// (wrapping); Tab is swallowed; anything else is not the menu's.
+    pub fn key(&mut self, event: &KeyDownEvent) -> Option<Outcome> {
+        let key = event.keystroke.key.as_str();
+        match key {
+            "escape" => Some(Outcome::Close),
+            "enter" | "space" => self.active.map(Outcome::Activate),
+            "down" | "up" | "home" | "end" => {
+                let forward = matches!(key, "down" | "home");
+                let n = self.items.len();
+                let mut index = if matches!(key, "home" | "end") {
+                    None
+                } else {
+                    self.active
+                };
+                for _ in 0..n {
+                    let next = match (index, forward) {
+                        (None, true) => 0,
+                        (None, false) => n - 1,
+                        (Some(i), true) => (i + 1) % n,
+                        (Some(i), false) => (i + n - 1) % n,
+                    };
+                    index = Some(next);
+                    if self.items[next].enabled {
+                        self.active = index;
+                        break;
+                    }
+                }
+                Some(Outcome::Moved)
+            }
+            "tab" => Some(Outcome::Moved),
+            _ => None,
+        }
+    }
+
+    /// The popover at the pointer over a full-window backdrop that closes it. `menu` reads the
+    /// view's open menu; `activate` runs the picked item (its id) with the subject after the
+    /// menu closed.
+    pub fn overlay<V: 'static>(
+        &self,
+        id: &'static str,
+        aria_label: &'static str,
+        menu: fn(&mut V) -> &mut Option<ContextMenu>,
+        activate: fn(&mut V, &'static str, String, &mut Window, &mut Context<V>),
+        window: &Window,
+        cx: &Context<V>,
+    ) -> impl IntoElement {
+        let t = cx.theme();
+        let hover = t.menu_item_hover;
+        let close = move |this: &mut V, window: &mut Window, cx: &mut Context<V>| {
+            if let Some(open) = menu(this).take() {
+                open.close(window, cx);
+            }
+            cx.stop_propagation();
+            cx.notify();
+        };
+        let pick = move |this: &mut V, index: usize, window: &mut Window, cx: &mut Context<V>| {
+            let Some(mut open) = menu(this).take_if(|m| m.items[index].enabled) else {
+                return;
+            };
+            let id = open.items[index].id;
+            let subject = std::mem::take(&mut open.subject);
+            open.close(window, cx);
+            activate(this, id, subject, window, cx);
+            cx.stop_propagation();
+            cx.notify();
+        };
+        let rows = self.items.iter().enumerate().map(|(index, item)| {
+            if item.separator {
+                return div()
+                    .h(px(9.))
+                    .flex()
+                    .items_center()
+                    .child(div().h(px(1.)).w_full().bg(t.border))
+                    .into_any_element();
+            }
+            let enabled = item.enabled;
+            div()
+                .id((id, index))
+                .role(Role::MenuItem)
+                .aria_label(item.label.clone())
+                .aria_disabled(!enabled)
+                .when(self.active == Some(index), |d| {
+                    d.aria_active_descendant().bg(hover)
+                })
+                .h(px(28.5625))
+                .px(px(8.))
+                .rounded(px(12.))
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .when(enabled, |d| {
+                    d.cursor_pointer()
+                        .on_hover(cx.listener(move |this, hovered, _, cx| {
+                            if *hovered && let Some(open) = menu(this) {
+                                open.active = Some(index);
+                                cx.notify();
+                            }
+                        }))
+                })
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |this, _, window, cx| pick(this, index, window, cx)))
+                .when_some(item.icon, |d, icon| {
+                    let color = t.text;
+                    let id = item.id;
+                    d.child(
+                        div().size(px(16.)).flex_none().child(
+                            gpui::canvas(
+                                |_, _, _| {},
+                                move |bounds, (), window, cx| {
+                                    if !shapes::paint_icon(
+                                        icon, id, bounds, false, color, None, window, cx,
+                                    ) {
+                                        window
+                                            .paint_svg(
+                                                bounds,
+                                                id.into(),
+                                                Some(icon),
+                                                gpui::TransformationMatrix::default(),
+                                                color,
+                                                cx,
+                                            )
+                                            .ok();
+                                    }
+                                },
+                            )
+                            .size(px(16.)),
+                        ),
+                    )
+                })
+                .child(
+                    text(
+                        item.label.clone(),
+                        13.,
+                        18.5714,
+                        430.,
+                        if enabled { t.text } else { t.text_tertiary },
+                    )
+                    .flex_1(),
+                )
+                .when_some(item.accelerator, |d, keys| {
+                    d.child(text(keys, 13., 18.5714, 430., t.text_tertiary))
+                })
+                .into_any_element()
+        });
+        let popup = crate::composer::popover(t, 220., |d| d.children(rows))
+            .ml_0()
+            .pl_0()
+            .id(id)
+            .role(Role::Menu)
+            .aria_label(aria_label)
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+                let Some(outcome) = menu(this).as_mut().and_then(|m| m.key(event)) else {
+                    return;
+                };
+                match outcome {
+                    Outcome::Moved => {}
+                    Outcome::Close => close(this, window, cx),
+                    Outcome::Activate(index) => pick(this, index, window, cx),
+                }
+                cx.stop_propagation();
+                cx.notify();
+            }))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation());
+        deferred(
+            anchored().position(gpui::point(px(0.), px(0.))).child(
+                div()
+                    .w(window.viewport_size().width)
+                    .h(window.viewport_size().height)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, window, cx| close(this, window, cx)),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, _, window, cx| close(this, window, cx)),
+                    )
+                    .child(
+                        anchored()
+                            .position(self.position)
+                            .anchor(Anchor::TopLeft)
+                            .snap_to_window_with_margin(px(8.))
+                            .child(popup),
+                    ),
+            ),
+        )
+        .with_priority(4)
+    }
+}
 
 /// Items as the original passes them to `showContextMenu`: id, label and 16 px icon (its
 /// data url). The `Open in` heading is disabled; the separator is drawn as a rule.
@@ -52,26 +329,10 @@ pub(super) fn note_right_clicked_link(url: String) {
     RIGHT_CLICKED_LINK.set(Some(url));
 }
 
-pub(super) struct LinkMenu {
-    url: String,
-    position: Point<Pixels>,
-    active: Option<usize>,
-    focus: FocusHandle,
-    return_focus: Option<FocusHandle>,
-}
-
-fn enabled(index: usize) -> bool {
-    !matches!(index, HEADING | SEPARATOR)
-}
-
 impl ThreadView {
     /// The open link menu's items as `(id, label, enabled)`; empty when none is open.
-    pub fn context_menu_items(&self) -> impl ExactSizeIterator<Item = (&str, &str, bool)> {
-        ITEMS
-            .iter()
-            .take(if self.menu.is_some() { ITEMS.len() } else { 0 })
-            .enumerate()
-            .map(|(index, &(id, label, _))| (id, label, enabled(index)))
+    pub fn context_menu_items(&self) -> impl Iterator<Item = (&str, &str, bool)> {
+        self.menu.iter().flat_map(ContextMenu::rows)
     }
 
     /// Where the open link menu's top-left corner is anchored (the pointer).
@@ -88,89 +349,37 @@ impl ThreadView {
         let Some(url) = RIGHT_CLICKED_LINK.take() else {
             return;
         };
-        let focus = cx.focus_handle();
-        self.menu = Some(LinkMenu {
-            url,
-            position: event.position,
-            active: None,
-            return_focus: window.focused(cx),
-            focus: focus.clone(),
-        });
-        window.focus(&focus, cx);
-        cx.stop_propagation();
-        cx.notify();
-    }
-
-    fn close_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(menu) = self.menu.take()
-            && let Some(focus) = menu.return_focus
-        {
-            window.focus(&focus, cx);
-        }
-        cx.stop_propagation();
-        cx.notify();
-    }
-
-    fn menu_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(menu) = &mut self.menu else { return };
-        let key = event.keystroke.key.as_str();
-        match key {
-            "escape" => self.close_menu(window, cx),
-            "enter" | "space" => {
-                if let Some(index) = menu.active {
-                    self.activate(index, window, cx);
-                }
-            }
-            "down" | "up" | "home" | "end" => {
-                let forward = matches!(key, "down" | "home");
-                let mut index = if matches!(key, "home" | "end") {
-                    None
+        let items = ITEMS
+            .iter()
+            .enumerate()
+            .map(|(index, &(id, label, icon))| Item {
+                icon,
+                ..if index == SEPARATOR {
+                    Item::separator(id)
                 } else {
-                    menu.active
-                };
-                for _ in 0..ITEMS.len() {
-                    let next = match (index, forward) {
-                        (None, true) => 0,
-                        (None, false) => ITEMS.len() - 1,
-                        (Some(i), true) => (i + 1) % ITEMS.len(),
-                        (Some(i), false) => (i + ITEMS.len() - 1) % ITEMS.len(),
-                    };
-                    index = Some(next);
-                    if enabled(next) {
-                        menu.active = index;
-                        break;
-                    }
+                    Item::new(id, label, index != HEADING)
                 }
-            }
-            "tab" => {}
-            _ => return,
-        }
+            })
+            .collect();
+        self.menu = Some(ContextMenu::open(items, url, event.position, window, cx));
         cx.stop_propagation();
         cx.notify();
     }
 
-    fn activate(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if !enabled(index) {
-            return;
-        }
-        let Some(menu) = self.menu.take() else { return };
-        if let Some(focus) = menu.return_focus {
-            window.focus(&focus, cx);
-        }
-        match ITEMS[index].0 {
+    fn activate_link(&mut self, id: &str, url: String, _: &mut Window, cx: &mut Context<Self>) {
+        match id {
             // ponytail: the in-app browser panel (New tab / New window) is not ported; its
             // destinations open the system browser until it is.
             "open-in-new-tab" | "open-in-new-window" | "open-in-external-browser" => {
-                cx.open_url(&menu.url)
+                cx.open_url(&url)
             }
-            "copy-link" => cx.write_to_clipboard(ClipboardItem::new_string(menu.url)),
+            "copy-link" => cx.write_to_clipboard(ClipboardItem::new_string(url)),
             "save-link-as" => {
                 let downloads = std::env::var_os("HOME")
                     .map(PathBuf::from)
                     .unwrap_or_default()
                     .join("Downloads");
                 let chosen = cx.prompt_for_new_path(&downloads, None);
-                let url = menu.url;
                 cx.spawn(async move |_, _| {
                     if let Ok(Ok(Some(path))) = chosen.await {
                         // ponytail: the original's download service streams with progress;
@@ -186,120 +395,16 @@ impl ThreadView {
             }
             _ => unreachable!(),
         }
-        cx.stop_propagation();
-        cx.notify();
     }
 
     pub(super) fn menu_overlay(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
-        let menu = self.menu.as_ref().expect("open link menu");
-        let t = cx.theme();
-        let hover = t.menu_item_hover;
-        let rows = ITEMS.iter().enumerate().map(|(index, &(id, label, icon))| {
-            if index == SEPARATOR {
-                return div()
-                    .h(px(9.))
-                    .flex()
-                    .items_center()
-                    .child(div().h(px(1.)).w_full().bg(t.border))
-                    .into_any_element();
-            }
-            let enabled = enabled(index);
-            div()
-                .id(("thread-link-menu-item", index))
-                .role(Role::MenuItem)
-                .aria_label(label)
-                .aria_disabled(!enabled)
-                .when(menu.active == Some(index), |d| {
-                    d.aria_active_descendant().bg(hover)
-                })
-                .h(px(28.5625))
-                .px(px(8.))
-                .rounded(px(12.))
-                .flex()
-                .items_center()
-                .gap(px(6.))
-                .when(enabled, |d| {
-                    d.cursor_pointer()
-                        .on_hover(cx.listener(move |this, hovered, _, cx| {
-                            if *hovered && let Some(menu) = &mut this.menu {
-                                menu.active = Some(index);
-                                cx.notify();
-                            }
-                        }))
-                })
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(move |this, _, window, cx| this.activate(index, window, cx)))
-                .when_some(icon, |d, icon| {
-                    let color = t.text;
-                    d.child(
-                        div().size(px(16.)).flex_none().child(
-                            gpui::canvas(
-                                |_, _, _| {},
-                                move |bounds, (), window, cx| {
-                                    if !shapes::paint_icon(
-                                        icon, id, bounds, false, color, None, window, cx,
-                                    ) {
-                                        window
-                                            .paint_svg(
-                                                bounds,
-                                                id.into(),
-                                                Some(icon),
-                                                gpui::TransformationMatrix::default(),
-                                                color,
-                                                cx,
-                                            )
-                                            .ok();
-                                    }
-                                },
-                            )
-                            .size(px(16.)),
-                        ),
-                    )
-                })
-                .child(
-                    text(
-                        label,
-                        13.,
-                        18.5714,
-                        430.,
-                        if enabled { t.text } else { t.text_tertiary },
-                    )
-                    .flex_1(),
-                )
-                .into_any_element()
-        });
-        let popup = crate::composer::popover(t, 220., |d| d.children(rows))
-            .ml_0()
-            .pl_0()
-            .id("thread-link-menu")
-            .role(Role::Menu)
-            .aria_label("Link actions")
-            .track_focus(&menu.focus)
-            .on_key_down(cx.listener(Self::menu_key))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation());
-        deferred(
-            anchored().position(gpui::point(px(0.), px(0.))).child(
-                div()
-                    .w(window.viewport_size().width)
-                    .h(window.viewport_size().height)
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, window, cx| this.close_menu(window, cx)),
-                    )
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(|this, _, window, cx| this.close_menu(window, cx)),
-                    )
-                    .child(
-                        anchored()
-                            .position(menu.position)
-                            .anchor(Anchor::TopLeft)
-                            .snap_to_window_with_margin(px(8.))
-                            .child(popup),
-                    ),
-            ),
+        self.menu.as_ref().expect("open link menu").overlay(
+            "thread-link-menu",
+            "Link actions",
+            |this| &mut this.menu,
+            Self::activate_link,
+            window,
+            cx,
         )
-        .with_priority(4)
     }
 }
