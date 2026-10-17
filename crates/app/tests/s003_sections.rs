@@ -1,0 +1,203 @@
+//! RS-066 replays the recorded local section without changing default Recents paging.
+#![cfg(target_os = "macos")]
+
+#[path = "common/mod.rs"]
+mod common;
+
+use anyhow::{Context as _, Result, ensure};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use common::{Fx, ROOT, proxy_child, script};
+use image::RgbaImage;
+use serde_json::{Value, json};
+use std::{fs, path::Path, time::Duration};
+
+#[test]
+fn proxy() {
+    proxy_child();
+}
+
+fn section_state(rec: &Value) -> Result<&Value> {
+    rec["fixture"]["seed"]["value"]
+        .as_object()
+        .context("original section account map")?
+        .values()
+        .next()
+        .context("original section account")
+}
+
+fn threads(rec: &Value) -> Result<Vec<Value>> {
+    let mut lines = script(None, |_| {})?;
+    let data = lines
+        .iter_mut()
+        .find_map(|line| {
+            line.pointer_mut("/msg/result/data")
+                .filter(|data| data[0]["preview"].is_string())
+        })
+        .context("recorded thread/list")?
+        .as_array_mut()
+        .context("thread/list rows")?;
+    let template = data[0].clone();
+    let state = section_state(rec)?;
+    let keys = state["sections"][0]["itemKeys"]
+        .as_array()
+        .context("original custom section members")?;
+    let rows = rec["result"]["states"][1]["rows"]
+        .as_array()
+        .context("original expanded rows")?;
+    for (index, key) in keys.iter().enumerate() {
+        let mut thread = template.clone();
+        thread["id"] = json!(
+            key.as_str()
+                .and_then(|key| key.strip_prefix("codex:thread:local:"))
+                .context("original local thread key")?
+        );
+        thread["name"] = rows.get(index).context("original row title")?["title"].clone();
+        data.push(thread);
+    }
+    Ok(lines)
+}
+
+fn control(image: &RgbaImage, reference: &Value, out: &Path, tag: &str) -> Result<()> {
+    let crop: [u32; 4] = serde_json::from_value(reference["crop"].clone())?;
+    let [x, y, width, height] = crop;
+    let port = image::imageops::crop_imm(image, x, y, width, height).to_image();
+    let screen = if reference["label"] == "Show more" {
+        "s003-sections-more"
+    } else {
+        "s003-sections-less"
+    };
+    let refs = out.join("references");
+    let directory = refs.join(screen);
+    fs::create_dir_all(&directory)?;
+    let stem = format!("dark@{}x{}", width / 2, height / 2);
+    fs::write(
+        directory.join(format!("{stem}.png")),
+        BASE64.decode(
+            reference["pngBase64"]
+                .as_str()
+                .context("original control PNG")?,
+        )?,
+    )?;
+    fs::write(
+        directory.join(format!("{stem}.spec.json")),
+        serde_json::to_vec(&reference["spec"])?,
+    )?;
+    let metrics = parity::diff_ref(&refs, &out.join(tag), screen, "dark", &port)?;
+    ensure!(
+        metrics.pass,
+        "{} differs: outside={} text={:.3}%",
+        reference["label"],
+        metrics.counts.diff_px_outside_text,
+        metrics.counts.text_diff_ratio * 100.,
+    );
+    Ok(())
+}
+
+fn check(fx: &mut Fx, rec: &Value, state: &Value, out: &Path, tag: &str) -> Result<()> {
+    let expected = if state["expanded"] == "false" {
+        0
+    } else {
+        state["rows"]
+            .as_array()
+            .context("original section rows")?
+            .len()
+    };
+    let shown = fx.read(|root, cx| {
+        root.sidebar()
+            .read(cx)
+            .section_shown("custom:s003-sections")
+    });
+    ensure!(
+        shown == Some(expected),
+        "{tag}: section shows {shown:?}, expected {expected}"
+    );
+    let recents = fx.read(|root, cx| root.sidebar().read(cx).recents_shown());
+    ensure!(
+        recents
+            == rec["provenance"]["baselineRows"]
+                .as_array()
+                .context("original Recents")?
+                .len(),
+        "{tag}: custom members entered default Recents"
+    );
+    let image = fx.shot()?;
+    image.save(out.join(format!("{tag}.png")))?;
+    if expected == 0 {
+        for sample in rec["result"]["collapsedPixels"]
+            .as_array()
+            .context("original hidden rows")?
+        {
+            let [x, y]: [u32; 2] = serde_json::from_value(sample["at"].clone())?;
+            let rgba: [u8; 4] = serde_json::from_value(sample["rgba"].clone())?;
+            ensure!(
+                image.get_pixel(x, y).0 == rgba,
+                "{tag}: a collapsed custom row remains visible"
+            );
+        }
+    } else {
+        let label = &state["buttons"][0]["text"];
+        let reference = rec["result"]["controls"]
+            .as_array()
+            .context("original control references")?
+            .iter()
+            .find(|reference| &reference["label"] == label)
+            .context("recorded paging control")?;
+        control(&image, reference, out, tag)?;
+    }
+    Ok(())
+}
+
+pub fn replay_recording(rec: &Value) -> Result<()> {
+    let out = tempfile::Builder::new()
+        .prefix("s003-sections-")
+        .tempdir_in(env!("CARGO_TARGET_TMPDIR"))?
+        .keep();
+    println!("S003_SECTION_OUTPUT {}", out.display());
+    let mut fx = Fx::captured("dark", (1280., 832.), threads(rec)?)?;
+    let sidebar = fx.read(|root, _| root.sidebar().clone());
+    let state = section_state(rec)?;
+    sidebar.update(&mut fx.cx, |sidebar, cx| sidebar.set_sections(state, cx))?;
+    fx.hover((1270., 820.))?;
+    fx.advance(Duration::from_millis(600))?;
+    let before = fx.sent()?.len();
+    check(&mut fx, rec, &rec["result"]["states"][0], &out, "rest")?;
+    for (index, step) in rec["steps"]
+        .as_array()
+        .context("original steps")?
+        .iter()
+        .enumerate()
+    {
+        let bbox = &step["target"]["bbox"];
+        let number = |key: &str| bbox[key].as_f64().context("recorded click bounds");
+        fx.click((
+            (number("x")? + number("w")? / 2.) as f32,
+            (number("y")? + number("h")? / 2.) as f32,
+        ))?;
+        fx.advance(Duration::from_millis(
+            step["waitMs"].as_u64().context("recorded wait")?,
+        ))?;
+        fx.hover((1270., 820.))?;
+        fx.advance(Duration::from_millis(600))?;
+        let state = rec["result"]["states"]
+            .as_array()
+            .context("original states")?
+            .iter()
+            .find(|state| state["afterStep"].as_u64() == Some(index as u64))
+            .context("original transition state")?;
+        check(&mut fx, rec, state, &out, &format!("step-{index}"))?;
+    }
+    let sent = fx.sent()?;
+    ensure!(
+        json!(sent[before..]) == rec["result"]["requests"],
+        "section paging sent an unrecorded request"
+    );
+    Ok(())
+}
+
+#[test]
+fn custom_section_more_less_and_collapse_follow_the_original() -> Result<()> {
+    let rec: Value = serde_json::from_slice(&fs::read(format!(
+        "{ROOT}/refs/interactions/s003_sections.json"
+    ))?)?;
+    replay_recording(&rec)
+}

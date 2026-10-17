@@ -1,0 +1,2254 @@
+{
+  "name": "s003_sections",
+  "source": "Original Mac renderer; exact approved prior S003 forty-row localThreadCatalog test seed, with original verified sidebar-custom-sections-v3 association fields.",
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 2,
+    "topFrame": true,
+    "url": "http://127.0.0.1:4663/index.html?theme=dark"
+  },
+  "fixture": {
+    "prior": "refs/interactions/s003.json#/paging",
+    "threads": 40,
+    "seed": {
+      "key": "sidebar-custom-sections-v3",
+      "value": {
+        "00000000-0000-4000-8000-000000000000": {
+          "sections": [
+            {
+              "id": "s003-sections",
+              "name": "Review",
+              "itemKeys": [
+                "codex:thread:local:0199a003-0000-7000-8000-000000000001",
+                "codex:thread:local:0199a003-0000-7000-8000-000000000002",
+                "codex:thread:local:0199a003-0000-7000-8000-000000000003",
+                "codex:thread:local:0199a003-0000-7000-8000-000000000004",
+                "codex:thread:local:0199a003-0000-7000-8000-000000000005",
+                "codex:thread:local:0199a003-0000-7000-8000-000000000006",
+                "codex:thread:local:0199a003-0000-7000-8000-000000000007",
+                "codex:thread:local:0199a003-0000-7000-8000-000000000008",
+                "codex:thread:local:0199a003-0000-7000-8000-000000000009",
+                "codex:thread:local:0199a003-0000-7000-8000-000000000010",
+                "codex:thread:local:0199a003-0000-7000-8000-000000000011",
+                "codex:thread:local:0199a003-0000-7000-8000-000000000012",
+                "codex:thread:local:0199a003-0000-7000-8000-000000000013",
+                "codex:thread:local:0199a003-0000-7000-8000-000000000014",
+                "codex:thread:local:0199a003-0000-7000-8000-000000000015"
+              ]
+            }
+          ],
+          "collapsedSectionIds": [],
+          "sectionOrder": [
+            "threads",
+            "custom:s003-sections",
+            "chats"
+          ],
+          "appServerLegacySectionIds": [],
+          "appServerMigratedHostIds": [
+            "local"
+          ]
+        }
+      }
+    }
+  },
+  "steps": [
+    {
+      "type": "click",
+      "target": {
+        "selector": "button",
+        "text": "Show more",
+        "bbox": {
+          "x": 60,
+          "y": 603,
+          "w": 88.1640625,
+          "h": 24
+        }
+      },
+      "waitMs": 600
+    },
+    {
+      "type": "click",
+      "target": {
+        "selector": "button",
+        "text": "Show less",
+        "bbox": {
+          "x": 60,
+          "y": 758,
+          "w": 80.640625,
+          "h": 24
+        }
+      },
+      "waitMs": 600
+    },
+    {
+      "type": "click",
+      "target": {
+        "selector": "button",
+        "text": "Show more",
+        "bbox": {
+          "x": 60,
+          "y": 603,
+          "w": 88.1640625,
+          "h": 24
+        }
+      },
+      "waitMs": 600
+    },
+    {
+      "type": "click",
+      "target": {
+        "selector": "[data-app-action-sidebar-section-toggle]",
+        "text": "Review",
+        "bbox": {
+          "x": 64,
+          "y": 258.5,
+          "w": 254,
+          "h": 25
+        }
+      },
+      "waitMs": 600
+    },
+    {
+      "type": "click",
+      "target": {
+        "selector": "[data-app-action-sidebar-section-toggle]",
+        "text": "Review",
+        "bbox": {
+          "x": 64,
+          "y": 258.5,
+          "w": 254,
+          "h": 25
+        }
+      },
+      "waitMs": 600
+    }
+  ],
+  "result": {
+    "states": [
+      {
+        "name": "rest",
+        "expanded": "true",
+        "header": {
+          "selector": "[data-app-action-sidebar-section-toggle]",
+          "text": "Review",
+          "bbox": {
+            "x": 64,
+            "y": 258.5,
+            "w": 254,
+            "h": 25
+          }
+        },
+        "rows": [
+          {
+            "title": "S003 thread 01",
+            "bbox": {
+              "x": 60,
+              "y": 290,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 02",
+            "bbox": {
+              "x": 60,
+              "y": 321,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 03",
+            "bbox": {
+              "x": 60,
+              "y": 352,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 04",
+            "bbox": {
+              "x": 60,
+              "y": 383,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 05",
+            "bbox": {
+              "x": 60,
+              "y": 414,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 06",
+            "bbox": {
+              "x": 60,
+              "y": 445,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 07",
+            "bbox": {
+              "x": 60,
+              "y": 476,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 08",
+            "bbox": {
+              "x": 60,
+              "y": 507,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 09",
+            "bbox": {
+              "x": 60,
+              "y": 538,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 10",
+            "bbox": {
+              "x": 60,
+              "y": 569,
+              "w": 272,
+              "h": 30
+            }
+          }
+        ],
+        "buttons": [
+          {
+            "selector": "button",
+            "text": "Show more",
+            "bbox": {
+              "x": 60,
+              "y": 603,
+              "w": 88.1640625,
+              "h": 24
+            },
+            "computed": {
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "color": "rgba(255, 255, 255, 0.498)",
+              "font": "13px / 13px -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "borderRadius": "9.375px"
+            },
+            "disabled": null
+          }
+        ],
+        "recentsControls": [],
+        "requests": [
+          {
+            "svc": "localThreadCatalog",
+            "method": "setSourceEnabled",
+            "args": [
+              {
+                "kind": "app-server"
+              },
+              true
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "subscribeStatus",
+            "args": [
+              "__fn"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "requestSync",
+            "args": [
+              [
+                "local"
+              ],
+              "immediate"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "subscribeThreadObservations",
+            "args": [
+              "__fn"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "requestStartupSync",
+            "args": []
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "requestSync",
+            "args": [
+              [
+                "local"
+              ],
+              "immediate"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "requestSync",
+            "args": [
+              [
+                "durable"
+              ],
+              "immediate"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "setSourceEnabled",
+            "args": [
+              {
+                "kind": "chatgpt",
+                "accountId": "00000000-0000-4000-8000-000000000000"
+              },
+              true
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "readStatus",
+            "args": []
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "readPage",
+            "args": [
+              {
+                "hostId": "local",
+                "limit": 10,
+                "sortKey": "updated_at"
+              }
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "readPage",
+            "args": [
+              {
+                "hostId": "chatgpt:00000000-0000-4000-8000-000000000000:user-000000000000000000000000",
+                "limit": 10,
+                "sortKey": "updated_at"
+              }
+            ]
+          },
+          {
+            "key": "sidebar-custom-sections-v3",
+            "value": {
+              "00000000-0000-4000-8000-000000000000": {
+                "sections": [],
+                "collapsedSectionIds": [],
+                "sectionOrder": [],
+                "appServerLegacySectionIds": []
+              }
+            },
+            "deleted": false,
+            "type": "persisted-atom-update"
+          },
+          {
+            "key": "sidebar-custom-sections-v3",
+            "value": {
+              "00000000-0000-4000-8000-000000000000": {
+                "sections": [],
+                "collapsedSectionIds": [],
+                "sectionOrder": [],
+                "appServerLegacySectionIds": [],
+                "appServerMigratedHostIds": [
+                  "local"
+                ]
+              }
+            },
+            "deleted": false,
+            "type": "persisted-atom-update"
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "readThreadCount",
+            "args": [
+              "local"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "readEntries",
+            "args": [
+              [
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000001"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000002"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000003"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000004"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000005"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000006"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000007"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000008"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000009"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000010"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000011"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000012"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000013"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000014"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000015"
+                }
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "name": "more",
+        "afterStep": 0,
+        "expanded": "true",
+        "header": {
+          "selector": "[data-app-action-sidebar-section-toggle]",
+          "text": "Review",
+          "bbox": {
+            "x": 64,
+            "y": 258.5,
+            "w": 254,
+            "h": 25
+          }
+        },
+        "rows": [
+          {
+            "title": "S003 thread 01",
+            "bbox": {
+              "x": 60,
+              "y": 290,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 02",
+            "bbox": {
+              "x": 60,
+              "y": 321,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 03",
+            "bbox": {
+              "x": 60,
+              "y": 352,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 04",
+            "bbox": {
+              "x": 60,
+              "y": 383,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 05",
+            "bbox": {
+              "x": 60,
+              "y": 414,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 06",
+            "bbox": {
+              "x": 60,
+              "y": 445,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 07",
+            "bbox": {
+              "x": 60,
+              "y": 476,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 08",
+            "bbox": {
+              "x": 60,
+              "y": 507,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 09",
+            "bbox": {
+              "x": 60,
+              "y": 538,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 10",
+            "bbox": {
+              "x": 60,
+              "y": 569,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 11",
+            "bbox": {
+              "x": 60,
+              "y": 600,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 12",
+            "bbox": {
+              "x": 60,
+              "y": 631,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 13",
+            "bbox": {
+              "x": 60,
+              "y": 662,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 14",
+            "bbox": {
+              "x": 60,
+              "y": 693,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 15",
+            "bbox": {
+              "x": 60,
+              "y": 724,
+              "w": 272,
+              "h": 30
+            }
+          }
+        ],
+        "buttons": [
+          {
+            "selector": "button",
+            "text": "Show less",
+            "bbox": {
+              "x": 60,
+              "y": 758,
+              "w": 80.640625,
+              "h": 24
+            },
+            "computed": {
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "color": "rgba(255, 255, 255, 0.498)",
+              "font": "13px / 13px -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "borderRadius": "9.375px"
+            },
+            "disabled": null
+          }
+        ],
+        "recentsControls": [],
+        "requests": [
+          {
+            "svc": "localThreadCatalog",
+            "method": "setSourceEnabled",
+            "args": [
+              {
+                "kind": "app-server"
+              },
+              true
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "subscribeStatus",
+            "args": [
+              "__fn"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "requestSync",
+            "args": [
+              [
+                "local"
+              ],
+              "immediate"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "subscribeThreadObservations",
+            "args": [
+              "__fn"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "requestStartupSync",
+            "args": []
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "requestSync",
+            "args": [
+              [
+                "local"
+              ],
+              "immediate"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "requestSync",
+            "args": [
+              [
+                "durable"
+              ],
+              "immediate"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "setSourceEnabled",
+            "args": [
+              {
+                "kind": "chatgpt",
+                "accountId": "00000000-0000-4000-8000-000000000000"
+              },
+              true
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "readStatus",
+            "args": []
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "readPage",
+            "args": [
+              {
+                "hostId": "local",
+                "limit": 10,
+                "sortKey": "updated_at"
+              }
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "readPage",
+            "args": [
+              {
+                "hostId": "chatgpt:00000000-0000-4000-8000-000000000000:user-000000000000000000000000",
+                "limit": 10,
+                "sortKey": "updated_at"
+              }
+            ]
+          },
+          {
+            "key": "sidebar-custom-sections-v3",
+            "value": {
+              "00000000-0000-4000-8000-000000000000": {
+                "sections": [],
+                "collapsedSectionIds": [],
+                "sectionOrder": [],
+                "appServerLegacySectionIds": []
+              }
+            },
+            "deleted": false,
+            "type": "persisted-atom-update"
+          },
+          {
+            "key": "sidebar-custom-sections-v3",
+            "value": {
+              "00000000-0000-4000-8000-000000000000": {
+                "sections": [],
+                "collapsedSectionIds": [],
+                "sectionOrder": [],
+                "appServerLegacySectionIds": [],
+                "appServerMigratedHostIds": [
+                  "local"
+                ]
+              }
+            },
+            "deleted": false,
+            "type": "persisted-atom-update"
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "readThreadCount",
+            "args": [
+              "local"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "readEntries",
+            "args": [
+              [
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000001"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000002"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000003"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000004"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000005"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000006"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000007"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000008"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000009"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000010"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000011"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000012"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000013"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000014"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000015"
+                }
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "name": "less",
+        "afterStep": 1,
+        "expanded": "true",
+        "header": {
+          "selector": "[data-app-action-sidebar-section-toggle]",
+          "text": "Review",
+          "bbox": {
+            "x": 64,
+            "y": 258.5,
+            "w": 254,
+            "h": 25
+          }
+        },
+        "rows": [
+          {
+            "title": "S003 thread 01",
+            "bbox": {
+              "x": 60,
+              "y": 290,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 02",
+            "bbox": {
+              "x": 60,
+              "y": 321,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 03",
+            "bbox": {
+              "x": 60,
+              "y": 352,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 04",
+            "bbox": {
+              "x": 60,
+              "y": 383,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 05",
+            "bbox": {
+              "x": 60,
+              "y": 414,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 06",
+            "bbox": {
+              "x": 60,
+              "y": 445,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 07",
+            "bbox": {
+              "x": 60,
+              "y": 476,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 08",
+            "bbox": {
+              "x": 60,
+              "y": 507,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 09",
+            "bbox": {
+              "x": 60,
+              "y": 538,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 10",
+            "bbox": {
+              "x": 60,
+              "y": 569,
+              "w": 272,
+              "h": 30
+            }
+          }
+        ],
+        "buttons": [
+          {
+            "selector": "button",
+            "text": "Show more",
+            "bbox": {
+              "x": 60,
+              "y": 603,
+              "w": 88.1640625,
+              "h": 24
+            },
+            "computed": {
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "color": "rgba(255, 255, 255, 0.498)",
+              "font": "13px / 13px -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "borderRadius": "9.375px"
+            },
+            "disabled": null
+          }
+        ],
+        "recentsControls": [],
+        "requests": [
+          {
+            "svc": "localThreadCatalog",
+            "method": "setSourceEnabled",
+            "args": [
+              {
+                "kind": "app-server"
+              },
+              true
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "subscribeStatus",
+            "args": [
+              "__fn"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "requestSync",
+            "args": [
+              [
+                "local"
+              ],
+              "immediate"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "subscribeThreadObservations",
+            "args": [
+              "__fn"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "requestStartupSync",
+            "args": []
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "requestSync",
+            "args": [
+              [
+                "local"
+              ],
+              "immediate"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "requestSync",
+            "args": [
+              [
+                "durable"
+              ],
+              "immediate"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "setSourceEnabled",
+            "args": [
+              {
+                "kind": "chatgpt",
+                "accountId": "00000000-0000-4000-8000-000000000000"
+              },
+              true
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "readStatus",
+            "args": []
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "readPage",
+            "args": [
+              {
+                "hostId": "local",
+                "limit": 10,
+                "sortKey": "updated_at"
+              }
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "readPage",
+            "args": [
+              {
+                "hostId": "chatgpt:00000000-0000-4000-8000-000000000000:user-000000000000000000000000",
+                "limit": 10,
+                "sortKey": "updated_at"
+              }
+            ]
+          },
+          {
+            "key": "sidebar-custom-sections-v3",
+            "value": {
+              "00000000-0000-4000-8000-000000000000": {
+                "sections": [],
+                "collapsedSectionIds": [],
+                "sectionOrder": [],
+                "appServerLegacySectionIds": []
+              }
+            },
+            "deleted": false,
+            "type": "persisted-atom-update"
+          },
+          {
+            "key": "sidebar-custom-sections-v3",
+            "value": {
+              "00000000-0000-4000-8000-000000000000": {
+                "sections": [],
+                "collapsedSectionIds": [],
+                "sectionOrder": [],
+                "appServerLegacySectionIds": [],
+                "appServerMigratedHostIds": [
+                  "local"
+                ]
+              }
+            },
+            "deleted": false,
+            "type": "persisted-atom-update"
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "readThreadCount",
+            "args": [
+              "local"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "readEntries",
+            "args": [
+              [
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000001"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000002"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000003"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000004"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000005"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000006"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000007"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000008"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000009"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000010"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000011"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000012"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000013"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000014"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000015"
+                }
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "name": "more",
+        "afterStep": 2,
+        "expanded": "true",
+        "header": {
+          "selector": "[data-app-action-sidebar-section-toggle]",
+          "text": "Review",
+          "bbox": {
+            "x": 64,
+            "y": 258.5,
+            "w": 254,
+            "h": 25
+          }
+        },
+        "rows": [
+          {
+            "title": "S003 thread 01",
+            "bbox": {
+              "x": 60,
+              "y": 290,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 02",
+            "bbox": {
+              "x": 60,
+              "y": 321,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 03",
+            "bbox": {
+              "x": 60,
+              "y": 352,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 04",
+            "bbox": {
+              "x": 60,
+              "y": 383,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 05",
+            "bbox": {
+              "x": 60,
+              "y": 414,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 06",
+            "bbox": {
+              "x": 60,
+              "y": 445,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 07",
+            "bbox": {
+              "x": 60,
+              "y": 476,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 08",
+            "bbox": {
+              "x": 60,
+              "y": 507,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 09",
+            "bbox": {
+              "x": 60,
+              "y": 538,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 10",
+            "bbox": {
+              "x": 60,
+              "y": 569,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 11",
+            "bbox": {
+              "x": 60,
+              "y": 600,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 12",
+            "bbox": {
+              "x": 60,
+              "y": 631,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 13",
+            "bbox": {
+              "x": 60,
+              "y": 662,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 14",
+            "bbox": {
+              "x": 60,
+              "y": 693,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 15",
+            "bbox": {
+              "x": 60,
+              "y": 724,
+              "w": 272,
+              "h": 30
+            }
+          }
+        ],
+        "buttons": [
+          {
+            "selector": "button",
+            "text": "Show less",
+            "bbox": {
+              "x": 60,
+              "y": 758,
+              "w": 80.640625,
+              "h": 24
+            },
+            "computed": {
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "color": "rgba(255, 255, 255, 0.498)",
+              "font": "13px / 13px -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "borderRadius": "9.375px"
+            },
+            "disabled": null
+          }
+        ],
+        "recentsControls": [],
+        "requests": [
+          {
+            "svc": "localThreadCatalog",
+            "method": "setSourceEnabled",
+            "args": [
+              {
+                "kind": "app-server"
+              },
+              true
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "subscribeStatus",
+            "args": [
+              "__fn"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "requestSync",
+            "args": [
+              [
+                "local"
+              ],
+              "immediate"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "subscribeThreadObservations",
+            "args": [
+              "__fn"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "requestStartupSync",
+            "args": []
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "requestSync",
+            "args": [
+              [
+                "local"
+              ],
+              "immediate"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "requestSync",
+            "args": [
+              [
+                "durable"
+              ],
+              "immediate"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "setSourceEnabled",
+            "args": [
+              {
+                "kind": "chatgpt",
+                "accountId": "00000000-0000-4000-8000-000000000000"
+              },
+              true
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "readStatus",
+            "args": []
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "readPage",
+            "args": [
+              {
+                "hostId": "local",
+                "limit": 10,
+                "sortKey": "updated_at"
+              }
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "readPage",
+            "args": [
+              {
+                "hostId": "chatgpt:00000000-0000-4000-8000-000000000000:user-000000000000000000000000",
+                "limit": 10,
+                "sortKey": "updated_at"
+              }
+            ]
+          },
+          {
+            "key": "sidebar-custom-sections-v3",
+            "value": {
+              "00000000-0000-4000-8000-000000000000": {
+                "sections": [],
+                "collapsedSectionIds": [],
+                "sectionOrder": [],
+                "appServerLegacySectionIds": []
+              }
+            },
+            "deleted": false,
+            "type": "persisted-atom-update"
+          },
+          {
+            "key": "sidebar-custom-sections-v3",
+            "value": {
+              "00000000-0000-4000-8000-000000000000": {
+                "sections": [],
+                "collapsedSectionIds": [],
+                "sectionOrder": [],
+                "appServerLegacySectionIds": [],
+                "appServerMigratedHostIds": [
+                  "local"
+                ]
+              }
+            },
+            "deleted": false,
+            "type": "persisted-atom-update"
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "readThreadCount",
+            "args": [
+              "local"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "readEntries",
+            "args": [
+              [
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000001"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000002"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000003"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000004"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000005"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000006"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000007"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000008"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000009"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000010"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000011"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000012"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000013"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000014"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000015"
+                }
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "name": "collapsed",
+        "afterStep": 3,
+        "expanded": "false"
+      },
+      {
+        "name": "reopened",
+        "afterStep": 4,
+        "expanded": "true",
+        "header": {
+          "selector": "[data-app-action-sidebar-section-toggle]",
+          "text": "Review",
+          "bbox": {
+            "x": 64,
+            "y": 258.5,
+            "w": 202,
+            "h": 25
+          }
+        },
+        "rows": [
+          {
+            "title": "S003 thread 01",
+            "bbox": {
+              "x": 60,
+              "y": 290,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 02",
+            "bbox": {
+              "x": 60,
+              "y": 321,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 03",
+            "bbox": {
+              "x": 60,
+              "y": 352,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 04",
+            "bbox": {
+              "x": 60,
+              "y": 383,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 05",
+            "bbox": {
+              "x": 60,
+              "y": 414,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 06",
+            "bbox": {
+              "x": 60,
+              "y": 445,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 07",
+            "bbox": {
+              "x": 60,
+              "y": 476,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 08",
+            "bbox": {
+              "x": 60,
+              "y": 507,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 09",
+            "bbox": {
+              "x": 60,
+              "y": 538,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 10",
+            "bbox": {
+              "x": 60,
+              "y": 569,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 11",
+            "bbox": {
+              "x": 60,
+              "y": 600,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 12",
+            "bbox": {
+              "x": 60,
+              "y": 631,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 13",
+            "bbox": {
+              "x": 60,
+              "y": 662,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 14",
+            "bbox": {
+              "x": 60,
+              "y": 693,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "title": "S003 thread 15",
+            "bbox": {
+              "x": 60,
+              "y": 724,
+              "w": 272,
+              "h": 30
+            }
+          }
+        ],
+        "buttons": [
+          {
+            "selector": "button",
+            "text": "Show less",
+            "bbox": {
+              "x": 60,
+              "y": 758,
+              "w": 80.640625,
+              "h": 24
+            },
+            "computed": {
+              "backgroundColor": "rgba(0, 0, 0, 0)",
+              "color": "rgba(255, 255, 255, 0.498)",
+              "font": "13px / 13px -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "borderRadius": "9.375px"
+            },
+            "disabled": null
+          }
+        ],
+        "recentsControls": [],
+        "requests": [
+          {
+            "svc": "localThreadCatalog",
+            "method": "setSourceEnabled",
+            "args": [
+              {
+                "kind": "app-server"
+              },
+              true
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "subscribeStatus",
+            "args": [
+              "__fn"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "requestSync",
+            "args": [
+              [
+                "local"
+              ],
+              "immediate"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "subscribeThreadObservations",
+            "args": [
+              "__fn"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "requestStartupSync",
+            "args": []
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "requestSync",
+            "args": [
+              [
+                "local"
+              ],
+              "immediate"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "requestSync",
+            "args": [
+              [
+                "durable"
+              ],
+              "immediate"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "setSourceEnabled",
+            "args": [
+              {
+                "kind": "chatgpt",
+                "accountId": "00000000-0000-4000-8000-000000000000"
+              },
+              true
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "readStatus",
+            "args": []
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "readPage",
+            "args": [
+              {
+                "hostId": "local",
+                "limit": 10,
+                "sortKey": "updated_at"
+              }
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "readPage",
+            "args": [
+              {
+                "hostId": "chatgpt:00000000-0000-4000-8000-000000000000:user-000000000000000000000000",
+                "limit": 10,
+                "sortKey": "updated_at"
+              }
+            ]
+          },
+          {
+            "key": "sidebar-custom-sections-v3",
+            "value": {
+              "00000000-0000-4000-8000-000000000000": {
+                "sections": [],
+                "collapsedSectionIds": [],
+                "sectionOrder": [],
+                "appServerLegacySectionIds": []
+              }
+            },
+            "deleted": false,
+            "type": "persisted-atom-update"
+          },
+          {
+            "key": "sidebar-custom-sections-v3",
+            "value": {
+              "00000000-0000-4000-8000-000000000000": {
+                "sections": [],
+                "collapsedSectionIds": [],
+                "sectionOrder": [],
+                "appServerLegacySectionIds": [],
+                "appServerMigratedHostIds": [
+                  "local"
+                ]
+              }
+            },
+            "deleted": false,
+            "type": "persisted-atom-update"
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "readThreadCount",
+            "args": [
+              "local"
+            ]
+          },
+          {
+            "svc": "localThreadCatalog",
+            "method": "readEntries",
+            "args": [
+              [
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000001"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000002"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000003"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000004"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000005"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000006"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000007"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000008"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000009"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000010"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000011"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000012"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000013"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000014"
+                },
+                {
+                  "hostId": "local",
+                  "threadId": "0199a003-0000-7000-8000-000000000015"
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    ],
+    "requests": [],
+    "controls": [
+      {
+        "label": "Show less",
+        "bbox": {
+          "x": 60,
+          "y": 758,
+          "w": 80.640625,
+          "h": 24
+        },
+        "crop": [
+          120,
+          1516,
+          162,
+          48
+        ],
+        "pngBase64": "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",
+        "spec": {
+          "viewport": [
+            81.0,
+            24.0,
+            2
+          ],
+          "texts": [
+            {
+              "rect": [
+                8.0,
+                3.5,
+                64.640625,
+                16.5
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "label": "Show more",
+        "bbox": {
+          "x": 60,
+          "y": 603,
+          "w": 88.1640625,
+          "h": 24
+        },
+        "crop": [
+          120,
+          1206,
+          178,
+          48
+        ],
+        "pngBase64": "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",
+        "spec": {
+          "viewport": [
+            89.0,
+            24.0,
+            2
+          ],
+          "texts": [
+            {
+              "rect": [
+                8.0,
+                3.5,
+                72.1640625,
+                16.5
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "collapsedPixels": [
+      {
+        "at": [
+          326,
+          1239
+        ],
+        "rgba": [
+          29,
+          29,
+          29,
+          255
+        ],
+        "note": "Collapsed section hides recorded row 11."
+      },
+      {
+        "at": [
+          332,
+          1484
+        ],
+        "rgba": [
+          29,
+          29,
+          29,
+          255
+        ],
+        "note": "Collapsed section hides recorded row 15."
+      }
+    ]
+  },
+  "screenshots": [
+    "original-rest.png",
+    "original-step-1.png",
+    "original-step-2.png",
+    "original-step-3.png",
+    "original-step-4.png",
+    "original-step-5.png"
+  ],
+  "provenance": {
+    "fourRowCatalog": {
+      "catalogEntries": [
+        {
+          "hostId": "local",
+          "threadId": "01a13deb-899c-7c01-842a-9b97dc221163",
+          "displayTitle": "Reply with the single word: pong",
+          "sourceCreatedAt": 1792040208,
+          "sourceUpdatedAt": 1792040211,
+          "sourceRecencyAt": 1792040208,
+          "cwd": "/private/tmp/cgx-mac/proj",
+          "sourceKind": "vscode",
+          "sourceDetail": null,
+          "threadSource": null,
+          "modelProvider": "openai",
+          "gitBranch": "main"
+        },
+        {
+          "hostId": "local",
+          "threadId": "01a13de9-c48a-7b20-8382-db900881cb99",
+          "displayTitle": "Change the greeting in hello.py to \"Hello, Codex\".",
+          "sourceCreatedAt": 1792040092,
+          "sourceUpdatedAt": 1792040102,
+          "sourceRecencyAt": 1792040092,
+          "cwd": "/private/tmp/cgx-mac/proj",
+          "sourceKind": "vscode",
+          "sourceDetail": null,
+          "threadSource": null,
+          "modelProvider": "openai",
+          "gitBranch": "main"
+        },
+        {
+          "hostId": "local",
+          "threadId": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f",
+          "displayTitle": "Add a subtract(a, b) function to src/math.py next to add, then run python3 -c '\u2026",
+          "sourceCreatedAt": 1792040071,
+          "sourceUpdatedAt": 1792040088,
+          "sourceRecencyAt": 1792040071,
+          "cwd": "/private/tmp/cgx-mac/proj",
+          "sourceKind": "vscode",
+          "sourceDetail": null,
+          "threadSource": null,
+          "modelProvider": "openai",
+          "gitBranch": "main"
+        },
+        {
+          "hostId": "local",
+          "threadId": "01a13de9-35ed-7c72-a36a-68eeb2f4e1ee",
+          "displayTitle": "In two sentences, what does this repository contain?",
+          "sourceCreatedAt": 1792040056,
+          "sourceUpdatedAt": 1792040067,
+          "sourceRecencyAt": 1792040056,
+          "cwd": "/private/tmp/cgx-mac/proj",
+          "sourceKind": "vscode",
+          "sourceDetail": null,
+          "threadSource": null,
+          "modelProvider": "openai",
+          "gitBranch": "main"
+        }
+      ],
+      "catalogHostIds": [
+        "local"
+      ],
+      "globalStateEntries": [
+        {
+          "key": "desktop-first-seen-at-ms",
+          "value": 1792038580503
+        },
+        {
+          "key": "local-projects",
+          "value": {}
+        },
+        {
+          "key": "selected-project",
+          "value": null
+        },
+        {
+          "key": "project-appearances",
+          "value": {}
+        },
+        {
+          "key": "pinned-thread-ids",
+          "value": null
+        },
+        {
+          "key": "pinned-project-ids",
+          "value": null
+        },
+        {
+          "key": "sidebar-project-thread-orders",
+          "value": {}
+        },
+        {
+          "key": "sidebar-thread-metadata",
+          "value": null
+        },
+        {
+          "key": "thread-project-assignments",
+          "value": null
+        },
+        {
+          "key": "thread-workspace-root-hints",
+          "value": null
+        },
+        {
+          "key": "projectless-thread-ids",
+          "value": null
+        },
+        {
+          "key": "remote-projects",
+          "value": []
+        },
+        {
+          "key": "project-order",
+          "value": null
+        },
+        {
+          "key": "connection-group-order",
+          "value": null
+        },
+        {
+          "key": "remote-cwds-by-host-and-workspace",
+          "value": null
+        },
+        {
+          "key": "added-remote-control-env-ids",
+          "value": []
+        },
+        {
+          "key": "remote-connection-auto-connect-by-host-id",
+          "value": null
+        }
+      ],
+      "workspaceRootOptions": {
+        "roots": [],
+        "labels": {}
+      },
+      "projectlessWorkspaceRoot": {
+        "workspaceRoot": "/Users/user/Documents/Codex"
+      }
+    },
+    "baselineRows": [
+      {
+        "id": "local:01a13de9-c48a-7b20-8382-db900881cb99",
+        "title": "Change the greeting in hello.py to \"Hello, Codex\"."
+      },
+      {
+        "id": "local:01a13de9-6fff-78e1-84fc-ebb3a2dc873f",
+        "title": "Add a subtract(a, b) function to src/math.py next to add, then run python3 -c '\u2026"
+      },
+      {
+        "id": "local:01a13de9-35ed-7c72-a36a-68eeb2f4e1ee",
+        "title": "In two sentences, what does this repository contain?"
+      }
+    ],
+    "priorFixture": "The exact prior approved S003 forty-row localThreadCatalog generator supplies controlled input only.",
+    "originalRequestsBeforeSteps": [
+      {
+        "svc": "localThreadCatalog",
+        "method": "readEntries",
+        "args": [
+          [
+            {
+              "hostId": "local",
+              "threadId": "0199a003-0000-7000-8000-000000000001"
+            },
+            {
+              "hostId": "local",
+              "threadId": "0199a003-0000-7000-8000-000000000002"
+            },
+            {
+              "hostId": "local",
+              "threadId": "0199a003-0000-7000-8000-000000000003"
+            },
+            {
+              "hostId": "local",
+              "threadId": "0199a003-0000-7000-8000-000000000004"
+            },
+            {
+              "hostId": "local",
+              "threadId": "0199a003-0000-7000-8000-000000000005"
+            },
+            {
+              "hostId": "local",
+              "threadId": "0199a003-0000-7000-8000-000000000006"
+            },
+            {
+              "hostId": "local",
+              "threadId": "0199a003-0000-7000-8000-000000000007"
+            },
+            {
+              "hostId": "local",
+              "threadId": "0199a003-0000-7000-8000-000000000008"
+            },
+            {
+              "hostId": "local",
+              "threadId": "0199a003-0000-7000-8000-000000000009"
+            },
+            {
+              "hostId": "local",
+              "threadId": "0199a003-0000-7000-8000-000000000010"
+            },
+            {
+              "hostId": "local",
+              "threadId": "0199a003-0000-7000-8000-000000000011"
+            },
+            {
+              "hostId": "local",
+              "threadId": "0199a003-0000-7000-8000-000000000012"
+            },
+            {
+              "hostId": "local",
+              "threadId": "0199a003-0000-7000-8000-000000000013"
+            },
+            {
+              "hostId": "local",
+              "threadId": "0199a003-0000-7000-8000-000000000014"
+            },
+            {
+              "hostId": "local",
+              "threadId": "0199a003-0000-7000-8000-000000000015"
+            }
+          ]
+        ]
+      }
+    ],
+    "viewportRule": "Every retained transition screenshot checks the live 1280x832 DPR-2 viewport before capture.",
+    "storage": "The original list expansion uses its in-memory section map. This recording adds no custom-section storage."
+  }
+}
