@@ -107,6 +107,22 @@ pub fn tpp_models(identity: &Identity) -> Request {
     }))
 }
 
+/// The Scheduled page's read-only suggestion request.
+pub fn suggested_automations() -> Request {
+    Request::Http(json!({
+        "url": "/suggested_automations",
+        "method": "GET",
+        "headers": {
+            "OAI-Language": "en-US",
+            "X-OpenAI-Attach-Auth": "1",
+            "X-OpenAI-Attach-Integrity-State": "1",
+            "originator": "Codex Desktop",
+            "X-OpenAI-Task-Suggestions-Surface": "scheduled_page",
+        },
+        "returnErrorResponse": true,
+    }))
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Exchange {
     pub request: Request,

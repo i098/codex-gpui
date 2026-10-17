@@ -1307,6 +1307,7 @@ pub struct Login {
     api_key: String,
     focus: FocusHandle,
     error: Option<String>,
+    restart_blocked: bool,
 }
 
 enum Stage {
@@ -1324,7 +1325,12 @@ impl Login {
             api_key: String::new(),
             focus: cx.focus_handle(),
             error: None,
+            restart_blocked: false,
         }
+    }
+
+    pub fn restart_ready(&self) -> bool {
+        !self.restart_blocked && matches!(self.stage, Stage::Welcome) && self.api_key.is_empty()
     }
 
     /// `account/login/completed`: a failed sign-in shows its error and returns to the start.
@@ -1348,6 +1354,7 @@ impl Login {
             return;
         };
         let bridge = bridge.clone();
+        self.restart_blocked = true;
         cx.spawn(async move |this, cx| {
             let result = bridge
                 .request::<_, Value>("account/login/start", params)

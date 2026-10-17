@@ -57,40 +57,46 @@ Each screen still runs both themes and sizes before it returns its combined fail
 The flow executable exits 1 if any flow fails.
 There is no report-only or optional mode.
 
+`Fx::reference_shot` parks the pointer at `(round(width * 0.6), 6)` and makes only the captured composer caret transparent.
+It keeps keyboard focus, selection, and editor input intact, then restores normal caret drawing.
+The fixture clock uses the original `2026-10-15T17:00:00Z` base and `-07:00` offset, plus monotonic elapsed time from test startup.
+The original preload also advances from its base; the exact historical screenshot instant is not retained.
+Normal Root clocks remain live, and the separate static screen clocks keep their fixed semantics.
+
 Run all nine Root checks with `tools/mac.sh -l root-gate 'cargo test -p app --test flows -- parity_'`.
 Keep `cargo run -p parity -- --gate` as the separate static screen gate.
 Its 36 passing comparisons do not prove Root parity.
 
-The P7 Mac run checks dark and light at 1280x832 and 1440x900.
+The capture-preparation Mac run checks dark and light at 1280x832 and 1440x900.
 Each cell below gives `outside count / text percent`.
-The six failing screens remain tracked in [the Root mismatch issue](https://github.com/i098/codex-gpui/issues/151).
+Composer passes all four comparisons; five failing screens remain tracked in [the Root mismatch issue](https://github.com/i098/codex-gpui/issues/151).
 
 | Screen and input entry | Dark 1280x832 | Dark 1440x900 | Light 1280x832 | Light 1440x900 |
 |---|---|---|---|---|
-| Home: launch | 0 / 0.411% | 0 / 0.411% | 0 / 0.132% | 0 / 0.132% |
-| Sidebar: Search, type `math` | 95803 / 12.237% | 102494 / 9.982% | 128171 / 13.479% | 137529 / 10.368% |
-| Composer: type `Refactor src/math.py`, click model pill | 11016 / 2.402% | 11016 / 2.402% | 11016 / 2.320% | 11016 / 2.320% |
-| Thread: click the subtract row | 3695 / 1.669% | 3695 / 1.649% | 3698 / 1.670% | 3698 / 1.651% |
-| Diff: subtract, `⌥⌘B`, collapse file | 3695 / 1.379% | 3695 / 1.492% | 3698 / 1.303% | 3698 / 1.412% |
+| Home: launch | 0 / 0.377% | 0 / 0.377% | 0 / 0.098% | 0 / 0.098% |
+| Sidebar: Search, type `math` | 95831 / 12.250% | 102522 / 9.995% | 128199 / 13.491% | 137557 / 10.381% |
+| Composer: type `Refactor src/math.py`, click model pill | 0 / 0.332% | 0 / 0.332% | 0 / 0.250% | 0 / 0.250% |
+| Thread: click the subtract row | 3695 / 0.795% | 3695 / 0.786% | 3698 / 0.797% | 3698 / 0.788% |
+| Diff: subtract, `⌥⌘B`, collapse file | 3695 / 0.694% | 3695 / 0.795% | 3698 / 0.617% | 3698 / 0.716% |
 | Settings: `⌘,` | 0 / 0.088% | 0 / 0.080% | 0 / 0.117% | 0 / 0.107% |
-| Automations: click Scheduled | 45742 / 27.970% | 45740 / 27.970% | 45788 / 28.031% | 45764 / 28.031% |
-| Terminal: subtract, recorded command events, summary command row | 3830 / 0.745% | 3830 / 0.819% | 3833 / 0.738% | 3833 / 0.808% |
+| Automations: click Scheduled | 40039 / 27.119% | 40037 / 27.119% | 40077 / 27.176% | 40053 / 27.176% |
+| Terminal: subtract, recorded command events, summary command row | 3830 / 0.727% | 3830 / 0.801% | 3833 / 0.720% | 3833 / 0.791% |
 | Mobile: avatar, Set up mobile | 0 / 0.468% | 0 / 0.468% | 0 / 0.467% | 0 / 0.467% |
 
 The old profile helper opens Keyboard shortcuts over Home instead of Mobile.
 The corrected helper uses the proved Mobile entry; the old failed captures remain retained in the acceptance evidence.
 The large-window Composer click uses the original reference's centered-column and bottom offsets.
-The prior large-window clicks miss the menu; the corrected clicks reach it and still fail the strict pixel gate.
+The prior large-window clicks miss the menu; the corrected clicks and reference capture preparation pass the strict Composer gate.
 
-Fixture, clock, focus, host-data, and drawing differences remain unresolved.
-None of these possible causes waives a failure.
+Pointer, clock, and composer-caret preparation now follow the reference; other fixture, host-data, and drawing differences remain unresolved.
+None of these remaining causes waives a failure.
 Keep S026's recorded command groups and settled search behavior instead of restoring an older pending-search screenshot state.
 Keep S009's File viewer behavior; its recorded test replaces the obsolete file-link-to-Changes assertion.
 The S009, S026, F3b, and S034b recorded tests pass with the strict shared helper.
 Formatting and `cargo clippy --workspace --all-targets -- -D warnings` pass after integrating current main.
 The initial broad clippy run failed at `ms6a.rs:168`; the retained log preserves that result.
 
-An isolated smoke check sends a retained input-driven Composer capture through `parity_image`; it returns exit 1 with 11016 outside pixels.
+Before this repair, an isolated smoke check sends a retained Composer capture through `parity_image` and returns exit 1 with 11016 outside pixels.
 All 36 unchanged original images pass the same helper with zero differences.
 Replaying the old Mobile click returns exit 1 for all four route checks before any pixel comparison.
 These checks prove the guard; they do not replace the failing Root captures.
@@ -137,6 +143,10 @@ These checks prove the guard; they do not replace the failing Root captures.
 | 11 | Focus ring | focus ring | 2 px ring on the 36×36 button. | No tab stops. | NOT WIRED (`crates/ui/src/lib.rs` `Shell::rail`: no focus handles or `focus_visible` ring) |
 | 12 | Resize | resize | At 1280, 767 and 600 px the rail stays 52 px. | The rail stays and rail Home answers at all 3 widths. | PASS (`resize_three_widths`) |
 
+Home reselect clears the draft and keeps the current focus only when the main view is `HomeMain`.
+Home rail selection can identify the Thread route family; it does not identify the current Home view.
+Thread-to-Home navigation keeps the Home composer focus set by `Root::new_chat`.
+
 ## 14.2 Sidebar
 
 | # | Item | Kind | Original | Port | Status |
@@ -173,10 +183,30 @@ The original shows no toast for this Unpin action.
 S001b replays `refs/interactions/s001b.json` with `cargo test -p app --test s001b` on macOS: the Pin click moves the row under `Pinned` at once, sends `thread/section/move` with the fixed Pinned section, shows no toast, hides the Unpin icon at rest, and a refused move puts the row back without a toast.
 Running-chat and scheduled-task archive confirmation still need a dialog extension outside this six-file slice.
 
+S031 replays `refs/interactions/s031.json` with `cargo test -p app --test s031` on macOS.
+The original recording uses real archive and unarchive replies from an isolated fixture home.
+View opens the standalone `/archive` route without the Settings sidebar.
+The original uses a memory router, so its document pathname stays `/` while its route context records `/archive`.
+The port opens `Route::Archive` and reads the local archived chat list.
+The replay checks Undo, View, the exact requests, the hidden sidebar, Back navigation, and the unchanged Settings entry.
+The shared replay runs the same dedicated adapter, so it retains these state and request assertions.
+The destination loads every cursor page before showing the list.
+Successful Undo also removes the restored row from an open archive page.
+Two review regressions check cursor traversal and Undo after another toast opens View.
+Both regressions use real app-server replies from a fresh isolated fixture home.
+F3a still checks the toast layout, lifetime, hover pause, swipe, and Undo.
+Archive search, filters, and management actions are separate inventory rows outside AM-101.
+
 The S004 recording uses the original renderer through the Linux route1 stack in an isolated Chrome context.
 Its twelve actions check resize limits, collapse, restored width, titlebar toggles, tooltips, boundary pixels, and no app-server requests.
 The current original tooltip is `Toggle sidebar ⇧⌘S`, not the inventory's `⌘B` label.
 The static parity gate retains all 36 baseline counts.
+The repair records the original 300 ms settled-toggle delay and requests native presentation after advancing the virtual clock.
+Clock advancement alone leaves the step-6 surface closed.
+The repaired S004 replay passes all twelve actions with the original pixel, width, tooltip, and request assertions.
+Native frame requests bypass the inactive window's wall-clock throttle while preserving the recorded virtual clock.
+The unchanged MS2 replay passes all spring, row-shift, opacity, and reduced-motion assertions.
+The scoped issue is [S004 acceptance samples a stale sidebar frame](https://github.com/i098/codex-gpui/issues/149).
 
 F1b replays all 30 original steps with `cargo test -p app --test f1b` on macOS.
 Clicking a section header keeps pointer focus; Enter enables its keyboard ring without moving focus.
@@ -242,6 +272,16 @@ Run `tools/mac.sh -l ms4 'cargo test -p app --test stream_fade'` for native glyp
 The test samples each delta from 0 to 700 ms and checks that earlier glyphs remain unchanged.
 Linux uses a no-op text system, so these glyph checks require macOS.
 MO-37 and MO-39 remain with the image and block-renderer slices, as approved for MS4.
+
+S010 uses the original native menu template in `refs/interactions/s010.json` and the retained S011 paragraph and clipboard contract.
+The selected-text menu enables `Look Up`, `Search with Google`, and `Copy`, with the original separators and Copy shortcut.
+The menu measures its row widths once when it opens, so the original Look Up label fits without clipping.
+`Look Up` calls `textsys::show_definition` at the menu's opening point; it does not open Dictionary.app or change the clipboard.
+`crates/app/tests/s010.rs` checks the rows, selection, clipboard, search URL, dismissal, reverse-selection copy, and absence of app-server requests.
+It checks Copy by mouse and `Cmd+C` while the menu holds focus, with old clipboard text seeded before each action.
+The shared menu restores transcript focus before running an action, so `Cmd+C` still works after dismissal.
+S011 remains unchanged and continues to check paragraph selection and highlight pixels.
+The headless S010 replay has no AppKit view; it checks the missing-handle path without an external-app fallback.
 
 ## 14.5 Composer
 
@@ -369,7 +409,20 @@ S034b still checks the recorded sign-in path; no account or authentication chang
 
 ## 15.1 Automations ("Scheduled")
 
-`Root` opens the page on rail `Scheduled` and on the command menu's `Manage scheduled tasks`. The page data comes from host fetches (`list-automations`, `inbox-items`, `automation-*`); `CloudHost` (`crates/app/src/host.rs`) serves the local ones from `CODEX_HOME` and the ChatGPT backend ones (`/wham/usage`, `/beacons/home`, `/automations?filter=scheduled`, `/suggested_automations`, the suggestion card's conversation start) with the sign-in that `codex app-server` holds. The page shows the empty state with the landing examples until the UI reads those answers.
+`Root` opens the page from rail `Scheduled` and the command menu's `Manage scheduled tasks`.
+It reads `list-automations` and `/suggested_automations` independently through the existing desktop host, off the UI thread.
+`CloudHost` reads local tasks from `CODEX_HOME` and uses the app-server's existing sign-in for the read-only suggestion request.
+The page shows landing examples while suggestions load or when the suggestion read fails.
+The response replaces the cards with server suggestions, followed by distinct landing examples, up to six cards.
+Route changes and host replacement cancel the pending suggestion update.
+The pending state follows the selected prompt across a late response.
+Cards use their emoji when the icon is not bundled.
+
+`parity_automations` replays the genuine `refs/interactions/host.json` response through the actual Root.
+All four unchanged strict Automations comparisons pass with an owned `CODEX_HOME` and temporary directory.
+The `host` test `scheduled_suggestions_follow_late_reads_and_host_replacement` checks navigation before response handling and prevents old-host cards after replacement.
+The new host read does not load oracle or replay files.
+This read-only repair does not create tasks, prepare conversations, schedule work, or change accounts.
 
 Slice S035 proves suggestion hover (AM-037) with `refs/interactions/s035.json` and `crates/app/tests/s035.rs`.
 The test replays pointer entry and exit on the existing fixture screen with the original server suggestions.
@@ -395,7 +448,7 @@ The conversation prepare, its stream, and the navigation into the started conver
 | 10 | Previous runs | click | Run chat, mark read, archive. | — | NOT WIRED (no host: `inbox-items`, `automation-run-archive`) |
 | 11 | Row hover | hover | Row highlight. | No task rows; suggestion hover matches the original recording. | FAIL (no task rows; suggestion hover passes `s035::suggestion_hover_matches_original`) |
 | 12 | Focus ring | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/screens/automations.rs`) |
-| 13 | No tasks | empty | `No scheduled tasks`, suggestions. | `No scheduled tasks` and the landing examples (no `/suggested_automations` backend). | PASS (`rail_scheduled`, `parity_automations`) |
+| 13 | No tasks | empty | `No scheduled tasks`, suggestions. | `No scheduled tasks`, server suggestions and distinct landing examples, up to six cards. | PASS (`rail_scheduled`, `parity_automations`, `host::scheduled_suggestions_follow_late_reads_and_host_replacement`) |
 | 14 | Loading | loading | `Loading scheduled tasks…`. | — | NOT WIRED (no host: `list-automations`) |
 | 15 | Error | error | `Scheduled tasks could not be loaded`. | — | NOT WIRED (no host: `list-automations`) |
 | 16 | Resize | resize | List and detail share the main column. | No list or detail panel. | FAIL (no task list without the host) |
@@ -403,6 +456,16 @@ The conversation prepare, its stream, and the navigation into the started conver
 ## 15.2 Background terminal
 
 `Root` opens the terminal tab beside the open thread from the thread summary's `Background processes` row, through the same side panel as Changes.
+
+The Terminal helper sends all six recorded notifications through `Root::on_event` in the original order.
+The sequence starts with active status and ends with idle status after the completed turn.
+Completion marks the selected thread unread and shows Home attention, as the original renderer does.
+Opening or closing a side tab preserves both indicators.
+Opening the unread thread clears both indicators.
+`background_terminal_tab` checks these transitions, the open summary, the running command, and output `2\n`.
+The complete strict Terminal pixel gate still fails; the separate rail and capture repairs remain required.
+References, text boxes, route checks, and thresholds stay unchanged.
+See [the scoped unread issue](https://github.com/i098/codex-gpui/issues/169).
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
@@ -573,3 +636,25 @@ Run `tools/mac.sh -l f1d-projects 'cargo test -p app --test f1d_projects -- --te
 The [strict static report](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ff8c28f83516f4fb8545d34d04a67ab08498485936cb345b/report.html) passes all 36 cases with zero outside-text differences.
 
 
+
+## Shared tooltip side offset
+
+`Tooltip::side_offset` sets the gap from one trigger's absolute-positioning edge.
+The default remains 2 px; other callers keep their positions.
+
+The native original uses a 1280×832 viewport at scale 2.
+Its Add trigger has bounds `[448.25, 776, 28, 28]`, zero padding, and a 1 px border.
+Its tooltip has vertical bounds `742..772`, with a 4 px gap above the trigger.
+The same capture places Search's tooltip 2 px below its trigger.
+
+The shared bordered pill positions its absolute child at y777.
+The S018 caller can use `.side_offset(px(5.))` to match the original Add tooltip without moving the trigger.
+Add rendering and query changes stay in S018.
+
+`crates/app/tests/f1a.rs` checks the bordered pill at both offsets.
+The selected offset gives vertical bounds `742..772`; the unchanged default gives `745..775`.
+The existing recording still checks all 34 actions and 13 default tooltips.
+
+The [native original capture](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/b3cf204103d640697ec41c58541aab67d5f63b6dde0c7fba/original-add.png) retains the original Add tooltip.
+The [port capture](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/b3cf204103d640697ec41c58541aab67d5f63b6dde0c7fba/s018-add-after.png) uses the S018 smoke snapshot with the offset setter.
+Both captures use the same Mac viewport and scale.

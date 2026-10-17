@@ -83,6 +83,7 @@
     },
     {
       "type": "click",
+      "waitMs": 300,
       "target": {
         "selector": "button[aria-label=\"Show sidebar\"]",
         "bbox": {
@@ -95,6 +96,7 @@
     },
     {
       "type": "click",
+      "waitMs": 300,
       "target": {
         "selector": "button[aria-label=\"Hide sidebar\"]",
         "bbox": {
@@ -107,6 +109,7 @@
     },
     {
       "type": "click",
+      "waitMs": 300,
       "target": {
         "selector": "button[aria-label=\"Show sidebar\"]",
         "bbox": {
@@ -127,6 +130,7 @@
     },
     {
       "type": "click",
+      "waitMs": 300,
       "target": {
         "selector": "button[aria-label=\"Hide sidebar\"]",
         "bbox": {

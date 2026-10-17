@@ -1,9 +1,14 @@
 use super::*;
-use crate::screens::thread::view::menu::{ContextMenu, Item};
+use crate::screens::thread::view::menu::{ContextMenu, Item, selection_url};
 use gpui::TransformationMatrix;
 use std::time::Instant;
 
 type EditState = (String, Range<usize>, Vec<mention::Mention>);
+
+#[derive(Default)]
+struct TransparentCaret(bool);
+
+impl gpui::Global for TransparentCaret {}
 
 /// ProseMirror's history: edits closer than `newGroupDelay` (500 ms) that touch the last
 /// edit's end form one undo step; undo and redo close the group.
@@ -22,6 +27,11 @@ fn is_word(c: char) -> bool {
 }
 
 impl Composer {
+    /// Makes the captured caret transparent without changing focus, selection, or input.
+    pub fn set_caret_transparent(cx: &mut App, transparent: bool) {
+        cx.default_global::<TransparentCaret>().0 = transparent;
+    }
+
     pub(super) fn cursor(&self) -> usize {
         if self.selection_reversed {
             self.selected_range.start
@@ -403,10 +413,10 @@ impl Composer {
         match id {
             // ponytail: `showDefinitionForSelection` has no GPUI call; Dictionary.app opens
             // the same entry from its URL scheme.
-            "lookUpSelection" => cx.open_url(&format!("dict://{}", form_encode(&selection))),
-            "searchWithGoogle" => cx.open_url(&format!(
-                "https://www.google.com/search?q={}",
-                form_encode(&selection)
+            "lookUpSelection" => cx.open_url(&selection_url("dict://", &selection)),
+            "searchWithGoogle" => cx.open_url(&selection_url(
+                "https://www.google.com/search?q=",
+                &selection,
             )),
             "cut" => self.cut(&crate::Cut, window, cx),
             "copy" => self.copy(&crate::Copy, window, cx),
@@ -680,26 +690,6 @@ impl EntityInputHandler for Composer {
     }
 }
 
-/// `URLSearchParams` encoding (`application/x-www-form-urlencoded`): spaces become `+`.
-fn form_encode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'*' | b'-' | b'.' | b'_' => {
-                out.push(b as char)
-            }
-            b' ' => out.push('+'),
-            _ => {
-                const HEX: &[u8; 16] = b"0123456789ABCDEF";
-                out.push('%');
-                out.push(HEX[(b >> 4) as usize] as char);
-                out.push(HEX[(b & 15) as usize] as char);
-            }
-        }
-    }
-    out
-}
-
 /// The text area: wraps to its width, grows one row per line.
 pub(super) struct Editor(pub(super) Entity<Composer>);
 
@@ -880,9 +870,11 @@ impl gpui::Element for Editor {
                 row += LINE_HEIGHT;
             }
         }
-        let caret = (c.selected_range.is_empty() && focus.is_focused(window))
-            .then(|| c.point_for_index(c.cursor()))
-            .flatten();
+        let caret = (c.selected_range.is_empty()
+            && focus.is_focused(window)
+            && !cx.try_global::<TransparentCaret>().is_some_and(|s| s.0))
+        .then(|| c.point_for_index(c.cursor()))
+        .flatten();
         // Each chip's 16 px icon sits in its slot, 2 px under the line top (`_IconContainer`).
         let icons: Vec<_> = c
             .mentions

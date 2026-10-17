@@ -6,6 +6,7 @@
 mod features;
 pub mod host;
 pub mod host_settings;
+pub mod qa;
 
 use anyhow::{Context as _, Result};
 use async_channel::Receiver;
@@ -35,7 +36,7 @@ use ui::screens::diff::panel::{
 use ui::screens::home::HomeMain;
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
 use ui::screens::sidebar::{
-    ArchiveThread, CommandMenu, CommandMenuEvent, HomeSidebar, LoadMore, OpenThread,
+    ArchiveThread, ArchivedChats, CommandMenu, CommandMenuEvent, HomeSidebar, LoadMore, OpenThread,
     PINNED_SECTION_ID, PinThread, RenameThread, SEARCH_LIMIT, SearchHit, title as thread_title,
 };
 use ui::screens::terminal::Xterm;
@@ -197,6 +198,7 @@ pub enum Route {
     Automation(String),
     /// Profile menu ▸ `Set up mobile` (`/codex-mobile`).
     Mobile,
+    Archive,
 }
 
 /// The thread route's side panel tab.
@@ -349,8 +351,9 @@ pub struct Root {
     /// `tabs`); kept across threads like the original's panel.
     tabs: Vec<SidePanel>,
     side: Option<SidePanel>,
-    /// The route's own shell (Settings, Scheduled, Mobile).
+    /// The route's own shell.
     page: Option<Entity<Shell>>,
+    archive_page: Option<Entity<ArchivedChats>>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
     /// `⌘K` command menu over the window.
@@ -363,14 +366,17 @@ pub struct Root {
     project_load: Option<Task<()>>,
     automations: Option<Result<Value, String>>,
     automation_load: Option<Task<()>>,
+    suggestion_load: Option<Task<()>>,
     /// The Scheduled routes' sidebar, fed the host's list when the read completes.
     scheduled: Option<Entity<automations::ScheduledSidebar>>,
     /// The Scheduled empty page: its suggestion cards start guided conversations.
     suggestions: Option<Entity<automations::AutomationsPage>>,
     cwd: String,
+    clock: Option<Clock>,
     config: Value,
     skills: Value,
     ready: bool,
+    qa_work_started: bool,
     /// Threads started or resumed by this app-server; others need `thread/resume` first.
     loaded: HashSet<String>,
     /// Id of the server request the composer's approval card answers.
@@ -484,6 +490,16 @@ impl Root {
             });
             shell
         });
+        cx.observe(&sidebar, |this, sidebar, cx| {
+            let attention = !sidebar.read(cx).unread.is_empty();
+            if this.shell.read(cx).attention != attention {
+                this.shell.update(cx, |shell, cx| {
+                    shell.attention = attention;
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
         cx.observe_in(&shell, window, |this, _, window, cx| {
             this.save(window, cx);
             cx.notify();
@@ -496,6 +512,13 @@ impl Root {
         .detach();
         cx.observe_window_appearance(window, |this, window, cx| this.apply_theme(window, cx))
             .detach();
+        if qa::ENABLED {
+            // ponytail: defer used sessions until manual close; prove state restoration before relaxing this guard.
+            cx.observe_window_activation(window, |this, window, _| {
+                this.qa_work_started |= window.is_window_active();
+            })
+            .detach();
+        }
         let _events = cx.spawn(async move |this, cx| {
             while let Ok(event) = events.recv().await {
                 if this
@@ -527,6 +550,7 @@ impl Root {
             tabs: Vec::new(),
             side: None,
             page: None,
+            archive_page: None,
             settings_section: None,
             command_menu: None,
             dialog: None,
@@ -538,12 +562,15 @@ impl Root {
             automations: None,
             automation_load: None,
             project_load: None,
+            suggestion_load: None,
             scheduled: None,
             suggestions: None,
             cwd,
+            clock: None,
             config: Value::Null,
             skills: Value::Null,
             ready: false,
+            qa_work_started: false,
             loaded: HashSet::new(),
             approval: None,
             toaster: cx.new(|_| Toaster::new()),
@@ -569,6 +596,12 @@ impl Root {
         root.connect(window, cx);
         root.load_projects(cx);
         root
+    }
+
+    /// Uses `clock` for thread timestamps. Set it before opening a thread.
+    pub fn with_clock(mut self, clock: Clock) -> Self {
+        self.clock = Some(clock);
+        self
     }
 
     /// `initialize`, then account, Recents, models and config; shows the route once ready.
@@ -611,6 +644,7 @@ impl Root {
                         .expect("close preference");
                 this.skills = skills;
                 this.ready = true;
+                this.select_route(cx);
                 this.sync(window, cx);
             })
         });
@@ -620,6 +654,29 @@ impl Root {
     /// `initialize` and the startup reads are done and the route is showing.
     pub fn ready(&self) -> bool {
         self.ready
+    }
+
+    pub fn qa_restart_ready(&self, window: &Window, cx: &App) -> bool {
+        self.ready
+            && !window.is_window_active()
+            && !self.qa_work_started
+            && self.state.route == Route::Home
+            && self.loaded.is_empty()
+            && self
+                .threads
+                .iter()
+                .all(|thread| thread.status != ThreadStatus::Active)
+            && self.dialog.is_none()
+            && self.command_menu.is_none()
+            && self.approval.is_none()
+            && self.automation_load.is_none()
+            && self.state.confirm_before_close != ConfirmBeforeClose::Always
+            && self.home.read(cx).composer.read(cx).restart_ready()
+            && self.thread_composer.read(cx).restart_ready()
+            && self
+                .login
+                .as_ref()
+                .is_none_or(|login| login.read(cx).restart_ready())
     }
 
     /// The open thread's view.
@@ -636,9 +693,13 @@ impl Root {
         &self.state.route
     }
 
-    /// The shell on screen: the route's own (Settings, Scheduled, Mobile), else the main one.
+    /// The shell on screen: the route's own shell, else the main shell.
     pub fn shell(&self) -> &Entity<Shell> {
         self.page.as_ref().unwrap_or(&self.shell)
+    }
+
+    pub fn archived_chats(&self) -> Option<&Entity<ArchivedChats>> {
+        self.archive_page.as_ref()
     }
 
     /// The Home sidebar of the chat routes.
@@ -692,11 +753,13 @@ impl Root {
     pub fn set_host(&mut self, host: Arc<dyn host::Host>, cx: &mut Context<Self>) {
         self.automation_load = None;
         self.project_load = None;
+        self.suggestion_load = None;
         self.host = host;
         self.automations = None;
         self.load_projects(cx);
         if self.scheduled_route() {
             self.load_automations(cx);
+            self.load_suggestions(cx);
         }
         cx.notify();
     }
@@ -749,6 +812,31 @@ impl Root {
                 }
                 this.automations = Some(result);
                 cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    fn load_suggestions(&mut self, cx: &mut Context<Self>) {
+        let Some(page) = self.suggestions.clone() else {
+            return;
+        };
+        page.update(cx, |page, cx| {
+            page.set_pending(None, cx);
+            page.set_suggestions(Vec::new(), cx);
+        });
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move {
+            let response = host.fetch(&host::suggested_automations())?;
+            Ok::<Vec<automations::Suggestion>, anyhow::Error>(serde_json::from_value(
+                host::json_body(&response)?,
+            )?)
+        });
+        self.suggestion_load = Some(cx.spawn(async move |this, cx| {
+            let result = read.await;
+            this.update(cx, |_, cx| match result {
+                Ok(server) => page.update(cx, |page, cx| page.set_suggestions(server, cx)),
+                Err(error) => eprintln!("codex-gpui: failed to load task suggestions: {error:#}"),
             })
             .ok();
         }));
@@ -901,6 +989,7 @@ impl Root {
             self.forward.clear();
             self.sync(window, cx);
         }
+        self.select_route(cx);
     }
 
     fn step(&mut self, back: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -911,14 +1000,25 @@ impl Root {
         };
         if let Some(route) = from.pop() {
             to.push(std::mem::replace(&mut self.state.route, route));
+            self.select_route(cx);
             self.sync(window, cx);
         }
+    }
+
+    fn select_route(&self, cx: &mut Context<Self>) {
+        let id = match &self.state.route {
+            Route::Thread(id) => Some(id.as_str()),
+            _ => None,
+        };
+        self.sidebar.update(cx, |s, cx| s.select(id, cx));
     }
 
     /// Shows the route (loading its thread if needed), pushes history into the shell and
     /// persists the state.
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.suggestion_load = None;
         let (can_back, can_forward) = (!self.back.is_empty(), !self.forward.is_empty());
+        self.archive_page = None;
         self.page = match self.state.route.clone() {
             Route::Settings => {
                 // The Appearance page shows the theme the app keeps.
@@ -970,9 +1070,17 @@ impl Root {
                 self.suggestions = page;
                 Some(shell)
             }
+            Route::Archive => {
+                let (shell, page) = ui::screens::sidebar::archive_shell(cx);
+                self.archive_page = Some(page);
+                Some(shell)
+            }
             Route::Mobile => Some(mobile::shell(cx)),
             Route::Home | Route::Thread(_) => None,
         };
+        if self.scheduled_route() {
+            self.load_suggestions(cx);
+        }
         if let Some(page) = &self.page {
             page.update(cx, |shell, _| {
                 shell.can_go_back = can_back;
@@ -996,8 +1104,6 @@ impl Root {
             (None, _) => self.home.clone().into(),
         };
         window.focus(&self.route_focus(cx), cx);
-        self.sidebar
-            .update(cx, |s, cx| s.select(thread_id.as_deref(), cx));
         let home = self.state.route == Route::Home;
         self.shell.update(cx, |shell, cx| {
             shell.selected_rail = home.then_some("home");
@@ -1346,10 +1452,11 @@ impl Root {
             c.set_search_roots(vec![thread.cwd.clone()]);
         });
         let route = Route::Thread(thread.id.clone());
-        let clock = Clock {
+        let clock = self.clock.unwrap_or_else(|| Clock {
             utc_offset: utc_offset(),
             pinned_now: None,
-        };
+            elapsed_since: None,
+        });
         let composer = self.thread_composer.clone().into();
         self.diff = Some(cx.new(|_| DiffPanel::last_turn(&self.cwd, &thread.cwd, &thread.turns)));
         self.file = None;
@@ -1365,6 +1472,7 @@ impl Root {
     /// Home composer: `thread/start` with the chosen model and permissions, open it, then
     /// `turn/start`; the turn streams in through [`Self::on_event`].
     fn start_thread(&mut self, s: Submission, window: &mut Window, cx: &mut Context<Self>) {
+        self.qa_work_started = true;
         let (bridge, cwd) = (self.bridge.clone(), self.cwd.clone());
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let mut params = json!({ "cwd": cwd, "model": model(&s) });
@@ -1394,6 +1502,7 @@ impl Root {
     /// `Steer` sends it into the turn (`turn/steer`). A refusal shows `Error submitting
     /// message` and puts the text back.
     fn send(&mut self, s: Submission, window: &mut Window, cx: &mut Context<Self>) {
+        self.qa_work_started = true;
         let Some(view) = &self.thread else { return };
         let view = view.read(cx);
         let id = view.id().to_owned();
@@ -1694,7 +1803,7 @@ impl Root {
                     let toast = Toast::info("Archived chat")
                         .icon("sidebar-archive")
                         .action("View", move |window, cx| {
-                            view.update(cx, |this, cx| this.open_archived_chats(window, cx))
+                            view.update(cx, |this, cx| this.navigate(Route::Archive, window, cx))
                                 .ok();
                         })
                         .action("Undo", move |window, cx| {
@@ -1739,6 +1848,9 @@ impl Root {
                     .and_then(|r| serde_json::from_value::<Thread>(r["thread"].clone()).ok());
                 match thread {
                     Some(thread) => {
+                        if let Some(page) = &this.archive_page {
+                            page.update(cx, |page, cx| page.unarchived(&thread.id, cx));
+                        }
                         this.threads.retain(|t| t.id != thread.id);
                         this.threads
                             .insert(at.unwrap_or(0).min(this.threads.len()), thread);
@@ -1775,14 +1887,6 @@ impl Root {
             self.sync(window, cx);
         } else {
             self.navigate(Route::Settings, window, cx);
-        }
-    }
-
-    /// The archive toast's View.
-    /// ponytail: the original's destination is not recorded; Settings ▸ Archived chats lists them.
-    fn open_archived_chats(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(section) = settings::section("Archived chats") {
-            self.open_settings_section(section, window, cx);
         }
     }
 
@@ -1863,12 +1967,13 @@ impl Root {
 
     /// Sends a config write and, once the server took it, applies it to the kept config.
     fn write_config(
-        &self,
+        &mut self,
         method: &'static str,
         params: Value,
         cx: &mut Context<Self>,
         apply: impl FnOnce(&mut Value) + 'static,
     ) {
+        self.qa_work_started = true;
         let bridge = self.bridge.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {
             bridge.request::<_, Value>(method, params).await?;
@@ -1888,6 +1993,11 @@ impl Root {
     /// Every server message: streamed into the open thread and the sign-in view, plus
     /// Recents updates and approval prompts.
     pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        if matches!(&event, Event::Notification { method, .. } if method == "turn/started")
+            || matches!(&event, Event::Request { .. })
+        {
+            self.qa_work_started = true;
+        }
         if let Some(view) = &self.thread {
             view.update(cx, |view, cx| {
                 view.apply(&event, cx);
@@ -1934,12 +2044,9 @@ impl Root {
                             .update(cx, |s, cx| s.set_running(id, active, cx));
                     }
                 }
-                // Recents rows show the thread preview, known once a turn ran; a turn that
-                // completed while its thread was not open leaves the unread dot.
+                // Completion can leave the selected thread unread, including a background terminal.
                 "turn/completed" => {
-                    if let Some(id) = params["threadId"].as_str()
-                        && self.state.route != Route::Thread(id.to_owned())
-                    {
+                    if let Some(id) = params["threadId"].as_str() {
                         self.sidebar.update(cx, |s, cx| s.set_unread(id, cx));
                     }
                     self.refresh_threads(cx)
