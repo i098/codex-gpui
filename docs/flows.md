@@ -540,7 +540,7 @@ Atomic native clicks prove General and Configuration activation.
 
 All 36 strict static cases pass with the original thresholds.
 Their metrics and port PNGs match the baseline exactly.
-The [hosted strict report](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/de6213354309fc9f3926b5b4d0091cadb7d11d3937d74e7b/report.html) retains those thresholds.
+The [hosted strict report](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/6a2e81ed2b8a20f663537c3e11dde75b1fc541b2604d0a89/report.html) retains those thresholds.
 
 ## S026: Command menu groups and chat results
 
