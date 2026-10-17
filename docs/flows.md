@@ -180,6 +180,10 @@ The original uses a memory router, so its document pathname stays `/` while its 
 The port opens `Route::Archive` and reads the local archived chat list.
 The replay checks Undo, View, the exact requests, the hidden sidebar, Back navigation, and the unchanged Settings entry.
 The shared replay runs the same dedicated adapter, so it retains these state and request assertions.
+The destination loads every cursor page before showing the list.
+Successful Undo also removes the restored row from an open archive page.
+Two review regressions check cursor traversal and Undo after another toast opens View.
+Both regressions use real app-server replies from a fresh isolated fixture home.
 F3a still checks the toast layout, lifetime, hover pause, swipe, and Undo.
 Archive search, filters, and management actions are separate inventory rows outside AM-101.
 

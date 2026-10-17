@@ -65,6 +65,36 @@ pub fn archive_shell(cx: &mut App) -> (gpui::Entity<Shell>, gpui::Entity<Archive
     (shell, main)
 }
 
+pub async fn archived_threads(
+    bridge: &bridge::Bridge,
+    page_size: usize,
+) -> anyhow::Result<Vec<Thread>> {
+    // ponytail: eager archive summaries; load on scroll if archive size makes entry slow.
+    let request = |cursor: Option<String>| {
+        bridge.request::<_, ThreadListResponse>(
+            "thread/list",
+            serde_json::json!({
+                "archived": true,
+                "cursor": cursor,
+                "limit": page_size,
+                "modelProviders": null,
+                "sortKey": "updated_at",
+                "sourceKinds": [],
+                "useStateDbOnly": true
+            }),
+        )
+    };
+    let first = request(None).await?;
+    let mut threads = first.data;
+    let mut cursor = first.next_cursor;
+    while let Some(next_cursor) = cursor {
+        let page = request(Some(next_cursor)).await?;
+        threads.extend(page.data);
+        cursor = page.next_cursor;
+    }
+    Ok(threads)
+}
+
 pub struct ArchivedChats {
     pub threads: Option<anyhow::Result<Vec<Thread>>>,
     _load: gpui::Task<()>,
@@ -72,33 +102,32 @@ pub struct ArchivedChats {
 
 impl ArchivedChats {
     fn new(cx: &mut Context<Self>) -> Self {
+        Self {
+            threads: None,
+            _load: Self::load(cx),
+        }
+    }
+
+    pub fn unarchived(&mut self, id: &str, cx: &mut Context<Self>) {
+        if let Some(Ok(threads)) = &mut self.threads {
+            threads.retain(|thread| thread.id != id);
+        } else if self.threads.is_none() {
+            // A pending read can still contain the restored chat.
+            self._load = Self::load(cx);
+        }
+        cx.notify();
+    }
+
+    fn load(cx: &mut Context<Self>) -> gpui::Task<()> {
         let bridge = cx.global::<crate::screens::settings::AppServer>().0.clone();
-        let load = cx.spawn(async move |this, cx| {
-            let threads = bridge
-                .request::<_, ThreadListResponse>(
-                    "thread/list",
-                    serde_json::json!({
-                        "archived": true,
-                        "cursor": null,
-                        "limit": 100,
-                        "modelProviders": null,
-                        "sortKey": "updated_at",
-                        "sourceKinds": [],
-                        "useStateDbOnly": true
-                    }),
-                )
-                .await
-                .map(|page| page.data);
+        cx.spawn(async move |this, cx| {
+            let threads = archived_threads(&bridge, 100).await;
             this.update(cx, |this, cx| {
                 this.threads = Some(threads);
                 cx.notify();
             })
             .ok();
-        });
-        Self {
-            threads: None,
-            _load: load,
-        }
+        })
     }
 }
 

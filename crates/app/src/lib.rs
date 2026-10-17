@@ -1730,6 +1730,9 @@ impl Root {
                     .and_then(|r| serde_json::from_value::<Thread>(r["thread"].clone()).ok());
                 match thread {
                     Some(thread) => {
+                        if let Some(page) = &this.archive_page {
+                            page.update(cx, |page, cx| page.unarchived(&thread.id, cx));
+                        }
                         this.threads.retain(|t| t.id != thread.id);
                         this.threads
                             .insert(at.unwrap_or(0).min(this.threads.len()), thread);

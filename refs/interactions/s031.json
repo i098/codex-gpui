@@ -717,6 +717,451 @@
   "The original renderer uses a memory router. Its location context records /archive; document.location stays /.",
   "The original uses real codex app-server replies in an isolated CODEX_HOME under /tmp/cgx-s031-view. No production thread is changed.",
   "The fixture contains a real user input. Its unauthenticated model turn fails; archive and unarchive succeed through the real app-server.",
-  "The catalog adapter maps actual thread/list results to host catalog rows. Other host reads replay the existing route1 oracle."
- ]
+  "The catalog adapter maps actual thread/list results to host catalog rows. Other host reads replay the existing route1 oracle.",
+  "Review regressions use fresh isolated app-server replies. Page-size-one replies verify cursor traversal; the View route retains its recorded page size of 100."
+ ],
+ "reviewRegression": {
+  "firstThreadId": "01a14829-f455-70e3-87b1-6e13a78a501f",
+  "secondThreadId": "01a14829-f1a6-74f2-96d6-1b16e6cc408e",
+  "fixtureRpc": [
+   {
+    "dir": "send",
+    "msg": {
+     "id": 12,
+     "method": "thread/list",
+     "params": {
+      "limit": 100,
+      "archived": false
+     }
+    }
+   },
+   {
+    "dir": "recv",
+    "msg": {
+     "id": 12,
+     "result": {
+      "data": [
+       {
+        "id": "01a14829-f455-70e3-87b1-6e13a78a501f",
+        "environments": [
+         {
+          "environmentId": "local",
+          "cwd": "/tmp/cgx-s031-view/review-d15ef15b-d6d/proj",
+          "runtimeWorkspaceRoots": [
+           "/tmp/cgx-s031-view/review-d15ef15b-d6d/proj"
+          ]
+         }
+        ],
+        "extra": null,
+        "sessionId": "01a14829-f455-70e3-87b1-6e13a78a501f",
+        "forkedFromId": null,
+        "parentThreadId": null,
+        "preview": "S031 archive regression B",
+        "ephemeral": false,
+        "section": null,
+        "sectionEnteredAt": null,
+        "projectId": null,
+        "historyMode": "paginated",
+        "modelProvider": "openai",
+        "model": "gpt-6.1-sol",
+        "reasoningEffort": null,
+        "createdAt": 1792212071,
+        "updatedAt": 1792212072,
+        "recencyAt": 1792212071,
+        "status": {
+         "type": "idle"
+        },
+        "path": "/private/tmp/cgx-s031-view/review-d15ef15b-d6d/home/sessions/2026/10/16/rollout-2026-10-16T21-41-11-01a14829-f455-70e3-87b1-6e13a78a501f.jsonl",
+        "cwd": "/tmp/cgx-s031-view/review-d15ef15b-d6d/proj",
+        "cliVersion": "0.162.0-alpha.17.2",
+        "originator": "codex-gpui",
+        "source": "vscode",
+        "canAcceptDirectInput": null,
+        "threadSource": null,
+        "agentNickname": null,
+        "agentRole": null,
+        "gitInfo": null,
+        "name": "S031 archive regression B",
+        "daybreakEnabled": null,
+        "turns": []
+       },
+       {
+        "id": "01a14829-f1a6-74f2-96d6-1b16e6cc408e",
+        "environments": [
+         {
+          "environmentId": "local",
+          "cwd": "/tmp/cgx-s031-view/review-d15ef15b-d6d/proj",
+          "runtimeWorkspaceRoots": [
+           "/tmp/cgx-s031-view/review-d15ef15b-d6d/proj"
+          ]
+         }
+        ],
+        "extra": null,
+        "sessionId": "01a14829-f1a6-74f2-96d6-1b16e6cc408e",
+        "forkedFromId": null,
+        "parentThreadId": null,
+        "preview": "S031 archive regression A",
+        "ephemeral": false,
+        "section": null,
+        "sectionEnteredAt": null,
+        "projectId": null,
+        "historyMode": "paginated",
+        "modelProvider": "openai",
+        "model": "gpt-6.1-sol",
+        "reasoningEffort": null,
+        "createdAt": 1792212070,
+        "updatedAt": 1792212071,
+        "recencyAt": 1792212071,
+        "status": {
+         "type": "idle"
+        },
+        "path": "/private/tmp/cgx-s031-view/review-d15ef15b-d6d/home/sessions/2026/10/16/rollout-2026-10-16T21-41-10-01a14829-f1a6-74f2-96d6-1b16e6cc408e.jsonl",
+        "cwd": "/tmp/cgx-s031-view/review-d15ef15b-d6d/proj",
+        "cliVersion": "0.162.0-alpha.17.2",
+        "originator": "codex-gpui",
+        "source": "vscode",
+        "canAcceptDirectInput": null,
+        "threadSource": null,
+        "agentNickname": null,
+        "agentRole": null,
+        "gitInfo": null,
+        "name": "S031 archive regression A",
+        "daybreakEnabled": null,
+        "turns": []
+       }
+      ],
+      "nextCursor": null,
+      "backwardsCursor": "2026-10-17T04:41:11.508Z"
+     }
+    }
+   }
+  ],
+  "viewUndoRpc": [
+   {
+    "dir": "send",
+    "msg": {
+     "id": 13,
+     "method": "thread/archive",
+     "params": {
+      "threadId": "01a14829-f455-70e3-87b1-6e13a78a501f"
+     }
+    }
+   },
+   {
+    "dir": "recv",
+    "msg": {
+     "id": 13,
+     "result": {}
+    }
+   },
+   {
+    "dir": "send",
+    "msg": {
+     "id": 14,
+     "method": "thread/archive",
+     "params": {
+      "threadId": "01a14829-f1a6-74f2-96d6-1b16e6cc408e"
+     }
+    }
+   },
+   {
+    "dir": "recv",
+    "msg": {
+     "id": 14,
+     "result": {}
+    }
+   },
+   {
+    "dir": "send",
+    "msg": {
+     "id": 15,
+     "method": "thread/list",
+     "params": {
+      "archived": true,
+      "cursor": null,
+      "limit": 100,
+      "modelProviders": null,
+      "sortKey": "updated_at",
+      "sourceKinds": [],
+      "useStateDbOnly": true
+     }
+    }
+   },
+   {
+    "dir": "recv",
+    "msg": {
+     "id": 15,
+     "result": {
+      "data": [
+       {
+        "id": "01a14829-f1a6-74f2-96d6-1b16e6cc408e",
+        "environments": null,
+        "extra": null,
+        "sessionId": "01a14829-f1a6-74f2-96d6-1b16e6cc408e",
+        "forkedFromId": null,
+        "parentThreadId": null,
+        "preview": "S031 archive regression A",
+        "ephemeral": false,
+        "section": null,
+        "sectionEnteredAt": null,
+        "projectId": null,
+        "historyMode": "paginated",
+        "modelProvider": "openai",
+        "model": "gpt-6.1-sol",
+        "reasoningEffort": null,
+        "createdAt": 1792212070,
+        "updatedAt": 1792212072,
+        "recencyAt": 1792212071,
+        "status": {
+         "type": "notLoaded"
+        },
+        "path": "/private/tmp/cgx-s031-view/review-d15ef15b-d6d/home/archived_sessions/rollout-2026-10-16T21-41-10-01a14829-f1a6-74f2-96d6-1b16e6cc408e.jsonl",
+        "cwd": "/private/tmp/cgx-s031-view/review-d15ef15b-d6d/proj",
+        "cliVersion": "0.162.0-alpha.17.2",
+        "originator": "codex-gpui",
+        "source": "vscode",
+        "canAcceptDirectInput": null,
+        "threadSource": null,
+        "agentNickname": null,
+        "agentRole": null,
+        "gitInfo": null,
+        "name": "S031 archive regression A",
+        "daybreakEnabled": null,
+        "turns": []
+       },
+       {
+        "id": "01a14829-f455-70e3-87b1-6e13a78a501f",
+        "environments": null,
+        "extra": null,
+        "sessionId": "01a14829-f455-70e3-87b1-6e13a78a501f",
+        "forkedFromId": null,
+        "parentThreadId": null,
+        "preview": "S031 archive regression B",
+        "ephemeral": false,
+        "section": null,
+        "sectionEnteredAt": null,
+        "projectId": null,
+        "historyMode": "paginated",
+        "modelProvider": "openai",
+        "model": "gpt-6.1-sol",
+        "reasoningEffort": null,
+        "createdAt": 1792212071,
+        "updatedAt": 1792212072,
+        "recencyAt": 1792212071,
+        "status": {
+         "type": "notLoaded"
+        },
+        "path": "/private/tmp/cgx-s031-view/review-d15ef15b-d6d/home/archived_sessions/rollout-2026-10-16T21-41-11-01a14829-f455-70e3-87b1-6e13a78a501f.jsonl",
+        "cwd": "/private/tmp/cgx-s031-view/review-d15ef15b-d6d/proj",
+        "cliVersion": "0.162.0-alpha.17.2",
+        "originator": "codex-gpui",
+        "source": "vscode",
+        "canAcceptDirectInput": null,
+        "threadSource": null,
+        "agentNickname": null,
+        "agentRole": null,
+        "gitInfo": null,
+        "name": "S031 archive regression B",
+        "daybreakEnabled": null,
+        "turns": []
+       }
+      ],
+      "nextCursor": null,
+      "backwardsCursor": "2026-10-17T04:41:12.102Z"
+     }
+    }
+   },
+   {
+    "dir": "send",
+    "msg": {
+     "id": 18,
+     "method": "thread/unarchive",
+     "params": {
+      "threadId": "01a14829-f455-70e3-87b1-6e13a78a501f"
+     }
+    }
+   },
+   {
+    "dir": "recv",
+    "msg": {
+     "id": 18,
+     "result": {
+      "thread": {
+       "id": "01a14829-f455-70e3-87b1-6e13a78a501f",
+       "environments": null,
+       "extra": null,
+       "sessionId": "01a14829-f455-70e3-87b1-6e13a78a501f",
+       "forkedFromId": null,
+       "parentThreadId": null,
+       "preview": "S031 archive regression B",
+       "ephemeral": false,
+       "section": null,
+       "sectionEnteredAt": null,
+       "projectId": null,
+       "historyMode": "paginated",
+       "modelProvider": "openai",
+       "model": "gpt-6.1-sol",
+       "reasoningEffort": null,
+       "createdAt": 1792212071,
+       "updatedAt": 1792212072,
+       "recencyAt": 1792212071,
+       "status": {
+        "type": "notLoaded"
+       },
+       "path": "/private/tmp/cgx-s031-view/review-d15ef15b-d6d/home/sessions/2026/10/16/rollout-2026-10-16T21-41-11-01a14829-f455-70e3-87b1-6e13a78a501f.jsonl",
+       "cwd": "/private/tmp/cgx-s031-view/review-d15ef15b-d6d/proj",
+       "cliVersion": "0.162.0-alpha.17.2",
+       "originator": "codex-gpui",
+       "source": "vscode",
+       "canAcceptDirectInput": null,
+       "threadSource": null,
+       "agentNickname": null,
+       "agentRole": null,
+       "gitInfo": null,
+       "name": "S031 archive regression B",
+       "daybreakEnabled": null,
+       "turns": []
+      }
+     }
+    }
+   }
+  ],
+  "paginationRpc": [
+   {
+    "dir": "send",
+    "msg": {
+     "id": 16,
+     "method": "thread/list",
+     "params": {
+      "archived": true,
+      "cursor": null,
+      "limit": 1,
+      "modelProviders": null,
+      "sortKey": "updated_at",
+      "sourceKinds": [],
+      "useStateDbOnly": true
+     }
+    }
+   },
+   {
+    "dir": "recv",
+    "msg": {
+     "id": 16,
+     "result": {
+      "data": [
+       {
+        "id": "01a14829-f1a6-74f2-96d6-1b16e6cc408e",
+        "environments": null,
+        "extra": null,
+        "sessionId": "01a14829-f1a6-74f2-96d6-1b16e6cc408e",
+        "forkedFromId": null,
+        "parentThreadId": null,
+        "preview": "S031 archive regression A",
+        "ephemeral": false,
+        "section": null,
+        "sectionEnteredAt": null,
+        "projectId": null,
+        "historyMode": "paginated",
+        "modelProvider": "openai",
+        "model": "gpt-6.1-sol",
+        "reasoningEffort": null,
+        "createdAt": 1792212070,
+        "updatedAt": 1792212072,
+        "recencyAt": 1792212071,
+        "status": {
+         "type": "notLoaded"
+        },
+        "path": "/private/tmp/cgx-s031-view/review-d15ef15b-d6d/home/archived_sessions/rollout-2026-10-16T21-41-10-01a14829-f1a6-74f2-96d6-1b16e6cc408e.jsonl",
+        "cwd": "/private/tmp/cgx-s031-view/review-d15ef15b-d6d/proj",
+        "cliVersion": "0.162.0-alpha.17.2",
+        "originator": "codex-gpui",
+        "source": "vscode",
+        "canAcceptDirectInput": null,
+        "threadSource": null,
+        "agentNickname": null,
+        "agentRole": null,
+        "gitInfo": null,
+        "name": "S031 archive regression A",
+        "daybreakEnabled": null,
+        "turns": []
+       }
+      ],
+      "nextCursor": "2026-10-17T04:41:12.103Z",
+      "backwardsCursor": "2026-10-17T04:41:12.102Z"
+     }
+    }
+   },
+   {
+    "dir": "send",
+    "msg": {
+     "id": 17,
+     "method": "thread/list",
+     "params": {
+      "archived": true,
+      "cursor": "2026-10-17T04:41:12.103Z",
+      "limit": 1,
+      "modelProviders": null,
+      "sortKey": "updated_at",
+      "sourceKinds": [],
+      "useStateDbOnly": true
+     }
+    }
+   },
+   {
+    "dir": "recv",
+    "msg": {
+     "id": 17,
+     "result": {
+      "data": [
+       {
+        "id": "01a14829-f455-70e3-87b1-6e13a78a501f",
+        "environments": null,
+        "extra": null,
+        "sessionId": "01a14829-f455-70e3-87b1-6e13a78a501f",
+        "forkedFromId": null,
+        "parentThreadId": null,
+        "preview": "S031 archive regression B",
+        "ephemeral": false,
+        "section": null,
+        "sectionEnteredAt": null,
+        "projectId": null,
+        "historyMode": "paginated",
+        "modelProvider": "openai",
+        "model": "gpt-6.1-sol",
+        "reasoningEffort": null,
+        "createdAt": 1792212071,
+        "updatedAt": 1792212072,
+        "recencyAt": 1792212071,
+        "status": {
+         "type": "notLoaded"
+        },
+        "path": "/private/tmp/cgx-s031-view/review-d15ef15b-d6d/home/archived_sessions/rollout-2026-10-16T21-41-11-01a14829-f455-70e3-87b1-6e13a78a501f.jsonl",
+        "cwd": "/private/tmp/cgx-s031-view/review-d15ef15b-d6d/proj",
+        "cliVersion": "0.162.0-alpha.17.2",
+        "originator": "codex-gpui",
+        "source": "vscode",
+        "canAcceptDirectInput": null,
+        "threadSource": null,
+        "agentNickname": null,
+        "agentRole": null,
+        "gitInfo": null,
+        "name": "S031 archive regression B",
+        "daybreakEnabled": null,
+        "turns": []
+       }
+      ],
+      "nextCursor": null,
+      "backwardsCursor": "2026-10-17T04:41:12.101Z"
+     }
+    }
+   }
+  ],
+  "archivedIds": [
+   "01a14829-f1a6-74f2-96d6-1b16e6cc408e",
+   "01a14829-f455-70e3-87b1-6e13a78a501f"
+  ],
+  "afterUndoIds": [
+   "01a14829-f1a6-74f2-96d6-1b16e6cc408e"
+  ]
+ }
 }
