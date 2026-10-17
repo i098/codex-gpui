@@ -57,40 +57,46 @@ Each screen still runs both themes and sizes before it returns its combined fail
 The flow executable exits 1 if any flow fails.
 There is no report-only or optional mode.
 
+`Fx::reference_shot` parks the pointer at `(round(width * 0.6), 6)` and makes only the captured composer caret transparent.
+It keeps keyboard focus, selection, and editor input intact, then restores normal caret drawing.
+The fixture clock uses the original `2026-10-15T17:00:00Z` base and `-07:00` offset, plus monotonic elapsed time from test startup.
+The original preload also advances from its base; the exact historical screenshot instant is not retained.
+Normal Root clocks remain live, and the separate static screen clocks keep their fixed semantics.
+
 Run all nine Root checks with `tools/mac.sh -l root-gate 'cargo test -p app --test flows -- parity_'`.
 Keep `cargo run -p parity -- --gate` as the separate static screen gate.
 Its 36 passing comparisons do not prove Root parity.
 
-The P7 Mac run checks dark and light at 1280x832 and 1440x900.
+The capture-preparation Mac run checks dark and light at 1280x832 and 1440x900.
 Each cell below gives `outside count / text percent`.
-The six failing screens remain tracked in [the Root mismatch issue](https://github.com/i098/codex-gpui/issues/151).
+Composer passes all four comparisons; five failing screens remain tracked in [the Root mismatch issue](https://github.com/i098/codex-gpui/issues/151).
 
 | Screen and input entry | Dark 1280x832 | Dark 1440x900 | Light 1280x832 | Light 1440x900 |
 |---|---|---|---|---|
-| Home: launch | 0 / 0.411% | 0 / 0.411% | 0 / 0.132% | 0 / 0.132% |
-| Sidebar: Search, type `math` | 95803 / 12.237% | 102494 / 9.982% | 128171 / 13.479% | 137529 / 10.368% |
-| Composer: type `Refactor src/math.py`, click model pill | 11016 / 2.402% | 11016 / 2.402% | 11016 / 2.320% | 11016 / 2.320% |
-| Thread: click the subtract row | 3695 / 1.669% | 3695 / 1.649% | 3698 / 1.670% | 3698 / 1.651% |
-| Diff: subtract, `⌥⌘B`, collapse file | 3695 / 1.379% | 3695 / 1.492% | 3698 / 1.303% | 3698 / 1.412% |
+| Home: launch | 0 / 0.377% | 0 / 0.377% | 0 / 0.098% | 0 / 0.098% |
+| Sidebar: Search, type `math` | 95831 / 12.250% | 102522 / 9.995% | 128199 / 13.491% | 137557 / 10.381% |
+| Composer: type `Refactor src/math.py`, click model pill | 0 / 0.332% | 0 / 0.332% | 0 / 0.250% | 0 / 0.250% |
+| Thread: click the subtract row | 3695 / 0.795% | 3695 / 0.786% | 3698 / 0.797% | 3698 / 0.788% |
+| Diff: subtract, `⌥⌘B`, collapse file | 3695 / 0.694% | 3695 / 0.795% | 3698 / 0.617% | 3698 / 0.716% |
 | Settings: `⌘,` | 0 / 0.088% | 0 / 0.080% | 0 / 0.117% | 0 / 0.107% |
-| Automations: click Scheduled | 45742 / 27.970% | 45740 / 27.970% | 45788 / 28.031% | 45764 / 28.031% |
-| Terminal: subtract, recorded command events, summary command row | 3830 / 0.745% | 3830 / 0.819% | 3833 / 0.738% | 3833 / 0.808% |
+| Automations: click Scheduled | 40039 / 27.119% | 40037 / 27.119% | 40077 / 27.176% | 40053 / 27.176% |
+| Terminal: subtract, recorded command events, summary command row | 3830 / 0.727% | 3830 / 0.801% | 3833 / 0.720% | 3833 / 0.791% |
 | Mobile: avatar, Set up mobile | 0 / 0.468% | 0 / 0.468% | 0 / 0.467% | 0 / 0.467% |
 
 The old profile helper opens Keyboard shortcuts over Home instead of Mobile.
 The corrected helper uses the proved Mobile entry; the old failed captures remain retained in the acceptance evidence.
 The large-window Composer click uses the original reference's centered-column and bottom offsets.
-The prior large-window clicks miss the menu; the corrected clicks reach it and still fail the strict pixel gate.
+The prior large-window clicks miss the menu; the corrected clicks and reference capture preparation pass the strict Composer gate.
 
-Fixture, clock, focus, host-data, and drawing differences remain unresolved.
-None of these possible causes waives a failure.
+Pointer, clock, and composer-caret preparation now follow the reference; other fixture, host-data, and drawing differences remain unresolved.
+None of these remaining causes waives a failure.
 Keep S026's recorded command groups and settled search behavior instead of restoring an older pending-search screenshot state.
 Keep S009's File viewer behavior; its recorded test replaces the obsolete file-link-to-Changes assertion.
 The S009, S026, F3b, and S034b recorded tests pass with the strict shared helper.
 Formatting and `cargo clippy --workspace --all-targets -- -D warnings` pass after integrating current main.
 The initial broad clippy run failed at `ms6a.rs:168`; the retained log preserves that result.
 
-An isolated smoke check sends a retained input-driven Composer capture through `parity_image`; it returns exit 1 with 11016 outside pixels.
+Before this repair, an isolated smoke check sends a retained Composer capture through `parity_image` and returns exit 1 with 11016 outside pixels.
 All 36 unchanged original images pass the same helper with zero differences.
 Replaying the old Mobile click returns exit 1 for all four route checks before any pixel comparison.
 These checks prove the guard; they do not replace the failing Root captures.
