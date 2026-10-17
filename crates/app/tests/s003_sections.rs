@@ -268,3 +268,73 @@ fn section_paging_follows_all_original_input_transitions() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn recorded_start_front_insert_preserves_custom_row_identity() -> Result<()> {
+    use common::{EXPLAIN, GREETING, SUBTRACT};
+
+    let rec: Value = serde_json::from_slice(&fs::read(format!(
+        "{ROOT}/refs/interactions/s003_sections.json"
+    ))?)?;
+    let section = &section_state(&rec)?["sections"][0];
+    // Real readback rows provide genuine thread/read replies for the native click.
+    let state = json!({
+        "sections": [{
+            "id": section["id"],
+            "name": section["name"],
+            "itemKeys": [
+                format!("codex:thread:local:{GREETING}"),
+                format!("codex:thread:local:{SUBTRACT}")
+            ]
+        }],
+        "collapsedSectionIds": []
+    });
+    let mut started = script(Some("sessions/explain.jsonl"), |_| {})?
+        .into_iter()
+        .find(|line| {
+            line["msg"]["method"] == "thread/started"
+                && line["msg"]["params"]["thread"]["id"] == EXPLAIN
+        })
+        .context("recorded Explain thread/started notification")?;
+    let params = started["msg"]["params"].take();
+    let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
+    let sidebar = fx.read(|root, _| root.sidebar().clone());
+    sidebar.update(&mut fx.cx, |sidebar, cx| sidebar.set_sections(&state, cx))?;
+    fx.hover((1270., 820.))?;
+    fx.advance(Duration::from_millis(600))?;
+    let before = fx.shot()?;
+    fx.root.update(&mut fx.cx, |root, cx| {
+        root.on_event(
+            bridge::Event::Notification {
+                method: "thread/started".into(),
+                params,
+            },
+            cx,
+        )
+    });
+    fx.advance(Duration::from_millis(600))?;
+    ensure!(
+        fx.read(|root, _| root.recents())
+            .first()
+            .map(String::as_str)
+            == Some(EXPLAIN),
+        "the recorded start event did not insert Explain at the front"
+    );
+    let after = fx.shot()?;
+    let bbox = &rec["result"]["states"][0]["rows"][0]["bbox"];
+    let number = |key: &str| bbox[key].as_f64().context("recorded custom row bounds");
+    let (x, y, w, h) = (number("x")?, number("y")?, number("w")?, number("h")?);
+    ensure!(
+        common::changed(&before, &after, [x as f32, y as f32, w as f32, h as f32]) == 0,
+        "front insertion changed the visible custom row identity"
+    );
+    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("s003-section-row-identity");
+    fs::create_dir_all(&out)?;
+    before.save(out.join("before.png"))?;
+    after.save(out.join("inserted.png"))?;
+    fx.click(((x + w / 2.) as f32, (y + h / 2.) as f32))?;
+    fx.wait_thread(GREETING)?;
+    fx.shot()?.save(out.join("opened-greeting.png"))?;
+    println!("S003_ROW_IDENTITY_OUTPUT {}", out.display());
+    Ok(())
+}
