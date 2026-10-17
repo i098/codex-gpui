@@ -1022,7 +1022,7 @@ impl Root {
         window.focus(&self.route_focus(cx), cx);
         self.sidebar
             .update(cx, |s, cx| s.select(thread_id.as_deref(), cx));
-        let home = self.state.route == Route::Home;
+        let home = matches!(self.state.route, Route::Home | Route::Thread(_));
         self.shell.update(cx, |shell, cx| {
             shell.selected_rail = home.then_some("home");
             shell.can_go_back = can_back;

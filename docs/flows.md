@@ -95,6 +95,34 @@ All 36 unchanged original images pass the same helper with zero differences.
 Replaying the old Mobile click returns exit 1 for all four route checks before any pixel comparison.
 These checks prove the guard; they do not replace the failing Root captures.
 
+### Home rail selection on thread routes
+
+Home stays selected on its Thread, Changes, and Background terminal routes.
+`rail_thread_family` enters those states through Root input and compares the Home rail with the original pixels.
+It checks both themes and sizes without changing focus, pointer position, clocks, or fixtures.
+Thread and Changes check the full Home button at `[8,52,36,36]`.
+Terminal checks `[8,66,36,22]`, below the reference's separate unread dot.
+This selection check does not waive any full-Root pixel difference.
+The strict full-screen gate still checks the original Terminal unread state and every outside-text pixel.
+
+Run the selection regression with `cargo test -p app --test flows -- rail_thread_family`.
+
+The new regression fails all 12 cases before the rail correction and matches all 12 afterward.
+The separate static gate remains 36/36.
+The unchanged input-driven full-Root gate still returns exit 1: 12 comparisons pass and 24 fail.
+Home, Settings, and Mobile pass all four variants.
+All four variants of each screen below still fail.
+Cells give `outside count / text percent`; the owned empty `CODEX_HOME` excludes ambient automation rows.
+
+| Remaining full-Root failure | Dark 1280x832 | Dark 1440x900 | Light 1280x832 | Light 1440x900 |
+|---|---|---|---|---|
+| Composer | 11016 / 2.402% | 11016 / 2.402% | 11016 / 2.320% | 11016 / 2.320% |
+| Thread | 0 / 1.317% | 0 / 1.302% | 0 / 1.317% | 0 / 1.302% |
+| Diff | 0 / 1.045% | 0 / 1.165% | 0 / 0.967% | 0 / 1.084% |
+| Automations | 40039 / 27.119% | 40037 / 27.119% | 40077 / 27.176% | 40053 / 27.176% |
+| Terminal | 359 / 0.429% | 359 / 0.507% | 359 / 0.420% | 359 / 0.495% |
+| Sidebar | 95831 / 12.250% | 102522 / 9.995% | 128199 / 13.491% | 137557 / 10.381% |
+
 ## App shell: shortcuts, menu bar, window (§2.2, §12, §13)
 
 | # | Item | Kind | Original | Port | Status |
