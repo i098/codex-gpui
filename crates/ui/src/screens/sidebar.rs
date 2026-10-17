@@ -66,7 +66,7 @@ pub fn archive_shell(cx: &mut App) -> (gpui::Entity<Shell>, gpui::Entity<Archive
 }
 
 pub struct ArchivedChats {
-    pub threads: Option<Result<Vec<Thread>, String>>,
+    pub threads: Option<anyhow::Result<Vec<Thread>>>,
     _load: gpui::Task<()>,
 }
 
@@ -88,8 +88,7 @@ impl ArchivedChats {
                     }),
                 )
                 .await
-                .map(|page| page.data)
-                .map_err(|error| error.to_string());
+                .map(|page| page.data);
             this.update(cx, |this, cx| {
                 this.threads = Some(threads);
                 cx.notify();
