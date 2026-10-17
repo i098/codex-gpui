@@ -460,3 +460,22 @@ The test also checks the unread dot in the port's pixels.
 The unread state is injected in the port because the original fixture contains no unread chat.
 Command activation belongs to the later command-menu slices.
 The test also checks selection after a delayed search reply and spinner removal after a failed search.
+
+## S014: Grouped activity and completed reasoning
+
+`crates/app/tests/s014.rs` replays `refs/interactions/s014.json` on the Mac headless app.
+The replay advances the test clock by the recorded 800 ms after the `Worked for` click.
+Without that wait, the disclosure remains at animation progress zero when the screenshot runs.
+The legacy `worked_for_expands` check uses the same recorded wait after each disclosure click.
+Both checks keep their original pixel assertions.
+
+The replay checks the summary box, hover text, chevron, expanded row icons, row text, collapse, and request count.
+The original hides the completed reasoning fixture and draws no `Thought` header.
+The port retains that state.
+No product code, probe coordinates, fixture responses, or pixel gates change.
+
+The fresh original input replay matches the recorded disclosure and activity row boxes exactly.
+It also checks the original hover color, expanded rows, collapse, and hidden completed reasoning.
+[Original screenshot](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/003c2454a49370802469ed64320fe26f160b4da61215578a/original-group-expanded.png).
+[Port screenshot](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/003c2454a49370802469ed64320fe26f160b4da61215578a/s014-group-expanded.png).
+

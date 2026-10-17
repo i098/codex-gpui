@@ -973,6 +973,13 @@ fn has_item(fx: &Fx, id: &str) -> bool {
 /// `Worked for 17s` expands the turn's hidden work, and a second click folds it again. Only
 /// the transcript above the docked composer is compared (its caret blinks).
 fn worked_for_expands() -> Result<String> {
+    let recording: Value =
+        serde_json::from_str(include_str!("../../../refs/interactions/s014.json"))?;
+    let wait = std::time::Duration::from_millis(
+        recording["steps"][2]["waitMs"]
+            .as_u64()
+            .context("S014 disclosure waitMs")?,
+    );
     let transcript = [340., 44., 936., 600.];
     let mut fx = Fx::new()?;
     open_subtract(&mut fx)?;
@@ -980,10 +987,12 @@ fn worked_for_expands() -> Result<String> {
     fx.hover((640., 22.))?;
     let folded = fx.shot()?;
     fx.click(at)?;
+    fx.advance(wait)?;
     fx.hover((640., 22.))?;
     let n = changed(&folded, &fx.shot()?, transcript);
     ensure!(n > 1000, "expanding repainted {n} px");
     fx.click(at)?;
+    fx.advance(wait)?;
     fx.hover((640., 22.))?;
     let left = changed(&folded, &fx.shot()?, transcript);
     ensure!(left == 0, "folding left {left} px");
