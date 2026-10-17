@@ -643,6 +643,23 @@ impl Composer {
         self.approval.as_ref()
     }
 
+    pub fn restart_ready(&self) -> bool {
+        self.content.is_empty()
+            && self.attachments.is_empty()
+            && self.pending_attachments == 0
+            && self.marked_range.is_none()
+            && !self.running
+            && self.approval.is_none()
+            && self.queued.is_empty()
+            && !self.edit_pending
+            && self.on_cancel_edit.is_none()
+            && self.menu.is_none()
+            && self.context_menu.is_none()
+            && !self.slash.open
+            && !self.is_selecting
+            && !self.drag_active
+    }
+
     /// Icon-only footer for a known narrow composer; the editor sets the measured width.
     pub fn set_compact(&mut self, compact: bool, cx: &mut Context<Self>) {
         self.footer_width = if compact { 0. } else { f32::INFINITY };
