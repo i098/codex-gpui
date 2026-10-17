@@ -353,7 +353,13 @@ impl EntityInputHandler for Composer {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.selected_range = self.range_from_utf16(&range_utf16);
+        let range = self.range_from_utf16(&range_utf16);
+        self.selected_range = if range.is_empty() {
+            let at = self.snap(range.start, None);
+            at..at
+        } else {
+            self.snap(range.start, Some(false))..self.snap(range.end, Some(true))
+        };
         self.selection_reversed = false;
         cx.notify();
     }
@@ -475,7 +481,12 @@ pub(super) fn shape(
         .filter(|_| !composer.content.is_empty());
     let mut cuts = vec![0, s.len()];
     cuts.extend(marked.iter().flat_map(|m| [m.start, m.end]));
-    cuts.extend(composer.mentions.iter().flat_map(|m| [m.range.start, m.range.end]));
+    cuts.extend(
+        composer
+            .mentions
+            .iter()
+            .flat_map(|m| [m.range.start, m.range.end]),
+    );
     cuts.sort_unstable();
     cuts.dedup();
     let runs = cuts
@@ -634,7 +645,10 @@ impl gpui::Element for Editor {
         self.0.update(cx, |c, _| c.lines = lines);
         let chip = chip_color(cx.theme());
         for (p, icon) in icons {
-            let r = Bounds::new(bounds.origin + point(p.x, p.y + px(2.)), size(px(16.), px(16.)));
+            let r = Bounds::new(
+                bounds.origin + point(p.x, p.y + px(2.)),
+                size(px(16.), px(16.)),
+            );
             window
                 .paint_svg(
                     r,

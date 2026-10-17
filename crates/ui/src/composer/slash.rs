@@ -210,10 +210,6 @@ pub(super) struct Slash {
 }
 
 impl Slash {
-    pub(super) fn has_selection(&self) -> bool {
-        self.open && !self.matches.is_empty()
-    }
-
     pub(super) fn reset(&mut self) {
         self.open = false;
         self.dismissed = None;
@@ -447,7 +443,7 @@ impl Composer {
             "usage" => SlashCommand::Usage,
             _ => return,
         };
-        self.content.replace_range(self.slash.range.clone(), "");
+        self.splice(self.slash.range.clone(), "");
         self.selected_range = self.slash.range.start..self.slash.range.start;
         self.marked_range = None;
         self.slash.open = false;

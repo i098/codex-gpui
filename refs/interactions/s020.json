@@ -1,0 +1,3802 @@
+{
+ "name": "s020-composer-mention-keys-and-chips",
+ "viewport": {
+  "w": 1280,
+  "h": 832,
+  "dpr": 1,
+  "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+  "theme": "dark",
+  "hoverEmulated": true
+ },
+ "steps": [
+  {
+   "type": "click",
+   "target": {
+    "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Change the greeting\"]",
+    "bbox": {
+     "x": 60,
+     "y": 290,
+     "w": 272,
+     "h": 30
+    }
+   },
+   "note": "opens the thread route; its cwd becomes the file search root"
+  },
+  {
+   "type": "click",
+   "target": {
+    "selector": ".ProseMirror",
+    "bbox": {
+     "x": 453,
+     "y": 728,
+     "w": 712,
+     "h": 44
+    }
+   },
+   "portReference": {
+    "screen": "thread",
+    "text": "Work with Codex"
+   },
+   "expect": {
+    "text": "",
+    "focused": true,
+    "chips": [],
+    "menu": null
+   }
+  },
+  {
+   "type": "type",
+   "text": "@",
+   "expect": {
+    "text": "@",
+    "focused": true,
+    "chips": [],
+    "menu": {
+     "bbox": {
+      "x": 441,
+      "y": 390,
+      "w": 736,
+      "h": 320
+     },
+     "activedescendant": null,
+     "sections": [
+      {
+       "id": "context-actions",
+       "heading": "Add",
+       "items": [
+        {
+         "text": "Files and folders",
+         "disabled": false,
+         "current": true,
+         "bbox": {
+          "x": 446,
+          "y": 422,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(255, 255, 255, 0.08)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1"
+         }
+        },
+        {
+         "text": "Attach appshot",
+         "disabled": true,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 450,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "0.5"
+         }
+        },
+        {
+         "text": "Goal | Set a goal to keep pursuing",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 479,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Sketch | Draw a sketch",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 507,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        }
+       ]
+      },
+      {
+       "id": "plugins",
+       "heading": "Plugins",
+       "items": [
+        {
+         "text": "Skyscanner | Find cheap flights",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 566,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Codex Security Cloud | Find and fix vulnerabilities across your repositories",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 595,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Interactive Brokers (IBKR) | Analyze global markets",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 624,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Google Calendar | Manage Google Calendar events",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 652,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Gmail | Read and manage Gmail",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 681,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "GitHub | Triage PRs, issues, CI, and publish flows",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 709,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Browser | Control the in-app browser",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 738,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Computer | Control Mac apps from ChatGPT",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 766,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Visualize | Create interactive visuals",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 795,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Pages | Create and edit pages and spaces",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 823,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Pets | Create and manage animated ChatGPT pets, not real-world or other-app pets.",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 852,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Plugin Management | Discover and manage plugins",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 881,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Sites Build and deploy websites",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 909,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        }
+       ]
+      },
+      {
+       "id": "agents",
+       "heading": "Agents",
+       "items": [
+        {
+         "text": "Loading agents…",
+         "disabled": true,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 968,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1"
+         }
+        }
+       ]
+      },
+      {
+       "id": "files",
+       "heading": "Files",
+       "items": [
+        {
+         "text": "Type to search for files",
+         "disabled": true,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 1027,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1"
+         }
+        }
+       ]
+      },
+      {
+       "id": "pages",
+       "heading": "Pages",
+       "items": [
+        {
+         "text": "Retry pages",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 1087,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        }
+       ]
+      },
+      {
+       "id": "spaces",
+       "heading": "Spaces",
+       "items": [
+        {
+         "text": "test",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 1146,
+          "w": 716,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "at": 1500
+  },
+  {
+   "type": "type",
+   "text": "mat",
+   "at": 2715,
+   "expect": {
+    "text": "@mat",
+    "focused": true,
+    "chips": [],
+    "menu": {
+     "bbox": {
+      "x": 441,
+      "y": 472,
+      "w": 736,
+      "h": 239
+     },
+     "activedescendant": null,
+     "sections": [
+      {
+       "id": "search-results",
+       "heading": null,
+       "items": [
+        {
+         "text": "Ask Matt | Find the right skill or workflow",
+         "disabled": false,
+         "current": true,
+         "bbox": {
+          "x": 446,
+          "y": 477,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(255, 255, 255, 0.08)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1"
+         }
+        },
+        {
+         "text": "Setup Matt Pocock Skills | Configure a repo for the skills",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 505,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Aws Cloudformation | Author, validate, and troubleshoot AWS CloudFormation templates. Covers template authoring with sec",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 534,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Browser | Control the in-app browser",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 562,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Computer | Control Mac apps from ChatGPT",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 591,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Pets | Create and manage animated ChatGPT pets, not real-world or other-app pets.",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 619,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "math.py | src",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 648,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "matrix.rs | src",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 676,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "requests": [
+    {
+     "type": "mcp-request",
+     "method": "fuzzyFileSearch/sessionStart",
+     "params": {
+      "sessionId": "01883f49-db7c-4673-9de2-421b55629a85",
+      "roots": [
+       "/private/tmp/cgx-mac/proj"
+      ]
+     }
+    },
+    {
+     "type": "mcp-request",
+     "method": "fuzzyFileSearch/sessionUpdate",
+     "params": {
+      "sessionId": "01883f49-db7c-4673-9de2-421b55629a85",
+      "query": "mat"
+     }
+    }
+   ],
+   "note": "after fuzzyFileSearch/sessionUpdated with the matches and sessionCompleted"
+  },
+  {
+   "type": "key",
+   "key": "ArrowUp",
+   "portKey": "up",
+   "expect": {
+    "text": "@mat",
+    "focused": true,
+    "chips": [],
+    "menu": {
+     "bbox": {
+      "x": 441,
+      "y": 472,
+      "w": 736,
+      "h": 239
+     },
+     "activedescendant": null,
+     "sections": [
+      {
+       "id": "search-results",
+       "heading": null,
+       "items": [
+        {
+         "text": "Ask Matt | Find the right skill or workflow",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 477,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Setup Matt Pocock Skills | Configure a repo for the skills",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 505,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Aws Cloudformation | Author, validate, and troubleshoot AWS CloudFormation templates. Covers template authoring with sec",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 534,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Browser | Control the in-app browser",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 562,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Computer | Control Mac apps from ChatGPT",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 591,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Pets | Create and manage animated ChatGPT pets, not real-world or other-app pets.",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 619,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "math.py | src",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 648,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "matrix.rs | src",
+         "disabled": false,
+         "current": true,
+         "bbox": {
+          "x": 446,
+          "y": 676,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(255, 255, 255, 0.08)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "note": "wraps from the first row to the last"
+  },
+  {
+   "type": "key",
+   "key": "ArrowUp",
+   "portKey": "up",
+   "expect": {
+    "text": "@mat",
+    "focused": true,
+    "chips": [],
+    "menu": {
+     "bbox": {
+      "x": 441,
+      "y": 472,
+      "w": 736,
+      "h": 239
+     },
+     "activedescendant": null,
+     "sections": [
+      {
+       "id": "search-results",
+       "heading": null,
+       "items": [
+        {
+         "text": "Ask Matt | Find the right skill or workflow",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 477,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Setup Matt Pocock Skills | Configure a repo for the skills",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 505,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Aws Cloudformation | Author, validate, and troubleshoot AWS CloudFormation templates. Covers template authoring with sec",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 534,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Browser | Control the in-app browser",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 562,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Computer | Control Mac apps from ChatGPT",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 591,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Pets | Create and manage animated ChatGPT pets, not real-world or other-app pets.",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 619,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "math.py | src",
+         "disabled": false,
+         "current": true,
+         "bbox": {
+          "x": 446,
+          "y": 648,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(255, 255, 255, 0.08)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1"
+         }
+        },
+        {
+         "text": "matrix.rs | src",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 676,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "key",
+   "key": "ArrowDown",
+   "portKey": "down",
+   "expect": {
+    "text": "@mat",
+    "focused": true,
+    "chips": [],
+    "menu": {
+     "bbox": {
+      "x": 441,
+      "y": 472,
+      "w": 736,
+      "h": 239
+     },
+     "activedescendant": null,
+     "sections": [
+      {
+       "id": "search-results",
+       "heading": null,
+       "items": [
+        {
+         "text": "Ask Matt | Find the right skill or workflow",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 477,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Setup Matt Pocock Skills | Configure a repo for the skills",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 505,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Aws Cloudformation | Author, validate, and troubleshoot AWS CloudFormation templates. Covers template authoring with sec",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 534,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Browser | Control the in-app browser",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 562,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Computer | Control Mac apps from ChatGPT",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 591,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Pets | Create and manage animated ChatGPT pets, not real-world or other-app pets.",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 619,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "math.py | src",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 648,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "matrix.rs | src",
+         "disabled": false,
+         "current": true,
+         "bbox": {
+          "x": 446,
+          "y": 676,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(255, 255, 255, 0.08)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "key",
+   "key": "ArrowDown",
+   "portKey": "down",
+   "expect": {
+    "text": "@mat",
+    "focused": true,
+    "chips": [],
+    "menu": {
+     "bbox": {
+      "x": 441,
+      "y": 472,
+      "w": 736,
+      "h": 239
+     },
+     "activedescendant": null,
+     "sections": [
+      {
+       "id": "search-results",
+       "heading": null,
+       "items": [
+        {
+         "text": "Ask Matt | Find the right skill or workflow",
+         "disabled": false,
+         "current": true,
+         "bbox": {
+          "x": 446,
+          "y": 477,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(255, 255, 255, 0.08)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1"
+         }
+        },
+        {
+         "text": "Setup Matt Pocock Skills | Configure a repo for the skills",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 505,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Aws Cloudformation | Author, validate, and troubleshoot AWS CloudFormation templates. Covers template authoring with sec",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 534,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Browser | Control the in-app browser",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 562,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Computer | Control Mac apps from ChatGPT",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 591,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Pets | Create and manage animated ChatGPT pets, not real-world or other-app pets.",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 619,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "math.py | src",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 648,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "matrix.rs | src",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 676,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "note": "wraps from the last row to the first"
+  },
+  {
+   "type": "key",
+   "key": "ArrowUp",
+   "portKey": "up",
+   "expect": {
+    "text": "@mat",
+    "focused": true,
+    "chips": [],
+    "menu": {
+     "bbox": {
+      "x": 441,
+      "y": 472,
+      "w": 736,
+      "h": 239
+     },
+     "activedescendant": null,
+     "sections": [
+      {
+       "id": "search-results",
+       "heading": null,
+       "items": [
+        {
+         "text": "Ask Matt | Find the right skill or workflow",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 477,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Setup Matt Pocock Skills | Configure a repo for the skills",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 505,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Aws Cloudformation | Author, validate, and troubleshoot AWS CloudFormation templates. Covers template authoring with sec",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 534,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Browser | Control the in-app browser",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 562,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Computer | Control Mac apps from ChatGPT",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 591,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Pets | Create and manage animated ChatGPT pets, not real-world or other-app pets.",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 619,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "math.py | src",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 648,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "matrix.rs | src",
+         "disabled": false,
+         "current": true,
+         "bbox": {
+          "x": 446,
+          "y": 676,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(255, 255, 255, 0.08)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "key",
+   "key": "ArrowUp",
+   "portKey": "up",
+   "expect": {
+    "text": "@mat",
+    "focused": true,
+    "chips": [],
+    "menu": {
+     "bbox": {
+      "x": 441,
+      "y": 472,
+      "w": 736,
+      "h": 239
+     },
+     "activedescendant": null,
+     "sections": [
+      {
+       "id": "search-results",
+       "heading": null,
+       "items": [
+        {
+         "text": "Ask Matt | Find the right skill or workflow",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 477,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Setup Matt Pocock Skills | Configure a repo for the skills",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 505,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Aws Cloudformation | Author, validate, and troubleshoot AWS CloudFormation templates. Covers template authoring with sec",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 534,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Browser | Control the in-app browser",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 562,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Computer | Control Mac apps from ChatGPT",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 591,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "Pets | Create and manage animated ChatGPT pets, not real-world or other-app pets.",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 619,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        },
+        {
+         "text": "math.py | src",
+         "disabled": false,
+         "current": true,
+         "bbox": {
+          "x": 446,
+          "y": 648,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(255, 255, 255, 0.08)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "1"
+         }
+        },
+        {
+         "text": "matrix.rs | src",
+         "disabled": false,
+         "current": false,
+         "bbox": {
+          "x": 446,
+          "y": 676,
+          "w": 726,
+          "h": 29
+         },
+         "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "opacity": "0.75"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "key",
+   "key": "Enter",
+   "portKey": "enter",
+   "expect": {
+    "text": "math.py ",
+    "focused": true,
+    "chips": [
+     {
+      "label": "math.py",
+      "linkLabel": "math.py",
+      "href": "/private/tmp/cgx-mac/proj/src/math.py",
+      "kind": "file",
+      "path": "src/math.py",
+      "editable": "false",
+      "bbox": {
+       "x": 453,
+       "y": 729,
+       "w": 74,
+       "h": 17
+      },
+      "computed": {
+       "color": "color(srgb 0.338039 0.523137 0.818039)",
+       "fontWeight": "500",
+       "fontSize": "14px",
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "display": "inline"
+      },
+      "icon": {
+       "bbox": {
+        "x": 453,
+        "y": 730,
+        "w": 16,
+        "h": 16
+       },
+       "color": "color(srgb 0.338039 0.523137 0.818039)"
+      },
+      "after": " "
+     }
+    ],
+    "menu": null
+   },
+   "note": "inserts the highlighted file as a mention chip followed by a space; the list closes, nothing is sent"
+  },
+  {
+   "type": "type",
+   "text": "hi",
+   "expect": {
+    "text": "math.py hi",
+    "focused": true,
+    "chips": [
+     {
+      "label": "math.py",
+      "linkLabel": "math.py",
+      "href": "/private/tmp/cgx-mac/proj/src/math.py",
+      "kind": "file",
+      "path": "src/math.py",
+      "editable": "false",
+      "bbox": {
+       "x": 453,
+       "y": 729,
+       "w": 74,
+       "h": 17
+      },
+      "computed": {
+       "color": "color(srgb 0.338039 0.523137 0.818039)",
+       "fontWeight": "500",
+       "fontSize": "14px",
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "display": "inline"
+      },
+      "icon": {
+       "bbox": {
+        "x": 453,
+        "y": 730,
+        "w": 16,
+        "h": 16
+       },
+       "color": "color(srgb 0.338039 0.523137 0.818039)"
+      },
+      "after": " hi"
+     }
+    ],
+    "menu": null
+   }
+  },
+  {
+   "type": "key",
+   "key": "Enter",
+   "portKey": "enter",
+   "expect": {
+    "text": "math.py hi",
+    "focused": true,
+    "chips": [
+     {
+      "label": "math.py",
+      "linkLabel": "math.py",
+      "href": "/private/tmp/cgx-mac/proj/src/math.py",
+      "kind": "file",
+      "path": "src/math.py",
+      "editable": "false",
+      "bbox": {
+       "x": 453,
+       "y": 729,
+       "w": 74,
+       "h": 17
+      },
+      "computed": {
+       "color": "color(srgb 0.338039 0.523137 0.818039)",
+       "fontWeight": "500",
+       "fontSize": "14px",
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "display": "inline"
+      },
+      "icon": {
+       "bbox": {
+        "x": 453,
+        "y": 730,
+        "w": 16,
+        "h": 16
+       },
+       "color": "color(srgb 0.338039 0.523137 0.818039)"
+      },
+      "after": " hi"
+     }
+    ],
+    "menu": null
+   },
+   "prompt": "[math.py](src/math.py) hi",
+   "toasts": [],
+   "note": "sends: the prompt is the composer's markdown (prompt-history atom); route1 refuses the turn, so the original keeps the text and shows the error toast"
+  }
+ ],
+ "result": {
+  "prompt": "[math.py](src/math.py) hi",
+  "dom": {
+   "text": "math.py hi",
+   "focused": true,
+   "chips": [
+    {
+     "label": "math.py",
+     "linkLabel": "math.py",
+     "href": "/private/tmp/cgx-mac/proj/src/math.py",
+     "kind": "file",
+     "path": "src/math.py",
+     "editable": "false",
+     "bbox": {
+      "x": 453,
+      "y": 729,
+      "w": 74,
+      "h": 17
+     },
+     "computed": {
+      "color": "color(srgb 0.338039 0.523137 0.818039)",
+      "fontWeight": "500",
+      "fontSize": "14px",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "display": "inline"
+     },
+     "icon": {
+      "bbox": {
+       "x": 453,
+       "y": 730,
+       "w": 16,
+       "h": 16
+      },
+      "color": "color(srgb 0.338039 0.523137 0.818039)"
+     },
+     "after": " hi"
+    }
+   ],
+   "menu": null
+  },
+  "requests": [
+   {
+    "type": "mcp-request",
+    "method": "fuzzyFileSearch/sessionStart",
+    "params": {
+     "sessionId": "01883f49-db7c-4673-9de2-421b55629a85",
+     "roots": [
+      "/private/tmp/cgx-mac/proj"
+     ]
+    }
+   },
+   {
+    "type": "mcp-request",
+    "method": "fuzzyFileSearch/sessionUpdate",
+    "params": {
+     "sessionId": "01883f49-db7c-4673-9de2-421b55629a85",
+     "query": "mat"
+    }
+   },
+   {
+    "type": "mcp-request",
+    "method": "fuzzyFileSearch/sessionStop",
+    "params": {
+     "sessionId": "01883f49-db7c-4673-9de2-421b55629a85"
+    }
+   }
+  ]
+ },
+ "second": {
+  "steps": [
+   {
+    "type": "click",
+    "target": {
+     "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Change the greeting\"]",
+     "bbox": {
+      "x": 60,
+      "y": 290,
+      "w": 272,
+      "h": 30
+     }
+    },
+    "note": "opens the thread route; its cwd becomes the file search root"
+   },
+   {
+    "type": "click",
+    "target": {
+     "selector": ".ProseMirror",
+     "bbox": {
+      "x": 453,
+      "y": 728,
+      "w": 712,
+      "h": 44
+     }
+    },
+    "portReference": {
+     "screen": "thread",
+     "text": "Work with Codex"
+    },
+    "expect": {
+     "text": "",
+     "focused": true,
+     "chips": [],
+     "menu": null
+    }
+   },
+   {
+    "type": "type",
+    "text": "@",
+    "expect": {
+     "text": "@",
+     "focused": true,
+     "chips": [],
+     "menu": {
+      "bbox": {
+       "x": 441,
+       "y": 390,
+       "w": 736,
+       "h": 320
+      },
+      "activedescendant": null,
+      "sections": [
+       {
+        "id": "context-actions",
+        "heading": "Add",
+        "items": [
+         {
+          "text": "Files and folders",
+          "disabled": false,
+          "current": true,
+          "bbox": {
+           "x": 446,
+           "y": 422,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(255, 255, 255, 0.08)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "1"
+          }
+         },
+         {
+          "text": "Attach appshot",
+          "disabled": true,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 450,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgba(255, 255, 255, 0.498)",
+           "opacity": "0.5"
+          }
+         },
+         {
+          "text": "Goal | Set a goal to keep pursuing",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 479,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Sketch | Draw a sketch",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 507,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         }
+        ]
+       },
+       {
+        "id": "plugins",
+        "heading": "Plugins",
+        "items": [
+         {
+          "text": "Skyscanner | Find cheap flights",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 566,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Codex Security Cloud | Find and fix vulnerabilities across your repositories",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 595,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Interactive Brokers (IBKR) | Analyze global markets",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 624,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Google Calendar | Manage Google Calendar events",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 652,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Gmail | Read and manage Gmail",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 681,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "GitHub | Triage PRs, issues, CI, and publish flows",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 709,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Browser | Control the in-app browser",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 738,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Computer | Control Mac apps from ChatGPT",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 766,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Visualize | Create interactive visuals",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 795,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Pages | Create and edit pages and spaces",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 823,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Pets | Create and manage animated ChatGPT pets, not real-world or other-app pets.",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 852,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Plugin Management | Discover and manage plugins",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 881,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Sites Build and deploy websites",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 909,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         }
+        ]
+       },
+       {
+        "id": "agents",
+        "heading": "Agents",
+        "items": [
+         {
+          "text": "Loading agents…",
+          "disabled": true,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 968,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgba(255, 255, 255, 0.498)",
+           "opacity": "1"
+          }
+         }
+        ]
+       },
+       {
+        "id": "files",
+        "heading": "Files",
+        "items": [
+         {
+          "text": "Type to search for files",
+          "disabled": true,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 1027,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgba(255, 255, 255, 0.498)",
+           "opacity": "1"
+          }
+         }
+        ]
+       },
+       {
+        "id": "pages",
+        "heading": "Pages",
+        "items": [
+         {
+          "text": "Retry pages",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 1087,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         }
+        ]
+       },
+       {
+        "id": "spaces",
+        "heading": "Spaces",
+        "items": [
+         {
+          "text": "test",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 1146,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         }
+        ]
+       }
+      ]
+     }
+    },
+    "at": 1500
+   },
+   {
+    "type": "type",
+    "text": "mat",
+    "at": 3214,
+    "expect": {
+     "text": "@mat",
+     "focused": true,
+     "chips": [],
+     "menu": {
+      "bbox": {
+       "x": 441,
+       "y": 472,
+       "w": 736,
+       "h": 239
+      },
+      "activedescendant": null,
+      "sections": [
+       {
+        "id": "search-results",
+        "heading": null,
+        "items": [
+         {
+          "text": "Ask Matt | Find the right skill or workflow",
+          "disabled": false,
+          "current": true,
+          "bbox": {
+           "x": 446,
+           "y": 477,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(255, 255, 255, 0.08)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "1"
+          }
+         },
+         {
+          "text": "Setup Matt Pocock Skills | Configure a repo for the skills",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 505,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Aws Cloudformation | Author, validate, and troubleshoot AWS CloudFormation templates. Covers template authoring with sec",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 534,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Browser | Control the in-app browser",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 562,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Computer | Control Mac apps from ChatGPT",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 591,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Pets | Create and manage animated ChatGPT pets, not real-world or other-app pets.",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 619,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "math.py | src",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 648,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "matrix.rs | src",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 676,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         }
+        ]
+       }
+      ]
+     }
+    },
+    "requests": [
+     {
+      "type": "mcp-request",
+      "method": "fuzzyFileSearch/sessionStart",
+      "params": {
+       "sessionId": "43e22799-375f-4eb2-8a9e-12fa48b5dd18",
+       "roots": [
+        "/private/tmp/cgx-mac/proj"
+       ]
+      }
+     },
+     {
+      "type": "mcp-request",
+      "method": "fuzzyFileSearch/sessionUpdate",
+      "params": {
+       "sessionId": "43e22799-375f-4eb2-8a9e-12fa48b5dd18",
+       "query": "mat"
+      }
+     }
+    ]
+   },
+   {
+    "type": "key",
+    "key": "ArrowUp",
+    "portKey": "up",
+    "expect": {
+     "text": "@mat",
+     "focused": true,
+     "chips": [],
+     "menu": {
+      "bbox": {
+       "x": 441,
+       "y": 472,
+       "w": 736,
+       "h": 239
+      },
+      "activedescendant": null,
+      "sections": [
+       {
+        "id": "search-results",
+        "heading": null,
+        "items": [
+         {
+          "text": "Ask Matt | Find the right skill or workflow",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 477,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Setup Matt Pocock Skills | Configure a repo for the skills",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 505,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Aws Cloudformation | Author, validate, and troubleshoot AWS CloudFormation templates. Covers template authoring with sec",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 534,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Browser | Control the in-app browser",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 562,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Computer | Control Mac apps from ChatGPT",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 591,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Pets | Create and manage animated ChatGPT pets, not real-world or other-app pets.",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 619,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "math.py | src",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 648,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "matrix.rs | src",
+          "disabled": false,
+          "current": true,
+          "bbox": {
+           "x": 446,
+           "y": 676,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(255, 255, 255, 0.08)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "1"
+          }
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   {
+    "type": "key",
+    "key": "ArrowUp",
+    "portKey": "up",
+    "expect": {
+     "text": "@mat",
+     "focused": true,
+     "chips": [],
+     "menu": {
+      "bbox": {
+       "x": 441,
+       "y": 472,
+       "w": 736,
+       "h": 239
+      },
+      "activedescendant": null,
+      "sections": [
+       {
+        "id": "search-results",
+        "heading": null,
+        "items": [
+         {
+          "text": "Ask Matt | Find the right skill or workflow",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 477,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Setup Matt Pocock Skills | Configure a repo for the skills",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 505,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Aws Cloudformation | Author, validate, and troubleshoot AWS CloudFormation templates. Covers template authoring with sec",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 534,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Browser | Control the in-app browser",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 562,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Computer | Control Mac apps from ChatGPT",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 591,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Pets | Create and manage animated ChatGPT pets, not real-world or other-app pets.",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 619,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "math.py | src",
+          "disabled": false,
+          "current": true,
+          "bbox": {
+           "x": 446,
+           "y": 648,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(255, 255, 255, 0.08)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "1"
+          }
+         },
+         {
+          "text": "matrix.rs | src",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 676,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   {
+    "type": "key",
+    "key": "Tab",
+    "portKey": "tab",
+    "expect": {
+     "text": "math.py ",
+     "focused": true,
+     "chips": [
+      {
+       "label": "math.py",
+       "linkLabel": "math.py",
+       "href": "/private/tmp/cgx-mac/proj/src/math.py",
+       "kind": "file",
+       "path": "src/math.py",
+       "editable": "false",
+       "bbox": {
+        "x": 453,
+        "y": 729,
+        "w": 74,
+        "h": 17
+       },
+       "computed": {
+        "color": "color(srgb 0.338039 0.523137 0.818039)",
+        "fontWeight": "500",
+        "fontSize": "14px",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "display": "inline"
+       },
+       "icon": {
+        "bbox": {
+         "x": 453,
+         "y": 730,
+         "w": 16,
+         "h": 16
+        },
+        "color": "color(srgb 0.338039 0.523137 0.818039)"
+       },
+       "after": " "
+      }
+     ],
+     "menu": null
+    },
+    "note": "Tab inserts the highlighted row like Enter"
+   },
+   {
+    "type": "type",
+    "text": "hi",
+    "expect": {
+     "text": "math.py hi",
+     "focused": true,
+     "chips": [
+      {
+       "label": "math.py",
+       "linkLabel": "math.py",
+       "href": "/private/tmp/cgx-mac/proj/src/math.py",
+       "kind": "file",
+       "path": "src/math.py",
+       "editable": "false",
+       "bbox": {
+        "x": 453,
+        "y": 729,
+        "w": 74,
+        "h": 17
+       },
+       "computed": {
+        "color": "color(srgb 0.338039 0.523137 0.818039)",
+        "fontWeight": "500",
+        "fontSize": "14px",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "display": "inline"
+       },
+       "icon": {
+        "bbox": {
+         "x": 453,
+         "y": 730,
+         "w": 16,
+         "h": 16
+        },
+        "color": "color(srgb 0.338039 0.523137 0.818039)"
+       },
+       "after": " hi"
+      }
+     ],
+     "menu": null
+    }
+   },
+   {
+    "type": "key",
+    "key": "Backspace",
+    "portKey": "backspace",
+    "expect": {
+     "text": "math.py h",
+     "focused": true,
+     "chips": [
+      {
+       "label": "math.py",
+       "linkLabel": "math.py",
+       "href": "/private/tmp/cgx-mac/proj/src/math.py",
+       "kind": "file",
+       "path": "src/math.py",
+       "editable": "false",
+       "bbox": {
+        "x": 453,
+        "y": 729,
+        "w": 74,
+        "h": 17
+       },
+       "computed": {
+        "color": "color(srgb 0.338039 0.523137 0.818039)",
+        "fontWeight": "500",
+        "fontSize": "14px",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "display": "inline"
+       },
+       "icon": {
+        "bbox": {
+         "x": 453,
+         "y": 730,
+         "w": 16,
+         "h": 16
+        },
+        "color": "color(srgb 0.338039 0.523137 0.818039)"
+       },
+       "after": " h"
+      }
+     ],
+     "menu": null
+    }
+   },
+   {
+    "type": "key",
+    "key": "Backspace",
+    "portKey": "backspace",
+    "expect": {
+     "text": "math.py ",
+     "focused": true,
+     "chips": [
+      {
+       "label": "math.py",
+       "linkLabel": "math.py",
+       "href": "/private/tmp/cgx-mac/proj/src/math.py",
+       "kind": "file",
+       "path": "src/math.py",
+       "editable": "false",
+       "bbox": {
+        "x": 453,
+        "y": 729,
+        "w": 74,
+        "h": 17
+       },
+       "computed": {
+        "color": "color(srgb 0.338039 0.523137 0.818039)",
+        "fontWeight": "500",
+        "fontSize": "14px",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "display": "inline"
+       },
+       "icon": {
+        "bbox": {
+         "x": 453,
+         "y": 730,
+         "w": 16,
+         "h": 16
+        },
+        "color": "color(srgb 0.338039 0.523137 0.818039)"
+       },
+       "after": " "
+      }
+     ],
+     "menu": null
+    }
+   },
+   {
+    "type": "key",
+    "key": "Backspace",
+    "portKey": "backspace",
+    "expect": {
+     "text": "math.py",
+     "focused": true,
+     "chips": [
+      {
+       "label": "math.py",
+       "linkLabel": "math.py",
+       "href": "/private/tmp/cgx-mac/proj/src/math.py",
+       "kind": "file",
+       "path": "src/math.py",
+       "editable": "false",
+       "bbox": {
+        "x": 453,
+        "y": 729,
+        "w": 74,
+        "h": 17
+       },
+       "computed": {
+        "color": "color(srgb 0.338039 0.523137 0.818039)",
+        "fontWeight": "500",
+        "fontSize": "14px",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "display": "inline"
+       },
+       "icon": {
+        "bbox": {
+         "x": 453,
+         "y": 730,
+         "w": 16,
+         "h": 16
+        },
+        "color": "color(srgb 0.338039 0.523137 0.818039)"
+       },
+       "after": ""
+      }
+     ],
+     "menu": null
+    },
+    "note": "removes the space after the chip"
+   },
+   {
+    "type": "key",
+    "key": "Backspace",
+    "portKey": "backspace",
+    "expect": {
+     "text": "",
+     "focused": true,
+     "chips": [],
+     "menu": null
+    },
+    "note": "removes the whole chip"
+   },
+   {
+    "type": "type",
+    "text": "@",
+    "expect": {
+     "text": "@",
+     "focused": true,
+     "chips": [],
+     "menu": {
+      "bbox": {
+       "x": 441,
+       "y": 390,
+       "w": 736,
+       "h": 320
+      },
+      "activedescendant": null,
+      "sections": [
+       {
+        "id": "context-actions",
+        "heading": "Add",
+        "items": [
+         {
+          "text": "Files and folders",
+          "disabled": false,
+          "current": true,
+          "bbox": {
+           "x": 446,
+           "y": 422,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(255, 255, 255, 0.08)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "1"
+          }
+         },
+         {
+          "text": "Attach appshot",
+          "disabled": true,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 450,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgba(255, 255, 255, 0.498)",
+           "opacity": "0.5"
+          }
+         },
+         {
+          "text": "Goal | Set a goal to keep pursuing",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 479,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Sketch | Draw a sketch",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 507,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         }
+        ]
+       },
+       {
+        "id": "plugins",
+        "heading": "Plugins",
+        "items": [
+         {
+          "text": "Skyscanner | Find cheap flights",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 566,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Codex Security Cloud | Find and fix vulnerabilities across your repositories",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 595,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Interactive Brokers (IBKR) | Analyze global markets",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 624,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Google Calendar | Manage Google Calendar events",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 652,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Gmail | Read and manage Gmail",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 681,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "GitHub | Triage PRs, issues, CI, and publish flows",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 709,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Browser | Control the in-app browser",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 738,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Computer | Control Mac apps from ChatGPT",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 766,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Visualize | Create interactive visuals",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 795,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Pages | Create and edit pages and spaces",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 823,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Pets | Create and manage animated ChatGPT pets, not real-world or other-app pets.",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 852,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Plugin Management | Discover and manage plugins",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 881,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Sites Build and deploy websites",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 909,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         }
+        ]
+       },
+       {
+        "id": "agents",
+        "heading": "Agents",
+        "items": [
+         {
+          "text": "Loading agents…",
+          "disabled": true,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 968,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgba(255, 255, 255, 0.498)",
+           "opacity": "1"
+          }
+         }
+        ]
+       },
+       {
+        "id": "files",
+        "heading": "Files",
+        "items": [
+         {
+          "text": "Type to search for files",
+          "disabled": true,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 1027,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgba(255, 255, 255, 0.498)",
+           "opacity": "1"
+          }
+         }
+        ]
+       },
+       {
+        "id": "pages",
+        "heading": "Pages",
+        "items": [
+         {
+          "text": "Retry pages",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 1087,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         }
+        ]
+       },
+       {
+        "id": "spaces",
+        "heading": "Spaces",
+        "items": [
+         {
+          "text": "test",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 1146,
+           "w": 716,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         }
+        ]
+       }
+      ]
+     }
+    },
+    "at": 1500
+   },
+   {
+    "type": "type",
+    "text": "setup",
+    "expect": {
+     "text": "@setup",
+     "focused": true,
+     "chips": [],
+     "menu": {
+      "bbox": {
+       "x": 441,
+       "y": 586,
+       "w": 736,
+       "h": 124
+      },
+      "activedescendant": null,
+      "sections": [
+       {
+        "id": "search-results",
+        "heading": null,
+        "items": [
+         {
+          "text": "Setup Pre-Commit | Add pre-commit quality checks",
+          "disabled": false,
+          "current": true,
+          "bbox": {
+           "x": 446,
+           "y": 591,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(255, 255, 255, 0.08)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "1"
+          }
+         },
+         {
+          "text": "Setup TS Deep Modules | Enforce deep TypeScript modules",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 619,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Setup Matt Pocock Skills | Configure a repo for the skills",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 648,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Clerk Setup | Add Clerk authentication to any project by following the official quickstart guides.",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 676,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         }
+        ]
+       }
+      ]
+     }
+    },
+    "at": 2500
+   },
+   {
+    "type": "key",
+    "key": "ArrowDown",
+    "portKey": "down",
+    "expect": {
+     "text": "@setup",
+     "focused": true,
+     "chips": [],
+     "menu": {
+      "bbox": {
+       "x": 441,
+       "y": 586,
+       "w": 736,
+       "h": 124
+      },
+      "activedescendant": null,
+      "sections": [
+       {
+        "id": "search-results",
+        "heading": null,
+        "items": [
+         {
+          "text": "Setup Pre-Commit | Add pre-commit quality checks",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 591,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Setup TS Deep Modules | Enforce deep TypeScript modules",
+          "disabled": false,
+          "current": true,
+          "bbox": {
+           "x": 446,
+           "y": 619,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(255, 255, 255, 0.08)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "1"
+          }
+         },
+         {
+          "text": "Setup Matt Pocock Skills | Configure a repo for the skills",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 648,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Clerk Setup | Add Clerk authentication to any project by following the official quickstart guides.",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 676,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   {
+    "type": "key",
+    "key": "ArrowDown",
+    "portKey": "down",
+    "expect": {
+     "text": "@setup",
+     "focused": true,
+     "chips": [],
+     "menu": {
+      "bbox": {
+       "x": 441,
+       "y": 586,
+       "w": 736,
+       "h": 124
+      },
+      "activedescendant": null,
+      "sections": [
+       {
+        "id": "search-results",
+        "heading": null,
+        "items": [
+         {
+          "text": "Setup Pre-Commit | Add pre-commit quality checks",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 591,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Setup TS Deep Modules | Enforce deep TypeScript modules",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 619,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         },
+         {
+          "text": "Setup Matt Pocock Skills | Configure a repo for the skills",
+          "disabled": false,
+          "current": true,
+          "bbox": {
+           "x": 446,
+           "y": 648,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(255, 255, 255, 0.08)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "1"
+          }
+         },
+         {
+          "text": "Clerk Setup | Add Clerk authentication to any project by following the official quickstart guides.",
+          "disabled": false,
+          "current": false,
+          "bbox": {
+           "x": 446,
+           "y": 676,
+           "w": 726,
+           "h": 29
+          },
+          "computed": {
+           "backgroundColor": "rgba(0, 0, 0, 0)",
+           "color": "rgb(255, 255, 255)",
+           "opacity": "0.75"
+          }
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   {
+    "type": "key",
+    "key": "Enter",
+    "portKey": "enter",
+    "expect": {
+     "text": "Setup Matt Pocock Skills ",
+     "focused": true,
+     "chips": [
+      {
+       "label": "Setup Matt Pocock Skills",
+       "linkLabel": "$setup-matt-pocock-skills",
+       "href": "/Users/user/.agents/skills/setup-matt-pocock-skills/SKILL.md",
+       "kind": "skill",
+       "path": "/Users/user/.agents/skills/setup-matt-pocock-skills/SKILL.md",
+       "editable": "false",
+       "bbox": {
+        "x": 453,
+        "y": 729,
+        "w": 186,
+        "h": 17
+       },
+       "computed": {
+        "color": "color(srgb 0.338039 0.523137 0.818039)",
+        "fontWeight": "500",
+        "fontSize": "14px",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "display": "inline"
+       },
+       "icon": {
+        "bbox": {
+         "x": 453,
+         "y": 730,
+         "w": 16,
+         "h": 16
+        },
+        "color": "color(srgb 0.338039 0.523137 0.818039)"
+       },
+       "after": " "
+      }
+     ],
+     "menu": null
+    },
+    "note": "inserts the highlighted skill as a chip: label = display name, link label = $name"
+   },
+   {
+    "type": "type",
+    "text": "hi",
+    "expect": {
+     "text": "Setup Matt Pocock Skills hi",
+     "focused": true,
+     "chips": [
+      {
+       "label": "Setup Matt Pocock Skills",
+       "linkLabel": "$setup-matt-pocock-skills",
+       "href": "/Users/user/.agents/skills/setup-matt-pocock-skills/SKILL.md",
+       "kind": "skill",
+       "path": "/Users/user/.agents/skills/setup-matt-pocock-skills/SKILL.md",
+       "editable": "false",
+       "bbox": {
+        "x": 453,
+        "y": 729,
+        "w": 186,
+        "h": 17
+       },
+       "computed": {
+        "color": "color(srgb 0.338039 0.523137 0.818039)",
+        "fontWeight": "500",
+        "fontSize": "14px",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "display": "inline"
+       },
+       "icon": {
+        "bbox": {
+         "x": 453,
+         "y": 730,
+         "w": 16,
+         "h": 16
+        },
+        "color": "color(srgb 0.338039 0.523137 0.818039)"
+       },
+       "after": " hi"
+      }
+     ],
+     "menu": null
+    }
+   },
+   {
+    "type": "key",
+    "key": "Enter",
+    "portKey": "enter",
+    "expect": {
+     "text": "Setup Matt Pocock Skills hi",
+     "focused": true,
+     "chips": [
+      {
+       "label": "Setup Matt Pocock Skills",
+       "linkLabel": "$setup-matt-pocock-skills",
+       "href": "/Users/user/.agents/skills/setup-matt-pocock-skills/SKILL.md",
+       "kind": "skill",
+       "path": "/Users/user/.agents/skills/setup-matt-pocock-skills/SKILL.md",
+       "editable": "false",
+       "bbox": {
+        "x": 453,
+        "y": 729,
+        "w": 186,
+        "h": 17
+       },
+       "computed": {
+        "color": "color(srgb 0.338039 0.523137 0.818039)",
+        "fontWeight": "500",
+        "fontSize": "14px",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "display": "inline"
+       },
+       "icon": {
+        "bbox": {
+         "x": 453,
+         "y": 730,
+         "w": 16,
+         "h": 16
+        },
+        "color": "color(srgb 0.338039 0.523137 0.818039)"
+       },
+       "after": " hi"
+      }
+     ],
+     "menu": null
+    },
+    "prompt": "[$setup-matt-pocock-skills](/Users/user/.agents/skills/setup-matt-pocock-skills/SKILL.md) hi",
+    "toasts": [],
+    "note": "sends: the prompt is the composer's markdown (prompt-history atom); route1 refuses the turn, so the original keeps the text and shows the error toast"
+   }
+  ],
+  "result": {
+   "prompt": "[$setup-matt-pocock-skills](/Users/user/.agents/skills/setup-matt-pocock-skills/SKILL.md) hi",
+   "dom": {
+    "text": "Setup Matt Pocock Skills hi",
+    "focused": true,
+    "chips": [
+     {
+      "label": "Setup Matt Pocock Skills",
+      "linkLabel": "$setup-matt-pocock-skills",
+      "href": "/Users/user/.agents/skills/setup-matt-pocock-skills/SKILL.md",
+      "kind": "skill",
+      "path": "/Users/user/.agents/skills/setup-matt-pocock-skills/SKILL.md",
+      "editable": "false",
+      "bbox": {
+       "x": 453,
+       "y": 729,
+       "w": 186,
+       "h": 17
+      },
+      "computed": {
+       "color": "color(srgb 0.338039 0.523137 0.818039)",
+       "fontWeight": "500",
+       "fontSize": "14px",
+       "backgroundColor": "rgba(0, 0, 0, 0)",
+       "display": "inline"
+      },
+      "icon": {
+       "bbox": {
+        "x": 453,
+        "y": 730,
+        "w": 16,
+        "h": 16
+       },
+       "color": "color(srgb 0.338039 0.523137 0.818039)"
+      },
+      "after": " hi"
+     }
+    ],
+    "menu": null
+   },
+   "requests": [
+    {
+     "type": "mcp-request",
+     "method": "fuzzyFileSearch/sessionStart",
+     "params": {
+      "sessionId": "43e22799-375f-4eb2-8a9e-12fa48b5dd18",
+      "roots": [
+       "/private/tmp/cgx-mac/proj"
+      ]
+     }
+    },
+    {
+     "type": "mcp-request",
+     "method": "fuzzyFileSearch/sessionUpdate",
+     "params": {
+      "sessionId": "43e22799-375f-4eb2-8a9e-12fa48b5dd18",
+      "query": "mat"
+     }
+    },
+    {
+     "type": "mcp-request",
+     "method": "fuzzyFileSearch/sessionStop",
+     "params": {
+      "sessionId": "43e22799-375f-4eb2-8a9e-12fa48b5dd18"
+     }
+    },
+    {
+     "type": "mcp-request",
+     "method": "fuzzyFileSearch/sessionStart",
+     "params": {
+      "sessionId": "f3feda6d-596c-48e0-826e-d43a1d8cc8c1",
+      "roots": [
+       "/private/tmp/cgx-mac/proj"
+      ]
+     }
+    },
+    {
+     "type": "mcp-request",
+     "method": "fuzzyFileSearch/sessionUpdate",
+     "params": {
+      "sessionId": "f3feda6d-596c-48e0-826e-d43a1d8cc8c1",
+      "query": "setup"
+     }
+    },
+    {
+     "type": "mcp-request",
+     "method": "fuzzyFileSearch/sessionStop",
+     "params": {
+      "sessionId": "f3feda6d-596c-48e0-826e-d43a1d8cc8c1"
+     }
+    }
+   ]
+  }
+ },
+ "screenshot": [
+  "/sdc-disk/tmp/cgx/s020/shots/s020-at-mat.png",
+  "/sdc-disk/tmp/cgx/s020/shots/s020-chip-file.png",
+  "/sdc-disk/tmp/cgx/s020/shots/s020-before-send-file.png",
+  "/sdc-disk/tmp/cgx/s020/shots/s020-chip-skill.png",
+  "/sdc-disk/tmp/cgx/s020/shots/s020-before-send-skill.png"
+ ],
+ "recorder": {
+  "stack": "tools/route1/linux/start.sh copy on port 4620 (fake ssh runs the mock app-server with a fuzzyFileSearch session over hello.py, README.md, src/math.py, src/matrix.rs, docs/notes.md; server.mjs READ_ONLY patched to pass fuzzyFileSearch/*), fleet chrome tier :9522, own incognito context per run, CODEX_HOME /sdc-disk/tmp/cgx/s020/inv-r1/home",
+  "notes": [
+   "Two runs on separate pages (steps, second.steps): a third `@` search in one page trips a renderer bug in the Pages search.",
+   "The list sets aria-current on the highlighted row; aria-activedescendant stays unset.",
+   "Plugins rows (Browser, Computer, Pets) come from host services the port does not have; the port's rows must appear in the recorded order.",
+   "A chip is a contenteditable=false span: 16 px icon in a 19 px slot, then the label (file name, or the skill's display name) in font-weight 500, color-mix(text-info 80%, text 20%); a space follows the chip.",
+   "The prompt sent replaces a file chip by [name](path) and a skill chip by [$name](skill path); result.prompt is the prompt-history markdown of the send (getText and getPersistedText share the markdown serializer)."
+  ]
+ }
+}

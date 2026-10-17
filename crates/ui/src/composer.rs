@@ -698,14 +698,14 @@ impl Composer {
 
     /// Enter: `approval.approve` accepts a pending request, and a draft still sends.
     fn enter(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
-        if self.approval.is_some() && !self.slash.has_selection() {
+        if self.approval.is_some() && !self.slash.open {
             self.decide(ApprovalDecision::Accept, window, cx);
         }
         self.submit(&Submit, window, cx);
     }
 
     fn submit(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
-        if self.slash.has_selection() {
+        if self.slash.open {
             self.activate_slash(window, cx);
             return;
         }
@@ -716,7 +716,11 @@ impl Composer {
             return;
         }
         let submission = Submission {
-            text: self.prompt(),
+            text: if self.mentions.is_empty() && self.on_cancel_edit.is_none() {
+                std::mem::take(&mut self.content)
+            } else {
+                self.prompt()
+            },
             attachments: self.attachments.drain(..).map(|a| a.path).collect(),
             model: self
                 .current_model()
