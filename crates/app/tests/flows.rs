@@ -25,6 +25,7 @@ const FLOWS: &[(&str, Flow)] = &[
     ("launch_home", launch_home),
     ("parity_home", || parity_flow("home", |_| Ok(()))),
     ("rail_home_from_thread", rail_home_from_thread),
+    ("rail_thread_family", rail_thread_family),
     ("rail_home_reselect_resets", rail_home_reselect_resets),
     ("rail_hover_fill", rail_hover_fill),
     ("resize_three_widths", resize_three_widths),
@@ -190,11 +191,58 @@ fn rail_home_from_thread() -> Result<String> {
     let mut fx = Fx::new()?;
     fx.click(fx.at("home", "Add a subtract")?)?;
     fx.wait_thread(SUBTRACT)?;
-    ensure!(fx.shell(|s| s.selected_rail).is_none());
     fx.click(RAIL_HOME)?;
     ensure!(fx.route() == Route::Home, "route {:?}", fx.route());
     ensure!(fx.shell(|s| s.selected_rail) == Some("home"));
     ensure!(fx.composer_focused()?);
+    Ok(String::new())
+}
+
+fn rail_thread_family() -> Result<String> {
+    let mut mismatches = 0;
+    for (screen, panel) in [
+        ("thread", None),
+        ("diff", Some(SidePanel::Changes)),
+        ("terminal", Some(SidePanel::Terminal)),
+    ] {
+        for theme in ["dark", "light"] {
+            for size in [(1280., 832.), (1440., 900.)] {
+                let mut fx = Fx::with(theme, size, None, |_| {})?;
+                match screen {
+                    "thread" => {
+                        fx.click(fx.at("home", "Add a subtract")?)?;
+                        fx.wait_thread(SUBTRACT)?;
+                    }
+                    "diff" => open_changes(&mut fx)?,
+                    _ => open_terminal(&mut fx)?,
+                }
+                ensure!(fx.read(|r, _| matches!(r.route(), Route::Thread(id) if id == SUBTRACT)));
+                ensure!(side(&fx) == panel);
+                let reference = image::open(format!(
+                    "{ROOT}/refs/{screen}/{theme}@{}x{}.png",
+                    size.0, size.1
+                ))?
+                .into_rgba8();
+                let port = fx.shot()?;
+                port.save(format!(
+                    "{}/rail-{screen}-{theme}@{}x{}.png",
+                    env!("CARGO_TARGET_TMPDIR"),
+                    size.0,
+                    size.1
+                ))?;
+                // The Terminal unread dot ends at y=66; compare the shared selection below it.
+                let rail = if screen == "terminal" {
+                    [8., 66., 36., 22.]
+                } else {
+                    [8., 52., 36., 36.]
+                };
+                let n = changed(&reference, &port, rail);
+                println!("{screen} {theme} {}x{} rail={n}", size.0, size.1);
+                mismatches += usize::from(n != 0);
+            }
+        }
+    }
+    ensure!(mismatches == 0, "{mismatches} original rail regions differ");
     Ok(String::new())
 }
 

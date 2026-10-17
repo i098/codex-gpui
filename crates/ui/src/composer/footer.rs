@@ -91,13 +91,34 @@ impl Composer {
             .items_center()
             .gap(px(5.))
             .child(
-                pill("add-files", t)
-                    .tab_index(0)
-                    .focus_visible(menu::trigger_focus)
-                    .w(px(28.))
-                    .justify_center()
-                    .child(footer_icon("plus", t.text))
-                    .on_click(cx.listener(|this, _, _, cx| this.add_files(cx))),
+                crate::tooltip::tooltip(
+                    pill("add-files", t)
+                        .role(gpui::Role::Button)
+                        .aria_label("Add files and more")
+                        .aria_expanded(self.slash.open && self.slash.mention)
+                        .tab_index(0)
+                        .focus_visible(menu::trigger_focus)
+                        .w(px(28.))
+                        .justify_center()
+                        .child(footer_icon("plus", t.text))
+                        .capture_any_mouse_down(cx.listener(|this, _, _, _| {
+                            this.slash.add_mouse_open = this.slash.open && this.slash.mention;
+                        }))
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                this.slash.add_mouse_open = false;
+                                this.toggle_add(window, cx);
+                                cx.stop_propagation();
+                            }
+                        }))
+                        .on_click(cx.listener(|this, _, window, cx| this.toggle_add(window, cx))),
+                    "Add files and more",
+                    Some("@"),
+                    crate::tooltip::Side::Top,
+                )
+                // The 1 px trigger border leaves a 4 px visible gap with this content-edge offset.
+                .side_offset(px(5.)),
             )
             .child(
                 div()

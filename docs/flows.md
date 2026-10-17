@@ -101,6 +101,30 @@ All 36 unchanged original images pass the same helper with zero differences.
 Replaying the old Mobile click returns exit 1 for all four route checks before any pixel comparison.
 These checks prove the guard; they do not replace the failing Root captures.
 
+### Home rail selection on thread routes
+
+Home stays selected on its Thread, Changes, and Background terminal routes.
+`rail_thread_family` enters those states through Root input and compares the Home rail with the original pixels.
+It checks both themes and sizes without changing focus, pointer position, clocks, or fixtures.
+Thread and Changes check the full Home button at `[8,52,36,36]`.
+Terminal checks `[8,66,36,22]`, below the reference's separate unread dot.
+This selection check does not waive any full-Root pixel difference.
+The strict full-screen gate still checks the original Terminal unread state and every outside-text pixel.
+
+Run the selection regression with `cargo test -p app --test flows -- rail_thread_family`.
+
+The new regression fails all 12 cases before the rail correction and matches all 12 afterward.
+The separate static gate remains 36/36.
+At integrated source `60283d8` on main `9079aa0`, the unchanged full-Root gate returns exit 1: 32 comparisons pass and four fail.
+Every screen except Sidebar passes all four variants.
+Sidebar still differs from its older pending-state reference; correct S026 settled search behavior remains unchanged.
+This result includes the upstream repairs; the consumer change remains limited to Home rail selection.
+Cells give `outside count / text percent`; the owned empty `CODEX_HOME` excludes ambient automation rows.
+
+| Remaining full-Root failure | Dark 1280x832 | Dark 1440x900 | Light 1280x832 | Light 1440x900 |
+|---|---|---|---|---|
+| Sidebar | 95831 / 12.250% | 102522 / 9.995% | 128199 / 13.491% | 137557 / 10.381% |
+
 ## App shell: shortcuts, menu bar, window (§2.2, §12, §13)
 
 | # | Item | Kind | Original | Port | Status |
@@ -304,9 +328,19 @@ The headless S010 replay has no AppKit view; it checks the missing-handle path w
 | 15 | Submit blocked | error | `Unable to send message`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 16 | Upload in progress | loading | `Files uploading…`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 17 | Upload failure | error | `Unable to upload file`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
-| 18 | Button hover | hover | Ghost hover; tooltip after a delay. | Hover fill; no tooltip. | FAIL (no tooltip: `crates/ui/src/composer.rs`; fill checked by `composer_button_hover`) |
+| 18 | Button hover | hover | Ghost hover; tooltip after a delay. | Hover fill. The `+` tooltip includes the `@` hint and matches its original bounds. | PARTIAL (`+`: `s018::add_tooltip_replay`; other composer tooltips remain absent) |
 | 19 | Focus ring | focus ring | Send button ring. | — | NOT WIRED (`crates/ui/src/composer.rs`: no `focus_visible` ring) |
 | 20 | Resize | resize | Below 40rem the editor and footer stack. | Only the 475 px compact footer. | FAIL (`crates/ui/src/composer.rs`) |
+| 21 | `+` Add menu | click | Opens the mention list without inserting `@`; Escape keeps the draft. | Reuses the S019 query state; keys skip disabled actions, and a second click closes the list. | PASS (`s018::add_menu_replay`) |
+
+S018 records CP-039 and CP-040 in `refs/interactions/s018.json`.
+Its Add replay checks local actions, selection, query text, focus, Escape, reopen, and the second trigger click.
+Its draft check covers a Unicode prefix, replacement before the query anchor, and typed `@` after dismissal.
+The tooltip matches the original trigger bounds and y=742..772 box, including the unchanged bottom probe.
+The bordered trigger uses `side_offset(px(5.))` for its recorded 4 px visible gap; other tooltips keep the shared default.
+Host-provided Plugins, Agents, Pages, and Spaces remain outside the local-action scope, as in S019 and S020.
+The isolated original host returns HTTP 200 `{}` for Pages search; repeated queries can fail at `N.items.flatMap`.
+The recording retains that limit and does not replace the host response.
 
 S021 replays all 16 original steps from `refs/interactions/s021.json` for CP-054 and CP-055.
 The surface check covers the menu's top and bottom padding across its width, outside the rounded corners.
@@ -549,6 +583,37 @@ Clipboard line endings become spaces in the single-line query.
 The test also checks focus restoration and result activation after caret movement.
 Static reference scenes hide the caret, as the original capture does.
 Ranking, command providers, and the S026 search contract remain unchanged.
+
+## S025 ranking: Command-search score and pointer selection
+
+`crates/app/tests/s025_rank.rs` replays `refs/interactions/s025_rank.json` on the background Mac lane.
+The original capture records twelve ambiguous queries before the ordering change.
+The matcher uses the original `_4o` and `k2` score rules over UTF-16 units, including emoji title ordering.
+Settings comparisons retain original scores without fixing an incidental order for equal-score rows.
+Empty-query groups retain the S026 record.
+Nonempty queries put suggested commands in their original command groups.
+
+The replay checks arrow selection across groups, hover fill, input focus, and selection reset after typing.
+The destination checks compare rendered heading glyphs with the original Worktrees, General, and Configuration records.
+Enter opens Worktrees.
+Row clicks open General and the Configuration destination for Work preferences.
+The original `chat` query selects the greeting chat.
+That recorded state replaces the obsolete, unrecorded S026 assumption that New chat stays selected.
+The original S026 group, request, and failed-search checks remain.
+The S025 caret and selection replay remains unchanged.
+
+The test reuses the unchanged original search response selected by the fixture server.
+The capture changes no renderer code or startup response.
+The first query outcomes precede the port change; a second record corrects native entry and pointer transport.
+The trusted capture uses native ref clicks, native keyboard input, and atomic owned-target CDP pointer events.
+The original also shows an unrelated ChatGPT search error and a later Create page provider.
+This slice does not add either provider or settings-page content.
+The record includes the earlier raw New chat attempt.
+Atomic native clicks prove General and Configuration activation.
+
+All 36 strict static cases pass with the original thresholds.
+Their metrics and port PNGs match the baseline exactly.
+The [hosted strict report](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/6a2e81ed2b8a20f663537c3e11dde75b1fc541b2604d0a89/report.html) retains those thresholds.
 
 ## S026: Command menu groups and chat results
 
