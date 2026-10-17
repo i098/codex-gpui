@@ -14,6 +14,22 @@
     "fixture": "settings.write stores the value and settings.readAll reads it back; other services use the existing oracle",
     "deferred": "ST-178: signed-out route rendered an empty root in two route1 attempts; excluded by firstmate"
   },
+  "focus": {
+    "source": "Original 26.1007.30912 through isolated route1, Chrome 156, 2026-10-17; page-local settings writes only.",
+    "pointer": {
+      "focused": true,
+      "focusVisible": false
+    },
+    "keyboard": [
+      { "key": "Enter", "portKey": "enter", "checked": false },
+      { "key": "Space", "portKey": "space", "checked": true }
+    ],
+    "ring": {
+      "rgb": [58, 131, 247],
+      "width": 2
+    },
+    "settleMs": 150
+  },
   "steps": [
     {
       "type": "key",
