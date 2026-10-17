@@ -60,6 +60,11 @@ iconutil -c icns /tmp/AppIcon.iconset -o assets/app/AppIcon.icns
 | `parity` | The pixel-parity harness: it renders each screen headless and compares it with the reference screenshot. |
 | `app` | The `codex-gpui` binary: the root view, the menu bar and the app-server session. |
 
+On macOS, `textsys::show_definition(window, selection, baseline)` opens AppKit's native Look Up popover.
+The baseline uses window-local logical pixels from the top left; the adapter handles both view orientations.
+Call it on the main thread with the unchanged selection.
+Headless windows return their native-handle error; the adapter has no URL or clipboard fallback.
+
 `gpui` and `gpui_apple` come from Zed at a fixed revision and are vendored in `crates/textsys`.
 The workspace `[patch]` replaces the upstream crates with these copies.
 Stock GPUI cannot match Chromium's pixels, so the copies change three things:

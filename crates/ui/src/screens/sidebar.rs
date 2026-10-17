@@ -487,49 +487,60 @@ impl Render for HomeSidebar {
             let collapsed = self.collapsed[i];
             let header_focus = focus::handle(title, -1, window, cx);
             div()
+                .tab_group()
                 .px(px(8.))
                 .flex()
                 .flex_col()
                 .child(
-                    focus::ring(
-                        div()
-                            .id(title)
-                            .group(title)
-                            .role(gpui::Role::Button)
-                            .aria_label(title)
-                            .aria_expanded(!collapsed)
-                            .relative()
-                            .h(px(30.))
-                            .flex()
-                            .items_center()
-                            .pl(px(8.))
-                            .child(text(title, 14., 21., 500., cx.theme().text_tertiary))
-                            .child(
-                                svg()
-                                    .path("icons/chevron-down.svg")
-                                    .w(px(14.))
-                                    .h(px(14.7))
-                                    .ml(px(4.))
-                                    .text_color(cx.theme().text_tertiary)
-                                    .opacity(if collapsed { 1. } else { 0. })
-                                    .group_hover(title, |s| s.opacity(1.))
-                                    .with_transformation(Transformation::rotate(radians(
-                                        if collapsed {
-                                            -std::f32::consts::FRAC_PI_2
-                                        } else {
-                                            0.
-                                        },
-                                    ))),
-                            ),
-                        &header_focus,
-                        px(10.),
-                        px(2.),
-                        cx,
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.collapsed[i] ^= true;
-                        cx.notify();
-                    })),
+                    div()
+                        .group(title)
+                        .relative()
+                        .h(px(30.))
+                        .flex()
+                        .items_center()
+                        .pl(px(8.))
+                        .child(text(title, 14., 21., 500., cx.theme().text_tertiary))
+                        .child(
+                            svg()
+                                .path("icons/chevron-down.svg")
+                                .w(px(14.))
+                                .h(px(14.7))
+                                .ml(px(4.))
+                                .text_color(cx.theme().text_tertiary)
+                                .opacity(if collapsed { 1. } else { 0. })
+                                .group_hover(title, |s| s.opacity(1.))
+                                .with_transformation(Transformation::rotate(radians(
+                                    if collapsed {
+                                        -std::f32::consts::FRAC_PI_2
+                                    } else {
+                                        0.
+                                    },
+                                ))),
+                        )
+                        .child(
+                            focus::ring(
+                                div()
+                                    .id(title)
+                                    .role(gpui::Role::Button)
+                                    .aria_label(title)
+                                    .aria_expanded(!collapsed)
+                                    .absolute()
+                                    .top(px(2.5))
+                                    .left(px(4.))
+                                    .right(px(66.))
+                                    .h(px(25.)),
+                                &header_focus,
+                                px(10.),
+                                px(2.),
+                                cx,
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.collapsed[i] ^= true;
+                                    cx.notify();
+                                },
+                            )),
+                        ),
                 )
                 .when(!collapsed, |d| d.child(div().pt(px(4.)).child(body)))
         };

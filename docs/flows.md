@@ -37,7 +37,9 @@ The rows were not clicked again on the original through `tools/route1`: its `ser
 
 Before round 5 (F2Flows): 57 PASS, 33 FAIL, 102 NOT WIRED. Before round 4 (F1Flows): 42 PASS, 25 FAIL, 125 NOT WIRED.
 
-Last run: 76 flows, 76 passed.
+The historical round 5 run reported 76 flows passed.
+The P7 strict-gate run checks 73 flows: 66 pass and seven fail.
+Six failures are strict Root parity failures; `worked_for_expands` also reports zero pixels repainted.
 
 The `scroll_*` flows send wheel events (pixel deltas, a trackpad flick with its momentum events, and wheel lines) to the sidebar sections, the thread, the Changes panel, the Settings nav and page, and the Scheduled page.
 At 1280x320, the largest offset of the sidebar sections is 82 px, the same as in the original.
@@ -46,56 +48,52 @@ The other panes must repaint on the first wheel, stay still past the end, and sh
 
 ## Parity of the states the flows reach
 
-The flows that reach a state with a ref run `parity::diff_ref` on the screenshot.
-The numbers are reported, not gated: the pixel lanes own them.
-The right column is the same ref diffed against the parity harness's own screen builder (`cargo run -p parity -- --screen <s>`), for comparison.
-`outside` is the count of differing device pixels outside text boxes; `text` is the ratio of differing pixels inside text boxes.
+Each `parity_*` flow enters the real Root with mouse or key input, then checks its route and selected side panel.
+The Sidebar flow also checks that the command menu opens; Composer checks its typed draft and open menu.
+Only then does the flow compare its captured image with the original reference through `parity::diff_ref`.
+The gate requires zero differing device pixels outside text boxes and at most 0.5% inside text boxes.
+`Fx::parity` returns an error on a mismatch.
+Each screen still runs both themes and sizes before it returns its combined failure.
+The flow executable exits 1 if any flow fails.
+There is no report-only or optional mode.
 
-Numbers from the round 4 run (F1Flows); the screen builder column is a run of the same source tree.
+Run all nine Root checks with `tools/mac.sh -l root-gate 'cargo test -p app --test flows -- parity_'`.
+Keep `cargo run -p parity -- --gate` as the separate static screen gate.
+Its 36 passing comparisons do not prove Root parity.
 
-| Flow | Ref | Root (flow) | Screen builder |
-|---|---|---|---|
-| `parity_home` (launch) | home dark 1280x832 | outside 292, text 1.465 % | outside 292, text 1.431 % |
-| | home dark 1440x900 | outside 282, text 1.465 % | outside 282, text 1.431 % |
-| | home light 1280x832 | outside 482, text 1.193 % | outside 482, text 1.159 % |
-| | home light 1440x900 | outside 478, text 1.193 % | outside 478, text 1.159 % |
-| `parity_sidebar` (`Search`, type `math`) | sidebar dark 1280x832 | outside 285, text 1.060 % | outside 285, text 1.060 % |
-| | sidebar dark 1440x900 | outside 278, text 1.048 % | outside 278, text 1.048 % |
-| | sidebar light 1280x832 | outside 549, text 1.274 % | outside 549, text 1.274 % |
-| | sidebar light 1440x900 | outside 554, text 1.255 % | outside 554, text 1.255 % |
-| `parity_composer` (type `Refactor src/math.py`, click the model pill) | composer dark 1280x832 | outside 12166, text 4.004 % | outside 1141, text 2.050 % |
-| | composer dark 1440x900 | outside 96535, text 14.792 % | outside 1107, text 2.050 % |
-| | composer light 1280x832 | outside 11989, text 3.464 % | outside 950, text 1.513 % |
-| | composer light 1440x900 | outside 102108, text 13.843 % | outside 955, text 1.513 % |
-| `parity_thread` (click the subtract row) | thread dark 1280x832 | outside 5122, text 2.869 % | outside 1400, text 3.758 % |
-| | thread dark 1440x900 | outside 5039, text 2.836 % | outside 1294, text 3.715 % |
-| | thread light 1280x832 | outside 5658, text 1.867 % | outside 1812, text 1.685 % |
-| | thread light 1440x900 | outside 5549, text 1.845 % | outside 1701, text 1.665 % |
-| `parity_diff` (subtract, `⌥⌘B`, collapse the file) | diff dark 1280x832 | outside 6809, text 2.275 % | outside 3275, text 2.954 % |
-| | diff dark 1440x900 | outside 7216, text 3.856 % | outside 3638, text 4.672 % |
-| | diff light 1280x832 | outside 9859, text 1.532 % | outside 6400, text 1.306 % |
-| | diff light 1440x900 | outside 9945, text 3.169 % | outside 6429, text 3.015 % |
-| `parity_settings` (`⌘,`) | settings dark 1280x832 | outside 626, text 1.661 % | outside 626, text 1.661 % |
-| | settings dark 1440x900 | outside 679, text 1.691 % | outside 679, text 1.691 % |
-| | settings light 1280x832 | outside 475, text 0.308 % | outside 475, text 0.308 % |
-| | settings light 1440x900 | outside 501, text 0.315 % | outside 501, text 0.315 % |
-| `parity_automations` (rail `Scheduled`) | automations dark 1280x832 | outside 40055, text 27.122 % | outside 161, text 0.282 % |
-| | automations dark 1440x900 | outside 40051, text 27.122 % | outside 220, text 0.282 % |
-| | automations light 1280x832 | outside 40095, text 27.179 % | outside 185, text 0.152 % |
-| | automations light 1440x900 | outside 40069, text 27.179 % | outside 259, text 0.152 % |
-| `parity_terminal` (subtract, replayed running command, summary ▸ the command) | terminal dark 1280x832 | outside 6441, text 2.351 % | outside 3135, text 3.214 % |
-| | terminal dark 1440x900 | outside 6467, text 3.946 % | outside 3150, text 4.891 % |
-| | terminal light 1280x832 | outside 5786, text 1.378 % | outside 2414, text 1.148 % |
-| | terminal light 1440x900 | outside 5772, text 3.435 % | outside 2400, text 3.272 % |
-| `parity_mobile` (avatar ▸ `Set up mobile`) | mobile dark 1280x832 | outside 66, text 0.472 % | outside 66, text 0.472 % |
-| | mobile dark 1440x900 | outside 65, text 0.472 % | outside 65, text 0.472 % |
-| | mobile light 1280x832 | outside 75, text 0.471 % | outside 75, text 0.471 % |
-| | mobile light 1440x900 | outside 74, text 0.471 % | outside 74, text 0.471 % |
+The P7 Mac run checks dark and light at 1280x832 and 1440x900.
+Each cell below gives `outside count / text percent`.
+The six failing screens remain tracked in [the Root mismatch issue](https://github.com/i098/codex-gpui/issues/151).
 
-- Home, Sidebar, Settings and Mobile: the app gives the same pixels as the screen builder outside text. [INFERENCE] The small text difference on Home comes from the focused composer (caret).
-- Thread, Diff, Terminal: `Root` uses the local clock, and the screen builder pins the capture clock (`CAPTURE_CLOCK`). [INFERENCE] The extra difference is the relative times and the focused thread composer.
-- Composer: the click on the model pill opens the effort menu (`Menu::Effort`), like the ref. [INFERENCE] The extra difference comes from the typed text and caret against `Composer::set_text`, and from the hover state that the click leaves on the pill.
-- Automations: the app has no `/suggested_automations` backend, so its cards are the landing examples, not the ref's server suggestions.
+| Screen and input entry | Dark 1280x832 | Dark 1440x900 | Light 1280x832 | Light 1440x900 |
+|---|---|---|---|---|
+| Home: launch | 0 / 0.411% | 0 / 0.411% | 0 / 0.132% | 0 / 0.132% |
+| Sidebar: Search, type `math` | 95803 / 12.237% | 102494 / 9.982% | 128171 / 13.479% | 137529 / 10.368% |
+| Composer: type `Refactor src/math.py`, click model pill | 11016 / 2.402% | 11016 / 2.402% | 11016 / 2.320% | 11016 / 2.320% |
+| Thread: click the subtract row | 3695 / 1.669% | 3695 / 1.649% | 3698 / 1.670% | 3698 / 1.651% |
+| Diff: subtract, `⌥⌘B`, collapse file | 3695 / 1.379% | 3695 / 1.492% | 3698 / 1.303% | 3698 / 1.412% |
+| Settings: `⌘,` | 0 / 0.088% | 0 / 0.080% | 0 / 0.117% | 0 / 0.107% |
+| Automations: click Scheduled | 45742 / 27.970% | 45740 / 27.970% | 45788 / 28.031% | 45764 / 28.031% |
+| Terminal: subtract, recorded command events, summary command row | 3830 / 0.745% | 3830 / 0.819% | 3833 / 0.738% | 3833 / 0.808% |
+| Mobile: avatar, Set up mobile | 0 / 0.468% | 0 / 0.468% | 0 / 0.467% | 0 / 0.467% |
+
+The old profile helper opens Keyboard shortcuts over Home instead of Mobile.
+The corrected helper uses the proved Mobile entry; the old failed captures remain retained in the acceptance evidence.
+The large-window Composer click uses the original reference's centered-column and bottom offsets.
+The prior large-window clicks miss the menu; the corrected clicks reach it and still fail the strict pixel gate.
+
+Fixture, clock, focus, host-data, and drawing differences remain unresolved.
+None of these possible causes waives a failure.
+Keep S026's recorded command groups and settled search behavior instead of restoring an older pending-search screenshot state.
+Keep S009's File viewer behavior; its recorded test replaces the obsolete file-link-to-Changes assertion.
+The S009, S026, F3b, and S034b recorded tests pass with the strict shared helper.
+Formatting and `cargo clippy --workspace --all-targets -- -D warnings` pass after integrating current main.
+The initial broad clippy run failed at `ms6a.rs:168`; the retained log preserves that result.
+
+An isolated smoke check sends a retained input-driven Composer capture through `parity_image`; it returns exit 1 with 11016 outside pixels.
+All 36 unchanged original images pass the same helper with zero differences.
+Replaying the old Mobile click returns exit 1 for all four route checks before any pixel comparison.
+These checks prove the guard; they do not replace the failing Root captures.
 
 ## App shell: shortcuts, menu bar, window (§2.2, §12, §13)
 
@@ -160,7 +158,7 @@ Numbers from the round 4 run (F1Flows); the screen builder column is a run of th
 | 15 | `⌘⇧[` / `⌘⇧]` | shortcut | Previous / next chat. | Previous / next Recents row. | PASS (`previous_next_chat`, `menu_bar_actions`) |
 | 16 | `⌘⇧S` / `⌘B` | shortcut | Toggle sidebar. | Toggles. | PASS (`sidebar_toggle_keys`) |
 | 17 | Titlebar `Hide sidebar` | click | Collapses the left panel over a 300 ms spring (main surface slides, sidebar rows fade and shift 16 px); label changes to `Show sidebar`; instant under reduced motion. | The main surface and the sidebar content follow `motion::spring_300` from the toggle's progress; the recorded tooltip stays `Toggle sidebar ⇧⌘S` in both states. | PASS (`sidebar_toggle_titlebar`; `crates/app/tests/s004.rs`; spring frames: `crates/app/tests/ms2.rs` against `refs/interactions/ms2.json`) |
-| 18 | Row focus | focus ring | 2 px ring, offset -2 px. | No tab stops. | NOT WIRED (`crates/ui/src/screens/sidebar.rs` `thread_row`) |
+| 18 | Row focus | focus ring | 2 px ring, offset -2 px. | Tab moves through rows and their Pin and Archive actions; focus reveals the actions. | PASS (`crates/app/tests/f1b.rs`) |
 | 19 | Empty lists | empty | `No projects`, `No chats`; activity `Nothing needs attention`. | Empty `thread/list` gives no Recents (`No chats` branch); `No projects` always. No activity view. | PASS (`sidebar_empty_lists`) |
 | 20 | Lists loading | loading | Activity: `Checking unread chats…`. | — | NOT WIRED (`crates/ui/src/screens/sidebar.rs`: no activity view or loading state) |
 | 21 | Load error | error | `Projects couldn't be loaded` + `Retry`; `Could not load chats`. | A `thread/list` error stops `Root::connect`, so no route shows. | FAIL (`crates/app/src/lib.rs` `connect` treats it as fatal; `crates/ui/src/screens/sidebar.rs` has no error state) |
@@ -188,6 +186,13 @@ The S004 recording uses the original renderer through the Linux route1 stack in 
 Its twelve actions check resize limits, collapse, restored width, titlebar toggles, tooltips, boundary pixels, and no app-server requests.
 The current original tooltip is `Toggle sidebar ⇧⌘S`, not the inventory's `⌘B` label.
 The static parity gate retains all 36 baseline counts.
+
+F1b replays all 30 original steps with `cargo test -p app --test f1b` on macOS.
+Clicking a section header keeps pointer focus; Enter enables its keyboard ring without moving focus.
+The section header retains its original 202×25 px target inside the 272×30 px layout row at the recorded width.
+The S003 header replacement enlarged that target, so the ring moved away from the recorded border pixels.
+The repair restores the shared target and tab group for Projects, Recents, and Pinned without changing the ring painter or input handling.
+The existing replay checks the original colors, row actions, tooltips, canceled row click, Home route, and absence of app-server writes.
 
 ## 14.3 Home
 
@@ -256,7 +261,7 @@ MO-37 and MO-39 remain with the image and block-renderer slices, as approved for
 | 3 | Enter | shortcut | Sends; `⌘ + Enter` modes per setting. | Enter sends; no `Send shortcut` setting. | PASS (`submit_enter_starts_thread`) |
 | 4 | Shift+Enter | shortcut | New line. | New line in the Home and thread composers. | PASS (`shift_enter_newline`) |
 | 5 | `@` | shortcut | Mention list. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
-| 6 | `/` | shortcut | Slash command menu. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
+| 6 | `/` | shortcut | Slash command menu. | Matches the recorded menu, filtering, selected row, editor focus, arrows, Escape, Enter, and Tab. | PASS (`s021::slash_menu_keyboard_replay`) |
 | 7 | Paste large text | click | `Pasted text.txt` chip. | Paste inserts the text. | NOT WIRED (`crates/ui/src/composer.rs` `paste`) |
 | 8 | Drag file over composer | hover | `Drop to attach`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 9 | Attachment chip remove | click | Removes the attachment. | Handler exists (`remove-attachment`). | FAIL (no flow: attachments come only from the system file picker, which the headless window does not answer) |
@@ -272,6 +277,15 @@ MO-37 and MO-39 remain with the image and block-renderer slices, as approved for
 | 19 | Focus ring | focus ring | Send button ring. | — | NOT WIRED (`crates/ui/src/composer.rs`: no `focus_visible` ring) |
 | 20 | Resize | resize | Below 40rem the editor and footer stack. | Only the 475 px compact footer. | FAIL (`crates/ui/src/composer.rs`) |
 
+S021 replays all 16 original steps from `refs/interactions/s021.json` for CP-054 and CP-055.
+The surface check covers the menu's top and bottom padding across its width, outside the rounded corners.
+Filtered selected rows cover the former scrollbar gutter, so that gutter cannot identify the menu background.
+The original ArrowDown counterfactual changes the old sample without changing the menu bounds, draft, or focus.
+The replay retains the selected-row color, command order, focus, and exact request checks.
+Run `tools/mac.sh -l s021-repair 'cargo test -p app --test s021 --test s019 --test s020 --test s022 -- --test-threads=1'`.
+The neighboring checks retain command draft rules, mention navigation, atomic chips, undo, and editor input.
+Other command bodies and the plus Add menu remain outside S021.
+
 The S023 test replays `refs/interactions/s023.json`, recorded from the original renderer with the isolated Linux route1 stub.
 It checks the Stop pixels, request, error toast, focus, completion, and inactive click.
 Firstmate authorized a separate CP-108 follow-up after the corrected recording stub still emitted no `turn/steer` request.
@@ -283,9 +297,11 @@ Firstmate authorized a separate CP-108 follow-up after the corrected recording s
 Slice S028 records the original with the Linux route1 recorder in an isolated browser context.
 `refs/interactions/s028.json` records file changes, aggregate diff updates, and the `def` search.
 The native `find-in-thread` message substitutes for the Electron shortcut in the browser.
-The port test uses `Cmd+F` and checks both result counts and highlight colors.
+The port test checks `Cmd+F`, the native Find action, both result counts, and the recorded highlight colors.
+The app routes Find to the focused Changes panel before thread find.
+The replay checks that diff find never opens thread find.
 It resolves `View changes` from the static reference because Linux text layout places that button below the Mac reference.
-Run `tools/mac.sh -l s028 'cargo test -p app --test s028 -- --nocapture'`.
+Run `tools/mac.sh -l s028-repair 'cargo test -p app --test s028 -- --nocapture --test-threads=1'`.
 The open panel keeps its state across streamed updates and uses `turn/diff/updated` as the authoritative diff.
 Search scope switching and repository-watch sources remain separate inventory slices.
 
@@ -302,7 +318,7 @@ Comment actions (S075/S082), file tabs (S186), and external targets remain outsi
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
-| 1 | Open Changes panel | entry | `⌥⌘B` or `View changes`. | Both open it, and so does a file link in an answer; the last turn's diff (`Last Turn` source). | PASS (`changes_panel_keys`, `view_changes_opens_panel`, `file_link_opens_changes`, `parity_diff`) |
+| 1 | Open Changes panel | entry | `⌥⌘B` or `View changes`. | Both open the last turn's diff (`Last Turn` source). A file link opens the File viewer, as S009 records. | PASS (`changes_panel_keys`, `view_changes_opens_panel`, `s009`); strict pixels FAIL (`parity_diff`) |
 | 2 | `/diff` window | entry | Single file diff. | — | NOT WIRED (`crates/app/src/main.rs`: one window only) |
 | 3 | Source selector | click | Uncommitted / Staged / … | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 4 | Show / Hide files | click | Toggles the file tree. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
@@ -325,7 +341,17 @@ Comment actions (S075/S082), file tabs (S186), and external targets remain outsi
 
 ## 14.7 Settings, login and onboarding
 
-A settings row reports its change to `Root`: `desktop.*` and `features.*` rows persist with `config/value/write` and `Root` keeps the value once the server took it; host and session rows keep their value for the session. Leaving and reopening Settings shows the kept value (`settings_value_round_trip`).
+A settings row reports its change to `Root`.
+`desktop.*` and `features.*` rows persist with `config/value/write`; `Root` keeps the value after the server accepts it.
+The menu-bar switch persists through the local `settings.write` service.
+Session rows keep their values for the session.
+Leaving and reopening Settings shows the kept value (`settings_value_round_trip`).
+
+S034 covers ST-003 and ST-026 with the unchanged off/on samples in `refs/interactions/s034.json`.
+The replay advances the virtual clock by the original 150 ms transition before checking settled pixels.
+Enabled switches use the existing GPUI native click path for Enter and Space, without duplicate key handlers.
+The replay checks pointer focus without a ring, the blue keyboard ring, saved values, reload, and Back navigation.
+S034b still checks the recorded sign-in path; no account or authentication changes are part of this repair.
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
@@ -336,7 +362,7 @@ A settings row reports its change to `Root`: `desktop.*` and `features.*` rows p
 | 5 | Theme Light/Dark/System | click | Applies the theme at once. | Appearance ▸ Theme (`Light`, `Dark`, `System`) dispatches `SetTheme`; `Root::set_theme` applies and persists it. | PASS (`appearance_theme_control`) |
 | 6 | Collapse nav | click | `Collapse settings navigation`. | — | NOT WIRED (`crates/ui/src/screens/settings.rs` `SettingsNav`) |
 | 7 | Row hover | hover | Row highlight. | Highlight shows. | PASS (`settings_nav_hover`) |
-| 8 | Keyboard nav | focus ring | Ring on rows and controls. | — | NOT WIRED (`crates/ui/src/screens/settings.rs`) |
+| 8 | Keyboard nav | focus ring | Ring on rows and controls. | S034 proves pointer focus, Enter/Space activation, and the keyboard ring on switches. Other rows remain unwired. | NOT WIRED (remaining rows and controls) |
 | 9 | Section loading | loading | Skeleton row. | — | NOT WIRED (`crates/ui/src/screens/settings.rs`) |
 | 10 | Save failure | error | Toast. | The error is logged. | FAIL (`crates/ui/src/screens/settings.rs` `send` only logs; no toast) |
 | 11 | Login `/login` | entry | Sign-in screen. | A signed-out `account/read` shows the sign-in view. | PASS (`signed_out_shows_login`) |
@@ -469,3 +495,22 @@ The test also checks the unread dot in the port's pixels.
 The unread state is injected in the port because the original fixture contains no unread chat.
 Command activation belongs to the later command-menu slices.
 The test also checks selection after a delayed search reply and spinner removal after a failed search.
+
+## S014: Grouped activity and completed reasoning
+
+`crates/app/tests/s014.rs` replays `refs/interactions/s014.json` on the Mac headless app.
+The replay advances the test clock by the recorded 800 ms after the `Worked for` click.
+Without that wait, the disclosure remains at animation progress zero when the screenshot runs.
+The legacy `worked_for_expands` check uses the same recorded wait after each disclosure click.
+Both checks keep their original pixel assertions.
+
+The replay checks the summary box, hover text, chevron, expanded row icons, row text, collapse, and request count.
+The original hides the completed reasoning fixture and draws no `Thought` header.
+The port retains that state.
+No product code, probe coordinates, fixture responses, or pixel gates change.
+
+The fresh original input replay matches the recorded disclosure and activity row boxes exactly.
+It also checks the original hover color, expanded rows, collapse, and hidden completed reasoning.
+[Original screenshot](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/003c2454a49370802469ed64320fe26f160b4da61215578a/original-group-expanded.png).
+[Port screenshot](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/003c2454a49370802469ed64320fe26f160b4da61215578a/s014-group-expanded.png).
+

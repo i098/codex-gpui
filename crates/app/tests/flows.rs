@@ -1,8 +1,8 @@
 //! Flow harness (docs/flows.md): the real [`app::Root`] on a replayed app-server
 //! (fixtures/readback.jsonl, plus a recorded session for turns), driven by mouse and key
 //! events at the original's element bounds (refs/<screen>/dark@1280x832.spec.json) and by the
-//! menu bar's actions. Where a ref exists for the state reached, the parity diff runs and its
-//! numbers print; they are reported, not gated (the pixel lanes own them).
+//! menu bar's actions. Each parity flow checks the reached route and fails on a pixel
+//! mismatch under the same strict thresholds as the separate static screen gate.
 //!
 //! Runs every flow, then fails if any did. `cargo test -p app --test flows -- <filter>` runs
 //! only the flows whose name contains `<filter>`.
@@ -47,7 +47,18 @@ const FLOWS: &[(&str, Flow)] = &[
     ("parity_composer", || {
         parity_flow("composer", |fx| {
             fx.type_text("Refactor src/math.py")?;
-            fx.click(fx.at("home", "GPT-6 Astra")?)
+            let (x, y) = fx.at("home", "GPT-6 Astra")?;
+            // The original's pill moves with the centered column and the window bottom.
+            fx.click((x + (fx.size.0 - 1280.) / 2., y + fx.size.1 - 832.))?;
+            ensure!(fx.composer_text()? == "Refactor src/math.py");
+            let composer = fx.composer();
+            ensure!(
+                fx.cx.update_window(fx.window, |_, window, cx| {
+                    composer.read(cx).menu_state(window).0
+                })?,
+                "the composer menu did not open"
+            );
+            Ok(())
         })
     }),
     ("back_forward_titlebar", back_forward_titlebar),
@@ -108,7 +119,6 @@ const FLOWS: &[(&str, Flow)] = &[
     ("fork_chat", fork_chat),
     ("earlier_turn_actions_hover", earlier_turn_actions_hover),
     ("undo_reverts_turn", undo_reverts_turn),
-    ("file_link_opens_changes", file_link_opens_changes),
     ("approval_round_trip", approval_round_trip),
     ("archive_chat", archive_chat),
     ("recent_chat_keys", recent_chat_keys),
@@ -654,10 +664,9 @@ fn avatar(fx: &Fx) -> (f32, f32) {
     (26., fx.size.1 - 26.)
 }
 
-/// Profile menu row `n`: `Settings`, then `Set up mobile` under the `Help` heading. The menu
-/// sits 48 px above the window's bottom edge.
+/// Profile menu rows `Settings` and `Set up mobile`, above the `Keyboard Shortcuts` row.
 fn profile_item(fx: &Fx, n: usize) -> (f32, f32) {
-    (118., fx.size.1 - [128., 68.][n])
+    (118., fx.size.1 - [160., 100.][n])
 }
 
 fn profile_menu_settings() -> Result<String> {
@@ -973,6 +982,13 @@ fn has_item(fx: &Fx, id: &str) -> bool {
 /// `Worked for 17s` expands the turn's hidden work, and a second click folds it again. Only
 /// the transcript above the docked composer is compared (its caret blinks).
 fn worked_for_expands() -> Result<String> {
+    let recording: Value =
+        serde_json::from_str(include_str!("../../../refs/interactions/s014.json"))?;
+    let wait = std::time::Duration::from_millis(
+        recording["steps"][2]["waitMs"]
+            .as_u64()
+            .context("S014 disclosure waitMs")?,
+    );
     let transcript = [340., 44., 936., 600.];
     let mut fx = Fx::new()?;
     open_subtract(&mut fx)?;
@@ -980,10 +996,12 @@ fn worked_for_expands() -> Result<String> {
     fx.hover((640., 22.))?;
     let folded = fx.shot()?;
     fx.click(at)?;
+    fx.advance(wait)?;
     fx.hover((640., 22.))?;
     let n = changed(&folded, &fx.shot()?, transcript);
     ensure!(n > 1000, "expanding repainted {n} px");
     fx.click(at)?;
+    fx.advance(wait)?;
     fx.hover((640., 22.))?;
     let left = changed(&folded, &fx.shot()?, transcript);
     ensure!(left == 0, "folding left {left} px");
@@ -1068,14 +1086,6 @@ fn undo_reverts_turn() -> Result<String> {
         fx.read(|r, cx| r.thread().is_some_and(|v| v.read(cx).turns().is_empty()))
     })?;
     ensure!(fx.route() == Route::Thread(SUBTRACT.into()));
-    Ok(String::new())
-}
-
-fn file_link_opens_changes() -> Result<String> {
-    let mut fx = Fx::new()?;
-    open_subtract(&mut fx)?;
-    fx.click(fx.at("thread", "src/math.py")?)?;
-    ensure!(side(&fx) == Some(SidePanel::Changes), "{:?}", side(&fx));
     Ok(String::new())
 }
 

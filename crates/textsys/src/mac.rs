@@ -10,6 +10,7 @@
 //!   black on white without font smoothing at the device size, 4 horizontal subpixel offsets,
 //!   no gamma pre-blend (Chromium-Mac does not define `SK_GAMMA_APPLY_TO_A8`).
 
+use anyhow::Context as _;
 use core_foundation::{
     attributed_string::CFMutableAttributedString,
     base::{CFRange, CFType, TCFType},
@@ -45,11 +46,52 @@ use gpui::{
     Pixels, PlatformTextSystem, RenderGlyphParams, Result, SUBPIXEL_VARIANTS_X, ShapedGlyph,
     ShapedRun, Size, TextRenderingMode, point, px, size,
 };
+use objc2::{AnyThread, MainThreadMarker};
+use objc2_app_kit::NSView;
+use objc2_foundation::{NSAttributedString, NSPoint, NSRect, NSString};
 use parking_lot::Mutex;
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 #[path = "shape.rs"]
 mod shape;
 use std::{borrow::Cow, collections::HashMap, ptr};
+
+/// Show AppKit's definition popover for the unchanged selection.
+/// `baseline` uses window-local logical pixels from the top left.
+/// Return an error if the native view is unavailable or the caller is not on the main thread.
+pub fn show_definition(
+    window: &gpui::Window,
+    selection: &str,
+    baseline: gpui::Point<Pixels>,
+) -> anyhow::Result<()> {
+    let handle = HasWindowHandle::window_handle(window)?;
+    let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+        anyhow::bail!("Look Up requires an AppKit window view");
+    };
+    let _main_thread =
+        MainThreadMarker::new().context("Look Up requires the AppKit main thread")?;
+    // SAFETY: The live window handle borrows its NSView. The main-thread check precedes all AppKit calls.
+    let view = unsafe { &*handle.ns_view.cast::<NSView>().as_ptr() };
+    let text = NSAttributedString::initWithString(
+        NSAttributedString::alloc(),
+        &NSString::from_str(selection),
+    );
+    view.showDefinitionForAttributedString_atPoint(
+        Some(&text),
+        definition_baseline(view.bounds(), view.isFlipped(), baseline),
+    );
+    Ok(())
+}
+
+fn definition_baseline(bounds: NSRect, flipped: bool, baseline: gpui::Point<Pixels>) -> NSPoint {
+    let x = bounds.origin.x + f64::from(baseline.x);
+    let y = if flipped {
+        bounds.origin.y + f64::from(baseline.y)
+    } else {
+        bounds.origin.y + bounds.size.height - f64::from(baseline.y)
+    };
+    NSPoint::new(x, y)
+}
 
 #[derive(Default)]
 pub struct SkiaMatchedTextSystem(Mutex<State>);
@@ -638,4 +680,25 @@ unsafe extern "C" {
         matrix: *const CGAffineTransform,
         attributes: CTFontDescriptorRef,
     ) -> CTFontRef;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use objc2_foundation::NSSize;
+
+    #[test]
+    fn definition_baseline_preserves_bounds_origin_and_view_orientation() {
+        let bounds = NSRect::new(NSPoint::new(11., 13.), NSSize::new(200., 120.));
+        let baseline = point(px(17.5), px(23.25));
+
+        assert_eq!(
+            definition_baseline(bounds, true, baseline),
+            NSPoint::new(28.5, 36.25)
+        );
+        assert_eq!(
+            definition_baseline(bounds, false, baseline),
+            NSPoint::new(28.5, 109.75)
+        );
+    }
 }
