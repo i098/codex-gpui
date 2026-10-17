@@ -17,21 +17,34 @@ pub enum Kind {
     CloseWindow,
     /// `Schedule a task`: the Scheduled sidebar's `New task` create editor (AM-005).
     ScheduleTask,
+    /// `Rename chat` from a Recents row's menu (RS-091, refs/interactions/s002.json): the
+    /// `Chat title` input, prefilled and selected, `Cancel`, `Save` and `Close dialog`.
+    Rename,
 }
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub enum Outcome {
     Dismiss,
-    CloseWindow { do_not_ask_again: bool },
+    CloseWindow {
+        do_not_ask_again: bool,
+    },
+    /// `Save` or Enter in `Rename chat`: `thread/name/set` of `thread` to `name`.
+    Rename {
+        thread: String,
+        name: String,
+    },
 }
 
 pub struct Dialog {
     kind: Kind,
     controls: [FocusHandle; 3],
     selected: usize,
+    /// The text of the `Shortcuts` search or the `Rename` title.
     query: String,
     select_all: bool,
     do_not_ask_again: bool,
     scroll: ScrollHandle,
+    /// `Rename`: the thread id.
+    thread: String,
 }
 impl EventEmitter<Outcome> for Dialog {}
 impl Focusable for Dialog {
@@ -49,6 +62,16 @@ impl Dialog {
             select_all: false,
             do_not_ask_again: false,
             scroll: ScrollHandle::new(),
+            thread: String::new(),
+        }
+    }
+    /// `Rename chat` for `thread`, its input prefilled with `title` and all of it selected.
+    pub fn rename(thread: String, title: String, cx: &mut Context<Self>) -> Self {
+        Self {
+            query: title,
+            select_all: true,
+            thread,
+            ..Self::new(Kind::Rename, cx)
         }
     }
     pub fn kind(&self) -> Kind {
@@ -70,7 +93,18 @@ impl Dialog {
             (Kind::ScheduleTask, 0) => "Instructions…",
             (Kind::ScheduleTask, 1) => "Cancel",
             (Kind::ScheduleTask, _) => "Close dialog",
+            (Kind::Rename, 0) => "Chat title",
+            (Kind::Rename, 1) => "Save",
+            (Kind::Rename, _) => "Cancel",
         }
+    }
+    /// The whole query is selected (typing replaces it).
+    pub fn all_selected(&self) -> bool {
+        self.select_all
+    }
+    /// The text input of `Shortcuts` and `Rename` has focus.
+    fn editing(&self) -> bool {
+        matches!(self.kind, Kind::Shortcuts | Kind::Rename) && self.selected == 0
     }
     fn visible(&self) -> impl Iterator<Item = &'static Shortcut> + '_ {
         let query = self.query.trim().as_bytes();
@@ -94,11 +128,15 @@ impl Dialog {
                 self.do_not_ask_again = !self.do_not_ask_again;
                 cx.notify();
             }
+            (Kind::Rename, 0 | 1) => cx.emit(Outcome::Rename {
+                thread: self.thread.clone(),
+                name: self.query.clone(),
+            }),
             _ => cx.emit(Outcome::Dismiss),
         }
     }
     fn insert(&mut self, value: &str, cx: &mut Context<Self>) {
-        if self.kind != Kind::Shortcuts || self.selected != 0 {
+        if !self.editing() {
             return;
         }
         if self.select_all {
@@ -120,10 +158,12 @@ impl Dialog {
                 self.controls[self.selected].focus(window, cx);
                 cx.notify();
             }
+            // Enter in the title input submits the form; Space types.
+            "enter" if self.kind == Kind::Rename && self.selected == 0 => self.activate(cx),
             "enter" | "space" if self.kind == Kind::CloseWindow || self.selected != 0 => {
                 self.activate(cx)
             }
-            "backspace" if self.kind == Kind::Shortcuts && self.selected == 0 => {
+            "backspace" if self.editing() => {
                 if self.select_all {
                     self.query.clear();
                     self.select_all = false;
@@ -394,6 +434,102 @@ impl Dialog {
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(Outcome::Dismiss))),
             )
     }
+    /// `Rename chat` (420 x 185, p-20): heading 20/28, hint 14/21 at 50 %, the 36 px
+    /// `Chat title` input (13 px, 1 px ring, blue when focused), `Cancel` and `Save`, and
+    /// `Close dialog` 24 px at the top right.
+    fn rename_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        let focused = self.selected == 0;
+        div()
+            .p(px(20.))
+            .flex()
+            .flex_col()
+            .child(text("Rename chat", 20., 28., 600., t.text))
+            .child(
+                text(
+                    "Keep it short and recognizable",
+                    14.,
+                    21.,
+                    430.,
+                    t.text.opacity(0.498),
+                )
+                .mt(px(4.)),
+            )
+            .child(
+                div()
+                    .id("rename-title")
+                    .role(gpui::Role::TextInput)
+                    .aria_label("Chat title")
+                    .aria_value(self.query.clone())
+                    .aria_placeholder("Add a title…")
+                    .track_focus(&self.controls[0])
+                    .mt(px(12.))
+                    .h(px(36.))
+                    .rounded(px(10.))
+                    .border_1()
+                    .border_color(if focused {
+                        rgba(0x3a83f7ff).into()
+                    } else {
+                        t.border_strong
+                    })
+                    .bg(t.surface_elevated_secondary.opacity(0.96))
+                    .px(px(10.))
+                    .flex()
+                    .items_center()
+                    .overflow_hidden()
+                    .cursor_text()
+                    .child(
+                        text(
+                            if self.query.is_empty() {
+                                "Add a title…".into()
+                            } else {
+                                self.query.clone()
+                            },
+                            13.,
+                            18.5714,
+                            430.,
+                            if self.query.is_empty() {
+                                t.text_tertiary
+                            } else {
+                                t.text
+                            },
+                        )
+                        .when(self.select_all && !self.query.is_empty(), |d| {
+                            d.bg(rgba(0x3a83f766))
+                        }),
+                    )
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.selected = 0;
+                        this.controls[0].focus(window, cx);
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    .mt(px(12.))
+                    .flex()
+                    .justify_end()
+                    .gap(px(12.))
+                    .child(self.button(2, "Cancel", 80., t, cx))
+                    .child(self.button(1, "Save", 66., t, cx)),
+            )
+            .child(
+                div()
+                    .id("rename-close")
+                    .role(gpui::Role::Button)
+                    .aria_label("Close dialog")
+                    .absolute()
+                    .right(px(16.))
+                    .top(px(16.))
+                    .size(px(24.))
+                    .rounded(px(4.))
+                    .hover(|s| s.bg(t.ghost_hover))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icon("close", 16., t.text.opacity(0.8)))
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(Outcome::Dismiss))),
+            )
+    }
     fn shortcuts_content(&self, visible: &[&Shortcut], t: &Theme, cx: &Context<Self>) -> Div {
         let mut list = div().flex().flex_col().pr(px(22.));
         let mut heading = "";
@@ -560,6 +696,7 @@ impl Render for Dialog {
             Kind::Shortcuts => (600., shortcuts_height),
             Kind::CloseWindow => (420., 171.),
             Kind::ScheduleTask => (680., 422.),
+            Kind::Rename => (420., 185.),
         };
         let width = width.min(f32::from(viewport.width) * 0.92);
         let height = height.min(f32::from(viewport.height) * 0.92);
@@ -567,6 +704,7 @@ impl Render for Dialog {
             Kind::Shortcuts => self.shortcuts_content(&visible, t, cx),
             Kind::CloseWindow => self.close_content(t, cx),
             Kind::ScheduleTask => self.schedule_content(t, cx),
+            Kind::Rename => self.rename_content(t, cx),
         };
         // `codex-dialog-overlay`: the schedule dialog's `_dimmedOverlay` is rgba(0,0,0,.5) with
         // blur(1px); the blur is not drawn (flat fills are unchanged by it).
@@ -596,6 +734,7 @@ impl Render for Dialog {
                         Kind::Shortcuts => "Keyboard shortcuts",
                         Kind::CloseWindow => "Are you sure you want to close the window?",
                         Kind::ScheduleTask => "Schedule a task",
+                        Kind::Rename => "Rename chat",
                     })
                     .on_key_down(cx.listener(Self::key))
                     .on_action(cx.listener(|this, _: &SelectAll, _, cx| {
