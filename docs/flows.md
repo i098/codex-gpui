@@ -243,6 +243,16 @@ The test samples each delta from 0 to 700 ms and checks that earlier glyphs rema
 Linux uses a no-op text system, so these glyph checks require macOS.
 MO-37 and MO-39 remain with the image and block-renderer slices, as approved for MS4.
 
+S010 uses the original native menu template in `refs/interactions/s010.json` and the retained S011 paragraph and clipboard contract.
+The selected-text menu enables `Look Up`, `Search with Google`, and `Copy`, with the original separators and Copy shortcut.
+The menu measures its row widths once when it opens, so the original Look Up label fits without clipping.
+`Look Up` calls `textsys::show_definition` at the menu's opening point; it does not open Dictionary.app or change the clipboard.
+`crates/app/tests/s010.rs` checks the rows, selection, clipboard, search URL, dismissal, reverse-selection copy, and absence of app-server requests.
+It checks Copy by mouse and `Cmd+C` while the menu holds focus, with old clipboard text seeded before each action.
+The shared menu restores transcript focus before running an action, so `Cmd+C` still works after dismissal.
+S011 remains unchanged and continues to check paragraph selection and highlight pixels.
+The headless S010 replay has no AppKit view; it checks the missing-handle path without an external-app fallback.
+
 ## 14.5 Composer
 
 | # | Item | Kind | Original | Port | Status |
