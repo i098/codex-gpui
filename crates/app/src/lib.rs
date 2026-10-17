@@ -1130,6 +1130,11 @@ impl Root {
             this.dialog = None;
             match outcome {
                 DialogOutcome::Dismiss => window.focus(&this.focus, cx),
+                DialogOutcome::FullAccess => {
+                    let composer = this.composer(cx);
+                    composer.update(cx, |composer, cx| composer.confirm_full_access(cx));
+                    window.focus(&composer.focus_handle(cx), cx);
+                }
                 DialogOutcome::CloseWindow { do_not_ask_again } => {
                     if *do_not_ask_again {
                         this.state.confirm_before_close = ConfirmBeforeClose::Never;
@@ -1246,18 +1251,7 @@ impl Root {
         let (bridge, cwd) = (self.bridge.clone(), self.cwd.clone());
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let mut params = json!({ "cwd": cwd, "model": model(&s) });
-            let (policy, sandbox, reviewer) = match s.permission {
-                Permission::Ask => ("on-request", "workspace-write", "user"),
-                Permission::ApproveForMe => ("on-request", "workspace-write", "auto_review"),
-                Permission::FullAccess => ("never", "danger-full-access", "user"),
-                // `config.toml` decides.
-                Permission::Custom => ("", "", ""),
-            };
-            if !policy.is_empty() {
-                params["approvalPolicy"] = policy.into();
-                params["sandbox"] = sandbox.into();
-                params["approvalsReviewer"] = reviewer.into();
-            }
+            apply_permissions(&mut params, s.permission);
             let mut thread = bridge
                 .request::<_, ThreadStartResponse>("thread/start", params)
                 .await?
@@ -1949,6 +1943,17 @@ async fn resume_if(
 fn model(s: &Submission) -> Option<&str> {
     (!s.model.is_empty()).then_some(s.model.as_str())
 }
+fn apply_permissions(params: &mut Value, permission: Permission) {
+    let (policy, profile, reviewer) = match permission {
+        Permission::Ask => ("on-request", ":workspace", "user"),
+        Permission::ApproveForMe => ("on-request", ":workspace", "guardian_subagent"),
+        Permission::FullAccess => ("never", ":danger-full-access", "user"),
+        Permission::Custom => return,
+    };
+    params["approvalPolicy"] = policy.into();
+    params["permissions"] = profile.into();
+    params["approvalsReviewer"] = reviewer.into();
+}
 
 /// `turn/start` with the prompt, attachments, model, effort and Fast mode.
 async fn turn_start(bridge: &Bridge, thread_id: &str, s: &Submission) -> Result<()> {
@@ -1974,6 +1979,7 @@ async fn turn_start(bridge: &Bridge, thread_id: &str, s: &Submission) -> Result<
         "model": model(s),
         "effort": s.effort,
     });
+    apply_permissions(&mut params, s.permission);
     if s.fast {
         params["serviceTier"] = "priority".into();
     }
@@ -2014,6 +2020,11 @@ impl Render for Root {
             }))
             .on_action(cx.listener(|this, _: &NewChat, window, cx| this.new_chat(window, cx)))
             .on_action(cx.listener(|this, _: &ui::composer::Stop, _, cx| this.stop(cx)))
+            .on_action(
+                cx.listener(|this, _: &ui::composer::RequestFullAccess, window, cx| {
+                    this.open_dialog(DialogKind::FullAccess, window, cx);
+                }),
+            )
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
                 this.navigate(Route::Settings, window, cx)
             }))

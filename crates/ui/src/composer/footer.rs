@@ -79,6 +79,7 @@ impl Composer {
             });
         let has_input = !self.content.is_empty() || !self.attachments.is_empty();
         let stopping = self.running && !has_input;
+        let armed = stopping && self.stop_armed.is_some();
         // The docked body is a cc layer: its icons blend onto its transparent tile, not onto
         // the card as the home composer's do (whose fitted pixels those are).
         let docked = self.docked;
@@ -148,7 +149,11 @@ impl Composer {
             .justify_center()
             .relative()
             .child(shapes::decoration(deco(9999., t.composer_primary, vec![])))
-            .when(stopping, |d| {
+            .when(armed, |d| {
+                // `keyboardShortcutLabel`: a 12 px `Esc` replaces the square while armed.
+                d.child(text("Esc", 12., 16., 400., t.text_composer_primary))
+            })
+            .when(stopping && !armed, |d| {
                 d.child(
                     div()
                         .size(px(8.8))
@@ -172,6 +177,8 @@ impl Composer {
             })
             .on_click(cx.listener(move |this, _, window, cx| {
                 if stopping {
+                    this.stop_armed = None;
+                    this.focus_handle.focus(window, cx);
                     window.dispatch_action(Box::new(Stop), cx);
                 } else {
                     this.submit(&Submit, window, cx);

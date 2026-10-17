@@ -3,6 +3,10 @@
 //! Numbers use the CSS pixels of refs/home and refs/composer.
 //! Clipboard text of at least 5,000 UTF-16 units becomes a saved text attachment.
 //! Clipboard images retain their bytes and show a thumbnail.
+//! S024: the first Escape shows `Esc` for two seconds; the next Escape interrupts the turn.
+//! Composition and open suggestions consume Escape without stopping.
+//! Permission presets apply to start requests. Full access requires the shared warning dialog.
+//! `cargo test -p app --test s024` replays `refs/interactions/s024.json`, including the footer focus rings.
 
 use crate::{MONO, icon::icon, text};
 use bridge::types::{ApprovalDecision, CommandApprovalRequest, FileChangeApprovalRequest, Model};
@@ -26,6 +30,7 @@ actions!(
         /// Send the prompt (Enter).
         Submit,
         Stop,
+        RequestFullAccess,
         /// Insert a line break (Shift+Enter).
         Newline,
         Backspace,
@@ -469,6 +474,9 @@ pub struct Composer {
     menu_trigger_hovered: bool,
     approval: Option<Approval>,
     running: bool,
+    /// Escape while a turn runs arms the stop for 2 s (the Stop button reads `Esc`); a second
+    /// Escape in that window interrupts the turn. The task clears the arm.
+    stop_armed: Option<Task<()>>,
     /// `Follow-up behavior` is `Queue`: a submit while a turn runs queues on the app-server
     /// instead of steering the turn.
     queue_mode: bool,
@@ -533,6 +541,7 @@ impl Composer {
             menu_trigger_hovered: false,
             approval: None,
             running: false,
+            stop_armed: None,
             queue_mode: false,
             queued: Vec::new(),
             on_submit: None,
@@ -645,6 +654,7 @@ impl Composer {
     pub fn set_running(&mut self, running: bool, cx: &mut Context<Self>) {
         if self.running != running {
             self.running = running;
+            self.stop_armed = None;
             cx.notify();
         }
     }
@@ -803,6 +813,9 @@ impl Composer {
     }
 
     fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
+        if self.marked_range.is_some() {
+            return;
+        }
         if self.slash.open {
             self.close_slash(cx);
             return;
@@ -821,6 +834,19 @@ impl Composer {
         } else if self.approval.is_some() {
             // `approval.decline` (Escape), unless a menu has focus.
             self.decide(ApprovalDecision::Decline, window, cx);
+        } else if self.running {
+            if self.stop_armed.take().is_some() {
+                window.dispatch_action(Box::new(Stop), cx);
+            } else {
+                self.stop_armed = Some(cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(Duration::from_secs(2)).await;
+                    let _ = this.update(cx, |this, cx| {
+                        this.stop_armed = None;
+                        cx.notify();
+                    });
+                }));
+            }
+            cx.notify();
         } else if !self.edit_pending
             && let Some(cancel) = self.on_cancel_edit.clone()
         {
@@ -972,8 +998,13 @@ impl Composer {
     fn activate_menu_item(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         match self.menu {
             Some(Menu::Permissions) => {
-                self.permission = Permission::ALL[index];
+                let permission = Permission::ALL[index];
                 self.dismiss(&Dismiss, window, cx);
+                if permission == Permission::FullAccess {
+                    window.dispatch_action(Box::new(RequestFullAccess), cx);
+                } else {
+                    self.permission = permission;
+                }
             }
             Some(Menu::Models) => {
                 self.model = index;
@@ -1021,6 +1052,16 @@ impl Composer {
 
     pub fn permission(&self) -> Permission {
         self.permission
+    }
+
+    pub fn confirm_full_access(&mut self, cx: &mut Context<Self>) {
+        self.permission = Permission::FullAccess;
+        cx.notify();
+    }
+
+    /// The stop confirmation is armed (first Escape of two).
+    pub fn stop_armed(&self) -> bool {
+        self.stop_armed.is_some()
     }
 
     pub fn fast_mode(&self) -> bool {

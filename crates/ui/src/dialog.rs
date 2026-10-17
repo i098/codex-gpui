@@ -15,6 +15,7 @@ type Shortcut = (&'static str, &'static str, &'static [&'static str]);
 pub enum Kind {
     Shortcuts,
     CloseWindow,
+    FullAccess,
     /// `Schedule a task`: the Scheduled sidebar's `New task` create editor (AM-005).
     ScheduleTask,
     /// `Rename chat` from a Recents row's menu (RS-091, refs/interactions/s002.json): the
@@ -24,6 +25,7 @@ pub enum Kind {
 #[derive(Clone)]
 pub enum Outcome {
     Dismiss,
+    FullAccess,
     CloseWindow {
         do_not_ask_again: bool,
     },
@@ -90,6 +92,8 @@ impl Dialog {
             (Kind::CloseWindow, 0) => "Cancel",
             (Kind::CloseWindow, 1) => "Close Window",
             (Kind::CloseWindow, _) => "Do not ask me again",
+            (Kind::FullAccess, 0) => "Cancel",
+            (Kind::FullAccess, _) => "Confirm",
             (Kind::ScheduleTask, 0) => "Instructions…",
             (Kind::ScheduleTask, 1) => "Cancel",
             (Kind::ScheduleTask, _) => "Close dialog",
@@ -121,6 +125,7 @@ impl Dialog {
     }
     fn activate(&mut self, cx: &mut Context<Self>) {
         match (self.kind, self.selected) {
+            (Kind::FullAccess, 1) => cx.emit(Outcome::FullAccess),
             (Kind::CloseWindow, 1) => cx.emit(Outcome::CloseWindow {
                 do_not_ask_again: self.do_not_ask_again,
             }),
@@ -152,7 +157,10 @@ impl Dialog {
         match k.key.as_str() {
             "escape" => cx.emit(Outcome::Dismiss),
             "tab" => {
-                let count = if self.kind == Kind::Shortcuts { 2 } else { 3 };
+                let count = match self.kind {
+                    Kind::Shortcuts | Kind::FullAccess => 2,
+                    _ => 3,
+                };
                 self.selected =
                     (self.selected + if k.modifiers.shift { count - 1 } else { 1 }) % count;
                 self.controls[self.selected].focus(window, cx);
@@ -160,7 +168,10 @@ impl Dialog {
             }
             // Enter in the title input submits the form; Space types.
             "enter" if self.kind == Kind::Rename && self.selected == 0 => self.activate(cx),
-            "enter" | "space" if self.kind == Kind::CloseWindow || self.selected != 0 => {
+            "enter" | "space"
+                if matches!(self.kind, Kind::CloseWindow | Kind::FullAccess)
+                    || self.selected != 0 =>
+            {
                 self.activate(cx)
             }
             "backspace" if self.editing() => {
@@ -203,6 +214,13 @@ impl Dialog {
             .justify_center()
             .rounded(px(12.5))
             .bg(if primary { t.text } else { t.list_hover })
+            .when(self.kind == Kind::FullAccess, |d| {
+                d.h(px(36.)).rounded(px(18.)).bg(if primary {
+                    t.text_error.opacity(0.1)
+                } else {
+                    t.list_hover
+                })
+            })
             .border_2()
             .border_color(if self.selected == index {
                 rgba(0x3a83f7ff)
@@ -215,7 +233,13 @@ impl Dialog {
                 14.,
                 18.,
                 430.,
-                if primary { t.menu_background } else { t.text },
+                if self.kind == Kind::FullAccess && primary {
+                    t.text_error
+                } else if primary {
+                    t.menu_background
+                } else {
+                    t.text
+                },
             ))
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.selected = index;
@@ -223,6 +247,46 @@ impl Dialog {
                 this.activate(cx);
             }))
     }
+    fn full_access_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        let mut capabilities = div()
+            .p(px(12.))
+            .rounded(px(16.))
+            .bg(t.list_hover)
+            .flex()
+            .flex_col()
+            .gap(px(12.));
+        for (title, description) in [
+            (
+                "Files and folders",
+                "Read, create, modify, upload, or delete files anywhere on this computer",
+            ),
+            (
+                "Terminal commands",
+                "Run commands, install software, and change system settings",
+            ),
+            (
+                "Internet and connected apps",
+                "Access websites, send data, and use enabled plugins",
+            ),
+        ] {
+            capabilities = capabilities.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(text(title, 13., 18., 500., t.text))
+                    .child(text(description, 13., 18., 400., t.text_secondary).whitespace_normal()),
+            );
+        }
+        div().relative().size_full().p(px(20.)).flex().flex_col().gap(px(12.))
+            .child(text("Turn on Full Access?", 20., 28., 600., t.text))
+            .child(text("Codex will be able to run commands, use the internet, and create and edit files anywhere on this computer without your permission. This includes but is not limited to:", 14., 20., 400., t.text_secondary).whitespace_normal())
+            .child(capabilities)
+            .child(text("This comes with risks like loss or exposure of sensitive data and prompt injection. You can turn this off.", 14., 20., 400., t.text_secondary).whitespace_normal())
+            .child(div().absolute().bottom(px(20.)).right(px(20.)).flex().gap(px(12.))
+                .child(self.button(0, "Cancel", 88., t, cx))
+                .child(self.button(1, "Confirm", 115., t, cx)))
+    }
+
     fn close_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
         div()
             .p(px(20.))
@@ -697,6 +761,7 @@ impl Render for Dialog {
             Kind::CloseWindow => (420., 171.),
             Kind::ScheduleTask => (680., 422.),
             Kind::Rename => (420., 185.),
+            Kind::FullAccess => (520., 420.),
         };
         let width = width.min(f32::from(viewport.width) * 0.92);
         let height = height.min(f32::from(viewport.height) * 0.92);
@@ -705,6 +770,7 @@ impl Render for Dialog {
             Kind::CloseWindow => self.close_content(t, cx),
             Kind::ScheduleTask => self.schedule_content(t, cx),
             Kind::Rename => self.rename_content(t, cx),
+            Kind::FullAccess => self.full_access_content(t, cx),
         };
         // `codex-dialog-overlay`: the schedule dialog's `_dimmedOverlay` is rgba(0,0,0,.5) with
         // blur(1px); the blur is not drawn (flat fills are unchanged by it).
@@ -735,6 +801,7 @@ impl Render for Dialog {
                         Kind::CloseWindow => "Are you sure you want to close the window?",
                         Kind::ScheduleTask => "Schedule a task",
                         Kind::Rename => "Rename chat",
+                        Kind::FullAccess => "Turn on Full Access?",
                     })
                     .on_key_down(cx.listener(Self::key))
                     .on_action(cx.listener(|this, _: &SelectAll, _, cx| {
