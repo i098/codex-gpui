@@ -497,11 +497,13 @@ impl Root {
         .detach();
         cx.observe_window_appearance(window, |this, window, cx| this.apply_theme(window, cx))
             .detach();
-        // ponytail: defer used sessions until manual close; prove state restoration before relaxing this guard.
-        cx.observe_window_activation(window, |this, window, _| {
-            this.qa_work_started |= window.is_window_active();
-        })
-        .detach();
+        if qa::ENABLED {
+            // ponytail: defer used sessions until manual close; prove state restoration before relaxing this guard.
+            cx.observe_window_activation(window, |this, window, _| {
+                this.qa_work_started |= window.is_window_active();
+            })
+            .detach();
+        }
         let _events = cx.spawn(async move |this, cx| {
             while let Ok(event) = events.recv().await {
                 if this
