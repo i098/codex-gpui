@@ -201,3 +201,70 @@ fn custom_section_more_less_and_collapse_follow_the_original() -> Result<()> {
     ))?)?;
     replay_recording(&rec)
 }
+
+#[test]
+fn section_paging_follows_all_original_input_transitions() -> Result<()> {
+    let rec: Value = serde_json::from_slice(&fs::read(format!(
+        "{ROOT}/refs/interactions/s003_sections.json"
+    ))?)?;
+    let mut fx = Fx::captured("dark", (1280., 832.), threads(&rec)?)?;
+    let sidebar = fx.read(|root, _| root.sidebar().clone());
+    let state = section_state(&rec)?;
+    sidebar.update(&mut fx.cx, |sidebar, cx| sidebar.set_sections(state, cx))?;
+    fx.hover((1270., 820.))?;
+    fx.advance(Duration::from_millis(600))?;
+    let before = fx.sent()?.len();
+    let baseline = rec["provenance"]["baselineRows"]
+        .as_array()
+        .context("original Recents")?
+        .len();
+    for state in rec["result"]["states"]
+        .as_array()
+        .context("original section states")?
+    {
+        if let Some(index) = state["afterStep"].as_u64() {
+            let step = &rec["steps"][index as usize];
+            let bbox = &step["target"]["bbox"];
+            let number = |key: &str| bbox[key].as_f64().context("recorded click bounds");
+            fx.click((
+                (number("x")? + number("w")? / 2.) as f32,
+                (number("y")? + number("h")? / 2.) as f32,
+            ))?;
+            fx.advance(Duration::from_millis(
+                step["waitMs"].as_u64().context("recorded wait")?,
+            ))?;
+            fx.hover((1270., 820.))?;
+            fx.advance(Duration::from_millis(600))?;
+        }
+        let expected = if state["expanded"] == "false" {
+            0
+        } else {
+            state["rows"]
+                .as_array()
+                .context("original visible section rows")?
+                .len()
+        };
+        let (shown, recents) = fx.read(|root, cx| {
+            let sidebar = root.sidebar().read(cx);
+            (
+                sidebar.section_shown("custom:s003-sections"),
+                sidebar.recents_shown(),
+            )
+        });
+        ensure!(
+            shown == Some(expected),
+            "section rows: {shown:?}, expected {expected}"
+        );
+        ensure!(
+            recents == baseline,
+            "section paging changed default Recents"
+        );
+        println!("S003_SECTION_STATE rows={expected} recents={recents}");
+    }
+    let sent = fx.sent()?;
+    ensure!(
+        json!(sent[before..]) == rec["result"]["requests"],
+        "section paging sent an unrecorded request"
+    );
+    Ok(())
+}

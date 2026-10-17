@@ -836,8 +836,13 @@ The test checks both the paging requests and the retry transition.
 
 The original hides timestamps in every Home sidebar list, including project groups.
 It shows an unread dot after a failed background turn, rather than an error icon.
-`Show more` belongs to a non-final Recents section; `Show less` belongs to custom sections.
-Those section arrangements remain outside this port's default layout.
+`refs/interactions/s003_sections.json` records a non-final custom section with fifteen local chats.
+`Show more` changes ten visible rows to fifteen; `Show less` restores ten rows.
+A header click hides the section; reopening keeps its expanded list.
+Default Recents retains infinite paging and has no paging button.
+The recorded input check verifies all five clicks, unchanged Recents, and no app-server requests.
+The separate strict label-image check still fails; its references, text rectangles, and limits remain unchanged.
+Section creation and new storage remain outside RS-066.
 
 ## S025: Command-query caret and selection
 

@@ -922,7 +922,6 @@ impl HomeSidebar {
                 "Show more"
             };
             let handle = focus::handle(section.paging_id.clone(), 0, window, cx);
-            // The original color-mix uses 50% alpha; CSS serialization loses that precision.
             let color = Hsla {
                 a: 0.5,
                 ..cx.theme().text_tertiary
