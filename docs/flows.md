@@ -254,7 +254,7 @@ MO-37 and MO-39 remain with the image and block-renderer slices, as approved for
 | 3 | Enter | shortcut | Sends; `⌘ + Enter` modes per setting. | Enter sends; no `Send shortcut` setting. | PASS (`submit_enter_starts_thread`) |
 | 4 | Shift+Enter | shortcut | New line. | New line in the Home and thread composers. | PASS (`shift_enter_newline`) |
 | 5 | `@` | shortcut | Mention list. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
-| 6 | `/` | shortcut | Slash command menu. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
+| 6 | `/` | shortcut | Slash command menu. | Matches the recorded menu, filtering, selected row, editor focus, arrows, Escape, Enter, and Tab. | PASS (`s021::slash_menu_keyboard_replay`) |
 | 7 | Paste large text | click | `Pasted text.txt` chip. | Paste inserts the text. | NOT WIRED (`crates/ui/src/composer.rs` `paste`) |
 | 8 | Drag file over composer | hover | `Drop to attach`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 9 | Attachment chip remove | click | Removes the attachment. | Handler exists (`remove-attachment`). | FAIL (no flow: attachments come only from the system file picker, which the headless window does not answer) |
@@ -269,6 +269,15 @@ MO-37 and MO-39 remain with the image and block-renderer slices, as approved for
 | 18 | Button hover | hover | Ghost hover; tooltip after a delay. | Hover fill; no tooltip. | FAIL (no tooltip: `crates/ui/src/composer.rs`; fill checked by `composer_button_hover`) |
 | 19 | Focus ring | focus ring | Send button ring. | — | NOT WIRED (`crates/ui/src/composer.rs`: no `focus_visible` ring) |
 | 20 | Resize | resize | Below 40rem the editor and footer stack. | Only the 475 px compact footer. | FAIL (`crates/ui/src/composer.rs`) |
+
+S021 replays all 16 original steps from `refs/interactions/s021.json` for CP-054 and CP-055.
+The surface check covers the menu's top and bottom padding across its width, outside the rounded corners.
+Filtered selected rows cover the former scrollbar gutter, so that gutter cannot identify the menu background.
+The original ArrowDown counterfactual changes the old sample without changing the menu bounds, draft, or focus.
+The replay retains the selected-row color, command order, focus, and exact request checks.
+Run `tools/mac.sh -l s021-repair 'cargo test -p app --test s021 --test s019 --test s020 --test s022 -- --test-threads=1'`.
+The neighboring checks retain command draft rules, mention navigation, atomic chips, undo, and editor input.
+Other command bodies and the plus Add menu remain outside S021.
 
 The S023 test replays `refs/interactions/s023.json`, recorded from the original renderer with the isolated Linux route1 stub.
 It checks the Stop pixels, request, error toast, focus, completion, and inactive click.

@@ -86,11 +86,19 @@ fn slash_menu_keyboard_replay() -> Result<()> {
         let x = b["x"].as_u64().context("menu x")? as u32;
         let y = b["y"].as_u64().context("menu y")? as u32;
         let w = b["w"].as_u64().context("menu width")? as u32;
+        let h = b["h"].as_u64().context("menu height")? as u32;
         let scale = image.width() / 1280;
-        ensure!(
-            image.get_pixel((x + w - 7) * scale, (y + 22) * scale).0[..3] == [45, 45, 45],
-            "step {index}: recorded menu surface differs"
-        );
+        // Filtered rows cover the scrollbar gutter. Check the menu's padding, not a row's paint.
+        for row in [y + 2, y + 3, y + h - 4, y + h - 3] {
+            for py in row * scale..(row + 1) * scale {
+                for px in (x + 20) * scale..(x + w - 20) * scale {
+                    ensure!(
+                        image.get_pixel(px, py).0[..3] == [45, 45, 45],
+                        "step {index}: recorded menu surface differs at ({px}, {py})"
+                    );
+                }
+            }
+        }
         if let Some(b) = expected["menu"]["selected"].get("bbox") {
             let x = b["x"].as_u64().context("selected x")? as u32;
             let y = b["y"].as_u64().context("selected y")? as u32;
