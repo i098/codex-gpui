@@ -1,5 +1,5 @@
 use super::*;
-use crate::screens::thread::view::menu::{ContextMenu, Item};
+use crate::screens::thread::view::menu::{ContextMenu, Item, selection_url};
 use gpui::TransformationMatrix;
 use std::time::Instant;
 
@@ -403,10 +403,10 @@ impl Composer {
         match id {
             // ponytail: `showDefinitionForSelection` has no GPUI call; Dictionary.app opens
             // the same entry from its URL scheme.
-            "lookUpSelection" => cx.open_url(&format!("dict://{}", form_encode(&selection))),
-            "searchWithGoogle" => cx.open_url(&format!(
-                "https://www.google.com/search?q={}",
-                form_encode(&selection)
+            "lookUpSelection" => cx.open_url(&selection_url("dict://", &selection)),
+            "searchWithGoogle" => cx.open_url(&selection_url(
+                "https://www.google.com/search?q=",
+                &selection,
             )),
             "cut" => self.cut(&crate::Cut, window, cx),
             "copy" => self.copy(&crate::Copy, window, cx),
@@ -678,26 +678,6 @@ impl EntityInputHandler for Composer {
         let local = p - self.bounds?.origin;
         Some(self.offset_to_utf16(self.index_for_local(local)))
     }
-}
-
-/// `URLSearchParams` encoding (`application/x-www-form-urlencoded`): spaces become `+`.
-fn form_encode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'*' | b'-' | b'.' | b'_' => {
-                out.push(b as char)
-            }
-            b' ' => out.push('+'),
-            _ => {
-                const HEX: &[u8; 16] = b"0123456789ABCDEF";
-                out.push('%');
-                out.push(HEX[(b >> 4) as usize] as char);
-                out.push(HEX[(b & 15) as usize] as char);
-            }
-        }
-    }
-    out
 }
 
 /// The text area: wraps to its width, grows one row per line.
