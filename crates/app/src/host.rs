@@ -295,12 +295,7 @@ fn project_rows(
             .enumerate()
             .filter_map(|(rank, id)| id.as_str().map(|id| (id, rank)))
             .collect();
-        rows.sort_by_key(|project| {
-            ranks
-                .get(project.id.as_ref())
-                .copied()
-                .unwrap_or(usize::MAX)
-        });
+        rows.sort_by_key(|project| ranks.get(project.id.as_ref()).copied());
     }
     Ok(rows)
 }
@@ -609,7 +604,7 @@ impl Host for LocalHost {
             "original sidebar project state must be an object"
         );
         project_rows(&state, &self.home, |path, _| {
-            Ok(Some(Path::new(path).try_exists()?))
+            Ok(Some(Path::new(path).exists()))
         })
     }
 

@@ -46,18 +46,18 @@ fn native_project_order_and_markers_follow_the_stored_roots() -> Result<()> {
     assert_eq!(
         rows.iter().map(|row| row.id.as_ref()).collect::<Vec<_>>(),
         [
+            "outside",
             "parity-worktree",
             "parity-missing",
-            "parity-project",
-            "outside"
+            "parity-project"
         ],
     );
-    assert!(rows[0].worktree && !rows[0].missing && !rows[0].expanded);
-    assert!(rows[1].missing && !rows[1].worktree);
-    assert!(!rows[2].missing && !rows[2].worktree);
-    assert!(!rows[3].worktree);
-    assert_eq!(rows[3].label.as_ref(), "Outside");
-    assert!(rows[3].expanded);
+    assert!(rows[1].worktree && !rows[1].missing && !rows[1].expanded);
+    assert!(rows[2].missing && !rows[2].worktree);
+    assert!(!rows[3].missing && !rows[3].worktree);
+    assert!(!rows[0].worktree);
+    assert_eq!(rows[0].label.as_ref(), "Outside");
+    assert!(rows[0].expanded);
 
     fs::remove_dir(&ordinary)?;
     assert!(
@@ -93,6 +93,42 @@ fn a_missing_path_response_does_not_mark_every_project_deleted() -> Result<()> {
     recording["project_snapshot"]["existing_paths"] = json!([]);
     let host = ReplayHost::from_recording(&recording.to_string())?;
     assert!(host.projects()?.iter().all(|row| row.missing));
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn one_failed_project_path_keeps_healthy_rows_visible() -> Result<()> {
+    let mut state = serde_json::from_str::<Value>(RECORDING)?["project_snapshot"]["state"].clone();
+    let home = tempfile::tempdir()?;
+    let healthy = home.path().join("healthy");
+    let looped = home.path().join("looped");
+    let missing = home.path().join("missing");
+    fs::create_dir(&healthy)?;
+    std::os::unix::fs::symlink(&looped, &looped)?;
+    for (id, path) in [
+        ("parity-project", &healthy),
+        ("parity-worktree", &looped),
+        ("parity-missing", &missing),
+    ] {
+        state["local-projects"][id]["rootPaths"] = json!([path]);
+    }
+    fs::write(
+        home.path().join(".codex-global-state.json"),
+        serde_json::to_vec(&state)?,
+    )?;
+
+    let rows = LocalHost::new(home.path()).projects()?;
+    assert_eq!(
+        rows.iter()
+            .map(|row| (row.id.as_ref(), row.missing))
+            .collect::<Vec<_>>(),
+        [
+            ("parity-project", false),
+            ("parity-worktree", true),
+            ("parity-missing", true),
+        ],
+    );
     Ok(())
 }
 
@@ -222,6 +258,69 @@ fn recorded_project_marker_is_painted() -> Result<()> {
             assert!(fx.read(|root, cx| root.sidebar().read(cx).worktree_tooltip().is_none()));
             assert!(fx.read(|_, cx| ui::tooltip::shown(cx).is_none()));
         }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn long_project_labels_do_not_cover_markers_or_hover_actions() -> Result<()> {
+    use common::Fx;
+    use std::sync::Arc;
+
+    let recording: Value = serde_json::from_str(RECORDING)?;
+    let mut fx = Fx::new()?;
+    fx.root.update(&mut fx.cx, |root, cx| {
+        root.set_host(Arc::new(ReplayHost::from_recording(RECORDING).unwrap()), cx)
+    });
+    fx.wait("the recorded project rows", |fx| {
+        fx.read(|root, cx| root.sidebar().read(cx).projects().len() == 3)
+    })?;
+    let projects = fx.read(|root, cx| root.sidebar().read(cx).projects().to_vec());
+    let mut long_projects = projects.clone();
+    for project in &mut long_projects {
+        project.label = "W".repeat(100).into();
+    }
+    for (name, index, reserve, hovered) in [
+        ("worktree-rest", 1, 36., false),
+        ("worktree-hover", 1, 92., true),
+        ("ordinary-hover", 0, 56., true),
+        ("missing-hover", 2, 56., true),
+    ] {
+        let bounds = &recording["rest"]["rows"][index]["bbox"];
+        let number = |key: &str| bounds[key].as_f64().unwrap() as f32;
+        let at = if hovered {
+            (number("x") + 14., number("y") + number("h") / 2.)
+        } else {
+            (900., 10.)
+        };
+        let mut captures = Vec::new();
+        for (suffix, rows) in [("control", &projects), ("long", &long_projects)] {
+            fx.root.update(&mut fx.cx, |root, cx| {
+                root.sidebar()
+                    .update(cx, |sidebar, cx| sidebar.set_projects(rows.clone(), cx))
+            });
+            fx.hover(at)?;
+            let image = fx.shot()?;
+            image.save(format!(
+                "{}/f1d-label-{name}-{suffix}.png",
+                env!("CARGO_TARGET_TMPDIR")
+            ))?;
+            captures.push(
+                image::imageops::crop_imm(
+                    &image,
+                    ((number("x") + number("w") - reserve) * 2.) as u32,
+                    (number("y") * 2.) as u32,
+                    (reserve * 2.) as u32,
+                    (number("h") * 2.) as u32,
+                )
+                .to_image(),
+            );
+        }
+        anyhow::ensure!(
+            captures[0] == captures[1],
+            "the long label covers the {name} marker or actions"
+        );
     }
     Ok(())
 }

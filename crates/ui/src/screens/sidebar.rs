@@ -344,6 +344,7 @@ impl HomeSidebar {
             .children(self.projects.iter().map(|project| {
                 let group = project.id.clone();
                 let color = theme.text_default_nav;
+                let label_width = if project.worktree { 204. } else { 240. };
                 let content = div()
                     .absolute()
                     .inset_0()
@@ -372,12 +373,17 @@ impl HomeSidebar {
                     )))
                     .child(
                         div()
+                            .id("project-label")
                             .absolute()
                             .left(px(32.))
+                            .w(px(label_width))
+                            .group_hover(group.clone(), move |style| style.w(px(label_width - 56.)))
                             .top_0()
                             .h(px(30.))
                             .flex()
                             .items_center()
+                            .overflow_hidden()
+                            .layer()
                             .child(text(project.label.clone(), 14., 21., 430., color)),
                     )
                     .when(project.worktree, |row| {
