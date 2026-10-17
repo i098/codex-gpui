@@ -274,9 +274,11 @@ Firstmate authorized a separate CP-108 follow-up after the corrected recording s
 Slice S028 records the original with the Linux route1 recorder in an isolated browser context.
 `refs/interactions/s028.json` records file changes, aggregate diff updates, and the `def` search.
 The native `find-in-thread` message substitutes for the Electron shortcut in the browser.
-The port test uses `Cmd+F` and checks both result counts and highlight colors.
+The port test checks `Cmd+F`, the native Find action, both result counts, and the recorded highlight colors.
+The app routes Find to the focused Changes panel before thread find.
+The replay checks that diff find never opens thread find.
 It resolves `View changes` from the static reference because Linux text layout places that button below the Mac reference.
-Run `tools/mac.sh -l s028 'cargo test -p app --test s028 -- --nocapture'`.
+Run `tools/mac.sh -l s028-repair 'cargo test -p app --test s028 -- --nocapture --test-threads=1'`.
 The open panel keeps its state across streamed updates and uses `turn/diff/updated` as the authoritative diff.
 Search scope switching and repository-watch sources remain separate inventory slices.
 
