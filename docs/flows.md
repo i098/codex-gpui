@@ -475,6 +475,18 @@ It shows an unread dot after a failed background turn, rather than an error icon
 `Show more` belongs to a non-final Recents section; `Show less` belongs to custom sections.
 Those section arrangements remain outside this port's default layout.
 
+## S025: Command-query caret and selection
+
+`crates/app/tests/s025.rs` checks 45 native editing states from `refs/interactions/s025.json`.
+The original recording uses the background Mac renderer and native editing commands for Command shortcuts.
+The test checks query text, UTF-16 selection, selection direction, and input focus after every recorded step.
+It also checks copied text and the original selection color.
+The recording covers caret insertion, selection replacement, word and line deletion, select-all, copy, cut, paste, and pointer selection.
+Clipboard line endings become spaces in the single-line query.
+The test also checks focus restoration and result activation after caret movement.
+Static reference scenes hide the caret, as the original capture does.
+Ranking, command providers, and the S026 search contract remain unchanged.
+
 ## S026: Command menu groups and chat results
 
 `crates/app/tests/s026.rs` replays `refs/interactions/s026.json` with the shared headless app helpers.
@@ -486,6 +498,30 @@ The test also checks the unread dot in the port's pixels.
 The unread state is injected in the port because the original fixture contains no unread chat.
 Command activation belongs to the later command-menu slices.
 The test also checks selection after a delayed search reply and spinner removal after a failed search.
+
+## F0b: Recording contract dispatch
+
+`crates/app/tests/replay.rs` checks every JSON recording in `refs/interactions/`.
+Each slice uses its dedicated test target, which keeps its state, pixel, and request assertions.
+The motion recording `ms4.json` uses `stream_fade`; `selftest.json` uses the generic step checks.
+The recorder determinism bundle runs through `f0a` instead of being skipped.
+S017 also compares its first recorded filesystem writes through the shared request comparison.
+The proxy log preserves paths, directory flags, and decoded attachment contents while the comparison normalizes random IDs.
+Later restoration writes cannot hide an incorrect initial paste.
+Unknown contracts, an empty recording selection, and failed adapters fail the combined result.
+The driver checks the remaining recordings after an adapter fails and reports every failure.
+It does not treat known acceptance failures as success.
+
+Run the complete replay on the Mac:
+
+```sh
+tools/mac.sh -l accept-parity 'cargo test -p app --test replay -- --test-threads=1 --nocapture'
+```
+
+Set `REPLAY=<stem>` to select one exact recording, such as `REPLAY=selftest`.
+An incomplete `portReference` returns a field error instead of panicking.
+The regression check passes the same incomplete object that panicked before the repair.
+No original recording, product behavior, or pixel threshold changes.
 
 ## S014: Grouped activity and completed reasoning
 
@@ -504,4 +540,3 @@ The fresh original input replay matches the recorded disclosure and activity row
 It also checks the original hover color, expanded rows, collapse, and hidden completed reasoning.
 [Original screenshot](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/003c2454a49370802469ed64320fe26f160b4da61215578a/original-group-expanded.png).
 [Port screenshot](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/003c2454a49370802469ed64320fe26f160b4da61215578a/s014-group-expanded.png).
-

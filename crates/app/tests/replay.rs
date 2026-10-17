@@ -1,25 +1,7 @@
-//! Replays the route1 recordings of the original app (`refs/interactions/*.json`, format in
-//! the interaction inventory §5) on the headless [`app::Root`] and checks that the port ends
-//! up in the same state:
-//!
-//! - **pixels**: for each `result.dom` entry with `bbox` and `computed.backgroundColor`, the
-//!   most common colour of the port's window inside the bbox must equal that colour blended
-//!   over its backdrop (the port's own pixels there before the first step, or the entry's
-//!   `backdrop` css colour). The entry is checked before the first step when its `state` is
-//!   `rest`, else after step `afterStep` (default: the last). Mode, not the centre pixel,
-//!   because text and icons sit on the centre of most boxes.
-//! - **state**: `result.state` (port-only keys, see [`check_state`]), after the last step.
-//! - **bridge**: the recorded `result.requests` that have a `method` must be sent by the
-//!   port during the steps, in that order (exactly those with `result.requestsExact`).
-//!
-//! Steps carry a position (`at`, else the centre of `target.bbox`); `key` steps may carry a
-//! `portKey` (gpui syntax, e.g. `cmd-a`) where the recorder's Linux Chrome used another chord,
-//! and a `clipboard` (`text` or `pngBytes`) that is on the clipboard when the key goes down.
-//! Recorded `fs/*` requests (the app-server's filesystem API, absent from the fixtures) are
-//! answered with an empty result; attachment paths use the recorder's codex home, and a v4
-//! UUID in a param (the original's random attachment directory) compares as `<id>`.
-//! `REPLAY=<stem>` selects one exact file stem (e.g. `f2a`); unset or empty runs all scripts.
-//! Recorder determinism fixtures contain `runs` instead of `steps` and report `SKIP`.
+//! Replays each interaction recording through its dedicated state, pixel, and request checks.
+//! `selftest.json` uses the shared step contract below.
+//! `REPLAY=<stem>` selects one exact recording; unset or empty checks every recording.
+//! Unknown contracts and failed adapters fail the combined result.
 
 mod common;
 
@@ -27,7 +9,6 @@ use anyhow::{Context as _, Result, bail, ensure};
 use app::Route;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use common::*;
-use gpui::{ClipboardItem, Image, ImageFormat};
 use image::RgbaImage;
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -42,41 +23,56 @@ fn proxy() {
 }
 
 #[test]
-fn recordings() {
-    // The headless renderer is Metal and the text system is CoreText, like `flows.rs`.
+fn recordings() -> Result<()> {
     if !cfg!(target_os = "macos") {
         println!("replay: macOS only, skipped");
-        return;
+        return Ok(());
     }
-    // The recordings' attachment paths are under the route1 app-server's codex home.
-    // SAFETY: set before any app or background thread of this test reads the environment.
-    unsafe { std::env::set_var("CODEX_HOME", "/tmp/cgx-mac/home") };
     let filter = std::env::var("REPLAY").unwrap_or_default();
-    let mut files: Vec<_> = fs::read_dir(format!("{ROOT}/refs/interactions"))
-        .expect("refs/interactions")
-        .map(|e| e.expect("dir entry").path())
-        .filter(|p| p.extension().is_some_and(|e| e == "json"))
-        .filter(|p| matches_recording(p, &filter))
-        .collect();
+    let mut files = fs::read_dir(format!("{ROOT}/refs/interactions"))?
+        .map(|e| e.map(|entry| entry.path()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    files.retain(|p| p.extension().is_some_and(|e| e == "json") && matches_recording(p, &filter));
     files.sort();
+    ensure!(!files.is_empty(), "no recording matches {filter:?}");
     let mut failed = Vec::new();
     for file in &files {
-        let name = file.file_stem().unwrap().to_string_lossy();
-        match run(file) {
-            Ok(Some(note)) => println!("PASS {name} {note}"),
-            Ok(None) => println!("SKIP {name}: recorder determinism bundle, checked by f0a"),
+        let name = file
+            .file_stem()
+            .context("recording name")?
+            .to_string_lossy();
+        let result = if name == "selftest" {
+            run(file)
+        } else {
+            replay_adapter(file).and_then(|sent| {
+                if name == "s017" {
+                    let rec: Value = serde_json::from_slice(&fs::read(file)?)?;
+                    check_attachment_requests(&rec["result"], &sent)?;
+                }
+                Ok("dedicated adapter".to_owned())
+            })
+        };
+        match result {
+            Ok(note) => println!("PASS {name} {note}"),
             Err(err) => {
                 println!("FAIL {name}: {err:#}");
                 failed.push(format!("{name}: {err:#}"));
             }
         }
     }
-    assert!(
+    println!(
+        "{} recordings, {} passed, {} failed",
+        files.len(),
+        files.len() - failed.len(),
+        failed.len()
+    );
+    ensure!(
         failed.is_empty(),
-        "{} failed:\n{}",
+        "{} recordings failed:\n{}",
         failed.len(),
         failed.join("\n")
     );
+    Ok(())
 }
 
 fn matches_recording(path: &Path, filter: &str) -> bool {
@@ -101,15 +97,64 @@ fn recording_filter_matches_only_the_exact_stem() {
 }
 
 #[test]
-fn recorder_determinism_fixture_is_skipped() {
-    assert_eq!(
-        run(Path::new(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../refs/interactions/f0a.json"
-        )))
-        .unwrap(),
-        None
+fn incomplete_port_reference_returns_an_error() -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        return Ok(());
+    }
+    let mut fx = Fx::new()?;
+    let step = json!({
+        "type": "click",
+        "portReference": { "screen": "home" }
+    });
+    let error = run_step(&mut fx, &step).expect_err("a reference needs its text");
+    ensure!(error.to_string() == "reference text", "{error:#}");
+    Ok(())
+}
+
+#[test]
+fn unknown_and_recursive_contracts_are_rejected() {
+    for name in ["unknown-contract.json", "replay.json"] {
+        let error = replay_adapter(Path::new(name)).expect_err("a contract needs an adapter");
+        assert!(
+            error.to_string().contains("unsupported recording contract"),
+            "{error:#}"
+        );
+    }
+}
+
+fn check_attachment_requests(result: &Value, sent: &[Value]) -> Result<()> {
+    let count = result["requests"]
+        .as_array()
+        .context("attachment requests")?
+        .len();
+    // The dedicated adapter tests restoration after these original paste writes.
+    let writes = sent
+        .iter()
+        .filter(|r| {
+            r["method"]
+                .as_str()
+                .is_some_and(|m| m.starts_with("fs/") && m != "fs/readFile")
+        })
+        .take(count);
+    check_requests(result, writes)
+}
+
+#[test]
+fn later_restoration_cannot_hide_wrong_attachment_writes() -> Result<()> {
+    let rec: Value = serde_json::from_str(include_str!("../../../refs/interactions/s017.json"))?;
+    let original = rec["result"]["requests"]
+        .as_array()
+        .context("recorded requests")?;
+    let mut sent = original.clone();
+    sent[0]["params"]["recursive"] = false.into();
+    sent.extend(original.iter().cloned());
+    let error = check_attachment_requests(&rec["result"], &sent)
+        .expect_err("later writes must not conceal an incorrect initial paste");
+    ensure!(
+        error.to_string().contains("fs/createDirectory"),
+        "{error:#}"
     );
+    Ok(())
 }
 
 /// A `result.dom` entry whose background colour the port must show.
@@ -122,11 +167,8 @@ struct Pixels {
     backdrop: Option<[u8; 3]>,
 }
 
-fn run(path: &Path) -> Result<Option<String>> {
+fn run(path: &Path) -> Result<String> {
     let rec: Value = serde_json::from_slice(&fs::read(path)?)?;
-    if rec.get("steps").is_none() && rec["runs"].is_array() {
-        return Ok(None);
-    }
     let steps = rec["steps"].as_array().context("no steps")?;
     let view = &rec["viewport"];
     let size = |key, default| view[key].as_f64().map_or(default, |v| v as f32);
@@ -161,16 +203,16 @@ fn run(path: &Path) -> Result<Option<String>> {
         if sent.len() != last.0 {
             last = (sent.len(), Instant::now());
         }
-        check_requests(&rec["result"], &sent[before..]).is_ok()
+        check_requests(&rec["result"], sent[before..].iter()).is_ok()
             || last.1.elapsed() > Duration::from_millis(300)
     })?;
     let sent = fx.sent()?.split_off(before);
-    check_requests(&rec["result"], &sent)?;
-    Ok(Some(format!(
+    check_requests(&rec["result"], sent.iter())?;
+    Ok(format!(
         "{} steps, {} pixel checks",
         steps.len(),
         checks.len()
-    )))
+    ))
 }
 
 // --- Steps ---
@@ -183,8 +225,14 @@ fn run_step(fx: &mut Fx, step: &Value) -> Result<()> {
         "click" => {
             let at = if let Some(reference) = step["portReference"].as_object() {
                 fx.at(
-                    reference["screen"].as_str().context("reference screen")?,
-                    reference["text"].as_str().context("reference text")?,
+                    reference
+                        .get("screen")
+                        .and_then(Value::as_str)
+                        .context("reference screen")?,
+                    reference
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .context("reference text")?,
                 )?
             } else {
                 target(step)?
@@ -193,19 +241,6 @@ fn run_step(fx: &mut Fx, step: &Value) -> Result<()> {
             if let Some(id) = step["waitThread"].as_str() {
                 fx.wait_thread(id)?;
             }
-        }
-        "key" => {
-            let clipboard = &step["clipboard"];
-            if let Some(text) = clipboard["text"].as_str() {
-                fx.cx
-                    .update(|cx| cx.write_to_clipboard(ClipboardItem::new_string(text.into())));
-            } else if clipboard["pngBytes"].is_array() {
-                let bytes: Vec<u8> = serde_json::from_value(clipboard["pngBytes"].clone())?;
-                let image = Image::from_bytes(ImageFormat::Png, bytes);
-                fx.cx
-                    .update(|cx| cx.write_to_clipboard(ClipboardItem::new_image(&image)));
-            }
-            fx.keys(&port_key(step)?)?
         }
         "type" => fx.type_text(step["text"].as_str().context("no text")?)?,
         "bridge" => {
@@ -260,37 +295,6 @@ fn target(step: &Value) -> Result<(f32, f32)> {
     }
     let [x, y, w, h] = bbox_of(&step["target"]["bbox"]).context("no `at` and no target.bbox")?;
     Ok((x + w / 2., y + h / 2.))
-}
-
-/// `Meta+Shift+k` as gpui's `cmd-shift-k`, unless the step has a `portKey`.
-fn port_key(step: &Value) -> Result<String> {
-    if let Some(key) = step["portKey"].as_str() {
-        return Ok(key.into());
-    }
-    let chord = step["key"].as_str().context("no key")?;
-    let (mods, key) = chord.rsplit_once('+').unwrap_or(("", chord));
-    let key = match key {
-        "ArrowUp" => "up".to_owned(),
-        "ArrowDown" => "down".to_owned(),
-        "ArrowLeft" => "left".to_owned(),
-        "ArrowRight" => "right".to_owned(),
-        " " | "Space" => "space".to_owned(),
-        "Escape" | "Enter" | "Backspace" | "Delete" | "Tab" | "Home" | "End" | "PageUp"
-        | "PageDown" => key.to_lowercase(),
-        k if k.chars().count() == 1 => k.to_lowercase(),
-        k => bail!("unsupported key {k:?}"),
-    };
-    let mut out = String::new();
-    for m in mods.split('+').filter(|m| !m.is_empty()) {
-        out += match m {
-            "Meta" | "Cmd" | "Command" => "cmd-",
-            "Control" | "Ctrl" => "ctrl-",
-            "Alt" | "Option" => "alt-",
-            "Shift" => "shift-",
-            m => bail!("unsupported modifier {m:?}"),
-        };
-    }
-    Ok(out + &key)
 }
 
 // --- Pixels ---
@@ -524,10 +528,9 @@ fn recorded(result: &Value) -> Vec<(String, Value)> {
         .collect()
 }
 
-fn check_requests(result: &Value, sent: &[Value]) -> Result<()> {
+fn check_requests<'a>(result: &Value, sent: impl Iterator<Item = &'a Value>) -> Result<()> {
     let want = recorded(result);
     let got: Vec<_> = sent
-        .iter()
         .map(|m| normalise(m["method"].as_str().unwrap_or("?"), m.get("params")))
         .collect();
     if result["requestsExact"] == true {
