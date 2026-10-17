@@ -1,0 +1,135 @@
+{
+  "name": "s010-selected-transcript-menu",
+  "rows": [
+    "SH-125",
+    "SH-131"
+  ],
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 1,
+    "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+    "theme": "dark",
+    "hoverEmulated": true
+  },
+  "provenance": {
+    "nativeTemplateSource": "/tmp/cgx/asar-x/.vite/build/main-CqEoQDOU.js",
+    "nativeTemplateSha256": "09d19386e1f23cf4ccbc950fc40d85a1e8a064a08be588b2a4be6a89f6ada9e6",
+    "nativeConstructorSha256": "343cb7f1b61856a7b54f92b3c0727dba137af7a3da4cc6f194320803035eafcd",
+    "note": "The native rows come from execution of the original macOS non-editable template. Route1 does not host Electron native menus. The selection drag and clipboard contract reuse S011. The additional browser observation preserves the selected paragraph; its new clipboard read was denied. No app-server responses were added.",
+    "selectionSource": "refs/interactions/s011.json",
+    "selectionSourceSha256": "49e969a2f878cd9229ca3ececf08297c683275128b11ed8fce2e91d23cdb60eb"
+  },
+  "steps": [
+    {
+      "type": "click",
+      "portReference": {
+        "screen": "home",
+        "text": "In two sentences"
+      },
+      "target": {
+        "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"In two sentences\"]",
+        "bbox": {
+          "x": 60,
+          "y": 383,
+          "w": 272,
+          "h": 30
+        }
+      },
+      "waitThread": "01a13de9-35ed-7c72-a36a-68eeb2f4e1ee"
+    },
+    {
+      "type": "drag",
+      "target": {
+        "selector": "main ._MarkdownRoot_63g8m_2 p",
+        "bbox": {
+          "x": 441,
+          "y": 261,
+          "w": 736,
+          "h": 48
+        }
+      },
+      "from": {
+        "x": 443,
+        "y": 273
+      },
+      "to": {
+        "x": 1201,
+        "y": 297
+      },
+      "note": "TH-127: drag from the first glyph of the answer past the end of its second line"
+    },
+    {
+      "type": "click",
+      "button": "right",
+      "at": {
+        "x": 453,
+        "y": 273
+      },
+      "note": "Right-click within the S011 paragraph selection."
+    }
+  ],
+  "result": {
+    "selection": "This repository contains a tiny Python demo used by codex-gpui fixtures. It includes a hello.py script that prints “Hello, world”, a src package with an add(a, b) function, and a short README.",
+    "menu": {
+      "items": [
+        {
+          "id": "lookUpSelection",
+          "label": "Look Up “This repository contains…”",
+          "enabled": true
+        },
+        {
+          "type": "separator",
+          "enabled": false
+        },
+        {
+          "id": "searchWithGoogle",
+          "label": "Search with Google",
+          "enabled": true
+        },
+        {
+          "type": "separator",
+          "enabled": false
+        },
+        {
+          "id": "copy",
+          "label": "Copy",
+          "enabled": true,
+          "accelerator": "CmdOrCtrl+C"
+        }
+      ]
+    },
+    "clipboard": "This repository contains a tiny Python demo used by codex-gpui fixtures. It includes a hello.py script that prints “Hello, world”, a src package with an add(a, b) function, and a short README.",
+    "googleUrl": "https://www.google.com/search?q=This+repository+contains+a+tiny+Python+demo+used+by+codex-gpui+fixtures.+It+includes+a+hello.py+script+that+prints+%E2%80%9CHello%2C+world%E2%80%9D%2C+a+src+package+with+an+add%28a%2C+b%29+function%2C+and+a+short+README.",
+    "lookupMethod": "showDefinitionForSelection",
+    "backwards": {
+      "drag": {
+        "type": "drag",
+        "target": {
+          "selector": "main ._MarkdownRoot_63g8m_2 p",
+          "bbox": {
+            "x": 441,
+            "y": 261,
+            "w": 736,
+            "h": 48
+          }
+        },
+        "from": {
+          "x": 1201,
+          "y": 273
+        },
+        "to": {
+          "x": 491,
+          "y": 273
+        },
+        "note": "TH-127: backwards drag from past the end of line 1 to a glyph boundary near its start"
+      },
+      "selection": "ository contains a tiny Python demo used by codex-gpui fixtures. It includes a hello.py script that",
+      "clipboard": "ository contains a tiny Python demo used by codex-gpui fixtures. It includes a hello.py script that"
+    },
+    "collapse": {
+      "x": 1000,
+      "y": 500
+    }
+  }
+}
