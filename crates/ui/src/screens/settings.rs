@@ -5,7 +5,7 @@
 use crate::{
     MONO, SANS, SetTheme, Shell,
     composer::{popover, shadow},
-    fixture,
+    fixture, focus,
     icon::icon,
     in_layer, layout_color,
     motion::{self, HoverFade},
@@ -534,15 +534,27 @@ impl SettingsPane {
         key: &'static str,
         default: bool,
         t: &Theme,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let on = self.page.read(cx).flag(key, default);
-        switch(key, on, false, t)
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.page
-                    .update(cx, |p, cx| p.set(key, Value::Bool(!on), cx))
-            }))
-            .into_any_element()
+        let focus = focus::handle(key, 0, window, cx);
+        focus::ring(
+            switch(key, on, false, t).relative(),
+            &focus,
+            Theme::RADIUS_FULL,
+            px(2.),
+            cx,
+        )
+        .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
+            focus.read(cx).handle.clone().focus(window, cx);
+            cx.stop_propagation();
+        })
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.page
+                .update(cx, |p, cx| p.set(key, Value::Bool(!on), cx))
+        }))
+        .into_any_element()
     }
 
     /// Pill segmented control (`Bottom` / `Right`, `Queue` / `Steer`).
@@ -599,7 +611,7 @@ impl SettingsPane {
     fn general(
         &self,
         t: &Theme,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<(&'static str, Vec<Div>)> {
         let page = self.page.read(cx);
@@ -666,7 +678,7 @@ impl SettingsPane {
                         Some(
                             "When ChatGPT runs with full access, it can edit any file on your computer and run commands with network, without your approval. This significantly increases the risk of data loss, leaks, or unexpected behavior. <a>Learn more</a> about elevated risks.",
                         ),
-                        self.toggle("session.fullAccess", true, t, cx),
+                        self.toggle("session.fullAccess", true, t, window, cx),
                     ),
                 ],
             ),
@@ -699,7 +711,7 @@ impl SettingsPane {
                     row(
                         "Show in menu bar",
                         Some("Keep ChatGPT in the macOS menu bar when the main window is closed"),
-                        self.toggle("host.mac-menu-bar-enabled", true, t, cx),
+                        self.toggle("host.mac-menu-bar-enabled", true, t, window, cx),
                     ),
                     row(
                         "Confirm before closing a window",
@@ -709,12 +721,12 @@ impl SettingsPane {
                     row(
                         "Full view by default",
                         Some("Start new tasks with Chat and content in a single tab strip"),
-                        self.toggle("host.default-workspace-full-view", false, t, cx),
+                        self.toggle("host.default-workspace-full-view", false, t, window, cx),
                     ),
                     row(
                         "Bottom panel",
                         Some("Show the bottom panel control in the app header"),
-                        self.toggle("session.bottomPanel", true, t, cx),
+                        self.toggle("session.bottomPanel", true, t, window, cx),
                     ),
                     row(
                         "Default terminal location",
@@ -732,14 +744,20 @@ impl SettingsPane {
                     row(
                         "Prevent sleep while running",
                         Some("Keep your computer awake while ChatGPT is running a task"),
-                        self.toggle("desktop.preventSleepWhileRunning", false, t, cx),
+                        self.toggle("desktop.preventSleepWhileRunning", false, t, window, cx),
                     ),
                     row(
                         "Compress local chat history",
                         Some(
                             "Save disk space by compressing older local chat history. Restart ChatGPT to apply changes.",
                         ),
-                        self.toggle("features.local_thread_store_compression", false, t, cx),
+                        self.toggle(
+                            "features.local_thread_store_compression",
+                            false,
+                            t,
+                            window,
+                            cx,
+                        ),
                     ),
                     row(
                         "Speed",
@@ -753,7 +771,7 @@ impl SettingsPane {
                         Some(
                             "Suggest what to do next by searching project files and connected apps",
                         ),
-                        self.toggle("host.ambient-suggestions-enabled", true, t, cx),
+                        self.toggle("host.ambient-suggestions-enabled", true, t, window, cx),
                     ),
                     row(
                         "Open source licenses",
@@ -763,7 +781,7 @@ impl SettingsPane {
                     row(
                         "Plugins",
                         Some("Allow ChatGPT to use installed plugins"),
-                        self.toggle("features.plugins", true, t, cx),
+                        self.toggle("features.plugins", true, t, window, cx),
                     ),
                 ],
             ),
@@ -773,19 +791,19 @@ impl SettingsPane {
                     row(
                         "Show predictions",
                         Some("Predict your next message based on the conversation"),
-                        self.toggle("session.messagePredictions", true, t, cx),
+                        self.toggle("session.messagePredictions", true, t, window, cx),
                     ),
                     row(
                         "Plain text composer",
                         Some(
                             "Keep code, Markdown, and links as literal text while writing messages",
                         ),
-                        self.toggle("desktop.composerPlainTextMode", false, t, cx),
+                        self.toggle("desktop.composerPlainTextMode", false, t, window, cx),
                     ),
                     row(
                         "Show context window usage",
                         None,
-                        self.toggle("host.show-context-window-usage", false, t, cx),
+                        self.toggle("host.show-context-window-usage", false, t, window, cx),
                     ),
                     row(
                         "Send shortcut",
@@ -824,6 +842,7 @@ impl SettingsPane {
                             "host.hotkey-window-projectless-default-enabled",
                             false,
                             t,
+                            window,
                             cx,
                         ),
                     ),
@@ -876,14 +895,14 @@ impl SettingsPane {
                     row(
                         "Confetti cannon",
                         Some("Let Codex fire confetti in the app when you ask!"),
-                        self.toggle("host.toys-confetti-enabled", false, t, cx),
+                        self.toggle("host.toys-confetti-enabled", false, t, window, cx),
                     ),
                     row(
                         "Audio visualizer",
                         Some(
                             "Animate conversation rails with system audio. Audio is processed on your device, never saved or uploaded.",
                         ),
-                        self.toggle("host.toys-audio-visualizer-enabled", false, t, cx),
+                        self.toggle("host.toys-audio-visualizer-enabled", false, t, window, cx),
                     ),
                 ],
             ),

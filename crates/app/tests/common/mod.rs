@@ -4,7 +4,7 @@
 #![allow(dead_code)]
 
 use anyhow::{Context as _, Result, ensure};
-use app::{Root, Route, State, ThemeSetting};
+use app::{Root, Route, SidePanel, State, ThemeSetting};
 use bridge::{Bridge, Event, RpcError};
 use gpui::{
     Action, AnyWindowHandle, App, AppContext as _, Entity, EntityInputHandler as _, Focusable as _,
@@ -484,18 +484,7 @@ impl Fx {
     /// Diffs the window against `refs/<screen>/<theme>@<W>x<H>.png`.
     pub fn parity(&mut self, screen: &str) -> Result<String> {
         let port = self.shot()?;
-        let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("flows-parity");
-        let refs = PathBuf::from(format!("{ROOT}/refs"));
-        let m = parity::diff_ref(&refs, &out, screen, self.theme, &port)?;
-        Ok(format!(
-            "[{screen} {} {}x{}: outside={} text={:.3}% {}]",
-            m.theme,
-            m.width,
-            m.height,
-            m.counts.diff_px_outside_text,
-            m.counts.text_diff_ratio * 100.,
-            if m.pass { "PASS" } else { "FAIL" }
-        ))
+        parity_image(screen, self.theme, &port)
     }
 }
 
@@ -563,18 +552,79 @@ pub fn assert_hover(fx: &mut Fx, at: (f32, f32), rect: [f32; 4], min: usize) -> 
     Ok(n)
 }
 
+/// Compares a captured image with the original reference and fails on a strict pixel mismatch.
+pub fn parity_image(screen: &str, theme: &str, port: &RgbaImage) -> Result<String> {
+    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("flows-parity");
+    let refs = PathBuf::from(format!("{ROOT}/refs"));
+    let m = parity::diff_ref(&refs, &out, screen, theme, port)?;
+    let note = format!(
+        "[{screen} {} {}x{}: outside={} text={:.3}% {}]",
+        m.theme,
+        m.width,
+        m.height,
+        m.counts.diff_px_outside_text,
+        m.counts.text_diff_ratio * 100.,
+        if m.pass { "PASS" } else { "FAIL" }
+    );
+    ensure!(m.pass, "{note}");
+    Ok(note)
+}
+
 /// Runs `reach` in each theme at each ref size of `screen`, then the parity diff.
 pub fn parity_flow(screen: &str, reach: fn(&mut Fx) -> Result<()>) -> Result<String> {
+    let route = match screen {
+        "home" | "composer" | "sidebar" => Route::Home,
+        "thread" | "diff" | "terminal" => Route::Thread(SUBTRACT.into()),
+        "settings" => Route::Settings,
+        "automations" => Route::Scheduled,
+        "mobile" => Route::Mobile,
+        _ => anyhow::bail!("no Root parity route for {screen}"),
+    };
+    let panel = match screen {
+        "diff" => Some(SidePanel::Changes),
+        "terminal" => Some(SidePanel::Terminal),
+        _ => None,
+    };
     let mut notes = Vec::new();
+    let mut failed = false;
     for theme in ["dark", "light"] {
         for size in [(1280., 832.), (1440., 900.)] {
-            let mut fx = Fx::with(theme, size, None, |_| {})?;
-            reach(&mut fx)?;
-            fx.cx.run_until_parked();
-            notes.push(fx.parity(screen)?);
+            let result = (|| {
+                let mut fx = Fx::with(theme, size, None, |_| {})?;
+                reach(&mut fx)?;
+                fx.cx.run_until_parked();
+                ensure!(
+                    fx.route() == route,
+                    "route {:?}, expected {route:?}",
+                    fx.route()
+                );
+                ensure!(
+                    fx.read(|r, _| r.side_panel()) == panel,
+                    "side panel {:?}, expected {panel:?}",
+                    fx.read(|r, _| r.side_panel())
+                );
+                ensure!(
+                    fx.read(|r, _| r.command_menu().is_some()) == (screen == "sidebar"),
+                    "unexpected command menu state"
+                );
+                println!(
+                    "{screen} {theme} {}x{} route={route:?} panel={panel:?}",
+                    size.0, size.1
+                );
+                fx.parity(screen)
+            })();
+            match result {
+                Ok(note) => notes.push(note),
+                Err(err) => {
+                    failed = true;
+                    notes.push(format!("[{screen} {theme} {}x{}: {err:#}]", size.0, size.1));
+                }
+            }
         }
     }
-    Ok(notes.join(" "))
+    let note = notes.join(" ");
+    ensure!(!failed, "{note}");
+    Ok(note)
 }
 
 // --- Request capture ---
