@@ -87,8 +87,8 @@ None of these possible causes waives a failure.
 Keep S026's recorded command groups and settled search behavior instead of restoring an older pending-search screenshot state.
 Keep S009's File viewer behavior; its recorded test replaces the obsolete file-link-to-Changes assertion.
 The S009, S026, F3b, and S034b recorded tests pass with the strict shared helper.
-Formatting and clippy pass for the affected test targets.
-The broader `cargo clippy -p app --tests -- -D warnings` run fails at `ms6a.rs:168` with `needless_range_loop`.
+Formatting and `cargo clippy --workspace --all-targets -- -D warnings` pass after integrating current main.
+The initial broad clippy run failed at `ms6a.rs:168`; the retained log preserves that result.
 
 An isolated smoke check sends a retained input-driven Composer capture through `parity_image`; it returns exit 1 with 11016 outside pixels.
 All 36 unchanged original images pass the same helper with zero differences.
