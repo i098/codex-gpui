@@ -295,9 +295,13 @@ impl Fx {
     /// Advances the test clock and renders the next animation frame.
     pub fn advance(&mut self, duration: Duration) -> Result<()> {
         self.cx.advance_clock(duration);
-        self.cx.update_window(self.window, |_, window, cx| {
-            window.simulate_next_frame(cx);
-        })?;
+        // Present virtual-time captures without the inactive window's wall-clock throttle.
+        self.cx
+            .test_window(self.window)
+            .simulate_frame_request(gpui::RequestFrameOptions {
+                require_presentation: true,
+                ..Default::default()
+            });
         self.cx.run_until_parked();
         Ok(())
     }

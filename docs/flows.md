@@ -177,6 +177,12 @@ The S004 recording uses the original renderer through the Linux route1 stack in 
 Its twelve actions check resize limits, collapse, restored width, titlebar toggles, tooltips, boundary pixels, and no app-server requests.
 The current original tooltip is `Toggle sidebar ⇧⌘S`, not the inventory's `⌘B` label.
 The static parity gate retains all 36 baseline counts.
+The repair records the original 300 ms settled-toggle delay and requests native presentation after advancing the virtual clock.
+Clock advancement alone leaves the step-6 surface closed.
+The repaired S004 replay passes all twelve actions with the original pixel, width, tooltip, and request assertions.
+Native frame requests bypass the inactive window's wall-clock throttle while preserving the recorded virtual clock.
+The unchanged MS2 replay passes all spring, row-shift, opacity, and reduced-motion assertions.
+The scoped issue is [S004 acceptance samples a stale sidebar frame](https://github.com/i098/codex-gpui/issues/149).
 
 F1b replays all 30 original steps with `cargo test -p app --test f1b` on macOS.
 Clicking a section header keeps pointer focus; Enter enables its keyboard ring without moving focus.
