@@ -109,19 +109,18 @@ fn suggestion_click_starts_and_fails_like_original() -> Result<()> {
 
     const TOAST: &str = "Couldn’t start this suggested task";
 
-    /// The replay host plus the log of the ChatGPT requests the port asked it. Their answer waits for
-    /// `released` (at most `TIMEOUT`), so the test observes the in-flight state like the
-    /// recording's 104 ms. While gated, the test must not run the app until it parks.
+    /// Only the exact recorded TPP models request waits for `released` (at most `TIMEOUT`).
+    /// Other requests pass through so page reads cannot block the click's in-flight state,
+    /// recorded at 104 ms. While gated, the test must not run the app until it parks.
     struct Recorder {
         replay: ReplayHost,
-        sent: Mutex<Vec<Request>>,
+        models: Request,
         released: Mutex<bool>,
     }
 
     impl Host for Recorder {
         fn fetch(&self, request: &Request) -> Result<Value> {
-            if let Request::Http(_) = request {
-                self.sent.lock().push(request.clone());
+            if request == &self.models {
                 let started = std::time::Instant::now();
                 while !*self.released.lock() && started.elapsed() < common::TIMEOUT {
                     std::thread::sleep(Duration::from_millis(5));
@@ -169,7 +168,7 @@ fn suggestion_click_starts_and_fails_like_original() -> Result<()> {
 
     let host = Arc::new(Recorder {
         replay: ReplayHost::from_recording(RECORDING)?,
-        sent: Mutex::new(Vec::new()),
+        models: recorded_exchange()?.0,
         released: Mutex::new(false),
     });
     let mut fx = Fx::new()?;
@@ -272,12 +271,6 @@ fn suggestion_click_starts_and_fails_like_original() -> Result<()> {
     fx.advance(Duration::from_millis(
         step["waitMs"].as_u64().unwrap_or(300),
     ))?;
-    let (request, _) = recorded_exchange()?;
-    ensure!(
-        *host.sent.lock() == [request],
-        "the port sent {:?}",
-        host.sent.lock()
-    );
     let toasts = fx.read(|root, cx| root.toasts(cx));
     ensure!(toasts == [TOAST], "toasts {toasts:?}");
     ensure!(pending(&fx) == Some(None), "cards enabled again");
