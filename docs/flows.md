@@ -448,3 +448,15 @@ The original hides timestamps in every Home sidebar list, including project grou
 It shows an unread dot after a failed background turn, rather than an error icon.
 `Show more` belongs to a non-final Recents section; `Show less` belongs to custom sections.
 Those section arrangements remain outside this port's default layout.
+
+## S026: Command menu groups and chat results
+
+`crates/app/tests/s026.rs` replays `refs/interactions/s026.json` with the shared headless app helpers.
+The original recording uses an isolated route1 home and a fleet Chrome context.
+The test checks every group and row on Home and an open chat, including commands that only the chat route registers.
+The two queries check title and content matches, substring highlights, project labels, snippets, and exact `thread/search` parameters.
+The result layout keeps the project column at 96 px.
+The test also checks the unread dot in the port's pixels.
+The unread state is injected in the port because the original fixture contains no unread chat.
+Command activation belongs to the later command-menu slices.
+The test also checks selection after a delayed search reply and spinner removal after a failed search.

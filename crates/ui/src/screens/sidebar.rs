@@ -20,7 +20,7 @@ use std::{
     collections::{HashMap, HashSet},
     ops::Range,
     path::Path,
-    time::Instant,
+    time::{Duration, Instant},
 };
 use theme::{ActiveTheme as _, Appearance, Theme};
 
@@ -664,8 +664,19 @@ struct Item {
     keys: Option<SharedString>,
     /// Chat rows: the thread id.
     thread: Option<String>,
+    /// Chat rows: the `thread/search` content match, shown under the title.
+    snippet: Option<SharedString>,
+    /// Chat rows: added by `thread/search` (not in `thread/list`); dropped with the query.
+    from_search: bool,
+    /// Chat rows: the unread dot in the leading slot.
+    unread: bool,
+    /// Commands whose handler only exists with an open thread (`rr(O, id) === 0` hides the
+    /// others): `Search files`, `Open in new window`, `Commit or push`, ...
+    thread_only: bool,
     description: Option<&'static str>,
     external: bool,
+    /// A drill-in row (`Theme`): chevron on the right.
+    chevron: bool,
 }
 
 impl Item {
@@ -678,10 +689,20 @@ impl Item {
         }
     }
 
-    fn keys(self, keys: &'static str) -> Self {
+    fn chat(thread: &Thread, snippet: Option<String>, unread: bool) -> Self {
         Self {
-            keys: Some(keys.into()),
-            ..self
+            label: title(thread),
+            keywords: thread.preview.clone().into(),
+            project: Some(
+                Path::new(&thread.cwd)
+                    .file_name()
+                    .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
+                    .into(),
+            ),
+            thread: Some(thread.id.clone()),
+            snippet: snippet.map(Into::into),
+            unread,
+            ..Default::default()
         }
     }
 
@@ -689,17 +710,21 @@ impl Item {
         self.project.is_some()
     }
 
-    /// Chats match the query as a substring of their title or first message, commands with
-    /// [`fuzzy_match`] over title and description.
+    /// Chats match the query as a substring of their title or first message (or carry a
+    /// content snippet), commands with [`fuzzy_match`] over the title or the description.
     fn matches(&self, query: &str) -> bool {
         if self.is_chat() {
-            let query = query.to_lowercase();
-            [&self.label, &self.keywords]
-                .iter()
-                .any(|s| s.to_lowercase().contains(&query))
+            self.title_matches(query) || self.snippet.is_some()
         } else {
-            fuzzy_match(&format!("{} {}", self.label, self.keywords), query)
+            fuzzy_match(&self.label, query) || fuzzy_match(&self.keywords, query)
         }
+    }
+
+    fn title_matches(&self, query: &str) -> bool {
+        let query = query.to_lowercase();
+        [&self.label, &self.keywords]
+            .iter()
+            .any(|s| s.to_lowercase().contains(&query))
     }
 }
 
@@ -731,13 +756,15 @@ fn fuzzy_match(text: &str, query: &str) -> bool {
 }
 
 /// Which chars of `text` the original highlights for `query`: all for an empty query, else
-/// the first case-insensitive occurrence, else (`fuzzy`) a greedy in-order char match.
+/// the first case-insensitive occurrence, else (`fuzzy`) a greedy in-order char match. A
+/// text without any match stays plain (all on): the original dims the rest of a title only
+/// around a match.
 fn highlight(text: &str, query: &str, fuzzy: bool) -> Vec<bool> {
     let lower: Vec<char> = text.chars().flat_map(char::to_lowercase).collect();
     let q: Vec<char> = query.trim().chars().flat_map(char::to_lowercase).collect();
     // ponytail: assumes lowercasing keeps the char count (true for the fixture's ASCII).
     if q.is_empty() || lower.len() != text.chars().count() {
-        return vec![q.is_empty(); text.chars().count()];
+        return vec![true; text.chars().count()];
     }
     if let Some(start) = lower.windows(q.len()).position(|w| w == q.as_slice()) {
         return (0..lower.len())
@@ -745,14 +772,19 @@ fn highlight(text: &str, query: &str, fuzzy: bool) -> Vec<bool> {
             .collect();
     }
     let mut next = 0;
-    lower
+    let marks: Vec<bool> = lower
         .iter()
         .map(|c| {
             let hit = fuzzy && next < q.len() && *c == q[next];
             next += usize::from(hit);
             hit
         })
-        .collect()
+        .collect();
+    if marks.contains(&true) {
+        marks
+    } else {
+        vec![true; marks.len()]
+    }
 }
 
 /// [`text`] with the chars `marks` flags in `on` and the others in `off`.
@@ -794,15 +826,20 @@ fn marked(
 }
 
 /// `CommandMenuDialog` in chat-search mode (sidebar `Search`): the query input over `Chats`
-/// (from `thread/list`), `Quick actions`, `Settings` and `App`, filtered by the query. The
-/// selected row carries the `primary-ghost-hover` fill, the others `opacity: .75`.
-/// ponytail: the original also lists ~50 more commands (Chat, Navigation, Panels, ...) after
-/// `Settings`; add them with the commands they run.
+/// (from `thread/list`), `Quick actions`, the `Settings` pages and the command groups
+/// `Chat`, `Navigation`, `Panels`, `Project`, `Skills`, `Configure`, `App`, filtered by the
+/// query. The selected row carries the `primary-ghost-hover` fill, the others `opacity: .75`.
 pub struct CommandMenu {
     groups: Vec<(&'static str, Vec<Item>)>,
     query: String,
     selected: usize,
     focus: FocusHandle,
+    /// A thread is open: its commands show (`Search files`, `Mark as unread`, ...).
+    thread_open: bool,
+    /// Bumped on every query change; a debounced search only fires for the latest.
+    search_gen: usize,
+    /// `thread/search` in flight: the spinner next to `Chats`.
+    searching: bool,
 }
 
 /// What the command menu asks its owner to do.
@@ -813,7 +850,455 @@ pub enum CommandMenuEvent {
     OpenThread(String),
     /// A command row, by its label (`New chat`, `General`, `Manage scheduled tasks`, ...).
     Command(SharedString),
+    /// The query has 3+ chars and rested [`SEARCH_DEBOUNCE`]: send `thread/search` for it and
+    /// answer with [`CommandMenu::set_search_results`].
+    Search(String),
 }
+
+/// One `thread/search` result.
+#[derive(serde::Deserialize)]
+pub struct SearchHit {
+    pub thread: Thread,
+    pub snippet: String,
+}
+
+/// The original's `useDebouncedValue(search, 200)` before the content search.
+pub const SEARCH_DEBOUNCE: Duration = Duration::from_millis(200);
+
+/// Content results need 3+ chars (`includeContentResults`); `limit` is the quick
+/// presentation's `maxResults`.
+pub const SEARCH_MIN_CHARS: usize = 3;
+pub const SEARCH_LIMIT: u32 = 9;
+
+/// The command groups after `Settings`, in the original's `commandMenuGroupKey` order
+/// (`thread, navigation, panels, workspace, skills, configure, app`); `Quick actions` holds
+/// `newTask` and `openFolder` (plus `searchFiles` with a thread).
+const GROUPS: [&str; 7] = [
+    "Chat",
+    "Navigation",
+    "Panels",
+    "Project",
+    "Skills",
+    "Configure",
+    "App",
+];
+
+/// `(group, icon, label, description, keys, thread_only)`: the commands the original lists
+/// on the route1 stack (recorded in refs/interactions/s026.json, Home and a thread route).
+/// Commands without a handler in the current context are hidden; `thread_only` marks those
+/// that a thread route registers.
+/// ponytail: icons only where the port has the asset; the rest show an empty slot.
+type Command = (
+    &'static str,
+    Option<&'static str>,
+    &'static str,
+    &'static str,
+    &'static str,
+    bool,
+);
+const COMMANDS: &[Command] = &[
+    (
+        "Quick actions",
+        Some("sidebar-cmd-new-chat"),
+        "New chat",
+        "Start a new chat",
+        "⌘N",
+        false,
+    ),
+    (
+        "Quick actions",
+        Some("sidebar-cmd-folder"),
+        "Open folder",
+        "Add a local project to Codex",
+        "⌘O",
+        false,
+    ),
+    (
+        "Quick actions",
+        Some("search"),
+        "Search files",
+        "",
+        "⌘P",
+        true,
+    ),
+    (
+        "Chat",
+        Some("sidebar-cmd-new-chat"),
+        "New standalone chat",
+        "Start a new chat outside of any project",
+        "⌥⌘O",
+        false,
+    ),
+    (
+        "Chat",
+        None,
+        "Open in new window",
+        "Open the current chat in a new window",
+        "",
+        true,
+    ),
+    (
+        "Chat",
+        Some("sidebar-archive"),
+        "Archive chat",
+        "Archive the current chat",
+        "⇧⌘A",
+        false,
+    ),
+    (
+        "Chat",
+        None,
+        "Mark as unread",
+        "Mark the current chat as unread",
+        "⇧⌘U",
+        true,
+    ),
+    (
+        "Chat",
+        Some("sidebar-pin"),
+        "Toggle pin",
+        "Pin or unpin the current chat",
+        "⌥⌘P",
+        false,
+    ),
+    (
+        "Chat",
+        None,
+        "Open side chat",
+        "Open the current chat in a side chat",
+        "⌥⌘S",
+        true,
+    ),
+    (
+        "Navigation",
+        Some("search"),
+        "Switch chat…",
+        "Search and switch to a chat",
+        "",
+        false,
+    ),
+    (
+        "Navigation",
+        None,
+        "Toggle activity view",
+        "Turn the sidebar activity view on or off",
+        "⌥⌘U",
+        false,
+    ),
+    (
+        "Navigation",
+        None,
+        "Focus main chat",
+        "Move keyboard focus to the main chat composer",
+        "",
+        false,
+    ),
+    (
+        "Navigation",
+        None,
+        "Open your dot",
+        "Open your dot conversation",
+        "⌘.",
+        false,
+    ),
+    (
+        "Navigation",
+        None,
+        "Next chat needing attention",
+        "Switch to the next chat awaiting input or with unread activity",
+        "⌥⌘A",
+        false,
+    ),
+    (
+        "Navigation",
+        None,
+        "Previous chat",
+        "Switch to the previous chat",
+        "⇧⌘[",
+        false,
+    ),
+    (
+        "Navigation",
+        None,
+        "Next chat",
+        "Switch to the next chat",
+        "⇧⌘]",
+        false,
+    ),
+    (
+        "Navigation",
+        None,
+        "Go to recent chat 1",
+        "Open the recently updated chat in this shortcut slot",
+        "⌥⌘1",
+        false,
+    ),
+    (
+        "Navigation",
+        None,
+        "Go to recent chat 2",
+        "Open the recently updated chat in this shortcut slot",
+        "⌥⌘2",
+        false,
+    ),
+    (
+        "Navigation",
+        None,
+        "Go to recent chat 3",
+        "Open the recently updated chat in this shortcut slot",
+        "⌥⌘3",
+        false,
+    ),
+    (
+        "Navigation",
+        None,
+        "Go to recent chat 4",
+        "Open the recently updated chat in this shortcut slot",
+        "⌥⌘4",
+        false,
+    ),
+    (
+        "Navigation",
+        None,
+        "Go to recent chat 5",
+        "Open the recently updated chat in this shortcut slot",
+        "⌥⌘5",
+        false,
+    ),
+    (
+        "Navigation",
+        None,
+        "Go to recent chat 6",
+        "Open the recently updated chat in this shortcut slot",
+        "⌥⌘6",
+        false,
+    ),
+    (
+        "Navigation",
+        None,
+        "Switch to Chat",
+        "Switch to Chat",
+        "",
+        false,
+    ),
+    (
+        "Navigation",
+        None,
+        "Switch to Work",
+        "Switch to Work",
+        "",
+        false,
+    ),
+    (
+        "Navigation",
+        None,
+        "Switch to Codex",
+        "Switch to Codex",
+        "",
+        false,
+    ),
+    (
+        "Navigation",
+        Some("search"),
+        "Find",
+        "Search the current chat",
+        "⌘F",
+        false,
+    ),
+    (
+        "Navigation",
+        Some("arrow-left"),
+        "Back",
+        "Go back in navigation history",
+        "⌘[",
+        false,
+    ),
+    (
+        "Navigation",
+        Some("arrow-left"),
+        "Forward",
+        "Go forward in navigation history",
+        "⌘]",
+        false,
+    ),
+    (
+        "Panels",
+        None,
+        "Reopen closed tab",
+        "Reopen the most recently closed tab",
+        "⇧⌘T",
+        false,
+    ),
+    (
+        "Panels",
+        Some("sidebar"),
+        "Toggle sidebar",
+        "Show or hide the sidebar",
+        "⇧⌘S",
+        false,
+    ),
+    (
+        "Panels",
+        None,
+        "Toggle navigation panel",
+        "Show or hide a page's navigation, or the code viewer's file tree",
+        "⇧⌘E",
+        false,
+    ),
+    (
+        "Panels",
+        None,
+        "Toggle bottom panel",
+        "Show or hide the bottom panel",
+        "⌘J",
+        false,
+    ),
+    (
+        "Panels",
+        None,
+        "Toggle pinned summary",
+        "Show or hide the pinned summary",
+        "",
+        true,
+    ),
+    (
+        "Panels",
+        None,
+        "Open terminal",
+        "Open the terminal panel",
+        "⌃`",
+        false,
+    ),
+    (
+        "Panels",
+        None,
+        "Open browser tab",
+        "Open a new browser tab",
+        "⌘T",
+        false,
+    ),
+    (
+        "Panels",
+        None,
+        "New tab in full view",
+        "Enter or exit full view",
+        "⇧⌘F",
+        false,
+    ),
+    (
+        "Panels",
+        Some("sidebar"),
+        "Cycle workspace layout",
+        "Step from full view to split view, hide tabs, or show tabs beside Chat",
+        "⇧⌘B",
+        false,
+    ),
+    (
+        "Panels",
+        None,
+        "Open Changes tab",
+        "Open the Changes tab",
+        "⌃⇧G",
+        true,
+    ),
+    (
+        "Panels",
+        Some("sidebar"),
+        "New tab",
+        "Show or hide Changes for the current chat",
+        "⌥⌘B",
+        false,
+    ),
+    (
+        "Project",
+        None,
+        "Commit or push",
+        "Open commit or push options",
+        "",
+        true,
+    ),
+    (
+        "Project",
+        None,
+        "Create PR",
+        "Open pull request creation options",
+        "",
+        true,
+    ),
+    (
+        "Project",
+        None,
+        "Create draft PR",
+        "Open draft pull request creation options",
+        "",
+        true,
+    ),
+    (
+        "Project",
+        None,
+        "New project",
+        "Create a project",
+        "",
+        false,
+    ),
+    (
+        "Skills",
+        None,
+        "Go to skills",
+        "Browse installed and recommended skills",
+        "",
+        false,
+    ),
+    ("Configure", None, "Theme", "Codex", "", false),
+    (
+        "Configure",
+        Some("settings-import"),
+        "Import from other AI apps",
+        "Import from other AI apps",
+        "",
+        false,
+    ),
+    (
+        "App",
+        Some("settings-profile"),
+        "Show Mini",
+        "Show Mini from anywhere",
+        "⌥Space",
+        false,
+    ),
+    (
+        "App",
+        None,
+        "Clear all unreads",
+        "Mark all chats and scheduled task updates as read",
+        "⇧Esc",
+        false,
+    ),
+    (
+        "App",
+        Some("sidebar-cmd-manage-scheduled-tasks"),
+        "Manage scheduled tasks",
+        "Create or manage scheduled tasks from the current page",
+        "",
+        false,
+    ),
+    (
+        "App",
+        Some("sidebar-cmd-log-out"),
+        "Log out",
+        "Sign out of Codex",
+        "",
+        false,
+    ),
+    (
+        "App",
+        Some("sidebar-cmd-feedback"),
+        "Feedback",
+        "Send product feedback to the ChatGPT team",
+        "",
+        false,
+    ),
+];
 
 impl EventEmitter<CommandMenuEvent> for CommandMenu {}
 
@@ -824,29 +1309,50 @@ impl Focusable for CommandMenu {
 }
 
 impl CommandMenu {
-    /// Over the fixture's `thread/list` (refs/sidebar).
+    /// Over the fixture's `thread/list` (refs/sidebar): the content search answered with the
+    /// first message of every chat it matches, still pending on ChatGPT (the spinner).
     pub fn new(query: &str, cx: &mut Context<Self>) -> Self {
         let list: ThreadListResponse = fixture::response("readback.jsonl", "thread/list", 0);
-        Self::with_threads(&list.data, query, cx)
+        let mut menu = Self::with_threads(&list.data, &[], false, query, cx);
+        for chat in &mut menu.groups[0].1 {
+            if !query.is_empty() && chat.title_matches(query) {
+                chat.snippet = Some(chat.keywords.clone());
+            }
+        }
+        menu.searching = !query.is_empty();
+        menu
     }
 
-    /// `Chats` from `threads` (a live `thread/list`), in that order.
-    pub fn with_threads(threads: &[Thread], query: &str, cx: &mut Context<Self>) -> Self {
+    /// `Chats` from `threads` (a live `thread/list`), in that order; `unread` ids carry the
+    /// dot; `thread_open` shows the commands a thread route registers.
+    pub fn with_threads(
+        threads: &[Thread],
+        unread: &[String],
+        thread_open: bool,
+        query: &str,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let chats = threads
             .iter()
-            .map(|t| Item {
-                label: title(t),
-                keywords: t.preview.clone().into(),
-                project: Some(
-                    Path::new(&t.cwd)
-                        .file_name()
-                        .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
-                        .into(),
-                ),
-                thread: Some(t.id.clone()),
-                ..Default::default()
-            })
+            .map(|t| Item::chat(t, None, unread.contains(&t.id)))
             .collect();
+        let command = |(_, icon, label, description, keys, thread_only): &Command| Item {
+            keys: Some(*keys).filter(|k| !k.is_empty()).map(Into::into),
+            thread_only: *thread_only,
+            description: (*label == "Theme").then_some(*description),
+            chevron: *label == "Theme",
+            ..Item::command(*icon, label, description)
+        };
+        let group = |name: &'static str| {
+            (
+                name,
+                COMMANDS
+                    .iter()
+                    .filter(|c| c.0 == name)
+                    .map(command)
+                    .collect::<Vec<_>>(),
+            )
+        };
         // Settings pages; `true` = trailing external-link arrow.
         let settings = [
             ("settings-general", "General", false),
@@ -891,74 +1397,163 @@ impl CommandMenu {
             external,
             ..Item::command(Some(icon), label, "")
         });
-        let create_page = "Start a private page outside a Space";
+        let mut groups = vec![
+            ("Chats", chats),
+            group("Quick actions"),
+            ("Settings", settings.into()),
+        ];
+        groups.extend(GROUPS.into_iter().map(group));
         Self {
-            groups: vec![
-                ("Chats", chats),
-                (
-                    "Quick actions",
-                    vec![
-                        Item::command(Some("sidebar-cmd-new-chat"), "New chat", "").keys("⌘N"),
-                        Item::command(Some("sidebar-cmd-folder"), "Open folder", "").keys("⌘O"),
-                    ],
-                ),
-                ("Settings", settings.into()),
-                (
-                    "App",
-                    vec![
-                        Item::command(
-                            Some("settings-profile"),
-                            "Show Mini",
-                            "Show Mini from anywhere",
-                        )
-                        .keys("⌥Space"),
-                        Item::command(
-                            None,
-                            "Clear all unreads",
-                            "Mark all chats and scheduled task updates as read",
-                        )
-                        .keys("⇧Esc"),
-                        Item::command(
-                            Some("sidebar-cmd-manage-scheduled-tasks"),
-                            "Manage scheduled tasks",
-                            "Create or manage scheduled tasks from the current page",
-                        ),
-                        Item::command(Some("sidebar-cmd-log-out"), "Log out", "Sign out of Codex"),
-                        Item::command(
-                            Some("sidebar-cmd-feedback"),
-                            "Feedback",
-                            "Send product feedback to the ChatGPT team",
-                        ),
-                        Item {
-                            description: Some(create_page),
-                            ..Item::command(
-                                Some("sidebar-cmd-create-page"),
-                                "Create page",
-                                create_page,
-                            )
-                        },
-                    ],
-                ),
-            ],
+            groups,
             query: query.to_owned(),
             selected: 0,
             focus: cx.focus_handle(),
+            thread_open,
+            search_gen: 0,
+            searching: false,
         }
     }
 
-    /// Groups with the items matching the query; empty groups are dropped.
+    /// Groups with the items matching the query; empty groups are dropped. `Chats` lists
+    /// the title matches first, then the content-only matches of `thread/search`.
+    /// ponytail: the original ranks every match by its matcher's score; list order here.
     fn visible(&self) -> Vec<(&'static str, Vec<&Item>)> {
+        let query = self.query.trim();
         self.groups
             .iter()
             .map(|(heading, items)| {
-                let items = items
+                let mut items = items
                     .iter()
-                    .filter(|i| self.query.trim().is_empty() || i.matches(&self.query))
+                    .filter(|i| self.thread_open || !i.thread_only)
+                    .filter(|i| query.is_empty() || i.matches(query))
                     .collect::<Vec<_>>();
+                if *heading == "Chats" && !query.is_empty() {
+                    items.sort_by_key(|i| !i.title_matches(query));
+                }
                 (*heading, items)
             })
             .filter(|(_, items)| !items.is_empty())
             .collect()
+    }
+
+    /// The visible rows as the recorder writes them (`title | desc:… | project | keys`, a
+    /// highlighted run in `[..]`, the snippet after ` || `) with their unread flag.
+    pub fn describe(&self) -> Vec<(&'static str, Vec<(String, bool)>)> {
+        let query = self.query.trim();
+        let bracket = |text: &str, marks: Vec<bool>| -> String {
+            if marks.iter().all(|&m| m) {
+                return text.to_owned();
+            }
+            let mut out = String::new();
+            let mut lit = false;
+            for (c, m) in text.chars().zip(marks) {
+                match (lit, m) {
+                    (false, true) => out.push('['),
+                    (true, false) => out.push(']'),
+                    _ => {}
+                }
+                lit = m;
+                out.push(c);
+            }
+            if lit {
+                out.push(']');
+            }
+            out
+        };
+        let mut index = 0;
+        self.visible()
+            .into_iter()
+            .map(|(heading, items)| {
+                let rows = items
+                    .into_iter()
+                    .map(|item| {
+                        index += 1;
+                        let mut parts = vec![bracket(
+                            &item.label,
+                            highlight(&item.label, query, !item.is_chat()),
+                        )];
+                        parts.extend(item.description.map(|d| format!("desc:{d}")));
+                        parts.extend(item.project.as_ref().map(|p| p.to_string()));
+                        parts.extend(
+                            item.keys
+                                .as_ref()
+                                .map(|k| k.to_string())
+                                .or_else(|| item.is_chat().then(|| format!("⌃{index}"))),
+                        );
+                        let mut text = parts.join(" | ");
+                        if let Some(s) = &item.snippet {
+                            text += &format!(" || {}", bracket(s, highlight(s, query, false)));
+                        }
+                        (text, item.unread)
+                    })
+                    .collect();
+                (heading, rows)
+            })
+            .collect()
+    }
+
+    /// `thread/search` answered for `term`: the matching chats get their snippet, the
+    /// results outside `thread/list` join `Chats`. A stale term is ignored.
+    pub fn set_search_results(&mut self, term: &str, hits: Vec<SearchHit>, cx: &mut Context<Self>) {
+        if term != self.query.trim() {
+            return;
+        }
+        self.searching = false;
+        let selected = self
+            .visible()
+            .into_iter()
+            .flat_map(|(_, rows)| rows)
+            .nth(self.selected)
+            .map(|item| (item.thread.clone(), item.label.clone()));
+        let chats = &mut self.groups[0].1;
+        for hit in hits {
+            match chats
+                .iter_mut()
+                .find(|c| c.thread.as_deref() == Some(&hit.thread.id))
+            {
+                Some(chat) => chat.snippet = Some(hit.snippet.into()),
+                None => chats.push(Item {
+                    from_search: true,
+                    ..Item::chat(&hit.thread, Some(hit.snippet), false)
+                }),
+            }
+        }
+        if let Some(selected) = selected
+            && let Some(index) = self
+                .visible()
+                .into_iter()
+                .flat_map(|(_, rows)| rows)
+                .position(|item| item.thread == selected.0 && item.label == selected.1)
+        {
+            self.selected = index;
+        }
+        cx.notify();
+    }
+
+    /// The query changed: drop the old search results and schedule the next search.
+    fn query_changed(&mut self, cx: &mut Context<Self>) {
+        self.selected = 0;
+        let chats = &mut self.groups[0].1;
+        chats.retain(|c| !c.from_search);
+        chats.iter_mut().for_each(|c| c.snippet = None);
+        self.search_gen += 1;
+        self.searching = false;
+        let term = self.query.trim().to_owned();
+        if term.chars().count() < SEARCH_MIN_CHARS {
+            return;
+        }
+        let generation = self.search_gen;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(SEARCH_DEBOUNCE).await;
+            this.update(cx, |this, cx| {
+                if this.search_gen == generation {
+                    this.searching = true;
+                    cx.emit(CommandMenuEvent::Search(term));
+                    cx.notify();
+                }
+            })
+        })
+        .detach();
     }
 
     fn on_key(&mut self, e: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -968,14 +1563,14 @@ impl CommandMenu {
             "up" => self.selected = self.selected.saturating_sub(1),
             "backspace" => {
                 self.query.pop();
-                self.selected = 0;
+                self.query_changed(cx);
             }
             "escape" => return cx.emit(CommandMenuEvent::Dismiss),
             "enter" => return self.confirm(cx),
             _ => match &k.key_char {
                 Some(c) if !k.modifiers.platform && !k.modifiers.control => {
                     self.query.push_str(c);
-                    self.selected = 0;
+                    self.query_changed(cx);
                 }
                 _ => return,
             },
@@ -1035,10 +1630,8 @@ impl Render for CommandMenu {
         let text_width = width - 2. * 5. - 2. * 8. - 16. - 8.;
         let mut index = 0;
         let groups = self.visible().into_iter().map(|(heading, items)| {
-            // While a query is typed the original also searches ChatGPT conversations and
-            // shows its pending spinner next to `Chats`.
-            // ponytail: that remote search is not wired, so the spinner stays.
-            let searching = heading == "Chats" && !query.is_empty();
+            // The pending content search shows its spinner next to `Chats`.
+            let searching = heading == "Chats" && self.searching;
             div()
                 .flex()
                 .flex_col()
@@ -1195,9 +1788,7 @@ fn menu_row(
         (surface, 0.75)
     };
     let (fg, dim) = (t.text, t.text_tertiary);
-    let snippet = (item.is_chat() && !query.is_empty())
-        .then(|| item.keywords.clone())
-        .filter(|s| s.to_lowercase().contains(&query.to_lowercase()));
+    let snippet = item.snippet.clone();
     let label = marked(
         item.label.clone(),
         &highlight(&item.label, query, !item.is_chat()),
@@ -1265,6 +1856,9 @@ fn menu_row(
         )
         .when(item.external, |d| {
             d.child(icon("arrow-up-right", 16., fg.opacity(row_opacity)))
+        })
+        .when(item.chevron, |d| {
+            d.child(icon("thread-chevron-right", 16., fg.opacity(row_opacity)))
         });
     div()
         .id(("command-row", ordinal))
@@ -1281,12 +1875,29 @@ fn menu_row(
                 ..Default::default()
             }))
         })
-        .child(
-            div().size(px(16.)).flex_none().children(
-                item.icon
-                    .map(|name| icon(name, 16., fg.opacity(row_opacity))),
-            ),
-        )
+        .child(div().size(px(16.)).flex_none().map(|slot| {
+            if item.unread {
+                // `size-5` box with a `scale-50` `icon-xs` dot: 8 px `info-solid`, centred.
+                slot.flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .size(px(8.))
+                            .child(shapes::decoration(shapes::Decoration {
+                                radius: Corners::all(Theme::RADIUS_FULL),
+                                fill: Some(t.info_solid.opacity(row_opacity)),
+                                ..Default::default()
+                            })),
+                    )
+            } else {
+                slot.children(item.icon.map(|name| {
+                    // `navigateForward` is the back arrow with `-scale-x-100`.
+                    icon(name, 16., fg.opacity(row_opacity))
+                        .when(item.label == "Forward", |i| i.flip_x())
+                }))
+            }
+        }))
         .child(
             div()
                 .flex_1()
