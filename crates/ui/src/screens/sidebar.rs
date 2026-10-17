@@ -24,6 +24,10 @@ use std::{
 };
 use theme::{ActiveTheme as _, Appearance, Theme};
 
+#[path = "sidebar/menu.rs"]
+mod menu;
+use menu::ThreadMenu;
+
 /// `.sidebar-item`: `--radius-lg` (12.5 px) with `corner-shape: superellipse(1.5)`.
 const RADIUS_ROW: Pixels = px(12.5);
 
@@ -34,7 +38,7 @@ pub const PINNED_SECTION_ID: &str = "01984de2-8f74-7c91-a3b2-5c5e937cf318";
 const PAGE: usize = 10;
 
 /// Recents row label: the thread name, else its preview cut to 80 chars with `…`.
-pub(crate) fn title(thread: &Thread) -> SharedString {
+pub fn title(thread: &Thread) -> SharedString {
     if let Some(name) = &thread.name {
         return name.clone().into();
     }
@@ -66,6 +70,8 @@ pub struct HomeSidebar {
     page_error: bool,
     /// The sections' scroller (Projects and Recents under the header).
     pub scroll: ScrollHandle,
+    /// The open row context menu.
+    menu: Option<ThreadMenu>,
 }
 
 /// Emitted when a Recents row is clicked, with the thread id.
@@ -89,6 +95,11 @@ pub struct ArchiveThread(pub String);
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = sidebar, no_json)]
 pub struct PinThread(pub String, pub bool);
+
+/// The row menu's `Rename`: opens the `Rename chat` dialog for the thread (its id).
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = sidebar, no_json)]
+pub struct RenameThread(pub String);
 
 fn is_pinned(t: &Thread) -> bool {
     t.section
@@ -123,6 +134,7 @@ impl HomeSidebar {
             loading: false,
             page_error: false,
             scroll: ScrollHandle::new(),
+            menu: None,
         }
     }
 
@@ -276,6 +288,7 @@ impl HomeSidebar {
             .gap(px(1.))
             .children(rows.map(|(id, label)| {
                 let open = id.clone();
+                let menu_for = id.clone();
                 let row_focus = focus::handle(
                     SharedString::from(format!("thread-row-{id}")),
                     0,
@@ -311,6 +324,12 @@ impl HomeSidebar {
                     [&row_focus, &pin_focus, &archive_focus],
                 )
                 .on_click(cx.listener(move |_, _, _, cx| cx.emit(OpenThread(open.clone()))))
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| {
+                        this.open_menu(menu_for.clone(), e.position, window, cx)
+                    }),
+                )
             }))
             .children(sentinel)
             .when(!pinned && self.loading, |d| {
@@ -446,6 +465,7 @@ impl Render for HomeSidebar {
                     .child(projects)
                     .child(recents),
             )
+            .children(self.menu.as_ref().map(|_| self.menu_overlay(window, cx)))
     }
 }
 
