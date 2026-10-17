@@ -11,9 +11,10 @@ use anyhow::{Context as _, Result, ensure};
 use app::{Root, State, ThemeSetting};
 use bridge::Bridge;
 use gpui::{
-    AnyWindowHandle, AppContext as _, Context, Entity, HeadlessAppContext, IntoElement, Keystroke,
-    Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
-    PlatformInput, Render, Styled, Window, div, point, px, size,
+    AnyWindowHandle, AppContext as _, Context, Entity, HeadlessAppContext, InteractiveElement,
+    IntoElement, KeyUpEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement, Pixels, PlatformInput, PlatformWindow as _, Render, Styled,
+    Window, div, point, px, size,
 };
 use image::RgbaImage;
 use serde_json::Value;
@@ -343,6 +344,230 @@ fn bordered_trigger_offset_matches_native_add_without_changing_the_default() -> 
             &[45, 45, 45]
         );
     }
+    Ok(())
+}
+
+struct FocusTriggers;
+
+impl Render for FocusTriggers {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .font_family(ui::SANS)
+            .bg(gpui::rgb(0x181818))
+            .on_key_down(ui::focus::tab)
+            .children(
+                [
+                    ("focus-first", 100., "Focus first"),
+                    ("focus-second", 300., "Focus second"),
+                    ("focus-plain", 500., "Hover only"),
+                ]
+                .map(|(id, left, label)| {
+                    let focus = ui::focus::handle(id, 0, window, cx);
+                    let tip = ui::tooltip::tooltip(
+                        div()
+                            .id(id)
+                            .absolute()
+                            .left(px(left))
+                            .top(px(100.))
+                            .w(px(80.))
+                            .h(px(30.))
+                            .track_focus(&focus.read(cx).handle),
+                        label,
+                        None,
+                        ui::tooltip::Side::Top,
+                    );
+                    if id == "focus-plain" {
+                        tip
+                    } else {
+                        tip.focus_handle(&focus.read(cx).handle)
+                    }
+                }),
+            )
+    }
+}
+
+#[test]
+fn keyboard_tooltip_ownership_and_dismissal_follow_focus() -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        return Ok(());
+    }
+    let mut cx = HeadlessAppContext::with_platform(
+        textsys::text_system(),
+        Arc::new(theme::Assets),
+        gpui_platform::current_headless_renderer,
+    );
+    cx.update(|cx| {
+        theme::load_fonts(cx);
+        cx.set_global(theme::Theme::dark());
+    });
+    let window = cx.open_window(size(px(1280.), px(832.)), |_, cx| cx.new(|_| FocusTriggers))?;
+    let window: AnyWindowHandle = window.into();
+    // TestWindow has no OS window; change only its simulated active status.
+    cx.test_window(window).activate();
+    cx.run_until_parked();
+    let shown = |cx: &mut HeadlessAppContext| -> Result<Option<ui::tooltip::Shown>> {
+        // Render the focus event, then the tooltip frame that its notification requests.
+        for _ in 0..2 {
+            cx.test_window(window)
+                .simulate_frame_request(gpui::RequestFrameOptions {
+                    require_presentation: true,
+                    ..Default::default()
+                });
+            cx.run_until_parked();
+        }
+        let image = cx.capture_screenshot(window)?;
+        let tip = cx.update(|cx| ui::tooltip::shown(cx).cloned());
+        if let Some(tip) = &tip {
+            let scale = image.width() as f32 / 1280.;
+            let x = (f32::from(tip.bounds.origin.x) + 6.) * scale;
+            let y =
+                (f32::from(tip.bounds.origin.y) + f32::from(tip.bounds.size.height) / 2.) * scale;
+            assert_eq!(&image.get_pixel(x as u32, y as u32).0[..3], &[45, 45, 45]);
+        } else {
+            assert!(
+                image.pixels().all(|pixel| pixel.0[..3] == [24, 24, 24]),
+                "closed tooltip still paints"
+            );
+        }
+        Ok(tip)
+    };
+    let press = |cx: &mut HeadlessAppContext, key: &str| -> Result<()> {
+        let stroke = Keystroke::parse(key)?;
+        cx.update_window(window, |_, window, cx| {
+            window.dispatch_keystroke(stroke.clone(), cx);
+            window.dispatch_event(PlatformInput::KeyUp(KeyUpEvent { keystroke: stroke }), cx);
+        })?;
+        cx.run_until_parked();
+        Ok(())
+    };
+    let hover = |cx: &mut HeadlessAppContext, position| -> Result<()> {
+        cx.update_window(window, |_, window, cx| {
+            window.dispatch_event(
+                PlatformInput::MouseMove(MouseMoveEvent {
+                    position,
+                    pressed_button: None,
+                    modifiers: Modifiers::default(),
+                }),
+                cx,
+            );
+        })?;
+        cx.run_until_parked();
+        Ok(())
+    };
+    let click = |cx: &mut HeadlessAppContext, at| -> Result<()> {
+        hover(cx, at)?;
+        for event in [
+            PlatformInput::MouseDown(MouseDownEvent {
+                position: at,
+                button: MouseButton::Left,
+                modifiers: Modifiers::default(),
+                click_count: 1,
+                first_mouse: false,
+            }),
+            PlatformInput::MouseUp(MouseUpEvent {
+                position: at,
+                button: MouseButton::Left,
+                modifiers: Modifiers::default(),
+                click_count: 1,
+            }),
+        ] {
+            cx.update_window(window, |_, window, cx| {
+                window.dispatch_event(event, cx);
+            })?;
+            cx.run_until_parked();
+        }
+        Ok(())
+    };
+    cx.capture_screenshot(window)?;
+    click(&mut cx, point(px(540.), px(115.)))?;
+    assert!(shown(&mut cx)?.is_none());
+    for (key, expected) in [
+        ("tab", Some("Focus first")),
+        ("escape", None),
+        ("tab", Some("Focus second")),
+        ("tab", None),
+        ("shift-tab", Some("Focus second")),
+    ] {
+        let before = cx.update_window(window, |_, window, cx| window.focused(cx))?;
+        press(&mut cx, key)?;
+        assert_eq!(
+            shown(&mut cx)?.as_ref().map(|tip| tip.label.as_ref()),
+            expected,
+            "{key}"
+        );
+        let after = cx.update_window(window, |_, window, cx| window.focused(cx))?;
+        assert!(after.is_some());
+        if key == "escape" {
+            assert!(after == before, "Escape moved focus");
+            cx.advance_clock(Duration::from_secs(1));
+            cx.run_until_parked();
+            assert!(shown(&mut cx)?.is_none());
+        } else {
+            assert!(after != before, "Tab did not move focus");
+        }
+    }
+    let at = point(px(140.), px(115.));
+    click(&mut cx, at)?;
+    cx.advance_clock(Duration::from_millis(250));
+    cx.run_until_parked();
+    assert!(
+        shown(&mut cx)?.is_none(),
+        "pointer focus reopened the tooltip"
+    );
+
+    press(&mut cx, "tab")?;
+    let previous = shown(&mut cx)?.context("keyboard tooltip")?.bounds;
+    let focused = cx.update_window(window, |_, window, cx| window.focused(cx))?;
+    let proof = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    fs::create_dir_all(proof)?;
+    cx.capture_screenshot(window)?
+        .save(proof.join("f1a-focus-keyboard.png"))?;
+    hover(&mut cx, point(px(700.), px(300.)))?;
+    hover(&mut cx, at)?;
+    assert_eq!(
+        shown(&mut cx)?.context("hover tooltip")?.label,
+        "Focus first"
+    );
+    let image = cx.capture_screenshot(window)?;
+    image.save(proof.join("f1a-focus-hover-takeover.png"))?;
+    let scale = image.width() as f32 / 1280.;
+    let x = (f32::from(previous.origin.x) + 6.) * scale;
+    let y = (f32::from(previous.origin.y) + f32::from(previous.size.height) / 2.) * scale;
+    assert_eq!(&image.get_pixel(x as u32, y as u32).0[..3], &[24, 24, 24]);
+    for target in [None, Some(point(px(540.), px(115.)))] {
+        if let Some(target) = target {
+            hover(&mut cx, target)?;
+            cx.advance_clock(Duration::from_millis(OPEN_DELAY_MS));
+            cx.run_until_parked();
+            assert_eq!(
+                shown(&mut cx)?.context("default hover tooltip")?.label,
+                "Hover only"
+            );
+        }
+        press(&mut cx, "escape")?;
+        assert!(shown(&mut cx)?.is_none());
+        assert!(cx.update_window(window, |_, window, cx| window.focused(cx))? == focused);
+        cx.advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert!(shown(&mut cx)?.is_none());
+    }
+    press(&mut cx, "shift-tab")?;
+    assert_eq!(
+        shown(&mut cx)?
+            .context("keyboard tooltip before blur")?
+            .label,
+        "Focus first"
+    );
+    let focused = cx.update_window(window, |_, window, cx| window.focused(cx))?;
+    let other = cx.open_window(size(px(1.), px(1.)), |_, cx| cx.new(|_| FocusTriggers))?;
+    cx.test_window(other.into()).activate();
+    cx.run_until_parked();
+    assert!(
+        shown(&mut cx)?.is_none(),
+        "window blur left the tooltip open"
+    );
+    assert!(cx.update_window(window, |_, window, cx| window.focused(cx))? == focused);
     Ok(())
 }
 
