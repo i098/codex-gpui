@@ -35,7 +35,7 @@ use ui::screens::diff::panel::{
 use ui::screens::home::HomeMain;
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
 use ui::screens::sidebar::{
-    ArchiveThread, CommandMenu, CommandMenuEvent, HomeSidebar, LoadMore, OpenThread,
+    ArchiveThread, ArchivedChats, CommandMenu, CommandMenuEvent, HomeSidebar, LoadMore, OpenThread,
     PINNED_SECTION_ID, PinThread, RenameThread, SEARCH_LIMIT, SearchHit, title as thread_title,
 };
 use ui::screens::terminal::Xterm;
@@ -197,6 +197,7 @@ pub enum Route {
     Automation(String),
     /// Profile menu ▸ `Set up mobile` (`/codex-mobile`).
     Mobile,
+    Archive,
 }
 
 /// The thread route's side panel tab.
@@ -349,8 +350,9 @@ pub struct Root {
     /// `tabs`); kept across threads like the original's panel.
     tabs: Vec<SidePanel>,
     side: Option<SidePanel>,
-    /// The route's own shell (Settings, Scheduled, Mobile).
+    /// The route's own shell.
     page: Option<Entity<Shell>>,
+    archive_page: Option<Entity<ArchivedChats>>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
     /// `⌘K` command menu over the window.
@@ -526,6 +528,7 @@ impl Root {
             tabs: Vec::new(),
             side: None,
             page: None,
+            archive_page: None,
             settings_section: None,
             command_menu: None,
             dialog: None,
@@ -633,9 +636,13 @@ impl Root {
         &self.state.route
     }
 
-    /// The shell on screen: the route's own (Settings, Scheduled, Mobile), else the main one.
+    /// The shell on screen: the route's own shell, else the main shell.
     pub fn shell(&self) -> &Entity<Shell> {
         self.page.as_ref().unwrap_or(&self.shell)
+    }
+
+    pub fn archived_chats(&self) -> Option<&Entity<ArchivedChats>> {
+        self.archive_page.as_ref()
     }
 
     /// The Home sidebar of the chat routes.
@@ -897,6 +904,7 @@ impl Root {
     /// persists the state.
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (can_back, can_forward) = (!self.back.is_empty(), !self.forward.is_empty());
+        self.archive_page = None;
         self.page = match self.state.route.clone() {
             Route::Settings => {
                 // The Appearance page shows the theme the app keeps.
@@ -946,6 +954,11 @@ impl Root {
                 let (shell, sidebar, page) = automations::shell(tasks, selected, utc_offset(), cx);
                 self.scheduled = Some(sidebar);
                 self.suggestions = page;
+                Some(shell)
+            }
+            Route::Archive => {
+                let (shell, page) = ui::screens::sidebar::archive_shell(cx);
+                self.archive_page = Some(page);
                 Some(shell)
             }
             Route::Mobile => Some(mobile::shell(cx)),
@@ -1672,7 +1685,7 @@ impl Root {
                     let toast = Toast::info("Archived chat")
                         .icon("sidebar-archive")
                         .action("View", move |window, cx| {
-                            view.update(cx, |this, cx| this.open_archived_chats(window, cx))
+                            view.update(cx, |this, cx| this.navigate(Route::Archive, window, cx))
                                 .ok();
                         })
                         .action("Undo", move |window, cx| {
@@ -1753,14 +1766,6 @@ impl Root {
             self.sync(window, cx);
         } else {
             self.navigate(Route::Settings, window, cx);
-        }
-    }
-
-    /// The archive toast's View.
-    /// ponytail: the original's destination is not recorded; Settings ▸ Archived chats lists them.
-    fn open_archived_chats(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(section) = settings::section("Archived chats") {
-            self.open_settings_section(section, window, cx);
         }
     }
 

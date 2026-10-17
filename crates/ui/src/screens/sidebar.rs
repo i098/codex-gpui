@@ -50,6 +50,108 @@ pub fn title(thread: &Thread) -> SharedString {
     }
 }
 
+pub fn archive_shell(cx: &mut App) -> (gpui::Entity<Shell>, gpui::Entity<ArchivedChats>) {
+    let sidebar = cx.new(|_| crate::EmptySidebar).into();
+    let main = cx.new(ArchivedChats::new);
+    let shell = cx.new(|_| {
+        let mut shell = Shell::new(sidebar, main.clone().into());
+        shell.sidebar_open = false;
+        shell.selected_rail = None;
+        shell.chat_chrome = false;
+        shell.new_tab = false;
+        shell.main_backgrounds = 1;
+        shell
+    });
+    (shell, main)
+}
+
+pub struct ArchivedChats {
+    pub threads: Option<Result<Vec<Thread>, String>>,
+    _load: gpui::Task<()>,
+}
+
+impl ArchivedChats {
+    fn new(cx: &mut Context<Self>) -> Self {
+        let bridge = cx.global::<crate::screens::settings::AppServer>().0.clone();
+        let load = cx.spawn(async move |this, cx| {
+            let threads = bridge
+                .request::<_, ThreadListResponse>(
+                    "thread/list",
+                    serde_json::json!({
+                        "archived": true,
+                        "cursor": null,
+                        "limit": 100,
+                        "modelProviders": null,
+                        "sortKey": "updated_at",
+                        "sourceKinds": [],
+                        "useStateDbOnly": true
+                    }),
+                )
+                .await
+                .map(|page| page.data)
+                .map_err(|error| error.to_string());
+            this.update(cx, |this, cx| {
+                this.threads = Some(threads);
+                cx.notify();
+            })
+            .ok();
+        });
+        Self {
+            threads: None,
+            _load: load,
+        }
+    }
+}
+
+impl Render for ArchivedChats {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.theme();
+        let mut content = div()
+            .w_full()
+            .max_w(px(768.))
+            .mx_auto()
+            .flex()
+            .flex_col()
+            .gap(px(16.))
+            .child(text("Archived chats", 24., 28.8, 500., t.text));
+        content = match &self.threads {
+            None => content.child(text(
+                "Loading archived chats…",
+                14.,
+                21.,
+                430.,
+                t.text_secondary,
+            )),
+            Some(Err(_)) => content.child(text(
+                "Could not load archived chats",
+                14.,
+                21.,
+                430.,
+                t.text,
+            )),
+            Some(Ok(threads)) if threads.is_empty() => {
+                content.child(text("No archived chats", 14., 21., 430., t.text_secondary))
+            }
+            Some(Ok(threads)) => content.children(threads.iter().map(|thread| {
+                div()
+                    .p(px(16.))
+                    .bg(t.surface_secondary)
+                    .rounded(px(16.))
+                    .child(text(title(thread), 14., 21., 430., t.text))
+            })),
+        };
+        div()
+            .id("archived-chats")
+            .size_full()
+            .overflow_y_scroll()
+            .bg(t.surface)
+            .px(px(24.))
+            .pt(px(112.))
+            .pb(px(24.))
+            .child(content)
+    }
+}
+
 pub struct HomeSidebar {
     /// `(thread id, row label)` in `thread/list` order.
     threads: Vec<(String, SharedString)>,

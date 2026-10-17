@@ -412,6 +412,7 @@ fn check_state(fx: &mut Fx, state: &Value) -> Result<()> {
                 Route::Scheduled => "scheduled".to_owned(),
                 Route::Automation(id) => format!("scheduled?automationId={id}"),
                 Route::Mobile => "mobile".to_owned(),
+                Route::Archive => "archive".to_owned(),
             }
             .into(),
             "selectedRail" => fx.shell(|s| s.selected_rail).into(),
