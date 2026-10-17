@@ -1,0 +1,545 @@
+{
+  "name": "s025-command-search-ranking",
+  "source": {
+    "renderer": "Original route1 on the owned Mac headless lane s025-rank",
+    "entry": "http://127.0.0.1:4665/index.html?theme=dark",
+    "capture": "chrome-devtools-axi real Search clicks and typing; authorized native CDP hover on the exact owned target; no renderer or startup response changes",
+    "scoreTies": "Settings scores come from the original _4o filter and captured data-value strings. The original comparator permits equal-score rows in either order.",
+    "originalChatSelection": {
+      "query": "chat",
+      "selectedLabel": "Change the greeting in hello.py to \"Hello, Codex\".",
+      "ariaSelected": true,
+      "evidence": "The original native query recording retains this selected row before the S026 assumption is removed."
+    },
+    "limitations": [
+      "The original also shows an unrelated ChatGPT search error and a later Create page provider. This slice does not add either provider.",
+      "The retained raw New chat click sequence did not activate. A real axi click on General proves row activation separately.",
+      "Worktrees has a full original settings body; the existing port page has its heading only. This slice changes command navigation, not settings content."
+    ]
+  },
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 2,
+    "theme": "dark"
+  },
+  "queries": [
+    {
+      "query": "n",
+      "groups": [
+        {
+          "heading": "Chats",
+          "items": [
+            "Change the greeting in hello.py to \"Hello, Codex\".",
+            "Add a subtract(a, b) function to src/math.py next to add, then run python3 -c '\u2026",
+            "In two sentences, what does this repository contain?"
+          ]
+        },
+        {
+          "heading": "Settings",
+          "scores": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+          "items": [
+            "General",
+            "Notifications",
+            "Import",
+            "Profile",
+            "Account",
+            "Parental controls",
+            "Trusted contact",
+            "Appearance",
+            "Voice",
+            "Storage",
+            "Mini & Pets",
+            "Computer history",
+            "Appshots",
+            "Git",
+            "Connections",
+            "Cloud preferences",
+            "Codex Cloud",
+            "Legacy Codex Cloud",
+            "Code Review",
+            "Environments",
+            "Worktrees",
+            "Configuration",
+            "Work preferences",
+            "Personalization",
+            "Keyboard shortcuts",
+            "Usage & billing",
+            "Analytics",
+            "Browser",
+            "Computer use",
+            "MCP servers",
+            "Hooks",
+            "Plugins",
+            "Data controls",
+            "Archived chats",
+            "Cloud computer",
+            "Passwords",
+            "Account"
+          ]
+        },
+        {
+          "heading": "Chat",
+          "items": [
+            "New chat",
+            "New standalone chat",
+            "Toggle pin",
+            "Archive chat"
+          ]
+        },
+        {
+          "heading": "Navigation",
+          "items": [
+            "Next chat",
+            "Next chat needing attention",
+            "Find",
+            "Switch chat\u2026",
+            "Toggle activity view",
+            "Focus main chat",
+            "Open your dot",
+            "Go to recent chat 1",
+            "Go to recent chat 2",
+            "Go to recent chat 3",
+            "Go to recent chat 4",
+            "Go to recent chat 5",
+            "Go to recent chat 6",
+            "Back",
+            "Forward"
+          ]
+        },
+        {
+          "heading": "Panels",
+          "items": [
+            "New tab",
+            "New tab in full view",
+            "Toggle navigation panel",
+            "Reopen closed tab",
+            "Toggle bottom panel",
+            "Open terminal",
+            "Open browser tab"
+          ]
+        },
+        {
+          "heading": "Project",
+          "items": [
+            "New project",
+            "Open folder"
+          ]
+        },
+        {
+          "heading": "Skills",
+          "items": [
+            "Go to skills"
+          ]
+        },
+        {
+          "heading": "Configure",
+          "items": [
+            "Theme"
+          ]
+        },
+        {
+          "heading": "App",
+          "items": [
+            "Show Mini",
+            "Clear all unreads",
+            "Manage scheduled tasks",
+            "Log out",
+            "Feedback"
+          ]
+        }
+      ]
+    },
+    {
+      "query": "st",
+      "groups": [
+        {
+          "heading": "Chats",
+          "items": [
+            "In two sentences, what does this repository contain?",
+            "Add a subtract(a, b) function to src/math.py next to add, then run python3 -c '\u2026"
+          ]
+        },
+        {
+          "heading": "Settings",
+          "scores": [109896, 9984, 1],
+          "items": [
+            "Trusted contact",
+            "Storage",
+            "Computer history"
+          ]
+        },
+        {
+          "heading": "Chat",
+          "items": [
+            "New chat",
+            "New standalone chat"
+          ]
+        },
+        {
+          "heading": "Navigation",
+          "items": [
+            "Switch to Chat",
+            "Switch to Work",
+            "Switch to Codex",
+            "Next chat",
+            "Find",
+            "Previous chat",
+            "Next chat needing attention",
+            "Switch chat\u2026",
+            "Back",
+            "Forward"
+          ]
+        },
+        {
+          "heading": "Panels",
+          "items": [
+            "Cycle workspace layout",
+            "Toggle sidebar",
+            "Toggle bottom panel",
+            "New tab",
+            "Toggle navigation panel",
+            "Reopen closed tab"
+          ]
+        },
+        {
+          "heading": "Skills",
+          "items": [
+            "Go to skills"
+          ]
+        },
+        {
+          "heading": "App",
+          "items": [
+            "Feedback",
+            "Manage scheduled tasks",
+            "Clear all unreads"
+          ]
+        }
+      ]
+    },
+    {
+      "query": "new",
+      "groups": [
+        {
+          "heading": "Chat",
+          "items": [
+            "New chat",
+            "New standalone chat"
+          ]
+        },
+        {
+          "heading": "Navigation",
+          "items": [
+            "Next chat needing attention"
+          ]
+        },
+        {
+          "heading": "Panels",
+          "items": [
+            "New tab",
+            "New tab in full view",
+            "Open browser tab"
+          ]
+        },
+        {
+          "heading": "Project",
+          "items": [
+            "New project"
+          ]
+        }
+      ]
+    },
+    {
+      "query": "tab",
+      "groups": [
+        {
+          "heading": "Panels",
+          "items": [
+            "New tab",
+            "Open browser tab",
+            "Reopen closed tab",
+            "New tab in full view",
+            "Cycle workspace layout"
+          ]
+        }
+      ]
+    },
+    {
+      "query": "open",
+      "groups": [
+        {
+          "heading": "Navigation",
+          "items": [
+            "Open your dot",
+            "Go to recent chat 1",
+            "Go to recent chat 2",
+            "Go to recent chat 3",
+            "Go to recent chat 4",
+            "Go to recent chat 5",
+            "Go to recent chat 6"
+          ]
+        },
+        {
+          "heading": "Panels",
+          "items": [
+            "Open terminal",
+            "Open browser tab",
+            "Reopen closed tab"
+          ]
+        },
+        {
+          "heading": "Project",
+          "items": [
+            "Open folder"
+          ]
+        }
+      ]
+    },
+    {
+      "query": "go",
+      "groups": [
+        {
+          "heading": "Navigation",
+          "items": [
+            "Go to recent chat 1",
+            "Go to recent chat 2",
+            "Go to recent chat 3",
+            "Go to recent chat 4",
+            "Go to recent chat 5",
+            "Go to recent chat 6",
+            "Back",
+            "Forward"
+          ]
+        },
+        {
+          "heading": "Skills",
+          "items": [
+            "Go to skills"
+          ]
+        }
+      ]
+    },
+    {
+      "query": "nf",
+      "groups": [
+        {
+          "heading": "Settings",
+          "scores": [1],
+          "items": [
+            "Configuration"
+          ]
+        },
+        {
+          "heading": "Panels",
+          "items": [
+            "New tab in full view",
+            "Toggle navigation panel"
+          ]
+        }
+      ]
+    },
+    {
+      "query": "work",
+      "groups": [
+        {
+          "heading": "Settings",
+          "scores": [9982, 9975],
+          "items": [
+            "Worktrees",
+            "Work preferences"
+          ]
+        },
+        {
+          "heading": "Navigation",
+          "items": [
+            "Switch to Work"
+          ]
+        },
+        {
+          "heading": "Panels",
+          "items": [
+            "Cycle workspace layout"
+          ]
+        }
+      ]
+    },
+    {
+      "query": "chat",
+      "groups": [
+        {
+          "heading": "Chats",
+          "items": [
+            "Change the greeting in hello.py to \"Hello, Codex\"."
+          ]
+        },
+        {
+          "heading": "Settings",
+          "scores": [9997],
+          "items": [
+            "Archived chats"
+          ]
+        },
+        {
+          "heading": "Chat",
+          "items": [
+            "New chat",
+            "Archive chat",
+            "New standalone chat",
+            "Toggle pin"
+          ]
+        },
+        {
+          "heading": "Navigation",
+          "items": [
+            "Next chat",
+            "Previous chat",
+            "Focus main chat",
+            "Switch chat\u2026",
+            "Find",
+            "Go to recent chat 1",
+            "Go to recent chat 2",
+            "Go to recent chat 3",
+            "Go to recent chat 4",
+            "Go to recent chat 5",
+            "Go to recent chat 6",
+            "Switch to Chat",
+            "Next chat needing attention"
+          ]
+        },
+        {
+          "heading": "Panels",
+          "items": [
+            "Cycle workspace layout",
+            "New tab"
+          ]
+        },
+        {
+          "heading": "Project",
+          "items": [
+            "Open folder"
+          ]
+        },
+        {
+          "heading": "App",
+          "items": [
+            "Log out",
+            "Clear all unreads",
+            "Feedback"
+          ]
+        }
+      ]
+    },
+    {
+      "query": "settings",
+      "groups": [
+        {
+          "heading": "Settings",
+          "scores": [110018, 110016, 110016, 110015, 110014, 110014, 110014, 110014, 110014, 110014, 110014, 110013, 110012, 110012, 110012, 110011, 110010, 110010, 110010, 110010, 110009, 110009, 110008, 110008, 110008, 110007, 110007, 110006, 110006, 110006, 110005, 110005, 110004, 110004, 110003, 110003, 109997],
+          "items": [
+            "Git",
+            "Voice",
+            "Hooks",
+            "Import",
+            "General",
+            "Profile",
+            "Account",
+            "Storage",
+            "Browser",
+            "Plugins",
+            "Account",
+            "Appshots",
+            "Worktrees",
+            "Analytics",
+            "Passwords",
+            "Appearance",
+            "Connections",
+            "Mini & Pets",
+            "Codex Cloud",
+            "Code Review",
+            "Environments",
+            "Computer use",
+            "Notifications",
+            "Configuration",
+            "Data controls",
+            "Archived chats",
+            "Cloud computer",
+            "Trusted contact",
+            "Personalization",
+            "Usage & billing",
+            "Computer history",
+            "Work preferences",
+            "Parental controls",
+            "Cloud preferences",
+            "Legacy Codex Cloud",
+            "Keyboard shortcuts",
+            "MCP servers"
+          ]
+        }
+      ]
+    },
+    {
+      "query": "theme",
+      "groups": [
+        {
+          "heading": "Configure",
+          "items": [
+            "Theme"
+          ]
+        }
+      ]
+    },
+    {
+      "query": "pane",
+      "groups": [
+        {
+          "heading": "Panels",
+          "items": [
+            "Toggle bottom panel",
+            "Toggle navigation panel",
+            "Open terminal"
+          ]
+        }
+      ]
+    }
+  ],
+  "selection": {
+    "query": "work",
+    "paletteSource": "Original before-hover and hover screenshots, sampled at the row's clear left edge",
+    "selectedRgba": [61, 61, 61, 255],
+    "plainRgba": [45, 45, 45, 255],
+    "rows": [
+      {"label": "Worktrees", "sample": [389, 252.0703125]},
+      {"label": "Work preferences", "sample": [389, 283.0703125]},
+      {"label": "Switch to Work", "sample": [389, 344.640625]},
+      {"label": "Cycle workspace layout", "sample": [389, 406.2109375]}
+    ],
+    "initialSelected": "Worktrees",
+    "steps": [
+      {"type": "key", "key": "up", "query": "work", "selected": "Worktrees"},
+      {"type": "key", "key": "down", "query": "work", "selected": "Work preferences"},
+      {"type": "key", "key": "down", "query": "work", "selected": "Switch to Work"},
+      {"type": "key", "key": "up", "query": "work", "selected": "Work preferences"},
+      {"type": "hover", "at": [640, 252.0703125], "query": "work", "selected": "Worktrees", "checkpoint": "hover-worktrees"},
+      {"type": "hover", "at": [640, 283.0703125], "query": "work", "selected": "Work preferences", "checkpoint": "hover-preferences"},
+      {"type": "type", "text": "t", "query": "workt", "selected": "Worktrees", "checkpoint": "reset-worktrees"}
+    ],
+    "enter": {"key": "enter", "heading": "Worktrees", "menuOpen": false}
+  },
+  "rowClick": {
+    "query": "settings",
+    "label": "General",
+    "at": [640, 376.0703125],
+    "heading": "General",
+    "checkpoint": "click-general",
+    "menuOpen": false
+  },
+  "aliasClick": {
+    "query": "work",
+    "label": "Work preferences",
+    "at": [640, 283.0703125],
+    "heading": "Configuration",
+    "checkpoint": "click-configuration",
+    "menuOpen": false
+  }
+}

@@ -487,6 +487,33 @@ The test also checks focus restoration and result activation after caret movemen
 Static reference scenes hide the caret, as the original capture does.
 Ranking, command providers, and the S026 search contract remain unchanged.
 
+## S025 ranking: Command-search score and pointer selection
+
+`crates/app/tests/s025_rank.rs` replays `refs/interactions/s025_rank.json` on the background Mac lane.
+The original capture records twelve ambiguous queries before the ordering change.
+The matcher uses the original `_4o` and `k2` score rules.
+Settings comparisons retain original scores without fixing an incidental order for equal-score rows.
+Empty-query groups retain the S026 record.
+Nonempty queries put suggested commands in their original command groups.
+
+The replay checks arrow selection across groups, hover fill, input focus, and selection reset after typing.
+Enter opens Worktrees.
+Row clicks open General and the Configuration destination for Work preferences.
+The original `chat` query selects the greeting chat.
+That recorded state replaces the obsolete, unrecorded S026 assumption that New chat stays selected.
+The original S026 group, request, and failed-search checks remain.
+The S025 caret and selection replay remains unchanged.
+
+The test reuses the unchanged original search response selected by the fixture server.
+The capture changes no renderer code or startup response.
+The original also shows an unrelated ChatGPT search error and a later Create page provider.
+This slice does not add either provider or settings-page content.
+The raw New chat click attempt did not activate; a separate real General click proves row activation.
+
+All 36 strict static cases pass with the original thresholds.
+Their metrics and port PNGs match the baseline exactly.
+The [hosted strict report](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/de6213354309fc9f3926b5b4d0091cadb7d11d3937d74e7b/report.html) retains those thresholds.
+
 ## S026: Command menu groups and chat results
 
 `crates/app/tests/s026.rs` replays `refs/interactions/s026.json` with the shared headless app helpers.

@@ -671,7 +671,10 @@ fn thread_row(
 struct Item {
     icon: Option<&'static str>,
     label: SharedString,
-    /// Text the query also matches: a command's description, a chat's first message.
+    search_value: SharedString,
+    updated_at: i64,
+    aliases: &'static [&'static str],
+    /// A command's search description.
     keywords: SharedString,
     /// Chat rows: workspace folder name; `Some` marks the row as a chat.
     project: Option<SharedString>,
@@ -698,15 +701,18 @@ impl Item {
         Self {
             icon,
             label: label.into(),
+            search_value: label.into(),
             keywords: keywords.into(),
             ..Default::default()
         }
     }
 
     fn chat(thread: &Thread, snippet: Option<String>, unread: bool) -> Self {
+        let label = title(thread);
         Self {
-            label: title(thread),
-            keywords: thread.preview.clone().into(),
+            search_value: label.clone(),
+            label,
+            updated_at: thread.updated_at,
             project: Some(
                 Path::new(&thread.cwd)
                     .file_name()
@@ -724,49 +730,338 @@ impl Item {
         self.project.is_some()
     }
 
-    /// Chats match the query as a substring of their title or first message (or carry a
-    /// content snippet), commands with [`fuzzy_match`] over the title or the description.
-    fn matches(&self, query: &str) -> bool {
+    fn score(&self, pattern: &MatchPattern) -> Option<(u8, i32)> {
+        let title = pattern.score(&self.search_value);
         if self.is_chat() {
-            self.title_matches(query) || self.snippet.is_some()
-        } else {
-            fuzzy_match(&self.label, query) || fuzzy_match(&self.keywords, query)
+            if title > 0 {
+                return Some((0, title));
+            }
+            return self.snippet.as_ref().and_then(|snippet| {
+                let score = pattern.score(snippet);
+                (score > 0).then_some((1, score))
+            });
         }
-    }
-
-    fn title_matches(&self, query: &str) -> bool {
-        let query = query.to_lowercase();
-        [&self.label, &self.keywords]
+        let score = self
+            .aliases
             .iter()
-            .any(|s| s.to_lowercase().contains(&query))
+            .fold(title.max(pattern.score(&self.keywords)), |score, alias| {
+                score.max(pattern.score(alias))
+            });
+        (score > 0).then_some((0, score))
     }
 }
 
-/// The command menu's filter (a word-start matcher, `*query`): the query splits into
-/// contiguous fragments; the first may start anywhere, each next one at a word start.
-fn fuzzy_match(text: &str, query: &str) -> bool {
-    fn word_start(t: &[char], i: usize) -> bool {
-        i == 0 || !t[i - 1].is_alphanumeric() || (t[i].is_uppercase() && t[i - 1].is_lowercase())
-    }
-    fn rest(t: &[char], q: &[char], from: usize, first: bool) -> bool {
-        if q.is_empty() {
-            return true;
+/// The original `_4o`/`k2` score uses the first matching fragments, not the highest-scoring path.
+struct MatchPattern {
+    main: Vec<char>,
+    fallback: Option<Vec<char>>,
+    paths: bool,
+}
+
+impl MatchPattern {
+    fn new(query: &str) -> Self {
+        let mut lower = String::with_capacity(query.len());
+        for c in query.trim().chars() {
+            let folded = c.to_lowercase();
+            if folded.clone().map(char::len_utf16).sum::<usize>() == c.len_utf16() {
+                lower.extend(folded);
+            } else {
+                lower.push(c);
+            }
         }
-        (from..t.len()).any(|i| {
-            (first || word_start(t, i))
-                && (1..=q.len()).any(|k| {
-                    t.len() >= i + k
-                        && t[i..i + k]
-                            .iter()
-                            .zip(&q[..k])
-                            .all(|(a, b)| a.to_lowercase().eq(b.to_lowercase()))
-                        && rest(t, &q[k..], i + k, false)
-                })
+        let paths = lower.contains(['/', '\\']);
+        let mut main = vec!['*'];
+        for c in lower.chars() {
+            if paths && matches!(c, '/' | '\\') {
+                main.extend(['*', '\0', '*']);
+            } else {
+                main.push(c);
+            }
+        }
+        let tail = ['/', '\\']
+            .into_iter()
+            .filter_map(|c| lower.rfind(c))
+            .filter(|&i| i + 1 < lower.len())
+            .max();
+        let fallback = tail.map(|i| lower[i + 1..].chars().collect());
+        Self {
+            main,
+            fallback,
+            paths,
+        }
+    }
+
+    fn score(&self, value: &str) -> i32 {
+        let text: Vec<_> = value
+            .chars()
+            .map(|c| {
+                if self.paths && matches!(c, '/' | '\\') {
+                    '\0'
+                } else {
+                    c
+                }
+            })
+            .collect();
+        let degree = self
+            .degree(&self.main, &text)
+            .or_else(|| self.fallback.as_ref().and_then(|p| self.degree(p, &text)));
+        degree.map_or(0, |score| {
+            (score * 10 - value.encode_utf16().count() as i32).max(1)
         })
     }
-    let t: Vec<char> = text.chars().collect();
-    let q: Vec<char> = query.trim().chars().collect();
-    rest(&t, &q, 0, true)
+
+    fn degree(&self, pattern: &[char], text: &[char]) -> Option<i32> {
+        let mut ranges = Vec::new();
+        if pattern.iter().map(|c| c.len_utf16()).sum::<usize>() > 100 {
+            let literal: Vec<_> = pattern.iter().copied().filter(|c| *c != '*').collect();
+            if literal.is_empty() {
+                return Some(0);
+            }
+            let start = text
+                .windows(literal.len())
+                .position(|s| s.iter().zip(&literal).all(|(&a, &b)| same_char(b, a)))?;
+            if pattern[0] != '*' && start != 0 {
+                return None;
+            }
+            ranges.push(start..start + literal.len());
+        } else if !self.match_at(pattern, text, 0, 0, &mut ranges, &mut HashSet::new()) {
+            return None;
+        }
+        let mut count = 0;
+        for index in 0..ranges.len() {
+            let range = ranges[index].clone();
+            if count > 0 && ranges[count - 1].end == range.start {
+                ranges[count - 1].end = range.end;
+            } else {
+                ranges[count] = range;
+                count += 1;
+            }
+        }
+        ranges.truncate(count);
+        if ranges.is_empty() {
+            return Some(0);
+        }
+        let fragments = ranges;
+        let first = &fragments[0];
+        let mut score = 0;
+        let mut boundary = 0;
+        let mut skipped = 0;
+        let mut pattern_index = 0;
+        let mut upper = false;
+        for (fragment_index, range) in fragments.iter().enumerate() {
+            for index in range.clone() {
+                let next_fragment = fragment_index > 0 && index == range.start;
+                let mut at_boundary = false;
+                while boundary <= index {
+                    if boundary == index {
+                        at_boundary = true;
+                    } else if next_fragment {
+                        skipped += 1;
+                    }
+                    boundary = if boundary < text.len() && text[boundary].is_ascii_digit() {
+                        boundary + 1
+                    } else {
+                        (boundary + 1..text.len())
+                            .find(|&i| word_start(text, i))
+                            .unwrap_or(text.len() + 1)
+                    };
+                }
+                pattern_index += pattern[pattern_index..]
+                    .iter()
+                    .position(|&c| same_char(c, text[index]))?;
+                let c = pattern[pattern_index];
+                if at_boundary {
+                    upper = text[index] == c && c.is_uppercase();
+                }
+                score += if next_fragment && at_boundary && c.is_lowercase() {
+                    -10
+                } else if text[index] == c {
+                    if c.is_uppercase() {
+                        50
+                    } else {
+                        i32::from(at_boundary)
+                    }
+                } else if at_boundary || c.is_lowercase() && upper {
+                    -1
+                } else {
+                    0
+                };
+                pattern_index += 1;
+            }
+        }
+        let start = first.start;
+        let starts_word = start == 0 || word_start(text, start) && !word_start(text, start - 1);
+        score += if starts_word { 1000 } else { 0 };
+        score -= fragments.len() as i32 + skipped * 10;
+        score += if text[..start].iter().any(|c| matches!(c, '/' | '\\')) {
+            0
+        } else {
+            2
+        };
+        score += i32::from(start == 0) + i32::from(fragments.last().unwrap().end == text.len());
+        Some(score + if start == 0 { 10000 } else { 0 })
+    }
+
+    fn match_at(
+        &self,
+        pattern: &[char],
+        text: &[char],
+        mut p: usize,
+        from: usize,
+        ranges: &mut Vec<Range<usize>>,
+        failed: &mut HashSet<(usize, usize, bool)>,
+    ) -> bool {
+        if p == pattern.len() {
+            return true;
+        }
+        if wildcard(pattern[p]) {
+            while p < pattern.len() && wildcard(pattern[p]) {
+                p += 1;
+            }
+            if p == pattern.len() {
+                return true;
+            }
+            let next = find_pattern_char(pattern, text, p, from);
+            return self.skip_words(pattern, text, (p, next), true, ranges, failed);
+        }
+        self.fragment(pattern, text, p, from, ranges, failed)
+    }
+
+    fn skip_words(
+        &self,
+        pattern: &[char],
+        text: &[char],
+        (p, mut next): (usize, Option<usize>),
+        freely: bool,
+        ranges: &mut Vec<Range<usize>>,
+        failed: &mut HashSet<(usize, usize, bool)>,
+    ) -> bool {
+        let Some(start) = next else {
+            return false;
+        };
+        if failed.contains(&(p, start, freely)) {
+            return false;
+        }
+        let mut longest = 0;
+        while let Some(index) = next {
+            let length = fragment_length(pattern, text, p, index);
+            if length > longest {
+                if !middle_match(pattern, text, p, index) {
+                    longest = length;
+                }
+                if self.fragment(pattern, text, p, index, ranges, failed) {
+                    return true;
+                }
+            }
+            next = find_pattern_char(pattern, text, p, index + 1);
+            if !freely {
+                next = check_dots(pattern, text, p, index + 1, next);
+            }
+        }
+        failed.insert((p, start, freely));
+        false
+    }
+
+    fn fragment(
+        &self,
+        pattern: &[char],
+        text: &[char],
+        p: usize,
+        start: usize,
+        ranges: &mut Vec<Range<usize>>,
+        failed: &mut HashSet<(usize, usize, bool)>,
+    ) -> bool {
+        let length = fragment_length(pattern, text, p, start);
+        if length == 0 {
+            return false;
+        }
+        if p + length == pattern.len() {
+            ranges.push(start..start + length);
+            return true;
+        }
+        let minimum = if middle_match(pattern, text, p, start) {
+            3
+        } else {
+            1
+        };
+        for length in (1..=length).rev() {
+            if length < minimum && !pattern.get(p + length).is_some_and(|&c| wildcard(c)) {
+                break;
+            }
+            ranges.push(start..start + length);
+            let matched = if wildcard(pattern[p + length]) {
+                self.match_at(pattern, text, p + length, start + length, ranges, failed)
+            } else {
+                let next = find_pattern_char(pattern, text, p + length, start + length + 1);
+                let next = check_dots(pattern, text, p + length, start + length, next);
+                self.skip_words(pattern, text, (p + length, next), false, ranges, failed)
+            };
+            if matched {
+                return true;
+            }
+            ranges.pop();
+        }
+        false
+    }
+}
+
+fn wildcard(c: char) -> bool {
+    matches!(c, ' ' | '*')
+}
+fn word_start(text: &[char], index: usize) -> bool {
+    index < text.len()
+        && text[index].is_ascii_alphanumeric()
+        && (index == 0
+            || !text[index - 1].is_ascii_alphanumeric()
+            || text[index].is_uppercase() && text[index - 1].is_lowercase()
+            || text[index].is_ascii_digit() && !text[index - 1].is_ascii_digit())
+}
+fn same_char(pattern: char, actual: char) -> bool {
+    pattern == actual
+        || pattern.to_lowercase().eq(std::iter::once(actual))
+        || pattern.to_uppercase().eq(std::iter::once(actual))
+}
+fn find_pattern_char(pattern: &[char], text: &[char], p: usize, from: usize) -> Option<usize> {
+    let anywhere = p > 0 && pattern[p - 1] == '*' || !pattern[p].is_ascii_alphanumeric();
+    (from..text.len())
+        .find(|&index| same_char(pattern[p], text[index]) && (anywhere || word_start(text, index)))
+}
+fn check_dots(
+    pattern: &[char],
+    text: &[char],
+    p: usize,
+    from: usize,
+    next: Option<usize>,
+) -> Option<usize> {
+    next.filter(|&to| {
+        !(pattern.contains(&'.')
+            && (p == 0 || pattern[p - 1] != '.')
+            && text[from..to].contains(&'.'))
+    })
+}
+fn fragment_length(pattern: &[char], text: &[char], p: usize, from: usize) -> usize {
+    let mut length = 0;
+    while from + length < text.len() && p + length < pattern.len() {
+        if !same_char(pattern[p + length], text[from + length]) {
+            if length > 0
+                && pattern[p + length].is_ascii_digit()
+                && pattern[p + length - 1].is_ascii_digit()
+                && text[from + length].is_ascii_digit()
+            {
+                return 0;
+            }
+            break;
+        }
+        length += 1;
+    }
+    length
+}
+fn middle_match(pattern: &[char], text: &[char], p: usize, from: usize) -> bool {
+    p > 0
+        && pattern[p - 1] == '*'
+        && !pattern.get(p + 1).is_some_and(|&c| wildcard(c))
+        && text[from].is_ascii_alphanumeric()
+        && !word_start(text, from)
 }
 
 /// Which chars of `text` the original highlights for `query`: all for an empty query, else
@@ -931,7 +1226,7 @@ const COMMANDS: &[Command] = &[
         "Quick actions",
         Some("sidebar-cmd-folder"),
         "Open folder",
-        "Add a local project to Codex",
+        "Add a local project to ChatGPT",
         "⌘O",
         false,
     ),
@@ -1308,7 +1603,7 @@ const COMMANDS: &[Command] = &[
         "App",
         Some("sidebar-cmd-log-out"),
         "Log out",
-        "Sign out of Codex",
+        "Sign out of ChatGPT",
         "",
         false,
     ),
@@ -1336,9 +1631,10 @@ impl CommandMenu {
     pub fn new(query: &str, cx: &mut Context<Self>) -> Self {
         let list: ThreadListResponse = fixture::response("readback.jsonl", "thread/list", 0);
         let mut menu = Self::with_threads(&list.data, &[], false, query, cx);
-        for chat in &mut menu.groups[0].1 {
-            if !query.is_empty() && chat.title_matches(query) {
-                chat.snippet = Some(chat.keywords.clone());
+        let pattern = MatchPattern::new(query);
+        for (chat, thread) in menu.groups[0].1.iter_mut().zip(&list.data) {
+            if !query.is_empty() && pattern.score(&chat.search_value) > 0 {
+                chat.snippet = Some(thread.preview.clone().into());
             }
         }
         menu.searching = !query.is_empty();
@@ -1360,12 +1656,19 @@ impl CommandMenu {
             .iter()
             .map(|t| Item::chat(t, None, unread.contains(&t.id)))
             .collect();
-        let command = |(_, icon, label, description, keys, thread_only): &Command| Item {
-            keys: Some(*keys).filter(|k| !k.is_empty()).map(Into::into),
-            thread_only: *thread_only,
-            description: (*label == "Theme").then_some(*description),
-            chevron: *label == "Theme",
-            ..Item::command(*icon, label, description)
+        let command = |(_, icon, label, description, keys, thread_only): &Command| {
+            let mut item = Item {
+                keys: Some(*keys).filter(|k| !k.is_empty()).map(Into::into),
+                thread_only: *thread_only,
+                description: (*label == "Theme").then_some(*description),
+                chevron: *label == "Theme",
+                ..Item::command(*icon, label, description)
+            };
+            if *label == "Theme" {
+                item.search_value = "theme appearance Codex".into();
+                item.keywords = "color theme preset dark light night".into();
+            }
+            item
         };
         let group = |name: &'static str| {
             (
@@ -1419,6 +1722,20 @@ impl CommandMenu {
         ]
         .map(|(icon, label, external)| Item {
             external,
+            search_value: format!(
+                "settings {label}{}",
+                if label == "MCP servers" {
+                    " mcp settings"
+                } else {
+                    ""
+                },
+            )
+            .into(),
+            aliases: if label == "Connections" {
+                &["remote", "ssh"]
+            } else {
+                &[]
+            },
             ..Item::command(Some(icon), label, "")
         });
         let mut groups = vec![
@@ -1446,23 +1763,47 @@ impl CommandMenu {
         }
     }
 
-    /// Groups with the items matching the query; empty groups are dropped. `Chats` lists
-    /// the title matches first, then the content-only matches of `thread/search`.
-    /// ponytail: the original ranks every match by its matcher's score; list order here.
+    /// Keep registered groups; rank matches within each group.
     fn visible(&self) -> Vec<(&'static str, Vec<&Item>)> {
         let query = self.query.trim();
+        let pattern = MatchPattern::new(query);
+        let quick = &self.groups[1].1;
         self.groups
             .iter()
+            .filter(|(heading, _)| query.is_empty() || *heading != "Quick actions")
             .map(|(heading, items)| {
-                let mut items = items
-                    .iter()
-                    .filter(|i| self.thread_open || !i.thread_only)
-                    .filter(|i| query.is_empty() || i.matches(query))
+                let suggested = quick.iter().filter(|item| {
+                    !query.is_empty()
+                        && match item.label.as_ref() {
+                            "New chat" => *heading == "Chat",
+                            "Open folder" => *heading == "Project",
+                            "Search files" => *heading == "Navigation",
+                            _ => false,
+                        }
+                });
+                let mut ranked = suggested
+                    .chain(items.iter())
+                    .filter(|item| self.thread_open || !item.thread_only)
+                    .filter_map(|item| {
+                        let rank = if query.is_empty() {
+                            Some((0, 0))
+                        } else {
+                            item.score(&pattern)
+                        };
+                        rank.map(|rank| (rank, item))
+                    })
                     .collect::<Vec<_>>();
-                if *heading == "Chats" && !query.is_empty() {
-                    items.sort_by_key(|i| !i.title_matches(query));
+                if !query.is_empty() {
+                    ranked.sort_by(|(a, left), (b, right)| {
+                        a.0.cmp(&b.0)
+                            .then_with(|| b.1.cmp(&a.1))
+                            .then_with(|| right.updated_at.cmp(&left.updated_at))
+                    });
                 }
-                (*heading, items)
+                (
+                    *heading,
+                    ranked.into_iter().map(|(_, item)| item).collect::<Vec<_>>(),
+                )
             })
             .filter(|(_, items)| !items.is_empty())
             .collect()
@@ -1860,7 +2201,12 @@ impl CommandMenu {
             .nth(self.selected)
             .map(|item| match &item.thread {
                 Some(id) => CommandMenuEvent::OpenThread(id.clone()),
-                None => CommandMenuEvent::Command(item.label.clone()),
+                // Work preferences opens the Configuration route in the original.
+                None => CommandMenuEvent::Command(if item.label == "Work preferences" {
+                    "Configuration".into()
+                } else {
+                    item.label.clone()
+                }),
             });
         if let Some(event) = event {
             cx.emit(event);
@@ -2039,12 +2385,17 @@ impl Render for CommandMenu {
                             let selected = index == self.selected;
                             index += 1;
                             // `Chats` is the first group, so a chat's ordinal is `index`.
-                            menu_row(item, query, index, selected, text_width, t, window).on_click(
-                                cx.listener(move |this, _, _, cx| {
+                            menu_row(item, query, index, selected, text_width, t, window)
+                                .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                                    if this.selected != index - 1 {
+                                        this.selected = index - 1;
+                                        cx.notify();
+                                    }
+                                }))
+                                .on_click(cx.listener(move |this, _, _, cx| {
                                     this.selected = index - 1;
                                     this.confirm(cx);
-                                }),
-                            )
+                                }))
                         })),
                 )
         });
@@ -2412,15 +2763,17 @@ mod tests {
     #[test]
     fn math_query_matches_like_the_original() {
         // refs/sidebar: `math` keeps the subtract chat and `Manage scheduled tasks` only.
-        assert!(fuzzy_match(
-            "Manage scheduled tasks Create or manage scheduled tasks from the current page",
-            "math"
-        ));
-        assert!(!fuzzy_match(
-            "Clear all unreads Mark all chats and scheduled task updates as read",
-            "math"
-        ));
-        assert!(!fuzzy_match("Computer history ", "math"));
+        let pattern = MatchPattern::new("math");
+        assert!(
+            pattern.score(
+                "Manage scheduled tasks Create or manage scheduled tasks from the current page"
+            ) > 0
+        );
+        assert_eq!(
+            pattern.score("Clear all unreads Mark all chats and scheduled task updates as read"),
+            0
+        );
+        assert_eq!(pattern.score("Computer history "), 0);
         let marks = highlight("Manage scheduled tasks", "math", true);
         let lit: String = "Manage scheduled tasks"
             .chars()
