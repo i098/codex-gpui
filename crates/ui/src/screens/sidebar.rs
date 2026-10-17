@@ -53,6 +53,136 @@ pub fn title(thread: &Thread) -> SharedString {
     }
 }
 
+pub fn archive_shell(cx: &mut App) -> (gpui::Entity<Shell>, gpui::Entity<ArchivedChats>) {
+    let sidebar = cx.new(|_| crate::EmptySidebar).into();
+    let main = cx.new(ArchivedChats::new);
+    let shell = cx.new(|_| {
+        let mut shell = Shell::new(sidebar, main.clone().into());
+        shell.sidebar_open = false;
+        shell.selected_rail = None;
+        shell.chat_chrome = false;
+        shell.new_tab = false;
+        shell.main_backgrounds = 1;
+        shell
+    });
+    (shell, main)
+}
+
+pub async fn archived_threads(
+    bridge: &bridge::Bridge,
+    page_size: usize,
+) -> anyhow::Result<Vec<Thread>> {
+    // ponytail: eager archive summaries; load on scroll if archive size makes entry slow.
+    let request = |cursor: Option<String>| {
+        bridge.request::<_, ThreadListResponse>(
+            "thread/list",
+            serde_json::json!({
+                "archived": true,
+                "cursor": cursor,
+                "limit": page_size,
+                "modelProviders": null,
+                "sortKey": "updated_at",
+                "sourceKinds": [],
+                "useStateDbOnly": true
+            }),
+        )
+    };
+    let first = request(None).await?;
+    let mut threads = first.data;
+    let mut cursor = first.next_cursor;
+    while let Some(next_cursor) = cursor {
+        let page = request(Some(next_cursor)).await?;
+        threads.extend(page.data);
+        cursor = page.next_cursor;
+    }
+    Ok(threads)
+}
+
+pub struct ArchivedChats {
+    pub threads: Option<anyhow::Result<Vec<Thread>>>,
+    _load: gpui::Task<()>,
+}
+
+impl ArchivedChats {
+    fn new(cx: &mut Context<Self>) -> Self {
+        Self {
+            threads: None,
+            _load: Self::load(cx),
+        }
+    }
+
+    pub fn unarchived(&mut self, id: &str, cx: &mut Context<Self>) {
+        if let Some(Ok(threads)) = &mut self.threads {
+            threads.retain(|thread| thread.id != id);
+        } else if self.threads.is_none() {
+            // A pending read can still contain the restored chat.
+            self._load = Self::load(cx);
+        }
+        cx.notify();
+    }
+
+    fn load(cx: &mut Context<Self>) -> gpui::Task<()> {
+        let bridge = cx.global::<crate::screens::settings::AppServer>().0.clone();
+        cx.spawn(async move |this, cx| {
+            let threads = archived_threads(&bridge, 100).await;
+            this.update(cx, |this, cx| {
+                this.threads = Some(threads);
+                cx.notify();
+            })
+            .ok();
+        })
+    }
+}
+
+impl Render for ArchivedChats {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.theme();
+        let mut content = div()
+            .w_full()
+            .max_w(px(768.))
+            .mx_auto()
+            .flex()
+            .flex_col()
+            .gap(px(16.))
+            .child(text("Archived chats", 24., 28.8, 500., t.text));
+        content = match &self.threads {
+            None => content.child(text(
+                "Loading archived chats…",
+                14.,
+                21.,
+                430.,
+                t.text_secondary,
+            )),
+            Some(Err(_)) => content.child(text(
+                "Could not load archived chats",
+                14.,
+                21.,
+                430.,
+                t.text,
+            )),
+            Some(Ok(threads)) if threads.is_empty() => {
+                content.child(text("No archived chats", 14., 21., 430., t.text_secondary))
+            }
+            Some(Ok(threads)) => content.children(threads.iter().map(|thread| {
+                div()
+                    .p(px(16.))
+                    .bg(t.surface_secondary)
+                    .rounded(px(16.))
+                    .child(text(title(thread), 14., 21., 430., t.text))
+            })),
+        };
+        div()
+            .id("archived-chats")
+            .size_full()
+            .overflow_y_scroll()
+            .bg(t.surface)
+            .px(px(24.))
+            .pt(px(112.))
+            .pb(px(24.))
+            .child(content)
+    }
+}
+
 pub struct HomeSidebar {
     /// `(thread id, row label)` in `thread/list` order.
     threads: Vec<(String, SharedString)>,
