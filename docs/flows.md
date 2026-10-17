@@ -460,3 +460,27 @@ The test also checks the unread dot in the port's pixels.
 The unread state is injected in the port because the original fixture contains no unread chat.
 Command activation belongs to the later command-menu slices.
 The test also checks selection after a delayed search reply and spinner removal after a failed search.
+
+## F0b: Recording contract dispatch
+
+`crates/app/tests/replay.rs` checks every JSON recording in `refs/interactions/`.
+Each slice uses its dedicated test target, which keeps its state, pixel, and request assertions.
+The motion recording `ms4.json` uses `stream_fade`; `selftest.json` uses the generic step checks.
+The recorder determinism bundle runs through `f0a` instead of being skipped.
+S017 also compares its first recorded filesystem writes through the shared request comparison.
+The proxy log preserves paths, directory flags, and decoded attachment contents while the comparison normalizes random IDs.
+Later restoration writes cannot hide an incorrect initial paste.
+Unknown contracts, an empty recording selection, and failed adapters fail the combined result.
+The driver checks the remaining recordings after an adapter fails and reports every failure.
+It does not treat known acceptance failures as success.
+
+Run the complete replay on the Mac:
+
+```sh
+tools/mac.sh -l accept-parity 'cargo test -p app --test replay -- --test-threads=1 --nocapture'
+```
+
+Set `REPLAY=<stem>` to select one exact recording, such as `REPLAY=selftest`.
+An incomplete `portReference` returns a field error instead of panicking.
+The regression check passes the same incomplete object that panicked before the repair.
+No original recording, product behavior, or pixel threshold changes.
