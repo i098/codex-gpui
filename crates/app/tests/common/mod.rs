@@ -35,6 +35,56 @@ pub const EXPLAIN: &str = "01a13de9-35ed-7c72-a36a-68eeb2f4e1ee";
 pub const GREETING_PROMPT: &str = "Change the greeting in hello.py to \"Hello, Codex\".";
 pub const TIMEOUT: Duration = Duration::from_secs(30);
 
+pub fn replay_adapter(recording: &Path) -> Result<Vec<Value>> {
+    let stem = recording
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .context("recording name")?;
+    let target = match stem {
+        "ms4" => "stream_fade",
+        name => name,
+    };
+    ensure!(
+        target != "replay"
+            && Path::new(ROOT)
+                .join("crates/app/tests")
+                .join(format!("{target}.rs"))
+                .is_file(),
+        "unsupported recording contract {stem:?}: no dedicated adapter"
+    );
+    let log = (stem == "s017").then(|| {
+        Path::new(env!("CARGO_TARGET_TMPDIR"))
+            .join(format!("replay-{stem}-{}.log", std::process::id()))
+    });
+    let mut command = Command::new(env!("CARGO"));
+    command.current_dir(ROOT).args([
+        "test",
+        "-p",
+        "app",
+        "--test",
+        target,
+        "--",
+        "--test-threads=1",
+        "--nocapture",
+    ]);
+    if let Some(log) = &log {
+        command.env("CGX_REPLAY_REQUEST_LOG", log);
+    }
+    let status = command
+        .status()
+        .with_context(|| format!("run {target} adapter for {stem}"))?;
+    ensure!(status.success(), "{target} adapter failed: {status}");
+    let Some(log) = log else {
+        return Ok(Vec::new());
+    };
+    let requests = fs::read_to_string(&log)?
+        .lines()
+        .map(serde_json::from_str)
+        .collect::<serde_json::Result<Vec<Value>>>()?;
+    fs::remove_file(log)?;
+    Ok(requests)
+}
+
 /// Titlebar and rail buttons (inventory §2.2, §3): 28 px titlebar buttons at y 8, 36 px rail
 /// buttons at x 8.
 pub const BACK: (f32, f32) = (102., 22.);
@@ -96,7 +146,9 @@ impl Fx {
     /// binary must have a `#[test] fn proxy() { proxy_child() }`.
     pub fn captured(theme: &'static str, size: (f32, f32), lines: Vec<Value>) -> Result<Self> {
         let script = write_script(&lines)?;
-        let log = script.with_extension("log");
+        let log = env::var_os("CGX_REPLAY_REQUEST_LOG")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| script.with_extension("log"));
         fs::write(&log, "")?;
         let mut cmd = Command::new(env::current_exe()?);
         // Quiet and uncaptured: libtest then prints only a "running 1 test" line to stdout,
