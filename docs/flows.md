@@ -304,9 +304,19 @@ The headless S010 replay has no AppKit view; it checks the missing-handle path w
 | 15 | Submit blocked | error | `Unable to send message`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 16 | Upload in progress | loading | `Files uploading…`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 17 | Upload failure | error | `Unable to upload file`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
-| 18 | Button hover | hover | Ghost hover; tooltip after a delay. | Hover fill; no tooltip. | FAIL (no tooltip: `crates/ui/src/composer.rs`; fill checked by `composer_button_hover`) |
+| 18 | Button hover | hover | Ghost hover; tooltip after a delay. | Hover fill. The `+` tooltip includes the `@` hint and matches its original bounds. | PARTIAL (`+`: `s018::add_tooltip_replay`; other composer tooltips remain absent) |
 | 19 | Focus ring | focus ring | Send button ring. | — | NOT WIRED (`crates/ui/src/composer.rs`: no `focus_visible` ring) |
 | 20 | Resize | resize | Below 40rem the editor and footer stack. | Only the 475 px compact footer. | FAIL (`crates/ui/src/composer.rs`) |
+| 21 | `+` Add menu | click | Opens the mention list without inserting `@`; Escape keeps the draft. | Reuses the S019 query state; keys skip disabled actions, and a second click closes the list. | PASS (`s018::add_menu_replay`) |
+
+S018 records CP-039 and CP-040 in `refs/interactions/s018.json`.
+Its Add replay checks local actions, selection, query text, focus, Escape, reopen, and the second trigger click.
+Its draft check covers a Unicode prefix, replacement before the query anchor, and typed `@` after dismissal.
+The tooltip matches the original trigger bounds and y=742..772 box, including the unchanged bottom probe.
+The bordered trigger uses `side_offset(px(5.))` for its recorded 4 px visible gap; other tooltips keep the shared default.
+Host-provided Plugins, Agents, Pages, and Spaces remain outside the local-action scope, as in S019 and S020.
+The isolated original host returns HTTP 200 `{}` for Pages search; repeated queries can fail at `N.items.flatMap`.
+The recording retains that limit and does not replace the host response.
 
 S021 replays all 16 original steps from `refs/interactions/s021.json` for CP-054 and CP-055.
 The surface check covers the menu's top and bottom padding across its width, outside the rounded corners.
