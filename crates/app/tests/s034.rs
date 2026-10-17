@@ -51,6 +51,7 @@ fn proxy() {
 fn recorded_switch_writes_and_back_navigation() -> anyhow::Result<()> {
     use app::Route;
     use common::*;
+    use gpui::{KeyUpEvent, Keystroke, PlatformInput};
 
     let rec: Value = serde_json::from_str(include_str!("../../../refs/interactions/s034.json"))?;
     let dir = scratch();
@@ -96,6 +97,9 @@ fn recorded_switch_writes_and_back_navigation() -> anyhow::Result<()> {
                     .unwrap_or(true)
             });
             assert_eq!(checked, dom["checked"] == "true", "checked at step {index}");
+            fx.advance(std::time::Duration::from_millis(
+                rec["focus"]["settleMs"].as_u64().unwrap(),
+            ))?;
             let shot = fx.shot()?;
             let center = fx.at("settings", dom["aria"].as_str().unwrap())?;
             let bbox = &dom["bbox"];
@@ -119,6 +123,47 @@ fn recorded_switch_writes_and_back_navigation() -> anyhow::Result<()> {
                 );
             }
             shot.save(dir.join(format!("step-{index}.png")))?;
+        }
+        if step["target"]["text"] == "Show ChatGPT in the menu bar" {
+            let focused = fx
+                .cx
+                .update_window(fx.window, |_, window, cx| window.focused(cx))?;
+            assert_eq!(
+                focused.is_some(),
+                rec["focus"]["pointer"]["focused"].as_bool().unwrap(),
+                "pointer focus at step {index}"
+            );
+        }
+        if index == 4 {
+            let center = fx.at("settings", "Show ChatGPT in the menu bar")?;
+            let sample = |shot: &image::RgbaImage| {
+                shot.get_pixel(
+                    (center.0 * shot.width() as f32 / 1280.) as u32,
+                    ((center.1 - 11.) * shot.height() as f32 / 832.) as u32,
+                )
+                .0[..3]
+                    .to_vec()
+            };
+            let blue: Vec<u8> = serde_json::from_value(rec["focus"]["ring"]["rgb"].clone())?;
+            assert_ne!(sample(&fx.shot()?), blue, "pointer focus ring");
+            for key in rec["focus"]["keyboard"].as_array().unwrap() {
+                fx.keys(key["portKey"].as_str().unwrap())?;
+                let stroke = Keystroke::parse(key["portKey"].as_str().unwrap())?;
+                fx.input(PlatformInput::KeyUp(KeyUpEvent { keystroke: stroke }))?;
+                let saved = Settings::load(path.clone())?;
+                assert_eq!(saved.read_all()["mac-menu-bar-enabled"], key["checked"]);
+                fx.advance(std::time::Duration::from_millis(
+                    rec["focus"]["settleMs"].as_u64().unwrap(),
+                ))?;
+                let shot = fx.shot()?;
+                assert_eq!(
+                    sample(&shot),
+                    blue,
+                    "keyboard focus ring for {}",
+                    key["key"]
+                );
+                shot.save(dir.join(format!("focus-{}.png", key["portKey"].as_str().unwrap())))?;
+            }
         }
         if step["target"]["text"] == "Back" {
             assert_eq!(fx.route(), Route::Home);

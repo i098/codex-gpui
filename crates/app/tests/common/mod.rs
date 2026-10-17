@@ -4,7 +4,7 @@
 #![allow(dead_code)]
 
 use anyhow::{Context as _, Result, ensure};
-use app::{Root, Route, State, ThemeSetting};
+use app::{Root, Route, SidePanel, State, ThemeSetting};
 use bridge::{Bridge, Event, RpcError};
 use gpui::{
     Action, AnyWindowHandle, App, AppContext as _, Entity, EntityInputHandler as _, Focusable as _,
@@ -34,6 +34,62 @@ pub const SUBTRACT: &str = "01a13de9-6fff-78e1-84fc-ebb3a2dc873f";
 pub const EXPLAIN: &str = "01a13de9-35ed-7c72-a36a-68eeb2f4e1ee";
 pub const GREETING_PROMPT: &str = "Change the greeting in hello.py to \"Hello, Codex\".";
 pub const TIMEOUT: Duration = Duration::from_secs(30);
+/// The original capture clock's base, not its unrecorded historical screenshot instant.
+pub const CAPTURE_CLOCK: ui::screens::thread::view::Clock = ui::screens::thread::view::Clock {
+    utc_offset: -7 * 3600,
+    pinned_now: Some(1_792_083_600),
+    elapsed_since: None,
+};
+
+pub fn replay_adapter(recording: &Path) -> Result<Vec<Value>> {
+    let stem = recording
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .context("recording name")?;
+    let target = match stem {
+        "ms4" => "stream_fade",
+        name => name,
+    };
+    ensure!(
+        target != "replay"
+            && Path::new(ROOT)
+                .join("crates/app/tests")
+                .join(format!("{target}.rs"))
+                .is_file(),
+        "unsupported recording contract {stem:?}: no dedicated adapter"
+    );
+    let log = (stem == "s017").then(|| {
+        Path::new(env!("CARGO_TARGET_TMPDIR"))
+            .join(format!("replay-{stem}-{}.log", std::process::id()))
+    });
+    let mut command = Command::new(env!("CARGO"));
+    command.current_dir(ROOT).args([
+        "test",
+        "-p",
+        "app",
+        "--test",
+        target,
+        "--",
+        "--test-threads=1",
+        "--nocapture",
+    ]);
+    if let Some(log) = &log {
+        command.env("CGX_REPLAY_REQUEST_LOG", log);
+    }
+    let status = command
+        .status()
+        .with_context(|| format!("run {target} adapter for {stem}"))?;
+    ensure!(status.success(), "{target} adapter failed: {status}");
+    let Some(log) = log else {
+        return Ok(Vec::new());
+    };
+    let requests = fs::read_to_string(&log)?
+        .lines()
+        .map(serde_json::from_str)
+        .collect::<serde_json::Result<Vec<Value>>>()?;
+    fs::remove_file(log)?;
+    Ok(requests)
+}
 
 /// Titlebar and rail buttons (inventory §2.2, §3): 28 px titlebar buttons at y 8, 36 px rail
 /// buttons at x 8.
@@ -96,7 +152,9 @@ impl Fx {
     /// binary must have a `#[test] fn proxy() { proxy_child() }`.
     pub fn captured(theme: &'static str, size: (f32, f32), lines: Vec<Value>) -> Result<Self> {
         let script = write_script(&lines)?;
-        let log = script.with_extension("log");
+        let log = env::var_os("CGX_REPLAY_REQUEST_LOG")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| script.with_extension("log"));
         fs::write(&log, "")?;
         let mut cmd = Command::new(env::current_exe()?);
         // Quiet and uncaptured: libtest then prints only a "running 1 test" line to stdout,
@@ -116,6 +174,10 @@ impl Fx {
         bridge: Bridge,
         events: async_channel::Receiver<Event>,
     ) -> Result<Self> {
+        let clock = ui::screens::thread::view::Clock {
+            elapsed_since: Some(Instant::now()),
+            ..CAPTURE_CLOCK
+        };
         let mut cx = HeadlessAppContext::with_platform(
             textsys::text_system(),
             Arc::new(theme::Assets),
@@ -140,7 +202,7 @@ impl Fx {
                 theme,
                 ..State::default()
             };
-            cx.new(|cx| Root::new(state, bridge, events, CWD.into(), window, cx))
+            cx.new(|cx| Root::new(state, bridge, events, CWD.into(), window, cx).with_clock(clock))
         })?;
         let root = cx.read_window(&window, |root, _| root)?;
         let mut fx = Self {
@@ -243,9 +305,13 @@ impl Fx {
     /// Advances the test clock and renders the next animation frame.
     pub fn advance(&mut self, duration: Duration) -> Result<()> {
         self.cx.advance_clock(duration);
-        self.cx.update_window(self.window, |_, window, cx| {
-            window.simulate_next_frame(cx);
-        })?;
+        // Present virtual-time captures without the inactive window's wall-clock throttle.
+        self.cx
+            .test_window(self.window)
+            .simulate_frame_request(gpui::RequestFrameOptions {
+                require_presentation: true,
+                ..Default::default()
+            });
         self.cx.run_until_parked();
         Ok(())
     }
@@ -406,6 +472,21 @@ impl Fx {
         self.cx.capture_screenshot(self.window)
     }
 
+    /// Matches the reference pointer and caret preparation without changing keyboard focus.
+    pub fn reference_shot(&mut self) -> Result<RgbaImage> {
+        self.hover(((self.size.0 * 0.6).round(), 6.))?;
+        self.cx.update_window(self.window, |_, window, cx| {
+            Composer::set_caret_transparent(cx, true);
+            window.refresh();
+        })?;
+        let image = self.shot();
+        self.cx.update_window(self.window, |_, window, cx| {
+            Composer::set_caret_transparent(cx, false);
+            window.refresh();
+        })?;
+        image
+    }
+
     /// Center of the original's element: a node with this `aria-label`, else the first text
     /// starting with `key`, in refs/<screen>/dark@1280x832.spec.json.
     pub fn at(&self, screen: &str, key: &str) -> Result<(f32, f32)> {
@@ -431,19 +512,8 @@ impl Fx {
 
     /// Diffs the window against `refs/<screen>/<theme>@<W>x<H>.png`.
     pub fn parity(&mut self, screen: &str) -> Result<String> {
-        let port = self.shot()?;
-        let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("flows-parity");
-        let refs = PathBuf::from(format!("{ROOT}/refs"));
-        let m = parity::diff_ref(&refs, &out, screen, self.theme, &port)?;
-        Ok(format!(
-            "[{screen} {} {}x{}: outside={} text={:.3}% {}]",
-            m.theme,
-            m.width,
-            m.height,
-            m.counts.diff_px_outside_text,
-            m.counts.text_diff_ratio * 100.,
-            if m.pass { "PASS" } else { "FAIL" }
-        ))
+        let port = self.reference_shot()?;
+        parity_image(screen, self.theme, &port)
     }
 }
 
@@ -511,18 +581,79 @@ pub fn assert_hover(fx: &mut Fx, at: (f32, f32), rect: [f32; 4], min: usize) -> 
     Ok(n)
 }
 
+/// Compares a captured image with the original reference and fails on a strict pixel mismatch.
+pub fn parity_image(screen: &str, theme: &str, port: &RgbaImage) -> Result<String> {
+    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("flows-parity");
+    let refs = PathBuf::from(format!("{ROOT}/refs"));
+    let m = parity::diff_ref(&refs, &out, screen, theme, port)?;
+    let note = format!(
+        "[{screen} {} {}x{}: outside={} text={:.3}% {}]",
+        m.theme,
+        m.width,
+        m.height,
+        m.counts.diff_px_outside_text,
+        m.counts.text_diff_ratio * 100.,
+        if m.pass { "PASS" } else { "FAIL" }
+    );
+    ensure!(m.pass, "{note}");
+    Ok(note)
+}
+
 /// Runs `reach` in each theme at each ref size of `screen`, then the parity diff.
 pub fn parity_flow(screen: &str, reach: fn(&mut Fx) -> Result<()>) -> Result<String> {
+    let route = match screen {
+        "home" | "composer" | "sidebar" => Route::Home,
+        "thread" | "diff" | "terminal" => Route::Thread(SUBTRACT.into()),
+        "settings" => Route::Settings,
+        "automations" => Route::Scheduled,
+        "mobile" => Route::Mobile,
+        _ => anyhow::bail!("no Root parity route for {screen}"),
+    };
+    let panel = match screen {
+        "diff" => Some(SidePanel::Changes),
+        "terminal" => Some(SidePanel::Terminal),
+        _ => None,
+    };
     let mut notes = Vec::new();
+    let mut failed = false;
     for theme in ["dark", "light"] {
         for size in [(1280., 832.), (1440., 900.)] {
-            let mut fx = Fx::with(theme, size, None, |_| {})?;
-            reach(&mut fx)?;
-            fx.cx.run_until_parked();
-            notes.push(fx.parity(screen)?);
+            let result = (|| {
+                let mut fx = Fx::with(theme, size, None, |_| {})?;
+                reach(&mut fx)?;
+                fx.cx.run_until_parked();
+                ensure!(
+                    fx.route() == route,
+                    "route {:?}, expected {route:?}",
+                    fx.route()
+                );
+                ensure!(
+                    fx.read(|r, _| r.side_panel()) == panel,
+                    "side panel {:?}, expected {panel:?}",
+                    fx.read(|r, _| r.side_panel())
+                );
+                ensure!(
+                    fx.read(|r, _| r.command_menu().is_some()) == (screen == "sidebar"),
+                    "unexpected command menu state"
+                );
+                println!(
+                    "{screen} {theme} {}x{} route={route:?} panel={panel:?}",
+                    size.0, size.1
+                );
+                fx.parity(screen)
+            })();
+            match result {
+                Ok(note) => notes.push(note),
+                Err(err) => {
+                    failed = true;
+                    notes.push(format!("[{screen} {theme} {}x{}: {err:#}]", size.0, size.1));
+                }
+            }
         }
     }
-    Ok(notes.join(" "))
+    let note = notes.join(" ");
+    ensure!(!failed, "{note}");
+    Ok(note)
 }
 
 // --- Request capture ---

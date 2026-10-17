@@ -48,6 +48,55 @@ swiftc -O assets/app/icon.swift -o /tmp/icon
 iconutil -c icns /tmp/AppIcon.iconset -o assets/app/AppIcon.icns
 ```
 
+## Live QA build
+
+QA uses `~/Applications/Codex GPUI QA.app` with bundle id `dev.codexgpui.qa`.
+It rebuilds merged `origin/main`; it does not hot-reload a running Rust process.
+Build a staged QA bundle from Linux with `tools/bundle.sh --qa`.
+That command does not install or open it.
+
+Run this once on the Mac from a clean checkout of the latest merged main:
+
+```sh
+python3 tools/qa-sync.py install
+```
+
+The owned launchd job `dev.codexgpui.qa-sync` checks main every 30 seconds.
+Its script, source cache, build logs, artifact records, and agent plist stay in `~/Library/Application Support/codex-gpui-qa/updater/`.
+Temporary builds and isolated startup probes stay under `/tmp`.
+The updater fetches real Git objects, rejects dirty or unlanded source, and checks main again before activation.
+It coalesces newer revisions during a build and retains a pending candidate when QA cannot close safely.
+It verifies the signed bundle, compiled source revision, artifact digest, executable path, and running PID.
+It keeps the previous bundle at `updater/last-working.app`.
+It rebuilds missing temporary candidates and removes completed or superseded temporary artifacts.
+It verifies an unfinished activation or restores the backup after the new process exits.
+
+QA data stays in `~/Library/Application Support/codex-gpui-qa/profile/`.
+Its UI state and host settings live under `profile/home/Library/Application Support/codex-gpui/`.
+Its app-server uses `profile/codex` as `CODEX_HOME` and `profile/workspace` as the default project.
+The app-server receives a clean environment and uses file-only credential storage.
+QA starts signed out; it never copies normal credentials, settings, history, or workspace data.
+It can read the existing ChatGPT app-server executable without changing that app.
+The normal Codex GPUI profile and launch behavior stay unchanged.
+
+Programmatic startup uses `open -g` and an unfocused QA window.
+After QA gains focus, starts a turn, changes model settings, or starts sign-in, close QA when ready to update.
+The updater keeps its candidate pending until that close.
+It also refuses to close during a draft, attachment work, an approval, a running turn, or unverified readiness.
+A shared profile lock prevents a reopened QA process from racing with bundle replacement.
+It does not promise to preserve drafts, open views, navigation history, or running sessions.
+It never force-quits an app.
+If a new process cannot prove readiness, the updater retains the backup rather than forcing that process to stop.
+
+Read the current source, artifact, and runtime identities with:
+
+```sh
+python3 "$HOME/Library/Application Support/codex-gpui-qa/updater/qa-sync.py" status
+```
+
+Stop only the owned timer with `launchctl bootout "gui/$(id -u)/dev.codexgpui.qa-sync"`.
+That command does not close QA or any normal app.
+
 ## Architecture
 
 | Crate | Role |

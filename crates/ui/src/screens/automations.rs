@@ -143,7 +143,7 @@ impl Task {
 
 /// One `/suggested_automations` entry (or a built-in landing example).
 #[derive(Clone, Deserialize)]
-struct Suggestion {
+pub struct Suggestion {
     title: SharedString,
     description: SharedString,
     user_message: SharedString,
@@ -239,9 +239,8 @@ pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
 
 /// The app's `/scheduled` route with the host's `tasks`: the task thread of `selected`
 /// (`?automationId=`, with the composer docked under it), else the empty page (returned
-/// third). The port has no ChatGPT backend for `/suggested_automations`, so the cards are the
-/// landing examples, as the original shows them without server suggestions. Dates show at
-/// `utc_offset` seconds.
+/// third). Host suggestions replace the landing examples when the read completes.
+/// Dates show at `utc_offset` seconds.
 pub fn shell(
     tasks: Vec<Task>,
     selected: Option<(Task, AnyView)>,
@@ -497,6 +496,24 @@ pub struct AutomationsPage {
 }
 
 impl AutomationsPage {
+    pub fn set_suggestions(&mut self, server: Vec<Suggestion>, cx: &mut Context<Self>) {
+        let pending = self.pending.map(|i| self.cards.swap_remove(i));
+        self.cards = cards(server);
+        if let Some(pending) = pending {
+            self.pending = Some(
+                self.cards
+                    .iter()
+                    .position(|card| card.user_message == pending.user_message)
+                    .unwrap_or_else(|| {
+                        self.cards.truncate(5);
+                        self.cards.push(pending);
+                        self.cards.len() - 1
+                    }),
+            );
+        }
+        cx.notify();
+    }
+
     /// The card whose conversation is starting.
     pub fn pending(&self) -> Option<usize> {
         self.pending
@@ -516,19 +533,27 @@ impl AutomationsPage {
         // rasterized by Chromium's Skia like Blink draws an svg `<img>`. Elsewhere GPUI's own
         // image raster (the copies declare 40x40, the 20 px slot at 2x: GPUI rasterizes svg
         // images at their intrinsic size).
-        let glyph = match &s.icon_url {
+        let bundled = (!starting)
+            .then_some(s.icon_url.as_ref())
+            .flatten()
+            .and_then(|url| {
+                let path = format!("ui/automations/{}", url.rsplit('/').next().unwrap_or(url));
+                cx.asset_source()
+                    .load(&path)
+                    .ok()
+                    .flatten()
+                    .map(|source| (path, source))
+            });
+        let glyph = match bundled {
             // ponytail: the original spins the rays (`animate-spin`); animations are out of scope.
             _ if starting => icon("rays", 20., t.text_tertiary).into_any_element(),
-            Some(url) => {
-                let path = format!("ui/automations/{}", url.rsplit('/').next().unwrap_or(url));
+            Some((path, source)) => {
                 if cfg!(target_os = "macos") {
                     canvas(
                         |_, _, _| {},
                         move |b, (), window, cx| {
-                            if let Ok(Some(src)) = cx.asset_source().load(&path) {
-                                let white = gpui::white();
-                                shapes::paint_icon(&src, &path, b, false, white, None, window, cx);
-                            }
+                            let white = gpui::white();
+                            shapes::paint_icon(&source, &path, b, false, white, None, window, cx);
                         },
                     )
                     .size(px(20.))

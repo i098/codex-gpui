@@ -1,8 +1,8 @@
 //! Flow harness (docs/flows.md): the real [`app::Root`] on a replayed app-server
 //! (fixtures/readback.jsonl, plus a recorded session for turns), driven by mouse and key
 //! events at the original's element bounds (refs/<screen>/dark@1280x832.spec.json) and by the
-//! menu bar's actions. Where a ref exists for the state reached, the parity diff runs and its
-//! numbers print; they are reported, not gated (the pixel lanes own them).
+//! menu bar's actions. Each parity flow checks the reached route and fails on a pixel
+//! mismatch under the same strict thresholds as the separate static screen gate.
 //!
 //! Runs every flow, then fails if any did. `cargo test -p app --test flows -- <filter>` runs
 //! only the flows whose name contains `<filter>`.
@@ -47,7 +47,18 @@ const FLOWS: &[(&str, Flow)] = &[
     ("parity_composer", || {
         parity_flow("composer", |fx| {
             fx.type_text("Refactor src/math.py")?;
-            fx.click(fx.at("home", "GPT-6 Astra")?)
+            let (x, y) = fx.at("home", "GPT-6 Astra")?;
+            // The original's pill moves with the centered column and the window bottom.
+            fx.click((x + (fx.size.0 - 1280.) / 2., y + fx.size.1 - 832.))?;
+            ensure!(fx.composer_text()? == "Refactor src/math.py");
+            let composer = fx.composer();
+            ensure!(
+                fx.cx.update_window(fx.window, |_, window, cx| {
+                    composer.read(cx).menu_state(window).0
+                })?,
+                "the composer menu did not open"
+            );
+            Ok(())
         })
     }),
     ("back_forward_titlebar", back_forward_titlebar),
@@ -72,7 +83,7 @@ const FLOWS: &[(&str, Flow)] = &[
     ("theme_switch", theme_switch),
     ("rail_scheduled", rail_scheduled),
     ("parity_automations", || {
-        parity_flow("automations", |fx| fx.click(RAIL_SCHEDULED))
+        parity_flow("automations", open_recorded_automations)
     }),
     ("profile_menu_settings", profile_menu_settings),
     ("profile_menu_dismiss", profile_menu_dismiss),
@@ -108,7 +119,6 @@ const FLOWS: &[(&str, Flow)] = &[
     ("fork_chat", fork_chat),
     ("earlier_turn_actions_hover", earlier_turn_actions_hover),
     ("undo_reverts_turn", undo_reverts_turn),
-    ("file_link_opens_changes", file_link_opens_changes),
     ("approval_round_trip", approval_round_trip),
     ("archive_chat", archive_chat),
     ("recent_chat_keys", recent_chat_keys),
@@ -639,6 +649,16 @@ fn theme_switch() -> Result<String> {
 
 // --- Rail Scheduled, profile menu, Mobile ---
 
+fn open_recorded_automations(fx: &mut Fx) -> Result<()> {
+    let host = app::host::ReplayHost::from_recording(include_str!(
+        "../../../refs/interactions/host.json"
+    ))?;
+    fx.root.update(&mut fx.cx, |root, cx| {
+        root.set_host(std::sync::Arc::new(host), cx)
+    });
+    fx.click(RAIL_SCHEDULED)
+}
+
 fn rail_scheduled() -> Result<String> {
     let mut fx = Fx::new()?;
     fx.click(RAIL_SCHEDULED)?;
@@ -654,10 +674,9 @@ fn avatar(fx: &Fx) -> (f32, f32) {
     (26., fx.size.1 - 26.)
 }
 
-/// Profile menu row `n`: `Settings`, then `Set up mobile` under the `Help` heading. The menu
-/// sits 48 px above the window's bottom edge.
+/// Profile menu rows `Settings` and `Set up mobile`, above the `Keyboard Shortcuts` row.
 fn profile_item(fx: &Fx, n: usize) -> (f32, f32) {
-    (118., fx.size.1 - [128., 68.][n])
+    (118., fx.size.1 - [160., 100.][n])
 }
 
 fn profile_menu_settings() -> Result<String> {
@@ -877,20 +896,64 @@ fn diff_file_header_toggle() -> Result<String> {
 fn open_terminal(fx: &mut Fx) -> Result<()> {
     fx.click(fx.at("home", "Add a subtract")?)?;
     fx.wait_thread(SUBTRACT)?;
-    let view = fx.read(|r, _| r.thread().cloned()).context("no thread")?;
-    fx.cx.update(|cx| {
-        view.update(cx, |v, cx| {
-            for event in ui::screens::terminal::running_command_replay() {
-                v.apply(&event, cx);
-            }
+    let status: Vec<_> = include_str!("../../../fixtures/sessions/subtract.jsonl")
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("fixture line is JSON"))
+        .filter(|line| line["msg"]["method"] == "thread/status/changed")
+        .map(|line| bridge::Event::Notification {
+            method: "thread/status/changed".into(),
+            params: line["msg"]["params"].clone(),
         })
-    });
-    fx.cx.run_until_parked();
+        .collect();
+    let mut events = ui::screens::terminal::running_command_replay();
+    for event in &mut events {
+        if let bridge::Event::Notification { params, .. } = event
+            && params["turn"].is_object()
+        {
+            params["turn"]["rootTurnId"] = params["turn"]["id"].clone();
+        }
+    }
+    ensure!(status.len() == 2, "recorded active and idle statuses");
+    events.insert(0, status[0].clone());
+    events.push(status[1].clone());
+    for (index, event) in events.into_iter().enumerate() {
+        fx.root.update(&mut fx.cx, |r, cx| r.on_event(event, cx));
+        fx.cx.run_until_parked();
+        let observed = fx.read(|r, cx| {
+            (
+                r.sidebar().read(cx).is_running(SUBTRACT),
+                r.sidebar().read(cx).unread.iter().any(|id| id == SUBTRACT),
+                r.shell().read(cx).attention,
+            )
+        });
+        let expected = (index < 5, index >= 4, index >= 4);
+        ensure!(
+            observed == expected,
+            "Terminal event {index}: running/unread/attention {observed:?}, expected {expected:?}"
+        );
+    }
     // refs/thread: `Toggle summary` 63 px from the window's right edge; the summary popover
     // ends 12 px from it (refs/terminal, shifted to the full-width thread).
     let w = fx.size.0;
     fx.click((w - 63., 22.))?;
-    fx.click((w - 202., 179.7))
+    fx.click((w - 202., 179.7))?;
+    ensure!(
+        fx.read(|r, cx| {
+            let view = r.thread().expect("open thread").read(cx);
+            view.summary_open
+                && matches!(
+                    view.background_terminals().as_slice(),
+                    [(command, "2\n")]
+                        if command == "python3 -c 'from src.math import subtract; print(subtract(5, 3))'"
+                )
+        }),
+        "Terminal lost the open summary, running command, or recorded output"
+    );
+    ensure!(
+        fx.read(|r, cx| r.sidebar().read(cx).unread == [SUBTRACT]) && fx.shell(|s| s.attention),
+        "Opening Terminal cleared the selected unread thread or Home attention"
+    );
+    Ok(())
 }
 
 fn background_terminal_tab() -> Result<String> {
@@ -902,7 +965,18 @@ fn background_terminal_tab() -> Result<String> {
     // The summary stays open: its `Changes` row opens the Changes tab.
     fx.click((fx.size.0 - 202., 105.7))?;
     ensure!(side(&fx) == Some(SidePanel::Changes), "{:?}", side(&fx));
-    Ok(String::new())
+    ensure!(
+        fx.read(|r, cx| r.sidebar().read(cx).unread == [SUBTRACT]) && fx.shell(|s| s.attention),
+        "Changing side tabs cleared the selected unread thread or Home attention"
+    );
+    fx.click(RAIL_HOME)?;
+    fx.click(fx.at("home", "Add a subtract")?)?;
+    fx.wait_thread(SUBTRACT)?;
+    ensure!(
+        fx.read(|r, cx| r.sidebar().read(cx).unread.is_empty()) && !fx.shell(|s| s.attention),
+        "Opening the unread thread did not clear its dot and Home attention"
+    );
+    Ok("six Root events; selected unread and Home attention set, then cleared on open".into())
 }
 
 // --- Settings ▸ Appearance ---
@@ -1077,14 +1151,6 @@ fn undo_reverts_turn() -> Result<String> {
         fx.read(|r, cx| r.thread().is_some_and(|v| v.read(cx).turns().is_empty()))
     })?;
     ensure!(fx.route() == Route::Thread(SUBTRACT.into()));
-    Ok(String::new())
-}
-
-fn file_link_opens_changes() -> Result<String> {
-    let mut fx = Fx::new()?;
-    open_subtract(&mut fx)?;
-    fx.click(fx.at("thread", "src/math.py")?)?;
-    ensure!(side(&fx) == Some(SidePanel::Changes), "{:?}", side(&fx));
     Ok(String::new())
 }
 

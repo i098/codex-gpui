@@ -6,7 +6,7 @@
 //!   was open or closed less than `SKIP_DELAY` ago (Radix `skipDelayDuration`), so moving
 //!   along a row of buttons shows each at once.
 //! - Closes when the pointer leaves, on a press on the trigger, and on Escape.
-//! - Sits `OFFSET` px from the trigger, centred above, below, or to its right.
+//! - Defaults to `OFFSET` px from the trigger's positioning edge, above, below, or to its right.
 //!
 //! The tooltip stays at least 8 px inside the window, including narrow titlebar layouts.
 
@@ -151,6 +151,7 @@ pub fn tooltip(
         label: label.into(),
         shortcut: shortcut.map(SharedString::new_static),
         side,
+        side_offset: OFFSET,
     }
 }
 
@@ -160,6 +161,15 @@ pub struct Tooltip {
     label: SharedString,
     shortcut: Option<SharedString>,
     side: Side,
+    side_offset: Pixels,
+}
+
+impl Tooltip {
+    /// Sets the gap from the trigger's absolute-positioning edge, inside its border.
+    pub fn side_offset(mut self, side_offset: Pixels) -> Self {
+        self.side_offset = side_offset;
+        self
+    }
 }
 
 impl RenderOnce for Tooltip {
@@ -177,7 +187,7 @@ impl RenderOnce for Tooltip {
             shortcut: self.shortcut,
         };
         let open = state.read(cx).open;
-        let bubble = open.then(|| bubble(&spec, self.side, &state, cx));
+        let bubble = open.then(|| bubble(&spec, self.side, self.side_offset, &state, cx));
         self.trigger
             .on_hover({
                 let (state, spec) = (state.clone(), spec.clone());
@@ -194,7 +204,13 @@ impl RenderOnce for Tooltip {
 }
 
 /// The pill, placed by an absolute box as large as the trigger (its containing block).
-fn bubble(spec: &Spec, side: Side, state: &Entity<TipState>, cx: &App) -> impl IntoElement {
+fn bubble(
+    spec: &Spec,
+    side: Side,
+    side_offset: Pixels,
+    state: &Entity<TipState>,
+    cx: &App,
+) -> impl IntoElement {
     let t = cx.theme();
     // `--color-background-tooltip` over `--color-text-tooltip`. [INFERENCE: light values from
     // the CSS (`primary-solid` over its inverse); only dark is recorded.]
@@ -266,17 +282,17 @@ fn bubble(spec: &Spec, side: Side, state: &Entity<TipState>, cx: &App) -> impl I
         Side::Top => (
             div().absolute().left(relative(0.5)).top_0(),
             Anchor::BottomCenter,
-            point(px(0.), -OFFSET),
+            point(px(0.), -side_offset),
         ),
         Side::Bottom => (
             div().absolute().left(relative(0.5)).top(relative(1.)),
             Anchor::TopCenter,
-            point(px(0.), OFFSET),
+            point(px(0.), side_offset),
         ),
         Side::Right => (
             div().absolute().left(relative(1.)).top(relative(0.5)),
             Anchor::LeftCenter,
-            point(OFFSET, px(0.)),
+            point(side_offset, px(0.)),
         ),
     };
     deferred(
