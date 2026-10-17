@@ -28,11 +28,14 @@ use bridge::Bridge;
 use rusqlite::{Connection, OpenFlags, OptionalExtension as _, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
+use ui::screens::sidebar::Project;
 use url::Url;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -59,6 +62,11 @@ impl Request {
 pub trait Host: Send + Sync {
     /// Returns the original wire response. Call this off the UI thread for a local host.
     fn fetch(&self, request: &Request) -> Result<Value>;
+
+    /// Reads the original sidebar project state off the UI thread.
+    fn projects(&self) -> Result<Vec<Project>> {
+        bail!("sidebar project state is unsupported by this host")
+    }
 
     /// The signed-in ChatGPT identity the renderer puts on its backend requests; `None`
     /// without a ChatGPT sign-in. Call this off the UI thread for a cloud host.
@@ -123,6 +131,7 @@ pub struct Exchange {
 
 pub struct ReplayHost {
     exchanges: Vec<Exchange>,
+    project_snapshot: Option<ProjectSnapshot>,
 }
 
 impl ReplayHost {
@@ -130,9 +139,13 @@ impl ReplayHost {
         #[derive(Deserialize)]
         struct Recording {
             exchanges: Vec<Exchange>,
+            #[serde(default)]
+            project_snapshot: Option<ProjectSnapshot>,
         }
+        let recording: Recording = serde_json::from_str(recording)?;
         Ok(Self {
-            exchanges: serde_json::from_str::<Recording>(recording)?.exchanges,
+            exchanges: recording.exchanges,
+            project_snapshot: recording.project_snapshot,
         })
     }
 
@@ -155,7 +168,10 @@ impl ReplayHost {
             };
             exchanges.push(Exchange { request, response });
         }
-        Ok(Self { exchanges })
+        Ok(Self {
+            exchanges,
+            project_snapshot: None,
+        })
     }
 }
 
@@ -166,6 +182,13 @@ impl Host for ReplayHost {
             .find(|e| e.request == *request)
             .map(|e| e.response.clone())
             .context("no recorded host response for this exact request")
+    }
+
+    fn projects(&self) -> Result<Vec<Project>> {
+        self.project_snapshot
+            .as_ref()
+            .context("no recorded sidebar project snapshot")?
+            .rows()
     }
 
     /// The identity of the first recorded request that carries one.
@@ -181,6 +204,169 @@ impl Host for ReplayHost {
             })
         })
     }
+}
+
+#[derive(Deserialize)]
+struct ProjectSnapshot {
+    state: Value,
+    codex_home: PathBuf,
+    workspace_roots: Vec<String>,
+    existing_paths: Option<Vec<String>>,
+}
+
+impl ProjectSnapshot {
+    fn rows(&self) -> Result<Vec<Project>> {
+        let existing = self.existing_paths.as_ref().map(|paths| {
+            paths
+                .iter()
+                .map(|path| {
+                    normalized_project_path(path)
+                        .trim_end_matches('/')
+                        .to_owned()
+                })
+                .collect::<HashSet<_>>()
+        });
+        project_rows(&self.state, &self.codex_home, |path, normalized| {
+            Ok(existing.as_ref().map(|existing| {
+                self.workspace_roots.iter().any(|root| root == path)
+                    && existing.contains(normalized.trim_end_matches('/'))
+            }))
+        })
+    }
+}
+
+fn project_rows(
+    state: &Value,
+    codex_home: &Path,
+    mut exists: impl FnMut(&str, &str) -> Result<Option<bool>>,
+) -> Result<Vec<Project>> {
+    let Some(projects) = state["local-projects"].as_object() else {
+        return Ok(Vec::new());
+    };
+    let managed_root = normalized_project_path(&codex_home.join("worktrees").to_string_lossy());
+    let mut rows = Vec::with_capacity(projects.len());
+    for stored in projects.values() {
+        let (Some(id), Some(name), Some(roots)) = (
+            stored["id"].as_str(),
+            stored["name"].as_str(),
+            stored["rootPaths"].as_array(),
+        ) else {
+            continue;
+        };
+        if !stored["createdAt"].is_number()
+            || !stored["updatedAt"].is_number()
+            || roots.iter().any(|root| !root.is_string())
+        {
+            continue;
+        }
+        let root = roots.first().and_then(Value::as_str);
+        let normalized = root.map(normalized_project_path);
+        let worktree = root
+            .zip(normalized.as_deref())
+            .is_some_and(|(path, normalized)| {
+                is_worktree_path(normalized, &managed_root, is_windows_path(path))
+            });
+        let missing = match root.zip(normalized.as_deref()) {
+            Some((path, normalized)) => exists(path, normalized)?.is_some_and(|exists| !exists),
+            None => false,
+        };
+        let label = if name.trim().is_empty() {
+            id
+        } else {
+            name.trim()
+        };
+        let expanded_key = format!("sidebar-project-expanded-v1-codex:{id}");
+        rows.push(Project {
+            id: id.to_owned().into(),
+            label: label.to_owned().into(),
+            new_chat_label: if worktree {
+                "New chat in this worktree".into()
+            } else {
+                format!("Start new chat in {label}").into()
+            },
+            worktree,
+            missing,
+            expanded: state["electron-persisted-atom-state"][&expanded_key] != false,
+        });
+    }
+    if let Some(order) = state["project-order"].as_array() {
+        let ranks: HashMap<_, _> = order
+            .iter()
+            .enumerate()
+            .filter_map(|(rank, id)| id.as_str().map(|id| (id, rank)))
+            .collect();
+        rows.sort_by_key(|project| ranks.get(project.id.as_ref()).copied());
+    }
+    Ok(rows)
+}
+
+fn is_windows_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    path.starts_with("//")
+        || path.starts_with("\\\\")
+        || (bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && matches!(bytes[2], b'/' | b'\\'))
+}
+
+fn normalized_project_path(path: &str) -> String {
+    let windows = is_windows_path(path);
+    let path = if path.contains('\\') {
+        Cow::Owned(path.replace('\\', "/"))
+    } else {
+        Cow::Borrowed(path)
+    };
+    let mut normalized = PathBuf::with_capacity(path.len());
+    for component in Path::new(path.as_ref()).components() {
+        match component {
+            Component::ParentDir if normalized.file_name().is_some_and(|name| name != "..") => {
+                normalized.pop();
+            }
+            Component::ParentDir if !normalized.has_root() => normalized.push(".."),
+            Component::ParentDir | Component::CurDir => {}
+            component => normalized.push(component),
+        }
+    }
+    let mut normalized = normalized
+        .into_os_string()
+        .into_string()
+        .expect("project paths are UTF-8");
+    if windows {
+        normalized.make_ascii_lowercase();
+    }
+    normalized
+}
+
+fn is_worktree_path(path: &str, managed_root: &str, windows: bool) -> bool {
+    if path
+        .strip_prefix(managed_root)
+        .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with('/'))
+    {
+        return true;
+    }
+    let workspace_root = if windows {
+        "/openai/codex/workspaces"
+    } else {
+        "/OpenAI/Codex/workspaces"
+    };
+    path.match_indices("/worktrees").any(|(index, _)| {
+        let tail = &path[index + "/worktrees".len()..];
+        if !tail.is_empty() && !tail.starts_with('/') {
+            return false;
+        }
+        let prefix = &path[..index];
+        prefix.ends_with("/.codex")
+            || prefix.ends_with("/.codex-workspaces")
+            || prefix.ends_with(workspace_root)
+            || prefix
+                .rsplit_once("/instances/")
+                .is_some_and(|(root, instance)| {
+                    !instance.is_empty()
+                        && !instance.contains('/')
+                        && (root.ends_with("/.codex-workspaces") || root.ends_with(workspace_root))
+                })
+    })
 }
 
 /// Decodes a JSON response without turning HTTP errors or binary bodies into empty data.
@@ -404,6 +590,24 @@ impl LocalHost {
 }
 
 impl Host for LocalHost {
+    fn projects(&self) -> Result<Vec<Project>> {
+        let path = self.home.join(".codex-global-state.json");
+        let contents = match fs::read(&path) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error).context("read original sidebar project state"),
+        };
+        let state: Value =
+            serde_json::from_slice(&contents).context("decode original sidebar project state")?;
+        ensure!(
+            state.is_object(),
+            "original sidebar project state must be an object"
+        );
+        project_rows(&state, &self.home, |path, _| {
+            Ok(Some(Path::new(path).exists()))
+        })
+    }
+
     fn fetch(&self, request: &Request) -> Result<Value> {
         let Request::Fetch { method, url, body } = request else {
             bail!("authenticated remote HTTP is unsupported by LocalHost");
@@ -748,6 +952,10 @@ impl CloudHost {
 }
 
 impl Host for CloudHost {
+    fn projects(&self) -> Result<Vec<Project>> {
+        self.local.projects()
+    }
+
     fn fetch(&self, request: &Request) -> Result<Value> {
         match request {
             Request::Http(http) => self.http(http),
