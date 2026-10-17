@@ -216,6 +216,20 @@ impl DiffPanel {
         self.query.as_deref().map(|query| (query, self.matches))
     }
 
+    pub fn open_find(&mut self, window: &Window, cx: &mut Context<Self>) -> bool {
+        if !self
+            .focus
+            .as_ref()
+            .is_some_and(|focus| focus.is_focused(window))
+        {
+            return false;
+        }
+        self.query.get_or_insert_default();
+        self.selected_query = true;
+        cx.notify();
+        true
+    }
+
     pub fn apply(
         &mut self,
         event: &Event,
@@ -367,8 +381,9 @@ impl DiffPanel {
         }
         let key = &event.keystroke;
         if key.modifiers.platform && key.key == "f" {
-            self.query.get_or_insert_default();
-            self.selected_query = true;
+            self.open_find(window, cx);
+            cx.stop_propagation();
+            return;
         } else if let Some(query) = &mut self.query {
             match key.key.as_str() {
                 "escape" => self.query = None,

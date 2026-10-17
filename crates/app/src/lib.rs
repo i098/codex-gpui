@@ -2129,10 +2129,16 @@ impl Render for Root {
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::type_anywhere))
             .on_action(cx.listener(|this, _: &FindInThread, window, cx| {
-                if matches!(this.state.route, Route::Thread(_))
-                    && let Some(thread) = &this.thread
-                {
-                    thread.update(cx, |thread, cx| thread.open_find(window, cx));
+                if matches!(this.state.route, Route::Thread(_)) {
+                    if this.side == Some(SidePanel::Changes)
+                        && let Some(panel) = &this.diff
+                        && panel.update(cx, |panel, cx| panel.open_find(window, cx))
+                    {
+                        return;
+                    }
+                    if let Some(thread) = &this.thread {
+                        thread.update(cx, |thread, cx| thread.open_find(window, cx));
+                    }
                 }
             }))
             .on_action(cx.listener(|this, _: &FindNext, _, cx| {
