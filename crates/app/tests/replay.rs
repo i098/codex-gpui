@@ -128,17 +128,15 @@ fn check_attachment_requests(result: &Value, sent: &[Value]) -> Result<()> {
         .context("attachment requests")?
         .len();
     // The dedicated adapter tests restoration after these original paste writes.
-    let writes: Vec<_> = sent
+    let writes = sent
         .iter()
         .filter(|r| {
             r["method"]
                 .as_str()
                 .is_some_and(|m| m.starts_with("fs/") && m != "fs/readFile")
         })
-        .take(count)
-        .cloned()
-        .collect();
-    check_requests(result, &writes)
+        .take(count);
+    check_requests(result, writes)
 }
 
 #[test]
@@ -205,11 +203,11 @@ fn run(path: &Path) -> Result<String> {
         if sent.len() != last.0 {
             last = (sent.len(), Instant::now());
         }
-        check_requests(&rec["result"], &sent[before..]).is_ok()
+        check_requests(&rec["result"], sent[before..].iter()).is_ok()
             || last.1.elapsed() > Duration::from_millis(300)
     })?;
     let sent = fx.sent()?.split_off(before);
-    check_requests(&rec["result"], &sent)?;
+    check_requests(&rec["result"], sent.iter())?;
     Ok(format!(
         "{} steps, {} pixel checks",
         steps.len(),
@@ -530,10 +528,9 @@ fn recorded(result: &Value) -> Vec<(String, Value)> {
         .collect()
 }
 
-fn check_requests(result: &Value, sent: &[Value]) -> Result<()> {
+fn check_requests<'a>(result: &Value, sent: impl Iterator<Item = &'a Value>) -> Result<()> {
     let want = recorded(result);
     let got: Vec<_> = sent
-        .iter()
         .map(|m| normalise(m["method"].as_str().unwrap_or("?"), m.get("params")))
         .collect();
     if result["requestsExact"] == true {
