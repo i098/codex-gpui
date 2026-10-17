@@ -101,6 +101,30 @@ All 36 unchanged original images pass the same helper with zero differences.
 Replaying the old Mobile click returns exit 1 for all four route checks before any pixel comparison.
 These checks prove the guard; they do not replace the failing Root captures.
 
+### Home rail selection on thread routes
+
+Home stays selected on its Thread, Changes, and Background terminal routes.
+`rail_thread_family` enters those states through Root input and compares the Home rail with the original pixels.
+It checks both themes and sizes without changing focus, pointer position, clocks, or fixtures.
+Thread and Changes check the full Home button at `[8,52,36,36]`.
+Terminal checks `[8,66,36,22]`, below the reference's separate unread dot.
+This selection check does not waive any full-Root pixel difference.
+The strict full-screen gate still checks the original Terminal unread state and every outside-text pixel.
+
+Run the selection regression with `cargo test -p app --test flows -- rail_thread_family`.
+
+The new regression fails all 12 cases before the rail correction and matches all 12 afterward.
+The separate static gate remains 36/36.
+At integrated source `60283d8` on main `9079aa0`, the unchanged full-Root gate returns exit 1: 32 comparisons pass and four fail.
+Every screen except Sidebar passes all four variants.
+Sidebar still differs from its older pending-state reference; correct S026 settled search behavior remains unchanged.
+This result includes the upstream repairs; the consumer change remains limited to Home rail selection.
+Cells give `outside count / text percent`; the owned empty `CODEX_HOME` excludes ambient automation rows.
+
+| Remaining full-Root failure | Dark 1280x832 | Dark 1440x900 | Light 1280x832 | Light 1440x900 |
+|---|---|---|---|---|
+| Sidebar | 95831 / 12.250% | 102522 / 9.995% | 128199 / 13.491% | 137557 / 10.381% |
+
 ## App shell: shortcuts, menu bar, window (§2.2, §12, §13)
 
 | # | Item | Kind | Original | Port | Status |
