@@ -191,6 +191,8 @@ pub(super) struct Skill {
     pub(super) name: String,
     pub(super) title: String,
     pub(super) description: String,
+    /// `SKILL.md` path: the `$name` chip's link target.
+    pub(super) path: String,
 }
 
 #[derive(Default)]
@@ -208,10 +210,6 @@ pub(super) struct Slash {
 }
 
 impl Slash {
-    pub(super) fn has_selection(&self) -> bool {
-        self.open && !self.matches.is_empty()
-    }
-
     pub(super) fn reset(&mut self) {
         self.open = false;
         self.dismissed = None;
@@ -260,6 +258,7 @@ impl Composer {
                     name: name.into(),
                     title,
                     description,
+                    path: skill["path"].as_str().unwrap_or_default().into(),
                 })
             })
             .collect();
@@ -444,7 +443,7 @@ impl Composer {
             "usage" => SlashCommand::Usage,
             _ => return,
         };
-        self.content.replace_range(self.slash.range.clone(), "");
+        self.splice(self.slash.range.clone(), "");
         self.selected_range = self.slash.range.start..self.slash.range.start;
         self.marked_range = None;
         self.slash.open = false;
