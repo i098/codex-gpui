@@ -371,6 +371,7 @@ pub struct Root {
     /// The Scheduled empty page: its suggestion cards start guided conversations.
     suggestions: Option<Entity<automations::AutomationsPage>>,
     cwd: String,
+    clock: Option<Clock>,
     config: Value,
     skills: Value,
     ready: bool,
@@ -563,6 +564,7 @@ impl Root {
             scheduled: None,
             suggestions: None,
             cwd,
+            clock: None,
             config: Value::Null,
             skills: Value::Null,
             ready: false,
@@ -591,6 +593,12 @@ impl Root {
             .detach();
         root.connect(window, cx);
         root
+    }
+
+    /// Uses `clock` for thread timestamps. Set it before opening a thread.
+    pub fn with_clock(mut self, clock: Clock) -> Self {
+        self.clock = Some(clock);
+        self
     }
 
     /// `initialize`, then account, Recents, models and config; shows the route once ready.
@@ -1422,10 +1430,11 @@ impl Root {
             c.set_search_roots(vec![thread.cwd.clone()]);
         });
         let route = Route::Thread(thread.id.clone());
-        let clock = Clock {
+        let clock = self.clock.unwrap_or_else(|| Clock {
             utc_offset: utc_offset(),
             pinned_now: None,
-        };
+            elapsed_since: None,
+        });
         let composer = self.thread_composer.clone().into();
         self.diff = Some(cx.new(|_| DiffPanel::last_turn(&self.cwd, &thread.cwd, &thread.turns)));
         self.file = None;

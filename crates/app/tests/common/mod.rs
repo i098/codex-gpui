@@ -34,6 +34,12 @@ pub const SUBTRACT: &str = "01a13de9-6fff-78e1-84fc-ebb3a2dc873f";
 pub const EXPLAIN: &str = "01a13de9-35ed-7c72-a36a-68eeb2f4e1ee";
 pub const GREETING_PROMPT: &str = "Change the greeting in hello.py to \"Hello, Codex\".";
 pub const TIMEOUT: Duration = Duration::from_secs(30);
+/// The original capture clock's base, not its unrecorded historical screenshot instant.
+pub const CAPTURE_CLOCK: ui::screens::thread::view::Clock = ui::screens::thread::view::Clock {
+    utc_offset: -7 * 3600,
+    pinned_now: Some(1_792_083_600),
+    elapsed_since: None,
+};
 
 pub fn replay_adapter(recording: &Path) -> Result<Vec<Value>> {
     let stem = recording
@@ -168,6 +174,10 @@ impl Fx {
         bridge: Bridge,
         events: async_channel::Receiver<Event>,
     ) -> Result<Self> {
+        let clock = ui::screens::thread::view::Clock {
+            elapsed_since: Some(Instant::now()),
+            ..CAPTURE_CLOCK
+        };
         let mut cx = HeadlessAppContext::with_platform(
             textsys::text_system(),
             Arc::new(theme::Assets),
@@ -192,7 +202,7 @@ impl Fx {
                 theme,
                 ..State::default()
             };
-            cx.new(|cx| Root::new(state, bridge, events, CWD.into(), window, cx))
+            cx.new(|cx| Root::new(state, bridge, events, CWD.into(), window, cx).with_clock(clock))
         })?;
         let root = cx.read_window(&window, |root, _| root)?;
         let mut fx = Self {
@@ -458,6 +468,21 @@ impl Fx {
         self.cx.capture_screenshot(self.window)
     }
 
+    /// Matches the reference pointer and caret preparation without changing keyboard focus.
+    pub fn reference_shot(&mut self) -> Result<RgbaImage> {
+        self.hover(((self.size.0 * 0.6).round(), 6.))?;
+        self.cx.update_window(self.window, |_, window, cx| {
+            Composer::set_caret_transparent(cx, true);
+            window.refresh();
+        })?;
+        let image = self.shot();
+        self.cx.update_window(self.window, |_, window, cx| {
+            Composer::set_caret_transparent(cx, false);
+            window.refresh();
+        })?;
+        image
+    }
+
     /// Center of the original's element: a node with this `aria-label`, else the first text
     /// starting with `key`, in refs/<screen>/dark@1280x832.spec.json.
     pub fn at(&self, screen: &str, key: &str) -> Result<(f32, f32)> {
@@ -483,7 +508,7 @@ impl Fx {
 
     /// Diffs the window against `refs/<screen>/<theme>@<W>x<H>.png`.
     pub fn parity(&mut self, screen: &str) -> Result<String> {
-        let port = self.shot()?;
+        let port = self.reference_shot()?;
         parity_image(screen, self.theme, &port)
     }
 }
