@@ -155,7 +155,7 @@ Numbers from the round 4 run (F1Flows); the screen builder column is a run of th
 | 10 | `Recents` section toggle | click | Collapses or expands. | Same; a collapsed Recents row no longer opens. | PASS (`sidebar_section_collapse`) |
 | 11 | Thread row | click | Opens `/local/:conversationId`. | `OpenThread` → route Thread, `thread/read`, row selected. | PASS (`thread_row_opens_thread`) |
 | 12 | Thread row hover | hover | Row background; Archive / Pin actions appear. | The row reveals its actions. Buttons use the shared 150 ms hover transition. | PASS (`thread_row_hover`, `crates/app/tests/s001.rs`) |
-| 13 | Thread row context menu | click | Pin, Rename, Archive, Mark as unread, Open in new window, Delete. | Archive removes the row without opening the chat. Unpin moves an existing pinned chat to Recents through `thread/section/move`. | FAIL (Pin click and the context menu remain unwired; Archive and Unpin: `crates/app/tests/s001.rs`) |
+| 13 | Thread row context menu | click | Pin, Rename, Archive, Mark as unread, Open in new window, Delete. | Archive removes the row without opening the chat. Pin and Unpin move the chat into or out of `Pinned` through `thread/section/move`, with no toast; a refused move puts the row back silently. The Unpin icon hides at rest like Pin and Archive. | FAIL (the context menu remains unwired; Archive and Unpin: `crates/app/tests/s001.rs`; Pin: `crates/app/tests/s001b.rs`) |
 | 14 | `⌘1`…`⌘9` | shortcut | Go to chat N. | Opens Recents row N; `⌘9` past the end does nothing. | PASS (`cmd_digit_goes_to_chat`) |
 | 15 | `⌘⇧[` / `⌘⇧]` | shortcut | Previous / next chat. | Previous / next Recents row. | PASS (`previous_next_chat`, `menu_bar_actions`) |
 | 16 | `⌘⇧S` / `⌘B` | shortcut | Toggle sidebar. | Toggles. | PASS (`sidebar_toggle_keys`) |
@@ -172,7 +172,7 @@ The recording uses the original renderer with isolated host and app-server fixtu
 The replay checks Unpin, Archive, the Home route, outgoing requests, button timing, and the recorded hover blend.
 The native host translates `pinnedThreads.set(false)` to `thread/section/move` with a null section.
 The original shows no toast for this Unpin action.
-Pin click remains deferred after the recorder failure, as approved by firstmate.
+S001b replays `refs/interactions/s001b.json` with `cargo test -p app --test s001b` on macOS: the Pin click moves the row under `Pinned` at once, sends `thread/section/move` with the fixed Pinned section, shows no toast, hides the Unpin icon at rest, and a refused move puts the row back without a toast.
 Running-chat and scheduled-task archive confirmation still need a dialog extension outside this six-file slice.
 
 The S004 recording uses the original renderer through the Linux route1 stack in an isolated Chrome context.
@@ -349,7 +349,11 @@ Slice S035 proves suggestion hover (AM-037) with `refs/interactions/s035.json` a
 The test replays pointer entry and exit on the existing fixture screen with the original server suggestions.
 It checks the card fill, the adjacent card, and the icon colors against the Linux route1 recording.
 The existing hover implementation already matches; no production code changes are needed.
-Suggestion click (AM-036) has its transport (`CloudHost`); the guided conversation UI is not wired.
+Slice S035b proves suggestion click (AM-036) with `refs/interactions/s035b.json` and `crates/app/tests/s035b.rs`.
+The click puts the card in `Starting…` (rays spinner, status text) and disables every card at opacity 0.4.
+`Root` then reads the TPP models through the desktop host like the original's guided start (`conversation-actions` `J`).
+The oracle answers that read with the host's 499, so the recorded outcome is the toast `Couldn’t start this suggested task` and the cards enabled again.
+The conversation prepare, its stream, and the navigation into the started conversation are not recorded and not wired.
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|

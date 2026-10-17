@@ -27,7 +27,7 @@ use theme::{ActiveTheme as _, Appearance, Theme};
 /// `.sidebar-item`: `--radius-lg` (12.5 px) with `corner-shape: superellipse(1.5)`.
 const RADIUS_ROW: Pixels = px(12.5);
 
-const PINNED_SECTION_ID: &str = "01984de2-8f74-7c91-a3b2-5c5e937cf318";
+pub const PINNED_SECTION_ID: &str = "01984de2-8f74-7c91-a3b2-5c5e937cf318";
 
 /// Recents shows this many rows first and `PAGE` more each time its end comes into view
 /// (the original's `maxItems: 10`, `infiniteScroll` paging of the last section).
@@ -84,9 +84,11 @@ impl EventEmitter<LoadMore> for HomeSidebar {}
 #[action(namespace = sidebar, no_json)]
 pub struct ArchiveThread(pub String);
 
+/// A row's `Pin chat` / `Unpin chat`: `thread/section/move` of the thread (its id) into the
+/// Pinned section (`true`) or out of it (`false`).
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = sidebar, no_json)]
-pub struct UnpinThread(pub String);
+pub struct PinThread(pub String, pub bool);
 
 fn is_pinned(t: &Thread) -> bool {
     t.section
@@ -490,11 +492,7 @@ fn thread_row(
                 .items_center()
                 .justify_center()
                 .rounded(px(6.))
-                .opacity(if focused || (pinned && id == "pin-chat") {
-                    1.
-                } else {
-                    0.
-                })
+                .opacity(if focused { 1. } else { 0. })
                 .group_hover(group.clone(), |s| s.opacity(1.))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(crate::motion::ButtonVisual {
@@ -535,7 +533,7 @@ fn thread_row(
                     .absolute()
                     .left_0()
                     .top(px(5.))
-                    .w(px(if focused || pinned { 216. } else { 264. - clip }))
+                    .w(px(if focused { 216. } else { 264. - clip }))
                     .group_hover(group.clone(), |s| s.w(px(216.)))
                     .h(px(20.))
                     .pl(px(8.))
@@ -602,9 +600,8 @@ fn thread_row(
                         tooltip(
                             action("pin-chat", "sidebar-pin").on_click(move |_, window, cx| {
                                 cx.stop_propagation();
-                                if pinned {
-                                    window.dispatch_action(Box::new(UnpinThread(id.clone())), cx);
-                                }
+                                window
+                                    .dispatch_action(Box::new(PinThread(id.clone(), !pinned)), cx);
                             }),
                             if pinned { "Unpin chat" } else { "Pin chat" },
                             None,

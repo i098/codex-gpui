@@ -59,6 +59,44 @@ impl Request {
 pub trait Host: Send + Sync {
     /// Returns the original wire response. Call this off the UI thread for a local host.
     fn fetch(&self, request: &Request) -> Result<Value>;
+
+    /// The signed-in ChatGPT identity the renderer puts on its backend requests; `None`
+    /// without a ChatGPT sign-in. Call this off the UI thread for a cloud host.
+    fn identity(&self) -> Option<Identity> {
+        None
+    }
+}
+
+/// What the webview client sends with a ChatGPT backend request: the account and user of
+/// the session (`expectedIdentity`, `ChatGPT-Account-ID`) and the device id (`oai-did`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Identity {
+    pub account_id: String,
+    pub user_id: String,
+    pub device_id: String,
+}
+
+/// The webview client's models read that starts a suggested task's guided conversation
+/// (`conversation-actions` `J`: `query.getOrFetch` of the TPP models before the conversation
+/// is prepared), as recorded in `refs/interactions/s035b.json`.
+pub fn tpp_models(identity: &Identity) -> Request {
+    Request::Http(json!({
+        "url": "/tpp/models/?iim=false&include_icons=false",
+        "method": "GET",
+        "headers": {
+            "x-openai-web-frontend": "codex_webview",
+            "x-oai-mcp-form-version": "2",
+            "x-openai-codex-window-type": "electron",
+            "OAI-Language": "en-US",
+            "oai-did": identity.device_id,
+            "X-OpenAI-Attach-Auth": "1",
+            "X-OpenAI-Attach-Desktop-Surface": "1",
+            "X-OpenAI-Attach-Integrity-State": "1",
+            "ChatGPT-Account-ID": identity.account_id,
+        },
+        "expectedIdentity": {"accountId": identity.account_id, "userId": identity.user_id},
+        "returnErrorResponse": true,
+    }))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -112,6 +150,20 @@ impl Host for ReplayHost {
             .find(|e| e.request == *request)
             .map(|e| e.response.clone())
             .context("no recorded host response for this exact request")
+    }
+
+    /// The identity of the first recorded request that carries one.
+    fn identity(&self) -> Option<Identity> {
+        self.exchanges.iter().find_map(|e| {
+            let Request::Http(http) = &e.request else {
+                return None;
+            };
+            Some(Identity {
+                account_id: http["expectedIdentity"]["accountId"].as_str()?.to_owned(),
+                user_id: http["expectedIdentity"]["userId"].as_str()?.to_owned(),
+                device_id: http["headers"]["oai-did"].as_str()?.to_owned(),
+            })
+        })
     }
 }
 
@@ -435,6 +487,8 @@ pub struct CloudHost {
     base_url: String,
     // ponytail: in memory; the original persists it in global state across runs.
     integrity_state: Mutex<Option<String>>,
+    // ponytail: a fresh `oai-did` per process; the original persists the device id.
+    device_id: String,
     agent: ureq::Agent,
 }
 
@@ -458,6 +512,7 @@ impl CloudHost {
             cached: Mutex::new(None),
             base_url: base_url.into(),
             integrity_state: Mutex::new(None),
+            device_id: device_id(),
             agent,
         }
     }
@@ -683,6 +738,30 @@ impl Host for CloudHost {
             Request::Fetch { .. } => self.local.fetch(request),
         }
     }
+
+    fn identity(&self) -> Option<Identity> {
+        let claims = claims(&self.credentials(false).ok()?.token);
+        Some(Identity {
+            account_id: claims.principal_account?,
+            user_id: claims.user_id?,
+            device_id: self.device_id.clone(),
+        })
+    }
+}
+
+/// A random v4 UUID from the standard library's hasher keys.
+fn device_id() -> String {
+    use std::hash::{BuildHasher as _, RandomState};
+    let a = (RandomState::new().hash_one(0u8) & !0xf000) | 0x4000;
+    let b = (RandomState::new().hash_one(1u8) & !(0xc << 60)) | (0x8 << 60);
+    format!(
+        "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+        a >> 32,
+        (a >> 16) & 0xffff,
+        a & 0xffff,
+        b >> 48,
+        b & 0xffff_ffff_ffff
+    )
 }
 
 /// The recorded wire shape: `__response` for deliverable responses, else the error object.

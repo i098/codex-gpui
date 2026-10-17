@@ -1,0 +1,390 @@
+{
+  "name": "s001b",
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 1,
+    "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+    "theme": "dark",
+    "hoverEmulated": true
+  },
+  "initial": {
+    "pinned": [],
+    "recents": [
+      "01a13de9-c48a-7b20-8382-db900881cb99",
+      "01a13de9-6fff-78e1-84fc-ebb3a2dc873f",
+      "01a13de9-35ed-7c72-a36a-68eeb2f4e1ee"
+    ],
+    "sectionId": "01984de2-8f74-7c91-a3b2-5c5e937cf318"
+  },
+  "notes": [
+    "Recorded from the original renderer on the S001 route1 stack (Linux headless Chrome, isolated CODEX_HOME): fixture-backed pinnedThreads.set/list, localThreadCatalog pages honoring excludeThreadIds, and a mock app-server that marks pinned threads with the fixed Pinned section. With that stack the Pin click keeps every Recents row (the S001 drop came from a stub whose pinnedThreads.list and catalog page did not reflect the pin).",
+    "Pin click: the row moves under a new `Pinned` header at once (optimistic, within 100 ms), no toast at any time (sampled up to 3.5 s). The renderer sends host pinnedThreads.set(pinned:true) and writes the persisted atom app-server-pinned-thread-order-v1; the Electron host turns pinnedThreads.set(true) into app-server thread/section/move {threadId, sectionId: <fixed Pinned section>, beforeThreadId: null} (threadSectionEngine.setThreadPinned -> setThreadSection, main bundle). The renderer's own thread/read and thread/list refetches that follow are reads and are not required of the port.",
+    "Rest state: the row action group stays `opacity-0 group-hover:opacity-100` for pinned rows too, so the Unpin icon is hidden at rest and fades in on hover like Pin and Archive (dom entries `unpin-rest`, `unpin-hover`). The row title keeps the full 264 px track at rest.",
+    "Refused write (host pinnedThreads.set throws): the row stays in Pinned for about 350 ms, then returns to its Recents place; no toast (sampled to 3.8 s); the persisted atom is written back. See `refused`.",
+    "`Chat pinned` / `Chat unpinned` (appUndo.chatPinned) are the toasts of the app-wide Undo that re-pins or unpins; the Pin click itself shows none. Cmd+Z in the recorder is inconclusive (native accelerators do not fire from real keys)."
+  ],
+  "steps": [
+    {
+      "type": "hover",
+      "target": {
+        "text": "Change the greeting in hello.py to \"Hello, Codex\".",
+        "bbox": {
+          "x": 68,
+          "y": 295,
+          "w": 256,
+          "h": 20
+        }
+      },
+      "at": {
+        "x": 150,
+        "y": 305
+      },
+      "waitMs": 300
+    },
+    {
+      "type": "click",
+      "target": {
+        "selector": "[aria-label=\"Pin chat\"]",
+        "bbox": {
+          "x": 276,
+          "y": 295,
+          "w": 20,
+          "h": 20
+        }
+      },
+      "waitMs": 300
+    },
+    {
+      "type": "hover",
+      "at": {
+        "x": 800,
+        "y": 600
+      },
+      "note": "pointer leaves the sidebar: rest state",
+      "waitMs": 400
+    }
+  ],
+  "result": {
+    "dom": [
+      {
+        "after": "hover",
+        "selector": "[aria-label=\"Pin chat\"]",
+        "state": "hover",
+        "tag": "button",
+        "text": "",
+        "aria": "Pin chat",
+        "bbox": {
+          "x": 276,
+          "y": 295,
+          "w": 20,
+          "h": 20
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "after": "pin",
+        "selector": "sidebar order",
+        "order": [
+          "Pinned",
+          "row:Change the greeting ",
+          "Projects",
+          "Recents",
+          "row:Add a subtract(a, b)",
+          "row:In two sentences, wh"
+        ],
+        "at100ms": [
+          "Pinned",
+          "row:Change the greeting ",
+          "Projects",
+          "Recents",
+          "row:Add a subtract(a, b)",
+          "row:In two sentences, wh"
+        ],
+        "toast": null
+      },
+      {
+        "after": "pin",
+        "selector": "[data-app-action-sidebar-thread-row]",
+        "rows": [
+          {
+            "aria": "Change the greeting in hello.py to \"Hello, Codex\".",
+            "bbox": {
+              "x": 60,
+              "y": 203,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "aria": "Add a subtract(a, b) function to src/math.py next to add, then run python3 -c '…",
+            "bbox": {
+              "x": 60,
+              "y": 370,
+              "w": 272,
+              "h": 30
+            }
+          },
+          {
+            "aria": "In two sentences, what does this repository contain?",
+            "bbox": {
+              "x": 60,
+              "y": 401,
+              "w": 272,
+              "h": 30
+            }
+          }
+        ]
+      },
+      {
+        "after": "pin",
+        "selector": "Pinned header",
+        "tag": "span",
+        "text": "Pinned",
+        "aria": null,
+        "bbox": {
+          "x": 68,
+          "y": 174,
+          "w": 46,
+          "h": 21
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "after": "pin",
+        "selector": "Recents header",
+        "tag": "span",
+        "text": "Recents",
+        "aria": null,
+        "bbox": {
+          "x": 68,
+          "y": 341,
+          "w": 54,
+          "h": 21
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        }
+      },
+      {
+        "after": "rest",
+        "selector": "[aria-label=\"Unpin chat\"]",
+        "name": "unpin-rest",
+        "tag": "button",
+        "text": "",
+        "aria": "Unpin chat",
+        "bbox": {
+          "x": 276,
+          "y": 208,
+          "w": 20,
+          "h": 20
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        },
+        "groupOpacity": "0",
+        "groupClass": "opacity-0 group-hover:opacity-100"
+      },
+      {
+        "after": "rest",
+        "selector": "[aria-label=\"Archive chat\"] (pinned row)",
+        "tag": "button",
+        "text": "",
+        "aria": "Archive chat",
+        "bbox": {
+          "x": 304,
+          "y": 208,
+          "w": 20,
+          "h": 20
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        },
+        "groupOpacity": "0"
+      },
+      {
+        "after": "rest",
+        "selector": "[aria-label=\"Pin chat\"] (Recents row)",
+        "tag": "button",
+        "text": "",
+        "aria": "Pin chat",
+        "bbox": {
+          "x": 276,
+          "y": 375,
+          "w": 20,
+          "h": 20
+        },
+        "computed": {
+          "backgroundColor": "rgba(0, 0, 0, 0)",
+          "color": "rgba(255, 255, 255, 0.498)",
+          "opacity": "1",
+          "outline": "rgba(255, 255, 255, 0.498) none 3px",
+          "boxShadow": "none",
+          "cursor": "default"
+        },
+        "groupOpacity": "0"
+      },
+      {
+        "after": "rest",
+        "selector": "sidebar order (3.5 s)",
+        "order": [
+          "Pinned",
+          "row:Change the greeting ",
+          "Projects",
+          "Recents",
+          "row:Add a subtract(a, b)",
+          "row:In two sentences, wh"
+        ],
+        "toast": null
+      }
+    ],
+    "requests": [
+      {
+        "type": "host",
+        "svc": "pinnedThreads.set",
+        "args": [
+          {
+            "threadId": "01a13de9-c48a-7b20-8382-db900881cb99",
+            "pinned": true,
+            "hostId": "local",
+            "useAppServerPins": true
+          }
+        ]
+      },
+      {
+        "type": "persisted-atom-update",
+        "key": "app-server-pinned-thread-order-v1",
+        "value": [
+          "01a13de9-c48a-7b20-8382-db900881cb99"
+        ]
+      },
+      {
+        "type": "mcp-request",
+        "method": "thread/section/move",
+        "params": {
+          "threadId": "01a13de9-c48a-7b20-8382-db900881cb99",
+          "sectionId": "01984de2-8f74-7c91-a3b2-5c5e937cf318",
+          "beforeThreadId": null
+        },
+        "note": "what the Electron host sends to the app-server for pinnedThreads.set(true); the port sends it directly"
+      }
+    ],
+    "screenshot": "/sdc-disk/tmp/cgx/s001b/shots/s001b-rest.png",
+    "state": {
+      "route": "home"
+    },
+    "sidebar": {
+      "pinned": [
+        "01a13de9-c48a-7b20-8382-db900881cb99"
+      ],
+      "recents": [
+        "01a13de9-6fff-78e1-84fc-ebb3a2dc873f",
+        "01a13de9-35ed-7c72-a36a-68eeb2f4e1ee"
+      ],
+      "toast": null
+    },
+    "refused": {
+      "samples": [
+        {
+          "t": 352,
+          "order": [
+            "Pinned",
+            "row:Change the greeting ",
+            "Projects",
+            "Recents",
+            "row:Add a subtract(a, b)",
+            "row:In two sentences, wh"
+          ],
+          "toast": null
+        },
+        {
+          "t": 795,
+          "order": [
+            "Projects",
+            "Recents",
+            "row:Change the greeting ",
+            "row:Add a subtract(a, b)",
+            "row:In two sentences, wh"
+          ],
+          "toast": null
+        },
+        {
+          "t": 1800,
+          "order": [
+            "Projects",
+            "Recents",
+            "row:Change the greeting ",
+            "row:Add a subtract(a, b)",
+            "row:In two sentences, wh"
+          ],
+          "toast": null
+        },
+        {
+          "t": 3808,
+          "order": [
+            "Projects",
+            "Recents",
+            "row:Change the greeting ",
+            "row:Add a subtract(a, b)",
+            "row:In two sentences, wh"
+          ],
+          "toast": null
+        }
+      ],
+      "requests": [
+        {
+          "type": "persisted-atom-update",
+          "key": "app-server-pinned-thread-order-v1"
+        },
+        {
+          "type": "host",
+          "svc": "pinnedThreads.set",
+          "args": [
+            {
+              "threadId": "01a13de9-c48a-7b20-8382-db900881cb99",
+              "pinned": true,
+              "hostId": "local",
+              "useAppServerPins": true
+            }
+          ],
+          "answer": "throws"
+        },
+        {
+          "type": "persisted-atom-update",
+          "key": "app-server-pinned-thread-order-v1"
+        }
+      ],
+      "screenshot": "/sdc-disk/tmp/cgx/s001b/shots/s001b-refused.png",
+      "toast": null
+    }
+  }
+}
