@@ -1,4 +1,7 @@
 //! Replays the original shell focus boundaries, including disabled history controls.
+//! Traversal must not write to the host. `getAuthStatus` reads only when `refreshToken` is
+//! explicitly false; `includeToken` selects returned data, not a refresh.
+//! Refreshing calls and unknown editing methods remain writes.
 
 mod common;
 
@@ -14,6 +17,42 @@ use std::{fs, time::Duration};
 #[test]
 fn proxy() {
     common::proxy_child();
+}
+
+fn is_write(request: &Value) -> bool {
+    request["method"].as_str().is_some_and(|method| {
+        if method == "getAuthStatus" {
+            return request["params"]["refreshToken"] != false;
+        }
+        request["params"]["refreshToken"] == true
+            || (method != "initialized"
+                && !["/read", "/list", "/get", "/search"]
+                    .iter()
+                    .any(|suffix| method.ends_with(suffix)))
+    })
+}
+
+#[test]
+fn request_checks_reject_refreshes_and_edits() {
+    use serde_json::json;
+
+    for include_token in [false, true] {
+        assert!(!is_write(&json!({
+            "method": "getAuthStatus",
+            "params": {"includeToken": include_token, "refreshToken": false}
+        })));
+    }
+    for request in [
+        json!({"method": "getAuthStatus", "params": {"refreshToken": true}}),
+        json!({"method": "getAuthStatus", "params": {"refreshToken": null}}),
+        json!({"method": "getAuthStatus"}),
+        json!({"method": "account/read", "params": {"refreshToken": true}}),
+        json!({"method": "thread/start"}),
+        json!({"method": "config/batchWrite"}),
+        json!({"method": "getAndEdit"}),
+    ] {
+        assert!(is_write(&request), "{request}");
+    }
 }
 
 fn step(fx: &mut Fx, step: &Value) -> Result<()> {
@@ -103,14 +142,7 @@ fn shell_tab_boundaries_match_original() -> Result<()> {
         .sent()?
         .into_iter()
         .skip(before)
-        .filter(|r| {
-            r["method"].as_str().is_some_and(|m| {
-                m != "initialized"
-                    && !["/read", "/list", "/get", "/search"]
-                        .iter()
-                        .any(|suffix| m.ends_with(suffix))
-            })
-        })
+        .filter(is_write)
         .collect();
     ensure!(
         serde_json::to_value(writes)? == recording["result"]["requests"],
