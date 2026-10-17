@@ -158,7 +158,7 @@ These checks prove the guard; they do not replace the failing Root captures.
 | 15 | `⌘⇧[` / `⌘⇧]` | shortcut | Previous / next chat. | Previous / next Recents row. | PASS (`previous_next_chat`, `menu_bar_actions`) |
 | 16 | `⌘⇧S` / `⌘B` | shortcut | Toggle sidebar. | Toggles. | PASS (`sidebar_toggle_keys`) |
 | 17 | Titlebar `Hide sidebar` | click | Collapses the left panel over a 300 ms spring (main surface slides, sidebar rows fade and shift 16 px); label changes to `Show sidebar`; instant under reduced motion. | The main surface and the sidebar content follow `motion::spring_300` from the toggle's progress; the recorded tooltip stays `Toggle sidebar ⇧⌘S` in both states. | PASS (`sidebar_toggle_titlebar`; `crates/app/tests/s004.rs`; spring frames: `crates/app/tests/ms2.rs` against `refs/interactions/ms2.json`) |
-| 18 | Row focus | focus ring | 2 px ring, offset -2 px. | No tab stops. | NOT WIRED (`crates/ui/src/screens/sidebar.rs` `thread_row`) |
+| 18 | Row focus | focus ring | 2 px ring, offset -2 px. | Tab moves through rows and their Pin and Archive actions; focus reveals the actions. | PASS (`crates/app/tests/f1b.rs`) |
 | 19 | Empty lists | empty | `No projects`, `No chats`; activity `Nothing needs attention`. | Empty `thread/list` gives no Recents (`No chats` branch); `No projects` always. No activity view. | PASS (`sidebar_empty_lists`) |
 | 20 | Lists loading | loading | Activity: `Checking unread chats…`. | — | NOT WIRED (`crates/ui/src/screens/sidebar.rs`: no activity view or loading state) |
 | 21 | Load error | error | `Projects couldn't be loaded` + `Retry`; `Could not load chats`. | A `thread/list` error stops `Root::connect`, so no route shows. | FAIL (`crates/app/src/lib.rs` `connect` treats it as fatal; `crates/ui/src/screens/sidebar.rs` has no error state) |
@@ -177,6 +177,13 @@ The S004 recording uses the original renderer through the Linux route1 stack in 
 Its twelve actions check resize limits, collapse, restored width, titlebar toggles, tooltips, boundary pixels, and no app-server requests.
 The current original tooltip is `Toggle sidebar ⇧⌘S`, not the inventory's `⌘B` label.
 The static parity gate retains all 36 baseline counts.
+
+F1b replays all 30 original steps with `cargo test -p app --test f1b` on macOS.
+Clicking a section header keeps pointer focus; Enter enables its keyboard ring without moving focus.
+The section header retains its original 202×25 px target inside the 272×30 px layout row at the recorded width.
+The S003 header replacement enlarged that target, so the ring moved away from the recorded border pixels.
+The repair restores the shared target and tab group for Projects, Recents, and Pinned without changing the ring painter or input handling.
+The existing replay checks the original colors, row actions, tooltips, canceled row click, Home route, and absence of app-server writes.
 
 ## 14.3 Home
 
@@ -245,7 +252,7 @@ MO-37 and MO-39 remain with the image and block-renderer slices, as approved for
 | 3 | Enter | shortcut | Sends; `⌘ + Enter` modes per setting. | Enter sends; no `Send shortcut` setting. | PASS (`submit_enter_starts_thread`) |
 | 4 | Shift+Enter | shortcut | New line. | New line in the Home and thread composers. | PASS (`shift_enter_newline`) |
 | 5 | `@` | shortcut | Mention list. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
-| 6 | `/` | shortcut | Slash command menu. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
+| 6 | `/` | shortcut | Slash command menu. | Matches the recorded menu, filtering, selected row, editor focus, arrows, Escape, Enter, and Tab. | PASS (`s021::slash_menu_keyboard_replay`) |
 | 7 | Paste large text | click | `Pasted text.txt` chip. | Paste inserts the text. | NOT WIRED (`crates/ui/src/composer.rs` `paste`) |
 | 8 | Drag file over composer | hover | `Drop to attach`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 9 | Attachment chip remove | click | Removes the attachment. | Handler exists (`remove-attachment`). | FAIL (no flow: attachments come only from the system file picker, which the headless window does not answer) |
@@ -260,6 +267,15 @@ MO-37 and MO-39 remain with the image and block-renderer slices, as approved for
 | 18 | Button hover | hover | Ghost hover; tooltip after a delay. | Hover fill; no tooltip. | FAIL (no tooltip: `crates/ui/src/composer.rs`; fill checked by `composer_button_hover`) |
 | 19 | Focus ring | focus ring | Send button ring. | — | NOT WIRED (`crates/ui/src/composer.rs`: no `focus_visible` ring) |
 | 20 | Resize | resize | Below 40rem the editor and footer stack. | Only the 475 px compact footer. | FAIL (`crates/ui/src/composer.rs`) |
+
+S021 replays all 16 original steps from `refs/interactions/s021.json` for CP-054 and CP-055.
+The surface check covers the menu's top and bottom padding across its width, outside the rounded corners.
+Filtered selected rows cover the former scrollbar gutter, so that gutter cannot identify the menu background.
+The original ArrowDown counterfactual changes the old sample without changing the menu bounds, draft, or focus.
+The replay retains the selected-row color, command order, focus, and exact request checks.
+Run `tools/mac.sh -l s021-repair 'cargo test -p app --test s021 --test s019 --test s020 --test s022 -- --test-threads=1'`.
+The neighboring checks retain command draft rules, mention navigation, atomic chips, undo, and editor input.
+Other command bodies and the plus Add menu remain outside S021.
 
 The S023 test replays `refs/interactions/s023.json`, recorded from the original renderer with the isolated Linux route1 stub.
 It checks the Stop pixels, request, error toast, focus, completion, and inactive click.
