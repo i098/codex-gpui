@@ -12,6 +12,8 @@ use common::{Fx, script};
 use gpui::EntityInputHandler as _;
 use serde_json::{Value, json};
 
+type RecordedSection = (Option<String>, Vec<(String, bool)>);
+
 #[test]
 fn proxy() {
     common::proxy_child();
@@ -19,7 +21,7 @@ fn proxy() {
 
 /// Rows of the recorded `Add` and `Files` sections the port lists (the original's Plugins,
 /// Agents, Pages and Spaces come from host services the port does not have).
-fn recorded_sections(menu: &Value) -> Vec<(Option<String>, Vec<(String, bool)>)> {
+fn recorded_sections(menu: &Value) -> Vec<RecordedSection> {
     menu["sections"]
         .as_array()
         .into_iter()
