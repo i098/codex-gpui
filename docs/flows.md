@@ -497,3 +497,23 @@ It also checks the original hover color, expanded rows, collapse, and hidden com
 [Original screenshot](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/003c2454a49370802469ed64320fe26f160b4da61215578a/original-group-expanded.png).
 [Port screenshot](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/003c2454a49370802469ed64320fe26f160b4da61215578a/s014-group-expanded.png).
 
+
+## F3c: Model announcement (SH-142)
+
+`crates/app/tests/f3c.rs` checks the recorded GPT-6.1 Sol announcement on the Mac headless app.
+The recording is `refs/interactions/f3c.json`.
+The dialog keeps the original image, title, message, button labels, focus order, and dismissal controls.
+The tests cover both primary responses, the secondary button, Escape, Close, outside clicks, and the stored once-only history.
+
+The primary action writes the model and reasoning effort with `config/batchWrite`.
+A rejected write keeps the current model and shows the original error message.
+Both outcomes remember the announcement.
+`seen-model-upgrade-list` uses the existing global host-settings store.
+Each dismissal test reads the resulting file and starts a new app context without changing that file.
+The new context does not show the same announcement.
+
+The shared replay uses the recording's empty initial history.
+Ordinary replay data keeps the original baseline history from `tools/route1/oracle.json`.
+The ordinary checks use the separate fixture-preparation prerequisite.
+No original profile, sign-in flow, or legacy dialog assertion changes.
+
