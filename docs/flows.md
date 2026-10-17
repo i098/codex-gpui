@@ -137,6 +137,10 @@ These checks prove the guard; they do not replace the failing Root captures.
 | 11 | Focus ring | focus ring | 2 px ring on the 36×36 button. | No tab stops. | NOT WIRED (`crates/ui/src/lib.rs` `Shell::rail`: no focus handles or `focus_visible` ring) |
 | 12 | Resize | resize | At 1280, 767 and 600 px the rail stays 52 px. | The rail stays and rail Home answers at all 3 widths. | PASS (`resize_three_widths`) |
 
+Home reselect clears the draft and keeps the current focus only when the main view is `HomeMain`.
+Home rail selection can identify the Thread route family; it does not identify the current Home view.
+Thread-to-Home navigation keeps the Home composer focus set by `Root::new_chat`.
+
 ## 14.2 Sidebar
 
 | # | Item | Kind | Original | Port | Status |
