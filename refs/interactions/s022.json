@@ -1,0 +1,1037 @@
+{
+ "name": "s022-composer-edit",
+ "viewport": {
+  "w": 1280,
+  "h": 832,
+  "dpr": 1,
+  "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+  "theme": "dark",
+  "hoverEmulated": true
+ },
+ "note": "Recorded on route1 (Linux headless Chrome, navigator.platform Linux): each key step carries `key` (the Mac chord), `sent` (the chord Linux Chrome got, Meta mapped to Ctrl for ProseMirror's Mod) and the Blink editing `commands` macOS Chrome attaches from its system key bindings (Input.dispatchKeyEvent), so word movement and deletes run Blink's Mac commands. `result.dom[].editor` is the editor's text with the selection's anchor and focus as character offsets. `result.contextMenus[].dom` are the DOM `contextmenu` params (what Electron main's `context-menu` event gets); `menu.items` are the editable-field template of main-CqEoQDOU.js (`installNativeContextMenu`: Cut/Copy/Paste with CmdOrCtrl accelerators, Look Up and Search with Google with a selection, no Select All on darwin), which route1 cannot show.",
+ "steps": [
+  {
+   "type": "click",
+   "target": {
+    "selector": "[data-app-action-sidebar-thread-row][aria-label^=\"Add a subtract\"]",
+    "text": "Add a subtract(a, b) function to src/math.py next to add, then run python3 -c '…",
+    "bbox": {
+     "x": 60,
+     "y": 321,
+     "w": 272,
+     "h": 30
+    }
+   },
+   "waitThread": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f"
+  },
+  {
+   "type": "bridge",
+   "method": "turn/started",
+   "params": {
+    "threadId": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f",
+    "turn": {
+     "id": "s022-turn",
+     "items": [],
+     "status": "inProgress",
+     "error": null
+    }
+   },
+   "note": "Holds a turn in progress on the open thread (the stub never starts one)."
+  },
+  {
+   "type": "bridge",
+   "method": "turn/completed",
+   "params": {
+    "threadId": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f",
+    "turn": {
+     "id": "s022-turn",
+     "items": [],
+     "status": "completed",
+     "error": null
+    }
+   }
+  },
+  {
+   "type": "click",
+   "target": {
+    "selector": "[data-composer-placement=thread] .ProseMirror",
+    "bbox": {
+     "x": 453,
+     "y": 728,
+     "w": 712,
+     "h": 44
+    }
+   }
+  },
+  {
+   "type": "type",
+   "text": "abc"
+  },
+  {
+   "type": "type",
+   "text": "def",
+   "note": "700 ms after `abc`: a second history group (newGroupDelay 500 ms)."
+  },
+  {
+   "type": "key",
+   "key": "Meta+Z",
+   "sent": {
+    "key": "Ctrl+Z",
+    "commands": []
+   },
+   "portKey": "cmd-z"
+  },
+  {
+   "type": "key",
+   "key": "Meta+Z",
+   "sent": {
+    "key": "Ctrl+Z",
+    "commands": []
+   },
+   "portKey": "cmd-z"
+  },
+  {
+   "type": "key",
+   "key": "Meta+Z",
+   "sent": {
+    "key": "Ctrl+Z",
+    "commands": []
+   },
+   "portKey": "cmd-z",
+   "note": "Nothing left to undo."
+  },
+  {
+   "type": "key",
+   "key": "Meta+Shift+Z",
+   "sent": {
+    "key": "Ctrl+Shift+Z",
+    "commands": []
+   },
+   "portKey": "cmd-shift-z"
+  },
+  {
+   "type": "key",
+   "key": "Meta+Shift+Z",
+   "sent": {
+    "key": "Ctrl+Shift+Z",
+    "commands": []
+   },
+   "portKey": "cmd-shift-z"
+  },
+  {
+   "type": "key",
+   "key": "Meta+Shift+Z",
+   "sent": {
+    "key": "Ctrl+Shift+Z",
+    "commands": []
+   },
+   "portKey": "cmd-shift-z",
+   "note": "Nothing left to redo."
+  },
+  {
+   "type": "key",
+   "key": "Meta+A",
+   "sent": {
+    "key": "Ctrl+A",
+    "commands": [
+     "selectAll"
+    ]
+   },
+   "portKey": "cmd-a"
+  },
+  {
+   "type": "type",
+   "text": "one two three"
+  },
+  {
+   "type": "key",
+   "key": "Alt+ArrowLeft",
+   "sent": {
+    "key": "Alt+ArrowLeft",
+    "commands": [
+     "moveWordLeft"
+    ]
+   },
+   "portKey": "alt-left"
+  },
+  {
+   "type": "key",
+   "key": "Alt+ArrowLeft",
+   "sent": {
+    "key": "Alt+ArrowLeft",
+    "commands": [
+     "moveWordLeft"
+    ]
+   },
+   "portKey": "alt-left"
+  },
+  {
+   "type": "key",
+   "key": "Alt+Shift+ArrowLeft",
+   "sent": {
+    "key": "Alt+Shift+ArrowLeft",
+    "commands": [
+     "moveWordLeftAndModifySelection"
+    ]
+   },
+   "portKey": "alt-shift-left"
+  },
+  {
+   "type": "key",
+   "key": "Alt+ArrowRight",
+   "sent": {
+    "key": "Alt+ArrowRight",
+    "commands": [
+     "moveWordRight"
+    ]
+   },
+   "portKey": "alt-right"
+  },
+  {
+   "type": "key",
+   "key": "Alt+Shift+ArrowRight",
+   "sent": {
+    "key": "Alt+Shift+ArrowRight",
+    "commands": [
+     "moveWordRightAndModifySelection"
+    ]
+   },
+   "portKey": "alt-shift-right"
+  },
+  {
+   "type": "key",
+   "key": "Alt+ArrowRight",
+   "sent": {
+    "key": "Alt+ArrowRight",
+    "commands": [
+     "moveWordRight"
+    ]
+   },
+   "portKey": "alt-right"
+  },
+  {
+   "type": "key",
+   "key": "Alt+ArrowRight",
+   "sent": {
+    "key": "Alt+ArrowRight",
+    "commands": [
+     "moveWordRight"
+    ]
+   },
+   "portKey": "alt-right",
+   "note": "At the end already."
+  },
+  {
+   "type": "key",
+   "key": "Alt+Backspace",
+   "sent": {
+    "key": "Alt+Backspace",
+    "commands": [
+     "deleteWordBackward"
+    ]
+   },
+   "portKey": "alt-backspace"
+  },
+  {
+   "type": "key",
+   "key": "Alt+ArrowLeft",
+   "sent": {
+    "key": "Alt+ArrowLeft",
+    "commands": [
+     "moveWordLeft"
+    ]
+   },
+   "portKey": "alt-left"
+  },
+  {
+   "type": "key",
+   "key": "Alt+Delete",
+   "sent": {
+    "key": "Alt+Delete",
+    "commands": [
+     "deleteWordForward"
+    ]
+   },
+   "portKey": "alt-delete"
+  },
+  {
+   "type": "key",
+   "key": "End",
+   "sent": {
+    "key": "End",
+    "commands": [
+     "moveToEndOfLine"
+    ]
+   },
+   "portKey": "end"
+  },
+  {
+   "type": "key",
+   "key": "Meta+Backspace",
+   "sent": {
+    "key": "Ctrl+Backspace",
+    "commands": [
+     "deleteToBeginningOfLine"
+    ]
+   },
+   "portKey": "cmd-backspace"
+  },
+  {
+   "type": "type",
+   "text": "one two three"
+  },
+  {
+   "type": "key",
+   "key": "Meta+A",
+   "sent": {
+    "key": "Ctrl+A",
+    "commands": [
+     "selectAll"
+    ]
+   },
+   "portKey": "cmd-a"
+  },
+  {
+   "type": "key",
+   "key": "Meta+C",
+   "sent": {
+    "key": "Ctrl+C",
+    "commands": [
+     "copy"
+    ]
+   },
+   "portKey": "cmd-c"
+  },
+  {
+   "type": "key",
+   "key": "End",
+   "sent": {
+    "key": "End",
+    "commands": [
+     "moveToEndOfLine"
+    ]
+   },
+   "portKey": "end"
+  },
+  {
+   "type": "key",
+   "key": "Meta+V",
+   "sent": {
+    "key": "Ctrl+V",
+    "commands": [
+     "paste"
+    ]
+   },
+   "portKey": "cmd-v"
+  },
+  {
+   "type": "key",
+   "key": "Meta+A",
+   "sent": {
+    "key": "Ctrl+A",
+    "commands": [
+     "selectAll"
+    ]
+   },
+   "portKey": "cmd-a"
+  },
+  {
+   "type": "key",
+   "key": "Meta+X",
+   "sent": {
+    "key": "Ctrl+X",
+    "commands": [
+     "cut"
+    ]
+   },
+   "portKey": "cmd-x"
+  },
+  {
+   "type": "key",
+   "key": "Meta+V",
+   "sent": {
+    "key": "Ctrl+V",
+    "commands": [
+     "paste"
+    ]
+   },
+   "portKey": "cmd-v"
+  },
+  {
+   "type": "key",
+   "key": "Meta+A",
+   "sent": {
+    "key": "Ctrl+A",
+    "commands": [
+     "selectAll"
+    ]
+   },
+   "portKey": "cmd-a"
+  },
+  {
+   "type": "key",
+   "key": "Backspace",
+   "sent": {
+    "key": "Backspace",
+    "commands": []
+   },
+   "portKey": "backspace"
+  },
+  {
+   "type": "type",
+   "text": "one two three"
+  },
+  {
+   "type": "context-menu",
+   "target": {
+    "selector": "[data-composer-placement=thread] .ProseMirror"
+   },
+   "at": {
+    "x": 493,
+    "y": 738
+   },
+   "note": "On the word `two`, no selection."
+  },
+  {
+   "type": "context-menu",
+   "target": {
+    "selector": "[data-composer-placement=thread] .ProseMirror"
+   },
+   "at": {
+    "x": 1145,
+    "y": 738
+   },
+   "note": "Past the end of the text."
+  },
+  {
+   "type": "key",
+   "key": "Meta+A",
+   "sent": {
+    "key": "Ctrl+A",
+    "commands": [
+     "selectAll"
+    ]
+   },
+   "portKey": "cmd-a"
+  },
+  {
+   "type": "context-menu",
+   "target": {
+    "selector": "[data-composer-placement=thread] .ProseMirror"
+   },
+   "at": {
+    "x": 493,
+    "y": 738
+   },
+   "note": "With the whole draft selected."
+  },
+  {
+   "type": "key",
+   "key": "Meta+A",
+   "sent": {
+    "key": "Ctrl+A",
+    "commands": [
+     "selectAll"
+    ]
+   },
+   "portKey": "cmd-a"
+  },
+  {
+   "type": "key",
+   "key": "Backspace",
+   "sent": {
+    "key": "Backspace",
+    "commands": []
+   },
+   "portKey": "backspace"
+  },
+  {
+   "type": "context-menu",
+   "target": {
+    "selector": "[data-composer-placement=thread] .ProseMirror"
+   },
+   "at": {
+    "x": 493,
+    "y": 738
+   },
+   "note": "Empty editor."
+  }
+ ],
+ "result": {
+  "dom": [
+   {
+    "afterStep": 0,
+    "state": "idle thread",
+    "ariaLabel": "Work with Codex",
+    "placeholder": "Work with Codex",
+    "empty": true,
+    "bbox": {
+     "x": 453,
+     "y": 728,
+     "w": 712,
+     "h": 44
+    },
+    "stop": null
+   },
+   {
+    "afterStep": 1,
+    "state": "turn in progress",
+    "ariaLabel": "Work with Codex",
+    "placeholder": "Work with Codex",
+    "empty": true,
+    "bbox": {
+     "x": 453,
+     "y": 728,
+     "w": 712,
+     "h": 44
+    },
+    "stop": {
+     "x": 1141,
+     "y": 776,
+     "w": 28,
+     "h": 28
+    }
+   },
+   {
+    "afterStep": 2,
+    "state": "turn completed",
+    "ariaLabel": "Work with Codex",
+    "placeholder": "Work with Codex",
+    "empty": true,
+    "bbox": {
+     "x": 453,
+     "y": 728,
+     "w": 712,
+     "h": 44
+    },
+    "stop": null
+   },
+   {
+    "afterStep": 3,
+    "editor": {
+     "text": "",
+     "anchor": 0,
+     "focus": 0,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 4,
+    "editor": {
+     "text": "abc",
+     "anchor": 3,
+     "focus": 3,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 5,
+    "editor": {
+     "text": "abcdef",
+     "anchor": 6,
+     "focus": 6,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 6,
+    "editor": {
+     "text": "abc",
+     "anchor": 3,
+     "focus": 3,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 7,
+    "editor": {
+     "text": "",
+     "anchor": 0,
+     "focus": 0,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 8,
+    "editor": {
+     "text": "",
+     "anchor": 0,
+     "focus": 0,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 9,
+    "editor": {
+     "text": "abc",
+     "anchor": 3,
+     "focus": 3,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 10,
+    "editor": {
+     "text": "abcdef",
+     "anchor": 6,
+     "focus": 6,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 11,
+    "editor": {
+     "text": "abcdef",
+     "anchor": 6,
+     "focus": 6,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 12,
+    "editor": {
+     "text": "abcdef",
+     "anchor": 0,
+     "focus": 6,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 13,
+    "editor": {
+     "text": "one two three",
+     "anchor": 13,
+     "focus": 13,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 14,
+    "editor": {
+     "text": "one two three",
+     "anchor": 8,
+     "focus": 8,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 15,
+    "editor": {
+     "text": "one two three",
+     "anchor": 4,
+     "focus": 4,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 16,
+    "editor": {
+     "text": "one two three",
+     "anchor": 4,
+     "focus": 0,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 17,
+    "editor": {
+     "text": "one two three",
+     "anchor": 3,
+     "focus": 3,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 18,
+    "editor": {
+     "text": "one two three",
+     "anchor": 3,
+     "focus": 7,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 19,
+    "editor": {
+     "text": "one two three",
+     "anchor": 13,
+     "focus": 13,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 20,
+    "editor": {
+     "text": "one two three",
+     "anchor": 13,
+     "focus": 13,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 21,
+    "editor": {
+     "text": "one two ",
+     "anchor": 8,
+     "focus": 8,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 22,
+    "editor": {
+     "text": "one two ",
+     "anchor": 4,
+     "focus": 4,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 23,
+    "editor": {
+     "text": "one  ",
+     "anchor": 4,
+     "focus": 4,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 24,
+    "editor": {
+     "text": "one  ",
+     "anchor": 5,
+     "focus": 5,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 25,
+    "editor": {
+     "text": "",
+     "anchor": 0,
+     "focus": 0,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 26,
+    "editor": {
+     "text": "one two three",
+     "anchor": 13,
+     "focus": 13,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 27,
+    "editor": {
+     "text": "one two three",
+     "anchor": 0,
+     "focus": 13,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 28,
+    "editor": {
+     "text": "one two three",
+     "anchor": 0,
+     "focus": 13,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 29,
+    "editor": {
+     "text": "one two three",
+     "anchor": 13,
+     "focus": 13,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 30,
+    "editor": {
+     "text": "one two threeone two three",
+     "anchor": 26,
+     "focus": 26,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 31,
+    "editor": {
+     "text": "one two threeone two three",
+     "anchor": 0,
+     "focus": 26,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 32,
+    "editor": {
+     "text": "",
+     "anchor": 0,
+     "focus": 0,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 33,
+    "editor": {
+     "text": "one two threeone two three",
+     "anchor": 26,
+     "focus": 26,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 34,
+    "editor": {
+     "text": "one two threeone two three",
+     "anchor": 0,
+     "focus": 26,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 35,
+    "editor": {
+     "text": "",
+     "anchor": 0,
+     "focus": 0,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 36,
+    "editor": {
+     "text": "one two three",
+     "anchor": 13,
+     "focus": 13,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 39,
+    "editor": {
+     "text": "one two three",
+     "anchor": 0,
+     "focus": 13,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 41,
+    "editor": {
+     "text": "one two three",
+     "anchor": 0,
+     "focus": 13,
+     "focused": true
+    }
+   },
+   {
+    "afterStep": 42,
+    "editor": {
+     "text": "",
+     "anchor": 0,
+     "focus": 0,
+     "focused": true
+    }
+   }
+  ],
+  "contextMenus": [
+   {
+    "afterStep": 37,
+    "dom": {
+     "x": 493,
+     "y": 738,
+     "selectionText": "",
+     "isEditable": true,
+     "inComposer": true,
+     "defaultPrevented": false
+    },
+    "editor": {
+     "text": "one two three",
+     "anchor": 6,
+     "focus": 6,
+     "focused": true
+    },
+    "shown": true,
+    "menu": {
+     "pos": {
+      "x": 493,
+      "y": 738
+     },
+     "items": [
+      {
+       "id": "cut",
+       "label": "Cut",
+       "accelerator": "CmdOrCtrl+X",
+       "enabled": false
+      },
+      {
+       "id": "copy",
+       "label": "Copy",
+       "accelerator": "CmdOrCtrl+C",
+       "enabled": false
+      },
+      {
+       "id": "paste",
+       "label": "Paste",
+       "accelerator": "CmdOrCtrl+V",
+       "enabled": true
+      }
+     ]
+    }
+   },
+   {
+    "afterStep": 38,
+    "dom": {
+     "x": 1145,
+     "y": 738,
+     "selectionText": "",
+     "isEditable": true,
+     "inComposer": true,
+     "defaultPrevented": false
+    },
+    "editor": {
+     "text": "one two three",
+     "anchor": 13,
+     "focus": 13,
+     "focused": true
+    },
+    "shown": true,
+    "menu": {
+     "pos": {
+      "x": 1145,
+      "y": 738
+     },
+     "items": [
+      {
+       "id": "cut",
+       "label": "Cut",
+       "accelerator": "CmdOrCtrl+X",
+       "enabled": false
+      },
+      {
+       "id": "copy",
+       "label": "Copy",
+       "accelerator": "CmdOrCtrl+C",
+       "enabled": false
+      },
+      {
+       "id": "paste",
+       "label": "Paste",
+       "accelerator": "CmdOrCtrl+V",
+       "enabled": true
+      }
+     ]
+    }
+   },
+   {
+    "afterStep": 40,
+    "dom": {
+     "x": 493,
+     "y": 738,
+     "selectionText": "one two three",
+     "isEditable": true,
+     "inComposer": true,
+     "defaultPrevented": false
+    },
+    "editor": {
+     "text": "one two three",
+     "anchor": 0,
+     "focus": 13,
+     "focused": true
+    },
+    "shown": true,
+    "menu": {
+     "pos": {
+      "x": 493,
+      "y": 738
+     },
+     "items": [
+      {
+       "id": "lookUpSelection",
+       "label": "Look Up “one two three”",
+       "enabled": true
+      },
+      {
+       "id": "searchWithGoogle",
+       "label": "Search with Google",
+       "enabled": true
+      },
+      {
+       "type": "separator"
+      },
+      {
+       "id": "cut",
+       "label": "Cut",
+       "accelerator": "CmdOrCtrl+X",
+       "enabled": true
+      },
+      {
+       "id": "copy",
+       "label": "Copy",
+       "accelerator": "CmdOrCtrl+C",
+       "enabled": true
+      },
+      {
+       "id": "paste",
+       "label": "Paste",
+       "accelerator": "CmdOrCtrl+V",
+       "enabled": true
+      }
+     ]
+    }
+   },
+   {
+    "afterStep": 43,
+    "dom": {
+     "x": 493,
+     "y": 738,
+     "selectionText": "",
+     "isEditable": true,
+     "inComposer": true,
+     "defaultPrevented": false
+    },
+    "editor": {
+     "text": "",
+     "anchor": 0,
+     "focus": 0,
+     "focused": true
+    },
+    "shown": true,
+    "menu": {
+     "pos": {
+      "x": 493,
+      "y": 738
+     },
+     "items": [
+      {
+       "id": "cut",
+       "label": "Cut",
+       "accelerator": "CmdOrCtrl+X",
+       "enabled": false
+      },
+      {
+       "id": "copy",
+       "label": "Copy",
+       "accelerator": "CmdOrCtrl+C",
+       "enabled": false
+      },
+      {
+       "id": "paste",
+       "label": "Paste",
+       "accelerator": "CmdOrCtrl+V",
+       "enabled": true
+      }
+     ]
+    }
+   }
+  ],
+  "requests": [],
+  "platform": "Linux x86_64"
+ }
+}

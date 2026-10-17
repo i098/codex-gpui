@@ -71,6 +71,7 @@ pub type MentionSection = (Option<&'static str>, Vec<(String, bool)>);
 /// A mention chip in `content`: `range` holds [`ICON_SLOT`] and the label; the prompt sends
 /// `link` in its place. One atom, like ProseMirror's: the caret never enters it and any edit
 /// that touches it deletes it whole.
+#[derive(Clone)]
 pub struct Mention {
     pub(super) range: Range<usize>,
     pub(super) icon: &'static str,
@@ -246,6 +247,8 @@ impl Composer {
         }
         if completed {
             search.searching = false;
+            cx.notify();
+            return;
         } else {
             search.files = params["files"]
                 .as_array()
@@ -307,6 +310,7 @@ impl Composer {
                 (file.name.clone(), link, "diff-jump-to-file")
             }
         };
+        self.remember(&self.slash.range.clone());
         let range = self.splice(self.slash.range.clone(), &format!("{ICON_SLOT}{label} "));
         let end = range.start + ICON_SLOT.len() + label.len();
         let at = self

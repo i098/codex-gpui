@@ -47,7 +47,7 @@ mod items;
 #[path = "thread/markdown.rs"]
 mod markdown;
 #[path = "thread/menu.rs"]
-mod menu;
+pub(crate) mod menu;
 #[path = "thread/select.rs"]
 mod select;
 
@@ -119,7 +119,8 @@ pub struct ThreadView {
     /// press that focuses it).
     press_focus: Option<gpui::FocusHandle>,
     find: Option<FindState>,
-    menu: Option<menu::LinkMenu>,
+    /// The link menu (`menu.rs`): `subject` is the right-clicked link.
+    menu: Option<menu::ContextMenu>,
 }
 
 struct StreamSegment {
