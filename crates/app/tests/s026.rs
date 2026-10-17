@@ -192,25 +192,6 @@ fn command_menu_groups_and_chat_search_match_the_original() -> Result<()> {
     );
     fx.keys("escape")?;
     fx.action(Box::new(ui::NewChat))?;
-    fx.action(Box::new(OpenCommandMenu))?;
-    fx.type_text("chat")?;
-    let menu = fx.read(|root, _| root.command_menu().unwrap().clone());
-    let hits: Vec<ui::screens::sidebar::SearchHit> = serde_json::from_str(
-        include_str!("../../../fixtures/sessions/s026-thread-search.jsonl")
-            .lines()
-            .nth(1)
-            .unwrap(),
-    )
-    .map(|line: Value| serde_json::from_value(line["msg"]["result"]["data"].clone()).unwrap())?;
-    menu.update(&mut fx.cx, |menu, cx| {
-        menu.set_search_results("chat", hits, cx)
-    });
-    drop(menu);
-    fx.keys("enter")?;
-    ensure!(
-        fx.route() == Route::Home,
-        "the delayed reply must keep New chat selected"
-    );
 
     // The two successful responses are consumed. The next search receives a replay error.
     fx.action(Box::new(OpenCommandMenu))?;

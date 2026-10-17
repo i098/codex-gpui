@@ -143,6 +143,20 @@ fn request(requests: Vec<(&'static str, Value)>, cx: &App) {
 }
 
 impl Composer {
+    pub(super) fn toggle_add(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.slash.add_mouse_open) || (self.slash.open && self.slash.mention)
+        {
+            self.close_slash(cx);
+        } else {
+            self.end_search(cx);
+            self.slash.reset();
+            self.slash.add = Some(self.cursor());
+            self.slash.open = true;
+            self.refresh_slash(cx);
+        }
+        self.focus_handle.focus(window, cx);
+    }
+
     /// Workspace roots the `Files` section searches; none hides the section (Home).
     pub fn set_search_roots(&mut self, roots: Vec<String>) {
         self.slash.search.roots = roots;
@@ -348,6 +362,10 @@ impl Composer {
             }
             !hit
         });
+        if self.slash.add.is_some_and(|start| range.start < start) {
+            self.slash.open = false;
+            self.slash.add = None;
+        }
         self.content.replace_range(range.clone(), text);
         let delta = text.len() as isize - range.len() as isize;
         for m in &mut self.mentions {
@@ -403,7 +421,8 @@ impl Composer {
     /// The list's sections: `Add` and `Files` for an empty query, else the ranked rows or
     /// one note (`Searching…`, `No results`).
     fn sections(&self) -> Vec<(Option<&'static str>, Vec<Row>)> {
-        if self.content[self.slash.range.start + 1..self.slash.range.end].is_empty() {
+        let start = self.slash.range.start + usize::from(self.slash.add.is_none());
+        if self.content[start..self.slash.range.end].is_empty() {
             let add = ACTIONS
                 .iter()
                 .enumerate()

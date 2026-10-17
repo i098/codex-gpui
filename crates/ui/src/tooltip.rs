@@ -205,7 +205,8 @@ pub struct Tooltip {
 }
 
 impl Tooltip {
-    /// Opens on keyboard focus using the trigger's existing focus handle.
+    /// Opens immediately on keyboard focus using the trigger's existing focus handle.
+    /// Set this when the trigger is first rendered. Pointer focus does not open the tooltip.
     pub fn focus_handle(mut self, focus_handle: &FocusHandle) -> Self {
         self.focus_handle = Some(focus_handle.clone());
         self
@@ -221,7 +222,6 @@ impl Tooltip {
         self.delay = delay;
         self
     }
-
     /// Sets the gap from the trigger's absolute-positioning edge, inside its border.
     pub fn side_offset(mut self, side_offset: Pixels) -> Self {
         self.side_offset = side_offset;
@@ -245,7 +245,7 @@ impl RenderOnce for Tooltip {
                         if window.last_input_was_keyboard()
                             && let Some(spec) = state.focus_spec.clone()
                         {
-                            // Native focus callbacks run while drawing; notify after that frame.
+                            // Focus callbacks run during drawing; notify after the frame ends.
                             cx.defer_in(window, move |state, _, cx| {
                                 state.epoch += 1;
                                 state.open(spec, cx);

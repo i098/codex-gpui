@@ -11,6 +11,8 @@
 //! Needs the Metal headless renderer: macOS only.
 #![cfg(target_os = "macos")]
 
+mod common;
+
 use anyhow::{Context as _, Result, ensure};
 use app::{Root, State, ThemeSetting};
 use bridge::Bridge;
@@ -140,9 +142,11 @@ impl Fx {
             Arc::new(theme::Assets),
             gpui_platform::current_headless_renderer,
         );
+        let settings = common::recorded_host_settings()?;
         cx.update(|cx| {
             theme::load_fonts(cx);
             cx.set_global(theme::Theme::dark());
+            cx.set_global(settings);
             app::init(cx);
         });
         cx.allow_parking();
