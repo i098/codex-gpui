@@ -165,13 +165,13 @@ fn switch_follows_recorded_tracks() -> Result<()> {
                             mix(c, c, 0., card)
                         }
                     };
-                    for channel in 0..3 {
+                    for (channel, &observed) in observed.iter().enumerate() {
                         let range = bracket(translate, index, 0, |s| expected(s)[channel]);
                         ensure!(
-                            within(observed[channel], range, 1.5),
+                            within(observed, range, 1.5),
                             "{name} reduced={reduced} at {:?}: track channel {channel} is {}, expected {range:?}",
                             ms(sample),
-                            observed[channel]
+                            observed
                         );
                     }
                 }
