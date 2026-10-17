@@ -179,6 +179,7 @@ View opens the standalone `/archive` route without the Settings sidebar.
 The original uses a memory router, so its document pathname stays `/` while its route context records `/archive`.
 The port opens `Route::Archive` and reads the local archived chat list.
 The replay checks Undo, View, the exact requests, the hidden sidebar, Back navigation, and the unchanged Settings entry.
+The shared replay runs the same dedicated adapter, so it retains these state and request assertions.
 F3a still checks the toast layout, lifetime, hover pause, swipe, and Undo.
 Archive search, filters, and management actions are separate inventory rows outside AM-101.
 
