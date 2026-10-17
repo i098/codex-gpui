@@ -540,3 +540,36 @@ The fresh original input replay matches the recorded disclosure and activity row
 It also checks the original hover color, expanded rows, collapse, and hidden completed reasoning.
 [Original screenshot](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/003c2454a49370802469ed64320fe26f160b4da61215578a/original-group-expanded.png).
 [Port screenshot](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/003c2454a49370802469ed64320fe26f160b4da61215578a/s014-group-expanded.png).
+
+## F1d projects: Worktree and missing-folder markers
+
+`crates/app/tests/f1d_projects.rs` replays `refs/interactions/f1d_projects.json` through the F4 host.
+The original fixture contains a normal project, a managed worktree, and a missing folder.
+Its collapsed-state values come from actual original row clicks.
+
+The local and cloud hosts read the original `.codex-global-state.json` project and atom keys without rewriting the file.
+Rows preserve `project-order`, trimmed names, and the original first-root marker rules.
+A missing path response does not mark every project as deleted.
+The tests check folder deletion and restoration, malformed entries, ordering, and the `worktrees-extra` prefix boundary.
+
+The worktree icon reuses `thread-fork.svg` inside the original 12.5px superellipse overflow clip.
+That clip is required for the unchanged native glyph pixels to match exactly.
+The missing row uses the original 0.7 opacity and disabled-action tooltip.
+Both tooltip labels, bounds, dismissal, and `-0.15px` tracking follow the original recording.
+The worktree tooltip retains the original zero-size `contents` wrapper placement at the window origin.
+
+Default Recents, pins, status indicators, and paging retain their existing checks.
+Project activation, menus, hover-card actions, and project thread paging are outside RS-081.
+The shared replay selects the dedicated `f1d_projects` adapter.
+
+Run `tools/mac.sh -l f1d-projects 'cargo test -p app --test f1d_projects -- --test-threads=1'`.
+
+| Recorded region | Original | Port |
+|---|---|---|
+| Project rows | [Image](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ff8c28f83516f4fb8545d34d04a67ab08498485936cb345b/project-markers/original-rows.png) | [Image](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ff8c28f83516f4fb8545d34d04a67ab08498485936cb345b/project-markers/port-rows.png) |
+| Worktree tooltip | [Image](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ff8c28f83516f4fb8545d34d04a67ab08498485936cb345b/project-markers/original-worktree-tooltip.png) | [Image](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ff8c28f83516f4fb8545d34d04a67ab08498485936cb345b/project-markers/port-worktree-tooltip.png) |
+| Missing-folder tooltip | [Image](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ff8c28f83516f4fb8545d34d04a67ab08498485936cb345b/project-markers/original-missing-tooltip.png) | [Image](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ff8c28f83516f4fb8545d34d04a67ab08498485936cb345b/project-markers/port-missing-tooltip.png) |
+
+The [strict static report](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ff8c28f83516f4fb8545d34d04a67ab08498485936cb345b/report.html) passes all 36 cases with zero outside-text differences.
+
+
