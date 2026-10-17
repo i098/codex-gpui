@@ -173,6 +173,20 @@ The original shows no toast for this Unpin action.
 S001b replays `refs/interactions/s001b.json` with `cargo test -p app --test s001b` on macOS: the Pin click moves the row under `Pinned` at once, sends `thread/section/move` with the fixed Pinned section, shows no toast, hides the Unpin icon at rest, and a refused move puts the row back without a toast.
 Running-chat and scheduled-task archive confirmation still need a dialog extension outside this six-file slice.
 
+S031 replays `refs/interactions/s031.json` with `cargo test -p app --test s031` on macOS.
+The original recording uses real archive and unarchive replies from an isolated fixture home.
+View opens the standalone `/archive` route without the Settings sidebar.
+The original uses a memory router, so its document pathname stays `/` while its route context records `/archive`.
+The port opens `Route::Archive` and reads the local archived chat list.
+The replay checks Undo, View, the exact requests, the hidden sidebar, Back navigation, and the unchanged Settings entry.
+The shared replay runs the same dedicated adapter, so it retains these state and request assertions.
+The destination loads every cursor page before showing the list.
+Successful Undo also removes the restored row from an open archive page.
+Two review regressions check cursor traversal and Undo after another toast opens View.
+Both regressions use real app-server replies from a fresh isolated fixture home.
+F3a still checks the toast layout, lifetime, hover pause, swipe, and Undo.
+Archive search, filters, and management actions are separate inventory rows outside AM-101.
+
 The S004 recording uses the original renderer through the Linux route1 stack in an isolated Chrome context.
 Its twelve actions check resize limits, collapse, restored width, titlebar toggles, tooltips, boundary pixels, and no app-server requests.
 The current original tooltip is `Toggle sidebar ⇧⌘S`, not the inventory's `⌘B` label.
