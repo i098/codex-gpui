@@ -1,8 +1,7 @@
 //! Context menus drawn in place of Electron's native ones, like the chat actions menu
 //! (`header.rs`): [`ContextMenu`] holds the items, the anchor and keyboard focus for any view;
-//! the transcript's link menu (`electronBridge.showContextMenu`, refs/interactions/s012.json)
-//! is built on it here, the composer's editing menu in `composer.rs`. A right-click on plain
-//! text opens nothing: Electron's default template is empty without a selection.
+//! it builds the transcript's link and selected-text menus here and the composer editing menu.
+//! A right-click without a link or text selection opens nothing.
 use super::*;
 use gpui::{Anchor, FocusHandle, KeyDownEvent, MouseButton, Point, Role, anchored, deferred};
 use std::path::PathBuf;
@@ -47,6 +46,7 @@ pub(crate) struct ContextMenu {
     pub active: Option<usize>,
     focus: FocusHandle,
     return_focus: Option<FocusHandle>,
+    width: f32,
 }
 
 /// What a key did to the open menu.
@@ -65,6 +65,38 @@ impl ContextMenu {
         window: &mut Window,
         cx: &mut App,
     ) -> Self {
+        let text_width = |value: &str| {
+            f32::from(
+                window
+                    .text_system()
+                    .layout_line(
+                        value,
+                        px(13.),
+                        &[TextRun {
+                            len: value.len(),
+                            font: gpui::Font {
+                                weight: FontWeight(430.),
+                                ..font(SANS)
+                            },
+                            color: white(),
+                            ..Default::default()
+                        }],
+                        None,
+                    )
+                    .width,
+            )
+        };
+        let width = items
+            .iter()
+            .filter(|item| !item.separator)
+            .map(|item| {
+                text_width(&item.label)
+                    + item.accelerator.map_or(0., |keys| text_width(keys) + 6.)
+                    + if item.icon.is_some() { 22. } else { 0. }
+                    + 24.
+            })
+            .fold(220., f32::max)
+            .ceil();
         let return_focus = window.focused(cx);
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
@@ -75,6 +107,7 @@ impl ContextMenu {
             active: None,
             return_focus,
             focus,
+            width,
         }
     }
 
@@ -135,7 +168,7 @@ impl ContextMenu {
         id: &'static str,
         aria_label: &'static str,
         menu: fn(&mut V) -> &mut Option<ContextMenu>,
-        activate: fn(&mut V, &'static str, String, &mut Window, &mut Context<V>),
+        activate: impl Fn(&mut V, &'static str, String, &mut Window, &mut Context<V>) + Copy + 'static,
         window: &Window,
         cx: &Context<V>,
     ) -> impl IntoElement {
@@ -237,13 +270,25 @@ impl ContextMenu {
                 })
                 .into_any_element()
         });
-        let popup = crate::composer::popover(t, 220., |d| d.children(rows))
+        let popup = crate::composer::popover(t, self.width, |d| d.children(rows))
             .ml_0()
             .pl_0()
             .id(id)
             .role(Role::Menu)
             .aria_label(aria_label)
             .track_focus(&self.focus)
+            .on_action(cx.listener(move |this, _: &crate::Copy, window, cx| {
+                let index = menu(this).as_ref().and_then(|open| {
+                    open.items
+                        .iter()
+                        .position(|item| item.id == "copy" && item.enabled)
+                });
+                if let Some(index) = index {
+                    pick(this, index, window, cx);
+                } else {
+                    cx.propagate();
+                }
+            }))
             .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
                 let Some(outcome) = menu(this).as_mut().and_then(|m| m.key(event)) else {
                     return;
@@ -329,13 +374,57 @@ pub(super) fn note_right_clicked_link(url: String) {
     RIGHT_CLICKED_LINK.set(Some(url));
 }
 
+fn selected_text_items(_selection: &str) -> Vec<Item> {
+    #[cfg(target_os = "macos")]
+    let lookup = {
+        let trimmed = _selection.trim();
+        let shown = match trimmed.char_indices().nth(24) {
+            Some((index, _)) if trimmed.chars().count() > 25 => format!("{}…", &trimmed[..index]),
+            _ => trimmed.to_owned(),
+        };
+        Item::new("lookUpSelection", format!("Look Up “{shown}”"), true)
+    };
+    vec![
+        #[cfg(target_os = "macos")]
+        lookup,
+        #[cfg(target_os = "macos")]
+        Item::separator("separator"),
+        Item::new("searchWithGoogle", "Search with Google", true),
+        Item::separator("separator"),
+        Item {
+            accelerator: Some("⌘C"),
+            ..Item::new("copy", "Copy", true)
+        },
+    ]
+}
+
+pub(crate) fn selection_url(prefix: &str, selection: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut url = String::with_capacity(prefix.len() + selection.len() * 3);
+    url.push_str(prefix);
+    for byte in selection.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'*' | b'-' | b'.' | b'_' => {
+                url.push(byte as char);
+            }
+            b' ' => url.push('+'),
+            _ => {
+                url.push('%');
+                url.push(HEX[(byte >> 4) as usize] as char);
+                url.push(HEX[(byte & 15) as usize] as char);
+            }
+        }
+    }
+    url
+}
+
 impl ThreadView {
-    /// The open link menu's items as `(id, label, enabled)`; empty when none is open.
+    /// The open transcript menu's items as `(id, label, enabled)`; empty when none is open.
     pub fn context_menu_items(&self) -> impl Iterator<Item = (&str, &str, bool)> {
         self.menu.iter().flat_map(ContextMenu::rows)
     }
 
-    /// Where the open link menu's top-left corner is anchored (the pointer).
+    /// Where the open transcript menu's top-left corner is anchored (the pointer).
     pub fn context_menu_at(&self) -> Option<Point<Pixels>> {
         self.menu.as_ref().map(|menu| menu.position)
     }
@@ -346,34 +435,61 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(url) = RIGHT_CLICKED_LINK.take() else {
+        let (subject, items) = if let Some(url) = RIGHT_CLICKED_LINK.take() {
+            let items = ITEMS
+                .iter()
+                .enumerate()
+                .map(|(index, &(id, label, icon))| Item {
+                    icon,
+                    ..if index == SEPARATOR {
+                        Item::separator(id)
+                    } else {
+                        Item::new(id, label, index != HEADING)
+                    }
+                })
+                .collect();
+            (url, items)
+        } else if let Some(selection) = self.selected_text(window, cx) {
+            let items = selected_text_items(&selection);
+            (selection, items)
+        } else {
             return;
         };
-        let items = ITEMS
-            .iter()
-            .enumerate()
-            .map(|(index, &(id, label, icon))| Item {
-                icon,
-                ..if index == SEPARATOR {
-                    Item::separator(id)
-                } else {
-                    Item::new(id, label, index != HEADING)
-                }
-            })
-            .collect();
-        self.menu = Some(ContextMenu::open(items, url, event.position, window, cx));
+        self.menu = Some(ContextMenu::open(
+            items,
+            subject,
+            event.position,
+            window,
+            cx,
+        ));
         cx.stop_propagation();
         cx.notify();
     }
 
-    fn activate_link(&mut self, id: &str, url: String, _: &mut Window, cx: &mut Context<Self>) {
+    fn activate_context_item(
+        &mut self,
+        id: &str,
+        url: String,
+        _origin: Point<Pixels>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match id {
+            #[cfg(target_os = "macos")]
+            "lookUpSelection" => {
+                if let Err(error) = textsys::show_definition(_window, &url, _origin) {
+                    eprintln!("Look Up failed: {error:#}");
+                }
+            }
+            "searchWithGoogle" => {
+                cx.open_url(&selection_url("https://www.google.com/search?q=", &url))
+            }
             // ponytail: the in-app browser panel (New tab / New window) is not ported; its
             // destinations open the system browser until it is.
             "open-in-new-tab" | "open-in-new-window" | "open-in-external-browser" => {
                 cx.open_url(&url)
             }
-            "copy-link" => cx.write_to_clipboard(ClipboardItem::new_string(url)),
+            "copy-link" | "copy" => cx.write_to_clipboard(ClipboardItem::new_string(url)),
             "save-link-as" => {
                 let downloads = std::env::var_os("HOME")
                     .map(PathBuf::from)
@@ -398,11 +514,19 @@ impl ThreadView {
     }
 
     pub(super) fn menu_overlay(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
-        self.menu.as_ref().expect("open link menu").overlay(
+        let menu = self.menu.as_ref().expect("open transcript menu");
+        let origin = menu.position;
+        menu.overlay(
             "thread-link-menu",
-            "Link actions",
+            if menu.items.iter().any(|item| item.id == "copy") {
+                "Text actions"
+            } else {
+                "Link actions"
+            },
             |this| &mut this.menu,
-            Self::activate_link,
+            move |this, id, subject, window, cx| {
+                this.activate_context_item(id, subject, origin, window, cx);
+            },
             window,
             cx,
         )

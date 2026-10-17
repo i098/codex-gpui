@@ -173,6 +173,20 @@ The original shows no toast for this Unpin action.
 S001b replays `refs/interactions/s001b.json` with `cargo test -p app --test s001b` on macOS: the Pin click moves the row under `Pinned` at once, sends `thread/section/move` with the fixed Pinned section, shows no toast, hides the Unpin icon at rest, and a refused move puts the row back without a toast.
 Running-chat and scheduled-task archive confirmation still need a dialog extension outside this six-file slice.
 
+S031 replays `refs/interactions/s031.json` with `cargo test -p app --test s031` on macOS.
+The original recording uses real archive and unarchive replies from an isolated fixture home.
+View opens the standalone `/archive` route without the Settings sidebar.
+The original uses a memory router, so its document pathname stays `/` while its route context records `/archive`.
+The port opens `Route::Archive` and reads the local archived chat list.
+The replay checks Undo, View, the exact requests, the hidden sidebar, Back navigation, and the unchanged Settings entry.
+The shared replay runs the same dedicated adapter, so it retains these state and request assertions.
+The destination loads every cursor page before showing the list.
+Successful Undo also removes the restored row from an open archive page.
+Two review regressions check cursor traversal and Undo after another toast opens View.
+Both regressions use real app-server replies from a fresh isolated fixture home.
+F3a still checks the toast layout, lifetime, hover pause, swipe, and Undo.
+Archive search, filters, and management actions are separate inventory rows outside AM-101.
+
 The S004 recording uses the original renderer through the Linux route1 stack in an isolated Chrome context.
 Its twelve actions check resize limits, collapse, restored width, titlebar toggles, tooltips, boundary pixels, and no app-server requests.
 The current original tooltip is `Toggle sidebar ⇧⌘S`, not the inventory's `⌘B` label.
@@ -248,6 +262,16 @@ Run `tools/mac.sh -l ms4 'cargo test -p app --test stream_fade'` for native glyp
 The test samples each delta from 0 to 700 ms and checks that earlier glyphs remain unchanged.
 Linux uses a no-op text system, so these glyph checks require macOS.
 MO-37 and MO-39 remain with the image and block-renderer slices, as approved for MS4.
+
+S010 uses the original native menu template in `refs/interactions/s010.json` and the retained S011 paragraph and clipboard contract.
+The selected-text menu enables `Look Up`, `Search with Google`, and `Copy`, with the original separators and Copy shortcut.
+The menu measures its row widths once when it opens, so the original Look Up label fits without clipping.
+`Look Up` calls `textsys::show_definition` at the menu's opening point; it does not open Dictionary.app or change the clipboard.
+`crates/app/tests/s010.rs` checks the rows, selection, clipboard, search URL, dismissal, reverse-selection copy, and absence of app-server requests.
+It checks Copy by mouse and `Cmd+C` while the menu holds focus, with old clipboard text seeded before each action.
+The shared menu restores transcript focus before running an action, so `Cmd+C` still works after dismissal.
+S011 remains unchanged and continues to check paragraph selection and highlight pixels.
+The headless S010 replay has no AppKit view; it checks the missing-handle path without an external-app fallback.
 
 ## 14.5 Composer
 
@@ -546,3 +570,26 @@ The fresh original input replay matches the recorded disclosure and activity row
 It also checks the original hover color, expanded rows, collapse, and hidden completed reasoning.
 [Original screenshot](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/003c2454a49370802469ed64320fe26f160b4da61215578a/original-group-expanded.png).
 [Port screenshot](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/003c2454a49370802469ed64320fe26f160b4da61215578a/s014-group-expanded.png).
+
+
+## Shared tooltip side offset
+
+`Tooltip::side_offset` sets the gap from one trigger's absolute-positioning edge.
+The default remains 2 px; other callers keep their positions.
+
+The native original uses a 1280×832 viewport at scale 2.
+Its Add trigger has bounds `[448.25, 776, 28, 28]`, zero padding, and a 1 px border.
+Its tooltip has vertical bounds `742..772`, with a 4 px gap above the trigger.
+The same capture places Search's tooltip 2 px below its trigger.
+
+The shared bordered pill positions its absolute child at y777.
+The S018 caller can use `.side_offset(px(5.))` to match the original Add tooltip without moving the trigger.
+Add rendering and query changes stay in S018.
+
+`crates/app/tests/f1a.rs` checks the bordered pill at both offsets.
+The selected offset gives vertical bounds `742..772`; the unchanged default gives `745..775`.
+The existing recording still checks all 34 actions and 13 default tooltips.
+
+The [native original capture](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/b3cf204103d640697ec41c58541aab67d5f63b6dde0c7fba/original-add.png) retains the original Add tooltip.
+The [port capture](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/b3cf204103d640697ec41c58541aab67d5f63b6dde0c7fba/s018-add-after.png) uses the S018 smoke snapshot with the offset setter.
+Both captures use the same Mac viewport and scale.
