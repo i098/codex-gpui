@@ -1,0 +1,615 @@
+{
+  "name": "s025-command-query-editing",
+  "source": {
+    "renderer": "original route1",
+    "platform": "MacIntel",
+    "entry": "http://127.0.0.1:4625/index.html?theme=dark",
+    "capture": "Raw CDP on the owned background Mac lane. Meta shortcuts include the Chromium native editing command normally supplied by Cocoa; raw Meta key events alone have no native edit effect in chrome-headless-shell. No original code or startup replies changed."
+  },
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 2,
+    "theme": "dark"
+  },
+  "steps": [
+    {
+      "type": "click",
+      "target": {
+        "selector": "[aria-label=\"Search\"]",
+        "bbox": {
+          "x": 300,
+          "y": 56,
+          "w": 28,
+          "h": 28
+        }
+      },
+      "expected": {
+        "value": "",
+        "start": 0,
+        "end": 0,
+        "direction": "none",
+        "focused": true
+      }
+    },
+    {
+      "type": "type",
+      "text": "greet",
+      "expected": {
+        "value": "greet",
+        "start": 5,
+        "end": 5,
+        "direction": "none",
+        "focused": true
+      }
+    },
+    {
+      "type": "key",
+      "key": "ArrowLeft",
+      "expected": {
+        "value": "greet",
+        "start": 4,
+        "end": 4,
+        "direction": "none",
+        "focused": true
+      },
+      "portKey": "left"
+    },
+    {
+      "type": "type",
+      "text": "x",
+      "expected": {
+        "value": "greext",
+        "start": 5,
+        "end": 5,
+        "direction": "none",
+        "focused": true
+      },
+      "checkpoint": "caret"
+    },
+    {
+      "type": "key",
+      "key": "Shift+ArrowLeft",
+      "expected": {
+        "value": "greext",
+        "start": 4,
+        "end": 5,
+        "direction": "backward",
+        "focused": true
+      },
+      "portKey": "shift-left"
+    },
+    {
+      "type": "key",
+      "key": "Shift+ArrowLeft",
+      "expected": {
+        "value": "greext",
+        "start": 3,
+        "end": 5,
+        "direction": "backward",
+        "focused": true
+      },
+      "portKey": "shift-left"
+    },
+    {
+      "type": "type",
+      "text": "ab",
+      "expected": {
+        "value": "greabt",
+        "start": 5,
+        "end": 5,
+        "direction": "none",
+        "focused": true
+      }
+    },
+    {
+      "type": "key",
+      "key": "Shift+ArrowLeft",
+      "expected": {
+        "value": "greabt",
+        "start": 4,
+        "end": 5,
+        "direction": "backward",
+        "focused": true
+      },
+      "portKey": "shift-left"
+    },
+    {
+      "type": "key",
+      "key": "ArrowRight",
+      "expected": {
+        "value": "greabt",
+        "start": 5,
+        "end": 5,
+        "direction": "none",
+        "focused": true
+      },
+      "portKey": "right"
+    },
+    {
+      "type": "key",
+      "key": "Shift+ArrowLeft",
+      "expected": {
+        "value": "greabt",
+        "start": 4,
+        "end": 5,
+        "direction": "backward",
+        "focused": true
+      },
+      "portKey": "shift-left"
+    },
+    {
+      "type": "key",
+      "key": "ArrowLeft",
+      "expected": {
+        "value": "greabt",
+        "start": 4,
+        "end": 4,
+        "direction": "none",
+        "focused": true
+      },
+      "portKey": "left"
+    },
+    {
+      "type": "key",
+      "key": "Meta+a",
+      "nativeCommand": "selectAll",
+      "expected": {
+        "value": "greabt",
+        "start": 0,
+        "end": 6,
+        "direction": "none",
+        "focused": true
+      },
+      "portKey": "cmd-a"
+    },
+    {
+      "type": "type",
+      "text": "one two three",
+      "expected": {
+        "value": "one two three",
+        "start": 13,
+        "end": 13,
+        "direction": "none",
+        "focused": true
+      }
+    },
+    {
+      "type": "key",
+      "key": "Alt+ArrowLeft",
+      "expected": {
+        "value": "one two three",
+        "start": 8,
+        "end": 8,
+        "direction": "none",
+        "focused": true
+      },
+      "portKey": "alt-left"
+    },
+    {
+      "type": "key",
+      "key": "Alt+ArrowRight",
+      "expected": {
+        "value": "one two three",
+        "start": 13,
+        "end": 13,
+        "direction": "none",
+        "focused": true
+      },
+      "portKey": "alt-right"
+    },
+    {
+      "type": "key",
+      "key": "Alt+Shift+ArrowLeft",
+      "expected": {
+        "value": "one two three",
+        "start": 8,
+        "end": 13,
+        "direction": "backward",
+        "focused": true
+      },
+      "portKey": "alt-shift-left"
+    },
+    {
+      "type": "type",
+      "text": "four",
+      "expected": {
+        "value": "one two four",
+        "start": 12,
+        "end": 12,
+        "direction": "none",
+        "focused": true
+      }
+    },
+    {
+      "type": "key",
+      "key": "Alt+Backspace",
+      "expected": {
+        "value": "one two ",
+        "start": 8,
+        "end": 8,
+        "direction": "none",
+        "focused": true
+      },
+      "portKey": "alt-backspace"
+    },
+    {
+      "type": "key",
+      "key": "Meta+Backspace",
+      "nativeCommand": "deleteToBeginningOfLine",
+      "expected": {
+        "value": "",
+        "start": 0,
+        "end": 0,
+        "direction": "none",
+        "focused": true
+      },
+      "portKey": "cmd-backspace"
+    },
+    {
+      "type": "type",
+      "text": "one two three",
+      "expected": {
+        "value": "one two three",
+        "start": 13,
+        "end": 13,
+        "direction": "none",
+        "focused": true
+      }
+    },
+    {
+      "type": "key",
+      "key": "Meta+ArrowLeft",
+      "nativeCommand": "moveToBeginningOfLine",
+      "expected": {
+        "value": "one two three",
+        "start": 0,
+        "end": 0,
+        "direction": "none",
+        "focused": true
+      },
+      "portKey": "cmd-left"
+    },
+    {
+      "type": "key",
+      "key": "Alt+Delete",
+      "expected": {
+        "value": " two three",
+        "start": 0,
+        "end": 0,
+        "direction": "none",
+        "focused": true
+      },
+      "portKey": "alt-delete"
+    },
+    {
+      "type": "key",
+      "key": "Meta+ArrowRight",
+      "nativeCommand": "moveToEndOfLine",
+      "expected": {
+        "value": " two three",
+        "start": 10,
+        "end": 10,
+        "direction": "none",
+        "focused": true
+      },
+      "portKey": "cmd-right"
+    },
+    {
+      "type": "key",
+      "key": "Meta+Backspace",
+      "nativeCommand": "deleteToBeginningOfLine",
+      "expected": {
+        "value": "",
+        "start": 0,
+        "end": 0,
+        "direction": "none",
+        "focused": true
+      },
+      "portKey": "cmd-backspace"
+    },
+    {
+      "type": "type",
+      "text": "greet",
+      "expected": {
+        "value": "greet",
+        "start": 5,
+        "end": 5,
+        "direction": "none",
+        "focused": true
+      }
+    },
+    {
+      "type": "key",
+      "key": "Meta+Shift+ArrowLeft",
+      "nativeCommand": "moveToBeginningOfLineAndModifySelection",
+      "expected": {
+        "value": "greet",
+        "start": 0,
+        "end": 5,
+        "direction": "backward",
+        "focused": true
+      },
+      "checkpoint": "selection",
+      "portKey": "cmd-shift-left",
+      "pixel": {
+        "at": {
+          "x": 396,
+          "y": 177
+        },
+        "rgba": [
+          75,
+          75,
+          75,
+          255
+        ],
+        "source": "original-selection-native.png"
+      }
+    },
+    {
+      "type": "key",
+      "key": "Meta+c",
+      "nativeCommand": "copy",
+      "expected": {
+        "value": "greet",
+        "start": 0,
+        "end": 5,
+        "direction": "backward",
+        "focused": true
+      },
+      "clipboardExpected": "greet",
+      "portKey": "cmd-c"
+    },
+    {
+      "type": "key",
+      "key": "ArrowRight",
+      "expected": {
+        "value": "greet",
+        "start": 5,
+        "end": 5,
+        "direction": "none",
+        "focused": true
+      },
+      "portKey": "right"
+    },
+    {
+      "type": "key",
+      "key": "Meta+v",
+      "nativeCommand": "paste",
+      "expected": {
+        "value": "greetgreet",
+        "start": 10,
+        "end": 10,
+        "direction": "none",
+        "focused": true
+      },
+      "portKey": "cmd-v"
+    },
+    {
+      "type": "key",
+      "key": "Meta+a",
+      "nativeCommand": "selectAll",
+      "expected": {
+        "value": "greetgreet",
+        "start": 0,
+        "end": 10,
+        "direction": "none",
+        "focused": true
+      },
+      "portKey": "cmd-a"
+    },
+    {
+      "type": "key",
+      "key": "Meta+x",
+      "nativeCommand": "cut",
+      "expected": {
+        "value": "",
+        "start": 0,
+        "end": 0,
+        "direction": "none",
+        "focused": true
+      },
+      "clipboardExpected": "greetgreet",
+      "portKey": "cmd-x"
+    },
+    {
+      "type": "key",
+      "key": "Meta+v",
+      "nativeCommand": "paste",
+      "expected": {
+        "value": "greetgreet",
+        "start": 10,
+        "end": 10,
+        "direction": "none",
+        "focused": true
+      },
+      "portKey": "cmd-v"
+    },
+    {
+      "type": "key",
+      "key": "Meta+ArrowLeft",
+      "nativeCommand": "moveToBeginningOfLine",
+      "expected": {
+        "value": "greetgreet",
+        "start": 0,
+        "end": 0,
+        "direction": "none",
+        "focused": true
+      },
+      "portKey": "cmd-left"
+    },
+    {
+      "type": "key",
+      "key": "Delete",
+      "expected": {
+        "value": "reetgreet",
+        "start": 0,
+        "end": 0,
+        "direction": "none",
+        "focused": true
+      },
+      "portKey": "delete"
+    },
+    {
+      "type": "key",
+      "key": "Meta+ArrowRight",
+      "nativeCommand": "moveToEndOfLine",
+      "expected": {
+        "value": "reetgreet",
+        "start": 9,
+        "end": 9,
+        "direction": "none",
+        "focused": true
+      },
+      "portKey": "cmd-right"
+    },
+    {
+      "type": "key",
+      "key": "Backspace",
+      "expected": {
+        "value": "reetgree",
+        "start": 8,
+        "end": 8,
+        "direction": "none",
+        "focused": true
+      },
+      "portKey": "backspace"
+    },
+    {
+      "type": "key",
+      "key": "Meta+a",
+      "nativeCommand": "selectAll",
+      "expected": {
+        "value": "reetgree",
+        "start": 0,
+        "end": 8,
+        "direction": "none",
+        "focused": true
+      },
+      "portKey": "cmd-a"
+    },
+    {
+      "type": "type",
+      "text": "é猫😀",
+      "expected": {
+        "value": "é猫😀",
+        "start": 4,
+        "end": 4,
+        "direction": "none",
+        "focused": true
+      }
+    },
+    {
+      "type": "key",
+      "key": "ArrowLeft",
+      "expected": {
+        "value": "é猫😀",
+        "start": 2,
+        "end": 2,
+        "direction": "none",
+        "focused": true
+      },
+      "portKey": "left"
+    },
+    {
+      "type": "type",
+      "text": "x",
+      "expected": {
+        "value": "é猫x😀",
+        "start": 3,
+        "end": 3,
+        "direction": "none",
+        "focused": true
+      }
+    },
+    {
+      "type": "key",
+      "key": "Delete",
+      "expected": {
+        "value": "é猫x",
+        "start": 3,
+        "end": 3,
+        "direction": "none",
+        "focused": true
+      },
+      "portKey": "delete"
+    },
+    {
+      "type": "key",
+      "key": "Meta+a",
+      "nativeCommand": "selectAll",
+      "expected": {
+        "value": "é猫x",
+        "start": 0,
+        "end": 3,
+        "direction": "none",
+        "focused": true
+      },
+      "portKey": "cmd-a"
+    },
+    {
+      "type": "key",
+      "key": "Meta+v",
+      "nativeCommand": "paste",
+      "expected": {
+        "value": "one two three",
+        "start": 13,
+        "end": 13,
+        "direction": "none",
+        "focused": true
+      },
+      "clipboard": {
+        "text": "one\r\ntwo\nthree"
+      },
+      "portKey": "cmd-v"
+    },
+    {
+      "type": "click",
+      "at": {
+        "x": 415,
+        "y": 185.5
+      },
+      "target": {
+        "selector": "[cmdk-input]",
+        "bbox": {
+          "x": 385,
+          "y": 169,
+          "w": 510,
+          "h": 33
+        }
+      },
+      "expected": {
+        "value": "one two three",
+        "start": 2,
+        "end": 2,
+        "direction": "none",
+        "focused": true
+      }
+    },
+    {
+      "type": "drag",
+      "from": {
+        "x": 396,
+        "y": 185.5
+      },
+      "to": {
+        "x": 495,
+        "y": 185.5
+      },
+      "moves": 4,
+      "expected": {
+        "value": "one two three",
+        "start": 0,
+        "end": 13,
+        "direction": "none",
+        "focused": true
+      }
+    }
+  ],
+  "result": {
+    "state": {
+      "commandMenu": true,
+      "composerFocused": false
+    }
+  }
+}

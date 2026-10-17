@@ -10,13 +10,16 @@ use crate::{
 };
 use bridge::types::{Thread, ThreadListResponse, ThreadStatus};
 use gpui::{
-    Action, AnyElement, AnyView, App, AppContext as _, Context, Corners, Div, EventEmitter,
-    FocusHandle, Focusable, FontWeight, HighlightStyle, Hsla, InteractiveElement, IntoElement,
-    KeyDownEvent, MouseButton, ParentElement, Pixels, Render, Rgba, ScrollHandle, SharedString,
-    Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun, Transformation, Window,
-    canvas, div, point, prelude::FluentBuilder as _, px, radians, relative, rgba, svg,
+    Action, AnyElement, AnyView, App, AppContext as _, Bounds, ClipboardItem, Context, Corners,
+    Div, ElementInputHandler, EntityInputHandler, EventEmitter, FocusHandle, Focusable, FontWeight,
+    HighlightStyle, Hsla, InteractiveElement, IntoElement, KeyDownEvent, Modifiers, MouseButton,
+    ParentElement, Pixels, Point, Render, Rgba, ScrollHandle, ShapedLine, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, StyledText, TextRun, Transformation, UTF16Selection,
+    Window, canvas, div, fill, point, prelude::FluentBuilder as _, px, radians, relative, rgba,
+    size, svg,
 };
 use std::{
+    borrow::Cow,
     collections::{HashMap, HashSet},
     ops::Range,
     path::Path,
@@ -843,6 +846,14 @@ fn marked(
 pub struct CommandMenu {
     groups: Vec<(&'static str, Vec<Item>)>,
     query: String,
+    query_anchor: usize,
+    query_cursor: usize,
+    marked_query: Option<Range<usize>>,
+    query_line: Option<ShapedLine>,
+    query_bounds: Option<Bounds<Pixels>>,
+    query_scroll: Pixels,
+    query_dragging: bool,
+    show_caret: bool,
     selected: usize,
     focus: FocusHandle,
     /// A thread is open: its commands show (`Search files`, `Mark as unread`, ...).
@@ -1331,6 +1342,8 @@ impl CommandMenu {
             }
         }
         menu.searching = !query.is_empty();
+        // The static reference capture hides the blinking caret.
+        menu.show_caret = false;
         menu
     }
 
@@ -1417,6 +1430,14 @@ impl CommandMenu {
         Self {
             groups,
             query: query.to_owned(),
+            query_anchor: query.len(),
+            query_cursor: query.len(),
+            marked_query: None,
+            query_line: None,
+            query_bounds: None,
+            query_scroll: px(0.),
+            query_dragging: false,
+            show_caret: true,
             selected: 0,
             focus: cx.focus_handle(),
             thread_open,
@@ -1567,31 +1588,266 @@ impl CommandMenu {
         .detach();
     }
 
+    fn query_selection(&self) -> Range<usize> {
+        self.query_anchor.min(self.query_cursor)..self.query_anchor.max(self.query_cursor)
+    }
+
+    fn query_offset(&self, utf16: usize) -> usize {
+        let mut units = 0;
+        for (offset, ch) in self.query.char_indices() {
+            if units >= utf16 {
+                return offset;
+            }
+            units += ch.len_utf16();
+        }
+        self.query.len()
+    }
+
+    fn query_range(&self, range: Range<usize>) -> Range<usize> {
+        self.query_offset(range.start)..self.query_offset(range.end)
+    }
+
+    fn query_utf16(&self, offset: usize) -> usize {
+        self.query[..offset].encode_utf16().count()
+    }
+
+    fn replace_query(&mut self, range: Range<usize>, text: &str, cx: &mut Context<Self>) {
+        let text = if text.contains(['\r', '\n']) {
+            let mut clean = String::with_capacity(text.len());
+            let mut previous_cr = false;
+            for ch in text.chars() {
+                if ch != '\n' || !previous_cr {
+                    clean.push(if matches!(ch, '\r' | '\n') { ' ' } else { ch });
+                }
+                previous_cr = ch == '\r';
+            }
+            Cow::Owned(clean)
+        } else {
+            Cow::Borrowed(text)
+        };
+        if self.query[range.clone()] != *text {
+            self.query.replace_range(range.clone(), &text);
+            self.query_line = None;
+            self.query_changed(cx);
+        }
+        self.query_cursor = range.start + text.len();
+        self.query_anchor = self.query_cursor;
+        self.marked_query = None;
+        self.show_caret = true;
+        cx.notify();
+    }
+
+    fn query_boundary(&self, forward: bool, modifiers: Modifiers) -> usize {
+        let at = self.query_cursor;
+        if modifiers.platform {
+            return if forward { self.query.len() } else { 0 };
+        }
+        // Match the composer's alphanumeric word runs.
+        let word = |c: char| c.is_alphanumeric() || c == '_';
+        if forward {
+            let rest = &self.query[at..];
+            if modifiers.alt {
+                return self.query.len()
+                    - rest
+                        .trim_start_matches(|c| !word(c))
+                        .trim_start_matches(word)
+                        .len();
+            }
+            rest.chars().next().map_or(at, |c| at + c.len_utf8())
+        } else {
+            let before = &self.query[..at];
+            if modifiers.alt {
+                return before
+                    .trim_end_matches(|c| !word(c))
+                    .trim_end_matches(word)
+                    .len();
+            }
+            before.char_indices().next_back().map_or(0, |(i, _)| i)
+        }
+    }
+
+    fn copy_query(&self, cx: &mut Context<Self>) {
+        let range = self.query_selection();
+        if !range.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(self.query[range].to_owned()));
+        }
+    }
+
+    fn query_index(&self, position: Point<Pixels>) -> usize {
+        match (&self.query_line, self.query_bounds) {
+            (Some(line), Some(bounds)) => {
+                line.closest_index_for_x(position.x - bounds.origin.x + self.query_scroll)
+            }
+            _ => self.query.len(),
+        }
+    }
+
+    fn query_input(&mut self, width: f32, window: &Window, cx: &Context<Self>) -> Stateful<Div> {
+        let t = cx.theme();
+        let value: SharedString = self.query.clone().into();
+        let mut font = window.text_style().font();
+        font.weight = FontWeight(430.);
+        let line = window.text_system().shape_line(
+            value.clone(),
+            px(14.),
+            &[TextRun {
+                len: value.len(),
+                font,
+                color: t.text,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            }],
+            None,
+        );
+        let caret = line.x_for_index(self.query_cursor);
+        self.query_scroll = self
+            .query_scroll
+            .min(caret)
+            .max(caret - px(width - 1.))
+            .clamp(px(0.), (line.width - px(width - 1.)).max(px(0.)));
+        self.query_line = Some(line);
+        let entity = cx.entity();
+        let input = if self.query.is_empty() {
+            text("Search chats", 14., 21., 430., t.text_tertiary)
+        } else {
+            text(value.clone(), 14., 21., 430., t.text)
+        };
+        div()
+            .id("command-query")
+            .role(gpui::Role::TextInput)
+            .aria_label("Search chats")
+            .aria_value(value)
+            .aria_placeholder("Search chats")
+            .relative()
+            .w_full()
+            .h(px(21.))
+            .overflow_hidden()
+            .cursor_text()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, e: &gpui::MouseDownEvent, window, cx| {
+                    this.query_cursor = this.query_index(e.position);
+                    if !e.modifiers.shift {
+                        this.query_anchor = this.query_cursor;
+                    }
+                    this.query_dragging = true;
+                    this.show_caret = true;
+                    this.focus.focus(window, cx);
+                    cx.stop_propagation();
+                    cx.notify();
+                }),
+            )
+            .on_mouse_move(cx.listener(|this, e: &gpui::MouseMoveEvent, _, cx| {
+                if this.query_dragging && e.pressed_button == Some(MouseButton::Left) {
+                    this.query_cursor = this.query_index(e.position);
+                    cx.notify();
+                }
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, _| this.query_dragging = false),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, _, _| this.query_dragging = false),
+            )
+            .child(
+                canvas(
+                    |_, _, _| {},
+                    move |bounds, (), window, cx| {
+                        let (focus, selection, caret, show_caret) = entity.update(cx, |this, _| {
+                            this.query_bounds = Some(bounds);
+                            let line = this.query_line.as_ref().unwrap();
+                            let selection = this.query_selection();
+                            let x = |i| line.x_for_index(i) - this.query_scroll;
+                            (
+                                this.focus.clone(),
+                                x(selection.start)..x(selection.end),
+                                x(this.query_cursor),
+                                this.show_caret,
+                            )
+                        });
+                        window.handle_input(
+                            &focus,
+                            ElementInputHandler::new(bounds, entity.clone()),
+                            cx,
+                        );
+                        if !selection.is_empty() {
+                            window.paint_quad(fill(
+                                Bounds::from_corners(
+                                    bounds.origin + point(selection.start, px(0.)),
+                                    bounds.origin + point(selection.end, px(21.)),
+                                ),
+                                cx.theme().text_selection,
+                            ));
+                        } else if show_caret && focus.is_focused(window) {
+                            window.paint_quad(fill(
+                                Bounds::new(
+                                    bounds.origin + point(caret, px(2.)),
+                                    size(px(1.), px(17.)),
+                                ),
+                                cx.theme().text,
+                            ));
+                        }
+                    },
+                )
+                .absolute()
+                .inset_0(),
+            )
+            .child(input.relative().left(-self.query_scroll))
+    }
+
     fn on_key(&mut self, e: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
         let k = &e.keystroke;
         match k.key.as_str() {
-            "down" => self.selected += 1,
-            "up" => self.selected = self.selected.saturating_sub(1),
-            "backspace" => {
-                self.query.pop();
-                self.query_changed(cx);
+            "down" | "up" => {
+                self.selected = if k.key == "down" {
+                    self.selected + 1
+                } else {
+                    self.selected.saturating_sub(1)
+                };
+                let count = self
+                    .visible()
+                    .iter()
+                    .map(|(_, items)| items.len())
+                    .sum::<usize>();
+                self.selected = self.selected.min(count.saturating_sub(1));
             }
-            "escape" => return cx.emit(CommandMenuEvent::Dismiss),
-            "enter" => return self.confirm(cx),
-            _ => match &k.key_char {
-                Some(c) if !k.modifiers.platform && !k.modifiers.control => {
-                    self.query.push_str(c);
-                    self.query_changed(cx);
+            "left" | "right" => {
+                let forward = k.key == "right";
+                let selection = self.query_selection();
+                self.query_cursor = if !k.modifiers.shift
+                    && !k.modifiers.alt
+                    && !k.modifiers.platform
+                    && !selection.is_empty()
+                {
+                    if forward {
+                        selection.end
+                    } else {
+                        selection.start
+                    }
+                } else {
+                    self.query_boundary(forward, k.modifiers)
+                };
+                if !k.modifiers.shift {
+                    self.query_anchor = self.query_cursor;
                 }
-                _ => return,
-            },
+                self.show_caret = true;
+            }
+            "backspace" | "delete" => {
+                let mut range = self.query_selection();
+                if range.is_empty() {
+                    let to = self.query_boundary(k.key == "delete", k.modifiers);
+                    range = to.min(self.query_cursor)..to.max(self.query_cursor);
+                }
+                self.replace_query(range, "", cx);
+            }
+            "escape" => cx.emit(CommandMenuEvent::Dismiss),
+            "enter" => self.confirm(cx),
+            _ => return,
         }
-        let count = self
-            .visible()
-            .iter()
-            .map(|(_, items)| items.len())
-            .sum::<usize>();
-        self.selected = self.selected.min(count.saturating_sub(1));
+        cx.stop_propagation();
         cx.notify();
     }
 
@@ -1612,6 +1868,118 @@ impl CommandMenu {
     }
 }
 
+impl EntityInputHandler for CommandMenu {
+    fn text_for_range(
+        &mut self,
+        range: Range<usize>,
+        actual: &mut Option<Range<usize>>,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Option<String> {
+        let range = self.query_range(range);
+        *actual = Some(self.query_utf16(range.start)..self.query_utf16(range.end));
+        Some(self.query[range].to_owned())
+    }
+
+    fn selected_text_range(
+        &mut self,
+        _: bool,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Option<UTF16Selection> {
+        let range = self.query_selection();
+        Some(UTF16Selection {
+            range: self.query_utf16(range.start)..self.query_utf16(range.end),
+            reversed: self.query_cursor < self.query_anchor,
+        })
+    }
+
+    fn set_selected_text_range(
+        &mut self,
+        range: Range<usize>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let range = self.query_range(range);
+        self.query_anchor = range.start;
+        self.query_cursor = range.end;
+        cx.notify();
+    }
+
+    fn text_length_utf16(&mut self, _: &mut Window, _: &mut Context<Self>) -> Option<usize> {
+        Some(self.query.encode_utf16().count())
+    }
+
+    fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
+        self.marked_query
+            .as_ref()
+            .map(|r| self.query_utf16(r.start)..self.query_utf16(r.end))
+    }
+
+    fn unmark_text(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        self.marked_query = None;
+        cx.notify();
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        range: Option<Range<usize>>,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.replace_and_mark_text_in_range(range, text, None, window, cx);
+        self.marked_query = None;
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        range: Option<Range<usize>>,
+        text: &str,
+        selected: Option<Range<usize>>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let range = range
+            .map(|r| self.query_range(r))
+            .or(self.marked_query.clone())
+            .unwrap_or_else(|| self.query_selection());
+        let start = range.start;
+        self.replace_query(range, text, cx);
+        self.marked_query = (!text.is_empty()).then_some(start..self.query_cursor);
+        if let Some(selected) = selected {
+            let base = self.query_utf16(start);
+            let range = self.query_range(base + selected.start..base + selected.end);
+            self.query_anchor = range.start;
+            self.query_cursor = range.end;
+        }
+    }
+
+    fn bounds_for_range(
+        &mut self,
+        range: Range<usize>,
+        bounds: Bounds<Pixels>,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Option<Bounds<Pixels>> {
+        let range = self.query_range(range);
+        let line = self.query_line.as_ref()?;
+        Some(Bounds::from_corners(
+            bounds.origin + point(line.x_for_index(range.start) - self.query_scroll, px(0.)),
+            bounds.origin + point(line.x_for_index(range.end) - self.query_scroll, px(21.)),
+        ))
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        point: Point<Pixels>,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Option<usize> {
+        Some(self.query_utf16(self.query_index(point)))
+    }
+}
+
 impl Render for CommandMenu {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
@@ -1620,6 +1988,7 @@ impl Render for CommandMenu {
         // `.command-menu-dialog` / `.global-command-menu-dialog` sizing.
         let list_height = (0.9 * h - 64.).clamp(120., 440.);
         let width = 520f32.min(0.92 * w);
+        let input = self.query_input(width - 30., window, cx);
         let top = ((h - list_height - 64.) / 2.).max(16.);
         let surface = t.surface_elevated_secondary;
         // `border-color: var(--color-border)` in dark, transparent in light (still a 1 px
@@ -1679,11 +2048,6 @@ impl Render for CommandMenu {
                         })),
                 )
         });
-        let input = if query.is_empty() {
-            text("Search chats", 14., 21., 430., t.text_tertiary)
-        } else {
-            text(self.query.clone(), 14., 21., 430., t.text)
-        };
         div()
             .absolute()
             .inset_0()
@@ -1697,6 +2061,21 @@ impl Render for CommandMenu {
                     .id("command-menu")
                     .track_focus(&self.focus)
                     .on_key_down(cx.listener(Self::on_key))
+                    .on_action(cx.listener(|this, _: &crate::SelectAll, _, cx| {
+                        this.query_anchor = 0;
+                        this.query_cursor = this.query.len();
+                        cx.notify();
+                    }))
+                    .on_action(cx.listener(|this, _: &crate::Copy, _, cx| this.copy_query(cx)))
+                    .on_action(cx.listener(|this, _: &crate::Cut, _, cx| {
+                        this.copy_query(cx);
+                        this.replace_query(this.query_selection(), "", cx);
+                    }))
+                    .on_action(cx.listener(|this, _: &crate::Paste, window, cx| {
+                        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                            this.replace_text_in_range(None, &text, window, cx);
+                        }
+                    }))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .absolute()
                     .left(px((w - width) / 2. - ink_x))

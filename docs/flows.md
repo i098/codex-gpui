@@ -456,6 +456,18 @@ It shows an unread dot after a failed background turn, rather than an error icon
 `Show more` belongs to a non-final Recents section; `Show less` belongs to custom sections.
 Those section arrangements remain outside this port's default layout.
 
+## S025: Command-query caret and selection
+
+`crates/app/tests/s025.rs` checks 45 native editing states from `refs/interactions/s025.json`.
+The original recording uses the background Mac renderer and native editing commands for Command shortcuts.
+The test checks query text, UTF-16 selection, selection direction, and input focus after every recorded step.
+It also checks copied text and the original selection color.
+The recording covers caret insertion, selection replacement, word and line deletion, select-all, copy, cut, paste, and pointer selection.
+Clipboard line endings become spaces in the single-line query.
+The test also checks focus restoration and result activation after caret movement.
+Static reference scenes hide the caret, as the original capture does.
+Ranking, command providers, and the S026 search contract remain unchanged.
+
 ## S026: Command menu groups and chat results
 
 `crates/app/tests/s026.rs` replays `refs/interactions/s026.json` with the shared headless app helpers.
