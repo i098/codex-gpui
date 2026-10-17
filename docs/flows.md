@@ -691,3 +691,23 @@ The existing recording still checks all 34 actions and 13 default tooltips.
 The [native original capture](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/b3cf204103d640697ec41c58541aab67d5f63b6dde0c7fba/original-add.png) retains the original Add tooltip.
 The [port capture](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/b3cf204103d640697ec41c58541aab67d5f63b6dde0c7fba/s018-add-after.png) uses the S018 smoke snapshot with the offset setter.
 Both captures use the same Mac viewport and scale.
+
+## Shared tooltip keyboard focus API
+
+`Tooltip::focus_handle(&gpui::FocusHandle)` uses the trigger's existing focus handle.
+Set it when the trigger is first rendered.
+Keyboard focus opens the shared tooltip immediately.
+Blur and Escape close it without moving focus.
+Pointer focus does not reopen it.
+Hover replaces the visible provider owner, and Escape closes that active owner.
+
+`crates/app/tests/f1a.rs` checks this lifecycle in an isolated native fixture.
+The fixture uses real pointer entry before Tab and changes only the simulated TestWindow activity.
+It renders the focus event and the notified tooltip frame.
+It checks the painted tooltip fill after keyboard focus.
+It checks that the previous pill no longer paints after hover takes ownership.
+The default hover delay and `side_offset` geometry remain unchanged.
+
+This API does not complete Home focus behavior or add the separate F1d overflow predicate.
+The original Home inputs and edge probes remain unchanged.
+The scoped issue is [Add an opt-in focus API to the shared tooltip](https://github.com/i098/codex-gpui/issues/186).
