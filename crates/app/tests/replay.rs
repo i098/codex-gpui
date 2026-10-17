@@ -1,5 +1,6 @@
 //! Replays each interaction recording through its dedicated state, pixel, and request checks.
-//! `selftest.json` uses the shared step contract below with the recorded baseline host history.
+//! `selftest.json` uses the shared step contract below.
+//! `fixtureState.seen-model-upgrade-list` supplies recorded initial history; absent keys use the oracle baseline.
 //! `REPLAY=<stem>` selects one exact recording; unset or empty checks every recording.
 //! Unknown contracts and failed adapters fail the combined result.
 
@@ -184,7 +185,16 @@ fn run(path: &Path) -> Result<String> {
     {
         lines.extend(exchange(method, json!({})));
     }
-    let mut fx = Fx::captured(theme, (size("w", 1280.), size("h", 832.)), lines)?;
+    let mut settings = recorded_host_settings()?;
+    if let Some(history) = rec["fixtureState"].get("seen-model-upgrade-list") {
+        settings.write("seen-model-upgrade-list", history.clone())?;
+    }
+    let mut fx = Fx::captured_with_host_settings(
+        theme,
+        (size("w", 1280.), size("h", 832.)),
+        lines,
+        settings,
+    )?;
     let checks = pixel_checks(&rec, steps.len())?;
 
     let rest = fx.shot()?;
