@@ -83,7 +83,7 @@ const FLOWS: &[(&str, Flow)] = &[
     ("theme_switch", theme_switch),
     ("rail_scheduled", rail_scheduled),
     ("parity_automations", || {
-        parity_flow("automations", |fx| fx.click(RAIL_SCHEDULED))
+        parity_flow("automations", open_recorded_automations)
     }),
     ("profile_menu_settings", profile_menu_settings),
     ("profile_menu_dismiss", profile_menu_dismiss),
@@ -648,6 +648,16 @@ fn theme_switch() -> Result<String> {
 }
 
 // --- Rail Scheduled, profile menu, Mobile ---
+
+fn open_recorded_automations(fx: &mut Fx) -> Result<()> {
+    let host = app::host::ReplayHost::from_recording(include_str!(
+        "../../../refs/interactions/host.json"
+    ))?;
+    fx.root.update(&mut fx.cx, |root, cx| {
+        root.set_host(std::sync::Arc::new(host), cx)
+    });
+    fx.click(RAIL_SCHEDULED)
+}
 
 fn rail_scheduled() -> Result<String> {
     let mut fx = Fx::new()?;

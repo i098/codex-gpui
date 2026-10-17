@@ -383,7 +383,20 @@ S034b still checks the recorded sign-in path; no account or authentication chang
 
 ## 15.1 Automations ("Scheduled")
 
-`Root` opens the page on rail `Scheduled` and on the command menu's `Manage scheduled tasks`. The page data comes from host fetches (`list-automations`, `inbox-items`, `automation-*`); `CloudHost` (`crates/app/src/host.rs`) serves the local ones from `CODEX_HOME` and the ChatGPT backend ones (`/wham/usage`, `/beacons/home`, `/automations?filter=scheduled`, `/suggested_automations`, the suggestion card's conversation start) with the sign-in that `codex app-server` holds. The page shows the empty state with the landing examples until the UI reads those answers.
+`Root` opens the page from rail `Scheduled` and the command menu's `Manage scheduled tasks`.
+It reads `list-automations` and `/suggested_automations` independently through the existing desktop host, off the UI thread.
+`CloudHost` reads local tasks from `CODEX_HOME` and uses the app-server's existing sign-in for the read-only suggestion request.
+The page shows landing examples while suggestions load or when the suggestion read fails.
+The response replaces the cards with server suggestions, followed by distinct landing examples, up to six cards.
+Route changes and host replacement cancel the pending suggestion update.
+The pending state follows the selected prompt across a late response.
+Cards use their emoji when the icon is not bundled.
+
+`parity_automations` replays the genuine `refs/interactions/host.json` response through the actual Root.
+All four unchanged strict Automations comparisons pass with an owned `CODEX_HOME` and temporary directory.
+The `host` test `scheduled_suggestions_follow_late_reads_and_host_replacement` checks navigation before response handling and prevents old-host cards after replacement.
+The new host read does not load oracle or replay files.
+This read-only repair does not create tasks, prepare conversations, schedule work, or change accounts.
 
 Slice S035 proves suggestion hover (AM-037) with `refs/interactions/s035.json` and `crates/app/tests/s035.rs`.
 The test replays pointer entry and exit on the existing fixture screen with the original server suggestions.
@@ -409,7 +422,7 @@ The conversation prepare, its stream, and the navigation into the started conver
 | 10 | Previous runs | click | Run chat, mark read, archive. | — | NOT WIRED (no host: `inbox-items`, `automation-run-archive`) |
 | 11 | Row hover | hover | Row highlight. | No task rows; suggestion hover matches the original recording. | FAIL (no task rows; suggestion hover passes `s035::suggestion_hover_matches_original`) |
 | 12 | Focus ring | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/screens/automations.rs`) |
-| 13 | No tasks | empty | `No scheduled tasks`, suggestions. | `No scheduled tasks` and the landing examples (no `/suggested_automations` backend). | PASS (`rail_scheduled`, `parity_automations`) |
+| 13 | No tasks | empty | `No scheduled tasks`, suggestions. | `No scheduled tasks`, server suggestions and distinct landing examples, up to six cards. | PASS (`rail_scheduled`, `parity_automations`, `host::scheduled_suggestions_follow_late_reads_and_host_replacement`) |
 | 14 | Loading | loading | `Loading scheduled tasks…`. | — | NOT WIRED (no host: `list-automations`) |
 | 15 | Error | error | `Scheduled tasks could not be loaded`. | — | NOT WIRED (no host: `list-automations`) |
 | 16 | Resize | resize | List and detail share the main column. | No list or detail panel. | FAIL (no task list without the host) |
