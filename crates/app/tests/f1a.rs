@@ -11,8 +11,9 @@ use anyhow::{Context as _, Result, ensure};
 use app::{Root, State, ThemeSetting};
 use bridge::Bridge;
 use gpui::{
-    AnyWindowHandle, AppContext as _, Entity, HeadlessAppContext, Keystroke, Modifiers,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput, point, px, size,
+    AnyWindowHandle, AppContext as _, Context, Entity, HeadlessAppContext, IntoElement, Keystroke,
+    Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
+    PlatformInput, Render, Styled, Window, div, point, px, size,
 };
 use image::RgbaImage;
 use serde_json::Value;
@@ -20,6 +21,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{fs, thread};
+use theme::ActiveTheme as _;
 
 const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
 const CWD: &str = "/tmp/cgx-mac/proj";
@@ -263,6 +265,84 @@ fn tooltips_match_the_recording() -> Result<()> {
         checked >= 10,
         "the recording holds too few tooltips: {checked}"
     );
+    Ok(())
+}
+
+struct BorderedTrigger(Option<Pixels>);
+
+impl Render for BorderedTrigger {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let tip = ui::tooltip::tooltip(
+            ui::composer::pill("bordered-tooltip", cx.theme())
+                .absolute()
+                .left(px(448.25))
+                .top(px(776.))
+                .w(px(28.)),
+            "Add files and more",
+            Some("@"),
+            ui::tooltip::Side::Top,
+        );
+        let tip = match self.0 {
+            Some(offset) => tip.side_offset(offset),
+            None => tip,
+        };
+        div().size_full().child(tip)
+    }
+}
+
+#[test]
+fn bordered_trigger_offset_matches_native_add_without_changing_the_default() -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        return Ok(());
+    }
+    let proof = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    fs::create_dir_all(proof)?;
+    // Native original: 1280x832 @2, trigger y776..804, tooltip y742..772.
+    // The pill's 1 px border puts its absolute-positioning edge at y777.
+    for (offset, expected_top, name) in [
+        (Some(px(5.)), 742., "add-offset"),
+        (None, 745., "default-offset"),
+    ] {
+        let mut cx = HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        cx.update(|cx| {
+            theme::load_fonts(cx);
+            cx.set_global(theme::Theme::dark());
+        });
+        let window = cx.open_window(size(px(1280.), px(832.)), |_, cx| {
+            cx.new(|_| BorderedTrigger(offset))
+        })?;
+        let window: AnyWindowHandle = window.into();
+        cx.capture_screenshot(window)?;
+        cx.update_window(window, |_, window, cx| {
+            window.dispatch_event(
+                PlatformInput::MouseMove(MouseMoveEvent {
+                    position: point(px(462.25), px(790.)),
+                    pressed_button: None,
+                    modifiers: Modifiers::default(),
+                }),
+                cx,
+            );
+        })?;
+        cx.run_until_parked();
+        cx.advance_clock(Duration::from_millis(OPEN_DELAY_MS));
+        cx.run_until_parked();
+        let image = cx.capture_screenshot(window)?;
+        image.save(proof.join(format!("f1a-{name}.png")))?;
+        let shown = cx
+            .update(|cx| ui::tooltip::shown(cx).cloned())
+            .context("bordered trigger tooltip")?;
+        assert_eq!(image.dimensions(), (2560, 1664));
+        assert_eq!(shown.bounds.top(), px(expected_top));
+        assert_eq!(shown.bounds.bottom(), px(expected_top + 30.));
+        assert_eq!(
+            &image.get_pixel(774, (expected_top * 2.) as u32 + 30).0[..3],
+            &[45, 45, 45]
+        );
+    }
     Ok(())
 }
 

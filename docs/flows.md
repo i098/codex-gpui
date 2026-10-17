@@ -505,3 +505,26 @@ It also checks the original hover color, expanded rows, collapse, and hidden com
 [Original screenshot](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/003c2454a49370802469ed64320fe26f160b4da61215578a/original-group-expanded.png).
 [Port screenshot](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/003c2454a49370802469ed64320fe26f160b4da61215578a/s014-group-expanded.png).
 
+
+## Shared tooltip side offset
+
+`Tooltip::side_offset` sets the gap from one trigger's absolute-positioning edge.
+The default remains 2 px; other callers keep their positions.
+
+The native original uses a 1280×832 viewport at scale 2.
+Its Add trigger has bounds `[448.25, 776, 28, 28]`, zero padding, and a 1 px border.
+Its tooltip has vertical bounds `742..772`, with a 4 px gap above the trigger.
+The same capture places Search's tooltip 2 px below its trigger.
+
+The shared bordered pill positions its absolute child at y777.
+The S018 caller can use `.side_offset(px(5.))` to match the original Add tooltip without moving the trigger.
+Add rendering and query changes stay in S018.
+
+`crates/app/tests/f1a.rs` checks the bordered pill at both offsets.
+The selected offset gives vertical bounds `742..772`; the unchanged default gives `745..775`.
+The existing recording still checks all 34 actions and 13 default tooltips.
+
+The [native original capture](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/b3cf204103d640697ec41c58541aab67d5f63b6dde0c7fba/original-add.png) retains the original Add tooltip.
+The [port capture](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/b3cf204103d640697ec41c58541aab67d5f63b6dde0c7fba/s018-add-after.png) uses the S018 smoke snapshot with the offset setter.
+Both captures use the same Mac viewport and scale.
+
