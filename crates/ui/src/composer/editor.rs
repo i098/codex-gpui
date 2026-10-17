@@ -1,6 +1,6 @@
 use super::*;
-use gpui::TransformationMatrix;
 use crate::screens::thread::view::menu::{ContextMenu, Item};
+use gpui::TransformationMatrix;
 use std::time::Instant;
 
 type EditState = (String, Range<usize>, Vec<mention::Mention>);
@@ -78,7 +78,10 @@ impl Composer {
     /// End of the word after `offset` (skipping spaces first), as `moveWordRight` does.
     fn word_end(&self, offset: usize) -> usize {
         let rest = self.content[offset..].trim_start_matches(|c| !is_word(c));
-        self.snap(self.content.len() - rest.trim_start_matches(is_word).len(), Some(true))
+        self.snap(
+            self.content.len() - rest.trim_start_matches(is_word).len(),
+            Some(true),
+        )
     }
 
     /// Records the state before an edit of `range`, unless it joins the last edit's group.
@@ -87,9 +90,11 @@ impl Composer {
             at.elapsed() < NEW_GROUP_DELAY && range.start <= end && end <= range.end
         });
         if !joins {
-            self.history
-                .undo
-                .push((self.content.clone(), self.selected_range.clone(), self.mentions.clone()));
+            self.history.undo.push((
+                self.content.clone(),
+                self.selected_range.clone(),
+                self.mentions.clone(),
+            ));
             self.history.redo.clear();
         }
     }
@@ -107,18 +112,22 @@ impl Composer {
 
     pub(super) fn undo(&mut self, _: &crate::Undo, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(state) = self.history.undo.pop() {
-            self.history
-                .redo
-                .push((self.content.clone(), self.selected_range.clone(), self.mentions.clone()));
+            self.history.redo.push((
+                self.content.clone(),
+                self.selected_range.clone(),
+                self.mentions.clone(),
+            ));
             self.restore(state, cx);
         }
     }
 
     pub(super) fn redo(&mut self, _: &crate::Redo, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(state) = self.history.redo.pop() {
-            self.history
-                .undo
-                .push((self.content.clone(), self.selected_range.clone(), self.mentions.clone()));
+            self.history.undo.push((
+                self.content.clone(),
+                self.selected_range.clone(),
+                self.mentions.clone(),
+            ));
             self.restore(state, cx);
         }
     }

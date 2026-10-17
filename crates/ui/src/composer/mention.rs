@@ -247,8 +247,6 @@ impl Composer {
         }
         if completed {
             search.searching = false;
-            cx.notify();
-            return;
         } else {
             search.files = params["files"]
                 .as_array()
@@ -265,7 +263,9 @@ impl Composer {
                 .collect();
         }
         if self.slash.open && self.slash.mention {
+            let selected = self.slash.selected;
             self.refresh_slash(cx);
+            self.slash.selected = selected.min(self.slash.matches.len().saturating_sub(1));
         }
     }
 
@@ -307,7 +307,12 @@ impl Composer {
             None => {
                 let file = &self.slash.search.files[index - files];
                 let link = format!("[{}]({})", file.name, file.path);
-                (file.name.clone(), link, "diff-jump-to-file")
+                let icon = if file.name.ends_with(".py") {
+                    "thread-lang-python"
+                } else {
+                    "diff-jump-to-file"
+                };
+                (file.name.clone(), link, icon)
             }
         };
         self.remember(&self.slash.range.clone());

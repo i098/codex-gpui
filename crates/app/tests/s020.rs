@@ -231,3 +231,25 @@ fn mention_keys_chips_and_prompt_replay() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn chip_survives_undo_redo_and_word_movement() -> Result<()> {
+    let mut fx = Fx::new()?;
+    fx.click(fx.at("home", "Do anything")?)?;
+    insert(&mut fx, "@setup")?;
+    fx.wait("skill list", |fx| {
+        fx.read(|r, cx| r.composer(cx).read(cx).mention_state())
+            .is_some_and(|s| s[0].1.iter().any(|(row, _)| row.starts_with("Setup Matt")))
+    })?;
+    fx.keys("down down enter")?;
+    let chips = fx.read(|r, cx| r.composer(cx).read(cx).chips());
+    ensure!(chips.iter().any(|c| c.0 == "Setup Matt Pocock Skills"));
+    let prompt = fx.read(|r, cx| r.composer(cx).read(cx).prompt());
+    fx.keys("cmd-z cmd-shift-z")?;
+    ensure!(fx.read(|r, cx| r.composer(cx).read(cx).chips()) == chips);
+    ensure!(fx.read(|r, cx| r.composer(cx).read(cx).prompt()) == prompt);
+    fx.keys("alt-left delete")?;
+    ensure!(fx.read(|r, cx| r.composer(cx).read(cx).chips()).is_empty());
+    ensure!(fx.composer_text()? == " ");
+    Ok(())
+}
