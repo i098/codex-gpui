@@ -115,18 +115,14 @@ Run the selection regression with `cargo test -p app --test flows -- rail_thread
 
 The new regression fails all 12 cases before the rail correction and matches all 12 afterward.
 The separate static gate remains 36/36.
-The unchanged input-driven full-Root gate still returns exit 1: 12 comparisons pass and 24 fail.
-Home, Settings, and Mobile pass all four variants.
-All four variants of each screen below still fail.
+At integrated source `60283d8` on main `9079aa0`, the unchanged full-Root gate returns exit 1: 32 comparisons pass and four fail.
+Every screen except Sidebar passes all four variants.
+Sidebar still differs from its older pending-state reference; correct S026 settled search behavior remains unchanged.
+This result includes the upstream repairs; the consumer change remains limited to Home rail selection.
 Cells give `outside count / text percent`; the owned empty `CODEX_HOME` excludes ambient automation rows.
 
 | Remaining full-Root failure | Dark 1280x832 | Dark 1440x900 | Light 1280x832 | Light 1440x900 |
 |---|---|---|---|---|
-| Composer | 11016 / 2.402% | 11016 / 2.402% | 11016 / 2.320% | 11016 / 2.320% |
-| Thread | 0 / 1.317% | 0 / 1.302% | 0 / 1.317% | 0 / 1.302% |
-| Diff | 0 / 1.045% | 0 / 1.165% | 0 / 0.967% | 0 / 1.084% |
-| Automations | 40039 / 27.119% | 40037 / 27.119% | 40077 / 27.176% | 40053 / 27.176% |
-| Terminal | 359 / 0.429% | 359 / 0.507% | 359 / 0.420% | 359 / 0.495% |
 | Sidebar | 95831 / 12.250% | 102522 / 9.995% | 128199 / 13.491% | 137557 / 10.381% |
 
 ## App shell: shortcuts, menu bar, window (§2.2, §12, §13)
