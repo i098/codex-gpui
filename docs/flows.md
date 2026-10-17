@@ -160,7 +160,7 @@ Numbers from the round 4 run (F1Flows); the screen builder column is a run of th
 | 15 | `⌘⇧[` / `⌘⇧]` | shortcut | Previous / next chat. | Previous / next Recents row. | PASS (`previous_next_chat`, `menu_bar_actions`) |
 | 16 | `⌘⇧S` / `⌘B` | shortcut | Toggle sidebar. | Toggles. | PASS (`sidebar_toggle_keys`) |
 | 17 | Titlebar `Hide sidebar` | click | Collapses the left panel over a 300 ms spring (main surface slides, sidebar rows fade and shift 16 px); label changes to `Show sidebar`; instant under reduced motion. | The main surface and the sidebar content follow `motion::spring_300` from the toggle's progress; the recorded tooltip stays `Toggle sidebar ⇧⌘S` in both states. | PASS (`sidebar_toggle_titlebar`; `crates/app/tests/s004.rs`; spring frames: `crates/app/tests/ms2.rs` against `refs/interactions/ms2.json`) |
-| 18 | Row focus | focus ring | 2 px ring, offset -2 px. | No tab stops. | NOT WIRED (`crates/ui/src/screens/sidebar.rs` `thread_row`) |
+| 18 | Row focus | focus ring | 2 px ring, offset -2 px. | Tab moves through rows and their Pin and Archive actions; focus reveals the actions. | PASS (`crates/app/tests/f1b.rs`) |
 | 19 | Empty lists | empty | `No projects`, `No chats`; activity `Nothing needs attention`. | Empty `thread/list` gives no Recents (`No chats` branch); `No projects` always. No activity view. | PASS (`sidebar_empty_lists`) |
 | 20 | Lists loading | loading | Activity: `Checking unread chats…`. | — | NOT WIRED (`crates/ui/src/screens/sidebar.rs`: no activity view or loading state) |
 | 21 | Load error | error | `Projects couldn't be loaded` + `Retry`; `Could not load chats`. | A `thread/list` error stops `Root::connect`, so no route shows. | FAIL (`crates/app/src/lib.rs` `connect` treats it as fatal; `crates/ui/src/screens/sidebar.rs` has no error state) |
@@ -179,6 +179,13 @@ The S004 recording uses the original renderer through the Linux route1 stack in 
 Its twelve actions check resize limits, collapse, restored width, titlebar toggles, tooltips, boundary pixels, and no app-server requests.
 The current original tooltip is `Toggle sidebar ⇧⌘S`, not the inventory's `⌘B` label.
 The static parity gate retains all 36 baseline counts.
+
+F1b replays all 30 original steps with `cargo test -p app --test f1b` on macOS.
+Clicking a section header keeps pointer focus; Enter enables its keyboard ring without moving focus.
+The section header retains its original 202×25 px target inside the 272×30 px layout row at the recorded width.
+The S003 header replacement enlarged that target, so the ring moved away from the recorded border pixels.
+The repair restores the shared target and tab group for Projects, Recents, and Pinned without changing the ring painter or input handling.
+The existing replay checks the original colors, row actions, tooltips, canceled row click, Home route, and absence of app-server writes.
 
 ## 14.3 Home
 
