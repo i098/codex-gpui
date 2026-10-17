@@ -68,6 +68,8 @@ The updater fetches real Git objects, rejects dirty or unlanded source, and chec
 It coalesces newer revisions during a build and retains a pending candidate when QA cannot close safely.
 It verifies the signed bundle, compiled source revision, artifact digest, executable path, and running PID.
 It keeps the previous bundle at `updater/last-working.app`.
+It rebuilds missing temporary candidates and removes completed or superseded temporary artifacts.
+It verifies an unfinished activation or restores the backup after the new process exits.
 
 QA data stays in `~/Library/Application Support/codex-gpui-qa/profile/`.
 Its UI state and host settings live under `profile/home/Library/Application Support/codex-gpui/`.
@@ -81,6 +83,7 @@ Programmatic startup uses `open -g` and an unfocused QA window.
 After QA gains focus, starts a turn, changes model settings, or starts sign-in, close QA when ready to update.
 The updater keeps its candidate pending until that close.
 It also refuses to close during a draft, attachment work, an approval, a running turn, or unverified readiness.
+A shared profile lock prevents a reopened QA process from racing with bundle replacement.
 It does not promise to preserve drafts, open views, navigation history, or running sessions.
 It never force-quits an app.
 If a new process cannot prove readiness, the updater retains the backup rather than forcing that process to stop.

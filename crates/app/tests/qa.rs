@@ -76,12 +76,20 @@ fn normal_profile_keeps_existing_state_and_settings() -> Result<()> {
                 "--nocapture",
             ])
             .env("HOME", directory.path())
+            .env("CODEX_HOME", directory.path().join("normal-codex"))
             .env("QA_NORMAL_PROFILE_CHILD", "1")
             .status()?;
         assert!(status.success());
         return Ok(());
     }
     let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap());
+    let codex_home = std::env::var_os("CODEX_HOME");
+    app::qa::prepare()?;
+    assert_eq!(
+        std::env::var_os("HOME"),
+        Some(home.clone().into_os_string())
+    );
+    assert_eq!(std::env::var_os("CODEX_HOME"), codex_home);
     let directory = home.join("Library/Application Support/codex-gpui");
     std::fs::create_dir_all(&directory)?;
     std::fs::write(

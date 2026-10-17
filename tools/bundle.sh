@@ -10,7 +10,7 @@ if [[ ${1:-} != --assemble ]]; then
     [[ -z $(git status --porcelain) ]] || revision=$revision-dirty
     lane=bundle
     [[ $mode == normal ]] || { mode=qa; lane=qa-sync; }
-    tools/mac.sh -l "$lane" "bash tools/bundle.sh --assemble /tmp/cgx-mac/release-$lane $mode $revision"
+    tools/mac.sh -l "$lane" "bash tools/bundle.sh --assemble /tmp/cgx-mac/release-$lane $mode $revision archive"
     destination=/tmp/cgx/release
     filename=codex-gpui-$version-macos-arm64.zip
     [[ $mode == normal ]] || { destination=/sdc-disk/tmp/cgx/qa-sync; filename=codex-gpui-qa.zip; }
@@ -62,5 +62,9 @@ plutil -lint "$app/Contents/Info.plist"
 codesign --force --sign - --timestamp=none "$app"
 codesign --verify --strict --verbose=2 "$app"
 "$app/Contents/MacOS/codex-gpui" --qa-build-info
-(cd "$stage" && ditto -c -k --keepParent "$name.app" "$out/bundle.zip")
-printf 'verified bundle: %s\n' "$app"
+if [[ ${5:-} == archive ]]; then
+    (cd "$stage" && ditto -c -k --keepParent "$name.app" "$out/bundle.zip")
+    rm -rf -- "$stage"
+else
+    printf 'verified bundle: %s\n' "$app"
+fi

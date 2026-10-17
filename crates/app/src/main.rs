@@ -21,7 +21,7 @@ fn main() {
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_default();
     let mut cmd = bridge::default_command();
-    app::qa::configure_command(&mut cmd);
+    app::qa::configure_command(&mut cmd).expect("configure isolated QA app-server");
     cmd.current_dir(&cwd);
     let (bridge, events) = Bridge::spawn(cmd).unwrap_or_else(|err| {
         eprintln!("codex-gpui: cannot start codex app-server: {err:#}");

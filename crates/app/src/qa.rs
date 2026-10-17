@@ -14,10 +14,15 @@ pub const REVISION: &str = match option_env!("CODEX_GPUI_REVISION") {
     None => "development",
 };
 
-static PROFILE: OnceLock<PathBuf> = OnceLock::new();
+struct Profile {
+    root: PathBuf,
+    _lock: fs::File,
+}
+
+static PROFILE: OnceLock<Profile> = OnceLock::new();
 
 pub fn profile() -> Option<&'static PathBuf> {
-    PROFILE.get()
+    PROFILE.get().map(|profile| &profile.root)
 }
 
 fn private_directory(path: &Path) -> Result<()> {
@@ -45,8 +50,11 @@ pub fn prepare() -> Result<()> {
         [flag, path] if flag == "--qa-smoke-profile" => {
             let path = PathBuf::from(path).canonicalize()?;
             ensure!(
-                path.starts_with(PathBuf::from("/tmp").canonicalize()?),
-                "smoke profile must be under /tmp"
+                path.parent() == Some(PathBuf::from("/tmp").canonicalize()?.as_path())
+                    && path
+                        .file_name()
+                        .is_some_and(|name| name.to_string_lossy().starts_with("cgx-qa-smoke-")),
+                "smoke profile must be an owned cgx-qa-smoke-* directory directly under /tmp"
             );
             path
         }
@@ -56,6 +64,14 @@ pub fn prepare() -> Result<()> {
         }
     };
     private_directory(&root)?;
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(root.join("session.lock"))?;
+    lock.try_lock()
+        .context("QA profile is already open or updating")?;
     for directory in ["home", "codex", "workspace"] {
         private_directory(&root.join(directory))?;
     }
@@ -64,25 +80,45 @@ pub fn prepare() -> Result<()> {
         std::env::set_var("HOME", root.join("home"));
         std::env::set_var("CODEX_HOME", root.join("codex"));
         std::env::set_var("CODEX_GPUI_CWD", root.join("workspace"));
+        std::env::set_var("TMPDIR", "/tmp");
     }
     PROFILE
-        .set(root)
+        .set(Profile { root, _lock: lock })
         .map_err(|_| anyhow::anyhow!("QA profile already initialized"))?;
     Ok(())
 }
 
-pub fn configure_command(command: &mut Command) {
-    let Some(root) = profile() else { return };
-    command
+pub fn configure_command(command: &mut Command) -> Result<()> {
+    let Some(root) = profile() else { return Ok(()) };
+    let program = Path::new(command.get_program());
+    let executable = if program.is_absolute() {
+        program.to_owned()
+    } else if program.components().count() > 1 {
+        std::env::current_dir()?.join(program)
+    } else {
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+            .map(|directory| directory.join(program))
+            .find(|path| {
+                fs::metadata(path).is_ok_and(|metadata| {
+                    metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+                })
+            })
+            .context("cannot resolve the QA app-server executable on the original PATH")?
+    };
+    let mut isolated = Command::new(executable.canonicalize()?);
+    isolated
+        .args(command.get_args())
         .env_clear()
         .env("HOME", root.join("home"))
         .env("CODEX_HOME", root.join("codex"))
         .env(
             "PATH",
-            "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/opt/zerobrew/bin",
+            "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin:/opt/zerobrew/bin",
         )
         .env("TMPDIR", "/tmp")
         .args(["-c", "cli_auth_credentials_store=\"file\""]);
+    *command = isolated;
+    Ok(())
 }
 
 pub fn build_info() -> serde_json::Value {

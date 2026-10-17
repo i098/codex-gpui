@@ -36,6 +36,21 @@ def atomic_json(path, value):
     os.replace(temporary, path)
 
 
+def remove_temporary(path, prefix):
+    if path.is_symlink() or path.resolve().parent != Path("/tmp").resolve() or not path.name.startswith(prefix):
+        raise RuntimeError("refusing to remove an unexpected temporary path")
+    if path.exists():
+        shutil.rmtree(path)
+
+
+def discard_candidate(candidate):
+    if process_for(Path(candidate["bundle"])):
+        return False
+    remove_temporary(Path(candidate["stage"]), "cgx-qa-sync-")
+    remove_temporary(Path(candidate["smoke_profile"]), "cgx-qa-smoke-")
+    return True
+
+
 def owned_directory(path):
     if path.is_symlink():
         raise RuntimeError("owned QA directory is a symlink: " + str(path))
@@ -175,24 +190,28 @@ def close_ready(profile, bundle, revision):
 
 def launch(bundle, revision, profile=PROFILE, smoke=False):
     before = native_state()["frontmost"]
-    args = ["/usr/bin/open", "-g", "-n", str(bundle)]
-    if smoke:
-        args += ["--args", "--qa-smoke-profile", str(profile)]
-    run(*args)
+    existing = process_for(bundle)
+    if not existing:
+        args = ["/usr/bin/open", "-g", "-n", str(bundle)]
+        if smoke:
+            args += ["--args", "--qa-smoke-profile", str(profile)]
+        run(*args)
     deadline = time.monotonic() + 45
     while time.monotonic() < deadline:
         state = native_state()
-        if state["frontmost"] != before:
-            raise RuntimeError("foreground changed during background QA launch")
+        owned = [a for a in state["apps"] if Path(a["bundle"]).resolve() == bundle.resolve()]
+        if not existing and any(a["active"] or a["pid"] == state["frontmost"] for a in owned):
+            raise RuntimeError("QA took focus during a background launch")
         try:
             current = runtime(profile, bundle, revision)
-            if current and current["initialized"] and not current["active"]:
-                print(json.dumps({"event": "background-start", "frontmost": before, **current}), flush=True)
-                return
+            if current and current["initialized"] and (existing or not current["active"]):
+                print(json.dumps({"event": "running" if existing else "background-start",
+                                  "frontmost_before": before, "frontmost_after": state["frontmost"], **current}), flush=True)
+                return current
         except (FileNotFoundError, RuntimeError, json.JSONDecodeError):
             pass
         time.sleep(0.3)
-    raise RuntimeError("QA did not prove background startup before the deadline")
+    raise RuntimeError("QA did not prove startup before the deadline")
 
 
 def build(revision):
@@ -201,25 +220,101 @@ def build(revision):
     environment = os.environ.copy()
     environment.update(CARGO_HOME="/tmp/cgx-mac/cargo", RUSTUP_HOME="/tmp/cgx-mac/rustup",
                        CARGO_TARGET_DIR="/tmp/cgx-mac/target/qa-sync-updater",
-                       CARGO_NET_GIT_FETCH_WITH_CLI="true",
+                       CARGO_NET_GIT_FETCH_WITH_CLI="true", TMPDIR="/tmp",
                        PATH="/tmp/cgx-mac/cargo/bin:" + str(HOME / ".cargo/bin") + ":/opt/zerobrew/bin:/usr/bin:/bin:/usr/sbin:/sbin")
     log = UPDATER / ("build-" + revision + ".log")
-    with log.open("w") as output:
-        subprocess.run(["bash", "tools/bundle.sh", "--assemble", str(stage), "qa", revision],
-                       cwd=SOURCE, env=environment, stdout=output, stderr=subprocess.STDOUT,
-                       check=True, timeout=1800)
-    bundles = list(stage.glob("stage.*/Codex GPUI QA.app"))
-    if len(bundles) != 1:
-        raise RuntimeError("build did not produce exactly one QA bundle")
-    bundle = bundles[0]
-    identity = verify_bundle(bundle, revision)
-    profile = Path(tempfile.mkdtemp(prefix="cgx-qa-smoke-", dir="/tmp"))
-    launch(bundle, revision, profile, smoke=True)
-    if not close_ready(profile, bundle, revision):
-        raise RuntimeError("staged QA did not accept its safe close request")
-    identity["log"] = str(log)
+    try:
+        with log.open("w") as output:
+            subprocess.run(["bash", "tools/bundle.sh", "--assemble", str(stage), "qa", revision],
+                           cwd=SOURCE, env=environment, stdout=output, stderr=subprocess.STDOUT,
+                           check=True, timeout=1800)
+        bundles = list(stage.glob("stage.*/Codex GPUI QA.app"))
+        if len(bundles) != 1:
+            raise RuntimeError("build did not produce exactly one QA bundle")
+        identity = verify_bundle(bundles[0], revision)
+    except Exception:
+        remove_temporary(stage, "cgx-qa-sync-")
+        raise
+    identity.update(log=str(log), stage=str(stage), startup_verified=False,
+                    smoke_profile=tempfile.mkdtemp(prefix="cgx-qa-smoke-", dir="/tmp"))
     atomic_json(UPDATER / "pending.json", identity)
     return identity
+
+
+def probe_candidate(candidate):
+    bundle = Path(candidate["bundle"])
+    profile = Path(candidate["smoke_profile"])
+    if process_for(bundle):
+        state = runtime(profile, bundle, candidate["revision"])
+        if not state or not state["initialized"] or not state["ready"]:
+            print("pending: staged QA readiness is unverified", flush=True)
+            return False
+    else:
+        profile.mkdir(mode=0o700, exist_ok=True)
+        launch(bundle, candidate["revision"], profile, smoke=True)
+    if not close_ready(profile, bundle, candidate["revision"]):
+        print("pending: staged QA cannot close safely", flush=True)
+        return False
+    candidate["startup_verified"] = True
+    atomic_json(UPDATER / "pending.json", candidate)
+    remove_temporary(profile, "cgx-qa-smoke-")
+    return True
+
+
+def finish_activation(candidate):
+    installed = verify_bundle(INSTALLED, candidate["revision"], candidate["digest"])
+    atomic_json(UPDATER / "installed.json", installed)
+    temporary = UPDATER / "qa-sync.py.tmp"
+    temporary.write_text(git("show", candidate["revision"] + ":tools/qa-sync.py") + "\n")
+    os.replace(temporary, UPDATER / "qa-sync.py")
+    if not discard_candidate(candidate):
+        print("retained a running staged QA artifact: " + candidate["stage"], flush=True)
+    (UPDATER / "pending.json").unlink(missing_ok=True)
+    print(json.dumps({"event": "installed", **installed}), flush=True)
+    return True
+
+
+def recover_unfinished():
+    record = UPDATER / "installed.json"
+    previous = json.loads(record.read_text()) if record.exists() else None
+    if INSTALLED.exists():
+        try:
+            current_installation()
+            return True
+        except RuntimeError:
+            pending = UPDATER / "pending.json"
+            if not pending.exists():
+                raise
+            candidate = json.loads(pending.read_text())
+            verify_bundle(INSTALLED, candidate["revision"], candidate["digest"])
+        if process_for(INSTALLED):
+            state = runtime(PROFILE, INSTALLED, candidate["revision"])
+            if state and state["initialized"]:
+                return finish_activation(candidate)
+            print("pending: the new QA process has unverified readiness", flush=True)
+            return False
+    elif previous is None:
+        return True
+    with (PROFILE / "session.lock").open("a+") as session:
+        try:
+            fcntl.flock(session, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        if process_for(INSTALLED):
+            return False
+        if previous:
+            verify_bundle(BACKUP, previous["revision"], previous["digest"])
+        if INSTALLED.exists():
+            failed = UPDATER / "failed.app"
+            if failed.exists():
+                verify_bundle(failed)
+                shutil.rmtree(failed)
+            os.replace(INSTALLED, failed)
+        if previous:
+            os.replace(BACKUP, INSTALLED)
+    if previous:
+        launch(INSTALLED, previous["revision"])
+    return True
 
 
 def activate(candidate):
@@ -243,36 +338,41 @@ def activate(candidate):
         return False
     moved_previous = False
     try:
-        if latest_main() != revision:
-            if previous and process_for(INSTALLED) is None:
-                launch(INSTALLED, previous["revision"])
-            return False
-        if BACKUP.exists():
-            verify_bundle(BACKUP)
-            shutil.rmtree(BACKUP)
-        if previous:
-            os.replace(INSTALLED, BACKUP)
-            moved_previous = True
-        INSTALLED.parent.mkdir(exist_ok=True)
-        os.replace(replacement, INSTALLED)
-        verify_bundle(INSTALLED, revision, candidate["digest"])
+        with (PROFILE / "session.lock").open("a+") as session:
+            try:
+                fcntl.flock(session, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                print("pending: QA reopened before replacement", flush=True)
+                return False
+            if process_for(INSTALLED):
+                return False
+            if latest_main() != revision:
+                return False
+            if BACKUP.exists():
+                verify_bundle(BACKUP)
+                shutil.rmtree(BACKUP)
+            if previous:
+                os.replace(INSTALLED, BACKUP)
+                moved_previous = True
+            INSTALLED.parent.mkdir(exist_ok=True)
+            os.replace(replacement, INSTALLED)
+            verify_bundle(INSTALLED, revision, candidate["digest"])
         launch(INSTALLED, revision)
     except Exception:
         if process_for(INSTALLED) is None and previous:
-            if moved_previous:
-                if INSTALLED.exists():
-                    os.replace(INSTALLED, replacement)
-                os.replace(BACKUP, INSTALLED)
+            with (PROFILE / "session.lock").open("a+") as session:
+                fcntl.flock(session, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                if moved_previous:
+                    if INSTALLED.exists():
+                        os.replace(INSTALLED, replacement)
+                    os.replace(BACKUP, INSTALLED)
+                atomic_json(UPDATER / "installed.json", previous)
             launch(INSTALLED, previous["revision"])
         raise
-    installed = verify_bundle(INSTALLED, revision, candidate["digest"])
-    atomic_json(UPDATER / "installed.json", installed)
-    (UPDATER / "pending.json").unlink(missing_ok=True)
-    temporary = UPDATER / "qa-sync.py.tmp"
-    shutil.copyfile(SOURCE / "tools/qa-sync.py", temporary)
-    os.replace(temporary, UPDATER / "qa-sync.py")
-    print(json.dumps({"event": "installed", **installed}), flush=True)
-    return True
+    finally:
+        if previous and not moved_previous and process_for(INSTALLED) is None:
+            launch(INSTALLED, previous["revision"])
+    return finish_activation(candidate)
 
 
 def update():
@@ -281,14 +381,28 @@ def update():
         git("checkout", "--detach", "origin/main")
     while True:
         revision = latest_main()
-        current = current_installation()
-        if current and current["revision"] == revision:
-            print(json.dumps({"event": "synced", **current, "running": runtime(PROFILE, INSTALLED, revision)}), flush=True)
+        if not recover_unfinished():
             return
+        current = current_installation()
         pending = UPDATER / "pending.json"
         candidate = json.loads(pending.read_text()) if pending.exists() else None
-        if not candidate or candidate["revision"] != revision:
+        if current and current["revision"] == revision:
+            if candidate and candidate["revision"] == revision:
+                launch(INSTALLED, revision)
+                finish_activation(candidate)
+            else:
+                print(json.dumps({"event": "synced", **current, "running": runtime(PROFILE, INSTALLED, revision)}), flush=True)
+            return
+        if candidate and (candidate["revision"] != revision or not Path(candidate["bundle"]).is_dir()):
+            if not discard_candidate(candidate):
+                print("pending: a staged QA process still owns its profile", flush=True)
+                return
+            pending.unlink()
+            candidate = None
+        if candidate is None:
             candidate = build(revision)
+        if not candidate["startup_verified"] and not probe_candidate(candidate):
+            return
         if latest_main() != revision:
             continue
         if activate(candidate):
@@ -343,5 +457,5 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as error:
-        print("QA update failed; retained the last QA artifact: " + str(error), file=sys.stderr, flush=True)
+        print("QA update failed without a forced quit: " + str(error), file=sys.stderr, flush=True)
         sys.exit(1)
