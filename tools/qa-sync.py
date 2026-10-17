@@ -36,18 +36,31 @@ def atomic_json(path, value):
     os.replace(temporary, path)
 
 
-def remove_temporary(path, prefix):
+def temporary_path(path, prefix):
     if path.is_symlink() or path.resolve().parent != Path("/tmp").resolve() or not path.name.startswith(prefix):
-        raise RuntimeError("refusing to remove an unexpected temporary path")
-    if path.exists():
+        raise RuntimeError("unexpected temporary QA path")
+    return path
+
+
+def remove_temporary(path, prefix):
+    if temporary_path(path, prefix).exists():
         shutil.rmtree(path)
 
 
 def discard_candidate(candidate):
     if process_for(Path(candidate["bundle"])):
         return False
-    remove_temporary(Path(candidate["stage"]), "cgx-qa-sync-")
-    remove_temporary(Path(candidate["smoke_profile"]), "cgx-qa-smoke-")
+    profile = temporary_path(Path(candidate["smoke_profile"]), "cgx-qa-smoke-")
+    if profile.exists():
+        with (profile / "session.lock").open("a+") as session:
+            try:
+                fcntl.flock(session, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return False
+            remove_temporary(Path(candidate["stage"]), "cgx-qa-sync-")
+            remove_temporary(profile, "cgx-qa-smoke-")
+    else:
+        remove_temporary(Path(candidate["stage"]), "cgx-qa-sync-")
     return True
 
 
@@ -257,7 +270,6 @@ def probe_candidate(candidate):
         return False
     candidate["startup_verified"] = True
     atomic_json(UPDATER / "pending.json", candidate)
-    remove_temporary(profile, "cgx-qa-smoke-")
     return True
 
 
