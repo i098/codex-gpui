@@ -365,6 +365,7 @@ pub struct Root {
     host: Arc<dyn host::Host>,
     automations: Option<Result<Value, String>>,
     automation_load: Option<Task<()>>,
+    suggestion_load: Option<Task<()>>,
     /// The Scheduled routes' sidebar, fed the host's list when the read completes.
     scheduled: Option<Entity<automations::ScheduledSidebar>>,
     /// The Scheduled empty page: its suggestion cards start guided conversations.
@@ -558,6 +559,7 @@ impl Root {
             bridge,
             automations: None,
             automation_load: None,
+            suggestion_load: None,
             scheduled: None,
             suggestions: None,
             cwd,
@@ -739,10 +741,12 @@ impl Root {
     /// Replaces the desktop host and cancels any pending host read.
     pub fn set_host(&mut self, host: Arc<dyn host::Host>, cx: &mut Context<Self>) {
         self.automation_load = None;
+        self.suggestion_load = None;
         self.host = host;
         self.automations = None;
         if self.scheduled_route() {
             self.load_automations(cx);
+            self.load_suggestions(cx);
         }
         cx.notify();
     }
@@ -778,6 +782,31 @@ impl Root {
                 }
                 this.automations = Some(result);
                 cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    fn load_suggestions(&mut self, cx: &mut Context<Self>) {
+        let Some(page) = self.suggestions.clone() else {
+            return;
+        };
+        page.update(cx, |page, cx| {
+            page.set_pending(None, cx);
+            page.set_suggestions(Vec::new(), cx);
+        });
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move {
+            let response = host.fetch(&host::suggested_automations())?;
+            Ok::<Vec<automations::Suggestion>, anyhow::Error>(serde_json::from_value(
+                host::json_body(&response)?,
+            )?)
+        });
+        self.suggestion_load = Some(cx.spawn(async move |this, cx| {
+            let result = read.await;
+            this.update(cx, |_, cx| match result {
+                Ok(server) => page.update(cx, |page, cx| page.set_suggestions(server, cx)),
+                Err(error) => eprintln!("codex-gpui: failed to load task suggestions: {error:#}"),
             })
             .ok();
         }));
@@ -957,6 +986,7 @@ impl Root {
     /// Shows the route (loading its thread if needed), pushes history into the shell and
     /// persists the state.
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.suggestion_load = None;
         let (can_back, can_forward) = (!self.back.is_empty(), !self.forward.is_empty());
         self.archive_page = None;
         self.page = match self.state.route.clone() {
@@ -1018,6 +1048,9 @@ impl Root {
             Route::Mobile => Some(mobile::shell(cx)),
             Route::Home | Route::Thread(_) => None,
         };
+        if self.scheduled_route() {
+            self.load_suggestions(cx);
+        }
         if let Some(page) = &self.page {
             page.update(cx, |shell, _| {
                 shell.can_go_back = can_back;
