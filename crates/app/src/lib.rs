@@ -11,8 +11,8 @@ use anyhow::Result;
 use async_channel::Receiver;
 use bridge::types::{
     ApprovalDecision, CommandApprovalRequest, ConfigReadResponse, FileChangeApprovalRequest,
-    Thread, ThreadItem, ThreadReadResponse, ThreadStartResponse, ThreadStartedNotification,
-    TurnStatus,
+    Thread, ThreadItem, ThreadListResponse, ThreadReadResponse, ThreadStartResponse,
+    ThreadStartedNotification, TurnStatus,
 };
 use bridge::{Bridge, Event};
 use gpui::{
@@ -34,7 +34,7 @@ use ui::screens::diff::panel::{
 use ui::screens::home::HomeMain;
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
 use ui::screens::sidebar::{
-    ArchiveThread, CommandMenu, CommandMenuEvent, HomeSidebar, OpenThread, UnpinThread,
+    ArchiveThread, CommandMenu, CommandMenuEvent, HomeSidebar, LoadMore, OpenThread, UnpinThread,
 };
 use ui::screens::terminal::Xterm;
 use ui::screens::thread::view::{Clock, EditMessage, ForkThread, RevertTurn, ThreadView};
@@ -326,6 +326,9 @@ pub struct Root {
     sidebar: Entity<HomeSidebar>,
     /// Recents in sidebar order, for `⌘1`…`⌘9`, Previous/Next Chat and the command menu.
     threads: Vec<Thread>,
+    /// `thread/list` cursor of the page after `threads`, while the sidebar's end asks for it.
+    next_cursor: Option<String>,
+    loading_more: bool,
     /// The window is at least [`SIDEBAR_BREAKPOINT`] wide; narrower hides the sidebar.
     wide: bool,
     /// Holds key focus when no composer shows (Settings, a loading thread, sign-in), so
@@ -459,6 +462,10 @@ impl Root {
             },
         )
         .detach();
+        cx.subscribe_in(&sidebar, window, |this, _, _: &LoadMore, _, cx| {
+            this.load_more_threads(cx)
+        })
+        .detach();
         let main = cx.new(|_| ui::EmptyMain).into();
         let wide = window.viewport_size().width >= SIDEBAR_BREAKPOINT;
         let sidebar_open = state.sidebar_open && wide;
@@ -500,6 +507,8 @@ impl Root {
             shell,
             sidebar,
             threads: Vec::new(),
+            next_cursor: None,
+            loading_more: false,
             wide,
             focus: cx.focus_handle(),
             home: cx.new(|_| HomeMain {
@@ -577,6 +586,7 @@ impl Root {
                     this.login = Some(cx.new(Login::new));
                 }
                 this.set_threads(&threads.data, cx);
+                this.set_next_cursor(threads.next_cursor, cx);
                 let composers = [
                     this.home.read(cx).composer.clone(),
                     this.thread_composer.clone(),
@@ -728,6 +738,48 @@ impl Root {
     fn set_threads(&mut self, threads: &[Thread], cx: &mut Context<Self>) {
         self.threads = threads.to_vec();
         self.sidebar.update(cx, |s, cx| s.set_threads(threads, cx));
+    }
+
+    fn set_next_cursor(&mut self, cursor: Option<String>, cx: &mut Context<Self>) {
+        self.loading_more = false;
+        self.sidebar
+            .update(cx, |s, cx| s.set_has_more(cursor.is_some(), cx));
+        self.next_cursor = cursor;
+    }
+
+    /// The sidebar's end came into view past the loaded pages: the next `thread/list` page.
+    fn load_more_threads(&mut self, cx: &mut Context<Self>) {
+        let Some(cursor) = self.next_cursor.clone() else {
+            return;
+        };
+        if self.loading_more {
+            return;
+        }
+        self.loading_more = true;
+        let bridge = self.bridge.clone();
+        let task = cx.spawn(async move |this, cx| -> Result<()> {
+            let page = bridge
+                .request::<_, ThreadListResponse>(
+                    "thread/list",
+                    json!({ "cursor": cursor, "limit": 10 }),
+                )
+                .await;
+            this.update(cx, |this, cx| {
+                this.loading_more = false;
+                match page {
+                    Ok(mut page) => {
+                        let mut threads = std::mem::take(&mut this.threads);
+                        let ids: HashSet<&str> = threads.iter().map(|t| t.id.as_str()).collect();
+                        page.data.retain(|t| !ids.contains(t.id.as_str()));
+                        threads.extend(page.data);
+                        this.set_threads(&threads, cx);
+                        this.set_next_cursor(page.next_cursor, cx);
+                    }
+                    Err(_) => this.sidebar.update(cx, |s, cx| s.page_failed(cx)),
+                }
+            })
+        });
+        log_err(task, cx);
     }
 
     /// Puts `thread` at the top of Recents.
@@ -1614,8 +1666,24 @@ impl Root {
                         self.add_thread(&n.thread, cx);
                     }
                 }
-                // Recents rows show the thread preview, known once a turn ran.
-                "turn/completed" => self.refresh_threads(cx),
+                // The row's spinner follows the thread status.
+                "thread/status/changed" => {
+                    if let Some(id) = params["threadId"].as_str() {
+                        let active = params["status"]["type"] == "active";
+                        self.sidebar
+                            .update(cx, |s, cx| s.set_running(id, active, cx));
+                    }
+                }
+                // Recents rows show the thread preview, known once a turn ran; a turn that
+                // completed while its thread was not open leaves the unread dot.
+                "turn/completed" => {
+                    if let Some(id) = params["threadId"].as_str()
+                        && self.state.route != Route::Thread(id.to_owned())
+                    {
+                        self.sidebar.update(cx, |s, cx| s.set_unread(id, cx));
+                    }
+                    self.refresh_threads(cx)
+                }
                 "fuzzyFileSearch/sessionUpdated" | "fuzzyFileSearch/sessionCompleted" => {
                     let completed = method == "fuzzyFileSearch/sessionCompleted";
                     self.thread_composer
@@ -1672,11 +1740,22 @@ impl Root {
         }
     }
 
+    /// Reads the first `thread/list` page again; threads of later loaded pages stay after it.
     fn refresh_threads(&self, cx: &mut Context<Self>) {
         let bridge = self.bridge.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {
-            let list = bridge.thread_list().await?;
-            this.update(cx, |this, cx| this.set_threads(&list.data, cx))
+            let mut list = bridge.thread_list().await?;
+            this.update(cx, |this, cx| {
+                let fresh: HashSet<&str> = list.data.iter().map(|t| t.id.as_str()).collect();
+                let rest: Vec<Thread> = this
+                    .threads
+                    .iter()
+                    .filter(|t| !fresh.contains(t.id.as_str()))
+                    .cloned()
+                    .collect();
+                list.data.extend(rest);
+                this.set_threads(&list.data, cx)
+            })
         });
         log_err(task, cx);
     }

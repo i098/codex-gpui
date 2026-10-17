@@ -5,24 +5,33 @@
 use crate::{
     Shell, blit, fixture, focus, home_sidebar_header,
     icon::icon,
-    sidebar_empty, sidebar_section, text,
+    sidebar_empty, text,
     tooltip::{Side, tooltip},
 };
-use bridge::types::{Thread, ThreadListResponse};
+use bridge::types::{Thread, ThreadListResponse, ThreadStatus};
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, Context, Corners, Div, EventEmitter,
     FocusHandle, Focusable, FontWeight, HighlightStyle, Hsla, InteractiveElement, IntoElement,
     KeyDownEvent, MouseButton, ParentElement, Pixels, Render, Rgba, ScrollHandle, SharedString,
-    Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun, Window, div, point,
-    prelude::FluentBuilder as _, px, relative, rgba,
+    Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun, Transformation, Window,
+    canvas, div, point, prelude::FluentBuilder as _, px, radians, relative, rgba, svg,
 };
-use std::{collections::HashSet, ops::Range, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    ops::Range,
+    path::Path,
+    time::Instant,
+};
 use theme::{ActiveTheme as _, Appearance, Theme};
 
 /// `.sidebar-item`: `--radius-lg` (12.5 px) with `corner-shape: superellipse(1.5)`.
 const RADIUS_ROW: Pixels = px(12.5);
 
 const PINNED_SECTION_ID: &str = "01984de2-8f74-7c91-a3b2-5c5e937cf318";
+
+/// Recents shows this many rows first and `PAGE` more each time its end comes into view
+/// (the original's `maxItems: 10`, `infiniteScroll` paging of the last section).
+const PAGE: usize = 10;
 
 /// Recents row label: the thread name, else its preview cut to 80 chars with `…`.
 pub(crate) fn title(thread: &Thread) -> SharedString {
@@ -46,6 +55,15 @@ pub struct HomeSidebar {
     pinned: HashSet<String>,
     /// Threads whose rows carry the unread dot; any lights the header's bell.
     pub unread: Vec<String>,
+    /// Threads with an active turn (`thread/status/changed`), by the clock reading when their
+    /// spinner started.
+    running: HashMap<String, Instant>,
+    /// Recents rows shown: grows by [`PAGE`] while the list's end is in view.
+    limit: usize,
+    /// The owner holds a `thread/list` cursor: the end sentinel stays and asks for the page.
+    has_more: bool,
+    loading: bool,
+    page_error: bool,
     /// The sections' scroller (Projects and Recents under the header).
     pub scroll: ScrollHandle,
 }
@@ -54,6 +72,12 @@ pub struct HomeSidebar {
 pub struct OpenThread(pub String);
 
 impl EventEmitter<OpenThread> for HomeSidebar {}
+
+/// Emitted when Recents wants rows past the loaded `thread/list` pages (its end is in view
+/// and [`HomeSidebar::set_has_more`] was given `true`).
+pub struct LoadMore;
+
+impl EventEmitter<LoadMore> for HomeSidebar {}
 
 /// A Recents row's `Archive chat`: `thread/archive` on that thread (its id).
 #[derive(Clone, PartialEq, Action)]
@@ -87,6 +111,15 @@ impl HomeSidebar {
             collapsed: [false; 3],
             pinned: pinned_ids(threads),
             unread: Vec::new(),
+            running: threads
+                .iter()
+                .filter(|t| t.status == ThreadStatus::Active)
+                .map(|t| (t.id.clone(), Instant::now()))
+                .collect(),
+            limit: PAGE,
+            has_more: false,
+            loading: false,
+            page_error: false,
             scroll: ScrollHandle::new(),
         }
     }
@@ -94,6 +127,11 @@ impl HomeSidebar {
     pub fn set_threads(&mut self, threads: &[Thread], cx: &mut Context<Self>) {
         self.threads = threads.iter().map(|t| (t.id.clone(), title(t))).collect();
         self.pinned = pinned_ids(threads);
+        for thread in threads {
+            if thread.status == ThreadStatus::Active {
+                self.set_running(&thread.id, true, cx);
+            }
+        }
         cx.notify();
     }
 
@@ -112,19 +150,124 @@ impl HomeSidebar {
             (label, _) => label,
         };
         self.threads.insert(0, (thread.id.clone(), label));
+        self.set_running(&thread.id, thread.status == ThreadStatus::Active, cx);
         cx.notify();
     }
 
+    /// Opening a thread reads it: its unread dot goes.
     pub fn select(&mut self, id: Option<&str>, cx: &mut Context<Self>) {
         self.selected = id.map(str::to_owned);
+        if let Some(id) = id {
+            self.unread.retain(|u| u != id);
+        }
         cx.notify();
+    }
+
+    /// A turn is running in thread `id` (`thread/status/changed` active): its row shows the
+    /// spinner in place of the unread dot until the status goes idle.
+    pub fn set_running(&mut self, id: &str, running: bool, cx: &mut Context<Self>) {
+        if running {
+            self.running
+                .entry(id.to_owned())
+                .or_insert_with(|| cx.background_executor().now());
+        } else {
+            self.running.remove(id);
+        }
+        cx.notify();
+    }
+
+    pub fn is_running(&self, id: &str) -> bool {
+        self.running.contains_key(id)
+    }
+
+    /// A turn completed in thread `id` while it was not open: unread dot.
+    pub fn set_unread(&mut self, id: &str, cx: &mut Context<Self>) {
+        if !self.unread.iter().any(|u| u == id) {
+            self.unread.push(id.to_owned());
+        }
+        cx.notify();
+    }
+
+    /// Whether the owner can load another `thread/list` page ([`LoadMore`]).
+    pub fn set_has_more(&mut self, has_more: bool, cx: &mut Context<Self>) {
+        self.has_more = has_more;
+        self.loading = false;
+        self.page_error = false;
+        cx.notify();
+    }
+
+    pub fn page_failed(&mut self, cx: &mut Context<Self>) {
+        self.loading = false;
+        self.page_error = true;
+        cx.notify();
+    }
+
+    pub fn load_failed(&self) -> bool {
+        self.page_error
+    }
+
+    /// Recents rows on screen (the first [`limit`](Self::limit) unpinned threads).
+    pub fn recents_shown(&self) -> usize {
+        self.recents().count().min(self.limit)
+    }
+
+    pub fn projects_collapsed(&self) -> bool {
+        self.collapsed[0]
+    }
+
+    fn recents(&self) -> impl Iterator<Item = &(String, SharedString)> {
+        self.threads
+            .iter()
+            .filter(|(id, _)| !self.pinned.contains(id))
+    }
+
+    /// The end sentinel came into view: `PAGE` more rows when they are loaded, else the next
+    /// `thread/list` page from the owner.
+    fn load_more(&mut self, cx: &mut Context<Self>) {
+        if self.recents().count() > self.limit {
+            self.limit += PAGE;
+            cx.notify();
+        } else if self.has_more && !self.loading {
+            self.loading = true;
+            self.page_error = false;
+            cx.notify();
+            cx.emit(LoadMore);
+        }
     }
 
     fn rows(&self, pinned: bool, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let loaded = self.recents().count();
         let rows = self
             .threads
             .iter()
-            .filter(|(id, _)| self.pinned.contains(id) == pinned);
+            .filter(|(id, _)| self.pinned.contains(id) == pinned)
+            .take(if pinned { usize::MAX } else { self.limit });
+        let now = cx.background_executor().now();
+        if !self.running.is_empty() {
+            window.request_animation_frame();
+        }
+        // The original's end sentinel (`IntersectionObserver` on the list's last item): while
+        // it is inside the scroller's clip, the list pages.
+        let sentinel = (!pinned
+            && !self.loading
+            && !self.page_error
+            && (loaded > self.limit || self.has_more))
+            .then(|| {
+                let this = cx.weak_entity();
+                canvas(
+                    move |bounds, window, cx| {
+                        let clip = window.content_mask().bounds;
+                        if bounds.top() < clip.bottom() && bounds.bottom() > clip.top() {
+                            cx.defer(move |cx| {
+                                this.update(cx, |s, cx| s.load_more(cx)).ok();
+                            });
+                        }
+                    },
+                    |_, (), _, _| {},
+                )
+                .w_full()
+                .h(px(9.))
+            });
         div()
             .flex()
             .flex_col()
@@ -146,17 +289,52 @@ impl HomeSidebar {
                     cx,
                 );
                 let focused = row_focus.read(cx).handle.contains_focused(window, cx);
+                // `animate-spin`: one turn per second, linear.
+                let end = self
+                    .running
+                    .get(id)
+                    .map(|started| {
+                        RowEnd::Spinner(
+                            (now.saturating_duration_since(*started).as_secs_f32() % 1.) * 360.,
+                        )
+                    })
+                    .or_else(|| self.unread.contains(id).then_some(RowEnd::Dot));
                 thread_row(
                     id,
                     label.clone(),
                     self.selected.as_ref() == Some(id),
-                    self.unread.contains(id),
+                    end,
                     cx,
                     (focused, pinned),
                     [&row_focus, &pin_focus, &archive_focus],
                 )
                 .on_click(cx.listener(move |_, _, _, cx| cx.emit(OpenThread(open.clone()))))
             }))
+            .children(sentinel)
+            .when(!pinned && self.loading, |d| {
+                d.child(div().h(px(24.)).flex().justify_center().child(icon(
+                    "sidebar-cmd-spinner",
+                    16.,
+                    cx.theme().text_tertiary,
+                )))
+            })
+            .when(!pinned && self.page_error, |d| {
+                d.child(
+                    div()
+                        .id("retry-more-chats")
+                        .role(gpui::Role::Button)
+                        .aria_label("Could not load more chats")
+                        .cursor_pointer()
+                        .child(text(
+                            "Could not load more chats",
+                            12.,
+                            24.,
+                            430.,
+                            cx.theme().text_tertiary,
+                        ))
+                        .on_click(cx.listener(|s, _, _, cx| s.load_more(cx))),
+                )
+            })
             .into_any_element()
     }
 }
@@ -183,24 +361,43 @@ impl Render for HomeSidebar {
                        body: AnyElement,
                        window: &mut Window,
                        cx: &mut Context<Self>| {
-            let body = if self.collapsed[i] {
-                div().into_any_element()
-            } else {
-                body
-            };
+            let collapsed = self.collapsed[i];
             let header_focus = focus::handle(title, -1, window, cx);
-            sidebar_section(title, body, cx)
-                .relative()
-                .tab_group()
+            div()
+                .px(px(8.))
+                .flex()
+                .flex_col()
                 .child(
                     focus::ring(
                         div()
                             .id(title)
-                            .absolute()
-                            .top(px(2.5))
-                            .left(px(12.))
-                            .right(px(74.))
-                            .h(px(25.)),
+                            .group(title)
+                            .role(gpui::Role::Button)
+                            .aria_label(title)
+                            .aria_expanded(!collapsed)
+                            .relative()
+                            .h(px(30.))
+                            .flex()
+                            .items_center()
+                            .pl(px(8.))
+                            .child(text(title, 14., 21., 500., cx.theme().text_tertiary))
+                            .child(
+                                svg()
+                                    .path("icons/chevron-down.svg")
+                                    .w(px(14.))
+                                    .h(px(14.7))
+                                    .ml(px(4.))
+                                    .text_color(cx.theme().text_tertiary)
+                                    .opacity(if collapsed { 1. } else { 0. })
+                                    .group_hover(title, |s| s.opacity(1.))
+                                    .with_transformation(Transformation::rotate(radians(
+                                        if collapsed {
+                                            -std::f32::consts::FRAC_PI_2
+                                        } else {
+                                            0.
+                                        },
+                                    ))),
+                            ),
                         &header_focus,
                         px(10.),
                         px(2.),
@@ -211,6 +408,7 @@ impl Render for HomeSidebar {
                         cx.notify();
                     })),
                 )
+                .when(!collapsed, |d| d.child(div().pt(px(4.)).child(body)))
         };
         let projects = section(
             0,
@@ -248,21 +446,30 @@ impl Render for HomeSidebar {
     }
 }
 
+/// What a Recents row ends in: the `Working` spinner at `animate-spin` angle (degrees) while a
+/// turn runs, else the unread dot.
+#[derive(Clone, Copy)]
+enum RowEnd {
+    Spinner(f32),
+    Dot,
+}
+
 /// One Recents row: 30 px, `primary-ghost-hover` fill when hovered or selected. The label is
 /// clipped at the row's end with the marquee's 16 px right fade (`_overflowingViewport`).
 /// Hover or focus within the row shows `Pin chat` and `Archive chat`.
-/// An unread row ends in a blue dot, which takes 28 px off the label.
+/// A running row ends in the 16 px `Working` spinner, an unread one in a blue dot
+/// ([`RowEnd`]); either takes 28 px off the label and hides on hover.
 fn thread_row(
     id: &str,
     label: SharedString,
     selected: bool,
-    unread: bool,
+    end: Option<RowEnd>,
     cx: &App,
     (focused, pinned): (bool, bool),
     handles: [&gpui::Entity<focus::ControlFocus>; 3],
 ) -> Stateful<Div> {
     let t = cx.theme();
-    let clip = if unread { 28. } else { 0. };
+    let clip = if end.is_some() { 28. } else { 0. };
     let group = SharedString::from(format!("thread-row-{id}"));
     let fill = div()
         .absolute()
@@ -324,6 +531,7 @@ fn thread_row(
                 // `_clipViewport _overflowingViewport`: the marquee's CSS mask (8 px left fade over
                 // the track's padding, 16 px right fade), a masked layer in the sidebar's layer.
                 div()
+                    .id(SharedString::from(format!("thread-title-{id}")))
                     .absolute()
                     .left_0()
                     .top(px(5.))
@@ -336,21 +544,46 @@ fn thread_row(
                     .child(text(label, 14., 20., 430., t.text_default_nav))
                     .child(shapes::x_fade(px(8.), px(16.))),
             )
-            .when(unread, |d| {
-                d.child(
+            .when_some(end, |d, end| match end {
+                // `size-5` box at `pe-2`, `text-text/70`, hidden on hover like the dot.
+                RowEnd::Spinner(angle) => d.child(
+                    div()
+                        .id(SharedString::from(format!("working-{id}")))
+                        .absolute()
+                        .top(px(5.))
+                        .right(px(8.))
+                        .size(px(20.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .when(focused, |d| d.invisible())
+                        .group_hover(group.clone(), |s| s.invisible())
+                        .role(gpui::Role::Status)
+                        .aria_label("Working")
+                        .child(
+                            svg()
+                                .path("icons/sidebar-cmd-spinner.svg")
+                                .size(px(16.))
+                                .text_color(t.text.opacity(0.7))
+                                .with_transformation(Transformation::rotate(radians(
+                                    angle.to_radians(),
+                                ))),
+                        ),
+                ),
+                RowEnd::Dot => d.child(
                     div()
                         .absolute()
                         .top(px(11.))
                         .right(px(14.))
                         .size(px(8.))
-                        .opacity(if focused { 0. } else { 1. })
-                        .group_hover(group.clone(), |s| s.opacity(0.))
+                        .when(focused, |d| d.invisible())
+                        .group_hover(group.clone(), |s| s.invisible())
                         .child(shapes::decoration(shapes::Decoration {
                             radius: Corners::all(Theme::RADIUS_FULL),
                             fill: Some(t.info_solid),
                             ..Default::default()
                         })),
-                )
+                ),
             })
             .child(
                 div()
