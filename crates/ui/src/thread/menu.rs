@@ -375,28 +375,27 @@ pub(super) fn note_right_clicked_link(url: String) {
 }
 
 fn selected_text_items(_selection: &str) -> Vec<Item> {
-    let mut items = Vec::new();
     #[cfg(target_os = "macos")]
-    {
+    let lookup = {
         let trimmed = _selection.trim();
         let shown = match trimmed.char_indices().nth(24) {
             Some((index, _)) if trimmed.chars().count() > 25 => format!("{}…", &trimmed[..index]),
             _ => trimmed.to_owned(),
         };
-        items.push(Item::new(
-            "lookUpSelection",
-            format!("Look Up “{shown}”"),
-            true,
-        ));
-        items.push(Item::separator("separator"));
-    }
-    items.push(Item::new("searchWithGoogle", "Search with Google", true));
-    items.push(Item::separator("separator"));
-    items.push(Item {
-        accelerator: Some("⌘C"),
-        ..Item::new("copy", "Copy", true)
-    });
-    items
+        Item::new("lookUpSelection", format!("Look Up “{shown}”"), true)
+    };
+    vec![
+        #[cfg(target_os = "macos")]
+        lookup,
+        #[cfg(target_os = "macos")]
+        Item::separator("separator"),
+        Item::new("searchWithGoogle", "Search with Google", true),
+        Item::separator("separator"),
+        Item {
+            accelerator: Some("⌘C"),
+            ..Item::new("copy", "Copy", true)
+        },
+    ]
 }
 
 pub(crate) fn selection_url(prefix: &str, selection: &str) -> String {
