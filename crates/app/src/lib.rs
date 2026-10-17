@@ -36,7 +36,7 @@ use ui::screens::home::HomeMain;
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
 use ui::screens::sidebar::{
     ArchiveThread, CommandMenu, CommandMenuEvent, HomeSidebar, OpenThread, PINNED_SECTION_ID,
-    PinThread, RenameThread, title as thread_title,
+    PinThread, RenameThread, SEARCH_LIMIT, SearchHit, title as thread_title,
 };
 use ui::screens::terminal::Xterm;
 use ui::screens::thread::view::{Clock, EditMessage, ForkThread, RevertTurn, ThreadView};
@@ -1102,7 +1102,10 @@ impl Root {
 
     /// `⌘K`, `⌘⇧P` and the sidebar `Search`: the command menu over live Recents, focused.
     fn open_command_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let menu = cx.new(|cx| CommandMenu::with_threads(&self.threads, "", cx));
+        let unread = self.sidebar.read(cx).unread.clone();
+        let thread_open = matches!(self.state.route, Route::Thread(_));
+        let menu =
+            cx.new(|cx| CommandMenu::with_threads(&self.threads, &unread, thread_open, "", cx));
         cx.subscribe_in(&menu, window, |this, _, event, window, cx| {
             this.run_command(event, window, cx)
         })
@@ -1167,8 +1170,7 @@ impl Root {
         }
     }
 
-    /// Closes the command menu and runs its row: a chat opens, `New chat`, `Manage scheduled
-    /// tasks` and the settings pages navigate.
+    /// Opens a chat or settings page, or answers the open menu's content search.
     /// ponytail: commands whose feature the port lacks (Open folder, Show Mini, Log out, ...)
     /// only close the menu; run them when the features land.
     fn run_command(
@@ -1177,9 +1179,12 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let CommandMenuEvent::Search(term) = event {
+            return self.search_threads(term.clone(), window, cx);
+        }
         self.command_menu = None;
         match event {
-            CommandMenuEvent::Dismiss => {}
+            CommandMenuEvent::Dismiss | CommandMenuEvent::Search(_) => {}
             CommandMenuEvent::OpenThread(id) => {
                 self.navigate(Route::Thread(id.clone()), window, cx)
             }
@@ -1193,9 +1198,47 @@ impl Root {
                 }
             },
         }
-        // Give the keys back to the route (navigating already did).
         window.focus(&self.route_focus(cx), cx);
         cx.notify();
+    }
+
+    /// The command menu's content search: `thread/search` for `term` (the original's
+    /// `searchThreads`), answered into the open menu.
+    fn search_threads(&self, term: String, window: &Window, cx: &mut Context<Self>) {
+        let Some(menu) = self.command_menu.clone() else {
+            return;
+        };
+        let bridge = self.bridge.clone();
+        let task = cx.spawn_in(window, async move |_, cx| -> Result<()> {
+            let result = async {
+                let mut response: Value = bridge
+                    .request(
+                        "thread/search",
+                        json!({
+                            "cursor": null,
+                            "limit": SEARCH_LIMIT,
+                            "sortKey": "recency_at",
+                            "archived": false,
+                            "sourceKinds": [],
+                            "searchTerm": term,
+                        }),
+                    )
+                    .await?;
+                Ok::<Vec<SearchHit>, anyhow::Error>(serde_json::from_value(
+                    response["data"].take(),
+                )?)
+            }
+            .await;
+            let (hits, error) = match result {
+                Ok(hits) => (hits, None),
+                Err(error) => (Vec::new(), Some(error)),
+            };
+            cx.update(|_, cx| {
+                menu.update(cx, |menu, cx| menu.set_search_results(&term, hits, cx))
+            })?;
+            error.map_or(Ok(()), Err)
+        });
+        log_err(task, cx);
     }
 
     /// `thread/read` with turns, then shows it if the route still points at it.
