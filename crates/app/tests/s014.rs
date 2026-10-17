@@ -117,6 +117,9 @@ fn grouped_activity_matches_the_original() -> Result<()> {
 
     assert_eq!(steps[2]["target"]["text"], "Worked for 17s");
     fx.click(at(&steps[2]["target"]["bbox"]))?;
+    fx.advance(std::time::Duration::from_millis(
+        steps[2]["waitMs"].as_u64().context("Worked for waitMs")?,
+    ))?;
     fx.hover((1270., 820.))?;
     let opened = fx.shot()?;
     opened.save(format!(
