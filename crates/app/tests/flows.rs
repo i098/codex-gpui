@@ -886,20 +886,64 @@ fn diff_file_header_toggle() -> Result<String> {
 fn open_terminal(fx: &mut Fx) -> Result<()> {
     fx.click(fx.at("home", "Add a subtract")?)?;
     fx.wait_thread(SUBTRACT)?;
-    let view = fx.read(|r, _| r.thread().cloned()).context("no thread")?;
-    fx.cx.update(|cx| {
-        view.update(cx, |v, cx| {
-            for event in ui::screens::terminal::running_command_replay() {
-                v.apply(&event, cx);
-            }
+    let status: Vec<_> = include_str!("../../../fixtures/sessions/subtract.jsonl")
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("fixture line is JSON"))
+        .filter(|line| line["msg"]["method"] == "thread/status/changed")
+        .map(|line| bridge::Event::Notification {
+            method: "thread/status/changed".into(),
+            params: line["msg"]["params"].clone(),
         })
-    });
-    fx.cx.run_until_parked();
+        .collect();
+    let mut events = ui::screens::terminal::running_command_replay();
+    for event in &mut events {
+        if let bridge::Event::Notification { params, .. } = event
+            && params["turn"].is_object()
+        {
+            params["turn"]["rootTurnId"] = params["turn"]["id"].clone();
+        }
+    }
+    ensure!(status.len() == 2, "recorded active and idle statuses");
+    events.insert(0, status[0].clone());
+    events.push(status[1].clone());
+    for (index, event) in events.into_iter().enumerate() {
+        fx.root.update(&mut fx.cx, |r, cx| r.on_event(event, cx));
+        fx.cx.run_until_parked();
+        let observed = fx.read(|r, cx| {
+            (
+                r.sidebar().read(cx).is_running(SUBTRACT),
+                r.sidebar().read(cx).unread.iter().any(|id| id == SUBTRACT),
+                r.shell().read(cx).attention,
+            )
+        });
+        let expected = (index < 5, index >= 4, index >= 4);
+        ensure!(
+            observed == expected,
+            "Terminal event {index}: running/unread/attention {observed:?}, expected {expected:?}"
+        );
+    }
     // refs/thread: `Toggle summary` 63 px from the window's right edge; the summary popover
     // ends 12 px from it (refs/terminal, shifted to the full-width thread).
     let w = fx.size.0;
     fx.click((w - 63., 22.))?;
-    fx.click((w - 202., 179.7))
+    fx.click((w - 202., 179.7))?;
+    ensure!(
+        fx.read(|r, cx| {
+            let view = r.thread().expect("open thread").read(cx);
+            view.summary_open
+                && matches!(
+                    view.background_terminals().as_slice(),
+                    [(command, "2\n")]
+                        if command == "python3 -c 'from src.math import subtract; print(subtract(5, 3))'"
+                )
+        }),
+        "Terminal lost the open summary, running command, or recorded output"
+    );
+    ensure!(
+        fx.read(|r, cx| r.sidebar().read(cx).unread == [SUBTRACT]) && fx.shell(|s| s.attention),
+        "Opening Terminal cleared the selected unread thread or Home attention"
+    );
+    Ok(())
 }
 
 fn background_terminal_tab() -> Result<String> {
@@ -911,7 +955,18 @@ fn background_terminal_tab() -> Result<String> {
     // The summary stays open: its `Changes` row opens the Changes tab.
     fx.click((fx.size.0 - 202., 105.7))?;
     ensure!(side(&fx) == Some(SidePanel::Changes), "{:?}", side(&fx));
-    Ok(String::new())
+    ensure!(
+        fx.read(|r, cx| r.sidebar().read(cx).unread == [SUBTRACT]) && fx.shell(|s| s.attention),
+        "Changing side tabs cleared the selected unread thread or Home attention"
+    );
+    fx.click(RAIL_HOME)?;
+    fx.click(fx.at("home", "Add a subtract")?)?;
+    fx.wait_thread(SUBTRACT)?;
+    ensure!(
+        fx.read(|r, cx| r.sidebar().read(cx).unread.is_empty()) && !fx.shell(|s| s.attention),
+        "Opening the unread thread did not clear its dot and Home attention"
+    );
+    Ok("six Root events; selected unread and Home attention set, then cleared on open".into())
 }
 
 // --- Settings ▸ Appearance ---
