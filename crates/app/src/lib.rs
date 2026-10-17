@@ -483,6 +483,16 @@ impl Root {
             });
             shell
         });
+        cx.observe(&sidebar, |this, sidebar, cx| {
+            let attention = !sidebar.read(cx).unread.is_empty();
+            if this.shell.read(cx).attention != attention {
+                this.shell.update(cx, |shell, cx| {
+                    shell.attention = attention;
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
         cx.observe_in(&shell, window, |this, _, window, cx| {
             this.save(window, cx);
             cx.notify();
@@ -608,6 +618,7 @@ impl Root {
                         .expect("close preference");
                 this.skills = skills;
                 this.ready = true;
+                this.select_route(cx);
                 this.sync(window, cx);
             })
         });
@@ -879,6 +890,7 @@ impl Root {
             self.forward.clear();
             self.sync(window, cx);
         }
+        self.select_route(cx);
     }
 
     fn step(&mut self, back: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -889,8 +901,17 @@ impl Root {
         };
         if let Some(route) = from.pop() {
             to.push(std::mem::replace(&mut self.state.route, route));
+            self.select_route(cx);
             self.sync(window, cx);
         }
+    }
+
+    fn select_route(&self, cx: &mut Context<Self>) {
+        let id = match &self.state.route {
+            Route::Thread(id) => Some(id.as_str()),
+            _ => None,
+        };
+        self.sidebar.update(cx, |s, cx| s.select(id, cx));
     }
 
     /// Shows the route (loading its thread if needed), pushes history into the shell and
@@ -974,8 +995,6 @@ impl Root {
             (None, _) => self.home.clone().into(),
         };
         window.focus(&self.route_focus(cx), cx);
-        self.sidebar
-            .update(cx, |s, cx| s.select(thread_id.as_deref(), cx));
         let home = self.state.route == Route::Home;
         self.shell.update(cx, |shell, cx| {
             shell.selected_rail = home.then_some("home");
@@ -1912,12 +1931,9 @@ impl Root {
                             .update(cx, |s, cx| s.set_running(id, active, cx));
                     }
                 }
-                // Recents rows show the thread preview, known once a turn ran; a turn that
-                // completed while its thread was not open leaves the unread dot.
+                // Completion can leave the selected thread unread, including a background terminal.
                 "turn/completed" => {
-                    if let Some(id) = params["threadId"].as_str()
-                        && self.state.route != Route::Thread(id.to_owned())
-                    {
+                    if let Some(id) = params["threadId"].as_str() {
                         self.sidebar.update(cx, |s, cx| s.set_unread(id, cx));
                     }
                     self.refresh_threads(cx)

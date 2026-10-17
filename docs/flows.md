@@ -404,6 +404,16 @@ The conversation prepare, its stream, and the navigation into the started conver
 
 `Root` opens the terminal tab beside the open thread from the thread summary's `Background processes` row, through the same side panel as Changes.
 
+The Terminal helper sends all six recorded notifications through `Root::on_event` in the original order.
+The sequence starts with active status and ends with idle status after the completed turn.
+Completion marks the selected thread unread and shows Home attention, as the original renderer does.
+Opening or closing a side tab preserves both indicators.
+Opening the unread thread clears both indicators.
+`background_terminal_tab` checks these transitions, the open summary, the running command, and output `2\n`.
+The complete strict Terminal pixel gate still fails; the separate rail and capture repairs remain required.
+References, text boxes, route checks, and thresholds stay unchanged.
+See [the scoped unread issue](https://github.com/i098/codex-gpui/issues/169).
+
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Thread with a running background command | entry | `Background terminal` entry in the thread. | `Toggle summary` lists it under `Background processes`, as refs/terminal shows. | PASS (`background_terminal_tab`, `parity_terminal`) |
