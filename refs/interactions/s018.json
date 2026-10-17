@@ -1,0 +1,478 @@
+{
+  "name": "s018-composer-add",
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 1,
+    "theme": "dark"
+  },
+  "source": "Original renderer, isolated route1, existing fixture backend, shared Chrome tier with SF fonts",
+  "scope": "CP-039 and CP-040. Existing local Add actions; S019 owns file search. Host-provided Plugins, Agents, Pages and Spaces are excluded as in S019/S020.",
+  "trigger": { "x": 448.5, "y": 776, "w": 28, "h": 28 },
+  "tooltip": {
+    "text": "Add files and more | @",
+    "bbox": {
+      "x": 381,
+      "y": 742,
+      "w": 163.515625,
+      "h": 30
+    },
+    "background": "rgb(45, 45, 45)",
+    "color": "rgb(255, 255, 255)"
+  },
+  "steps": [
+    {
+      "type": "click",
+      "target": { "text": "Add files and more", "bbox": { "x": 448.5, "y": 776, "w": 28, "h": 28 } },
+      "expect": {
+        "text": "",
+        "focused": true,
+        "expanded": true,
+        "menu": {
+          "bbox": {
+            "x": 445.5,
+            "y": 395,
+            "w": 726,
+            "h": 310
+          },
+          "sections": [
+            {
+              "heading": "Add",
+              "items": [
+                {
+                  "text": "Files and folders",
+                  "bbox": {
+                    "x": 445.5,
+                    "y": 421.5625,
+                    "w": 716,
+                    "h": 28.5625
+                  },
+                  "background": "rgba(255, 255, 255, 0.08)",
+                  "current": true,
+                  "disabled": false
+                },
+                {
+                  "text": "Attach appshot",
+                  "bbox": {
+                    "x": 445.5,
+                    "y": 450.125,
+                    "w": 716,
+                    "h": 28.5625
+                  },
+                  "background": "rgba(0, 0, 0, 0)",
+                  "current": false
+                },
+                {
+                  "text": "Work in a project | Choose project for new chats",
+                  "bbox": {
+                    "x": 445.5,
+                    "y": 478.6875,
+                    "w": 716,
+                    "h": 28.5625
+                  },
+                  "background": "rgba(0, 0, 0, 0)",
+                  "current": false,
+                  "disabled": false
+                },
+                {
+                  "text": "Goal | Set a goal to keep pursuing",
+                  "bbox": {
+                    "x": 445.5,
+                    "y": 507.25,
+                    "w": 716,
+                    "h": 28.5625
+                  },
+                  "background": "rgba(0, 0, 0, 0)",
+                  "current": false,
+                  "disabled": false
+                },
+                {
+                  "text": "Plan mode | Turn plan mode on",
+                  "bbox": {
+                    "x": 445.5,
+                    "y": 535.8125,
+                    "w": 716,
+                    "h": 28.5625
+                  },
+                  "background": "rgba(0, 0, 0, 0)",
+                  "current": false,
+                  "disabled": false
+                },
+                {
+                  "text": "Sketch | Draw a sketch",
+                  "bbox": {
+                    "x": 445.5,
+                    "y": 564.375,
+                    "w": 716,
+                    "h": 28.5625
+                  },
+                  "background": "rgba(0, 0, 0, 0)",
+                  "current": false,
+                  "disabled": false
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "key",
+      "key": "ArrowDown",
+      "portKey": "down",
+      "expect": {
+        "text": "",
+        "focused": true,
+        "expanded": true,
+        "menu": {
+          "bbox": {
+            "x": 445.5,
+            "y": 395,
+            "w": 726,
+            "h": 310
+          },
+          "sections": [
+            {
+              "heading": "Add",
+              "items": [
+                {
+                  "text": "Files and folders",
+                  "bbox": {
+                    "x": 445.5,
+                    "y": 421.5625,
+                    "w": 716,
+                    "h": 28.5625
+                  },
+                  "background": "rgba(0, 0, 0, 0)",
+                  "current": false,
+                  "disabled": false
+                },
+                {
+                  "text": "Attach appshot",
+                  "bbox": {
+                    "x": 445.5,
+                    "y": 450.125,
+                    "w": 716,
+                    "h": 28.5625
+                  },
+                  "background": "rgba(0, 0, 0, 0)",
+                  "current": false
+                },
+                {
+                  "text": "Work in a project | Choose project for new chats",
+                  "bbox": {
+                    "x": 445.5,
+                    "y": 478.6875,
+                    "w": 716,
+                    "h": 28.5625
+                  },
+                  "background": "rgba(255, 255, 255, 0.08)",
+                  "current": true,
+                  "disabled": false
+                },
+                {
+                  "text": "Goal | Set a goal to keep pursuing",
+                  "bbox": {
+                    "x": 445.5,
+                    "y": 507.25,
+                    "w": 716,
+                    "h": 28.5625
+                  },
+                  "background": "rgba(0, 0, 0, 0)",
+                  "current": false,
+                  "disabled": false
+                },
+                {
+                  "text": "Plan mode | Turn plan mode on",
+                  "bbox": {
+                    "x": 445.5,
+                    "y": 535.8125,
+                    "w": 716,
+                    "h": 28.5625
+                  },
+                  "background": "rgba(0, 0, 0, 0)",
+                  "current": false,
+                  "disabled": false
+                },
+                {
+                  "text": "Sketch | Draw a sketch",
+                  "bbox": {
+                    "x": 445.5,
+                    "y": 564.375,
+                    "w": 716,
+                    "h": 28.5625
+                  },
+                  "background": "rgba(0, 0, 0, 0)",
+                  "current": false,
+                  "disabled": false
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "key",
+      "key": "ArrowUp",
+      "portKey": "up",
+      "expect": {
+        "text": "",
+        "focused": true,
+        "expanded": true,
+        "menu": {
+          "bbox": {
+            "x": 445.5,
+            "y": 395,
+            "w": 726,
+            "h": 310
+          },
+          "sections": [
+            {
+              "heading": "Add",
+              "items": [
+                {
+                  "text": "Files and folders",
+                  "bbox": {
+                    "x": 445.5,
+                    "y": 421.5625,
+                    "w": 716,
+                    "h": 28.5625
+                  },
+                  "background": "rgba(255, 255, 255, 0.08)",
+                  "current": true,
+                  "disabled": false
+                },
+                {
+                  "text": "Attach appshot",
+                  "bbox": {
+                    "x": 445.5,
+                    "y": 450.125,
+                    "w": 716,
+                    "h": 28.5625
+                  },
+                  "background": "rgba(0, 0, 0, 0)",
+                  "current": false
+                },
+                {
+                  "text": "Work in a project | Choose project for new chats",
+                  "bbox": {
+                    "x": 445.5,
+                    "y": 478.6875,
+                    "w": 716,
+                    "h": 28.5625
+                  },
+                  "background": "rgba(0, 0, 0, 0)",
+                  "current": false,
+                  "disabled": false
+                },
+                {
+                  "text": "Goal | Set a goal to keep pursuing",
+                  "bbox": {
+                    "x": 445.5,
+                    "y": 507.25,
+                    "w": 716,
+                    "h": 28.5625
+                  },
+                  "background": "rgba(0, 0, 0, 0)",
+                  "current": false,
+                  "disabled": false
+                },
+                {
+                  "text": "Plan mode | Turn plan mode on",
+                  "bbox": {
+                    "x": 445.5,
+                    "y": 535.8125,
+                    "w": 716,
+                    "h": 28.5625
+                  },
+                  "background": "rgba(0, 0, 0, 0)",
+                  "current": false,
+                  "disabled": false
+                },
+                {
+                  "text": "Sketch | Draw a sketch",
+                  "bbox": {
+                    "x": 445.5,
+                    "y": 564.375,
+                    "w": 716,
+                    "h": 28.5625
+                  },
+                  "background": "rgba(0, 0, 0, 0)",
+                  "current": false,
+                  "disabled": false
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "type",
+      "text": "files",
+      "expect": {
+        "text": "files",
+        "focused": true,
+        "expanded": true,
+        "menu": {
+          "bbox": {
+            "x": 445.5,
+            "y": 676.4375,
+            "w": 726,
+            "h": 28.5625
+          },
+          "sections": [
+            {
+              "heading": null,
+              "items": [
+                {
+                  "text": "Files and folders",
+                  "bbox": {
+                    "x": 445.5,
+                    "y": 676.4375,
+                    "w": 726,
+                    "h": 28.5625
+                  },
+                  "background": "rgba(255, 255, 255, 0.08)",
+                  "current": true,
+                  "disabled": false
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "key",
+      "key": "Escape",
+      "portKey": "escape",
+      "expect": {
+        "text": "files",
+        "focused": true,
+        "expanded": false,
+        "menu": null
+      }
+    },
+    {
+      "type": "click",
+      "target": { "text": "Add files and more", "bbox": { "x": 448.5, "y": 776, "w": 28, "h": 28 } },
+      "expect": {
+        "text": "files",
+        "focused": true,
+        "expanded": true,
+        "menu": {
+          "bbox": {
+            "x": 445.5,
+            "y": 395,
+            "w": 726,
+            "h": 310
+          },
+          "sections": [
+            {
+              "heading": "Add",
+              "items": [
+                {
+                  "text": "Files and folders",
+                  "bbox": {
+                    "x": 445.5,
+                    "y": 421.5625,
+                    "w": 716,
+                    "h": 28.5625
+                  },
+                  "background": "rgba(255, 255, 255, 0.08)",
+                  "current": true,
+                  "disabled": false
+                },
+                {
+                  "text": "Attach appshot",
+                  "bbox": {
+                    "x": 445.5,
+                    "y": 450.125,
+                    "w": 716,
+                    "h": 28.5625
+                  },
+                  "background": "rgba(0, 0, 0, 0)",
+                  "current": false
+                },
+                {
+                  "text": "Work in a project | Choose project for new chats",
+                  "bbox": {
+                    "x": 445.5,
+                    "y": 478.6875,
+                    "w": 716,
+                    "h": 28.5625
+                  },
+                  "background": "rgba(0, 0, 0, 0)",
+                  "current": false,
+                  "disabled": false
+                },
+                {
+                  "text": "Goal | Set a goal to keep pursuing",
+                  "bbox": {
+                    "x": 445.5,
+                    "y": 507.25,
+                    "w": 716,
+                    "h": 28.5625
+                  },
+                  "background": "rgba(0, 0, 0, 0)",
+                  "current": false,
+                  "disabled": false
+                },
+                {
+                  "text": "Plan mode | Turn plan mode on",
+                  "bbox": {
+                    "x": 445.5,
+                    "y": 535.8125,
+                    "w": 716,
+                    "h": 28.5625
+                  },
+                  "background": "rgba(0, 0, 0, 0)",
+                  "current": false,
+                  "disabled": false
+                },
+                {
+                  "text": "Sketch | Draw a sketch",
+                  "bbox": {
+                    "x": 445.5,
+                    "y": 564.375,
+                    "w": 716,
+                    "h": 28.5625
+                  },
+                  "background": "rgba(0, 0, 0, 0)",
+                  "current": false,
+                  "disabled": false
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "click",
+      "target": { "text": "Add files and more", "bbox": { "x": 448.5, "y": 776, "w": 28, "h": 28 } },
+      "expect": {
+        "text": "files",
+        "focused": true,
+        "expanded": false,
+        "menu": null
+      }
+    }
+  ],
+  "result": {
+    "state": { "composerFocused": true },
+    "dom": [{
+      "afterStep": 3,
+      "bbox": { "x": 445.5, "y": 676.4375, "w": 726, "h": 28.5625 },
+      "computed": { "backgroundColor": "rgba(255, 255, 255, 0.08)" },
+      "backdrop": "rgb(45, 45, 45)"
+    }]
+  },
+  "notes": [
+    "The plus trigger does not insert @. The editor retains focus and its draft.",
+    "These observations come from separate original captures. They do not assert a successful warm Pages search.",
+    "The original host privacy response to POST /global/search is HTTP 200 {}. Repeated Pages searches crash in aXc because N.items is undefined. No original response was replaced."
+  ]
+}
