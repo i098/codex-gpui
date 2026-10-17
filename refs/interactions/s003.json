@@ -1,0 +1,776 @@
+{
+ "name": "s003",
+ "viewport": {
+  "w": 1280,
+  "h": 832,
+  "dpr": 1,
+  "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+  "theme": "dark",
+  "hoverEmulated": true
+ },
+ "source": "Linux route1 stack (tools/route1/linux) with the S003 server patch: /__r1/s003?threads=N stubs localThreadCatalog with N synthetic threads, /__r1/s003-notify pushes app-server notifications",
+ "notes": [
+  "RS-057: the Projects header click flips aria-expanded and removes the `No projects` row; Recents moves up.",
+  "RS-103: `thread/status/changed` active shows the `Working` spinner (icon-xs, text/70, animate-spin) in a 20 px box at the row's end; the title clip loses 28 px; the spinner is hidden on hover where the actions show. No error icon reaches the row from a failed turn (the unread dot wins).",
+  "RS-102: `turn/completed` on a thread that is not open marks it unread: 8 px bg-info-solid dot at top 11 / right 14, hidden on hover. Opening the thread clears it.",
+  "RS-104: every Home sidebar list hides the row timestamp (flat chats rowOptions hideTimestamp: true, project groups hideThreadTimestamps: true, unified sidebar hideTimestamp: true): no timestamp text in any row at rest.",
+  "RS-066: Recents (last section) pages in `infiniteScroll` mode: 10 rows, +10 whenever the end sentinel is in view (once at load, the sentinel being visible), readPage limit 10 -> 20 -> 30. The `Show more` button exists only when Recents is not the last section; `Show less` only in custom sections."
+ ],
+ "steps": [
+  {
+   "type": "click",
+   "target": {
+    "selector": "[data-app-action-sidebar-section-toggle]",
+    "text": "Projects",
+    "bbox": {
+     "x": 64,
+     "y": 172,
+     "w": 254,
+     "h": 25
+    }
+   },
+   "waitMs": 500,
+   "note": "RS-057 collapse Projects"
+  },
+  {
+   "type": "click",
+   "target": {
+    "selector": "[data-app-action-sidebar-section-toggle]",
+    "text": "Projects",
+    "bbox": {
+     "x": 64,
+     "y": 172,
+     "w": 254,
+     "h": 25
+    }
+   },
+   "waitMs": 500,
+   "note": "RS-057 expand Projects again"
+  },
+  {
+   "type": "bridge",
+   "method": "thread/status/changed",
+   "params": {
+    "threadId": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f",
+    "status": {
+     "type": "active",
+     "activeFlags": []
+    }
+   },
+   "waitMs": 3000,
+   "note": "RS-103 the thread becomes active (the original reads it, then shows the spinner)"
+  },
+  {
+   "type": "bridge",
+   "method": "turn/started",
+   "params": {
+    "threadId": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f",
+    "turn": {
+     "id": "01a13de9-70bc-7de1-8ae6-000000000003",
+     "rootTurnId": "01a13de9-70bc-7de1-8ae6-000000000003",
+     "items": [],
+     "itemsView": "notLoaded",
+     "status": "inProgress",
+     "error": null,
+     "startedAt": 1792040071,
+     "completedAt": null,
+     "durationMs": null
+    },
+    "emittedAtMs": 1792040071376
+   },
+   "waitMs": 2000
+  },
+  {
+   "type": "hover",
+   "target": {
+    "selector": "[data-app-action-sidebar-thread-id=\"local:01a13de9-6fff-78e1-84fc-ebb3a2dc873f\"]",
+    "bbox": {
+     "x": 60,
+     "y": 321,
+     "w": 272,
+     "h": 30
+    }
+   },
+   "at": {
+    "x": 150,
+    "y": 336
+   },
+   "waitMs": 600,
+   "note": "RS-103 hover hides the spinner, shows the actions"
+  },
+  {
+   "type": "hover",
+   "at": {
+    "x": 1270,
+    "y": 820
+   },
+   "waitMs": 600,
+   "note": "pointer away"
+  },
+  {
+   "type": "bridge",
+   "method": "turn/completed",
+   "params": {
+    "threadId": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f",
+    "turn": {
+     "id": "01a13de9-70bc-7de1-8ae6-000000000003",
+     "rootTurnId": "01a13de9-70bc-7de1-8ae6-000000000003",
+     "items": [],
+     "itemsView": "notLoaded",
+     "status": "completed",
+     "error": null,
+     "startedAt": 1792040071,
+     "completedAt": 1792040080,
+     "durationMs": 9000
+    },
+    "emittedAtMs": 1792040080000
+   }
+  },
+  {
+   "type": "bridge",
+   "method": "thread/status/changed",
+   "params": {
+    "threadId": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f",
+    "status": {
+     "type": "idle"
+    }
+   },
+   "waitMs": 2000,
+   "note": "RS-102 unread dot"
+  },
+  {
+   "type": "hover",
+   "target": {
+    "selector": "[data-app-action-sidebar-thread-id=\"local:01a13de9-6fff-78e1-84fc-ebb3a2dc873f\"]",
+    "bbox": {
+     "x": 60,
+     "y": 321,
+     "w": 272,
+     "h": 30
+    }
+   },
+   "at": {
+    "x": 150,
+    "y": 336
+   },
+   "waitMs": 600,
+   "note": "RS-102 hover hides the dot, shows the actions"
+  }
+ ],
+ "result": {
+  "dom": [
+   {
+    "selector": "[data-app-action-sidebar-thread-id=\"local:01a13de9-6fff-78e1-84fc-ebb3a2dc873f\"] .rounded-full",
+    "bbox": {
+     "x": 310,
+     "y": 332,
+     "w": 8,
+     "h": 8
+    },
+    "computed": {
+     "backgroundColor": "rgb(58, 131, 247)"
+    },
+    "afterStep": 7,
+    "note": "RS-102 unread dot at rest"
+   },
+   {
+    "selector": "[data-app-action-sidebar-thread-id=\"local:01a13de9-6fff-78e1-84fc-ebb3a2dc873f\"]",
+    "bbox": {
+     "x": 310,
+     "y": 332,
+     "w": 8,
+     "h": 8
+    },
+    "computed": {
+     "backgroundColor": "rgba(255, 255, 255, 0.08)"
+    },
+    "afterStep": 8,
+    "note": "RS-102 the dot's box shows the hover fill on hover"
+   }
+  ],
+  "outcome": {
+   "projectsRest": {
+    "bbox": {
+     "x": 64,
+     "y": 172,
+     "w": 254,
+     "h": 25
+    },
+    "expanded": "true",
+    "chevron": {
+     "opacity": "0",
+     "rotated": false
+    },
+    "noProjects": {
+     "x": 60,
+     "y": 203,
+     "w": 272,
+     "h": 37
+    },
+    "recents": {
+     "x": 64,
+     "y": 259,
+     "w": 254,
+     "h": 25
+    }
+   },
+   "projectsCollapsed": {
+    "bbox": {
+     "x": 64,
+     "y": 172,
+     "w": 202,
+     "h": 25
+    },
+    "expanded": "false",
+    "chevron": {
+     "opacity": "1",
+     "rotated": true
+    },
+    "noProjects": null,
+    "recents": {
+     "x": 64,
+     "y": 218,
+     "w": 254,
+     "h": 25
+    }
+   },
+   "projectsExpanded": {
+    "bbox": {
+     "x": 64,
+     "y": 172,
+     "w": 202,
+     "h": 25
+    },
+    "expanded": "true",
+    "chevron": {
+     "opacity": "1",
+     "rotated": false
+    },
+    "noProjects": {
+     "x": 60,
+     "y": 203,
+     "w": 272,
+     "h": 37
+    },
+    "recents": {
+     "x": 64,
+     "y": 259,
+     "w": 254,
+     "h": 25
+    }
+   },
+   "rowRest": {
+    "row": {
+     "x": 60,
+     "y": 321,
+     "w": 272,
+     "h": 30
+    },
+    "titleClip": {
+     "x": 60,
+     "y": 326,
+     "w": 264,
+     "h": 20
+    },
+    "status": null,
+    "dot": null,
+    "unread": false,
+    "actions": [
+     {
+      "aria": "Pin chat",
+      "opacity": "0"
+     },
+     {
+      "aria": "Archive chat",
+      "opacity": "0"
+     }
+    ]
+   },
+   "rowRunning": {
+    "row": {
+     "x": 60,
+     "y": 321,
+     "w": 272,
+     "h": 30
+    },
+    "titleClip": {
+     "x": 60,
+     "y": 326,
+     "w": 236,
+     "h": 20
+    },
+    "status": {
+     "aria": "Working",
+     "bbox": {
+      "x": 304,
+      "y": 326,
+      "w": 20,
+      "h": 20
+     },
+     "icon": {
+      "x": 303,
+      "y": 325,
+      "w": 23,
+      "h": 23
+     },
+     "color": "oklab(0.999994 0.0000455677 0.0000200868 / 0.595)",
+     "visible": true,
+     "spin": true
+    },
+    "dot": null,
+    "unread": false,
+    "actions": [
+     {
+      "aria": "Pin chat",
+      "opacity": "0"
+     },
+     {
+      "aria": "Archive chat",
+      "opacity": "0"
+     }
+    ]
+   },
+   "rowRunningHover": {
+    "row": {
+     "x": 60,
+     "y": 321,
+     "w": 272,
+     "h": 30
+    },
+    "titleClip": {
+     "x": 60,
+     "y": 326,
+     "w": 208,
+     "h": 20
+    },
+    "status": {
+     "aria": "Working",
+     "bbox": {
+      "x": 0,
+      "y": 0,
+      "w": 0,
+      "h": 0
+     },
+     "icon": {
+      "x": 0,
+      "y": 0,
+      "w": 0,
+      "h": 0
+     },
+     "color": "oklab(0.999994 0.0000455677 0.0000200868 / 0.595)",
+     "visible": false,
+     "spin": true
+    },
+    "dot": null,
+    "unread": false,
+    "actions": [
+     {
+      "aria": "Pin chat",
+      "opacity": "1"
+     },
+     {
+      "aria": "Archive chat",
+      "opacity": "1"
+     }
+    ]
+   },
+   "rowUnread": {
+    "row": {
+     "x": 60,
+     "y": 321,
+     "w": 272,
+     "h": 30
+    },
+    "titleClip": {
+     "x": 60,
+     "y": 326,
+     "w": 236,
+     "h": 20
+    },
+    "status": null,
+    "dot": {
+     "bbox": {
+      "x": 310,
+      "y": 332,
+      "w": 8,
+      "h": 8
+     },
+     "computed": {
+      "backgroundColor": "rgb(58, 131, 247)"
+     },
+     "visible": true
+    },
+    "unread": true,
+    "actions": [
+     {
+      "aria": "Pin chat",
+      "opacity": "0"
+     },
+     {
+      "aria": "Archive chat",
+      "opacity": "0"
+     }
+    ]
+   },
+   "rowUnreadHover": {
+    "row": {
+     "x": 60,
+     "y": 321,
+     "w": 272,
+     "h": 30
+    },
+    "titleClip": {
+     "x": 60,
+     "y": 326,
+     "w": 208,
+     "h": 20
+    },
+    "status": null,
+    "dot": {
+     "bbox": {
+      "x": 0,
+      "y": 0,
+      "w": 0,
+      "h": 0
+     },
+     "computed": {
+      "backgroundColor": "rgb(58, 131, 247)"
+     },
+     "visible": false
+    },
+    "unread": true,
+    "actions": [
+     {
+      "aria": "Pin chat",
+      "opacity": "1"
+     },
+     {
+      "aria": "Archive chat",
+      "opacity": "1"
+     }
+    ]
+   },
+   "errors": []
+  }
+ },
+ "paging": {
+  "threads": 40,
+  "steps": [
+   {
+    "type": "scroll",
+    "at": {
+     "x": 190,
+     "y": 500
+    },
+    "deltaY": 400,
+    "times": 3,
+    "waitMs": 2500,
+    "note": "RS-066 wheel the sidebar to its end: the end sentinel pages the list"
+   }
+  ],
+  "result": {
+   "rest": {
+    "rows": [
+     {
+      "title": "S003 thread 01",
+      "y": 290
+     },
+     {
+      "title": "S003 thread 02",
+      "y": 321
+     },
+     {
+      "title": "S003 thread 03",
+      "y": 352
+     },
+     {
+      "title": "S003 thread 04",
+      "y": 383
+     },
+     {
+      "title": "S003 thread 05",
+      "y": 414
+     },
+     {
+      "title": "S003 thread 06",
+      "y": 445
+     },
+     {
+      "title": "S003 thread 07",
+      "y": 476
+     },
+     {
+      "title": "S003 thread 08",
+      "y": 507
+     },
+     {
+      "title": "S003 thread 09",
+      "y": 538
+     },
+     {
+      "title": "S003 thread 10",
+      "y": 569
+     },
+     {
+      "title": "S003 thread 11",
+      "y": 600
+     },
+     {
+      "title": "S003 thread 12",
+      "y": 631
+     },
+     {
+      "title": "S003 thread 13",
+      "y": 662
+     },
+     {
+      "title": "S003 thread 14",
+      "y": 693
+     },
+     {
+      "title": "S003 thread 15",
+      "y": 724
+     },
+     {
+      "title": "S003 thread 16",
+      "y": 755
+     },
+     {
+      "title": "S003 thread 17",
+      "y": 786
+     },
+     {
+      "title": "S003 thread 18",
+      "y": 817
+     },
+     {
+      "title": "S003 thread 19",
+      "y": 848
+     },
+     {
+      "title": "S003 thread 20",
+      "y": 879
+     }
+    ],
+    "catalog": [
+     {
+      "hostId": "local",
+      "limit": 10,
+      "sortKey": "updated_at"
+     },
+     {
+      "hostId": "local",
+      "cursor": "s003:10",
+      "limit": 10,
+      "sortKey": "updated_at"
+     },
+     {
+      "hostId": "local",
+      "cursor": "s003:20",
+      "limit": 10,
+      "sortKey": "updated_at"
+     },
+     {
+      "hostId": "local",
+      "limit": 30,
+      "sortKey": "updated_at"
+     }
+    ]
+   },
+   "showMore": [],
+   "scrollerRest": {
+    "bbox": {
+     "x": 52,
+     "y": 165,
+     "w": 288,
+     "h": 663
+    },
+    "scrollHeight": 769,
+    "scrollTop": 0
+   },
+   "afterScroll": {
+    "rows": [
+     {
+      "title": "S003 thread 01",
+      "y": -427
+     },
+     {
+      "title": "S003 thread 02",
+      "y": -396
+     },
+     {
+      "title": "S003 thread 03",
+      "y": -365
+     },
+     {
+      "title": "S003 thread 04",
+      "y": -334
+     },
+     {
+      "title": "S003 thread 05",
+      "y": -303
+     },
+     {
+      "title": "S003 thread 06",
+      "y": -272
+     },
+     {
+      "title": "S003 thread 07",
+      "y": -241
+     },
+     {
+      "title": "S003 thread 08",
+      "y": -210
+     },
+     {
+      "title": "S003 thread 09",
+      "y": -179
+     },
+     {
+      "title": "S003 thread 10",
+      "y": -148
+     },
+     {
+      "title": "S003 thread 11",
+      "y": -117
+     },
+     {
+      "title": "S003 thread 12",
+      "y": -86
+     },
+     {
+      "title": "S003 thread 13",
+      "y": -55
+     },
+     {
+      "title": "S003 thread 14",
+      "y": -24
+     },
+     {
+      "title": "S003 thread 15",
+      "y": 7
+     },
+     {
+      "title": "S003 thread 16",
+      "y": 38
+     },
+     {
+      "title": "S003 thread 17",
+      "y": 69
+     },
+     {
+      "title": "S003 thread 18",
+      "y": 100
+     },
+     {
+      "title": "S003 thread 19",
+      "y": 131
+     },
+     {
+      "title": "S003 thread 20",
+      "y": 162
+     },
+     {
+      "title": "S003 thread 21",
+      "y": 193
+     },
+     {
+      "title": "S003 thread 22",
+      "y": 224
+     },
+     {
+      "title": "S003 thread 23",
+      "y": 255
+     },
+     {
+      "title": "S003 thread 24",
+      "y": 286
+     },
+     {
+      "title": "S003 thread 25",
+      "y": 317
+     },
+     {
+      "title": "S003 thread 26",
+      "y": 348
+     },
+     {
+      "title": "S003 thread 27",
+      "y": 379
+     },
+     {
+      "title": "S003 thread 28",
+      "y": 410
+     },
+     {
+      "title": "S003 thread 29",
+      "y": 441
+     },
+     {
+      "title": "S003 thread 30",
+      "y": 472
+     },
+     {
+      "title": "S003 thread 31",
+      "y": 503
+     },
+     {
+      "title": "S003 thread 32",
+      "y": 534
+     },
+     {
+      "title": "S003 thread 33",
+      "y": 565
+     },
+     {
+      "title": "S003 thread 34",
+      "y": 596
+     },
+     {
+      "title": "S003 thread 35",
+      "y": 627
+     },
+     {
+      "title": "S003 thread 36",
+      "y": 658
+     },
+     {
+      "title": "S003 thread 37",
+      "y": 689
+     },
+     {
+      "title": "S003 thread 38",
+      "y": 720
+     },
+     {
+      "title": "S003 thread 39",
+      "y": 751
+     },
+     {
+      "title": "S003 thread 40",
+      "y": 782
+     }
+    ],
+    "catalog": [
+     {
+      "hostId": "local",
+      "limit": 40,
+      "sortKey": "updated_at"
+     }
+    ],
+    "scroller": {
+     "bbox": {
+      "x": 52,
+      "y": 165,
+      "w": 288,
+      "h": 663
+     },
+     "scrollHeight": 1380,
+     "scrollTop": 717
+    }
+   },
+   "showMoreAfter": []
+  },
+  "errors": []
+ }
+}

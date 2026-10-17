@@ -430,6 +430,25 @@ This slice covers TH-011, TH-013, and TH-036.
 Menu command activation, submenus, and arrow-key navigation belong to the later header slices.
 The recording also retains the delayed `Add scheduled task…` item as an observation of host-dependent state.
 
+## S003: Sidebar state
+
+`crates/app/tests/s003.rs` replays `refs/interactions/s003.json` on the Mac headless app.
+Projects collapses and expands its child list.
+Active threads show a spinner; completed background turns show a blue unread dot.
+Hover replaces either indicator with row actions.
+Opening a thread clears its unread dot.
+A persistent title-clip ID keeps the hover layout state, so long titles do not cover the actions.
+
+The original's default Recents section uses infinite paging, with ten more rows when its end enters the view.
+The recording shows 20 rows after initial layout and 40 after scrolling.
+The port loads cursor pages and shows `Could not load more chats` after a failed page; a click retries that cursor.
+The test checks both the paging requests and the retry transition.
+
+The original hides timestamps in every Home sidebar list, including project groups.
+It shows an unread dot after a failed background turn, rather than an error icon.
+`Show more` belongs to a non-final Recents section; `Show less` belongs to custom sections.
+Those section arrangements remain outside this port's default layout.
+
 ## S026: Command menu groups and chat results
 
 `crates/app/tests/s026.rs` replays `refs/interactions/s026.json` with the shared headless app helpers.
