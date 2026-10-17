@@ -1,5 +1,5 @@
 //! Shared harness of the headless app tests: the real [`app::Root`] on a replayed
-//! app-server, driven by mouse and key events. Used by `flows.rs` and `replay.rs`.
+//! app-server, driven by mouse and key events. Host history starts from the recorded oracle.
 
 #![allow(dead_code)]
 
@@ -108,6 +108,18 @@ pub const SIDEBAR_PANEL: [f32; 4] = [52., 44., 288., 784.];
 
 // --- Harness ---
 
+/// Returns in-memory host settings with the original baseline's recorded announcement history.
+/// Fails if the oracle has no history array. Fresh recordings must supply their own initial history.
+pub fn recorded_host_settings() -> Result<app::host_settings::Settings> {
+    let mut original: Value =
+        serde_json::from_slice(&fs::read(format!("{ROOT}/tools/route1/oracle.json"))?)?;
+    let history = original["persisted-atoms"]["state"]["seen-model-upgrade-list"].take();
+    ensure!(history.is_array(), "original host history is missing");
+    let mut settings = app::host_settings::Settings::default();
+    settings.write("seen-model-upgrade-list", history)?;
+    Ok(settings)
+}
+
 /// The app on a replayed app-server in a headless window.
 pub struct Fx {
     pub cx: HeadlessAppContext,
@@ -144,13 +156,24 @@ impl Fx {
 
     pub fn open(theme: &'static str, size: (f32, f32), lines: Vec<Value>) -> Result<Self> {
         let (bridge, events) = Bridge::replay(&write_script(&lines)?)?;
-        Self::boot(theme, size, bridge, events)
+        Self::boot(theme, size, bridge, events, recorded_host_settings()?)
     }
 
     /// Like [`Fx::open`], but the app-server is this test binary again as a proxy
     /// ([`proxy_child`]) that logs every client message: read them with [`Fx::sent`]. The
-    /// binary must have a `#[test] fn proxy() { proxy_child() }`.
+    /// binary must have a `#[test] fn proxy() { proxy_child() }`. Uses the recorded host history.
     pub fn captured(theme: &'static str, size: (f32, f32), lines: Vec<Value>) -> Result<Self> {
+        Self::captured_with_host_settings(theme, size, lines, recorded_host_settings()?)
+    }
+
+    /// Like [`Fx::captured`], but installs `settings` before [`Root`] starts.
+    /// Use the genuine recording's initial host settings for fresh-state or reload checks.
+    pub fn captured_with_host_settings(
+        theme: &'static str,
+        size: (f32, f32),
+        lines: Vec<Value>,
+        settings: app::host_settings::Settings,
+    ) -> Result<Self> {
         let script = write_script(&lines)?;
         let log = env::var_os("CGX_REPLAY_REQUEST_LOG")
             .map(PathBuf::from)
@@ -163,7 +186,7 @@ impl Fx {
             .env(PROXY_SCRIPT, &script)
             .env(PROXY_LOG, &log);
         let (bridge, events) = Bridge::spawn(cmd)?;
-        let mut fx = Self::boot(theme, size, bridge, events)?;
+        let mut fx = Self::boot(theme, size, bridge, events, settings)?;
         fx.log = Some(log);
         Ok(fx)
     }
@@ -173,6 +196,7 @@ impl Fx {
         (w, h): (f32, f32),
         bridge: Bridge,
         events: async_channel::Receiver<Event>,
+        settings: app::host_settings::Settings,
     ) -> Result<Self> {
         let clock = ui::screens::thread::view::Clock {
             elapsed_since: Some(Instant::now()),
@@ -189,6 +213,7 @@ impl Fx {
                 "light" => theme::Theme::light(),
                 _ => theme::Theme::dark(),
             });
+            cx.set_global(settings);
             app::init(cx);
         });
         // The replay answers on its own threads: let the scheduler wait for real I/O.
