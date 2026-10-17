@@ -5,7 +5,9 @@
 mod common;
 
 use anyhow::{Context as _, Result, ensure};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use gpui::{EntityInputHandler as _, Focusable as _};
+use image::GenericImageView as _;
 use serde_json::Value;
 use std::time::Duration;
 
@@ -158,6 +160,58 @@ fn check_selection(
     Ok(())
 }
 
+fn check_destination(
+    fx: &mut common::Fx,
+    recording: &Value,
+    heading: &str,
+) -> Result<image::RgbaImage> {
+    ensure!(fx.route() == app::Route::Settings);
+    ensure!(fx.read(|root, _| root.command_menu().is_none()));
+    let image = fx.shot()?;
+    let probe = &recording["headingProbe"];
+    let region = probe["region"].as_array().context("heading region")?;
+    let scale = image.width() as f32 / 1280.;
+    let pixel = |i: usize| (region[i].as_f64().unwrap() as f32 * scale) as u32;
+    let crop = image::imageops::crop_imm(&image, pixel(0), pixel(1), pixel(2), pixel(3));
+    let threshold = probe["foregroundAbove"]
+        .as_u64()
+        .context("heading foreground")? as u8;
+    let (mut left, mut top, mut right, mut bottom) = (crop.width(), crop.height(), 0, 0);
+    for (x, y, color) in crop.pixels() {
+        if color[0] > threshold {
+            left = left.min(x);
+            top = top.min(y);
+            right = right.max(x);
+            bottom = bottom.max(y);
+        }
+    }
+    ensure!(
+        left <= right && top <= bottom,
+        "missing rendered heading {heading}"
+    );
+    let (width, height) = (right - left + 1, bottom - top + 1);
+    let expected = &probe["headings"][heading];
+    ensure!(
+        width as u64 == expected["width"] && height as u64 == expected["height"],
+        "wrong rendered heading for {heading}: {width}x{height}"
+    );
+    let mut bits = vec![0u8; (width as usize * height as usize).div_ceil(8)];
+    for y in top..=bottom {
+        for x in left..=right {
+            if crop.get_pixel(x, y)[0] > threshold {
+                let index = ((y - top) * width + x - left) as usize;
+                bits[index / 8] |= 1 << (index % 8);
+            }
+        }
+    }
+    let expected_bits = STANDARD.decode(expected["bits"].as_str().context("heading glyphs")?)?;
+    ensure!(
+        bits == expected_bits,
+        "rendered heading does not match original {heading}"
+    );
+    Ok(image)
+}
+
 #[test]
 fn pointer_and_keys_keep_the_recorded_result_selected() -> Result<()> {
     let recording: Value = serde_json::from_str(RECORDING)?;
@@ -191,22 +245,24 @@ fn pointer_and_keys_keep_the_recorded_result_selected() -> Result<()> {
         }
     }
     fx.keys(selection["enter"]["key"].as_str().unwrap())?;
-    ensure!(fx.route() == app::Route::Settings);
-    ensure!(fx.read(|root, _| root.command_menu().is_none()));
-    fx.shot()?
-        .save(std::env::temp_dir().join("s025-rank-enter-worktrees.png"))?;
+    check_destination(
+        &mut fx,
+        &recording,
+        selection["enter"]["heading"].as_str().unwrap(),
+    )?
+    .save(std::env::temp_dir().join("s025-rank-enter-worktrees.png"))?;
 
     for click in [&recording["rowClick"], &recording["aliasClick"]] {
         fx.click(common::RAIL_HOME)?;
         fx.click(common::SEARCH)?;
         fx.type_text(click["query"].as_str().unwrap())?;
         fx.click(point(&click["at"]))?;
-        ensure!(fx.route() == app::Route::Settings);
-        ensure!(fx.read(|root, _| root.command_menu().is_none()));
-        fx.shot()?.save(std::env::temp_dir().join(format!(
-            "s025-rank-{}.png",
-            click["checkpoint"].as_str().unwrap(),
-        )))?;
+        check_destination(&mut fx, &recording, click["heading"].as_str().unwrap())?.save(
+            std::env::temp_dir().join(format!(
+                "s025-rank-{}.png",
+                click["checkpoint"].as_str().unwrap()
+            )),
+        )?;
     }
     Ok(())
 }

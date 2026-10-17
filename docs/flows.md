@@ -515,12 +515,13 @@ Ranking, command providers, and the S026 search contract remain unchanged.
 
 `crates/app/tests/s025_rank.rs` replays `refs/interactions/s025_rank.json` on the background Mac lane.
 The original capture records twelve ambiguous queries before the ordering change.
-The matcher uses the original `_4o` and `k2` score rules.
+The matcher uses the original `_4o` and `k2` score rules over UTF-16 units, including emoji title ordering.
 Settings comparisons retain original scores without fixing an incidental order for equal-score rows.
 Empty-query groups retain the S026 record.
 Nonempty queries put suggested commands in their original command groups.
 
 The replay checks arrow selection across groups, hover fill, input focus, and selection reset after typing.
+The destination checks compare rendered heading glyphs with the original Worktrees, General, and Configuration records.
 Enter opens Worktrees.
 Row clicks open General and the Configuration destination for Work preferences.
 The original `chat` query selects the greeting chat.
@@ -530,9 +531,12 @@ The S025 caret and selection replay remains unchanged.
 
 The test reuses the unchanged original search response selected by the fixture server.
 The capture changes no renderer code or startup response.
+The first query outcomes precede the port change; a second record corrects native entry and pointer transport.
+The trusted capture uses native ref clicks, native keyboard input, and atomic owned-target CDP pointer events.
 The original also shows an unrelated ChatGPT search error and a later Create page provider.
 This slice does not add either provider or settings-page content.
-The raw New chat click attempt did not activate; a separate real General click proves row activation.
+The record includes the earlier raw New chat attempt.
+Atomic native clicks prove General and Configuration activation.
 
 All 36 strict static cases pass with the original thresholds.
 Their metrics and port PNGs match the baseline exactly.

@@ -883,8 +883,8 @@ impl Item {
 
 /// The original `_4o`/`k2` score uses the first matching fragments, not the highest-scoring path.
 struct MatchPattern {
-    main: Vec<char>,
-    fallback: Option<Vec<char>>,
+    main: WordPattern,
+    fallback: Option<WordPattern>,
     paths: bool,
 }
 
@@ -900,12 +900,12 @@ impl MatchPattern {
             }
         }
         let paths = lower.contains(['/', '\\']);
-        let mut main = vec!['*'];
-        for c in lower.chars() {
-            if paths && matches!(c, '/' | '\\') {
-                main.extend(['*', '\0', '*']);
+        let mut main = vec![42];
+        for unit in lower.encode_utf16() {
+            if paths && matches!(unit, 47 | 92) {
+                main.extend([42, 0, 42]);
             } else {
-                main.push(c);
+                main.push(unit);
             }
         }
         let tail = ['/', '\\']
@@ -913,48 +913,89 @@ impl MatchPattern {
             .filter_map(|c| lower.rfind(c))
             .filter(|&i| i + 1 < lower.len())
             .max();
-        let fallback = tail.map(|i| lower[i + 1..].chars().collect());
         Self {
-            main,
-            fallback,
+            main: WordPattern::new(main),
+            fallback: tail.map(|i| WordPattern::new(lower[i + 1..].encode_utf16().collect())),
             paths,
         }
     }
 
     fn score(&self, value: &str) -> i32 {
         let text: Vec<_> = value
-            .chars()
-            .map(|c| {
-                if self.paths && matches!(c, '/' | '\\') {
-                    '\0'
+            .encode_utf16()
+            .map(|unit| {
+                if self.paths && matches!(unit, 47 | 92) {
+                    0
                 } else {
-                    c
+                    unit
                 }
             })
             .collect();
-        let degree = self
-            .degree(&self.main, &text)
-            .or_else(|| self.fallback.as_ref().and_then(|p| self.degree(p, &text)));
-        degree.map_or(0, |score| {
-            (score * 10 - value.encode_utf16().count() as i32).max(1)
-        })
+        self.main
+            .degree(&text)
+            .or_else(|| self.fallback.as_ref().and_then(|p| p.degree(&text)))
+            .map_or(0, |score| (score * 10 - text.len() as i32).max(1))
+    }
+}
+
+struct WordPattern {
+    units: Vec<u16>,
+    mixed_case: bool,
+    has_dots: bool,
+}
+
+impl WordPattern {
+    fn new(units: Vec<u16>) -> Self {
+        let mut meaningful = false;
+        let mut lower = false;
+        let mut upper_after_first = false;
+        for &unit in &units {
+            lower |= unit_lower(unit);
+            upper_after_first |= meaningful && unit_upper(unit);
+            meaningful |= !wildcard(unit);
+        }
+        Self {
+            has_dots: units.contains(&46),
+            units,
+            mixed_case: lower && upper_after_first,
+        }
     }
 
-    fn degree(&self, pattern: &[char], text: &[char]) -> Option<i32> {
+    fn degree(&self, text: &[u16]) -> Option<i32> {
         let mut ranges = Vec::new();
-        if pattern.iter().map(|c| c.len_utf16()).sum::<usize>() > 100 {
-            let literal: Vec<_> = pattern.iter().copied().filter(|c| *c != '*').collect();
+        if self.units.len() > 100 {
+            let literal: Vec<_> = self.units.iter().copied().filter(|&c| c != 42).collect();
             if literal.is_empty() {
                 return Some(0);
             }
-            let start = text
-                .windows(literal.len())
-                .position(|s| s.iter().zip(&literal).all(|(&a, &b)| same_char(b, a)))?;
-            if pattern[0] != '*' && start != 0 {
+            let start = if self.units[0] == 42 {
+                let lower_name: Vec<_> = String::from_utf16(text)
+                    .ok()?
+                    .to_lowercase()
+                    .encode_utf16()
+                    .collect();
+                let lower_pattern: Vec<_> = String::from_utf16(&literal)
+                    .ok()?
+                    .to_lowercase()
+                    .encode_utf16()
+                    .collect();
+                lower_name
+                    .windows(lower_pattern.len())
+                    .position(|part| part == lower_pattern)?
+            } else {
+                let prefix = text.get(..literal.len())?;
+                if String::from_utf16(prefix).ok()?.to_lowercase()
+                    != String::from_utf16(&literal).ok()?.to_lowercase()
+                {
+                    return None;
+                }
+                0
+            };
+            if start + literal.len() > text.len() {
                 return None;
             }
             ranges.push(start..start + literal.len());
-        } else if !self.match_at(pattern, text, 0, 0, &mut ranges, &mut HashSet::new()) {
+        } else if !self.match_at(text, 0, 0, &mut ranges, &mut HashSet::new()) {
             return None;
         }
         let mut count = 0;
@@ -971,14 +1012,13 @@ impl MatchPattern {
         if ranges.is_empty() {
             return Some(0);
         }
-        let fragments = ranges;
-        let first = &fragments[0];
+        let first = &ranges[0];
         let mut score = 0;
         let mut boundary = 0;
         let mut skipped = 0;
         let mut pattern_index = 0;
         let mut upper = false;
-        for (fragment_index, range) in fragments.iter().enumerate() {
+        for (fragment_index, range) in ranges.iter().enumerate() {
             for index in range.clone() {
                 let next_fragment = fragment_index > 0 && index == range.start;
                 let mut at_boundary = false;
@@ -988,7 +1028,7 @@ impl MatchPattern {
                     } else if next_fragment {
                         skipped += 1;
                     }
-                    boundary = if boundary < text.len() && text[boundary].is_ascii_digit() {
+                    boundary = if boundary < text.len() && unit_digit(text[boundary]) {
                         boundary + 1
                     } else {
                         (boundary + 1..text.len())
@@ -996,22 +1036,22 @@ impl MatchPattern {
                             .unwrap_or(text.len() + 1)
                     };
                 }
-                pattern_index += pattern[pattern_index..]
+                pattern_index += self.units[pattern_index..]
                     .iter()
-                    .position(|&c| same_char(c, text[index]))?;
-                let c = pattern[pattern_index];
+                    .position(|&c| same_unit(c, text[index]))?;
+                let c = self.units[pattern_index];
                 if at_boundary {
-                    upper = text[index] == c && c.is_uppercase();
+                    upper = text[index] == c && unit_upper(c);
                 }
-                score += if next_fragment && at_boundary && c.is_lowercase() {
+                score += if next_fragment && at_boundary && unit_lower(c) {
                     -10
                 } else if text[index] == c {
-                    if c.is_uppercase() {
+                    if unit_upper(c) {
                         50
                     } else {
                         i32::from(at_boundary)
                     }
-                } else if at_boundary || c.is_lowercase() && upper {
+                } else if at_boundary || unit_lower(c) && upper {
                     -1
                 } else {
                     0
@@ -1022,45 +1062,48 @@ impl MatchPattern {
         let start = first.start;
         let starts_word = start == 0 || word_start(text, start) && !word_start(text, start - 1);
         score += if starts_word { 1000 } else { 0 };
-        score -= fragments.len() as i32 + skipped * 10;
-        score += if text[..start].iter().any(|c| matches!(c, '/' | '\\')) {
+        score -= ranges.len() as i32 + skipped * 10;
+        score += if text[..start].iter().any(|c| matches!(c, 47 | 92)) {
             0
         } else {
             2
         };
-        score += i32::from(start == 0) + i32::from(fragments.last().unwrap().end == text.len());
+        score += i32::from(start == 0) + i32::from(ranges.last().unwrap().end == text.len());
         Some(score + if start == 0 { 10000 } else { 0 })
     }
 
     fn match_at(
         &self,
-        pattern: &[char],
-        text: &[char],
+        text: &[u16],
         mut p: usize,
         from: usize,
         ranges: &mut Vec<Range<usize>>,
         failed: &mut HashSet<(usize, usize, bool)>,
     ) -> bool {
-        if p == pattern.len() {
+        if p == self.units.len() {
             return true;
         }
-        if wildcard(pattern[p]) {
-            while p < pattern.len() && wildcard(pattern[p]) {
+        if wildcard(self.units[p]) {
+            while p < self.units.len() && wildcard(self.units[p]) {
                 p += 1;
             }
-            if p == pattern.len() {
+            if p == self.units.len() {
                 return true;
             }
-            let next = find_pattern_char(pattern, text, p, from);
-            return self.skip_words(pattern, text, (p, next), true, ranges, failed);
+            return self.skip_words(
+                text,
+                (p, self.find_next(text, p, from)),
+                true,
+                ranges,
+                failed,
+            );
         }
-        self.fragment(pattern, text, p, from, ranges, failed)
+        self.fragment(text, p, from, ranges, failed)
     }
 
     fn skip_words(
         &self,
-        pattern: &[char],
-        text: &[char],
+        text: &[u16],
         (p, mut next): (usize, Option<usize>),
         freely: bool,
         ranges: &mut Vec<Range<usize>>,
@@ -1074,18 +1117,26 @@ impl MatchPattern {
         }
         let mut longest = 0;
         while let Some(index) = next {
-            let length = fragment_length(pattern, text, p, index);
+            let can_start = !unit_upper(self.units[p])
+                || unit_upper(text[index])
+                || word_start(text, index)
+                || !self.mixed_case;
+            let length = if can_start {
+                self.fragment_length(text, p, index)
+            } else {
+                0
+            };
             if length > longest {
-                if !middle_match(pattern, text, p, index) {
+                if !self.middle_match(text, p, index) {
                     longest = length;
                 }
-                if self.fragment(pattern, text, p, index, ranges, failed) {
+                if self.fragment(text, p, index, ranges, failed) {
                     return true;
                 }
             }
-            next = find_pattern_char(pattern, text, p, index + 1);
+            next = self.find_next(text, p, index + 1);
             if !freely {
-                next = check_dots(pattern, text, p, index + 1, next);
+                next = self.check_dots(text, p, index + 1, next);
             }
         }
         failed.insert((p, start, freely));
@@ -1094,37 +1145,36 @@ impl MatchPattern {
 
     fn fragment(
         &self,
-        pattern: &[char],
-        text: &[char],
+        text: &[u16],
         p: usize,
         start: usize,
         ranges: &mut Vec<Range<usize>>,
         failed: &mut HashSet<(usize, usize, bool)>,
     ) -> bool {
-        let length = fragment_length(pattern, text, p, start);
+        let length = self.fragment_length(text, p, start);
         if length == 0 {
             return false;
         }
-        if p + length == pattern.len() {
+        if p + length == self.units.len() {
             ranges.push(start..start + length);
             return true;
         }
-        let minimum = if middle_match(pattern, text, p, start) {
+        let minimum = if self.middle_match(text, p, start) {
             3
         } else {
             1
         };
         for length in (1..=length).rev() {
-            if length < minimum && !pattern.get(p + length).is_some_and(|&c| wildcard(c)) {
+            if length < minimum && !self.units.get(p + length).is_some_and(|&c| wildcard(c)) {
                 break;
             }
             ranges.push(start..start + length);
-            let matched = if wildcard(pattern[p + length]) {
-                self.match_at(pattern, text, p + length, start + length, ranges, failed)
+            let matched = if wildcard(self.units[p + length]) {
+                self.match_at(text, p + length, start + length, ranges, failed)
             } else {
-                let next = find_pattern_char(pattern, text, p + length, start + length + 1);
-                let next = check_dots(pattern, text, p + length, start + length, next);
-                self.skip_words(pattern, text, (p + length, next), false, ranges, failed)
+                let next = self.find_next(text, p + length, start + length + 1);
+                let next = self.check_dots(text, p + length, start + length, next);
+                self.skip_words(text, (p + length, next), false, ranges, failed)
             };
             if matched {
                 return true;
@@ -1133,65 +1183,103 @@ impl MatchPattern {
         }
         false
     }
+
+    fn find_next(&self, text: &[u16], p: usize, from: usize) -> Option<usize> {
+        let anywhere = p > 0 && self.units[p - 1] == 42 || word_separator(self.units[p]);
+        if !anywhere
+            && self.mixed_case
+            && unit_lower(self.units[p])
+            && !(p > 0 && word_separator(self.units[p - 1]))
+        {
+            return None;
+        }
+        (from..text.len()).find(|&index| {
+            same_unit(self.units[p], text[index])
+                && (anywhere || !word_char(self.units[p]) || word_start(text, index))
+        })
+    }
+
+    fn check_dots(
+        &self,
+        text: &[u16],
+        p: usize,
+        from: usize,
+        next: Option<usize>,
+    ) -> Option<usize> {
+        next.filter(|&to| {
+            !(self.has_dots && (p == 0 || self.units[p - 1] != 46) && text[from..to].contains(&46))
+        })
+    }
+
+    fn fragment_length(&self, text: &[u16], p: usize, from: usize) -> usize {
+        let mut length = 0;
+        while from + length < text.len() && p + length < self.units.len() {
+            if !same_unit(self.units[p + length], text[from + length]) {
+                if length > 0
+                    && unit_digit(self.units[p + length])
+                    && unit_digit(self.units[p + length - 1])
+                    && unit_digit(text[from + length])
+                {
+                    return 0;
+                }
+                break;
+            }
+            length += 1;
+        }
+        length
+    }
+
+    fn middle_match(&self, text: &[u16], p: usize, from: usize) -> bool {
+        p > 0
+            && self.units[p - 1] == 42
+            && !self.units.get(p + 1).is_some_and(|&c| wildcard(c))
+            && word_char(text[from])
+            && !word_start(text, from)
+    }
 }
 
-fn wildcard(c: char) -> bool {
-    matches!(c, ' ' | '*')
+fn wildcard(unit: u16) -> bool {
+    matches!(unit, 32 | 42)
 }
-fn word_start(text: &[char], index: usize) -> bool {
-    index < text.len()
-        && text[index].is_ascii_alphanumeric()
-        && (index == 0
-            || !text[index - 1].is_ascii_alphanumeric()
-            || text[index].is_uppercase() && text[index - 1].is_lowercase()
-            || text[index].is_ascii_digit() && !text[index - 1].is_ascii_digit())
+fn word_char(unit: u16) -> bool {
+    unit < 128 && (unit as u8).is_ascii_alphanumeric()
 }
-fn same_char(pattern: char, actual: char) -> bool {
-    pattern == actual
-        || pattern.to_lowercase().eq(std::iter::once(actual))
-        || pattern.to_uppercase().eq(std::iter::once(actual))
+fn unit_digit(unit: u16) -> bool {
+    (48..=57).contains(&unit)
 }
-fn find_pattern_char(pattern: &[char], text: &[char], p: usize, from: usize) -> Option<usize> {
-    let anywhere = p > 0 && pattern[p - 1] == '*' || !pattern[p].is_ascii_alphanumeric();
-    (from..text.len())
-        .find(|&index| same_char(pattern[p], text[index]) && (anywhere || word_start(text, index)))
-}
-fn check_dots(
-    pattern: &[char],
-    text: &[char],
-    p: usize,
-    from: usize,
-    next: Option<usize>,
-) -> Option<usize> {
-    next.filter(|&to| {
-        !(pattern.contains(&'.')
-            && (p == 0 || pattern[p - 1] != '.')
-            && text[from..to].contains(&'.'))
+fn unit_upper(unit: u16) -> bool {
+    char::from_u32(unit as u32).is_some_and(|c| {
+        c.to_uppercase().eq(std::iter::once(c)) && !c.to_lowercase().eq(std::iter::once(c))
     })
 }
-fn fragment_length(pattern: &[char], text: &[char], p: usize, from: usize) -> usize {
-    let mut length = 0;
-    while from + length < text.len() && p + length < pattern.len() {
-        if !same_char(pattern[p + length], text[from + length]) {
-            if length > 0
-                && pattern[p + length].is_ascii_digit()
-                && pattern[p + length - 1].is_ascii_digit()
-                && text[from + length].is_ascii_digit()
-            {
-                return 0;
-            }
-            break;
-        }
-        length += 1;
-    }
-    length
+fn unit_lower(unit: u16) -> bool {
+    char::from_u32(unit as u32).is_some_and(|c| {
+        c.to_lowercase().eq(std::iter::once(c)) && !c.to_uppercase().eq(std::iter::once(c))
+    })
 }
-fn middle_match(pattern: &[char], text: &[char], p: usize, from: usize) -> bool {
-    p > 0
-        && pattern[p - 1] == '*'
-        && !pattern.get(p + 1).is_some_and(|&c| wildcard(c))
-        && text[from].is_ascii_alphanumeric()
-        && !word_start(text, from)
+fn word_start(text: &[u16], index: usize) -> bool {
+    index < text.len()
+        && word_char(text[index])
+        && (index == 0
+            || !word_char(text[index - 1])
+            || unit_upper(text[index]) && unit_lower(text[index - 1])
+            || unit_digit(text[index]) && !unit_digit(text[index - 1]))
+}
+fn same_unit(pattern: u16, actual: u16) -> bool {
+    if pattern == actual {
+        return true;
+    }
+    let (Some(pattern), Some(actual)) = (
+        char::from_u32(pattern as u32),
+        char::from_u32(actual as u32),
+    ) else {
+        return false;
+    };
+    pattern.to_lowercase().eq(std::iter::once(actual))
+        || pattern.to_uppercase().eq(std::iter::once(actual))
+}
+fn word_separator(unit: u16) -> bool {
+    matches!(unit, 9..=13 | 32 | 160 | 5760 | 8192..=8202 | 8232 | 8233 | 8239 | 8287 | 12288 | 65279 | 95 | 45 | 58 | 43 | 46 | 47 | 92)
 }
 
 /// Which chars of `text` the original highlights for `query`: all for an empty query, else
@@ -2872,6 +2960,14 @@ impl Render for Overlaid {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn emoji_chat_titles_keep_the_original_utf16_order() {
+        let pattern = MatchPattern::new("🚀");
+        let mut titles = ["Release 🚀", "😀🚀 status"];
+        titles.sort_by_key(|title| std::cmp::Reverse(pattern.score(title)));
+        assert_eq!(titles, ["😀🚀 status", "Release 🚀"]);
+    }
 
     #[test]
     fn layered_matches_skia() {
