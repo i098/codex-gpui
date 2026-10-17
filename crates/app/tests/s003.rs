@@ -283,3 +283,76 @@ fn failed_page_stops_loading_and_can_retry_the_same_cursor() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn an_all_pinned_page_still_loads_older_recents() -> Result<()> {
+    let mut lines = paged_script()?;
+    for line in &mut lines {
+        if line["msg"]["result"]["nextCursor"] == "s003:10" {
+            for thread in line["msg"]["result"]["data"].as_array_mut().unwrap() {
+                thread["section"] = json!({"id": ui::screens::sidebar::PINNED_SECTION_ID});
+            }
+        }
+    }
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    fx.wait("older Recents after pinned page", |fx| {
+        fx.shot().unwrap();
+        fx.read(|r, cx| r.sidebar().read(cx).recents_shown()) == 10
+    })?;
+    assert_eq!(fx.read(|r, _| r.recents()).len(), 20);
+    let pages: Vec<_> = fx
+        .sent()?
+        .into_iter()
+        .filter(|r| r["method"] == "thread/list" && r["params"]["cursor"].is_string())
+        .collect();
+    assert_eq!(pages.len(), 1);
+    assert_eq!(pages[0]["params"], json!({"cursor":"s003:10","limit":10}));
+    Ok(())
+}
+
+#[test]
+fn pinning_a_sibling_does_not_restart_a_finished_spinner() -> Result<()> {
+    let mut lines = script(None, |line| {
+        if let Some(threads) = line
+            .pointer_mut("/msg/result/data")
+            .and_then(Value::as_array_mut)
+        {
+            for thread in threads {
+                if thread["id"] == SUBTRACT {
+                    thread["status"] = json!({"type":"active","activeFlags":[]});
+                }
+            }
+        }
+    })?;
+    lines.extend(exchange("thread/section/move", json!({})));
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    ensure!(
+        fx.read(|r, cx| r.sidebar().read(cx).is_running(SUBTRACT)),
+        "The initial active status lacks a spinner"
+    );
+    fx.root.update(&mut fx.cx, |r, cx| {
+        r.on_event(
+            Event::Notification {
+                method: "thread/status/changed".into(),
+                params: json!({"threadId": SUBTRACT, "status":{"type":"idle"}}),
+            },
+            cx,
+        )
+    });
+    fx.hover((150., 305.))?;
+    fx.advance(Duration::from_millis(150))?;
+    ensure!(
+        !fx.read(|r, cx| r.sidebar().read(cx).is_running(SUBTRACT)),
+        "The idle event did not stop the spinner"
+    );
+    fx.click((286., 305.))?;
+    fx.wait("sibling pin", |fx| {
+        fx.sent()
+            .is_ok_and(|sent| sent.iter().any(|r| r["method"] == "thread/section/move"))
+    })?;
+    ensure!(
+        !fx.read(|r, cx| r.sidebar().read(cx).is_running(SUBTRACT)),
+        "Pinning restored the finished spinner"
+    );
+    Ok(())
+}

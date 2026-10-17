@@ -12,7 +12,7 @@ use async_channel::Receiver;
 use bridge::types::{
     ApprovalDecision, CommandApprovalRequest, ConfigReadResponse, FileChangeApprovalRequest,
     Thread, ThreadItem, ThreadListResponse, ThreadReadResponse, ThreadSection, ThreadStartResponse,
-    ThreadStartedNotification, TurnStatus,
+    ThreadStartedNotification, ThreadStatus, TurnStatus,
 };
 use bridge::{Bridge, Event};
 use gpui::{
@@ -35,8 +35,8 @@ use ui::screens::diff::panel::{
 use ui::screens::home::HomeMain;
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
 use ui::screens::sidebar::{
-    ArchiveThread, CommandMenu, CommandMenuEvent, HomeSidebar, LoadMore, OpenThread, PINNED_SECTION_ID,
-    PinThread,
+    ArchiveThread, CommandMenu, CommandMenuEvent, HomeSidebar, LoadMore, OpenThread,
+    PINNED_SECTION_ID, PinThread,
 };
 use ui::screens::terminal::Xterm;
 use ui::screens::thread::view::{Clock, EditMessage, ForkThread, RevertTurn, ThreadView};
@@ -1833,8 +1833,13 @@ impl Root {
                 }
                 // The row's spinner follows the thread status.
                 "thread/status/changed" => {
-                    if let Some(id) = params["threadId"].as_str() {
-                        let active = params["status"]["type"] == "active";
+                    if let Some(id) = params["threadId"].as_str()
+                        && let Ok(status) = ThreadStatus::deserialize(&params["status"])
+                    {
+                        let active = status == ThreadStatus::Active;
+                        if let Some(thread) = self.threads.iter_mut().find(|t| t.id == id) {
+                            thread.status = status;
+                        }
                         self.sidebar
                             .update(cx, |s, cx| s.set_running(id, active, cx));
                     }

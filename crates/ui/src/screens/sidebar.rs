@@ -351,11 +351,12 @@ pub fn home_sidebar(cx: &mut App, selected_thread: Option<&str>) -> AnyView {
 
 impl Render for HomeSidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let recents = if self.threads.iter().all(|(id, _)| self.pinned.contains(id)) {
-            sidebar_empty("No chats", cx).into_any_element()
-        } else {
-            self.rows(false, window, cx)
-        };
+        let recents =
+            if !self.has_more && self.threads.iter().all(|(id, _)| self.pinned.contains(id)) {
+                sidebar_empty("No chats", cx).into_any_element()
+            } else {
+                self.rows(false, window, cx)
+            };
         let pinned = (!self.pinned.is_empty()).then(|| self.rows(true, window, cx));
         // A header click collapses or expands its section (`group/nav-section`).
         let section = |i: usize,
