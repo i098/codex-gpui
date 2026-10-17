@@ -438,6 +438,8 @@ pub struct Composer {
     /// (the content) is a `will-change: opacity` layer. On Home the body paints the card.
     docked: bool,
     content: String,
+    /// Mention chips in `content`, in order.
+    mentions: Vec<mention::Mention>,
     selected_range: Range<usize>,
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
@@ -511,6 +513,7 @@ impl Composer {
             placeholder: placeholder.into(),
             docked,
             content: String::new(),
+            mentions: Vec::new(),
             selected_range: 0..0,
             selection_reversed: false,
             marked_range: None,
@@ -694,6 +697,7 @@ impl Composer {
 
     pub fn set_text(&mut self, s: &str, cx: &mut Context<Self>) {
         self.content = s.into();
+        self.mentions.clear();
         self.selected_range = s.len()..s.len();
         self.marked_range = None;
         self.history = editor::History::default();
@@ -732,14 +736,14 @@ impl Composer {
 
     /// Enter: `approval.approve` accepts a pending request, and a draft still sends.
     fn enter(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
-        if self.approval.is_some() && !self.slash.has_selection() {
+        if self.approval.is_some() && !self.slash.open {
             self.decide(ApprovalDecision::Accept, window, cx);
         }
         self.submit(&Submit, window, cx);
     }
 
     fn submit(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
-        if self.slash.has_selection() {
+        if self.slash.open {
             self.activate_slash(window, cx);
             return;
         }
@@ -750,10 +754,10 @@ impl Composer {
             return;
         }
         let submission = Submission {
-            text: if self.on_cancel_edit.is_some() {
-                self.content.clone()
-            } else {
+            text: if self.mentions.is_empty() && self.on_cancel_edit.is_none() {
                 std::mem::take(&mut self.content)
+            } else {
+                self.prompt()
             },
             attachments: self.attachments.drain(..).map(|a| a.path).collect(),
             model: self
@@ -767,6 +771,8 @@ impl Composer {
         if self.on_cancel_edit.is_some() {
             self.edit_pending = true;
         } else {
+            self.content.clear();
+            self.mentions.clear();
             self.selected_range = 0..0;
             self.marked_range = None;
             self.menu = None;

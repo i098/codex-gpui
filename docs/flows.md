@@ -429,3 +429,15 @@ The recorded `Chat actions` button has no tooltip.
 This slice covers TH-011, TH-013, and TH-036.
 Menu command activation, submenus, and arrow-key navigation belong to the later header slices.
 The recording also retains the delayed `Add scheduled task…` item as an observation of host-dependent state.
+
+## S026: Command menu groups and chat results
+
+`crates/app/tests/s026.rs` replays `refs/interactions/s026.json` with the shared headless app helpers.
+The original recording uses an isolated route1 home and a fleet Chrome context.
+The test checks every group and row on Home and an open chat, including commands that only the chat route registers.
+The two queries check title and content matches, substring highlights, project labels, snippets, and exact `thread/search` parameters.
+The result layout keeps the project column at 96 px.
+The test also checks the unread dot in the port's pixels.
+The unread state is injected in the port because the original fixture contains no unread chat.
+Command activation belongs to the later command-menu slices.
+The test also checks selection after a delayed search reply and spinner removal after a failed search.

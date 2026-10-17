@@ -1,0 +1,517 @@
+{
+ "name": "s026-command-menu-groups-and-chat-search",
+ "viewport": {
+  "w": 1280,
+  "h": 832,
+  "dpr": 1,
+  "ua": "Macintosh (navigator.platform stays Linux x86_64)",
+  "theme": "dark",
+  "hoverEmulated": true
+ },
+ "steps": [
+  {
+   "type": "click",
+   "target": {
+    "text": "Search",
+    "selector": "sidebar header button[aria-label=\"Search\"]",
+    "bbox": {
+     "x": 300,
+     "y": 56,
+     "w": 28,
+     "h": 28
+    }
+   },
+   "waitMs": 5000,
+   "note": "Opens the command menu in chat-search mode; the Settings pages section loads lazily."
+  },
+  {
+   "type": "type",
+   "text": "greet",
+   "waitMs": 1500,
+   "note": "3+ chars: thread/search (debounced 200 ms) adds content snippets to the Chats rows."
+  },
+  {
+   "type": "key",
+   "key": "Escape"
+  },
+  {
+   "type": "click",
+   "target": {
+    "text": "Search",
+    "bbox": {
+     "x": 300,
+     "y": 56,
+     "w": 28,
+     "h": 28
+    }
+   },
+   "waitMs": 500
+  },
+  {
+   "type": "type",
+   "text": "world",
+   "waitMs": 1500,
+   "note": "A content-only match: the title keeps the default colour (no substring), the snippet is highlighted."
+  },
+  {
+   "type": "key",
+   "key": "Escape"
+  }
+ ],
+ "result": {
+  "dom": [
+   {
+    "selector": "[cmdk-root] groups, empty query",
+    "afterStep": 0,
+    "groups": [
+     {
+      "heading": "Chats",
+      "items": [
+       "Change the greeting in hello.py to \"Hello, Codex\". | proj | ⌃1",
+       "Add a subtract(a, b) function to src/math.py next to add, then run python3 -c '… | proj | ⌃2",
+       "In two sentences, what does this repository contain? | proj | ⌃3"
+      ]
+     },
+     {
+      "heading": "Quick actions",
+      "items": [
+       "New chat | ⌘N",
+       "Open folder | ⌘O"
+      ]
+     },
+     {
+      "heading": "Settings",
+      "items": [
+       "General",
+       "Notifications",
+       "Import",
+       "Profile",
+       "Account",
+       "Parental controls",
+       "Trusted contact",
+       "Appearance",
+       "Voice",
+       "Storage",
+       "Mini & Pets",
+       "Computer history",
+       "Appshots",
+       "Git",
+       "Connections",
+       "Cloud preferences",
+       "Codex Cloud",
+       "Legacy Codex Cloud",
+       "Code Review",
+       "Environments",
+       "Worktrees",
+       "Configuration",
+       "Work preferences",
+       "Personalization",
+       "Keyboard shortcuts",
+       "Usage & billing",
+       "Analytics",
+       "Browser",
+       "Computer use",
+       "MCP servers",
+       "Hooks",
+       "Plugins",
+       "Data controls",
+       "Archived chats",
+       "Cloud computer",
+       "Passwords",
+       "Account"
+      ]
+     },
+     {
+      "heading": "Chat",
+      "items": [
+       "New standalone chat | ⌥⌘O",
+       "Archive chat | ⇧⌘A",
+       "Toggle pin | ⌥⌘P"
+      ]
+     },
+     {
+      "heading": "Navigation",
+      "items": [
+       "Switch chat…",
+       "Toggle activity view | ⌥⌘U",
+       "Focus main chat",
+       "Open your dot | ⌘.",
+       "Next chat needing attention | ⌥⌘A",
+       "Previous chat | ⇧⌘[",
+       "Next chat | ⇧⌘]",
+       "Go to recent chat 1 | ⌥⌘1",
+       "Go to recent chat 2 | ⌥⌘2",
+       "Go to recent chat 3 | ⌥⌘3",
+       "Go to recent chat 4 | ⌥⌘4",
+       "Go to recent chat 5 | ⌥⌘5",
+       "Go to recent chat 6 | ⌥⌘6",
+       "Switch to Chat",
+       "Switch to Work",
+       "Switch to Codex",
+       "Find | ⌘F",
+       "Back | ⌘[",
+       "Forward | ⌘]"
+      ]
+     },
+     {
+      "heading": "Panels",
+      "items": [
+       "Reopen closed tab | ⇧⌘T",
+       "Toggle sidebar | ⇧⌘S",
+       "Toggle navigation panel | ⇧⌘E",
+       "Toggle bottom panel | ⌘J",
+       "Open terminal | ⌃`",
+       "Open browser tab | ⌘T",
+       "New tab in full view | ⇧⌘F",
+       "Cycle workspace layout | ⇧⌘B",
+       "New tab | ⌥⌘B"
+      ]
+     },
+     {
+      "heading": "Project",
+      "items": [
+       "New project"
+      ]
+     },
+     {
+      "heading": "Skills",
+      "items": [
+       "Go to skills"
+      ]
+     },
+     {
+      "heading": "Configure",
+      "items": [
+       "Theme | desc:Codex",
+       "Import from other AI apps"
+      ]
+     },
+     {
+      "heading": "App",
+      "items": [
+       "Show Mini | ⌥Space",
+       "Clear all unreads | ⇧Esc",
+       "Manage scheduled tasks",
+       "Log out",
+       "Feedback"
+      ]
+     }
+    ],
+    "icons": [
+     "New chat",
+     "Open folder",
+     "General",
+     "Notifications",
+     "Import",
+     "Profile",
+     "Account",
+     "Parental controls",
+     "Trusted contact",
+     "Appearance",
+     "Voice",
+     "Storage",
+     "Mini & Pets",
+     "Computer history",
+     "Appshots",
+     "Git",
+     "Connections",
+     "Cloud preferences",
+     "Codex Cloud",
+     "Legacy Codex Cloud",
+     "Code Review",
+     "Environments",
+     "Worktrees",
+     "Configuration",
+     "Work preferences",
+     "Personalization",
+     "Keyboard shortcuts",
+     "Usage & billing",
+     "Analytics",
+     "Browser",
+     "Computer use",
+     "MCP servers",
+     "Hooks",
+     "Plugins",
+     "Data controls",
+     "Archived chats",
+     "Cloud computer",
+     "Passwords",
+     "Account",
+     "New standalone chat",
+     "Archive chat",
+     "Toggle pin",
+     "Switch chat…",
+     "Previous chat",
+     "Next chat",
+     "Find",
+     "Back",
+     "Forward",
+     "Toggle sidebar",
+     "Open terminal",
+     "Open browser tab",
+     "Cycle workspace layout",
+     "New tab",
+     "Go to skills",
+     "Theme",
+     "Import from other AI apps",
+     "Show Mini",
+     "Manage scheduled tasks",
+     "Log out",
+     "Feedback"
+    ],
+    "dialogBbox": {
+     "x": 380,
+     "y": 164,
+     "w": 520,
+     "h": 487
+    },
+    "note": "HC-073: group headings in order; items as `title | project | kbd`; commands without a handler in this context are absent."
+   },
+   {
+    "selector": "[cmdk-item][aria-selected=true]",
+    "afterStep": 0,
+    "bbox": {
+     "x": 385,
+     "y": 237,
+     "w": 510,
+     "h": 31
+    },
+    "computed": {
+     "backgroundColor": "rgba(255, 255, 255, 0.08)"
+    },
+    "backdrop": "rgb(45, 45, 45)",
+    "note": "First chat selected on open: primary-ghost-hover fill over the dialog surface."
+   },
+   {
+    "selector": "[cmdk-group][data-command-menu-search-section=chats] rows, query `greet`",
+    "afterStep": 1,
+    "groups": [
+     {
+      "heading": "Chats",
+      "items": [
+       "Change the [greet]ing in hello.py to \"Hello, Codex\". | proj | ⌃1 || Change the [greet]ing in hello.py to \"Hello, Codex\"."
+      ]
+     }
+    ],
+    "rows": [
+     {
+      "text": "Change the [greet]ing in hello.py to \"Hello, Codex\". | proj | ⌃1 || Change the [greet]ing in hello.py to \"Hello, Codex\".",
+      "selected": true,
+      "unreadDot": false,
+      "bbox": {
+       "x": 385,
+       "y": 237,
+       "w": 510,
+       "h": 49
+      },
+      "projectBox": {
+       "x": 755,
+       "y": 243,
+       "w": 96,
+       "h": 19
+      }
+     }
+    ],
+    "note": "HC-083: title highlight (substring, in [..]), project label right (w-24 = 96 px), ⌃n kbd, snippet under the title with the match in [..]."
+   },
+   {
+    "selector": "[cmdk-group][data-command-menu-search-section=chats] rows, query `world`",
+    "afterStep": 4,
+    "groups": [
+     {
+      "heading": "Chats",
+      "items": [
+       "In two sentences, what does this repository contain? | proj | ⌃1 || ... includes a `hello.py` script that prints “Hello, [world]”, a `src` package with an `add(a, b)` function, and a short README."
+      ]
+     }
+    ],
+    "rows": [
+     {
+      "text": "In two sentences, what does this repository contain? | proj | ⌃1 || ... includes a `hello.py` script that prints “Hello, [world]”, a `src` package with an `add(a, b)` function, and a short README.",
+      "selected": false,
+      "unreadDot": false,
+      "bbox": {
+       "x": 385,
+       "y": 237,
+       "w": 510,
+       "h": 49
+      },
+      "projectBox": {
+       "x": 755,
+       "y": 243,
+       "w": 96,
+       "h": 19
+      }
+     }
+    ]
+   }
+  ],
+  "requests": [
+   {
+    "type": "mcp-request",
+    "method": "thread/search",
+    "params": "{\"cursor\":null,\"limit\":9,\"sortKey\":\"recency_at\",\"archived\":false,\"sourceKinds\":[],\"searchTerm\":\"greet\"}"
+   },
+   {
+    "type": "mcp-request",
+    "method": "thread/search",
+    "params": "{\"cursor\":null,\"limit\":9,\"sortKey\":\"recency_at\",\"archived\":false,\"sourceKinds\":[],\"searchTerm\":\"world\"}"
+   }
+  ],
+  "state": {
+   "commandMenu": false,
+   "route": "home"
+  },
+  "screenshot": [
+   "s026-empty.png",
+   "s026-greet.png",
+   "s026-world.png"
+  ],
+  "threadRoute": {
+   "note": "A second original-app run opens the greeting chat before Search. The slice test checks these context-dependent groups.",
+   "groups": [
+    {
+     "heading": "Chats",
+     "items": [
+      "Change the greeting in hello.py to \"Hello, Codex\". | proj | ⌃1",
+      "Add a subtract(a, b) function to src/math.py next to add, then run python3 -c '… | proj | ⌃2",
+      "In two sentences, what does this repository contain? | proj | ⌃3"
+     ]
+    },
+    {
+     "heading": "Quick actions",
+     "items": [
+      "New chat | ⌘N",
+      "Open folder | ⌘O",
+      "Search files | ⌘P"
+     ]
+    },
+    {
+     "heading": "Settings",
+     "items": [
+      "General",
+      "Notifications",
+      "Import",
+      "Profile",
+      "Account",
+      "Parental controls",
+      "Trusted contact",
+      "Appearance",
+      "Voice",
+      "Storage",
+      "Mini & Pets",
+      "Computer history",
+      "Appshots",
+      "Git",
+      "Connections",
+      "Cloud preferences",
+      "Codex Cloud",
+      "Legacy Codex Cloud",
+      "Code Review",
+      "Environments",
+      "Worktrees",
+      "Configuration",
+      "Work preferences",
+      "Personalization",
+      "Keyboard shortcuts",
+      "Usage & billing",
+      "Analytics",
+      "Browser",
+      "Computer use",
+      "MCP servers",
+      "Hooks",
+      "Plugins",
+      "Data controls",
+      "Archived chats",
+      "Cloud computer",
+      "Passwords",
+      "Account"
+     ]
+    },
+    {
+     "heading": "Chat",
+     "items": [
+      "New standalone chat | ⌥⌘O",
+      "Open in new window",
+      "Archive chat | ⇧⌘A",
+      "Mark as unread | ⇧⌘U",
+      "Toggle pin | ⌥⌘P",
+      "Open side chat | ⌥⌘S"
+     ]
+    },
+    {
+     "heading": "Navigation",
+     "items": [
+      "Switch chat…",
+      "Toggle activity view | ⌥⌘U",
+      "Focus main chat",
+      "Open your dot | ⌘.",
+      "Next chat needing attention | ⌥⌘A",
+      "Previous chat | ⇧⌘[",
+      "Next chat | ⇧⌘]",
+      "Go to recent chat 1 | ⌥⌘1",
+      "Go to recent chat 2 | ⌥⌘2",
+      "Go to recent chat 3 | ⌥⌘3",
+      "Go to recent chat 4 | ⌥⌘4",
+      "Go to recent chat 5 | ⌥⌘5",
+      "Go to recent chat 6 | ⌥⌘6",
+      "Switch to Chat",
+      "Switch to Work",
+      "Switch to Codex",
+      "Find | ⌘F",
+      "Back | ⌘[",
+      "Forward | ⌘]"
+     ]
+    },
+    {
+     "heading": "Panels",
+     "items": [
+      "Reopen closed tab | ⇧⌘T",
+      "Toggle sidebar | ⇧⌘S",
+      "Toggle navigation panel | ⇧⌘E",
+      "Toggle bottom panel | ⌘J",
+      "Toggle pinned summary",
+      "Open terminal | ⌃`",
+      "Open browser tab | ⌘T",
+      "New tab in full view | ⇧⌘F",
+      "Cycle workspace layout | ⇧⌘B",
+      "Open Changes tab | ⌃⇧G",
+      "New tab | ⌥⌘B"
+     ]
+    },
+    {
+     "heading": "Project",
+     "items": [
+      "Commit or push",
+      "Create PR",
+      "Create draft PR",
+      "New project"
+     ]
+    },
+    {
+     "heading": "Skills",
+     "items": [
+      "Go to skills"
+     ]
+    },
+    {
+     "heading": "Configure",
+     "items": [
+      "Theme | desc:Codex",
+      "Import from other AI apps"
+     ]
+    },
+    {
+     "heading": "App",
+     "items": [
+      "Show Mini | ⌥Space",
+      "Clear all unreads | ⇧Esc",
+      "Manage scheduled tasks",
+      "Log out",
+      "Feedback"
+     ]
+    }
+   ]
+  }
+ }
+}
