@@ -294,6 +294,26 @@
         },
         "skipVisible": false,
         "mainFocused": false,
+        "tooltip": {
+          "label": "Select a project to run your chat in",
+          "shortcut": "⌥⇧⌘O",
+          "bbox": {
+            "x": 378,
+            "y": 649,
+            "w": 290.296875,
+            "h": 30
+          }
+        },
+        "selector": "[role=tooltip]",
+        "bbox": {
+          "x": 378,
+          "y": 649,
+          "w": 290.296875,
+          "h": 30
+        },
+        "computed": {
+          "backgroundColor": "rgb(45, 45, 45)"
+        },
         "pixels": [
           {
             "x": 455.5,
@@ -436,6 +456,26 @@
         },
         "skipVisible": false,
         "mainFocused": false,
+        "tooltip": {
+          "label": "Select a project to run your chat in",
+          "shortcut": "⌥⇧⌘O",
+          "bbox": {
+            "x": 378,
+            "y": 649,
+            "w": 290.296875,
+            "h": 30
+          }
+        },
+        "selector": "[role=tooltip]",
+        "bbox": {
+          "x": 378,
+          "y": 649,
+          "w": 290.296875,
+          "h": 30
+        },
+        "computed": {
+          "backgroundColor": "rgb(45, 45, 45)"
+        },
         "pixels": [
           {
             "x": 455.5,

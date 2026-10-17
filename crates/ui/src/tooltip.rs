@@ -1,20 +1,21 @@
 //! The shared tooltip (Radix `Tooltip` inside `Pn`): a 13 px pill with the label and the
-//! command's shortcut chip, opened by hovering its trigger. Values are the DOM of
+//! command's shortcut chip, opened by hover or opted-in keyboard focus. Values are the DOM of
 //! `refs/interactions/f1a.json`, recorded from the original.
 //!
 //! - Opens `OPEN_DELAY` after the pointer enters the trigger; at once when another tooltip
 //!   was open or closed less than `SKIP_DELAY` ago (Radix `skipDelayDuration`), so moving
 //!   along a row of buttons shows each at once.
 //! - Closes when the pointer leaves, on a press on the trigger, and on Escape.
+//! - Opted-in keyboard focus opens immediately; blur closes the same shared tooltip.
 //! - Defaults to `OFFSET` px from the trigger's positioning edge, above, below, or to its right.
 //!
 //! The tooltip stays at least 8 px inside the window, including narrow titlebar layouts.
 
 use gpui::{
-    Anchor, App, Bounds, Context, DispatchPhase, Div, ElementId, Entity, Global, Hsla,
+    Anchor, App, Bounds, Context, DispatchPhase, Div, ElementId, Entity, FocusHandle, Global, Hsla,
     InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Pixels, RenderOnce,
-    SharedString, Stateful, StatefulInteractiveElement, Styled, Window, anchored, canvas, deferred,
-    div, point, prelude::FluentBuilder as _, px, relative, rgba,
+    SharedString, Stateful, StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window,
+    anchored, canvas, deferred, div, point, prelude::FluentBuilder as _, px, relative, rgba,
 };
 use std::time::Duration;
 use theme::{ActiveTheme as _, Appearance};
@@ -46,6 +47,7 @@ pub struct Shown {
 #[derive(Default)]
 struct Hub {
     shown: Option<Shown>,
+    shown_state: Option<WeakEntity<TipState>>,
     skip_delay: bool,
     /// Tells the pending end of the skip window from a stale one.
     skip_gen: u64,
@@ -74,6 +76,8 @@ struct TipState {
     trigger_width: Pixels,
     /// Bumped by every enter and leave: a delay timer only opens the tooltip it started for.
     epoch: u64,
+    focus_spec: Option<Spec>,
+    _focus_subscriptions: Option<[Subscription; 2]>,
 }
 
 impl TipState {
@@ -84,7 +88,7 @@ impl TipState {
                 .required_width
                 .is_some_and(|width| width.round() <= self.trigger_width.round())
         {
-            return self.close(&spec.id, cx);
+            return self.close(cx);
         }
         if self.open {
             return;
@@ -106,9 +110,26 @@ impl TipState {
     }
 
     fn open(&mut self, spec: Spec, cx: &mut Context<Self>) {
+        if self.open
+            || spec
+                .required_width
+                .is_some_and(|width| width.round() <= self.trigger_width.round())
+        {
+            return;
+        }
+        let this = cx.entity().downgrade();
+        let previous = cx
+            .default_global::<Hub>()
+            .shown_state
+            .clone()
+            .filter(|previous| previous != &this);
+        if let Some(previous) = previous {
+            previous.update(cx, |state, cx| state.close(cx)).ok();
+        }
         self.open = true;
         let hub = cx.default_global::<Hub>();
         hub.skip_delay = true;
+        hub.shown_state = Some(this);
         hub.skip_gen += 1;
         hub.shown = Some(Shown {
             label: spec.label,
@@ -119,16 +140,22 @@ impl TipState {
         cx.notify();
     }
 
-    fn close(&mut self, id: &ElementId, cx: &mut Context<Self>) {
+    fn close(&mut self, cx: &mut Context<Self>) {
         self.epoch += 1;
         if !self.open {
             return;
         }
         self.open = false;
+        let this = cx.entity_id();
         let hub = cx.default_global::<Hub>();
         // Another tooltip may already have taken over (moving between triggers).
-        if hub.shown.as_ref().is_some_and(|s| &s.owner == id) {
+        if hub
+            .shown_state
+            .as_ref()
+            .is_some_and(|owner| owner.entity_id() == this)
+        {
             hub.shown = None;
+            hub.shown_state = None;
             hub.skip_gen += 1;
             let epoch = hub.skip_gen;
             cx.spawn(async move |_, cx| {
@@ -155,6 +182,7 @@ pub fn tooltip(
 ) -> Tooltip {
     Tooltip {
         trigger,
+        focus_handle: None,
         label: label.into(),
         shortcut: shortcut.map(SharedString::new_static),
         side,
@@ -167,6 +195,7 @@ pub fn tooltip(
 #[derive(IntoElement)]
 pub struct Tooltip {
     trigger: Stateful<Div>,
+    focus_handle: Option<FocusHandle>,
     label: SharedString,
     shortcut: Option<SharedString>,
     side: Side,
@@ -176,6 +205,12 @@ pub struct Tooltip {
 }
 
 impl Tooltip {
+    /// Opens on keyboard focus using the trigger's existing focus handle.
+    pub fn focus_handle(mut self, focus_handle: &FocusHandle) -> Self {
+        self.focus_handle = Some(focus_handle.clone());
+        self
+    }
+
     /// Opens only when the trigger cannot fit text of `width`, measured in CSS pixels.
     pub fn when_overflows(mut self, width: Pixels) -> Self {
         self.required_width = Some(width);
@@ -202,7 +237,25 @@ impl RenderOnce for Tooltip {
             .element_id
             .clone()
             .expect("a tooltip trigger has an id");
-        let state = window.use_keyed_state(id.clone(), cx, |_, _| TipState::default());
+        let state = window.use_keyed_state(id.clone(), cx, |window, cx| {
+            let mut state = TipState::default();
+            if let Some(handle) = self.focus_handle.as_ref() {
+                state._focus_subscriptions = Some([
+                    cx.on_focus(handle, window, |state: &mut TipState, window, cx| {
+                        if window.last_input_was_keyboard()
+                            && let Some(spec) = state.focus_spec.clone()
+                        {
+                            state.epoch += 1;
+                            state.open(spec, cx);
+                        }
+                    }),
+                    cx.on_blur(handle, window, |state: &mut TipState, _, cx| {
+                        state.close(cx)
+                    }),
+                ]);
+            }
+            state
+        });
         let spec = Spec {
             id,
             label: self.label,
@@ -210,17 +263,32 @@ impl RenderOnce for Tooltip {
             required_width: self.required_width,
             delay: self.delay,
         };
+        if let Some(handle) = self.focus_handle {
+            state.update(cx, |state, _| state.focus_spec = Some(spec.clone()));
+            self.trigger = self
+                .trigger
+                .track_focus(&handle)
+                .on_key_down(|event, _, cx| {
+                    if event.keystroke.key == "escape"
+                        && let Some(shown) = cx
+                            .try_global::<Hub>()
+                            .and_then(|hub| hub.shown_state.clone())
+                    {
+                        shown.update(cx, |state, cx| state.close(cx)).ok();
+                    }
+                });
+        }
         let open = state.read(cx).open;
         let bubble = open.then(|| bubble(&spec, self.side, self.side_offset, &state, cx));
         if let Some(required_width) = spec.required_width {
-            let (state, id) = (state.clone(), spec.id.clone());
+            let state = state.clone();
             self.trigger = self.trigger.child(
                 canvas(
                     move |bounds, _, cx| {
                         state.update(cx, |state, cx| {
                             state.trigger_width = bounds.size.width;
                             if required_width.round() <= bounds.size.width.round() {
-                                state.close(&id, cx);
+                                state.close(cx);
                             }
                         });
                     },
@@ -238,8 +306,8 @@ impl RenderOnce for Tooltip {
                 }
             })
             .on_mouse_down(MouseButton::Left, {
-                let (state, id) = (state.clone(), spec.id.clone());
-                move |_, _, cx| state.update(cx, |s, cx| s.close(&id, cx))
+                let state = state.clone();
+                move |_, _, cx| state.update(cx, |s, cx| s.close(cx))
             })
             .children(bubble)
     }
@@ -260,8 +328,7 @@ fn bubble(
         Appearance::Dark => (t.surface_elevated_secondary, t.text),
         Appearance::Light => (t.button_primary_solid, rgba(0xffffffff).into()),
     };
-    let id = spec.id.clone();
-    let owner = id.clone();
+    let owner = spec.id.clone();
     let state = state.clone();
     let pill = div()
         .relative()
@@ -318,10 +385,10 @@ fn bubble(
                     {
                         shown.bounds = bounds;
                     }
-                    let (state, id) = (state.clone(), id.clone());
+                    let state = state.clone();
                     window.on_key_event(move |e: &KeyDownEvent, phase, _, cx| {
                         if phase == DispatchPhase::Capture && e.keystroke.key == "escape" {
-                            state.update(cx, |s, cx| s.close(&id, cx));
+                            state.update(cx, |s, cx| s.close(cx));
                         }
                     });
                 },

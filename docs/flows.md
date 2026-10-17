@@ -130,9 +130,13 @@ Command titles open their full-label tooltip after 2000 ms only when the measure
 The tooltip wraps within 320 px and closes when the pointer leaves.
 Fitting command titles and the profile avatar have no tooltip.
 The original sidebar hover card also opens for fitting titles, so F1d does not replace that card.
-The shared replay passes all 15 recorded inputs, and F1a, F1b, F1c, and all 36 strict parity cases pass.
-F1d retains the failing Home project-ring probe at `(455.5, 695)` after both activation methods.
-The Home chip/fade painter needs a separate repair before the full F1d check can pass.
+The initial 15-input shared replay, F1a/F1b/F1c checks, and all 36 strict parity cases passed with unchanged metrics.
+The extended record also checks the already-recorded project tooltip, its shortcut, and its bounds after both skip-link activation methods.
+`Tooltip::focus_handle` reuses the control's native focus handle and the shared provider.
+Keyboard focus opens immediately; blur and Escape close the tooltip without moving focus.
+The lifecycle check rejects pointer-focus opening, delayed reopening after Escape, and multiple visible tooltip owners.
+F1d retains the original `(455.5, 695)` probes at steps 3 and 7.
+The full gate waits for the shared Home live/frozen mask, border-box, and keyboard-tooltip caller repair.
 
 ## 14.1 Left rail
 
