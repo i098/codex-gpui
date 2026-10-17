@@ -332,7 +332,17 @@ Comment actions (S075/S082), file tabs (S186), and external targets remain outsi
 
 ## 14.7 Settings, login and onboarding
 
-A settings row reports its change to `Root`: `desktop.*` and `features.*` rows persist with `config/value/write` and `Root` keeps the value once the server took it; host and session rows keep their value for the session. Leaving and reopening Settings shows the kept value (`settings_value_round_trip`).
+A settings row reports its change to `Root`.
+`desktop.*` and `features.*` rows persist with `config/value/write`; `Root` keeps the value after the server accepts it.
+The menu-bar switch persists through the local `settings.write` service.
+Session rows keep their values for the session.
+Leaving and reopening Settings shows the kept value (`settings_value_round_trip`).
+
+S034 covers ST-003 and ST-026 with the unchanged off/on samples in `refs/interactions/s034.json`.
+The replay advances the virtual clock by the original 150 ms transition before checking settled pixels.
+Enabled switches use the existing GPUI native click path for Enter and Space, without duplicate key handlers.
+The replay checks pointer focus without a ring, the blue keyboard ring, saved values, reload, and Back navigation.
+S034b still checks the recorded sign-in path; no account or authentication changes are part of this repair.
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
@@ -343,7 +353,7 @@ A settings row reports its change to `Root`: `desktop.*` and `features.*` rows p
 | 5 | Theme Light/Dark/System | click | Applies the theme at once. | Appearance ▸ Theme (`Light`, `Dark`, `System`) dispatches `SetTheme`; `Root::set_theme` applies and persists it. | PASS (`appearance_theme_control`) |
 | 6 | Collapse nav | click | `Collapse settings navigation`. | — | NOT WIRED (`crates/ui/src/screens/settings.rs` `SettingsNav`) |
 | 7 | Row hover | hover | Row highlight. | Highlight shows. | PASS (`settings_nav_hover`) |
-| 8 | Keyboard nav | focus ring | Ring on rows and controls. | — | NOT WIRED (`crates/ui/src/screens/settings.rs`) |
+| 8 | Keyboard nav | focus ring | Ring on rows and controls. | S034 proves pointer focus, Enter/Space activation, and the keyboard ring on switches. Other rows remain unwired. | NOT WIRED (remaining rows and controls) |
 | 9 | Section loading | loading | Skeleton row. | — | NOT WIRED (`crates/ui/src/screens/settings.rs`) |
 | 10 | Save failure | error | Toast. | The error is logged. | FAIL (`crates/ui/src/screens/settings.rs` `send` only logs; no toast) |
 | 11 | Login `/login` | entry | Sign-in screen. | A signed-out `account/read` shows the sign-in view. | PASS (`signed_out_shows_login`) |
