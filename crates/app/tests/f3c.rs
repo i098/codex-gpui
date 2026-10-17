@@ -255,3 +255,35 @@ fn primary_failure_keeps_the_model_and_still_remembers_the_announcement() -> Res
         .save(evidence_directory()?.join("announcement-primary-failure.png"))?;
     Ok(())
 }
+
+#[test]
+fn selected_or_default_announced_model_persists_without_a_dialog() -> Result<()> {
+    let rec = recording()?;
+    let key = "seen-model-upgrade-list";
+    for (index, model) in [Some(&rec["announcement"]["model"]), None]
+        .into_iter()
+        .enumerate()
+    {
+        let mut lines = script(None, |_| {})?;
+        let config = lines
+            .iter_mut()
+            .find_map(|line| line.pointer_mut("/msg/result/config")?.as_object_mut())
+            .context("recorded startup config")?;
+        if let Some(model) = model {
+            config.insert("model".into(), model.clone());
+        } else {
+            config.remove("model");
+        }
+        let path = evidence_directory()?.join(format!("selected-{index}-host-settings.json"));
+        let mut settings = Settings::load(path.clone())?;
+        settings.write(key, rec["fixtureState"][key].clone())?;
+        let fx = Fx::captured_with_host_settings("dark", (1280., 832.), lines, settings)?;
+        ensure!(fx.read(|root, _| root.dialog().is_none()));
+        let stored: Value = serde_json::from_slice(&fs::read(path)?)?;
+        ensure!(
+            stored[key] == rec["branches"]["secondary"]["stored"]["value"],
+            "the selected or default model was not persisted"
+        );
+    }
+    Ok(())
+}

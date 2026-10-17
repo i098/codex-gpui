@@ -1378,7 +1378,8 @@ impl Root {
             return;
         }
         self.command_menu = None;
-        cx.subscribe_in(&dialog, window, |this, _, outcome, window, cx| {
+        cx.subscribe_in(&dialog, window, |this, dialog, outcome, window, cx| {
+            dialog.read(cx).release_artwork(window);
             this.dialog = None;
             match outcome {
                 DialogOutcome::Dismiss => window.focus(&this.focus, cx),

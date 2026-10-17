@@ -120,6 +120,14 @@ impl Dialog {
             ..Self::new(Kind::ModelAnnouncement, cx)
         }
     }
+    /// Evicts the announcement image when its dialog leaves the window.
+    pub fn release_artwork(&self, window: &mut Window) {
+        if let Some(announcement) = &self.announcement
+            && let Some((_, _, image, _)) = announcement.artwork.borrow_mut().take()
+        {
+            window.drop_image(image).ok();
+        }
+    }
     pub fn kind(&self) -> Kind {
         self.kind
     }
@@ -974,6 +982,9 @@ fn announcement_artwork(cache: AnnouncementArtworkCache) -> impl IntoElement {
                 && *previous_scale == scale
             {
                 return (image.clone(), *rounded);
+            }
+            if let Some((_, _, image, _)) = cached.take() {
+                window.drop_image(image).ok();
             }
             let image = &*ANNOUNCEMENT_ARTWORK;
             let device = |value: Pixels| (f32::from(value) * scale).round() as u32;
