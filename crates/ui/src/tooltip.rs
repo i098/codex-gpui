@@ -245,12 +245,15 @@ impl RenderOnce for Tooltip {
                         if window.last_input_was_keyboard()
                             && let Some(spec) = state.focus_spec.clone()
                         {
-                            state.epoch += 1;
-                            state.open(spec, cx);
+                            // Native focus callbacks run while drawing; notify after that frame.
+                            cx.defer_in(window, move |state, _, cx| {
+                                state.epoch += 1;
+                                state.open(spec, cx);
+                            });
                         }
                     }),
-                    cx.on_blur(handle, window, |state: &mut TipState, _, cx| {
-                        state.close(cx)
+                    cx.on_blur(handle, window, |_: &mut TipState, window, cx| {
+                        cx.defer_in(window, |state, _, cx| state.close(cx));
                     }),
                 ]);
             }

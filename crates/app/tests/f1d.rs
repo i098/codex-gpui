@@ -63,6 +63,76 @@ fn full_label_tooltip_requires_overflow() -> Result<()> {
     replay(8..15)
 }
 
+#[test]
+fn skip_link_keyboard_and_pointer_paths_reach_same_content() -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        return Ok(());
+    }
+    let recording: Value =
+        serde_json::from_slice(&fs::read(format!("{ROOT}/refs/interactions/f1d.json"))?)?;
+    let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
+    fx.cx.test_window(fx.window).activate();
+    fx.cx.run_until_parked();
+    fx.shot()?;
+    let before = fx.sent()?.len();
+    let shots = std::env::var_os("F1D_SHOTS").map(PathBuf::from);
+    if let Some(dir) = &shots {
+        fs::create_dir_all(dir)?;
+    }
+    let run = |fx: &mut Fx, index: usize| -> Result<gpui::FocusHandle> {
+        step(fx, &recording["steps"][index])?;
+        let image = fx.shot()?;
+        if let Some(dir) = &shots {
+            image.save(dir.join(format!("functional-step-{index}.png")))?;
+        }
+        fx.cx
+            .update_window(fx.window, |_, window, cx| window.focused(cx))?
+            .with_context(|| format!("step {index}: missing focus"))
+    };
+    let home = run(&mut fx, 0)?;
+    let skip = run(&mut fx, 1)?;
+    ensure!(skip != home, "Shift-Tab did not reach the skip link");
+    let main = run(&mut fx, 2)?;
+    let composer = fx.composer();
+    ensure!(
+        fx.cx.update_window(fx.window, |_, window, cx| {
+            let composer = composer.focus_handle(cx);
+            main != composer && main.contains(&composer, window) && !main.contains(&home, window)
+        })?,
+        "Enter did not focus the main content region"
+    );
+    let first_content = run(&mut fx, 3)?;
+    ensure!(
+        fx.cx.update_window(fx.window, |_, window, cx| {
+            first_content != main
+                && first_content != composer.focus_handle(cx)
+                && main.contains(&first_content, window)
+        })?,
+        "Tab did not reach the first non-editor content control"
+    );
+    run(&mut fx, 4)?;
+    ensure!(run(&mut fx, 5)? == skip, "the skip target changed");
+    ensure!(
+        run(&mut fx, 6)? == main,
+        "click did not focus the same content region"
+    );
+    ensure!(
+        run(&mut fx, 7)? == first_content,
+        "click activation changed the next content Tab stop"
+    );
+    ensure!(
+        fx.route() == app::Route::Home,
+        "skip activation changed the route"
+    );
+    let requests = fx.sent()?;
+    ensure!(
+        requests[before..].is_empty(),
+        "skip navigation sent app-server requests: {:?}",
+        &requests[before..]
+    );
+    Ok(())
+}
+
 fn replay(steps: Range<usize>) -> Result<()> {
     if !cfg!(target_os = "macos") {
         println!("f1d: requires the macOS headless renderer");
@@ -71,6 +141,8 @@ fn replay(steps: Range<usize>) -> Result<()> {
     let recording: Value =
         serde_json::from_slice(&fs::read(format!("{ROOT}/refs/interactions/f1d.json"))?)?;
     let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
+    fx.cx.test_window(fx.window).activate();
+    fx.cx.run_until_parked();
     let shots = std::env::var_os("F1D_SHOTS").map(PathBuf::from);
     if let Some(dir) = &shots {
         fs::create_dir_all(dir)?;
@@ -250,10 +322,30 @@ fn keyboard_tooltip_ownership_and_dismissal_follow_focus() -> Result<()> {
     cx.test_window(window).activate();
     cx.run_until_parked();
     let shown = |cx: &mut HeadlessAppContext| -> Result<Option<ui::tooltip::Shown>> {
-        cx.update_window(window, |_, window, cx| window.simulate_next_frame(cx))?;
-        cx.run_until_parked();
-        cx.capture_screenshot(window)?;
-        Ok(cx.update(|cx| ui::tooltip::shown(cx).cloned()))
+        // Observe the native focus frame and the tooltip frame requested after it.
+        for _ in 0..2 {
+            cx.test_window(window)
+                .simulate_frame_request(gpui::RequestFrameOptions {
+                    require_presentation: true,
+                    ..Default::default()
+                });
+            cx.run_until_parked();
+        }
+        let image = cx.capture_screenshot(window)?;
+        let tip = cx.update(|cx| ui::tooltip::shown(cx).cloned());
+        if let Some(tip) = &tip {
+            let scale = image.width() as f32 / 1280.;
+            let x = (f32::from(tip.bounds.origin.x) + 6.) * scale;
+            let y =
+                (f32::from(tip.bounds.origin.y) + f32::from(tip.bounds.size.height) / 2.) * scale;
+            assert_eq!(&image.get_pixel(x as u32, y as u32).0[..3], &[45, 45, 45]);
+        } else {
+            assert!(
+                image.pixels().all(|pixel| pixel.0[..3] == [24, 24, 24]),
+                "closed tooltip still paints"
+            );
+        }
+        Ok(tip)
     };
     let press = |cx: &mut HeadlessAppContext, key: &str| -> Result<()> {
         let stroke = Keystroke::parse(key)?;
