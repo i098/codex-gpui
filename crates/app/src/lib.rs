@@ -11,7 +11,7 @@ pub mod qa;
 use anyhow::{Context as _, Result};
 use async_channel::Receiver;
 use bridge::types::{
-    ApprovalDecision, CommandApprovalRequest, ConfigReadResponse, FileChangeApprovalRequest,
+    ApprovalDecision, CommandApprovalRequest, ConfigReadResponse, FileChangeApprovalRequest, Model,
     Thread, ThreadItem, ThreadListResponse, ThreadReadResponse, ThreadSection, ThreadStartResponse,
     ThreadStartedNotification, ThreadStatus, TurnStatus,
 };
@@ -320,6 +320,25 @@ fn log_err(task: Task<Result<()>>, cx: &App) {
         })
         .detach();
 }
+#[derive(Deserialize)]
+struct ModelCatalog {
+    data: Vec<CatalogModel>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CatalogModel {
+    #[serde(flatten)]
+    model: Model,
+    availability_nux: Option<ModelAvailability>,
+}
+
+#[derive(Deserialize)]
+struct ModelAvailability {
+    message: String,
+}
+
+const LEGACY_MODEL_ANNOUNCEMENTS: [&str; 2] = ["gpt-5.4", "gpt-5.5"];
 
 pub struct Root {
     /// Window size, sidebar and route, saved back on every change.
@@ -375,6 +394,7 @@ pub struct Root {
     clock: Option<Clock>,
     config: Value,
     skills: Value,
+    models: Vec<Model>,
     ready: bool,
     qa_work_started: bool,
     /// Threads started or resumed by this app-server; others need `thread/resume` first.
@@ -569,6 +589,7 @@ impl Root {
             clock: None,
             config: Value::Null,
             skills: Value::Null,
+            models: Vec::new(),
             ready: false,
             qa_work_started: false,
             loaded: HashSet::new(),
@@ -613,7 +634,7 @@ impl Root {
                 .await?;
             let account = bridge.account_read().await?;
             let threads = bridge.thread_list().await?;
-            let models = bridge.model_list().await?;
+            let mut catalog: ModelCatalog = bridge.request("model/list", json!({})).await?;
             let config: ConfigReadResponse = bridge
                 .request("config/read", json!({ "includeLayers": false, "cwd": cwd }))
                 .await?;
@@ -628,13 +649,53 @@ impl Root {
                 }
                 this.set_threads(&threads.data, cx);
                 this.set_next_cursor(threads.next_cursor, cx);
+                let announcements_allowed = this.login.is_none()
+                    && matches!(this.state.route, Route::Home | Route::Thread(_));
+                let current_model = config.config["model"].as_str().or_else(|| {
+                    catalog
+                        .data
+                        .iter()
+                        .find(|entry| !entry.model.hidden && entry.model.is_default)
+                        .map(|entry| entry.model.model.as_str())
+                });
+                if announcements_allowed
+                    && let Some(current) = current_model
+                    && !LEGACY_MODEL_ANNOUNCEMENTS.contains(&current)
+                    && catalog.data.iter().any(|entry| {
+                        entry.model.model == current && entry.availability_nux.is_some()
+                    })
+                {
+                    this.remember_model_announcement(current, cx);
+                }
+                let announcement = announcements_allowed
+                    .then(|| {
+                        catalog.data.iter().position(|entry| {
+                            entry.availability_nux.is_some()
+                                && Some(entry.model.model.as_str()) != current_model
+                                && !LEGACY_MODEL_ANNOUNCEMENTS.contains(&entry.model.model.as_str())
+                                && !Self::model_announcement_history(cx)
+                                    .iter()
+                                    .any(|seen| seen.as_str() == Some(entry.model.model.as_str()))
+                        })
+                    })
+                    .flatten()
+                    .map(|index| {
+                        let message = catalog.data[index]
+                            .availability_nux
+                            .take()
+                            .expect("eligible model announcement")
+                            .message;
+                        (index, message)
+                    });
+                let models: Vec<Model> =
+                    catalog.data.into_iter().map(|entry| entry.model).collect();
                 let composers = [
                     this.home.read(cx).composer.clone(),
                     this.thread_composer.clone(),
                 ];
                 for composer in composers {
                     composer.update(cx, |c, cx| {
-                        c.set_models(&models.data, &config.config, cx);
+                        c.set_models(&models, &config.config, cx);
                         c.set_slash_skills(&skills, cx);
                     });
                 }
@@ -643,9 +704,15 @@ impl Root {
                     serde_json::to_value(this.state.confirm_before_close)
                         .expect("close preference");
                 this.skills = skills;
+                this.models = models;
                 this.ready = true;
                 this.select_route(cx);
                 this.sync(window, cx);
+                if let Some((index, message)) = announcement {
+                    let dialog =
+                        cx.new(|cx| Dialog::model_announcement(&this.models[index], message, cx));
+                    this.show_dialog(dialog, window, cx);
+                }
             })
         });
         log_err(task, cx);
@@ -1299,6 +1366,30 @@ impl Root {
         self.dialog.as_ref()
     }
 
+    fn model_announcement_history(cx: &App) -> &[Value] {
+        cx.try_global::<host_settings::Settings>()
+            .and_then(|settings| settings.read_all().get("seen-model-upgrade-list"))
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
+
+    fn remember_model_announcement(&mut self, model: &str, cx: &mut Context<Self>) {
+        let seen = Self::model_announcement_history(cx);
+        if seen.iter().any(|seen| seen.as_str() == Some(model)) {
+            return;
+        }
+        let mut seen = seen.to_vec();
+        seen.push(json!(model));
+        self.write_setting(
+            &SettingChanged {
+                path: "host.seen-model-upgrade-list",
+                value: Value::Array(seen),
+            },
+            cx,
+        );
+    }
+
     fn open_dialog(&mut self, kind: DialogKind, window: &mut Window, cx: &mut Context<Self>) {
         let dialog = cx.new(|cx| Dialog::new(kind, cx));
         self.show_dialog(dialog, window, cx);
@@ -1309,10 +1400,22 @@ impl Root {
             return;
         }
         self.command_menu = None;
-        cx.subscribe_in(&dialog, window, |this, _, outcome, window, cx| {
+        cx.subscribe_in(&dialog, window, |this, dialog, outcome, window, cx| {
+            dialog.read(cx).release_artwork(window);
             this.dialog = None;
             match outcome {
                 DialogOutcome::Dismiss => window.focus(&this.focus, cx),
+                DialogOutcome::DismissAnnouncement(model)
+                | DialogOutcome::UseAnnouncedModel { model, .. } => {
+                    if let DialogOutcome::UseAnnouncedModel {
+                        reasoning_effort, ..
+                    } = outcome
+                    {
+                        this.write_model(model, reasoning_effort, cx);
+                    }
+                    this.remember_model_announcement(model, cx);
+                    window.focus(&this.focus, cx);
+                }
                 DialogOutcome::FullAccess => {
                     let composer = this.composer(cx);
                     composer.update(cx, |composer, cx| composer.confirm_full_access(cx));
@@ -1914,7 +2017,7 @@ impl Root {
         }
     }
 
-    /// A model picker choice: `config/batchWrite` of `model` and `model_reasoning_effort`
+    /// A model choice: `config/batchWrite` of `model` and `model_reasoning_effort`
     /// (the original's `writeModel`).
     fn write_model(&mut self, model: &str, effort: &str, cx: &mut Context<Self>) {
         let params = json!({
@@ -1927,10 +2030,31 @@ impl Root {
             "reloadUserConfig": true,
         });
         let (model, effort) = (model.to_owned(), effort.to_owned());
-        self.write_config("config/batchWrite", params, cx, move |config| {
-            config["model"] = model.into();
-            config["model_reasoning_effort"] = effort.into();
+        let bridge = self.bridge.clone();
+        let task = cx.spawn(async move |this, cx| -> Result<()> {
+            let done = bridge
+                .request::<_, Value>("config/batchWrite", params)
+                .await;
+            this.update(cx, |this, cx| {
+                if done.is_ok() {
+                    let composers = [
+                        this.home.read(cx).composer.clone(),
+                        this.thread_composer.clone(),
+                    ];
+                    for composer in composers {
+                        composer.update(cx, |composer, cx| {
+                            composer.set_model_and_effort(&model, &effort, cx);
+                        });
+                    }
+                    this.config["model"] = model.into();
+                    this.config["model_reasoning_effort"] = effort.into();
+                } else {
+                    this.toast(Toast::danger("Couldn’t update model settings"), cx);
+                }
+            })?;
+            done.map(drop)
         });
+        log_err(task, cx);
     }
 
     /// Window preferences keep their state storage; other host settings use the desktop service.
