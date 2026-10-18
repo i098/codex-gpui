@@ -27,6 +27,12 @@ Host settings use the local `settings.write(key, value)` service and persist bes
 Theme and window-close preferences remain in `state.json`.
 The S034 replay checks the menu-bar switch, its saved values, and Back navigation against `refs/interactions/s034.json`.
 
+Scheduled > New task accepts instructions, a daily or weekly repeat, and a local time in `HH:MM` format.
+Create saves the definition through `create-automation` to `CODEX_HOME/automations/<id>/automation.toml`.
+The app reloads the task list after a successful write and retains the draft if the write fails.
+The existing host schedules and executes these definitions; this app does not start another scheduler.
+Run `cargo test -p app --test task_create -- --test-threads=1` on macOS for the native creation and reload proof.
+
 ## Release bundle
 
 ```sh
