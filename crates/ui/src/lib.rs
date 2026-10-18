@@ -38,6 +38,7 @@ actions!(
         GoBack,
         GoForward,
         OpenSettings,
+        LogOut,
         ShowKeyboardShortcuts,
         /// Rail `Scheduled`: the Automations page.
         OpenScheduled,
@@ -774,7 +775,7 @@ impl Shell {
 
     /// Profile avatar menu (`codex.profileDropdown.*`) above the avatar: `Settings`, then the
     /// `Help` submenu's `Set up mobile`, flattened under a `Help` heading.
-    /// ponytail: Profile, Usage, Log out and Show Mini open pages the port does not have; add
+    /// ponytail: Profile, Usage and Show Mini open pages the port does not have; add
     /// them with those pages.
     fn profile_menu(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let hover = t.menu_item_hover;
@@ -812,6 +813,7 @@ impl Shell {
             }))
             .child(composer::popover(t, 220., |d| {
                 d.child(settings)
+                    .child(item("profile-log-out", "Log out", dispatch::<LogOut>))
                     .child(div().px(px(8.)).pt(px(8.)).pb(px(4.)).child(text(
                         "Help",
                         12.,

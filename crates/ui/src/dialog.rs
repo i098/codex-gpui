@@ -16,6 +16,7 @@ pub enum Kind {
     Shortcuts,
     CloseWindow,
     FullAccess,
+    LogOut,
     /// `Schedule a task`: the Scheduled sidebar's `New task` create editor (AM-005).
     ScheduleTask,
     /// `Rename chat` from a Recents row's menu (RS-091, refs/interactions/s002.json): the
@@ -26,6 +27,7 @@ pub enum Kind {
 pub enum Outcome {
     Dismiss,
     FullAccess,
+    LogOut,
     CloseWindow {
         do_not_ask_again: bool,
     },
@@ -94,6 +96,8 @@ impl Dialog {
             (Kind::CloseWindow, _) => "Do not ask me again",
             (Kind::FullAccess, 0) => "Cancel",
             (Kind::FullAccess, _) => "Confirm",
+            (Kind::LogOut, 0) => "Cancel",
+            (Kind::LogOut, _) => "Log out",
             (Kind::ScheduleTask, 0) => "Instructions…",
             (Kind::ScheduleTask, 1) => "Cancel",
             (Kind::ScheduleTask, _) => "Close dialog",
@@ -126,6 +130,7 @@ impl Dialog {
     fn activate(&mut self, cx: &mut Context<Self>) {
         match (self.kind, self.selected) {
             (Kind::FullAccess, 1) => cx.emit(Outcome::FullAccess),
+            (Kind::LogOut, 1) => cx.emit(Outcome::LogOut),
             (Kind::CloseWindow, 1) => cx.emit(Outcome::CloseWindow {
                 do_not_ask_again: self.do_not_ask_again,
             }),
@@ -158,7 +163,7 @@ impl Dialog {
             "escape" => cx.emit(Outcome::Dismiss),
             "tab" => {
                 let count = match self.kind {
-                    Kind::Shortcuts | Kind::FullAccess => 2,
+                    Kind::Shortcuts | Kind::FullAccess | Kind::LogOut => 2,
                     _ => 3,
                 };
                 self.selected =
@@ -169,8 +174,10 @@ impl Dialog {
             // Enter in the title input submits the form; Space types.
             "enter" if self.kind == Kind::Rename && self.selected == 0 => self.activate(cx),
             "enter" | "space"
-                if matches!(self.kind, Kind::CloseWindow | Kind::FullAccess)
-                    || self.selected != 0 =>
+                if matches!(
+                    self.kind,
+                    Kind::CloseWindow | Kind::FullAccess | Kind::LogOut
+                ) || self.selected != 0 =>
             {
                 self.activate(cx)
             }
@@ -285,6 +292,33 @@ impl Dialog {
             .child(div().absolute().bottom(px(20.)).right(px(20.)).flex().gap(px(12.))
                 .child(self.button(0, "Cancel", 88., t, cx))
                 .child(self.button(1, "Confirm", 115., t, cx)))
+    }
+
+    fn logout_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        div()
+            .p(px(20.))
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .child(text("Log out?", 20., 28., 600., t.text))
+            .child(
+                text(
+                    "You’ll need to sign in again to keep using Codex",
+                    14.,
+                    20.,
+                    430.,
+                    t.text_secondary,
+                )
+                .whitespace_normal(),
+            )
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap(px(12.))
+                    .child(self.button(0, "Cancel", 80., t, cx))
+                    .child(self.button(1, "Log out", 88., t, cx)),
+            )
     }
 
     fn close_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
@@ -762,6 +796,7 @@ impl Render for Dialog {
             Kind::ScheduleTask => (680., 422.),
             Kind::Rename => (420., 185.),
             Kind::FullAccess => (520., 420.),
+            Kind::LogOut => (420., 152.),
         };
         let width = width.min(f32::from(viewport.width) * 0.92);
         let height = height.min(f32::from(viewport.height) * 0.92);
@@ -771,6 +806,7 @@ impl Render for Dialog {
             Kind::ScheduleTask => self.schedule_content(t, cx),
             Kind::Rename => self.rename_content(t, cx),
             Kind::FullAccess => self.full_access_content(t, cx),
+            Kind::LogOut => self.logout_content(t, cx),
         };
         // `codex-dialog-overlay`: the schedule dialog's `_dimmedOverlay` is rgba(0,0,0,.5) with
         // blur(1px); the blur is not drawn (flat fills are unchanged by it).
@@ -802,6 +838,7 @@ impl Render for Dialog {
                         Kind::ScheduleTask => "Schedule a task",
                         Kind::Rename => "Rename chat",
                         Kind::FullAccess => "Turn on Full Access?",
+                        Kind::LogOut => "Log out?",
                     })
                     .on_key_down(cx.listener(Self::key))
                     .on_action(cx.listener(|this, _: &SelectAll, _, cx| {

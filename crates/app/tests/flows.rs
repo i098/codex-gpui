@@ -724,7 +724,7 @@ fn avatar(fx: &Fx) -> (f32, f32) {
 
 /// Profile menu rows `Settings` and `Set up mobile`, above the `Keyboard Shortcuts` row.
 fn profile_item(fx: &Fx, n: usize) -> (f32, f32) {
-    (118., fx.size.1 - [160., 100.][n])
+    (118., fx.size.1 - [192., 100.][n])
 }
 
 fn profile_menu_settings() -> Result<String> {
