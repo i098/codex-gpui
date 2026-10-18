@@ -322,9 +322,9 @@ The headless S010 replay has no AppKit view; it checks the missing-handle path w
 | 9 | Attachment chip remove | click | Removes the attachment. | Handler exists (`remove-attachment`). | FAIL (no flow: attachments come only from the system file picker, which the headless window does not answer) |
 | 10 | Model picker | click | `Select model`, `Select effort`, Fast. | Opens; a model or effort choice writes `model` and `model_reasoning_effort` with `config/batchWrite` (the original's `writeModel`); parity: see `parity_composer`. | PASS (`model_picker_popover`, `effort_pick_writes_config`, `parity_composer`) |
 | 11 | Permissions dropdown | click | Ask / Approve for me / Full access / Custom. | Opens. | PASS (`permissions_popover`) |
-| 12 | Submit while running | click | Stop; with text Queue or Steer. | Stop appears when the composer is empty. Queue and Steer remain unimplemented. | FAIL (CP-108 follow-up) |
+| 12 | Submit while running | click | Stop; with text Queue or Steer. | Stop interrupts the active turn. Queue adds a server-owned submission; Steer sends input into the active turn. | PASS (`s023`, `s023b`) |
 | 13 | Stop | click | `turn/interrupt`. | Sends the active thread and turn IDs; completion removes Stop. Errors show `Failed to stop chat`. | PASS (`s023::stop_interrupts_only_the_active_turn`) |
-| 14 | Queued message row | click | Steer, Edit, Delete, Retry. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
+| 14 | Queued message row | click | Steer, Edit, Delete, Retry. | Steer sends the selected submission once. Delete removes it; Cmd+Z restores its text, identity, order, and chat location. Edit, menus, side chats, and Retry remain outside this slice. | PARTIAL (CP-113/114 pass in `s023b`; CP-115/116 remain open) |
 | 15 | Submit blocked | error | `Unable to send message`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 16 | Upload in progress | loading | `Files uploading…`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 17 | Upload failure | error | `Unable to upload file`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
@@ -354,6 +354,17 @@ Other command bodies and the plus Add menu remain outside S021.
 The S023 test replays `refs/interactions/s023.json`, recorded from the original renderer with the isolated Linux route1 stub.
 It checks the Stop pixels, request, error toast, focus, completion, and inactive click.
 Firstmate authorized a separate CP-108 follow-up after the corrected recording stub still emitted no `turn/steer` request.
+
+S023b covers CP-113 and CP-114 with the existing headless native Metal/CoreText application and the real Root/bridge path.
+The isolated local protocol fixture retains server queue IDs and the original `clientUserMessageId` and input.
+Native mouse and key input queues three messages, steers one row, deletes another, changes chats, and restores with Cmd+Z.
+The checks preserve remaining rows, paginated order, Unicode text, editor history, and the `Queued message restored` feedback.
+An idle Steer starts the existing queued submission through `thread/queue/start`.
+A refused queue deletion does not send an accepted steer again.
+A failed restore reorder retains the undo entry and does not add the message twice.
+The original S023b recording, pixel probes, and references remain unchanged.
+Captured images are headless native application frames, not installed-window desktop captures.
+Run `tools/mac.sh -l queue-actions 'cargo test -p app --test s023b -- --test-threads=1'`.
 
 ## 14.6 Diff view
 
