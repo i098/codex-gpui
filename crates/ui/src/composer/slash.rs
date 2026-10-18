@@ -275,6 +275,9 @@ impl Composer {
     /// The token before the cursor: `@` at the start or after whitespace (spaces allowed in
     /// its query, newlines not), else `/` without whitespace in its query.
     pub(super) fn refresh_slash(&mut self, cx: &mut Context<Self>) {
+        if self.plain_field.is_some() {
+            return;
+        }
         let cursor = self.cursor();
         let before = &self.content[..cursor];
         self.slash.add = self.slash.add.filter(|&start| {

@@ -1961,7 +1961,56 @@ impl Root {
             };
             if let Err(error) = result {
                 eprintln!("codex-gpui: settings.write({key}): {error:#}");
-                self.toast(Toast::danger("Couldn't save your changes. Try again"), cx);
+                let message = match key {
+                    "git-branch-prefix" => "Failed to save branch prefix",
+                    "git-pull-request-merge-method" => "Failed to save pull request merge method",
+                    "git-always-force-push" => "Failed to save force push setting",
+                    "git-create-pull-request-as-draft" => {
+                        "Failed to save draft pull request setting"
+                    }
+                    "git-review-mode" => "Could not save Git diff setting",
+                    "git-pr-watch-auto-merge" => "Failed to save automatic PR merging",
+                    "git-commit-instructions"
+                    | "git-pr-instructions"
+                    | "git-pr-watch-instructions" => "Failed to save instructions",
+                    _ => "Couldn't save your changes. Try again",
+                };
+                self.toast(Toast::danger(message), cx);
+            } else {
+                let message = match key {
+                    "git-branch-prefix" => Some("Saved branch prefix".to_owned()),
+                    "git-pull-request-merge-method" => {
+                        Some("Saved pull request merge method".to_owned())
+                    }
+                    "git-always-force-push" => Some(format!(
+                        "Always force push {}",
+                        if e.value == true {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        }
+                    )),
+                    "git-create-pull-request-as-draft" => Some(format!(
+                        "Create draft pull requests {}",
+                        if e.value == true {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        }
+                    )),
+                    "git-pr-watch-auto-merge" => Some(format!(
+                        "Automatic PR merging {}",
+                        if e.value == true {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        }
+                    )),
+                    _ => None,
+                };
+                if let Some(message) = message {
+                    self.toast(Toast::info(message), cx);
+                }
             }
             return;
         }
@@ -1990,8 +2039,19 @@ impl Root {
     ) {
         self.qa_work_started = true;
         let bridge = self.bridge.clone();
+        let review_delivery = params["keyPath"] == "desktop.reviewDelivery";
         let task = cx.spawn(async move |this, cx| -> Result<()> {
-            bridge.request::<_, Value>(method, params).await?;
+            if let Err(error) = bridge.request::<_, Value>(method, params).await {
+                if review_delivery {
+                    this.update(cx, |this, cx| {
+                        this.toast(
+                            Toast::danger("Could not save review delivery preference"),
+                            cx,
+                        );
+                    })?;
+                }
+                return Err(error);
+            }
             this.update(cx, |this, _| apply(&mut this.config))
         });
         log_err(task, cx);

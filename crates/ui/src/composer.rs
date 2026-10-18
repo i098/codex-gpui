@@ -489,6 +489,7 @@ pub struct Composer {
     edit_pending: bool,
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
+    plain_field: Option<bool>,
 }
 
 impl Composer {
@@ -552,7 +553,24 @@ impl Composer {
             edit_pending: false,
             on_approval: None,
             on_model: None,
+            plain_field: None,
         }
+    }
+
+    pub fn settings_field(
+        placeholder: &'static str,
+        value: &str,
+        multiline: bool,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut editor = Self::new(placeholder, false, cx);
+        editor.plain_field = Some(multiline);
+        editor.set_text(value, cx);
+        editor
+    }
+
+    pub fn field_text(&self) -> &str {
+        &self.content
     }
 
     pub fn message_edit(
@@ -761,6 +779,14 @@ impl Composer {
 
     /// Enter: `approval.approve` accepts a pending request, and a draft still sends.
     fn enter(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(multiline) = self.plain_field {
+            if multiline {
+                self.insert("\n", window, cx);
+            } else {
+                window.blur(cx);
+            }
+            return;
+        }
         if self.approval.is_some() && !self.slash.open {
             self.decide(ApprovalDecision::Accept, window, cx);
         }
@@ -1329,7 +1355,18 @@ impl Render for Composer {
             .on_action(cx.listener(Self::complete_command))
             .on_action(cx.listener(Self::next_command))
             .on_action(cx.listener(Self::previous_command))
-            .relative()
+            .relative();
+        if self.plain_field.is_some() {
+            return div().w_full().child(
+                card.border_1()
+                    .border_color(t.border)
+                    .rounded(px(8.))
+                    .bg(t.background_panel)
+                    .py(px(8.))
+                    .child(self.editor(cx)),
+            );
+        }
+        let card = card
             .flex()
             .flex_col()
             .child(shapes::decoration(if editing {
