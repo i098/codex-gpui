@@ -58,6 +58,8 @@ pub use actions::{EditMessage, ForkThread, RevertTurn};
 pub enum GitAction {
     Refresh,
     OpenForm,
+    CreateBranch,
+    SwitchBranch,
 }
 
 impl gpui::EventEmitter<GitAction> for ThreadView {}
@@ -272,7 +274,7 @@ impl ThreadView {
         cx.notify();
     }
 
-    pub fn git_action_rows(&self) -> [(&'static str, Option<&'static str>); 2] {
+    pub fn git_action_rows(&self) -> [(&'static str, Option<&'static str>); 4] {
         let (commit, push) = match &self.git_repository {
             None => (Some("Loading diff…"), Some("Loading push status…")),
             Some(Err(_)) => (
@@ -288,15 +290,29 @@ impl ThreadView {
                 },
             ),
         };
+        let (create, switch) = match &self.git_repository {
+            Some(Ok(repo)) => (
+                (repo.branch.is_some() || !repo.has_commits)
+                    .then_some("Create branch requires a detached HEAD"),
+                None,
+            ),
+            _ => (
+                Some("Branch information unavailable"),
+                Some("Branch information unavailable"),
+            ),
+        };
         [
             ("Commit", self.git_phase.or(commit)),
             ("Push", self.git_phase.or(push)),
+            ("Create branch", self.git_phase.or(create)),
+            ("Switch branch", self.git_phase.or(switch)),
         ]
     }
 
     pub fn git_command_available(&self) -> bool {
         self.git_action_rows()
             .iter()
+            .take(2)
             .any(|(_, reason)| reason.is_none())
     }
 
@@ -342,7 +358,11 @@ impl ThreadView {
             return;
         }
         self.close_git_actions(window, cx);
-        cx.emit(GitAction::OpenForm);
+        cx.emit(match index {
+            2 => GitAction::CreateBranch,
+            3 => GitAction::SwitchBranch,
+            _ => GitAction::OpenForm,
+        });
     }
 
     pub(super) fn git_control(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {

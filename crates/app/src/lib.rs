@@ -1078,7 +1078,7 @@ impl Root {
     }
 
     /// Both original header actions open the form, including a push with no local changes.
-    fn commit_or_push(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn open_git_form(&mut self, kind: DialogKind, window: &mut Window, cx: &mut Context<Self>) {
         let Some(thread) = self.thread.clone() else {
             return;
         };
@@ -1110,8 +1110,17 @@ impl Root {
                 }
                 match status {
                     Ok(repo) => {
-                        if repo.all.files > 0 || repo.branch.is_some() && repo.ahead > 0 {
-                            let dialog = cx.new(|cx| Dialog::commit(repo, cx));
+                        if kind != DialogKind::Commit
+                            || repo.all.files > 0
+                            || repo.branch.is_some() && repo.ahead > 0
+                        {
+                            let dialog = cx.new(|cx| {
+                                if kind == DialogKind::Commit {
+                                    Dialog::commit(repo, cx)
+                                } else {
+                                    Dialog::branches(repo, kind, cx)
+                                }
+                            });
                             this.commit_cwd = Some(cwd);
                             this.show_dialog(dialog, window, cx);
                         } else {
@@ -1120,7 +1129,166 @@ impl Root {
                     }
                     Err(error) => {
                         eprintln!("codex-gpui: cannot read Git status: {error:#}");
-                        this.toast(Toast::danger("Commit is unavailable right now"), cx);
+                        this.toast(
+                            Toast::danger(if kind == DialogKind::Commit {
+                                "Commit is unavailable right now"
+                            } else {
+                                "Branch information unavailable"
+                            }),
+                            cx,
+                        );
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn checkout_branch(
+        &mut self,
+        dialog: Entity<Dialog>,
+        name: String,
+        create: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.git_busy.is_some() {
+            return;
+        }
+        let Some(cwd) = self.commit_cwd.clone() else {
+            return;
+        };
+        dialog.update(cx, |dialog, cx| dialog.begin_checkout(name.clone(), cx));
+        self.set_git_phase(
+            Some(if create {
+                "Creating branch…"
+            } else {
+                "Switching branch…"
+            }),
+            cx,
+        );
+        let host = self.host.clone();
+        let repository = cwd.clone();
+        let mut params = json!({"cwd": repository});
+        params[if create { "newBranch" } else { "branch" }] = name.into();
+        let read = cx.background_spawn(async move {
+            let result = git_call(&*host, "git-checkout", params);
+            let repository = if result
+                .as_ref()
+                .is_ok_and(|body| body["status"] == "success")
+            {
+                None
+            } else {
+                git_call(&*host, "git-commit-status", json!({"cwd": repository}))
+                    .and_then(|status| commit_repository(&status, true, String::new()))
+                    .ok()
+            };
+            (result, repository)
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let (result, repository) = read.await;
+            this.update_in(cx, |this, window, cx| {
+                if let Some(repo) = repository {
+                    dialog.update(cx, |dialog, cx| dialog.set_branch_repository(repo, cx));
+                }
+                match result {
+                    Ok(body) if body["status"] == "success" => {
+                        if this.dialog.as_ref() == Some(&dialog) {
+                            this.dialog = None;
+                            this.commit_cwd = None;
+                            window.focus(&this.composer(cx).focus_handle(cx), cx);
+                        }
+                        let title = body["branch"].as_str().map_or_else(
+                            || "Checked out detached HEAD".to_owned(),
+                            |branch| format!("Switched to {branch}"),
+                        );
+                        this.finish_git_workflow(GitOutcome::Done(title), &cwd, cx);
+                    }
+                    result => {
+                        let (error, conflicts) = match result {
+                            Ok(body) => (
+                                body["error"]
+                                    .as_str()
+                                    .unwrap_or("Git checkout returned an invalid result")
+                                    .to_owned(),
+                                if body["errorType"] == "blocked-by-working-tree-changes" {
+                                    body["conflictedPaths"]
+                                        .as_array()
+                                        .into_iter()
+                                        .flatten()
+                                        .filter_map(|path| path.as_str().map(str::to_owned))
+                                        .collect()
+                                } else {
+                                    Vec::new()
+                                },
+                            ),
+                            Err(error) => (error.to_string(), Vec::new()),
+                        };
+                        dialog.update(cx, |dialog, cx| {
+                            dialog.checkout_error(error.clone(), conflicts, cx)
+                        });
+                        if this.dialog.as_ref() == Some(&dialog) {
+                            window.focus(&dialog.focus_handle(cx), cx);
+                        }
+                        this.finish_git_workflow(
+                            GitOutcome::failed(
+                                if create {
+                                    "Failed to create branch"
+                                } else {
+                                    "Failed to check out branch"
+                                },
+                                Some(error),
+                            ),
+                            &cwd,
+                            cx,
+                        );
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn commit_before_checkout(
+        &mut self,
+        dialog: Entity<Dialog>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(cwd) = self.commit_cwd.clone() else {
+            return;
+        };
+        let Some(target) = dialog.read(cx).checkout_target() else {
+            return;
+        };
+        dialog.update(cx, |dialog, cx| dialog.begin_checkout(target, cx));
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move {
+            git_call(&*host, "git-commit-status", json!({"cwd": cwd}))
+                .and_then(|status| commit_repository(&status, true, String::new()))
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = read.await;
+            this.update_in(cx, |this, window, cx| {
+                if this.dialog.as_ref() != Some(&dialog) {
+                    return;
+                }
+                match result {
+                    Ok(repo) => {
+                        dialog.update(cx, |dialog, cx| dialog.prepare_branch_commit(repo, cx));
+                        window.focus(&dialog.focus_handle(cx), cx);
+                    }
+                    Err(error) => {
+                        dialog.update(cx, |dialog, cx| {
+                            dialog.schedule_result(error.to_string(), cx)
+                        });
+                        this.toast(
+                            Toast::danger(format!("Failed to read changes: {error}")),
+                            cx,
+                        );
                     }
                 }
             })
@@ -1152,9 +1320,29 @@ impl Root {
             cwd: request.cwd.clone(),
             instructions: git_setting(cx, "git-commit-instructions").unwrap_or_default(),
         };
+        let continuation = self.dialog.clone().filter(|dialog| {
+            dialog.read(cx).kind() == DialogKind::Commit
+                && dialog.read(cx).checkout_target().is_some()
+        });
         cx.spawn_in(window, async move |this, cx| {
             let outcome = commit_workflow(&this, cx, &run, request).await;
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
+                if let Some(dialog) = continuation {
+                    match &outcome {
+                        GitOutcome::Done(_) => {
+                            let target = dialog.read(cx).checkout_target().unwrap();
+                            dialog.update(cx, |dialog, cx| dialog.resume_checkout(cx));
+                            this.finish_git_workflow(outcome, &run.cwd, cx);
+                            this.checkout_branch(dialog, target, false, window, cx);
+                            return;
+                        }
+                        GitOutcome::Failed { title, detail } => {
+                            dialog.update(cx, |dialog, cx| {
+                                dialog.schedule_result(detail.as_ref().unwrap_or(title).clone(), cx)
+                            });
+                        }
+                    }
+                }
                 this.finish_git_workflow(outcome, &run.cwd, cx)
             })
             .ok();
@@ -1833,13 +2021,53 @@ impl Root {
             return;
         }
         self.command_menu = None;
-        let commit = dialog.read(cx).kind() == DialogKind::Commit;
-        if commit && let Some(thread) = &self.thread {
+        let git_dialog = matches!(
+            dialog.read(cx).kind(),
+            DialogKind::Commit | DialogKind::Branches | DialogKind::CreateBranch
+        );
+        if git_dialog
+            && dialog.read(cx).kind() != DialogKind::Branches
+            && let Some(thread) = &self.thread
+        {
             thread.update(cx, |view, cx| view.close_summary(cx));
         }
         cx.subscribe_in(&dialog, window, move |this, dialog, outcome, window, cx| {
             if let DialogOutcome::ScheduleTask { prompt, rrule } = outcome {
                 this.create_task(prompt.clone(), rrule.clone(), window, cx);
+                return;
+            }
+            if let DialogOutcome::CheckoutBranch { name, create } = outcome {
+                this.checkout_branch(dialog.clone(), name.clone(), *create, window, cx);
+                return;
+            }
+            if let DialogOutcome::CommitBeforeCheckout = outcome {
+                this.commit_before_checkout(dialog.clone(), window, cx);
+                return;
+            }
+            if let DialogOutcome::Commit {
+                step,
+                message,
+                include_unstaged,
+                new_branch,
+            } = outcome
+                && let Some(target) = dialog.read(cx).checkout_target()
+            {
+                if this.git_busy.is_none()
+                    && let Some(cwd) = this.commit_cwd.clone()
+                {
+                    dialog.update(cx, |dialog, cx| dialog.begin_checkout(target, cx));
+                    this.git_workflow(
+                        GitRequest {
+                            cwd,
+                            step: *step,
+                            message: message.clone(),
+                            include_unstaged: *include_unstaged,
+                            new_branch: new_branch.clone(),
+                        },
+                        window,
+                        cx,
+                    );
+                }
                 return;
             }
             if dialog.read(cx).saving() {
@@ -1849,7 +2077,8 @@ impl Root {
             this.dialog = None;
             match outcome {
                 DialogOutcome::Dismiss => {
-                    if commit {
+                    if git_dialog {
+                        this.commit_cwd = None;
                         window.focus(&this.composer(cx).focus_handle(cx), cx);
                     } else {
                         window.focus(&this.focus, cx);
@@ -1904,7 +2133,9 @@ impl Root {
                         this.git_workflow(request, window, cx);
                     }
                 }
-                DialogOutcome::ScheduleTask { .. } => unreachable!(),
+                DialogOutcome::ScheduleTask { .. }
+                | DialogOutcome::CheckoutBranch { .. }
+                | DialogOutcome::CommitBeforeCheckout => unreachable!(),
             }
             cx.notify();
         })
@@ -1968,7 +2199,7 @@ impl Root {
                 "Open Changes tab" => window.dispatch_action(Box::new(OpenChangesPanel), cx),
                 "New tab" => window.dispatch_action(Box::new(ToggleChangesPanel), cx),
                 "Open terminal" => window.dispatch_action(Box::new(OpenBackgroundTerminal), cx),
-                "Commit or push" => self.commit_or_push(window, cx),
+                "Commit or push" => self.open_git_form(DialogKind::Commit, window, cx),
                 "Manage scheduled tasks" => window.dispatch_action(Box::new(OpenScheduled), cx),
                 label => {
                     if let Some(section) = settings::section(label) {
@@ -2073,7 +2304,9 @@ impl Root {
             window,
             |this, _, action: &GitAction, window, cx| match action {
                 GitAction::Refresh => this.refresh_git_actions(cx),
-                GitAction::OpenForm => this.commit_or_push(window, cx),
+                GitAction::OpenForm => this.open_git_form(DialogKind::Commit, window, cx),
+                GitAction::CreateBranch => this.open_git_form(DialogKind::CreateBranch, window, cx),
+                GitAction::SwitchBranch => this.open_git_form(DialogKind::Branches, window, cx),
             },
         )
         .detach();
@@ -3079,6 +3312,7 @@ fn commit_repository(
             .flatten()
             .filter_map(|branch| branch.as_str().map(str::to_owned))
             .collect(),
+        has_commits: status["hasCommits"].as_bool().unwrap_or(false),
         ahead: status["commitsAhead"].as_u64().unwrap_or_default() as usize,
         staged: selection("staged"),
         all: selection("all"),

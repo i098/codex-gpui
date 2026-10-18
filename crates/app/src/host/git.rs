@@ -327,8 +327,17 @@ fn commit_flow(endpoint: &str, root: &Path, params: &Value) -> Option<Result<Val
 }
 
 fn current_branch(root: &Path) -> Result<Option<String>> {
-    let head = git(root, &["symbolic-ref", "--short", "-q", "HEAD"])?;
-    Ok(head.success.then(|| head.stdout.trim().to_owned()))
+    let head = git(root, &["symbolic-ref", "-q", "HEAD"])?;
+    if !head.success {
+        return Ok(None);
+    }
+    Ok(Some(
+        head.stdout
+            .trim()
+            .strip_prefix("refs/heads/")
+            .context("HEAD is not a local branch reference")?
+            .to_owned(),
+    ))
 }
 
 fn upstream(root: &Path) -> Result<Option<String>> {
@@ -398,7 +407,7 @@ fn status(root: &Path) -> Result<Value> {
     let upstream = upstream(root)?;
     let local_branches: Vec<String> = checked(run(
         root,
-        &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+        &["for-each-ref", "--format=%(refname:lstrip=2)", "refs/heads"],
     )?)
     .map(|names| {
         String::from_utf8_lossy(&names)

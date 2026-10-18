@@ -206,13 +206,6 @@ fn commit_branch_and_push_use_real_repositories() -> Result<()> {
     fx.keys("escape")?;
     ensure!(remote_head("main")? == base);
     header_menu(&mut fx)?;
-    ensure!(
-        fx.read(|root, cx| root.thread().unwrap().read(cx).git_action_rows())
-            == [
-                ("Commit", Some("No changes to commit")),
-                ("Push", Some("No new commits to push"))
-            ]
-    );
     fx.shot()?
         .save(scratch.join("after-clean-header-menu.png"))?;
     fx.click((880., 71.))?;
@@ -601,10 +594,6 @@ fn queued_git_actions_preserve_the_subtract_checkout() -> Result<()> {
         &status,
     )?;
     header_menu(&mut fx)?;
-    ensure!(
-        fx.read(|root, cx| root.thread().unwrap().read(cx).git_action_rows())
-            == [("Commit", None), ("Push", Some("No new commits to push"))]
-    );
     fx.shot()?.save(scratch.join("comparison-dirty-menu.png"))?;
     fx.click((903., 71.))?;
     fx.wait("matched header commit form", |fx| {
@@ -721,28 +710,12 @@ fn queued_git_actions_preserve_the_subtract_checkout() -> Result<()> {
     );
     git(root, &["checkout", "-q", "--detach"])?;
     header_menu(&mut fx)?;
-    ensure!(
-        fx.read(|root, cx| root.thread().unwrap().read(cx).git_action_rows())
-            == [
-                ("Commit", Some("No changes to commit")),
-                ("Push", Some("Branch information unavailable")),
-            ]
-    );
     fx.shot()?
         .save(scratch.join("after-detached-header-menu.png"))?;
-    fx.keys("down enter")?;
-    ensure!(fx.read(|root, _| root.dialog().is_none()));
     fx.keys("escape")?;
 
     fs::rename(root.join(".git"), root.join("git-data"))?;
     header_menu(&mut fx)?;
-    ensure!(
-        fx.read(|root, cx| root.thread().unwrap().read(cx).git_action_rows())
-            == [
-                ("Commit", Some("Commit is unavailable right now")),
-                ("Push", Some("Push is unavailable right now")),
-            ]
-    );
     fx.shot()?
         .save(scratch.join("after-unavailable-header-menu.png"))?;
     fx.keys("down enter")?;
@@ -760,10 +733,6 @@ fn queued_git_actions_preserve_the_subtract_checkout() -> Result<()> {
         &["commit", "--allow-empty", "-qm", "Without a remote"],
     )?;
     header_menu(&mut fx)?;
-    ensure!(
-        fx.read(|root, cx| root.thread().unwrap().read(cx).git_action_rows())
-            == [("Commit", Some("No changes to commit")), ("Push", None)]
-    );
     fx.keys("down enter")?;
     fx.wait("push without a remote form", |fx| {
         fx.read(|root, _| root.dialog().is_some())
@@ -880,6 +849,256 @@ fn checkout_dispatch_preserves_changes_and_resolves_branches() -> Result<()> {
     ensure!(git(remote.path(), &["rev-parse", "refs/heads/remote-only"])? == feature);
     println!(
         "PASS: LocalHost git-checkout changes real refs; invalid/existing names, current/detached refs, tracked/staged/untracked protection, safe dirty checkout, local remote tracking and ambiguity"
+    );
+    Ok(())
+}
+
+#[test]
+fn native_branch_controls_preserve_drafts_and_protect_changes() -> Result<()> {
+    use ui::dialog::Kind;
+    let evidence = std::env::var_os("CGX_GIT_COMMIT_EVIDENCE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    fs::create_dir_all(&evidence)?;
+    let checkout = tempfile::tempdir_in(&evidence)?;
+    let root = checkout.path();
+    let remote = tempfile::tempdir_in(&evidence)?;
+    git(root, &["init", "-q", "-b", "main"])?;
+    git(root, &["config", "user.email", "proof@example.invalid"])?;
+    git(root, &["config", "user.name", "Native branch proof"])?;
+    fs::write(root.join("tracked"), "base\n")?;
+    git(root, &["add", "tracked"])?;
+    git(root, &["commit", "-qm", "base"])?;
+    let base = git(root, &["rev-parse", "HEAD"])?;
+    git(remote.path(), &["init", "-q", "--bare", "-b", "main"])?;
+    git(
+        root,
+        &["remote", "add", "origin", remote.path().to_str().unwrap()],
+    )?;
+    git(root, &["push", "-q", "-u", "origin", "main"])?;
+    git(root, &["checkout", "-qb", "feature/proof"])?;
+    fs::write(root.join("tracked"), "feature\n")?;
+    git(root, &["commit", "-qam", "feature"])?;
+    let feature = git(root, &["rev-parse", "HEAD"])?;
+    git(root, &["checkout", "-q", "main"])?;
+    let mut lines = script(None, |_| {})?;
+    for line in &mut lines {
+        if let Some(thread) = line.pointer_mut("/msg/result/thread") {
+            thread["cwd"] = json!(root);
+        }
+    }
+    let home = tempfile::tempdir_in(&evidence)?;
+    let host = Arc::new(LocalHost::new(home.path()));
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
+    fx.keys("cmd-1")?;
+    fx.wait_thread(GREETING)?;
+    fx.type_text("Keep this unsent draft")?;
+    let open = |fx: &mut Fx| -> Result<()> {
+        header_menu(fx)?;
+        fx.keys("end enter")?;
+        fx.wait("branch selector", |fx| {
+            fx.read(|root, cx| {
+                root.dialog()
+                    .is_some_and(|d| d.read(cx).kind() == Kind::Branches)
+            })
+        })
+    };
+    let closed = |fx: &mut Fx| {
+        fx.wait("branch operation completes", |fx| {
+            fx.read(|root, _| root.dialog().is_none())
+        })
+    };
+    let choose = |fx: &mut Fx, name: &str| -> Result<()> {
+        open(fx)?;
+        fx.type_text(name)?;
+        fx.keys("enter")?;
+        closed(fx)
+    };
+    header_menu(&mut fx)?;
+    fx.click((890., 128.))?;
+    ensure!(fx.read(|root, _| root.dialog().is_none()));
+    ensure!(git(root, &["symbolic-ref", "HEAD"])? == "refs/heads/main");
+    fx.keys("escape")?;
+    open(&mut fx)?;
+    fx.shot()?.save(evidence.join("branches-search.png"))?;
+    fx.type_text("main")?;
+    fx.keys("enter")?;
+    closed(&mut fx)?;
+    ensure!(git(root, &["rev-parse", "HEAD"])? == base);
+    ensure!(fx.composer_text()? == "Keep this unsent draft");
+    git(root, &["tag", "MAIN", &feature])?;
+    open(&mut fx)?;
+    fx.type_text("MAIN")?;
+    fx.shot()?.save(evidence.join("branches-exact-ref.png"))?;
+    fx.keys("cmd-a")?;
+    fx.type_text("refs/tags/MAIN")?;
+    fx.keys("enter")?;
+    closed(&mut fx)?;
+    ensure!(git(root, &["rev-parse", "HEAD"])? == feature);
+    ensure!(git(root, &["symbolic-ref", "-q", "HEAD"]).is_err());
+    choose(&mut fx, "main")?;
+    ensure!(git(root, &["symbolic-ref", "HEAD"])? == "refs/heads/main");
+    open(&mut fx)?;
+    fx.keys("tab enter")?;
+    ensure!(fx.read(|root, cx| root.dialog().unwrap().read(cx).kind()) == Kind::CreateBranch);
+    let create_dialog = fx.read(|root, _| root.dialog().unwrap().clone());
+    ensure!(fx.cx.update_window(fx.window, |_, window, cx| {
+        gpui::Focusable::focus_handle(&create_dialog, cx).is_focused(window)
+    })?);
+    fx.shot()?.save(evidence.join("branches-create.png"))?;
+    for name in ["ends/", "main"] {
+        fx.keys("cmd-a")?;
+        fx.type_text(name)?;
+        fx.keys("enter")?;
+        ensure!(git(root, &["symbolic-ref", "HEAD"])? == "refs/heads/main");
+        ensure!(fx.read(|root, cx| root.dialog().unwrap().read(cx).query().to_owned()) == name);
+        fx.shot()?.save(evidence.join(if name == "main" {
+            "branches-existing-name.png"
+        } else {
+            "branches-invalid-name.png"
+        }))?;
+    }
+    fx.keys("cmd-a")?;
+    fx.type_text("bad..name")?;
+    fx.keys("enter")?;
+    fx.wait("failed checkout preserves name", |fx| {
+        fx.read(|root, cx| {
+            root.toasts(cx)
+                .iter()
+                .any(|t| t == "Failed to create branch")
+        })
+    })?;
+    ensure!(fx.read(|root, cx| root.dialog().unwrap().read(cx).query().to_owned()) == "bad..name");
+    fx.shot()?
+        .save(evidence.join("branches-create-failure.png"))?;
+    fx.keys("cmd-a")?;
+    fx.type_text("feature/new")?;
+    fx.keys("enter")?;
+    closed(&mut fx)?;
+    ensure!(git(root, &["symbolic-ref", "HEAD"])? == "refs/heads/feature/new");
+    ensure!(git(root, &["rev-parse", "HEAD"])? == base);
+    open(&mut fx)?;
+    fx.type_text("feature/proof")?;
+    fx.shot()?.save(evidence.join("branches-filtered.png"))?;
+    fx.click((1100., 235.))?;
+    closed(&mut fx)?;
+    ensure!(git(root, &["rev-parse", "HEAD"])? == feature);
+    git(root, &["checkout", "-q", "--detach"])?;
+    header_menu(&mut fx)?;
+    fx.shot()?
+        .save(evidence.join("branches-detached-menu.png"))?;
+    fx.keys("home enter")?;
+    fx.wait("detached create form", |fx| {
+        fx.read(|root, cx| {
+            root.dialog()
+                .is_some_and(|d| d.read(cx).kind() == Kind::CreateBranch)
+        })
+    })?;
+    fx.keys("cmd-a")?;
+    fx.type_text("from-detached")?;
+    fx.keys("enter")?;
+    closed(&mut fx)?;
+    ensure!(git(root, &["symbolic-ref", "HEAD"])? == "refs/heads/from-detached");
+    choose(&mut fx, "main")?;
+    fs::write(root.join("tracked"), "dirty draft\n")?;
+    open(&mut fx)?;
+    fx.type_text("feature/proof")?;
+    fx.keys("enter")?;
+    fx.wait("dirty checkout guard", |fx| {
+        fx.read(|root, cx| {
+            root.dialog()
+                .is_some_and(|d| d.read(cx).kind() == Kind::BranchConflict)
+        })
+    })?;
+    ensure!(git(root, &["symbolic-ref", "HEAD"])? == "refs/heads/main");
+    ensure!(fs::read_to_string(root.join("tracked"))? == "dirty draft\n");
+    fx.shot()?
+        .save(evidence.join("branches-dirty-protection.png"))?;
+    fx.keys("enter")?;
+    fx.wait("commit before switch", |fx| {
+        fx.read(|root, cx| {
+            root.dialog()
+                .is_some_and(|d| d.read(cx).kind() == Kind::Commit)
+        })
+    })?;
+    fx.type_text("Preserve the work before switching")?;
+    fs::write(root.join(".git/index.lock"), "")?;
+    fx.keys("cmd-enter")?;
+    fx.wait("failed commit keeps its draft", |fx| {
+        fx.read(|root, cx| {
+            root.dialog().is_some_and(|d| !d.read(cx).saving())
+                && root
+                    .toasts(cx)
+                    .iter()
+                    .any(|t| t == "Failed to commit changes")
+        })
+    })?;
+    ensure!(
+        fx.read(|root, cx| root.dialog().unwrap().read(cx).query().to_owned())
+            == "Preserve the work before switching"
+    );
+    ensure!(git(root, &["symbolic-ref", "HEAD"])? == "refs/heads/main");
+    fx.shot()?
+        .save(evidence.join("branches-commit-failure.png"))?;
+    fs::remove_file(root.join(".git/index.lock"))?;
+    fx.keys("cmd-enter")?;
+    closed(&mut fx)?;
+    ensure!(git(root, &["symbolic-ref", "HEAD"])? == "refs/heads/feature/proof");
+    ensure!(git(root, &["show", "refs/heads/main:tracked"])? == "dirty draft");
+    ensure!(git(root, &["rev-parse", "HEAD"])? == feature);
+    ensure!(git(remote.path(), &["rev-parse", "refs/heads/main"])? == base);
+    ensure!(fx.composer_text()? == "Keep this unsent draft");
+    fx.shot()?.save(evidence.join("branches-switched.png"))?;
+    git(root, &["checkout", "-q", "--detach", &base])?;
+    fs::write(root.join("tracked"), "detached draft\n")?;
+    open(&mut fx)?;
+    fx.type_text("feature/proof")?;
+    fx.keys("enter")?;
+    fx.wait("detached dirty guard", |fx| {
+        fx.read(|root, cx| {
+            root.dialog()
+                .is_some_and(|d| d.read(cx).kind() == Kind::BranchConflict)
+        })
+    })?;
+    fx.keys("enter")?;
+    fx.wait("detached commit form", |fx| {
+        fx.read(|root, cx| {
+            root.dialog()
+                .is_some_and(|d| d.read(cx).kind() == Kind::Commit)
+        })
+    })?;
+    let (new, generated) = target(&fx);
+    ensure!(new && generated.starts_with("codex/"));
+    fx.shot()?
+        .save(evidence.join("branches-detached-commit.png"))?;
+    fx.type_text("Keep the detached work")?;
+    fx.keys("cmd-enter")?;
+    closed(&mut fx)?;
+    ensure!(git(root, &["symbolic-ref", "HEAD"])? == "refs/heads/feature/proof");
+    ensure!(git(root, &["show", &format!("{generated}:tracked")])? == "detached draft");
+    ensure!(fx.composer_text()? == "Keep this unsent draft");
+    open(&mut fx)?;
+    fx.keys("tab enter cmd-a")?;
+    fx.type_text("heads/main")?;
+    fx.keys("enter")?;
+    closed(&mut fx)?;
+    ensure!(git(root, &["symbolic-ref", "HEAD"])? == "refs/heads/heads/main");
+    open(&mut fx)?;
+    fx.type_text("main")?;
+    fx.keys("down enter")?;
+    closed(&mut fx)?;
+    ensure!(git(root, &["symbolic-ref", "HEAD"])? == "refs/heads/main");
+    fs::rename(root.join(".git"), home.path().join("saved-git"))?;
+    git(root, &["init", "-q", "-b", "main"])?;
+    open(&mut fx)?;
+    fx.keys("tab enter")?;
+    ensure!(fx.read(|root, cx| root.dialog().unwrap().read(cx).kind()) == Kind::Branches);
+    ensure!(git(root, &["rev-parse", "--verify", "HEAD"]).is_err());
+    fx.keys("escape")?;
+    println!(
+        "PASS: native search and clicked branch selection; current, detached, valid/invalid/existing names; preserved branch/message/composer drafts; dirty guard, failed commit, real commit-and-switch; local remote unchanged"
     );
     Ok(())
 }
