@@ -524,6 +524,7 @@ fn delete_undo_restores_order_and_location_before_editor_history() -> Result<()>
     }
     let mut fx = queue_fixture(json!({}))?;
     fx.type_text("draft")?;
+    let before = fx.reference_shot()?;
     click_queue(&mut fx, "queued-delete-queue-2")?;
     fx.wait("deleted row", |fx| queued(fx) == [MESSAGES[0], MESSAGES[2]])?;
     save_queue_frame(&mut fx, "queue-actions-deleted.png")?;
@@ -547,7 +548,15 @@ fn delete_undo_restores_order_and_location_before_editor_history() -> Result<()>
         sent(&mut fx, "thread/queue/reorder")?[0]["params"]["queuedSubmissionIds"],
         json!(["queue-1", "queue-4", "queue-3"])
     );
-    save_queue_frame(&mut fx, "queue-actions-restored.png")?;
+    let after = fx.reference_shot()?;
+    after.save(Path::new(env!("CARGO_TARGET_TMPDIR")).join("queue-actions-restored.png"))?;
+    let [x, y, _, height] = bbox(&recording()?["queue"]["result"]["submit"]["tray"]["textBbox"])?;
+    let text_box = [x, y, 120., height];
+    assert_eq!(
+        common::changed(&before, &after, text_box),
+        0,
+        "the remaining queued message keeps its rendered text after undo"
+    );
     fx.keys("cmd-z")?;
     assert_eq!(fx.composer_text()?, "");
     assert_eq!(queued(&mut fx), MESSAGES);

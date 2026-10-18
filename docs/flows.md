@@ -359,6 +359,7 @@ S023b covers CP-113 and CP-114 with the existing headless native Metal/CoreText 
 The isolated local protocol fixture retains server queue IDs and the original `clientUserMessageId` and input.
 Native mouse and key input queues three messages, steers one row, deletes another, changes chats, and restores with Cmd+Z.
 The checks preserve remaining rows, paginated order, Unicode text, editor history, and the `Queued message restored` feedback.
+The Steer and undo checks retain the exact pixels of the remaining queued message.
 An idle Steer starts the existing queued submission through `thread/queue/start`.
 A refused queue deletion does not send an accepted steer again.
 A failed restore reorder retains the undo entry and does not add the message twice.
