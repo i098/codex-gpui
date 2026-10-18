@@ -11,12 +11,12 @@ use crate::{
 use bridge::types::{Thread, ThreadListResponse, ThreadStatus};
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, Bounds, ClipboardItem, Context, Corners,
-    Div, ElementInputHandler, EntityInputHandler, EventEmitter, FocusHandle, Focusable, FontWeight,
-    HighlightStyle, Hsla, InteractiveElement, IntoElement, KeyDownEvent, Modifiers, MouseButton,
-    ParentElement, Pixels, Point, Render, Rgba, ScrollHandle, ShapedLine, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, StyledText, TextRun, Transformation, UTF16Selection,
-    Window, canvas, div, fill, point, prelude::FluentBuilder as _, px, radians, relative, rgba,
-    size, svg,
+    DispatchPhase, Div, ElementInputHandler, EntityInputHandler, EventEmitter, FocusHandle,
+    Focusable, FontWeight, HighlightStyle, Hsla, InteractiveElement, IntoElement, KeyDownEvent,
+    Modifiers, MouseButton, ParentElement, Pixels, Point, Render, Rgba, ScrollHandle, ShapedLine,
+    SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun,
+    Transformation, UTF16Selection, Window, anchored, canvas, deferred, div, fill, point,
+    prelude::FluentBuilder as _, px, radians, relative, rgba, size, svg,
 };
 use std::{
     borrow::Cow,
@@ -39,6 +39,21 @@ pub const PINNED_SECTION_ID: &str = "01984de2-8f74-7c91-a3b2-5c5e937cf318";
 /// Recents shows this many rows first and `PAGE` more each time its end comes into view
 /// (the original's `maxItems: 10`, `infiniteScroll` paging of the last section).
 const PAGE: usize = 10;
+
+const WORKTREE_TOOLTIP: &str = "This is a git worktree";
+const MISSING_PROJECT_TOOLTIP: &str = "This project folder was deleted or moved";
+static PROJECT_TOOLTIP_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
+    std::sync::LazyLock::new(|| textsys::letter_spacing(-0.15));
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Project {
+    pub id: SharedString,
+    pub label: SharedString,
+    pub new_chat_label: SharedString,
+    pub worktree: bool,
+    pub missing: bool,
+    pub expanded: bool,
+}
 
 /// Recents row label: the thread name, else its preview cut to 80 chars with `…`.
 pub fn title(thread: &Thread) -> SharedString {
@@ -186,6 +201,10 @@ impl Render for ArchivedChats {
 pub struct HomeSidebar {
     /// `(thread id, row label)` in `thread/list` order.
     threads: Vec<(String, SharedString)>,
+    projects: Vec<Project>,
+    worktree_tip: bool,
+    worktree_tip_epoch: u64,
+    worktree_tip_bounds: Bounds<Pixels>,
     selected: Option<String>,
     /// `Projects`, `Recents` collapsed by a click on their header.
     collapsed: [bool; 3],
@@ -253,6 +272,10 @@ impl HomeSidebar {
     pub fn new(threads: &[Thread], selected: Option<&str>) -> Self {
         Self {
             threads: threads.iter().map(|t| (t.id.clone(), title(t))).collect(),
+            projects: Vec::new(),
+            worktree_tip: false,
+            worktree_tip_epoch: 0,
+            worktree_tip_bounds: Bounds::default(),
             selected: selected.map(str::to_owned),
             collapsed: [false; 3],
             pinned: pinned_ids(threads),
@@ -269,6 +292,232 @@ impl HomeSidebar {
             scroll: ScrollHandle::new(),
             menu: None,
         }
+    }
+
+    pub fn set_projects(&mut self, projects: Vec<Project>, cx: &mut Context<Self>) {
+        self.projects = projects;
+        self.worktree_tip = false;
+        self.worktree_tip_epoch += 1;
+        cx.notify();
+    }
+
+    pub fn projects(&self) -> &[Project] {
+        &self.projects
+    }
+
+    pub fn worktree_tooltip(&self) -> Option<(&'static str, Bounds<Pixels>)> {
+        self.worktree_tip
+            .then_some((WORKTREE_TOOLTIP, self.worktree_tip_bounds))
+    }
+
+    fn hover_worktree(&mut self, hovered: bool, cx: &mut Context<Self>) {
+        self.worktree_tip_epoch += 1;
+        self.worktree_tip = false;
+        cx.notify();
+        if !hovered {
+            return;
+        }
+        let epoch = self.worktree_tip_epoch;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(200))
+                .await;
+            this.update(cx, |this, cx| {
+                if this.worktree_tip_epoch == epoch {
+                    this.worktree_tip = true;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn project_rows(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme();
+        div()
+            .id("project-rows")
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap(px(1.))
+            .children(self.projects.iter().map(|project| {
+                let group = project.id.clone();
+                let color = theme.text_default_nav;
+                let label_width = if project.worktree { 204. } else { 240. };
+                let content = div()
+                    .absolute()
+                    .inset_0()
+                    .opacity(if project.missing { 0.7 } else { 1. })
+                    .child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .opacity(0.)
+                            .group_hover(group.clone(), |style| style.opacity(1.))
+                            .child(shapes::decoration(shapes::Decoration {
+                                radius: Corners::all(RADIUS_ROW),
+                                corner: shapes::Corner::Squircle,
+                                fill: Some(theme.ghost_hover),
+                                ..Default::default()
+                            })),
+                    )
+                    .child(div().absolute().left(px(8.)).top(px(7.)).child(icon(
+                        if project.expanded {
+                            "sidebar-cmd-folder"
+                        } else {
+                            "thread-project"
+                        },
+                        16.,
+                        color,
+                    )))
+                    .child(
+                        div()
+                            .id("project-label")
+                            .absolute()
+                            .left(px(32.))
+                            .w(px(label_width))
+                            .group_hover(group.clone(), move |style| style.w(px(label_width - 56.)))
+                            .top_0()
+                            .h(px(30.))
+                            .flex()
+                            .items_center()
+                            .overflow_hidden()
+                            .layer()
+                            .child(text(project.label.clone(), 14., 21., 430., color)),
+                    )
+                    .when(project.worktree, |row| {
+                        row.child(
+                            div()
+                                .id("worktree-marker")
+                                .absolute()
+                                .right(px(10.))
+                                .top(px(7.))
+                                .size(px(16.))
+                                .group_hover(group.clone(), |style| style.right(px(66.)))
+                                .on_hover(cx.listener(|this, hovered, _, cx| {
+                                    this.hover_worktree(*hovered, cx)
+                                }))
+                                .child(icon("thread-fork", 16., theme.text_tertiary)),
+                        )
+                    })
+                    .child(
+                        div()
+                            .absolute()
+                            .right(px(8.))
+                            .top(px(5.))
+                            .h(px(20.))
+                            .flex()
+                            .gap(px(8.))
+                            .opacity(0.)
+                            .group_hover(group.clone(), |style| style.opacity(1.))
+                            .child(
+                                div()
+                                    .size(px(20.))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(icon("thread-chat-actions", 14., theme.text_tertiary)),
+                            )
+                            .child(
+                                div()
+                                    .size(px(20.))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .opacity(if project.missing { 0.4 } else { 1. })
+                                    .child(icon("new-chat", 14., theme.text_tertiary)),
+                            ),
+                    );
+                let row = div()
+                    .id(project.id.clone())
+                    .group(group)
+                    .relative()
+                    .w_full()
+                    .h(px(30.))
+                    .overflow_hidden()
+                    .role(gpui::Role::ListItem)
+                    .aria_label(project.label.clone())
+                    .child(content)
+                    .when(project.missing, |row| {
+                        row.child(tooltip(
+                            div()
+                                .id(project.id.clone())
+                                .absolute()
+                                .right(px(8.))
+                                .top(px(5.))
+                                .size(px(20.))
+                                .role(gpui::Role::Button)
+                                .aria_disabled(true)
+                                .aria_label(project.new_chat_label.clone())
+                                .font_features(PROJECT_TOOLTIP_FEATURES.clone()),
+                            MISSING_PROJECT_TOOLTIP,
+                            None,
+                            Side::Top,
+                        ))
+                    });
+                crate::rounded_clip(RADIUS_ROW, shapes::Corner::Squircle, row)
+            }))
+            .into_any_element()
+    }
+
+    fn worktree_tooltip_element(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme();
+        let (background, foreground) = match theme.appearance {
+            Appearance::Dark => (theme.surface_elevated_secondary, theme.text),
+            Appearance::Light => (theme.button_primary_solid, rgba(0xffffffff).into()),
+        };
+        let owner = cx.weak_entity();
+        // The original SVG trigger leaves this tooltip at the window origin.
+        deferred(
+            anchored().position(point(px(8.), px(2.))).child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .px(px(12.))
+                    .py(px(5.))
+                    .border_1()
+                    .border_color(foreground.opacity(0.05))
+                    .rounded(px(20.))
+                    .bg(background)
+                    .shadow(vec![gpui::BoxShadow {
+                        color: rgba(0x0f172a33).into(),
+                        offset: point(px(0.), px(8.)),
+                        blur_radius: px(18.),
+                        spread_radius: px(0.),
+                        inset: false,
+                    }])
+                    .child(
+                        text(WORKTREE_TOOLTIP, 13., 18., 430., foreground)
+                            .font_features(PROJECT_TOOLTIP_FEATURES.clone()),
+                    )
+                    .child(
+                        canvas(
+                            |_, _, _| {},
+                            move |bounds, (), window, cx| {
+                                owner
+                                    .update(cx, |this, _| this.worktree_tip_bounds = bounds)
+                                    .ok();
+                                let owner = owner.clone();
+                                window.on_key_event(move |event: &KeyDownEvent, phase, _, cx| {
+                                    if phase == DispatchPhase::Capture
+                                        && event.keystroke.key == "escape"
+                                    {
+                                        owner
+                                            .update(cx, |this, cx| this.hover_worktree(false, cx))
+                                            .ok();
+                                    }
+                                });
+                            },
+                        )
+                        .absolute()
+                        .inset(px(-1.)),
+                    ),
+            ),
+        )
+        .with_priority(2)
+        .into_any_element()
     }
 
     pub fn set_threads(&mut self, threads: &[Thread], cx: &mut Context<Self>) {
@@ -576,13 +825,12 @@ impl Render for HomeSidebar {
                 )
                 .when(!collapsed, |d| d.child(div().pt(px(4.)).child(body)))
         };
-        let projects = section(
-            0,
-            "Projects",
-            sidebar_empty("No projects", cx).into_any_element(),
-            window,
-            cx,
-        );
+        let project_rows = if self.projects.is_empty() {
+            sidebar_empty("No projects", cx).into_any_element()
+        } else {
+            self.project_rows(cx)
+        };
+        let projects = section(0, "Projects", project_rows, window, cx);
         let recents = section(1, "Recents", recents, window, cx);
         let pinned = pinned.map(|rows| section(2, "Pinned", rows, window, cx));
         div()
@@ -610,6 +858,7 @@ impl Render for HomeSidebar {
                     .child(recents),
             )
             .children(self.menu.as_ref().map(|_| self.menu_overlay(window, cx)))
+            .children(self.worktree_tip.then(|| self.worktree_tooltip_element(cx)))
     }
 }
 

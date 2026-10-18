@@ -69,6 +69,8 @@ It coalesces newer revisions during a build and retains a pending candidate when
 It verifies the signed bundle, compiled source revision, artifact digest, executable path, and running PID.
 It keeps the previous bundle at `updater/last-working.app`.
 It rebuilds missing temporary candidates and removes completed or superseded temporary artifacts.
+It requests a cooperative close before removing a superseded idle probe.
+It keeps the pending ownership record when a staged process cannot close safely.
 It verifies an unfinished activation or restores the backup after the new process exits.
 
 QA data stays in `~/Library/Application Support/codex-gpui-qa/profile/`.
@@ -79,10 +81,14 @@ QA starts signed out; it never copies normal credentials, settings, history, or 
 It can read the existing ChatGPT app-server executable without changing that app.
 The normal Codex GPUI profile and launch behavior stay unchanged.
 
-Programmatic startup uses `open -g` and an unfocused QA window.
+Programmatic startup uses `open -g -j` and keeps QA hidden.
+Open QA from its installed bundle or Dock icon when you want its window.
+If the installed revision already matches main but its process has stopped, the updater starts the installed bundle again.
 After QA gains focus, starts a turn, changes model settings, or starts sign-in, close QA when ready to update.
 The updater keeps its candidate pending until that close.
 It also refuses to close during a draft, attachment work, an approval, a running turn, or unverified readiness.
+Native foreground activity also prevents closing QA, even when its last heartbeat or window reports inactive.
+An observed application activation keeps the existing manual-close protection.
 A shared profile lock prevents a reopened QA process from racing with bundle replacement.
 It does not promise to preserve drafts, open views, navigation history, or running sessions.
 It never force-quits an app.
@@ -93,6 +99,8 @@ Read the current source, artifact, and runtime identities with:
 ```sh
 python3 "$HOME/Library/Application Support/codex-gpui-qa/updater/qa-sync.py" status
 ```
+
+Run the updater regression checks with `python3 -B tools/test_qa_sync.py`.
 
 Stop only the owned timer with `launchctl bootout "gui/$(id -u)/dev.codexgpui.qa-sync"`.
 That command does not close QA or any normal app.
@@ -220,4 +228,17 @@ Submenu arrows and model-trigger recording remain outside this replay.
 
 ```sh
 tools/mac.sh -l f2b 'cargo test -p app --test f2b -- --test-threads=1'
+```
+
+## Command-menu actions
+
+The command menu uses the existing app actions for new chats, archive, Find, navigation, six recent-chat slots, sidebar visibility, panels, and scheduled tasks.
+Find keeps focus in its search field after the menu closes.
+Panel commands keep the selected chat and the existing tabs.
+The terminal command opens an existing background command, not an interactive shell.
+Unsupported destinations remain known gaps; this change does not implement logout, git operations, cloud operations, or the project picker.
+Recorded command rows, ranking, and keyboard-editing checks remain unchanged.
+
+```sh
+tools/mac.sh -l cgx-command-dispatch 'cargo test -p app --test command_dispatch --test s025 --test s025_rank --test s026 -- --test-threads=1'
 ```

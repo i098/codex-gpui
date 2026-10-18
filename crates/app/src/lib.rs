@@ -382,6 +382,7 @@ pub struct Root {
     login: Option<Entity<Login>>,
     bridge: Arc<Bridge>,
     host: Arc<dyn host::Host>,
+    project_load: Option<Task<()>>,
     automations: Option<Result<Value, String>>,
     automation_load: Option<Task<()>>,
     suggestion_load: Option<Task<()>>,
@@ -548,7 +549,7 @@ impl Root {
                 }
             }
         });
-        let root = Self {
+        let mut root = Self {
             back: Vec::new(),
             forward: Vec::new(),
             shell,
@@ -580,6 +581,7 @@ impl Root {
             bridge,
             automations: None,
             automation_load: None,
+            project_load: None,
             suggestion_load: None,
             scheduled: None,
             suggestions: None,
@@ -613,6 +615,7 @@ impl Root {
         cx.on_focus_lost(window, |this, window, cx| window.focus(&this.focus, cx))
             .detach();
         root.connect(window, cx);
+        root.load_projects(cx);
         root
     }
 
@@ -816,14 +819,33 @@ impl Root {
     /// Replaces the desktop host and cancels any pending host read.
     pub fn set_host(&mut self, host: Arc<dyn host::Host>, cx: &mut Context<Self>) {
         self.automation_load = None;
+        self.project_load = None;
         self.suggestion_load = None;
         self.host = host;
         self.automations = None;
+        self.load_projects(cx);
         if self.scheduled_route() {
             self.load_automations(cx);
             self.load_suggestions(cx);
         }
         cx.notify();
+    }
+
+    fn load_projects(&mut self, cx: &mut Context<Self>) {
+        self.sidebar
+            .update(cx, |sidebar, cx| sidebar.set_projects(Vec::new(), cx));
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move { host.projects() });
+        self.project_load = Some(cx.spawn(async move |this, cx| {
+            let result = read.await;
+            this.update(cx, |this, cx| match result {
+                Ok(projects) => this
+                    .sidebar
+                    .update(cx, |sidebar, cx| sidebar.set_projects(projects, cx)),
+                Err(error) => eprintln!("codex-gpui: cannot read sidebar projects: {error:#}"),
+            })
+            .ok();
+        }));
     }
 
     /// The host's automation list, or its error; `None` means that the read has not completed.
@@ -1436,9 +1458,8 @@ impl Root {
         }
     }
 
-    /// Opens a chat or settings page, or answers the open menu's content search.
-    /// ponytail: commands whose feature the port lacks (Open folder, Show Mini, Log out, ...)
-    /// only close the menu; run them when the features land.
+    /// Runs implemented commands through the same actions as the keyboard and menus.
+    /// Unsupported destinations remain unfinished outside this dispatch slice.
     fn run_command(
         &mut self,
         event: &CommandMenuEvent,
@@ -1449,14 +1470,31 @@ impl Root {
             return self.search_threads(term.clone(), window, cx);
         }
         self.command_menu = None;
+        window.focus(&self.route_focus(cx), cx);
         match event {
             CommandMenuEvent::Dismiss | CommandMenuEvent::Search(_) => {}
             CommandMenuEvent::OpenThread(id) => {
                 self.navigate(Route::Thread(id.clone()), window, cx)
             }
             CommandMenuEvent::Command(label) => match label.as_ref() {
-                "New chat" => self.new_chat(window, cx),
-                "Manage scheduled tasks" => self.navigate(Route::Scheduled, window, cx),
+                "New chat" | "New standalone chat" => window.dispatch_action(Box::new(NewChat), cx),
+                "Archive chat" => window.dispatch_action(Box::new(ArchiveChat), cx),
+                "Find" => window.dispatch_action(Box::new(FindInThread), cx),
+                "Back" => window.dispatch_action(Box::new(GoBack), cx),
+                "Forward" => window.dispatch_action(Box::new(GoForward), cx),
+                "Previous chat" => window.dispatch_action(Box::new(PreviousChat), cx),
+                "Next chat" => window.dispatch_action(Box::new(NextChat), cx),
+                "Go to recent chat 1" => window.dispatch_action(Box::new(GoToRecentChat(0)), cx),
+                "Go to recent chat 2" => window.dispatch_action(Box::new(GoToRecentChat(1)), cx),
+                "Go to recent chat 3" => window.dispatch_action(Box::new(GoToRecentChat(2)), cx),
+                "Go to recent chat 4" => window.dispatch_action(Box::new(GoToRecentChat(3)), cx),
+                "Go to recent chat 5" => window.dispatch_action(Box::new(GoToRecentChat(4)), cx),
+                "Go to recent chat 6" => window.dispatch_action(Box::new(GoToRecentChat(5)), cx),
+                "Toggle sidebar" => window.dispatch_action(Box::new(ToggleSidebar), cx),
+                "Open Changes tab" => window.dispatch_action(Box::new(OpenChangesPanel), cx),
+                "New tab" => window.dispatch_action(Box::new(ToggleChangesPanel), cx),
+                "Open terminal" => window.dispatch_action(Box::new(OpenBackgroundTerminal), cx),
+                "Manage scheduled tasks" => window.dispatch_action(Box::new(OpenScheduled), cx),
                 label => {
                     if let Some(section) = settings::section(label) {
                         self.open_settings_section(section, window, cx);
@@ -1464,7 +1502,6 @@ impl Root {
                 }
             },
         }
-        window.focus(&self.route_focus(cx), cx);
         cx.notify();
     }
 

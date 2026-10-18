@@ -669,6 +669,43 @@ It also checks the original hover color, expanded rows, collapse, and hidden com
 [Original screenshot](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/003c2454a49370802469ed64320fe26f160b4da61215578a/original-group-expanded.png).
 [Port screenshot](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/003c2454a49370802469ed64320fe26f160b4da61215578a/s014-group-expanded.png).
 
+## F1d projects: Worktree and missing-folder markers
+
+`crates/app/tests/f1d_projects.rs` replays `refs/interactions/f1d_projects.json` through the F4 host.
+The original fixture contains a normal project, a managed worktree, and a missing folder.
+Its collapsed-state values come from actual original row clicks.
+
+The local and cloud hosts read the original `.codex-global-state.json` project and atom keys without rewriting the file.
+Rows keep trimmed names and the original first-root marker rules.
+Roots absent from `project-order` appear first; listed roots follow the saved order.
+A missing path response does not mark every project as deleted.
+The tests check folder deletion and restoration, malformed entries, ordering, and the `worktrees-extra` prefix boundary.
+A failed filesystem probe marks only its own root as missing, without hiding healthy projects.
+
+The worktree icon reuses `thread-fork.svg` inside the original 12.5px superellipse overflow clip.
+That clip is required for the unchanged native glyph pixels to match exactly.
+The missing row uses the original 0.7 opacity and disabled-action tooltip.
+Both tooltip labels, bounds, dismissal, and `-0.15px` tracking follow the original recording.
+The worktree tooltip retains the original zero-size `contents` wrapper placement at the window origin.
+Long project names stay clear of markers and hover actions.
+The label's stable element ID makes GPUI apply hover dimensions during layout.
+An image check protects the control regions for 100-character names at rest and on hover.
+
+Default Recents, pins, status indicators, and paging retain their existing checks.
+Project activation, menus, hover-card actions, and project thread paging are outside RS-081.
+The shared replay selects the dedicated `f1d_projects` adapter.
+
+Run `tools/mac.sh -l f1d-projects 'cargo test -p app --test f1d_projects -- --test-threads=1'`.
+
+| Recorded region | Original | Port |
+|---|---|---|
+| Project rows | [Image](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ff8c28f83516f4fb8545d34d04a67ab08498485936cb345b/project-markers/original-rows.png) | [Image](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ff8c28f83516f4fb8545d34d04a67ab08498485936cb345b/project-markers/port-rows.png) |
+| Worktree tooltip | [Image](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ff8c28f83516f4fb8545d34d04a67ab08498485936cb345b/project-markers/original-worktree-tooltip.png) | [Image](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ff8c28f83516f4fb8545d34d04a67ab08498485936cb345b/project-markers/port-worktree-tooltip.png) |
+| Missing-folder tooltip | [Image](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ff8c28f83516f4fb8545d34d04a67ab08498485936cb345b/project-markers/original-missing-tooltip.png) | [Image](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ff8c28f83516f4fb8545d34d04a67ab08498485936cb345b/project-markers/port-missing-tooltip.png) |
+
+The [strict static report](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ff8c28f83516f4fb8545d34d04a67ab08498485936cb345b/report.html) passes all 36 cases with zero outside-text differences.
+
+
 
 ## F3c: Model announcement (SH-142)
 
@@ -712,7 +749,28 @@ Add rendering and query changes stay in S018.
 `crates/app/tests/f1a.rs` checks the bordered pill at both offsets.
 The selected offset gives vertical bounds `742..772`; the unchanged default gives `745..775`.
 The existing recording still checks all 34 actions and 13 default tooltips.
+The F1a fixture loads `common::recorded_host_settings()` before `Root` starts, matching the recorded model-upgrade history.
 
 The [native original capture](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/b3cf204103d640697ec41c58541aab67d5f63b6dde0c7fba/original-add.png) retains the original Add tooltip.
 The [port capture](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/b3cf204103d640697ec41c58541aab67d5f63b6dde0c7fba/s018-add-after.png) uses the S018 smoke snapshot with the offset setter.
 Both captures use the same Mac viewport and scale.
+
+## Shared tooltip keyboard focus API
+
+`Tooltip::focus_handle(&gpui::FocusHandle)` uses the trigger's existing focus handle.
+Set it when the trigger is first rendered.
+Keyboard focus opens the shared tooltip immediately.
+Blur and Escape close it without moving focus.
+Pointer focus does not reopen it.
+Hover replaces the visible provider owner, and Escape closes that active owner.
+
+`crates/app/tests/f1a.rs` checks this lifecycle in an isolated native fixture.
+The fixture uses real pointer entry before Tab and changes only the simulated TestWindow activity.
+It renders the focus event and the notified tooltip frame.
+It checks the painted tooltip fill after keyboard focus.
+It checks that the previous pill no longer paints after hover takes ownership.
+The default hover delay and `side_offset` geometry remain unchanged.
+
+This API does not complete Home focus behavior or add the separate F1d overflow predicate.
+The original Home inputs and edge probes remain unchanged.
+The scoped issue is [Add an opt-in focus API to the shared tooltip](https://github.com/i098/codex-gpui/issues/186).
