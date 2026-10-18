@@ -33,8 +33,8 @@ use ui::dialog::{
     CommitRepository, CommitStep, Dialog, Kind as DialogKind, Outcome as DialogOutcome, Selection,
 };
 use ui::screens::diff::panel::{
-    ActivateSideTab, CloseSideTab, DiffPanel, DiffRequest, FileView, OpenFile, SplitScreen, Tab,
-    with_side_tabs,
+    ActivateSideTab, CloseSideTab, DiffPanel, DiffRequest, FileView, OpenFile, RevertChanges,
+    SplitScreen, Tab, with_side_tabs,
 };
 use ui::screens::home::{HomeMain, OpenFolder};
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
@@ -382,6 +382,7 @@ pub struct Root {
     archive_page: Option<Entity<ArchivedChats>>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
+    settings_page: Option<Entity<settings::SettingsPage>>,
     /// `⌘K` command menu over the window.
     command_menu: Option<Entity<CommandMenu>>,
     dialog: Option<Entity<Dialog>>,
@@ -599,6 +600,7 @@ impl Root {
             page: None,
             archive_page: None,
             settings_section: None,
+            settings_page: None,
             command_menu: None,
             dialog: None,
             login: None,
@@ -634,6 +636,7 @@ impl Root {
         window.on_window_should_close(cx, move |window, cx| {
             this.update(cx, |this, cx| {
                 if this.state.confirm_before_close != ConfirmBeforeClose::Always {
+                    this.flush_settings(cx);
                     return true;
                 }
                 this.open_dialog(DialogKind::CloseWindow, window, cx);
@@ -641,6 +644,11 @@ impl Root {
             })
             .unwrap_or(true)
         });
+        cx.on_app_quit(|this, cx| {
+            this.flush_settings(cx);
+            async {}
+        })
+        .detach();
         window.focus(&root.focus, cx);
         // The DOM's body: when the focused element goes (a closed find bar or menu blurs, a
         // node leaves the tree), the root takes focus so the key bindings keep working.
@@ -946,7 +954,7 @@ impl Root {
     }
 
     fn repository_request(
-        &self,
+        &mut self,
         panel: Entity<DiffPanel>,
         cwd: &str,
         request: &DiffRequest,
@@ -955,23 +963,60 @@ impl Root {
         if panel.read(cx).pending() {
             return;
         }
-        let (endpoint, path) = match request {
-            DiffRequest::Refresh => ("git-changes", None),
-            DiffRequest::Stage(path) => ("git-stage", Some(path)),
-            DiffRequest::Unstage(path) => ("git-unstage", Some(path)),
+        let (endpoint, params, reverted) = match request {
+            DiffRequest::Refresh => ("git-changes", json!({"cwd": cwd}), None),
+            DiffRequest::Stage(path) => ("git-stage", json!({"cwd": cwd, "path": path}), None),
+            DiffRequest::Unstage(path) => ("git-unstage", json!({"cwd": cwd, "path": path}), None),
+            DiffRequest::Revert(change) => (
+                "git-revert",
+                json!({"cwd": cwd, "path": change.path, "source": change.source,
+                    "diff": change.diff, "hunk": change.hunk}),
+                Some(match change.hunk {
+                    Some(index) => format!("hunk {} in {}", index + 1, change.path),
+                    None => change.path.clone(),
+                }),
+            ),
         };
-        let request = host::Request::post(endpoint, Some(json!({"cwd": cwd, "path": path})));
+        let request = host::Request::post(endpoint, Some(params));
         let host = self.host.clone();
         panel.update(cx, |panel, cx| panel.begin_repository_request(cx));
         let read = cx.background_spawn(async move {
-            host.fetch(&request)
-                .and_then(|response| host::json_body(&response))
-                .and_then(|body| Ok(serde_json::from_value(body)?))
-                .map_err(|error| error.to_string())
+            let body = host
+                .fetch(&request)
+                .and_then(|response| host::json_body(&response));
+            body.and_then(|body| {
+                let status = if endpoint == "git-revert" {
+                    match body["status"].as_str() {
+                        Some("success") => Some(false),
+                        Some("partial-success") => Some(true),
+                        _ => anyhow::bail!("Git revert returned an invalid result"),
+                    }
+                } else {
+                    None
+                };
+                Ok((
+                    serde_json::from_value::<ui::screens::diff::panel::RepositoryChanges>(body)?,
+                    status,
+                ))
+            })
+            .map_err(|error| error.to_string())
         });
-        cx.spawn(async move |_, cx| {
+        cx.spawn(async move |this, cx| {
             let result = read.await;
-            panel.update(cx, |panel, cx| panel.set_repository(result, cx));
+            this.update(cx, |this, cx| {
+                if let Some(target) = reverted {
+                    let toast = match &result {
+                        Ok((_, Some(true))) => Toast::info(format!("Partially reverted {target}")),
+                        Ok((_, Some(false))) => Toast::info(format!("Reverted {target}")),
+                        _ => Toast::danger(format!("Failed to revert {target}")),
+                    };
+                    this.toast(toast, cx);
+                }
+                panel.update(cx, |panel, cx| {
+                    panel.set_repository(result.map(|(changes, _)| changes), cx)
+                });
+            })
+            .ok();
         })
         .detach();
     }
@@ -1081,6 +1126,48 @@ impl Root {
         {
             self.repository_request(panel, cwd, &DiffRequest::Refresh, cx);
         }
+    }
+
+    fn confirm_revert(
+        &mut self,
+        panel: Entity<DiffPanel>,
+        cwd: &str,
+        change: &RevertChanges,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if panel.read(cx).pending() || self.dialog.is_some() {
+            return;
+        }
+        let request = DiffRequest::Revert(change.clone());
+        if cx
+            .try_global::<host_settings::Settings>()
+            .and_then(|settings| settings.read_all().get("skip-revert-confirmation"))
+            .and_then(Value::as_bool)
+            == Some(true)
+        {
+            self.repository_request(panel, cwd, &request, cx);
+            return;
+        }
+        let cwd = cwd.to_owned();
+        let dialog = cx.new(|cx| Dialog::new(DialogKind::RevertChanges, cx));
+        // Handle Confirm before show_dialog drops the event source.
+        cx.subscribe(&dialog, move |this, _, outcome, cx| {
+            if let DialogOutcome::RevertChanges { do_not_ask_again } = outcome {
+                if *do_not_ask_again {
+                    this.write_setting(
+                        &SettingChanged {
+                            path: "host.skip-revert-confirmation",
+                            value: Value::Bool(true),
+                        },
+                        cx,
+                    );
+                }
+                this.repository_request(panel.clone(), &cwd, &request, cx);
+            }
+        })
+        .detach();
+        self.show_dialog(dialog, window, cx);
     }
 
     /// The host's automation list, or its error; `None` means that the read has not completed.
@@ -1318,6 +1405,8 @@ impl Root {
     /// Shows the route (loading its thread if needed), pushes history into the shell and
     /// persists the state.
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.flush_settings(cx);
+        self.settings_page = None;
         self.suggestion_load = None;
         let (can_back, can_forward) = (!self.back.is_empty(), !self.forward.is_empty());
         self.archive_page = None;
@@ -1334,6 +1423,7 @@ impl Root {
                 config["host"]["confirm-before-close"] = json!(self.state.confirm_before_close);
                 let section = self.settings_section.take();
                 let (shell, page) = settings::shell(&config, &self.skills, section, cx);
+                self.settings_page = Some(page.clone());
                 cx.subscribe(&page, |this, page, e: &SettingChanged, cx| {
                     this.write_setting(e, cx);
                     if e.path.starts_with("host.") && e.path != settings::THEME {
@@ -1690,6 +1780,7 @@ impl Root {
             this.dialog = None;
             match outcome {
                 DialogOutcome::Dismiss => window.focus(&this.focus, cx),
+                DialogOutcome::RevertChanges { .. } => window.focus(&this.focus, cx),
                 DialogOutcome::DismissAnnouncement(model)
                 | DialogOutcome::UseAnnouncedModel { model, .. } => {
                     if let DialogOutcome::UseAnnouncedModel {
@@ -1712,6 +1803,7 @@ impl Root {
                         this.config["host"]["confirm-before-close"] = "never".into();
                         this.state.save();
                     }
+                    this.flush_settings(cx);
                     window.remove_window();
                 }
                 DialogOutcome::Rename { thread, name } => {
@@ -1757,6 +1849,7 @@ impl Root {
             return self.close_side(side, window, cx);
         }
         if self.state.confirm_before_close == ConfirmBeforeClose::Never {
+            self.flush_settings(cx);
             window.remove_window();
         } else {
             self.open_dialog(DialogKind::CloseWindow, window, cx);
@@ -1885,9 +1978,16 @@ impl Root {
         let composer = self.thread_composer.clone().into();
         let diff = cx.new(|_| DiffPanel::last_turn(&self.cwd, &thread.cwd, &thread.turns));
         let cwd = thread.cwd.clone();
-        cx.subscribe(&diff, move |this, panel, request: &DiffRequest, cx| {
-            this.repository_request(panel, &cwd, request, cx);
-        })
+        cx.subscribe_in(
+            &diff,
+            window,
+            move |this, panel, request: &DiffRequest, window, cx| match request {
+                DiffRequest::Revert(change) => {
+                    this.confirm_revert(panel.clone(), &cwd, change, window, cx)
+                }
+                _ => this.repository_request(panel.clone(), &cwd, request, cx),
+            },
+        )
         .detach();
         self.diff = Some(diff);
         self.file = None;
@@ -2376,6 +2476,15 @@ impl Root {
         log_err(task, cx);
     }
 
+    fn flush_settings(&mut self, cx: &mut Context<Self>) {
+        if let Some(page) = self.settings_page.clone() {
+            let pending = page.update(cx, |page, _| page.take_pending_instructions());
+            for change in pending {
+                self.write_setting(&change, cx);
+            }
+        }
+    }
+
     /// Window preferences keep their state storage; other host settings use the desktop service.
     fn write_setting(&mut self, e: &SettingChanged, cx: &mut Context<Self>) {
         if e.path == settings::THEME {
@@ -2404,7 +2513,56 @@ impl Root {
             };
             if let Err(error) = result {
                 eprintln!("codex-gpui: settings.write({key}): {error:#}");
-                self.toast(Toast::danger("Couldn't save your changes. Try again"), cx);
+                let message = match key {
+                    "git-branch-prefix" => "Failed to save branch prefix",
+                    "git-pull-request-merge-method" => "Failed to save pull request merge method",
+                    "git-always-force-push" => "Failed to save force push setting",
+                    "git-create-pull-request-as-draft" => {
+                        "Failed to save draft pull request setting"
+                    }
+                    "git-review-mode" => "Could not save Git diff setting",
+                    "git-pr-watch-auto-merge" => "Failed to save automatic PR merging",
+                    "git-commit-instructions"
+                    | "git-pr-instructions"
+                    | "git-pr-watch-instructions" => "Failed to save instructions",
+                    _ => "Couldn't save your changes. Try again",
+                };
+                self.toast(Toast::danger(message), cx);
+            } else {
+                let message = match key {
+                    "git-branch-prefix" => Some("Saved branch prefix".to_owned()),
+                    "git-pull-request-merge-method" => {
+                        Some("Saved pull request merge method".to_owned())
+                    }
+                    "git-always-force-push" => Some(format!(
+                        "Always force push {}",
+                        if e.value == true {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        }
+                    )),
+                    "git-create-pull-request-as-draft" => Some(format!(
+                        "Create draft pull requests {}",
+                        if e.value == true {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        }
+                    )),
+                    "git-pr-watch-auto-merge" => Some(format!(
+                        "Automatic PR merging {}",
+                        if e.value == true {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        }
+                    )),
+                    _ => None,
+                };
+                if let Some(message) = message {
+                    self.toast(Toast::info(message), cx);
+                }
             }
             return;
         }
@@ -2433,8 +2591,19 @@ impl Root {
     ) {
         self.qa_work_started = true;
         let bridge = self.bridge.clone();
+        let review_delivery = params["keyPath"] == "desktop.reviewDelivery";
         let task = cx.spawn(async move |this, cx| -> Result<()> {
-            bridge.request::<_, Value>(method, params).await?;
+            if let Err(error) = bridge.request::<_, Value>(method, params).await {
+                if review_delivery {
+                    this.update(cx, |this, cx| {
+                        this.toast(
+                            Toast::danger("Could not save review delivery preference"),
+                            cx,
+                        );
+                    })?;
+                }
+                return Err(error);
+            }
             this.update(cx, |this, _| apply(&mut this.config))
         });
         log_err(task, cx);

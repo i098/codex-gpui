@@ -328,7 +328,7 @@ impl Composer {
         let Some(item) = cx.read_from_clipboard() else {
             return;
         };
-        let attach = self.on_cancel_edit.is_none();
+        let attach = self.on_cancel_edit.is_none() && self.plain_field.is_none();
         if attach
             && item
                 .entries()
@@ -641,6 +641,13 @@ impl EntityInputHandler for Composer {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let single_line;
+        let new_text = if self.plain_field == Some(false) && new_text.contains(['\n', '\r']) {
+            single_line = new_text.replace(['\n', '\r'], "");
+            single_line.as_str()
+        } else {
+            new_text
+        };
         let range = range_utf16
             .as_ref()
             .map(|r| self.range_from_utf16(r))

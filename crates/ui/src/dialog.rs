@@ -37,6 +37,7 @@ pub enum Kind {
     Shortcuts,
     CloseWindow,
     FullAccess,
+    RevertChanges,
     ModelAnnouncement,
     /// `Schedule a task`: the Scheduled sidebar's `New task` create editor (AM-005).
     ScheduleTask,
@@ -56,6 +57,9 @@ pub enum Outcome {
         reasoning_effort: SharedString,
     },
     CloseWindow {
+        do_not_ask_again: bool,
+    },
+    RevertChanges {
         do_not_ask_again: bool,
     },
     /// `Save` or Enter in `Rename chat`: `thread/name/set` of `thread` to `name`.
@@ -148,7 +152,7 @@ impl Dialog {
         Self {
             kind,
             controls: std::array::from_fn(|_| cx.focus_handle()),
-            selected: 0,
+            selected: usize::from(kind == Kind::RevertChanges),
             query: String::new(),
             select_all: false,
             instruction_cursor: 0,
@@ -228,6 +232,9 @@ impl Dialog {
             (Kind::CloseWindow, 0) => "Cancel",
             (Kind::CloseWindow, 1) => "Close Window",
             (Kind::CloseWindow, _) => "Do not ask me again",
+            (Kind::RevertChanges, 0) => "Cancel",
+            (Kind::RevertChanges, 1) => "Confirm",
+            (Kind::RevertChanges, _) => "Don't ask again",
             (Kind::FullAccess, 0) => "Cancel",
             (Kind::FullAccess, _) => "Confirm",
             (Kind::ModelAnnouncement, 0) => "Close",
@@ -363,7 +370,10 @@ impl Dialog {
             (Kind::CloseWindow, 1) => cx.emit(Outcome::CloseWindow {
                 do_not_ask_again: self.do_not_ask_again,
             }),
-            (Kind::CloseWindow, 2) => {
+            (Kind::RevertChanges, 1) => cx.emit(Outcome::RevertChanges {
+                do_not_ask_again: self.do_not_ask_again,
+            }),
+            (Kind::CloseWindow | Kind::RevertChanges, 2) => {
                 self.do_not_ask_again = !self.do_not_ask_again;
                 cx.notify();
             }
@@ -550,7 +560,10 @@ impl Dialog {
             "enter" | "space"
                 if matches!(
                     self.kind,
-                    Kind::CloseWindow | Kind::FullAccess | Kind::ModelAnnouncement
+                    Kind::CloseWindow
+                        | Kind::FullAccess
+                        | Kind::ModelAnnouncement
+                        | Kind::RevertChanges
                 ) || (self.selected != 0 && !self.editing()) =>
             {
                 self.activate(cx)
@@ -595,13 +608,16 @@ impl Dialog {
             .justify_center()
             .rounded(px(12.5))
             .bg(if primary { t.text } else { t.list_hover })
-            .when(self.kind == Kind::FullAccess, |d| {
-                d.h(px(36.)).rounded(px(18.)).bg(if primary {
-                    t.text_error.opacity(0.1)
-                } else {
-                    t.list_hover
-                })
-            })
+            .when(
+                matches!(self.kind, Kind::FullAccess | Kind::RevertChanges),
+                |d| {
+                    d.h(px(36.)).rounded(px(18.)).bg(if primary {
+                        t.text_error.opacity(0.1)
+                    } else {
+                        t.list_hover
+                    })
+                },
+            )
             .border_2()
             .border_color(if self.selected == index {
                 rgba(0x3a83f7ff)
@@ -614,7 +630,7 @@ impl Dialog {
                 14.,
                 18.,
                 430.,
-                if self.kind == Kind::FullAccess && primary {
+                if matches!(self.kind, Kind::FullAccess | Kind::RevertChanges) && primary {
                     t.text_error
                 } else if primary {
                     t.menu_background
@@ -828,26 +844,49 @@ impl Dialog {
     }
 
     fn close_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        let revert = self.kind == Kind::RevertChanges;
+        let checkbox = if revert {
+            "Don't ask again"
+        } else {
+            "Do not ask me again"
+        };
         div()
             .p(px(20.))
             .flex()
             .flex_col()
             .child(
                 text(
-                    "Are you sure you want to close the window?",
+                    if revert {
+                        "Revert changes?"
+                    } else {
+                        "Are you sure you want to close the window?"
+                    },
                     20.,
                     28.,
                     600.,
                     t.text,
                 )
                 .whitespace_normal()
-                .h(px(56.)),
+                .h(px(if revert { 28. } else { 56. })),
             )
+            .when(revert, |d| {
+                d.child(
+                    text(
+                        "This action removes all of these changes.",
+                        14.,
+                        20.,
+                        400.,
+                        t.text_secondary,
+                    )
+                    .mt(px(8.))
+                    .whitespace_normal(),
+                )
+            })
             .child(
                 div()
                     .id("close-do-not-ask")
                     .role(gpui::Role::CheckBox)
-                    .aria_label("Do not ask me again")
+                    .aria_label(checkbox)
                     .aria_toggled(if self.do_not_ask_again {
                         gpui::Toggled::True
                     } else {
@@ -871,7 +910,7 @@ impl Dialog {
                                     .child(text("✓", 12., 12., 600., t.menu_background))
                             }),
                     )
-                    .child(text("Do not ask me again", 13., 19., 430., t.text))
+                    .child(text(checkbox, 13., 19., 430., t.text))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.selected = 2;
                         this.controls[2].focus(window, cx);
@@ -885,7 +924,13 @@ impl Dialog {
                     .justify_end()
                     .gap(px(12.))
                     .child(self.button(0, "Cancel", 80., t, cx))
-                    .child(self.button(1, "Close Window", 128., t, cx)),
+                    .child(self.button(
+                        1,
+                        if revert { "Confirm" } else { "Close Window" },
+                        128.,
+                        t,
+                        cx,
+                    )),
             )
     }
     /// The multi-line text input of `Instructions…` and `Commit message`: lines with the
@@ -2061,6 +2106,7 @@ impl Render for Dialog {
         let (width, height): (f32, f32) = match self.kind {
             Kind::Shortcuts => (600., shortcuts_height),
             Kind::CloseWindow => (420., 171.),
+            Kind::RevertChanges => (420., 199.),
             Kind::ScheduleTask => (680., 422.),
             Kind::Rename => (420., 185.),
             Kind::FullAccess => (520., 420.),
@@ -2071,7 +2117,7 @@ impl Render for Dialog {
         let height = height.min(f32::from(viewport.height) * 0.92);
         let content = match self.kind {
             Kind::Shortcuts => self.shortcuts_content(&visible, t, cx),
-            Kind::CloseWindow => self.close_content(t, cx),
+            Kind::CloseWindow | Kind::RevertChanges => self.close_content(t, cx),
             Kind::ScheduleTask => self.schedule_content(t, cx),
             Kind::Rename => self.rename_content(t, cx),
             Kind::FullAccess => self.full_access_content(t, cx),
@@ -2105,6 +2151,7 @@ impl Render for Dialog {
                     .aria_label(match self.kind {
                         Kind::Shortcuts => "Keyboard shortcuts".into(),
                         Kind::CloseWindow => "Are you sure you want to close the window?".into(),
+                        Kind::RevertChanges => "Revert changes?".into(),
                         Kind::ScheduleTask => "Schedule a task".into(),
                         Kind::Rename => "Rename chat".into(),
                         Kind::FullAccess => "Turn on Full Access?".into(),

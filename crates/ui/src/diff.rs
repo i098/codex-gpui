@@ -126,6 +126,15 @@ pub enum DiffRequest {
     Refresh,
     Stage(String),
     Unstage(String),
+    Revert(RevertChanges),
+}
+
+#[derive(Clone)]
+pub struct RevertChanges {
+    pub path: String,
+    pub source: &'static str,
+    pub diff: String,
+    pub hunk: Option<usize>,
 }
 
 #[derive(serde::Deserialize)]
@@ -286,7 +295,6 @@ impl DiffPanel {
                 self.error = None;
             }
             Err(error) => {
-                self.repository = None;
                 self.error = Some(error);
             }
         }
@@ -294,6 +302,30 @@ impl DiffPanel {
             self.show_repository();
         }
         cx.notify();
+    }
+
+    fn request_revert(&self, file: usize, hunk: Option<usize>, cx: &mut Context<Self>) {
+        if self.pending || self.error.is_some() || self.source == DiffSource::LastTurn {
+            return;
+        }
+        let Some(repository) = &self.repository else {
+            return;
+        };
+        let files = match self.source {
+            DiffSource::Staged => &repository.staged,
+            _ => &repository.unstaged,
+        };
+        let Some(file) = files.get(file) else { return };
+        cx.emit(DiffRequest::Revert(RevertChanges {
+            path: file.path.clone(),
+            source: if self.source == DiffSource::Staged {
+                "staged"
+            } else {
+                "unstaged"
+            },
+            diff: file.diff.clone(),
+            hunk,
+        }));
     }
 
     fn select_source(&mut self, source: DiffSource, cx: &mut Context<Self>) {
@@ -797,20 +829,63 @@ impl Render for DiffPanel {
                         this.open_menu(i, menu::Kind::Body, event.position, window, cx);
                     }),
                 )
-                .child(
-                    file_header(i, file, &t, cx).on_click(cx.listener(move |this, _, _, cx| {
+                .child(file_header(i, file, self, &t, cx).on_click(cx.listener(
+                    move |this, _, _, cx| {
                         this.files[i].open ^= true;
                         this.selection = None;
                         cx.notify();
-                    })),
-                )
+                    },
+                )))
                 .map(|d| {
                     if file.open {
-                        d.children(
-                            file.hunks
-                                .iter()
-                                .map(|h| hunk(h, &t, &ordinal, &line_index, self, cx)),
-                        )
+                        d.children(file.hunks.iter().enumerate().map(|(index, h)| {
+                            let controls = self.source != DiffSource::LastTurn
+                                && h.lines.iter().any(|l| l.kind != Kind::Context);
+                            div()
+                                .when(controls, |d| {
+                                    d.child(
+                                        div().flex().justify_end().px(px(12.)).py(px(4.)).child(
+                                            div()
+                                                .id(SharedString::from(format!(
+                                                    "revert-hunk-{i}-{index}"
+                                                )))
+                                                .role(gpui::Role::Button)
+                                                .aria_label(format!("Revert hunk {}", index + 1))
+                                                .aria_disabled(self.pending || self.error.is_some())
+                                                .focusable()
+                                                .tab_index(0)
+                                                .focus_visible(|s| {
+                                                    s.border_2().border_color(rgb(0x3a83f7))
+                                                })
+                                                .cursor_pointer()
+                                                .px(px(8.))
+                                                .h(px(24.))
+                                                .rounded(px(12.))
+                                                .bg(t.list_hover)
+                                                .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                                    cx.stop_propagation()
+                                                })
+                                                .on_key_down(cx.listener(
+                                                    move |this, event: &KeyDownEvent, _, cx| {
+                                                        if matches!(
+                                                            event.keystroke.key.as_str(),
+                                                            "enter" | "space"
+                                                        ) {
+                                                            this.request_revert(i, Some(index), cx);
+                                                            cx.stop_propagation();
+                                                        }
+                                                    },
+                                                ))
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.request_revert(i, Some(index), cx);
+                                                    cx.stop_propagation();
+                                                }))
+                                                .child(text("Revert", 12., 20., 430., t.text)),
+                                        ),
+                                    )
+                                })
+                                .child(hunk(h, &t, &ordinal, &line_index, self, cx))
+                        }))
                     } else {
                         line_index.set(
                             line_index.get()
@@ -1625,7 +1700,13 @@ pub fn stats(added: usize, removed: usize, size: f32, t: &Theme) -> Div {
         .child(tracked(format!("-{removed}"), t.git_deleted))
 }
 
-fn file_header(i: usize, file: &FileDiff, t: &Theme, cx: &Context<DiffPanel>) -> Stateful<Div> {
+fn file_header(
+    i: usize,
+    file: &FileDiff,
+    panel: &DiffPanel,
+    t: &Theme,
+    cx: &Context<DiffPanel>,
+) -> Stateful<Div> {
     let small = |name| round_icon(name, 20., t);
     let python = match t.appearance {
         Appearance::Dark => rgb(0x69b1ff),
@@ -1669,6 +1750,30 @@ fn file_header(i: usize, file: &FileDiff, t: &Theme, cx: &Context<DiffPanel>) ->
                 .items_center()
                 .gap(px(4.))
                 .child(stats(file.added, file.removed, 14., t).mx(px(4.)))
+                .when(panel.source != DiffSource::LastTurn, |d| {
+                    d.child(
+                        small("thread-undo")
+                            .id(("revert-file", i))
+                            .role(gpui::Role::Button)
+                            .aria_label("Revert file")
+                            .aria_disabled(panel.pending || panel.error.is_some())
+                            .focusable()
+                            .tab_index(0)
+                            .focus_visible(|s| s.border_2().border_color(rgb(0x3a83f7)))
+                            .cursor_pointer()
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+                                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                    this.request_revert(i, None, cx);
+                                    cx.stop_propagation();
+                                }
+                            }))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.request_revert(i, None, cx);
+                                cx.stop_propagation();
+                            })),
+                    )
+                })
                 .child(
                     small("diff-open-in")
                         .id(("diff-open-editor", i))

@@ -130,6 +130,8 @@ pub struct Fx {
     pub size: (f32, f32),
     /// Client-message log of the proxy app-server ([`Fx::captured`]).
     log: Option<PathBuf>,
+    /// The per-run desktop host storage, removed with the run.
+    _host_home: tempfile::TempDir,
 }
 
 impl Fx {
@@ -230,6 +232,11 @@ impl Fx {
             cx.new(|cx| Root::new(state, bridge, events, CWD.into(), window, cx).with_clock(clock))
         })?;
         let root = cx.read_window(&window, |root, _| root)?;
+        // Never the user's `CODEX_HOME`: its project rows move the recorded sidebar layout.
+        // No project state yet; a scenario that expects rows installs its own host.
+        let host_home = tempfile::tempdir()?;
+        let host = Arc::new(app::host::LocalHost::new(host_home.path()));
+        cx.update(|cx| root.update(cx, |root, cx| root.set_host(host, cx)));
         let mut fx = Self {
             cx,
             root,
@@ -237,6 +244,7 @@ impl Fx {
             theme,
             size: (w, h),
             log: None,
+            _host_home: host_home,
         };
         fx.wait("startup", |fx| fx.read(|r, _| r.ready()))?;
         Ok(fx)
