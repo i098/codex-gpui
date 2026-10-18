@@ -1137,6 +1137,7 @@ impl Root {
     /// HC-033: a printable key (no ⌘/⌃, not Space) typed outside an editable, with no
     /// dialog, menu or popover open, goes to the route's composer and focuses it.
     /// Content ancestors can hold plain focus handles without being popovers.
+    /// The thread transcript is the composer's sibling, so only its exact focus is allowed.
     fn type_anywhere(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
         let Some(text) = keystroke.key_char.as_deref() else {
@@ -1145,7 +1146,13 @@ impl Root {
         let printable = text.chars().count() == 1 && !text.chars().all(char::is_whitespace);
         let route_focus = self.route_focus(cx);
         let in_popover = window.focused(cx).is_some_and(|focus| {
-            !focus.tab_stop && focus != self.focus && !focus.contains(&route_focus, window)
+            !focus.tab_stop
+                && focus != self.focus
+                && !focus.contains(&route_focus, window)
+                && !self
+                    .thread
+                    .as_ref()
+                    .is_some_and(|thread| thread.read(cx).transcript_focused(window))
         });
         let editing = window
             .context_stack()

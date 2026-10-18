@@ -265,11 +265,6 @@ The existing replay checks the original colors, row actions, tooltips, canceled 
 | 20 | Account load failure | error | `We couldn’t load your account`, `Reload`, `Sign out`. | An `account/read` error stops `Root::connect`; the window stays empty. | FAIL (`crates/app/src/lib.rs` `connect`; no error page in `crates/ui`) |
 | 21 | Resize | resize | Below 768 px the sidebar is an overlay; below 40rem the composer stacks. | Sidebar hides (row 14.2/23); composer does not stack. | FAIL (`crates/ui/src/composer.rs`: only the 475 px compact footer) |
 
-S033 preserves the recorded content-click, Space, typing, focus, and native Edit menu assertions.
-`Root::type_anywhere` permits a focused ancestor of the route composer, including content outside the Tab order.
-The model and permissions popups retain their input without changing the composer draft.
-`popup_typing_does_not_reach_the_composer` checks both popups, then clicks blank content and resumes typing.
-
 ## 14.4 Thread view
 
 | # | Item | Kind | Original | Port | Status |
