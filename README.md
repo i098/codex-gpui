@@ -221,3 +221,16 @@ Submenu arrows and model-trigger recording remain outside this replay.
 ```sh
 tools/mac.sh -l f2b 'cargo test -p app --test f2b -- --test-threads=1'
 ```
+
+## Command-menu actions
+
+The command menu uses the existing app actions for new chats, archive, Find, navigation, six recent-chat slots, sidebar visibility, panels, and scheduled tasks.
+Find keeps focus in its search field after the menu closes.
+Panel commands keep the selected chat and the existing tabs.
+The terminal command opens an existing background command, not an interactive shell.
+Unsupported destinations remain known gaps; this change does not implement logout, git operations, cloud operations, or the project picker.
+Recorded command rows, ranking, and keyboard-editing checks remain unchanged.
+
+```sh
+tools/mac.sh -l cgx-command-dispatch 'cargo test -p app --test command_dispatch --test s025 --test s025_rank --test s026 -- --test-threads=1'
+```
