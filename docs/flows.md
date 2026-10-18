@@ -458,7 +458,8 @@ When no local changes exist, the form hides the message and checkbox and focuses
 The form retains Push actions without a remote; the existing host reports a missing remote as a failure.
 An empty or taken name disables all three rows.
 `Cmd+Enter` runs the focused row, else `Commit`.
-The host adds explicit `git-commit-status`, `git-commit-diff`, `git-commit` and `git-push` to the `git-changes` arm; no other `git-*` name is accepted.
+The host explicitly routes `git-commit-status`, `git-commit-diff`, `git-commit`, `git-push`, and `git-checkout` with the existing Git actions.
+It does not accept a generic `git-*` route.
 `git-commit` creates the branch, stages everything when unstaged changes are included, then commits; `git-push` sets the upstream of a branch that has none, as the original's push does.
 A blank message is written as the original's `generate-commit-message` does: an ephemeral read-only app-server thread (`thread/start` with `ephemeral`, then `turn/start` with a structured `message` schema) answers the original prompt, and the thread is unsubscribed.
 The generation model is `gpt-6-luna` unless the model list lacks it.
@@ -470,6 +471,20 @@ It then drains real host work and checks the owned commit and remote refs.
 It does not park Git or fake a host response.
 Matched capture fixtures use the retained Subtract thread and an owned `+5 -1` checkout.
 The `codex_git_commit` attribution trailer, `Create PR`, and standalone Create/Switch branch controls remain separate work.
+
+### Standalone branch runtime
+
+`LocalHost` accepts `git-checkout` with `cwd` and exactly one of `branch` or `newBranch`.
+`branch` resolves a local branch, a unique remote branch with tracking, or a commit reference for detached checkout.
+Ambiguous remote names fail without changing the current branch.
+`newBranch` validates the name and rejects existing names and repositories without commits before creating and checking out the branch.
+Success reports the actual current branch, or null for a detached HEAD.
+Git carries safe local changes and refuses checkout when it would overwrite tracked, staged, or untracked files.
+The failure reports `blocked-by-working-tree-changes`, the affected paths, and the Git error.
+The operation never forces checkout, stashes changes, or contacts a remote.
+`git_commit::checkout_dispatch_preserves_changes_and_resolves_branches` exercises the actual runtime dispatcher against disposable repositories and a local bare remote.
+It checks the resulting refs, file contents, index state, detached checkout, invalid names, and remote ambiguity.
+Standalone native Create/Switch controls remain pending; this backend change leaves the current UI unchanged.
 
 ## 14.7 Settings, login and onboarding
 
