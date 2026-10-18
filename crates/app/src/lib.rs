@@ -363,6 +363,7 @@ pub struct Root {
     login: Option<Entity<Login>>,
     bridge: Arc<Bridge>,
     host: Arc<dyn host::Host>,
+    project_load: Option<Task<()>>,
     automations: Option<Result<Value, String>>,
     automation_load: Option<Task<()>>,
     suggestion_load: Option<Task<()>>,
@@ -528,7 +529,7 @@ impl Root {
                 }
             }
         });
-        let root = Self {
+        let mut root = Self {
             back: Vec::new(),
             forward: Vec::new(),
             shell,
@@ -560,6 +561,7 @@ impl Root {
             bridge,
             automations: None,
             automation_load: None,
+            project_load: None,
             suggestion_load: None,
             scheduled: None,
             suggestions: None,
@@ -592,6 +594,7 @@ impl Root {
         cx.on_focus_lost(window, |this, window, cx| window.focus(&this.focus, cx))
             .detach();
         root.connect(window, cx);
+        root.load_projects(cx);
         root
     }
 
@@ -749,14 +752,33 @@ impl Root {
     /// Replaces the desktop host and cancels any pending host read.
     pub fn set_host(&mut self, host: Arc<dyn host::Host>, cx: &mut Context<Self>) {
         self.automation_load = None;
+        self.project_load = None;
         self.suggestion_load = None;
         self.host = host;
         self.automations = None;
+        self.load_projects(cx);
         if self.scheduled_route() {
             self.load_automations(cx);
             self.load_suggestions(cx);
         }
         cx.notify();
+    }
+
+    fn load_projects(&mut self, cx: &mut Context<Self>) {
+        self.sidebar
+            .update(cx, |sidebar, cx| sidebar.set_projects(Vec::new(), cx));
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move { host.projects() });
+        self.project_load = Some(cx.spawn(async move |this, cx| {
+            let result = read.await;
+            this.update(cx, |this, cx| match result {
+                Ok(projects) => this
+                    .sidebar
+                    .update(cx, |sidebar, cx| sidebar.set_projects(projects, cx)),
+                Err(error) => eprintln!("codex-gpui: cannot read sidebar projects: {error:#}"),
+            })
+            .ok();
+        }));
     }
 
     /// The host's automation list, or its error; `None` means that the read has not completed.
