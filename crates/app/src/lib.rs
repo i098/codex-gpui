@@ -43,7 +43,9 @@ use ui::screens::sidebar::{
     PINNED_SECTION_ID, PinThread, RenameThread, SEARCH_LIMIT, SearchHit, title as thread_title,
 };
 use ui::screens::terminal::Xterm;
-use ui::screens::thread::view::{Clock, EditMessage, ForkThread, RevertTurn, ThreadView};
+use ui::screens::thread::view::{
+    Clock, EditMessage, ForkThread, GitAction, RevertTurn, ThreadView,
+};
 use ui::screens::{automations, mobile};
 use ui::toast::{Toast, Toaster};
 use ui::{
@@ -411,7 +413,8 @@ pub struct Root {
     /// Id of the server request the composer's approval card answers.
     approval: Option<Value>,
     /// A commit, push or branch workflow is running (the original's single workflow state).
-    git_busy: bool,
+    git_busy: Option<&'static str>,
+    git_status_load: Option<Task<()>>,
     /// The repository the open commit form read; a later chat switch cannot redirect it.
     commit_cwd: Option<String>,
     /// `Include unstaged changes`, kept from one commit form to the next.
@@ -624,7 +627,8 @@ impl Root {
             qa_work_started: false,
             loaded: HashSet::new(),
             approval: None,
-            git_busy: false,
+            git_busy: None,
+            git_status_load: None,
             commit_cwd: None,
             commit_include_unstaged: true,
             generation: None,
@@ -861,6 +865,10 @@ impl Root {
         self.automation_load = None;
         self.project_load = None;
         self.suggestion_load = None;
+        self.git_status_load = None;
+        if let Some(thread) = &self.thread {
+            thread.update(cx, |view, cx| view.set_git_repository(None, cx));
+        }
         self.host = host;
         self.automations = None;
         self.load_projects(cx);
@@ -868,6 +876,7 @@ impl Root {
             self.load_automations(cx);
             self.load_suggestions(cx);
         }
+        self.refresh_git_actions(cx);
         cx.notify();
     }
 
@@ -1015,19 +1024,65 @@ impl Root {
                 panel.update(cx, |panel, cx| {
                     panel.set_repository(result.map(|(changes, _)| changes), cx)
                 });
+                this.refresh_git_actions(cx);
             })
             .ok();
         })
         .detach();
     }
 
-    /// `git.commit` (`Commit or push`): the commit form when the repository has changes to
-    /// commit, else a push of the commits the branch is ahead by, as the original's command.
+    fn refresh_git_actions(&mut self, cx: &mut Context<Self>) {
+        let Some(thread) = self.thread.clone() else {
+            return;
+        };
+        let cwd = thread.read(cx).cwd().to_owned();
+        let host = self.host.clone();
+        let lookup = host.clone();
+        thread.update(cx, |view, cx| view.set_git_repository(None, cx));
+        self.sync_git_availability(cx);
+        let read = cx.background_spawn(async move {
+            git_call(&*lookup, "git-commit-status", json!({"cwd": cwd}))
+                .and_then(|status| commit_repository(&status, true, String::new()))
+                .map_err(|error| error.to_string())
+        });
+        self.git_status_load = Some(cx.spawn(async move |this, cx| {
+            let repository = read.await;
+            this.update(cx, |this, cx| {
+                if this.thread.as_ref() != Some(&thread) || !Arc::ptr_eq(&host, &this.host) {
+                    return;
+                }
+                thread.update(cx, |view, cx| view.set_git_repository(Some(repository), cx));
+                this.sync_git_availability(cx);
+            })
+            .ok();
+        }));
+    }
+
+    fn sync_git_availability(&self, cx: &mut Context<Self>) {
+        if let Some(menu) = &self.command_menu {
+            let available = self.git_busy.is_none()
+                && self
+                    .thread
+                    .as_ref()
+                    .is_some_and(|view| view.read(cx).git_command_available());
+            menu.update(cx, |menu, cx| menu.set_git_available(available, cx));
+        }
+    }
+
+    fn set_git_phase(&mut self, phase: Option<&'static str>, cx: &mut Context<Self>) {
+        self.git_busy = phase;
+        if let Some(thread) = &self.thread {
+            thread.update(cx, |view, cx| view.set_git_phase(phase, cx));
+        }
+        self.sync_git_availability(cx);
+    }
+
+    /// Both original header actions open the form, including a push with no local changes.
     fn commit_or_push(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(thread) = self.thread.clone() else {
             return;
         };
-        if self.git_busy || self.dialog.is_some() {
+        if self.git_busy.is_some() || self.dialog.is_some() {
             return;
         }
         let view = thread.read(cx);
@@ -1037,6 +1092,7 @@ impl Root {
         let include = self.commit_include_unstaged;
         let host = self.host.clone();
         let repository = cwd.clone();
+        let request_host = host.clone();
         let read = cx.background_spawn(async move {
             git_call(&*host, "git-commit-status", json!({"cwd": repository}))
         });
@@ -1045,27 +1101,21 @@ impl Root {
                 .await
                 .and_then(|status| commit_repository(&status, include, name));
             this.update_in(cx, |this, window, cx| {
-                // The chat changed while Git answered: the answer is for another repository.
-                let current = this.thread.as_ref().map(|thread| thread.read(cx).cwd());
-                if current != Some(cwd.as_str()) {
+                if this.thread.as_ref() != Some(&thread)
+                    || !Arc::ptr_eq(&this.host, &request_host)
+                    || this.git_busy.is_some()
+                    || this.dialog.is_some()
+                {
                     return;
                 }
                 match status {
                     Ok(repo) => {
-                        let selection = if include { repo.all } else { repo.staged };
-                        if selection.files > 0 {
+                        if repo.all.files > 0 || repo.branch.is_some() && repo.ahead > 0 {
                             let dialog = cx.new(|cx| Dialog::commit(repo, cx));
                             this.commit_cwd = Some(cwd);
                             this.show_dialog(dialog, window, cx);
-                        } else if repo.remote && repo.branch.is_some() && repo.ahead > 0 {
-                            let push = GitRequest {
-                                cwd,
-                                step: CommitStep::Push,
-                                message: String::new(),
-                                include_unstaged: include,
-                                new_branch: None,
-                            };
-                            this.git_workflow(push, window, cx);
+                        } else {
+                            this.toast(Toast::info("No changes to commit"), cx);
                         }
                     }
                     Err(error) => {
@@ -1082,10 +1132,19 @@ impl Root {
     /// Creates the branch, commits and pushes in `cwd` as the submitted form chose, then
     /// toasts the result like the original and refreshes the Changes panel.
     fn git_workflow(&mut self, request: GitRequest, window: &mut Window, cx: &mut Context<Self>) {
-        if self.git_busy {
+        if self.git_busy.is_some() {
             return;
         }
-        self.git_busy = true;
+        let phase = if request.step == CommitStep::Push {
+            "Pushing changes…"
+        } else if request.message.is_empty() {
+            "Generating messages…"
+        } else if request.new_branch.is_some() {
+            "Creating branch…"
+        } else {
+            "Committing…"
+        };
+        self.set_git_phase(Some(phase), cx);
         let run = GitRun {
             host: self.host.clone(),
             bridge: self.bridge.clone(),
@@ -1104,7 +1163,7 @@ impl Root {
     }
 
     fn finish_git_workflow(&mut self, outcome: GitOutcome, cwd: &str, cx: &mut Context<Self>) {
-        self.git_busy = false;
+        self.set_git_phase(None, cx);
         match outcome {
             GitOutcome::Done(title) => self.toast(Toast::info(title), cx),
             GitOutcome::Failed { title, detail } => {
@@ -1125,6 +1184,8 @@ impl Root {
             && thread.read(cx).cwd() == cwd
         {
             self.repository_request(panel, cwd, &DiffRequest::Refresh, cx);
+        } else {
+            self.refresh_git_actions(cx);
         }
     }
 
@@ -1674,6 +1735,9 @@ impl Root {
 
     /// `⌘K`, `⌘⇧P` and the sidebar `Search`: the command menu over live Recents, focused.
     fn open_command_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(thread) = &self.thread {
+            thread.update(cx, |view, cx| view.close_summary(cx));
+        }
         let unread = self.sidebar.read(cx).unread.clone();
         let thread_open = matches!(self.state.route, Route::Thread(_));
         let menu =
@@ -1684,6 +1748,7 @@ impl Root {
         .detach();
         window.focus(&menu.focus_handle(cx), cx);
         self.command_menu = Some(menu);
+        self.refresh_git_actions(cx);
         cx.notify();
     }
 
@@ -1768,7 +1833,11 @@ impl Root {
             return;
         }
         self.command_menu = None;
-        cx.subscribe_in(&dialog, window, |this, dialog, outcome, window, cx| {
+        let commit = dialog.read(cx).kind() == DialogKind::Commit;
+        if commit && let Some(thread) = &self.thread {
+            thread.update(cx, |view, cx| view.close_summary(cx));
+        }
+        cx.subscribe_in(&dialog, window, move |this, dialog, outcome, window, cx| {
             if let DialogOutcome::ScheduleTask { prompt, rrule } = outcome {
                 this.create_task(prompt.clone(), rrule.clone(), window, cx);
                 return;
@@ -1779,7 +1848,13 @@ impl Root {
             dialog.read(cx).release_artwork(window);
             this.dialog = None;
             match outcome {
-                DialogOutcome::Dismiss => window.focus(&this.focus, cx),
+                DialogOutcome::Dismiss => {
+                    if commit {
+                        window.focus(&this.composer(cx).focus_handle(cx), cx);
+                    } else {
+                        window.focus(&this.focus, cx);
+                    }
+                }
                 DialogOutcome::RevertChanges { .. } => window.focus(&this.focus, cx),
                 DialogOutcome::DismissAnnouncement(model)
                 | DialogOutcome::UseAnnouncedModel { model, .. } => {
@@ -1816,7 +1891,7 @@ impl Root {
                     include_unstaged,
                     new_branch,
                 } => {
-                    window.focus(&this.focus, cx);
+                    window.focus(&this.composer(cx).focus_handle(cx), cx);
                     this.commit_include_unstaged = *include_unstaged;
                     if let Some(cwd) = this.commit_cwd.take() {
                         let request = GitRequest {
@@ -1992,7 +2067,18 @@ impl Root {
         self.diff = Some(diff);
         self.file = None;
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
+        view.update(cx, |view, cx| view.set_git_phase(self.git_busy, cx));
+        cx.subscribe_in(
+            &view,
+            window,
+            |this, _, action: &GitAction, window, cx| match action {
+                GitAction::Refresh => this.refresh_git_actions(cx),
+                GitAction::OpenForm => this.commit_or_push(window, cx),
+            },
+        )
+        .detach();
         self.thread = Some(view);
+        self.refresh_git_actions(cx);
         if self.state.route == route {
             self.sync(window, cx);
         } else {
@@ -2993,7 +3079,6 @@ fn commit_repository(
             .flatten()
             .filter_map(|branch| branch.as_str().map(str::to_owned))
             .collect(),
-        remote: status["remote"].is_string(),
         ahead: status["commitsAhead"].as_u64().unwrap_or_default() as usize,
         staged: selection("staged"),
         all: selection("all"),
@@ -3065,6 +3150,8 @@ async fn commit_workflow(
         } else {
             message
         };
+        this.update(cx, |this, cx| this.set_git_phase(Some("Committing…"), cx))
+            .ok();
         let params = json!({
             "cwd": run.cwd,
             "message": message,
@@ -3080,6 +3167,10 @@ async fn commit_workflow(
         }
     }
     if step != CommitStep::Commit {
+        this.update(cx, |this, cx| {
+            this.set_git_phase(Some("Pushing changes…"), cx)
+        })
+        .ok();
         let new_branch = new_branch.filter(|_| step == CommitStep::Push);
         let params = json!({"cwd": run.cwd, "newBranch": new_branch});
         match run.call(cx, "git-push", params).await {

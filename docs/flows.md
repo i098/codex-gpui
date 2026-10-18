@@ -436,16 +436,26 @@ Commit and push are in DT-139 below.
 
 ### DT-139: Commit or push
 
-The thread route's `Commit or push` command (`git.commit`) runs the original's rule.
-When the selected changes are not empty it opens the commit form; otherwise it pushes the commits that the branch is ahead by.
-When neither is possible the command does nothing; the original hides it, and the port's command list is static.
-The form uses the retained original's 420 × 289 px surface and 20 px corners.
+The summary Changes row exposes `Git actions` on pointer hover or keyboard focus.
+Both actions open the existing form; `Push` does not push before the user selects its form row.
+The shared command menu offers `Commit or push` only when Commit or Push is available and no workflow runs.
+Git availability includes staged, unstaged, and untracked changes, independent of the form's saved checkbox.
+Disabled Git rows show the original loading or unavailable reason.
+Arrow keys skip disabled rows, Enter selects a row, and Escape returns focus to the trigger.
+Opening the form or command list closes Summary.
+Closing the form returns focus to the current composer.
+The menu shows the active workflow phase and cannot start a second operation.
+Opening either menu reads status through the existing host; stage, revert, commit, and push results refresh it.
+Responses remain bound to the current thread entity and host.
+The dirty form uses the retained original's 420 × 289 px surface and 20 px corners.
 It uses 4 px field and action gaps, 14 px text, and the original commit/cloud-upload icons.
 The native capture also renders the original's blank-message and new-branch states with its `+5 -1` selection at 1280 × 832.
-`Commit to` lists the current branch and `New branch`, offered only when a remote exists; a detached HEAD starts on `New branch`.
+`Commit to` lists the current branch and `New branch`; a detached HEAD starts on `New branch`.
 The new name is prefilled with `git-branch-prefix` (default `codex/`) and the first five words of the chat title.
 `Include unstaged changes` (default on, kept for the session) shows `+N -M` of the selection or `No changes`.
 `Commit`, `Commit and push` and `Push` carry the original's tooltips: `No changes to commit`, `No new commits to push`, `Branch information unavailable`.
+When no local changes exist, the form hides the message and checkbox and focuses `Push`.
+The form retains Push actions without a remote; the existing host reports a missing remote as a failure.
 An empty or taken name disables all three rows.
 `Cmd+Enter` runs the focused row, else `Commit`.
 The host adds explicit `git-commit-status`, `git-commit-diff`, `git-commit` and `git-push` to the `git-changes` arm; no other `git-*` name is accepted.
@@ -455,7 +465,11 @@ The generation model is `gpt-6-luna` unless the model list lacks it.
 Failures toast `Failed to create branch`, `Failed to commit changes`, `Failed to push changes` or `Failed to generate commit message: …` with `Copy error`; success toasts `Committed to {branch}` or `Pushed {branch}`.
 The `git_commit` native proof drives all of this with keys and a mouse click against owned repositories and a local bare remote.
 Its message generation answers from a crafted replay exchange, because the fixtures hold no recording of it.
-The `codex_git_commit` attribution trailer, the header `Git actions` menu, `Create PR`, and branch switching remain separate work.
+The queued-state check uses native input and captures the rendered disabled UI before the background executor drains.
+It then drains real host work and checks the owned commit and remote refs.
+It does not park Git or fake a host response.
+Matched capture fixtures use the retained Subtract thread and an owned `+5 -1` checkout.
+The `codex_git_commit` attribution trailer, `Create PR`, and standalone Create/Switch branch controls remain separate work.
 
 ## 14.7 Settings, login and onboarding
 

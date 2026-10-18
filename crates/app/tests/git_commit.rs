@@ -30,6 +30,12 @@ fn git(root: &Path, args: &[&str]) -> Result<String> {
 fn command(fx: &mut Fx, label: &str) -> Result<()> {
     fx.keys("cmd-k")?;
     fx.type_text(label)?;
+    fx.wait("available command", |fx| {
+        fx.read(|root, cx| root.command_menu().unwrap().read(cx).describe())
+            .into_iter()
+            .flat_map(|(_, rows)| rows)
+            .any(|(text, _)| text.split(" | ").next().unwrap().replace(['[', ']'], "") == label)
+    })?;
     let index = fx
         .read(|root, cx| {
             root.command_menu()
@@ -51,10 +57,34 @@ fn command(fx: &mut Fx, label: &str) -> Result<()> {
     Ok(())
 }
 
+fn offers_commit(fx: &Fx) -> bool {
+    fx.read(|root, cx| root.command_menu().unwrap().read(cx).describe())
+        .into_iter()
+        .flat_map(|(_, rows)| rows)
+        .any(|(label, _)| label.contains("Commit"))
+}
+
 fn open_form(fx: &mut Fx) -> Result<()> {
     command(fx, "Commit or push")?;
     fx.wait("commit form", |fx| {
         fx.read(|root, _| root.dialog().is_some())
+    })
+}
+
+fn header_menu(fx: &mut Fx) -> Result<()> {
+    if !fx.read(|root, cx| root.thread().unwrap().read(cx).summary_open) {
+        fx.click((1217., 22.))?;
+    }
+    fx.click((1242., 106.))?;
+    fx.wait("Git header status", |fx| {
+        fx.read(|root, cx| {
+            let view = root.thread().unwrap().read(cx);
+            view.git_actions_open()
+                && view
+                    .git_action_rows()
+                    .iter()
+                    .all(|(_, reason)| !reason.is_some_and(|reason| reason.starts_with("Loading")))
+        })
     })
 }
 
@@ -130,8 +160,8 @@ fn commit_branch_and_push_use_real_repositories() -> Result<()> {
     git(root, &["commit", "-qm", "base"])?;
     git(root, &["remote", "add", "origin", remote.to_str().unwrap()])?;
     git(root, &["push", "-q", "-u", "origin", "main"])?;
-    fs::create_dir(root.join("sub"))?;
-    let cwd = root.join("sub").to_string_lossy().into_owned();
+    fs::create_dir(root.join("proj"))?;
+    let cwd = root.join("proj").to_string_lossy().into_owned();
     let other_repo = tempfile::tempdir_in(&scratch)?;
     let other = other_repo.path();
     git(other, &["init", "-q", "-b", "main"])?;
@@ -163,18 +193,49 @@ fn commit_branch_and_push_use_real_repositories() -> Result<()> {
     let remote_head = |branch: &str| git(remote, &["rev-parse", &format!("refs/heads/{branch}")]);
     let base = remote_head("main")?;
 
-    // A clean branch with nothing to push: the command has nothing to open or run.
-    command(&mut fx, "Commit or push")?;
+    fx.click((1217., 22.))?;
+    fx.shot()?.save(scratch.join("after-summary-header.png"))?;
+    fx.keys("cmd-k")?;
+    fx.type_text("Commit or push")?;
     fx.advance(Duration::from_secs(2))?;
-    ensure!(fx.read(|root, _| root.dialog().is_none()));
+    fx.shot()?.save(scratch.join("after-clean-command.png"))?;
+    ensure!(
+        !offers_commit(&fx),
+        "a clean synchronized branch must not offer Commit or push"
+    );
+    fx.keys("escape")?;
     ensure!(remote_head("main")? == base);
+    header_menu(&mut fx)?;
+    ensure!(
+        fx.read(|root, cx| root.thread().unwrap().read(cx).git_action_rows())
+            == [
+                ("Commit", Some("No changes to commit")),
+                ("Push", Some("No new commits to push"))
+            ]
+    );
+    fx.shot()?
+        .save(scratch.join("after-clean-header-menu.png"))?;
+    fx.click((880., 71.))?;
+    ensure!(fx.read(|root, _| root.dialog().is_none()));
+    fx.keys("escape enter")?;
+    ensure!(fx.read(|root, cx| root.thread().unwrap().read(cx).git_actions_open()));
+    fx.keys("escape")?;
 
     // Match the retained original form's +5 -1 selection without changing the commit cases.
     fs::write(
         root.join("a.txt"),
         "reference\nline 2\nline 3\nline 4\nline 5\n",
     )?;
-    open_form(&mut fx)?;
+    header_menu(&mut fx)?;
+    fx.shot()?
+        .save(scratch.join("after-dirty-header-menu.png"))?;
+    fx.hover((880., 100.))?;
+    fx.advance(Duration::from_millis(300))?;
+    fx.shot()?.save(scratch.join("after-disabled-push.png"))?;
+    fx.keys("down enter")?;
+    fx.wait("header commit form", |fx| {
+        fx.read(|root, _| root.dialog().is_some())
+    })?;
     fx.shot()?.save(scratch.join("original-state-blank.png"))?;
     fx.type_text("Add proof files")?;
     fx.shot()?.save(scratch.join("original-state-filled.png"))?;
@@ -186,6 +247,8 @@ fn commit_branch_and_push_use_real_repositories() -> Result<()> {
     fx.shot()?
         .save(scratch.join("original-state-new-branch.png"))?;
     fx.keys("escape")?;
+    ensure!(fx.composer_focused()?);
+    ensure!(!fx.read(|root, cx| root.thread().unwrap().read(cx).summary_open));
     git(root, &["checkout", "-q", "--", "a.txt"])?;
 
     // `Commit`: staged, unstaged and untracked files, with a typed message.
@@ -193,7 +256,11 @@ fn commit_branch_and_push_use_real_repositories() -> Result<()> {
     fs::write(root.join("b.txt"), "staged\n")?;
     git(root, &["add", "b.txt"])?;
     fs::write(root.join("c.txt"), "untracked\n")?;
-    open_form(&mut fx)?;
+    header_menu(&mut fx)?;
+    fx.click((880., 71.))?;
+    fx.wait("pointer commit form", |fx| {
+        fx.read(|root, _| root.dialog().is_some())
+    })?;
     ensure!(
         rows(&fx)
             == [
@@ -228,9 +295,20 @@ fn commit_branch_and_push_use_real_repositories() -> Result<()> {
     ensure!(git(root, &["show", "--name-only", "--format=%s"])? == "Only the index\n\nd.txt");
     ensure!(git(root, &["diff", "--name-only"])? == "a.txt");
 
-    // Nothing is staged and the box stays unchecked: the command pushes the two commits.
+    // Opening the push-only form must not push until the user selects Push.
     git(root, &["checkout", "-q", "--", "a.txt"])?;
-    command(&mut fx, "Commit or push")?;
+    open_form(&mut fx)?;
+    ensure!(remote_head("main")? == base);
+    ensure!(
+        rows(&fx)
+            == [
+                ("Commit", false, Some("No changes to commit")),
+                ("Commit and push", false, Some("No changes to commit")),
+                ("Push", true, None),
+            ]
+    );
+    fx.shot()?.save(scratch.join("after-push-only-form.png"))?;
+    fx.keys("enter")?;
     toast(&mut fx, "Pushed main")?;
     ensure!(remote_head("main")? == git(root, &["rev-parse", "HEAD"])?);
 
@@ -333,13 +411,19 @@ fn commit_branch_and_push_use_real_repositories() -> Result<()> {
         root,
         &["remote", "set-url", "origin", "/nonexistent/proof-remote"],
     )?;
-    command(&mut fx, "Commit or push")?;
+    open_form(&mut fx)?;
+    fx.keys("enter")?;
     toast(&mut fx, "Failed to push changes")?;
     git(
         root,
         &["remote", "set-url", "origin", remote.to_str().unwrap()],
     )?;
-    command(&mut fx, "Commit or push")?;
+    header_menu(&mut fx)?;
+    fx.keys("down enter")?;
+    fx.wait("header push form", |fx| {
+        fx.read(|root, _| root.dialog().is_some())
+    })?;
+    fx.keys("enter")?;
     toast(&mut fx, "Pushed feature/proof")?;
     ensure!(remote_head("feature/proof")? == git(root, &["rev-parse", "HEAD"])?);
 
@@ -354,7 +438,8 @@ fn commit_branch_and_push_use_real_repositories() -> Result<()> {
     fs::write(root.join("a.txt"), "base\nfork\n")?;
     git(root, &["commit", "-qam", "To the fork"])?;
     let origin_before = remote_head("feature/proof")?;
-    command(&mut fx, "Commit or push")?;
+    open_form(&mut fx)?;
+    fx.keys("enter")?;
     toast(&mut fx, "Pushed feature/proof")?;
     ensure!(
         git(fork.path(), &["rev-parse", "refs/heads/feature/proof"])?
@@ -431,6 +516,264 @@ fn commit_branch_and_push_use_real_repositories() -> Result<()> {
     ensure!(lone_status["remote"].is_null() && lone_status["hasCommits"] == false);
     println!(
         "PASS: native commit form, staged and unstaged selection, push-only command, click commit-and-push, new branch with exists check and upstream, recorded message generation, failure toasts, host boundary"
+    );
+    Ok(())
+}
+
+#[test]
+fn queued_git_actions_preserve_the_subtract_checkout() -> Result<()> {
+    use gpui::{
+        Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+        PlatformInput, point, px,
+    };
+
+    let scratch = std::env::var_os("CGX_GIT_COMMIT_EVIDENCE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("cgx-git-commit"));
+    fs::create_dir_all(&scratch)?;
+    let checkout = tempfile::tempdir_in(&scratch)?;
+    let workspace = checkout.path().join("proj");
+    fs::create_dir(&workspace)?;
+    let root = workspace.as_path();
+    let remote = tempfile::tempdir_in(&scratch)?;
+    git(remote.path(), &["init", "-q", "--bare", "-b", "main"])?;
+    git(root, &["init", "-q", "-b", "main"])?;
+    git(root, &["config", "user.email", "proof@example.invalid"])?;
+    git(root, &["config", "user.name", "Native proof"])?;
+    fs::create_dir(root.join("src"))?;
+    fs::write(root.join("hello.py"), "print(\"Hello, world\")\n")?;
+    fs::write(
+        root.join("src/math.py"),
+        "def add(a, b):\n    return a + b\n",
+    )?;
+    git(root, &["add", "-A"])?;
+    git(root, &["commit", "-qm", "base"])?;
+    git(
+        root,
+        &["remote", "add", "origin", remote.path().to_str().unwrap()],
+    )?;
+    git(root, &["push", "-q", "-u", "origin", "main"])?;
+    let base = git(root, &["rev-parse", "HEAD"])?;
+    let mut lines = script(None, |_| {})?;
+    for line in &mut lines {
+        if let Some(thread) = line.pointer_mut("/msg/result/thread") {
+            thread["cwd"] = workspace.to_string_lossy().into_owned().into();
+        }
+    }
+    lines.splice(0..0, generation("Apply the recorded updates"));
+    let home = tempfile::tempdir_in(&scratch)?;
+    let host = Arc::new(LocalHost::new(home.path()));
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
+    fx.keys("cmd-2")?;
+    fx.wait_thread(common::SUBTRACT)?;
+    fx.click((1217., 22.))?;
+    fx.hover((1242., 106.))?;
+    fx.shot()?
+        .save(scratch.join("comparison-entry-hover.png"))?;
+    fx.keys("cmd-k")?;
+    fx.type_text("Commit or push")?;
+    fx.advance(Duration::from_millis(300))?;
+    ensure!(!offers_commit(&fx));
+    fx.shot()?
+        .save(scratch.join("comparison-clean-command.png"))?;
+    fx.keys("escape")?;
+    fs::write(root.join("hello.py"), "print(\"Hello, Codex\")\n")?;
+    fs::write(
+        root.join("src/math.py"),
+        "def add(a, b):\n    return a + b\n\n\ndef subtract(a, b):\n    return a - b\n",
+    )?;
+    let status = json_body(&host.fetch(&Request::post(
+        "git-commit-status",
+        Some(json!({"cwd": root})),
+    ))?)?;
+    ensure!(
+        status["branch"] == "main"
+            && status["commitsAhead"] == 0
+            && status["staged"]["files"] == 0
+            && status["all"]["files"] == 2
+            && status["all"]["additions"] == 5
+            && status["all"]["deletions"] == 1
+    );
+    serde_json::to_writer_pretty(
+        fs::File::create(scratch.join("comparison-git-state.json"))?,
+        &status,
+    )?;
+    header_menu(&mut fx)?;
+    ensure!(
+        fx.read(|root, cx| root.thread().unwrap().read(cx).git_action_rows())
+            == [("Commit", None), ("Push", Some("No new commits to push"))]
+    );
+    fx.shot()?.save(scratch.join("comparison-dirty-menu.png"))?;
+    fx.click((903., 71.))?;
+    fx.wait("matched header commit form", |fx| {
+        fx.read(|root, _| root.dialog().is_some())
+    })?;
+    fx.shot()?.save(scratch.join("comparison-blank-form.png"))?;
+    fx.keys("escape")?;
+    fx.keys("cmd-k")?;
+    fx.type_text("Commit or push")?;
+    fx.wait("dirty command registration", |fx| offers_commit(fx))?;
+    fx.shot()?
+        .save(scratch.join("comparison-dirty-command.png"))?;
+    fx.keys("escape")?;
+    open_form(&mut fx)?;
+
+    // Capture queued native work before the deterministic background executor runs it.
+    let dispatch_keys = |fx: &mut Fx, keys: &str| -> Result<()> {
+        for key in keys.split(' ') {
+            let stroke = Keystroke::parse(key)?;
+            fx.cx.update_window(fx.window, |_, window, cx| {
+                window.dispatch_keystroke(stroke, cx);
+            })?;
+        }
+        Ok(())
+    };
+    let dispatch_click = |fx: &mut Fx, x: f32, y: f32| -> Result<()> {
+        fx.cx.update_window(fx.window, |_, window, cx| {
+            let position = point(px(x), px(y));
+            window.dispatch_event(
+                PlatformInput::MouseMove(MouseMoveEvent {
+                    position,
+                    pressed_button: None,
+                    modifiers: Modifiers::default(),
+                }),
+                cx,
+            );
+            window.dispatch_event(
+                PlatformInput::MouseDown(MouseDownEvent {
+                    button: MouseButton::Left,
+                    position,
+                    modifiers: Modifiers::default(),
+                    click_count: 1,
+                    first_mouse: false,
+                }),
+                cx,
+            );
+            window.dispatch_event(
+                PlatformInput::MouseUp(MouseUpEvent {
+                    button: MouseButton::Left,
+                    position,
+                    modifiers: Modifiers::default(),
+                    click_count: 1,
+                }),
+                cx,
+            );
+        })?;
+        Ok(())
+    };
+    dispatch_keys(&mut fx, "cmd-enter")?;
+    dispatch_click(&mut fx, 1217., 22.)?;
+    fx.cx
+        .capture_screenshot(fx.window)?
+        .save(scratch.join("queued-pending-header.png"))?;
+    let pending = fx.read(|root, cx| root.thread().unwrap().read(cx).git_action_rows());
+    ensure!(
+        pending
+            .iter()
+            .all(|(_, reason)| *reason == Some("Generating messages…")),
+        "native pending phase after direct submit/capture: {pending:?}"
+    );
+    dispatch_click(&mut fx, 1242., 106.)?;
+    fx.cx
+        .capture_screenshot(fx.window)?
+        .save(scratch.join("queued-pending-menu.png"))?;
+    dispatch_keys(&mut fx, "down enter escape cmd-k")?;
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        for c in "Commit or push".chars() {
+            window.dispatch_keystroke(
+                Keystroke {
+                    key: c.to_string(),
+                    ..Default::default()
+                },
+                cx,
+            );
+        }
+    })?;
+    ensure!(!offers_commit(&fx));
+    fx.cx
+        .capture_screenshot(fx.window)?
+        .save(scratch.join("queued-pending-command.png"))?;
+    ensure!(
+        git(root, &["rev-parse", "HEAD"])? == base,
+        "queued work has not run"
+    );
+    dispatch_keys(&mut fx, "escape")?;
+    toast(&mut fx, "Committed to main")?;
+    ensure!(git(root, &["log", "-1", "--format=%s"])? == "Apply the recorded updates");
+    ensure!(git(root, &["rev-list", "--count", "HEAD"])? == "2");
+    ensure!(git(root, &["status", "--porcelain"])?.is_empty());
+    ensure!(git(remote.path(), &["rev-parse", "refs/heads/main"])? == base);
+    header_menu(&mut fx)?;
+    fx.keys("down enter")?;
+    fx.wait("push-only comparison form", |fx| {
+        fx.read(|root, _| root.dialog().is_some())
+    })?;
+    fx.shot()?
+        .save(scratch.join("comparison-push-only-form.png"))?;
+    ensure!(git(remote.path(), &["rev-parse", "refs/heads/main"])? == base);
+    fx.keys("enter")?;
+    toast(&mut fx, "Pushed main")?;
+    ensure!(
+        git(remote.path(), &["rev-parse", "refs/heads/main"])?
+            == git(root, &["rev-parse", "HEAD"])?
+    );
+    git(root, &["checkout", "-q", "--detach"])?;
+    header_menu(&mut fx)?;
+    ensure!(
+        fx.read(|root, cx| root.thread().unwrap().read(cx).git_action_rows())
+            == [
+                ("Commit", Some("No changes to commit")),
+                ("Push", Some("Branch information unavailable")),
+            ]
+    );
+    fx.shot()?
+        .save(scratch.join("after-detached-header-menu.png"))?;
+    fx.keys("down enter")?;
+    ensure!(fx.read(|root, _| root.dialog().is_none()));
+    fx.keys("escape")?;
+
+    fs::rename(root.join(".git"), root.join("git-data"))?;
+    header_menu(&mut fx)?;
+    ensure!(
+        fx.read(|root, cx| root.thread().unwrap().read(cx).git_action_rows())
+            == [
+                ("Commit", Some("Commit is unavailable right now")),
+                ("Push", Some("Push is unavailable right now")),
+            ]
+    );
+    fx.shot()?
+        .save(scratch.join("after-unavailable-header-menu.png"))?;
+    fx.keys("down enter")?;
+    ensure!(fx.read(|root, _| root.dialog().is_none()));
+    fx.keys("escape cmd-k")?;
+    fx.type_text("Commit or push")?;
+    fx.advance(Duration::from_secs(1))?;
+    ensure!(!offers_commit(&fx));
+    fx.keys("escape")?;
+    fs::rename(root.join("git-data"), root.join(".git"))?;
+    git(root, &["checkout", "-q", "main"])?;
+    git(root, &["remote", "remove", "origin"])?;
+    git(
+        root,
+        &["commit", "--allow-empty", "-qm", "Without a remote"],
+    )?;
+    header_menu(&mut fx)?;
+    ensure!(
+        fx.read(|root, cx| root.thread().unwrap().read(cx).git_action_rows())
+            == [("Commit", Some("No changes to commit")), ("Push", None)]
+    );
+    fx.keys("down enter")?;
+    fx.wait("push without a remote form", |fx| {
+        fx.read(|root, _| root.dialog().is_some())
+    })?;
+    fx.shot()?
+        .save(scratch.join("after-no-remote-push-form.png"))?;
+    fx.keys("enter")?;
+    toast(&mut fx, "Failed to push changes")?;
+    println!(
+        "PASS: native queued/pending guard before background drain, real commit and local ref effects, recorded Subtract fixture, detached/unavailable/no-remote feedback"
     );
     Ok(())
 }
