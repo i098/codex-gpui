@@ -69,6 +69,8 @@ It coalesces newer revisions during a build and retains a pending candidate when
 It verifies the signed bundle, compiled source revision, artifact digest, executable path, and running PID.
 It keeps the previous bundle at `updater/last-working.app`.
 It rebuilds missing temporary candidates and removes completed or superseded temporary artifacts.
+It requests a cooperative close before removing a superseded idle probe.
+It keeps the pending ownership record when a staged process cannot close safely.
 It verifies an unfinished activation or restores the backup after the new process exits.
 
 QA data stays in `~/Library/Application Support/codex-gpui-qa/profile/`.
@@ -80,6 +82,8 @@ It can read the existing ChatGPT app-server executable without changing that app
 The normal Codex GPUI profile and launch behavior stay unchanged.
 
 Programmatic startup uses `open -g` and an unfocused QA window.
+Startup probes also use `open -j` to keep their temporary windows hidden.
+If the installed revision already matches main but its process has stopped, the updater starts the installed bundle again.
 After QA gains focus, starts a turn, changes model settings, or starts sign-in, close QA when ready to update.
 The updater keeps its candidate pending until that close.
 It also refuses to close during a draft, attachment work, an approval, a running turn, or unverified readiness.
@@ -93,6 +97,8 @@ Read the current source, artifact, and runtime identities with:
 ```sh
 python3 "$HOME/Library/Application Support/codex-gpui-qa/updater/qa-sync.py" status
 ```
+
+Run the updater regression checks with `python3 -B tools/test_qa_sync.py`.
 
 Stop only the owned timer with `launchctl bootout "gui/$(id -u)/dev.codexgpui.qa-sync"`.
 That command does not close QA or any normal app.

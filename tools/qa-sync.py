@@ -48,9 +48,9 @@ def remove_temporary(path, prefix):
 
 
 def discard_candidate(candidate):
-    if process_for(Path(candidate["bundle"])):
-        return False
     profile = temporary_path(Path(candidate["smoke_profile"]), "cgx-qa-smoke-")
+    if not close_ready(profile, Path(candidate["bundle"]), candidate["revision"]):
+        return False
     if profile.exists():
         with (profile / "session.lock").open("a+") as session:
             try:
@@ -207,6 +207,7 @@ def launch(bundle, revision, profile=PROFILE, smoke=False):
     if not existing:
         args = ["/usr/bin/open", "-g", "-n", str(bundle)]
         if smoke:
+            args.insert(1, "-j")
             args += ["--args", "--qa-smoke-profile", str(profile)]
         run(*args)
     deadline = time.monotonic() + 45
@@ -281,7 +282,8 @@ def finish_activation(candidate):
     os.replace(temporary, UPDATER / "qa-sync.py")
     if not discard_candidate(candidate):
         print("retained a running staged QA artifact: " + candidate["stage"], flush=True)
-    (UPDATER / "pending.json").unlink(missing_ok=True)
+    else:
+        (UPDATER / "pending.json").unlink(missing_ok=True)
     print(json.dumps({"event": "installed", **installed}), flush=True)
     return True
 
@@ -398,19 +400,19 @@ def update():
         current = current_installation()
         pending = UPDATER / "pending.json"
         candidate = json.loads(pending.read_text()) if pending.exists() else None
-        if current and current["revision"] == revision:
-            if candidate and candidate["revision"] == revision:
-                launch(INSTALLED, revision)
-                finish_activation(candidate)
-            else:
-                print(json.dumps({"event": "synced", **current, "running": runtime(PROFILE, INSTALLED, revision)}), flush=True)
-            return
         if candidate and (candidate["revision"] != revision or not Path(candidate["bundle"]).is_dir()):
             if not discard_candidate(candidate):
                 print("pending: a staged QA process still owns its profile", flush=True)
                 return
             pending.unlink()
             candidate = None
+        if current and current["revision"] == revision:
+            running = launch(INSTALLED, revision)
+            if candidate and candidate["revision"] == revision:
+                finish_activation(candidate)
+            else:
+                print(json.dumps({"event": "synced", **current, "running": running}), flush=True)
+            return
         if candidate is None:
             candidate = build(revision)
         if not candidate["startup_verified"] and not probe_candidate(candidate):
