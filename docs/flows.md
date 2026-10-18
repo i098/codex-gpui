@@ -389,7 +389,16 @@ Reads and mutations run off the UI thread, with loading and error states in the 
 Tracked files use one bulk Git diff per source; untracked files use separate comparisons.
 The `git_stage` native proof checks the real index, visible diff text, partial staging, deletion, lock recovery, and unborn repositories.
 It also checks literal and newline filenames, multi-file patches, and rejects paths outside the repository.
-Revert, hunk actions, commit, push, and remote Git remain separate work.
+The host also serves `git-revert` for the revert actions; no menu, dialog, or button calls it yet.
+It takes `cwd`, a repository-relative `path`, `source` (`unstaged` or `staged`), the `diff` text that Changes shows for that file, and an optional 0-based `hunk`.
+The host recomputes that diff and refuses a stale request (`file changed since its diff was shown`), so it never reverts a different hunk or newer edits.
+An unstaged revert reverse-applies the patch to the working tree, which also deletes an untracked file and restores a deleted one.
+A staged revert reverse-applies it to the index and then to the working tree, as the original does.
+The response `status` is `partial-success` when only the index was reverted: the working-tree step failed, or the working file already differed from the index, because Git could then move the patch onto a look-alike block and erase newer edits.
+Otherwise `status` is `success` and the body is the usual `{root, unstaged, staged}`; a Git failure is an error and changes nothing.
+A hunk revert leaves the file mode alone; a whole-file revert restores binary files and modes.
+The `git_revert` native-host proof checks the real index and files for file and hunk reverts, partial results, look-alike blocks, modes, binary files, stale input, an index lock, and rejected input.
+Menus, the `Revert changes?` confirmation, results in the panel, and commit, push, and remote Git remain separate work.
 
 
 | # | Item | Kind | Original | Port | Status |
@@ -399,8 +408,8 @@ Revert, hunk actions, commit, push, and remote Git remain separate work.
 | 3 | Source selector | click | Uncommitted / Staged / … | Last Turn, Unstaged, Staged, and Refresh read the open thread's local repository. | PARTIAL (`git_stage`; other sources remain separate) |
 | 4 | Show / Hide files | click | Toggles the file tree. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 5 | File tree filter | focus | `Filter files…`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Copy path and Collapse/Expand work. Local sources add Stage file or Unstage file. Open in editor remains disabled. | PARTIAL (`s027::diff_selection_and_hover_replay`, `git_stage`) |
-| 7 | Hunk revert / stage | click | Revert, Stage / Unstage hunk. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
+| 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Copy path and Collapse/Expand work. Local sources add Stage file or Unstage file. Open in editor remains disabled. The host reverts one file (`git-revert`, `git_revert`); no `Revert file` control exists yet. | PARTIAL (`s027::diff_selection_and_hover_replay`, `git_stage`) |
+| 7 | Hunk revert / stage | click | Revert, Stage / Unstage hunk. | The host reverts one hunk (`git-revert`, `git_revert`); no hunk control exists yet. | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 8 | Revert all | click | `Revert changes?` dialog. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 9 | Split / unified toggle | click | Switch diff layout. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 10 | Word wrap | click | Toggles wrap. | The body context menu toggles wrap; the header control remains separate work. | PARTIAL (`s027::diff_selection_and_hover_replay`) |
