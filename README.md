@@ -122,6 +122,10 @@ The baseline uses window-local logical pixels from the top left; the adapter han
 Call it on the main thread with the unchanged selection.
 Headless windows return their native-handle error; the adapter has no URL or clipboard fallback.
 
+With `test-support`, `HeadlessAppContext::did_prompt_for_paths` reports a pending path dialog.
+Use `simulate_path_prompt_response` to answer it with selected paths or `None` for cancellation.
+These hooks use `TestPlatform` without opening an OS dialog; normal app behavior does not change.
+
 `gpui` and `gpui_apple` come from Zed at a fixed revision and are vendored in `crates/textsys`.
 The workspace `[patch]` replaces the upstream crates with these copies.
 Stock GPUI cannot match Chromium's pixels, so the copies change three things:
