@@ -169,6 +169,7 @@ pub struct SettingsPage {
     values: Value,
     /// `projectlessWorkspaceRoot` default: `~/Documents/Codex`.
     projectless_root: String,
+    pending_instructions: Vec<SettingChanged>,
 }
 
 impl SettingsPage {
@@ -191,6 +192,7 @@ impl SettingsPage {
             query: String::new(),
             values,
             projectless_root,
+            pending_instructions: Vec::new(),
         }
     }
 
@@ -209,6 +211,8 @@ impl SettingsPage {
 
     /// Stores a setting and reports it to the app's config or host settings service.
     fn set(&mut self, path: &'static str, value: Value, cx: &mut Context<Self>) {
+        self.pending_instructions
+            .retain(|change| change.path != path);
         let (store, key) = path.split_once('.').unwrap_or((path, ""));
         // `IndexMut` makes a missing store an object on its first key.
         self.values[store][key] = value.clone();
@@ -219,6 +223,21 @@ impl SettingsPage {
     pub fn refresh_host(&mut self, values: Value, cx: &mut Context<Self>) {
         self.values["host"] = values;
         cx.notify();
+    }
+
+    fn draft_instructions(&mut self, path: &'static str, value: String) {
+        self.pending_instructions
+            .retain(|change| change.path != path);
+        if self.choice(path, "") != value {
+            self.pending_instructions.push(SettingChanged {
+                path,
+                value: json!(value),
+            });
+        }
+    }
+
+    pub fn take_pending_instructions(&mut self) -> Vec<SettingChanged> {
+        std::mem::take(&mut self.pending_instructions)
     }
 }
 
@@ -456,7 +475,17 @@ const SEND_OPTIONS: &[(&str, &str)] = &[
 
 impl SettingsPane {
     fn new(page: Entity<SettingsPage>, cx: &mut Context<Self>) -> Self {
-        cx.observe(&page, |_, _, cx| cx.notify()).detach();
+        cx.observe(&page, |_, page, cx| {
+            if page.read(cx).section != "Git" {
+                page.update(cx, |page, cx| {
+                    for change in page.take_pending_instructions() {
+                        page.set(change.path, change.value, cx);
+                    }
+                });
+            }
+            cx.notify();
+        })
+        .detach();
         Self {
             page,
             layer: Layer::default(),
@@ -628,6 +657,11 @@ impl SettingsPane {
         const FIELDS: &[(&str, &str, &str)] = &[
             ("host.git-branch-prefix", "Branch prefix", "codex/"),
             (
+                "host.git-pr-watch-instructions",
+                "Watch and fix pull requests",
+                "Add pull request watch guidance…",
+            ),
+            (
                 "host.git-commit-instructions",
                 "Commit instructions",
                 "Add commit message guidance…",
@@ -636,11 +670,6 @@ impl SettingsPane {
                 "host.git-pr-instructions",
                 "Pull request instructions",
                 "Add pull request guidance…",
-            ),
-            (
-                "host.git-pr-watch-instructions",
-                "Watch and fix pull requests",
-                "Add pull request watch guidance…",
             ),
         ];
         if self.git_fields.is_empty() {
@@ -654,19 +683,36 @@ impl SettingsPane {
                 let editor =
                     cx.new(|cx| Composer::settings_field(placeholder, &value, multiline, cx));
                 let field = editor.clone();
-                cx.on_blur(&editor.focus_handle(cx), window, move |this, _, cx| {
-                    this.save_git_field(key, &field, cx);
-                })
-                .detach();
+                if !multiline {
+                    cx.on_blur(&editor.focus_handle(cx), window, move |this, _, cx| {
+                        this.save_git_field(key, &field, cx);
+                    })
+                    .detach();
+                }
                 if multiline {
+                    let mut pending = None;
                     let mut previous = value.clone();
                     cx.observe(&editor, move |this, editor, cx| {
                         let text = editor.read(cx).field_text().to_owned();
                         if previous == text {
                             return;
                         }
-                        previous = text;
-                        this.save_git_field(key, &editor, cx);
+                        previous = text.clone();
+                        drop(pending.take());
+                        this.page
+                            .update(cx, |page, _| page.draft_instructions(key, text.clone()));
+                        if this.page.read(cx).choice(key, "") != text {
+                            pending = Some(cx.spawn(async move |this, cx| {
+                                cx.background_executor()
+                                    .timer(std::time::Duration::from_secs(3))
+                                    .await;
+                                let _ = this.update(cx, |this, cx| {
+                                    if editor.read(cx).field_text() == text {
+                                        this.save_git_field(key, &editor, cx);
+                                    }
+                                });
+                            }));
+                        }
                         cx.notify();
                     })
                     .detach();

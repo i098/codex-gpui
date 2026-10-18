@@ -29,7 +29,7 @@ The S034 replay checks the menu-bar switch, its saved values, and Back navigatio
 
 Settings > Git stores branch, merge, push, draft, diff, and pull request instruction preferences in `host-settings.json`.
 Review delivery uses the existing app-server config store.
-Branch prefix saves on blur or Enter; multiline instructions save after each edit.
+Branch prefix saves on blur or Enter; multiline instructions save after three idle seconds or when the page closes.
 The focused `cargo test -p app --test git_settings -- --test-threads=1` native replay verifies saved values after reopening Git settings.
 This page does not implement Git operations or active pull request watchers, and it does not complete other settings pages.
 

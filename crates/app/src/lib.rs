@@ -356,6 +356,7 @@ pub struct Root {
     archive_page: Option<Entity<ArchivedChats>>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
+    settings_page: Option<Entity<settings::SettingsPage>>,
     /// `⌘K` command menu over the window.
     command_menu: Option<Entity<CommandMenu>>,
     dialog: Option<Entity<Dialog>>,
@@ -552,6 +553,7 @@ impl Root {
             page: None,
             archive_page: None,
             settings_section: None,
+            settings_page: None,
             command_menu: None,
             dialog: None,
             login: None,
@@ -581,6 +583,7 @@ impl Root {
         window.on_window_should_close(cx, move |window, cx| {
             this.update(cx, |this, cx| {
                 if this.state.confirm_before_close != ConfirmBeforeClose::Always {
+                    this.flush_settings(cx);
                     return true;
                 }
                 this.open_dialog(DialogKind::CloseWindow, window, cx);
@@ -588,6 +591,11 @@ impl Root {
             })
             .unwrap_or(true)
         });
+        cx.on_app_quit(|this, cx| {
+            this.flush_settings(cx);
+            async {}
+        })
+        .detach();
         window.focus(&root.focus, cx);
         // The DOM's body: when the focused element goes (a closed find bar or menu blurs, a
         // node leaves the tree), the root takes focus so the key bindings keep working.
@@ -1016,6 +1024,8 @@ impl Root {
     /// Shows the route (loading its thread if needed), pushes history into the shell and
     /// persists the state.
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.flush_settings(cx);
+        self.settings_page = None;
         self.suggestion_load = None;
         let (can_back, can_forward) = (!self.back.is_empty(), !self.forward.is_empty());
         self.archive_page = None;
@@ -1032,6 +1042,7 @@ impl Root {
                 config["host"]["confirm-before-close"] = json!(self.state.confirm_before_close);
                 let section = self.settings_section.take();
                 let (shell, page) = settings::shell(&config, &self.skills, section, cx);
+                self.settings_page = Some(page.clone());
                 cx.subscribe(&page, |this, page, e: &SettingChanged, cx| {
                     this.write_setting(e, cx);
                     if e.path.starts_with("host.") && e.path != settings::THEME {
@@ -1324,6 +1335,7 @@ impl Root {
                         this.config["host"]["confirm-before-close"] = "never".into();
                         this.state.save();
                     }
+                    this.flush_settings(cx);
                     window.remove_window();
                 }
                 DialogOutcome::Rename { thread, name } => {
@@ -1349,6 +1361,7 @@ impl Root {
             return self.close_side(side, window, cx);
         }
         if self.state.confirm_before_close == ConfirmBeforeClose::Never {
+            self.flush_settings(cx);
             window.remove_window();
         } else {
             self.open_dialog(DialogKind::CloseWindow, window, cx);
@@ -1931,6 +1944,15 @@ impl Root {
             config["model"] = model.into();
             config["model_reasoning_effort"] = effort.into();
         });
+    }
+
+    fn flush_settings(&mut self, cx: &mut Context<Self>) {
+        if let Some(page) = self.settings_page.clone() {
+            let pending = page.update(cx, |page, _| page.take_pending_instructions());
+            for change in pending {
+                self.write_setting(&change, cx);
+            }
+        }
     }
 
     /// Window preferences keep their state storage; other host settings use the desktop service.

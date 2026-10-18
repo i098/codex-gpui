@@ -62,16 +62,32 @@ fn git_settings_native() -> anyhow::Result<()> {
     assert_eq!(saved["git-review-mode"], "last-turn-only");
     assert_eq!(saved["git-create-pull-request-as-draft"], false);
     assert_eq!(saved["git-pull-request-merge-method"], "squash");
-    fx.click((800., 710.))?;
+    fx.scroll((1050., 700.), -700.)?;
+    fx.advance(Duration::from_millis(500))?;
+    fx.shot()?.save(format!("{out}/instructions-layout.png"))?;
+    fx.click((800., 490.))?;
     fx.type_text("Use a short title.")?;
+    fx.advance(Duration::from_millis(2000))?;
+    let saved: Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+    assert!(saved.get("git-commit-instructions").is_none());
     fx.keys("enter")?;
     fx.type_text("Explain the change.")?;
+    fx.advance(Duration::from_millis(2900))?;
+    let saved: Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+    assert!(saved.get("git-commit-instructions").is_none());
+    fx.advance(Duration::from_millis(200))?;
     let saved: Value = serde_json::from_slice(&std::fs::read(&path)?)?;
     assert_eq!(
         saved["git-commit-instructions"],
         "Use a short title.\nExplain the change."
     );
+    fx.click((1140., 202.))?;
+    fx.click((800., 265.))?;
+    fx.type_text("Wait for checks.")?;
     fx.click(BACK)?;
+    let saved: Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+    assert_eq!(saved["git-pr-watch-auto-merge"], true);
+    assert_eq!(saved["git-pr-watch-instructions"], "Wait for checks.");
     fx.cx
         .update(|cx| cx.set_global(Settings::load(path.clone()).unwrap()));
     open_git(&mut fx)?;
@@ -81,7 +97,12 @@ fn git_settings_native() -> anyhow::Result<()> {
         .cx
         .update(|cx| cx.read_from_clipboard().and_then(|item| item.text()));
     assert_eq!(displayed.as_deref(), Some("me/"));
-    fx.click((800., 710.))?;
+    fx.click((800., 140.))?;
+    fx.advance(Duration::from_millis(5500))?;
+    fx.shot()?.save(format!("{out}/after.png"))?;
+    fx.scroll((1050., 700.), -700.)?;
+    fx.advance(Duration::from_millis(500))?;
+    fx.click((800., 490.))?;
     fx.keys("cmd-a cmd-c")?;
     let displayed = fx
         .cx
@@ -90,16 +111,12 @@ fn git_settings_native() -> anyhow::Result<()> {
         displayed.as_deref(),
         Some("Use a short title.\nExplain the change.")
     );
-    fx.click((800., 140.))?;
-    fx.advance(Duration::from_millis(5500))?;
-    fx.shot()?.save(format!("{out}/after.png"))?;
-    fx.scroll((1050., 700.), -700.)?;
-    fx.advance(Duration::from_millis(500))?;
     let previous = std::fs::read(&path)?;
     std::fs::remove_file(&path)?;
     std::fs::create_dir(&path)?;
-    fx.click((800., 425.))?;
+    fx.click((800., 710.))?;
     fx.type_text("Explain the test plan.")?;
+    fx.advance(Duration::from_millis(3100))?;
     assert!(path.is_dir());
     assert!(!fx.cx.update(|cx| {
         cx.global::<Settings>()
@@ -108,18 +125,19 @@ fn git_settings_native() -> anyhow::Result<()> {
     }));
     std::fs::remove_dir(&path)?;
     std::fs::write(&path, previous)?;
-    fx.click((1128., 494.))?;
+    fx.click((1128., 777.))?;
     let saved: Value = serde_json::from_slice(&std::fs::read(&path)?)?;
     assert_eq!(saved["git-pr-instructions"], "Explain the test plan.");
-    fx.click((1140., 643.))?;
-    fx.click((800., 710.))?;
-    fx.type_text("Wait for checks.")?;
-    let saved: Value = serde_json::from_slice(&std::fs::read(&path)?)?;
-    assert_eq!(saved["git-pr-watch-auto-merge"], true);
-    assert_eq!(saved["git-pr-watch-instructions"], "Wait for checks.");
     fx.advance(Duration::from_millis(5500))?;
     fx.shot()?.save(format!("{out}/after-instructions.png"))?;
     std::fs::copy(&path, std::path::Path::new(&out).join("host-settings.json"))?;
+    fx.click((800., 265.))?;
+    fx.keys("cmd-a")?;
+    fx.type_text("Keep watching.")?;
+    fx.cx.update(|cx| cx.shutdown());
+    fx.cx.run_until_parked();
+    let saved: Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+    assert_eq!(saved["git-pr-watch-instructions"], "Keep watching.");
     std::fs::remove_file(path)?;
     println!("Git settings: native edits persisted and reopened fields read back from disk.");
     Ok(())
