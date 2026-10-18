@@ -38,6 +38,8 @@ use std::time::Duration;
 use ui::screens::sidebar::Project;
 use url::Url;
 
+mod git;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "transport", content = "request", rename_all = "kebab-case")]
 pub enum Request {
@@ -629,6 +631,7 @@ impl Host for LocalHost {
         let body = match endpoint {
             "list-automations" => self.automations()?,
             "inbox-items" => self.inbox(&params)?,
+            "git-changes" | "git-stage" | "git-unstage" => git::fetch(endpoint, &params)?,
             "paths-exist" => {
                 let paths: Vec<String> =
                     serde_json::from_value(params.get("paths").cloned().unwrap_or(json!([])))?;

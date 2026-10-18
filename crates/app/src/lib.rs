@@ -31,7 +31,8 @@ use theme::Theme;
 use ui::composer::{Approval, Composer, Permission, Submission};
 use ui::dialog::{Dialog, Kind as DialogKind, Outcome as DialogOutcome};
 use ui::screens::diff::panel::{
-    ActivateSideTab, CloseSideTab, DiffPanel, FileView, OpenFile, SplitScreen, Tab, with_side_tabs,
+    ActivateSideTab, CloseSideTab, DiffPanel, DiffRequest, FileView, OpenFile, SplitScreen, Tab,
+    with_side_tabs,
 };
 use ui::screens::home::HomeMain;
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
@@ -781,6 +782,37 @@ impl Root {
         }));
     }
 
+    fn repository_request(
+        &self,
+        panel: Entity<DiffPanel>,
+        cwd: &str,
+        request: &DiffRequest,
+        cx: &mut Context<Self>,
+    ) {
+        if panel.read(cx).pending() {
+            return;
+        }
+        let (endpoint, path) = match request {
+            DiffRequest::Refresh => ("git-changes", None),
+            DiffRequest::Stage(path) => ("git-stage", Some(path)),
+            DiffRequest::Unstage(path) => ("git-unstage", Some(path)),
+        };
+        let request = host::Request::post(endpoint, Some(json!({"cwd": cwd, "path": path})));
+        let host = self.host.clone();
+        panel.update(cx, |panel, cx| panel.begin_repository_request(cx));
+        let read = cx.background_spawn(async move {
+            host.fetch(&request)
+                .and_then(|response| host::json_body(&response))
+                .and_then(|body| Ok(serde_json::from_value(body)?))
+                .map_err(|error| error.to_string())
+        });
+        cx.spawn(async move |_, cx| {
+            let result = read.await;
+            panel.update(cx, |panel, cx| panel.set_repository(result, cx));
+        })
+        .detach();
+    }
+
     /// The host's automation list, or its error; `None` means that the read has not completed.
     pub fn automations(&self) -> Option<&Result<Value, String>> {
         self.automations.as_ref()
@@ -1473,7 +1505,13 @@ impl Root {
             elapsed_since: None,
         });
         let composer = self.thread_composer.clone().into();
-        self.diff = Some(cx.new(|_| DiffPanel::last_turn(&self.cwd, &thread.cwd, &thread.turns)));
+        let diff = cx.new(|_| DiffPanel::last_turn(&self.cwd, &thread.cwd, &thread.turns));
+        let cwd = thread.cwd.clone();
+        cx.subscribe(&diff, move |this, panel, request: &DiffRequest, cx| {
+            this.repository_request(panel, &cwd, request, cx);
+        })
+        .detach();
+        self.diff = Some(diff);
         self.file = None;
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
         self.thread = Some(view);
