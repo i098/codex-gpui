@@ -157,9 +157,16 @@ impl Composer {
         self.focus_handle.focus(window, cx);
     }
 
-    /// Workspace roots the `Files` section searches; none hides the section (Home).
-    pub fn set_search_roots(&mut self, roots: Vec<String>) {
+    /// Changes the file-search roots without losing the current draft or query.
+    pub fn set_search_roots(&mut self, roots: Vec<String>, cx: &mut Context<Self>) {
+        if self.slash.search.roots == roots {
+            return;
+        }
+        self.end_search(cx);
         self.slash.search.roots = roots;
+        if self.slash.open && self.slash.mention {
+            self.refresh_slash(cx);
+        }
     }
 
     /// Fills `matches` for the `@` token with `query` (raw text after `@`) and drives the file

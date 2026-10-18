@@ -11,7 +11,7 @@ pub mod qa;
 use anyhow::{Context as _, Result};
 use async_channel::Receiver;
 use bridge::types::{
-    ApprovalDecision, CommandApprovalRequest, ConfigReadResponse, FileChangeApprovalRequest,
+    ApprovalDecision, CommandApprovalRequest, ConfigReadResponse, FileChangeApprovalRequest, Model,
     Thread, ThreadItem, ThreadListResponse, ThreadReadResponse, ThreadSection, ThreadStartResponse,
     ThreadStartedNotification, ThreadStatus, TurnStatus,
 };
@@ -19,9 +19,9 @@ use bridge::{Bridge, Event};
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Context, Entity,
     EntityInputHandler as _, FocusHandle, Focusable as _, InteractiveElement as _, IntoElement,
-    KeyBinding, KeyDownEvent, Menu, MenuItem, OsAction, ParentElement as _, Pixels, Render,
-    SharedString, Styled as _, SystemMenuType, Task, WeakEntity, Window, WindowAppearance, actions,
-    div, px,
+    KeyBinding, KeyDownEvent, Menu, MenuItem, OsAction, ParentElement as _, PathPromptOptions,
+    Pixels, Render, SharedString, Styled as _, SystemMenuType, Task, WeakEntity, Window,
+    WindowAppearance, actions, div, px,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -31,9 +31,10 @@ use theme::Theme;
 use ui::composer::{Approval, Composer, Permission, Submission};
 use ui::dialog::{Dialog, Kind as DialogKind, Outcome as DialogOutcome};
 use ui::screens::diff::panel::{
-    ActivateSideTab, CloseSideTab, DiffPanel, FileView, OpenFile, SplitScreen, Tab, with_side_tabs,
+    ActivateSideTab, CloseSideTab, DiffPanel, DiffRequest, FileView, OpenFile, SplitScreen, Tab,
+    with_side_tabs,
 };
-use ui::screens::home::HomeMain;
+use ui::screens::home::{HomeMain, OpenFolder};
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
 use ui::screens::sidebar::{
     ArchiveThread, ArchivedChats, CommandMenu, CommandMenuEvent, HomeSidebar, LoadMore, OpenThread,
@@ -94,6 +95,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-n", NewChat, None),
         KeyBinding::new("cmd-shift-o", NewChat, None),
+        KeyBinding::new("cmd-o", OpenFolder, None),
         KeyBinding::new("cmd-w", CloseWindow, None),
         KeyBinding::new("cmd-/", ShowKeyboardShortcuts, None),
         KeyBinding::new("cmd-z", Undo, None),
@@ -150,6 +152,7 @@ pub fn menus() -> Vec<Menu> {
         ]),
         Menu::new("File").items([
             MenuItem::action("New Chat", NewChat),
+            MenuItem::action("Open Folder…", OpenFolder),
             MenuItem::separator(),
             MenuItem::action("Close", CloseWindow),
         ]),
@@ -245,6 +248,7 @@ pub struct State {
     pub route: Route,
     pub theme: ThemeSetting,
     pub confirm_before_close: ConfirmBeforeClose,
+    pub project_root: Option<String>,
     #[serde(skip)]
     pub path: Option<PathBuf>,
 }
@@ -259,6 +263,7 @@ impl Default for State {
             route: Route::Home,
             theme: ThemeSetting::System,
             confirm_before_close: ConfirmBeforeClose::default(),
+            project_root: None,
             path: None,
         }
     }
@@ -320,6 +325,25 @@ fn log_err(task: Task<Result<()>>, cx: &App) {
         })
         .detach();
 }
+#[derive(Deserialize)]
+struct ModelCatalog {
+    data: Vec<CatalogModel>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CatalogModel {
+    #[serde(flatten)]
+    model: Model,
+    availability_nux: Option<ModelAvailability>,
+}
+
+#[derive(Deserialize)]
+struct ModelAvailability {
+    message: String,
+}
+
+const LEGACY_MODEL_ANNOUNCEMENTS: [&str; 2] = ["gpt-5.4", "gpt-5.5"];
 
 pub struct Root {
     /// Window size, sidebar and route, saved back on every change.
@@ -365,6 +389,7 @@ pub struct Root {
     bridge: Arc<Bridge>,
     host: Arc<dyn host::Host>,
     project_load: Option<Task<()>>,
+    picking_project: bool,
     automations: Option<Result<Value, String>>,
     automation_load: Option<Task<()>>,
     suggestion_load: Option<Task<()>>,
@@ -376,6 +401,7 @@ pub struct Root {
     clock: Option<Clock>,
     config: Value,
     skills: Value,
+    models: Vec<Model>,
     ready: bool,
     qa_work_started: bool,
     /// Threads started or resumed by this app-server; others need `thread/resume` first.
@@ -421,6 +447,9 @@ impl Root {
         };
         let home_composer = cx.new(|cx| {
             let mut composer = Composer::home(window, cx);
+            if let Some(root) = &state.project_root {
+                composer.set_search_roots(vec![root.clone()], cx);
+            }
             composer.on_model(on_model(this.clone()));
             let this = this.clone();
             composer.on_submit(move |s, window, cx| {
@@ -542,6 +571,14 @@ impl Root {
             focus: cx.focus_handle(),
             home: cx.new(|_| HomeMain {
                 composer: home_composer,
+                project: state.project_root.as_ref().map(|root| {
+                    std::path::Path::new(root)
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or(root)
+                        .to_owned()
+                        .into()
+                }),
             }),
             thread_composer,
             thread: None,
@@ -564,6 +601,7 @@ impl Root {
             automations: None,
             automation_load: None,
             project_load: None,
+            picking_project: false,
             suggestion_load: None,
             scheduled: None,
             suggestions: None,
@@ -571,6 +609,7 @@ impl Root {
             clock: None,
             config: Value::Null,
             skills: Value::Null,
+            models: Vec::new(),
             ready: false,
             qa_work_started: false,
             loaded: HashSet::new(),
@@ -621,7 +660,7 @@ impl Root {
                 .await?;
             let account = bridge.account_read().await?;
             let threads = bridge.thread_list().await?;
-            let models = bridge.model_list().await?;
+            let mut catalog: ModelCatalog = bridge.request("model/list", json!({})).await?;
             let config: ConfigReadResponse = bridge
                 .request("config/read", json!({ "includeLayers": false, "cwd": cwd }))
                 .await?;
@@ -636,13 +675,53 @@ impl Root {
                 }
                 this.set_threads(&threads.data, cx);
                 this.set_next_cursor(threads.next_cursor, cx);
+                let announcements_allowed = this.login.is_none()
+                    && matches!(this.state.route, Route::Home | Route::Thread(_));
+                let current_model = config.config["model"].as_str().or_else(|| {
+                    catalog
+                        .data
+                        .iter()
+                        .find(|entry| !entry.model.hidden && entry.model.is_default)
+                        .map(|entry| entry.model.model.as_str())
+                });
+                if announcements_allowed
+                    && let Some(current) = current_model
+                    && !LEGACY_MODEL_ANNOUNCEMENTS.contains(&current)
+                    && catalog.data.iter().any(|entry| {
+                        entry.model.model == current && entry.availability_nux.is_some()
+                    })
+                {
+                    this.remember_model_announcement(current, cx);
+                }
+                let announcement = announcements_allowed
+                    .then(|| {
+                        catalog.data.iter().position(|entry| {
+                            entry.availability_nux.is_some()
+                                && Some(entry.model.model.as_str()) != current_model
+                                && !LEGACY_MODEL_ANNOUNCEMENTS.contains(&entry.model.model.as_str())
+                                && !Self::model_announcement_history(cx)
+                                    .iter()
+                                    .any(|seen| seen.as_str() == Some(entry.model.model.as_str()))
+                        })
+                    })
+                    .flatten()
+                    .map(|index| {
+                        let message = catalog.data[index]
+                            .availability_nux
+                            .take()
+                            .expect("eligible model announcement")
+                            .message;
+                        (index, message)
+                    });
+                let models: Vec<Model> =
+                    catalog.data.into_iter().map(|entry| entry.model).collect();
                 let composers = [
                     this.home.read(cx).composer.clone(),
                     this.thread_composer.clone(),
                 ];
                 for composer in composers {
                     composer.update(cx, |c, cx| {
-                        c.set_models(&models.data, &config.config, cx);
+                        c.set_models(&models, &config.config, cx);
                         c.set_slash_skills(&skills, cx);
                     });
                 }
@@ -651,9 +730,15 @@ impl Root {
                     serde_json::to_value(this.state.confirm_before_close)
                         .expect("close preference");
                 this.skills = skills;
+                this.models = models;
                 this.ready = true;
                 this.select_route(cx);
                 this.sync(window, cx);
+                if let Some((index, message)) = announcement {
+                    let dialog =
+                        cx.new(|cx| Dialog::model_announcement(&this.models[index], message, cx));
+                    this.show_dialog(dialog, window, cx);
+                }
             })
         });
         log_err(task, cx);
@@ -787,6 +872,102 @@ impl Root {
             })
             .ok();
         }));
+    }
+
+    fn open_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.picking_project {
+            return;
+        }
+        self.picking_project = true;
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Choose project".into()),
+        });
+        let host = self.host.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = async {
+                let Some(paths) = paths.await?? else {
+                    return Ok(None);
+                };
+                let Some(path) = paths.into_iter().next() else {
+                    return Ok(None);
+                };
+                cx.background_spawn(async move {
+                    let root = host.add_project(&path)?;
+                    Ok::<_, anyhow::Error>(Some((root, host.projects()?)))
+                })
+                .await
+            }
+            .await;
+            this.update_in(cx, |this, window, cx| {
+                this.picking_project = false;
+                match result {
+                    Ok(Some((root, projects))) => {
+                        this.qa_work_started = true;
+                        this.project_load = None;
+                        this.sidebar
+                            .update(cx, |sidebar, cx| sidebar.set_projects(projects, cx));
+                        this.home.update(cx, |home, cx| {
+                            home.project = Some(
+                                std::path::Path::new(&root)
+                                    .file_name()
+                                    .and_then(|name| name.to_str())
+                                    .unwrap_or(&root)
+                                    .to_owned()
+                                    .into(),
+                            );
+                            home.composer.update(cx, |composer, cx| {
+                                composer.set_search_roots(vec![root.clone()], cx);
+                            });
+                            cx.notify();
+                        });
+                        this.state.project_root = Some(root);
+                        this.navigate(Route::Home, window, cx);
+                        this.save(window, cx);
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        eprintln!("codex-gpui: cannot choose project: {error:#}");
+                        this.toast(Toast::danger("Cannot open project folder"), cx);
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn repository_request(
+        &self,
+        panel: Entity<DiffPanel>,
+        cwd: &str,
+        request: &DiffRequest,
+        cx: &mut Context<Self>,
+    ) {
+        if panel.read(cx).pending() {
+            return;
+        }
+        let (endpoint, path) = match request {
+            DiffRequest::Refresh => ("git-changes", None),
+            DiffRequest::Stage(path) => ("git-stage", Some(path)),
+            DiffRequest::Unstage(path) => ("git-unstage", Some(path)),
+        };
+        let request = host::Request::post(endpoint, Some(json!({"cwd": cwd, "path": path})));
+        let host = self.host.clone();
+        panel.update(cx, |panel, cx| panel.begin_repository_request(cx));
+        let read = cx.background_spawn(async move {
+            host.fetch(&request)
+                .and_then(|response| host::json_body(&response))
+                .and_then(|body| Ok(serde_json::from_value(body)?))
+                .map_err(|error| error.to_string())
+        });
+        cx.spawn(async move |_, cx| {
+            let result = read.await;
+            panel.update(cx, |panel, cx| panel.set_repository(result, cx));
+        })
+        .detach();
     }
 
     /// The host's automation list, or its error; `None` means that the read has not completed.
@@ -1310,9 +1491,76 @@ impl Root {
         self.dialog.as_ref()
     }
 
+    fn model_announcement_history(cx: &App) -> &[Value] {
+        cx.try_global::<host_settings::Settings>()
+            .and_then(|settings| settings.read_all().get("seen-model-upgrade-list"))
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
+
+    fn remember_model_announcement(&mut self, model: &str, cx: &mut Context<Self>) {
+        let seen = Self::model_announcement_history(cx);
+        if seen.iter().any(|seen| seen.as_str() == Some(model)) {
+            return;
+        }
+        let mut seen = seen.to_vec();
+        seen.push(json!(model));
+        self.write_setting(
+            &SettingChanged {
+                path: "host.seen-model-upgrade-list",
+                value: Value::Array(seen),
+            },
+            cx,
+        );
+    }
+
     fn open_dialog(&mut self, kind: DialogKind, window: &mut Window, cx: &mut Context<Self>) {
         let dialog = cx.new(|cx| Dialog::new(kind, cx));
         self.show_dialog(dialog, window, cx);
+    }
+
+    fn create_task(
+        &mut self,
+        prompt: String,
+        rrule: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(dialog) = self.dialog.clone() else {
+            return;
+        };
+        let host = self.host.clone();
+        let name: String = prompt
+            .lines()
+            .next()
+            .unwrap_or(&prompt)
+            .chars()
+            .take(80)
+            .collect();
+        let params = json!({"name": name, "prompt": prompt, "rrule": rrule, "cwds": [self.cwd]});
+        let write = cx.background_spawn(async move {
+            host.fetch(&host::Request::post("create-automation", Some(params)))
+                .and_then(|response| host::json_body(&response))
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = write.await;
+            this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(_) => {
+                        this.dialog = None;
+                        window.focus(&this.focus, cx);
+                        this.load_automations(cx);
+                    }
+                    Err(error) => dialog.update(cx, |dialog, cx| {
+                        dialog.schedule_result(format!("Could not create task: {error}"), cx);
+                    }),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn show_dialog(&mut self, dialog: Entity<Dialog>, window: &mut Window, cx: &mut Context<Self>) {
@@ -1320,10 +1568,29 @@ impl Root {
             return;
         }
         self.command_menu = None;
-        cx.subscribe_in(&dialog, window, |this, _, outcome, window, cx| {
+        cx.subscribe_in(&dialog, window, |this, dialog, outcome, window, cx| {
+            if let DialogOutcome::ScheduleTask { prompt, rrule } = outcome {
+                this.create_task(prompt.clone(), rrule.clone(), window, cx);
+                return;
+            }
+            if dialog.read(cx).saving() {
+                return;
+            }
+            dialog.read(cx).release_artwork(window);
             this.dialog = None;
             match outcome {
                 DialogOutcome::Dismiss => window.focus(&this.focus, cx),
+                DialogOutcome::DismissAnnouncement(model)
+                | DialogOutcome::UseAnnouncedModel { model, .. } => {
+                    if let DialogOutcome::UseAnnouncedModel {
+                        reasoning_effort, ..
+                    } = outcome
+                    {
+                        this.write_model(model, reasoning_effort, cx);
+                    }
+                    this.remember_model_announcement(model, cx);
+                    window.focus(&this.focus, cx);
+                }
                 DialogOutcome::FullAccess => {
                     let composer = this.composer(cx);
                     composer.update(cx, |composer, cx| composer.confirm_full_access(cx));
@@ -1342,6 +1609,7 @@ impl Root {
                     window.focus(&this.focus, cx);
                     this.rename(thread.clone(), name.clone(), window, cx);
                 }
+                DialogOutcome::ScheduleTask { .. } => unreachable!(),
             }
             cx.notify();
         })
@@ -1388,6 +1656,7 @@ impl Root {
             }
             CommandMenuEvent::Command(label) => match label.as_ref() {
                 "New chat" | "New standalone chat" => window.dispatch_action(Box::new(NewChat), cx),
+                "Open folder" => window.dispatch_action(Box::new(OpenFolder), cx),
                 "Archive chat" => window.dispatch_action(Box::new(ArchiveChat), cx),
                 "Find" => window.dispatch_action(Box::new(FindInThread), cx),
                 "Back" => window.dispatch_action(Box::new(GoBack), cx),
@@ -1477,7 +1746,7 @@ impl Root {
         self.thread_composer.update(cx, |c, cx| {
             c.set_running(running, cx);
             c.set_queued(Vec::new(), cx);
-            c.set_search_roots(vec![thread.cwd.clone()]);
+            c.set_search_roots(vec![thread.cwd.clone()], cx);
         });
         let route = Route::Thread(thread.id.clone());
         let clock = self.clock.unwrap_or_else(|| Clock {
@@ -1486,7 +1755,13 @@ impl Root {
             elapsed_since: None,
         });
         let composer = self.thread_composer.clone().into();
-        self.diff = Some(cx.new(|_| DiffPanel::last_turn(&self.cwd, &thread.cwd, &thread.turns)));
+        let diff = cx.new(|_| DiffPanel::last_turn(&self.cwd, &thread.cwd, &thread.turns));
+        let cwd = thread.cwd.clone();
+        cx.subscribe(&diff, move |this, panel, request: &DiffRequest, cx| {
+            this.repository_request(panel, &cwd, request, cx);
+        })
+        .detach();
+        self.diff = Some(diff);
         self.file = None;
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
         self.thread = Some(view);
@@ -1501,7 +1776,13 @@ impl Root {
     /// `turn/start`; the turn streams in through [`Self::on_event`].
     fn start_thread(&mut self, s: Submission, window: &mut Window, cx: &mut Context<Self>) {
         self.qa_work_started = true;
-        let (bridge, cwd) = (self.bridge.clone(), self.cwd.clone());
+        let bridge = self.bridge.clone();
+        let cwd = self
+            .state
+            .project_root
+            .as_ref()
+            .unwrap_or(&self.cwd)
+            .clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let mut params = json!({ "cwd": cwd, "model": model(&s) });
             apply_permissions(&mut params, s.permission);
@@ -1927,7 +2208,7 @@ impl Root {
         }
     }
 
-    /// A model picker choice: `config/batchWrite` of `model` and `model_reasoning_effort`
+    /// A model choice: `config/batchWrite` of `model` and `model_reasoning_effort`
     /// (the original's `writeModel`).
     fn write_model(&mut self, model: &str, effort: &str, cx: &mut Context<Self>) {
         let params = json!({
@@ -1940,10 +2221,31 @@ impl Root {
             "reloadUserConfig": true,
         });
         let (model, effort) = (model.to_owned(), effort.to_owned());
-        self.write_config("config/batchWrite", params, cx, move |config| {
-            config["model"] = model.into();
-            config["model_reasoning_effort"] = effort.into();
+        let bridge = self.bridge.clone();
+        let task = cx.spawn(async move |this, cx| -> Result<()> {
+            let done = bridge
+                .request::<_, Value>("config/batchWrite", params)
+                .await;
+            this.update(cx, |this, cx| {
+                if done.is_ok() {
+                    let composers = [
+                        this.home.read(cx).composer.clone(),
+                        this.thread_composer.clone(),
+                    ];
+                    for composer in composers {
+                        composer.update(cx, |composer, cx| {
+                            composer.set_model_and_effort(&model, &effort, cx);
+                        });
+                    }
+                    this.config["model"] = model.into();
+                    this.config["model_reasoning_effort"] = effort.into();
+                } else {
+                    this.toast(Toast::danger("Couldn’t update model settings"), cx);
+                }
+            })?;
+            done.map(drop)
         });
+        log_err(task, cx);
     }
 
     fn flush_settings(&mut self, cx: &mut Context<Self>) {
@@ -2157,8 +2459,10 @@ impl Root {
                 }
                 "fuzzyFileSearch/sessionUpdated" | "fuzzyFileSearch/sessionCompleted" => {
                     let completed = method == "fuzzyFileSearch/sessionCompleted";
-                    self.thread_composer
-                        .update(cx, |c, cx| c.apply_file_search(completed, &params, cx));
+                    let home = self.home.read(cx).composer.clone();
+                    for composer in [home, self.thread_composer.clone()] {
+                        composer.update(cx, |c, cx| c.apply_file_search(completed, &params, cx));
+                    }
                 }
                 "account/login/completed" if params["success"] == true => {
                     self.login = None;
@@ -2378,6 +2682,7 @@ impl Render for Root {
                 }
             }))
             .on_action(cx.listener(|this, _: &NewChat, window, cx| this.new_chat(window, cx)))
+            .on_action(cx.listener(|this, _: &OpenFolder, window, cx| this.open_folder(window, cx)))
             .on_action(cx.listener(|this, _: &ui::composer::Stop, _, cx| this.stop(cx)))
             .on_action(
                 cx.listener(|this, _: &ui::composer::RequestFullAccess, window, cx| {

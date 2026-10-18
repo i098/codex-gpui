@@ -246,10 +246,10 @@ The existing replay checks the original colors, row actions, tooltips, canceled 
 | 1 | Launch to `/` | entry | Hero, announcement slot and composer. | Route Home, rail Home selected, composer focused, Recents loaded. | PASS (`launch_home`, `parity_home`) |
 | 2 | `New chat` row | click | Navigates to `/` and clears the draft. | Same. | PASS (`new_chat_row`) |
 | 3 | `⌘N` / `⌘⇧O` | shortcut | New chat on Home, composer focused. | Same. | PASS (`cmd_n_new_chat`) |
-| 4 | Hero project selector | click | Opens the project menu. | No projects. | NOT WIRED (`crates/ui/src/screens/home.rs` hero) |
+| 4 | Hero project selector | click | Opens the project menu. | Shows the selected folder and opens the native folder picker. | Native local-folder flow; no project dropdown. |
 | 5 | Beacon `Start Voice` | click | Starts a realtime voice chat. | No beacon. | NOT WIRED (`crates/ui/src/screens/home.rs`) |
 | 6 | Beacon dismiss `×` | click | Hides the banner. | No beacon. | NOT WIRED (`crates/ui/src/screens/home.rs`) |
-| 7 | `Choose project` | click | Project dropdown. | Chip has no handler. | NOT WIRED (`crates/ui/src/screens/home.rs` `utility_bar`) |
+| 7 | `Choose project` | click | Project dropdown. | Opens the native folder picker and selects a local project for new chats. | Native local-folder flow (`project_picker`); no project dropdown. |
 | 8 | `Work in` / `This computer` | click | Location menu. | Chip has no handler. | NOT WIRED (`crates/ui/src/screens/home.rs` `utility_bar`) |
 | 9 | Editor `Do anything` | focus | Caret shows. | Click focuses the editor. | PASS (`editor_click_focuses`) |
 | 10 | `+` Add files and more | click | Context menu (files, photos, @-mentions). | Opens the system file picker at once. | FAIL (`crates/ui/src/composer.rs` `add_files`: no context menu) |
@@ -380,16 +380,36 @@ The body menu also wraps long code lines without changing the copied text.
 The editor entry stays disabled until the native `openIn` service exists.
 Comment actions (S075/S082), file tabs (S186), and external targets remain outside this slice, as firstmate approved.
 
+Local Changes uses the existing desktop host for `git-changes`, `git-stage`, and `git-unstage`.
+Each request uses the open thread's absolute `cwd`; file actions also send one repository-relative `path`.
+The response body contains `root`, `unstaged`, and `staged`; each file contains `path` and its unified `diff`.
+The selector keeps Last Turn and adds Unstaged, Staged, and Refresh.
+Each local file menu stages or unstages the whole file; unstage preserves the working tree.
+Reads and mutations run off the UI thread, with loading and error states in the panel.
+Tracked files use one bulk Git diff per source; untracked files use separate comparisons.
+The `git_stage` native proof checks the real index, visible diff text, partial staging, deletion, lock recovery, and unborn repositories.
+It also checks literal and newline filenames, multi-file patches, and rejects paths outside the repository.
+The host also serves `git-revert` for the revert actions; no menu, dialog, or button calls it yet.
+It takes `cwd`, a repository-relative `path`, `source` (`unstaged` or `staged`), the `diff` text that Changes shows for that file, and an optional 0-based `hunk`.
+The host recomputes that diff and refuses a stale request (`file changed since its diff was shown`), so it never reverts a different hunk or newer edits.
+An unstaged revert reverse-applies the patch to the working tree, which also deletes an untracked file and restores a deleted one.
+A staged revert reverse-applies it to the index and then to the working tree, as the original does.
+The response `status` is `partial-success` when only the index was reverted: the working-tree step failed, or the working file already differed from the index, because Git could then move the patch onto a look-alike block and erase newer edits.
+Otherwise `status` is `success` and the body is the usual `{root, unstaged, staged}`; a Git failure is an error and changes nothing.
+A hunk revert leaves the file mode alone; a whole-file revert restores binary files and modes.
+The `git_revert` native-host proof checks the real index and files for file and hunk reverts, partial results, look-alike blocks, modes, binary files, stale input, an index lock, and rejected input.
+Menus, the `Revert changes?` confirmation, results in the panel, and commit, push, and remote Git remain separate work.
+
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Open Changes panel | entry | `⌥⌘B` or `View changes`. | Both open the last turn's diff (`Last Turn` source). A file link opens the File viewer, as S009 records. | PASS (`changes_panel_keys`, `view_changes_opens_panel`, `s009`); strict pixels FAIL (`parity_diff`) |
 | 2 | `/diff` window | entry | Single file diff. | — | NOT WIRED (`crates/app/src/main.rs`: one window only) |
-| 3 | Source selector | click | Uncommitted / Staged / … | — | NOT WIRED (`crates/ui/src/diff.rs`) |
+| 3 | Source selector | click | Uncommitted / Staged / … | Last Turn, Unstaged, Staged, and Refresh read the open thread's local repository. | PARTIAL (`git_stage`; other sources remain separate) |
 | 4 | Show / Hide files | click | Toggles the file tree. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 5 | File tree filter | focus | `Filter files…`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Copy path and Collapse/Expand work. Open in editor remains disabled pending host services. | PARTIAL (`s027::diff_selection_and_hover_replay`) |
-| 7 | Hunk revert / stage | click | Revert, Stage / Unstage hunk. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
+| 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Copy path and Collapse/Expand work. Local sources add Stage file or Unstage file. Open in editor remains disabled. The host reverts one file (`git-revert`, `git_revert`); no `Revert file` control exists yet. | PARTIAL (`s027::diff_selection_and_hover_replay`, `git_stage`) |
+| 7 | Hunk revert / stage | click | Revert, Stage / Unstage hunk. | The host reverts one hunk (`git-revert`, `git_revert`); no hunk control exists yet. | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 8 | Revert all | click | `Revert changes?` dialog. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 9 | Split / unified toggle | click | Switch diff layout. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 10 | Word wrap | click | Toggles wrap. | The body context menu toggles wrap; the header control remains separate work. | PARTIAL (`s027::diff_selection_and_hover_replay`) |
@@ -397,10 +417,10 @@ Comment actions (S075/S082), file tabs (S186), and external targets remain outsi
 | 12 | `⌘F` in diff | shortcut | `Search diff…`. | Focus the panel, open find, and type a query; matches highlight and update with the diff. | PASS (`s028::streamed_diff_and_find_replay`) |
 | 13 | `⌘L` | shortcut | Go to line. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 14 | Line hover | hover | No background change in the recorded Last Turn state; no `data-hovered` attribute. | No background change. | PASS (`s027::diff_selection_and_hover_replay`; corrects DT-014) |
-| 15 | No changes | empty | `No file changes yet`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 16 | Not a git repo | empty | `Create a Git repository`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 17 | Loading | loading | `Loading diff`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 18 | Load failure | error | `Couldn't load changes`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
+| 15 | No changes | empty | `No file changes yet`. | Local sources show `No changes`. | PARTIAL (`git_stage`; Last Turn unchanged) |
+| 16 | Not a git repo | empty | `Create a Git repository`. | Local sources show the Git error; repository creation remains separate. | PARTIAL (`crates/ui/src/diff.rs`) |
+| 17 | Loading | loading | `Loading diff`. | Local sources show `Loading changes…` and disable mutations until completion. | PARTIAL (`crates/ui/src/diff.rs`) |
+| 18 | Load failure | error | `Couldn't load changes`. | Local sources show the host error; Refresh retries the read. | PARTIAL (`git_stage` checks index-lock failure and recovery) |
 | 19 | Too large | error | `Diff too large to display`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 20 | Resize | resize | Split → inline for narrow panes. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 
@@ -697,6 +717,7 @@ The shared replay selects the dedicated `f1d_projects` adapter.
 
 Run `tools/mac.sh -l f1d-projects 'cargo test -p app --test f1d_projects -- --test-threads=1'`.
 
+
 | Recorded region | Original | Port |
 |---|---|---|
 | Project rows | [Image](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ff8c28f83516f4fb8545d34d04a67ab08498485936cb345b/project-markers/original-rows.png) | [Image](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ff8c28f83516f4fb8545d34d04a67ab08498485936cb345b/project-markers/port-rows.png) |
@@ -706,6 +727,60 @@ Run `tools/mac.sh -l f1d-projects 'cargo test -p app --test f1d_projects -- --te
 The [strict static report](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ff8c28f83516f4fb8545d34d04a67ab08498485936cb345b/report.html) passes all 36 cases with zero outside-text differences.
 
 
+## Native project selection and chat directories
+
+`Choose project`, the selected Home title, `⌘O`, File > Open Folder, and the `Open folder` command use GPUI's folder picker.
+The picker accepts one folder and does not change the selection or the current chat when canceled.
+The local host adds the folder to the existing `local-projects` and `project-order` records.
+It retains other projects and unrelated values in `.codex-global-state.json`.
+Selecting an existing root does not add a duplicate project.
+The sidebar uses the same host project rows as the marker flow.
+
+The app saves the selected new-chat root in `state.json`.
+The Home title, project chip, and file search use that selection.
+Changing roots stops the old file-search session, removes its results, and restarts the current query without clearing the draft.
+Home and thread composers accept only search replies for their own session.
+`thread/start` captures the selected root before its asynchronous request.
+Existing chats retain the directory from their thread data.
+`thread/resume` sends only the thread ID, without a selected-folder override.
+Changing the Home selection does not change another chat's directory.
+
+`crates/app/tests/project_picker.rs` checks two temporary repositories, cancellation, reopening an existing chat, new-chat requests, and saved selection.
+It also checks project reuse, host-state preservation, and invalid-folder errors.
+The Mac flow uses native GPUI mouse and key events with the supported headless picker response API.
+It captures the selected roots, the new chat, and the reopened app.
+The physical macOS folder dialog is not exercised by this headless check.
+Project dropdowns, worktrees, remote environments, discovery, indexing, and Git actions remain outside this native-folder slice.
+
+Run `tools/mac.sh -l cgx-project-picker 'cargo test -p app --test project_picker -- --test-threads=1'`.
+
+
+## F3c: Model announcement (SH-142)
+
+`crates/app/tests/f3c.rs` checks the recorded GPT-6.1 Sol announcement on the Mac headless app.
+The recording is `refs/interactions/f3c.json`.
+The dialog keeps the original image, title, message, button labels, focus order, and dismissal controls.
+The tests cover both primary responses, the secondary button, Escape, Close, outside clicks, and the stored once-only history.
+
+The primary action writes the model and reasoning effort with `config/batchWrite`.
+A successful write updates only the two model fields in each composer.
+Permissions, queue mode, Reset defaults and drafts remain unchanged.
+A rejected write keeps the current model and shows the original error message.
+`Root` stores the model ID for both outcomes.
+`seen-model-upgrade-list` uses the existing global host-settings store.
+Each dismissal test reads the resulting file and starts a new app context without changing that file.
+The new context does not show the same announcement.
+
+The shared replay uses the recording's empty initial history.
+Ordinary replay data keeps the original baseline history from `tools/route1/oracle.json`.
+The ordinary checks use the separate fixture-preparation prerequisite.
+No original profile, sign-in flow, or legacy dialog assertion changes.
+
+[Original announcement](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ddae05ee78165eadfc0a754e40daeb9a03ee71e3bb4b0d16/original-announcement.png).
+[Port announcement](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ddae05ee78165eadfc0a754e40daeb9a03ee71e3bb4b0d16/announcement-open.png).
+The retained port image uses the same dialog source as the integrated feature.
+The [strict static report](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ddae05ee78165eadfc0a754e40daeb9a03ee71e3bb4b0d16/report.html) passes all 36 cases with zero outside-text differences.
+The scoped issue is [SH-142](https://github.com/i098/codex-gpui/issues/184).
 
 ## Shared tooltip side offset
 

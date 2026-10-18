@@ -33,6 +33,12 @@ Branch prefix saves on blur or Enter; multiline instructions save after three id
 The focused `cargo test -p app --test git_settings -- --test-threads=1` native replay verifies saved values after reopening Git settings.
 This page does not implement Git operations or active pull request watchers, and it does not complete other settings pages.
 
+Scheduled > New task accepts instructions, a daily or weekly repeat, and a local time in `HH:MM` format.
+Create saves the definition through `create-automation` to `CODEX_HOME/automations/<id>/automation.toml`.
+The app reloads the task list after a successful write and retains the draft if the write fails.
+The existing host schedules and executes these definitions; this app does not start another scheduler.
+Run `cargo test -p app --test task_create -- --test-threads=1` on macOS for the native creation and reload proof.
+
 ## Release bundle
 
 ```sh
