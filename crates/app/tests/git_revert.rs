@@ -3,12 +3,12 @@
 use anyhow::{Context as _, Result, ensure};
 use app::host::{Host as _, LocalHost, Request, json_body};
 use serde_json::{Value, json};
-use std::{fs, path::Path, process::Command};
+use std::{fs, os::unix::fs::PermissionsExt as _, path::Path, process::Command};
 
 struct Repo {
     dir: tempfile::TempDir,
     host: LocalHost,
-    _home: tempfile::TempDir,
+    home: tempfile::TempDir,
 }
 
 impl Repo {
@@ -17,7 +17,7 @@ impl Repo {
         let repo = Self {
             dir: tempfile::tempdir()?,
             host: LocalHost::new(home.path()),
-            _home: home,
+            home,
         };
         repo.git(&["init", "-q"])?;
         repo.git(&["config", "user.email", "proof@example.invalid"])?;
@@ -292,5 +292,51 @@ fn revert_refuses_stale_input_and_reports_git_failures() -> Result<()> {
     ));
     ensure!(repo.read("a.txt")? == "staged\n");
     ensure!(repo.git(&["show", ":a.txt"])? == "staged\n");
+    Ok(())
+}
+
+/// An edit made while the request runs must not enter the applied patch. A `git` wrapper on
+/// the PATH of a child test process appends to the file right before the `--binary` capture;
+/// the child (this case with `CGX_REVERT_RACE_REPO` set) sends the request.
+#[test]
+fn revert_rejects_an_edit_made_during_the_request() -> Result<()> {
+    if let Ok(cwd) = std::env::var("CGX_REVERT_RACE_REPO") {
+        let home = tempfile::tempdir()?;
+        let host = LocalHost::new(home.path());
+        let call = |endpoint, mut params: Value| -> Result<Value> {
+            params["cwd"] = cwd.as_str().into();
+            json_body(&host.fetch(&Request::post(endpoint, Some(params)))?)
+        };
+        let shown = call("git-changes", json!({}))?["unstaged"][0]["diff"].clone();
+        let request = json!({"path": "a.txt", "source": "unstaged", "diff": shown});
+        let error = call("git-revert", request).unwrap_err();
+        ensure!(error.to_string().contains("changed since"), "{error}");
+        return Ok(());
+    }
+    let repo = Repo::new()?;
+    repo.commit("a.txt", "base\n")?;
+    repo.write("a.txt", "shown\n")?;
+    let path = std::env::var("PATH")?;
+    let wrapper = repo.home.path().join("git");
+    fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\ncase \" $* \" in *' --binary '*) printf 'unseen\\n' >> \
+             \"$CGX_REVERT_RACE_REPO/a.txt\";; esac\nPATH='{path}' exec git \"$@\"\n"
+        ),
+    )?;
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755))?;
+    let child = Command::new(std::env::current_exe()?)
+        .args(["--exact", "revert_rejects_an_edit_made_during_the_request"])
+        .env("CGX_REVERT_RACE_REPO", repo.root())
+        .env("PATH", format!("{}:{path}", repo.home.path().display()))
+        .output()?;
+    ensure!(
+        child.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&child.stdout),
+        String::from_utf8_lossy(&child.stderr)
+    );
+    ensure!(repo.read("a.txt")? == "shown\nunseen\n");
     Ok(())
 }

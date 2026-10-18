@@ -59,7 +59,9 @@ fn paths(root: &Path, staged: bool) -> Result<Vec<String>> {
     Ok(paths)
 }
 
-/// `binary` adds the data a reverse patch needs to restore a binary file.
+/// `binary` adds the data a reverse patch needs to restore a binary file. Both forms carry
+/// the full `index` line (`--binary` fills it for binary files only), so `head` compares one
+/// binary capture with the text Changes shows.
 fn diffs(root: &Path, staged: bool, binary: bool) -> Result<Vec<Value>> {
     let mut args = vec![
         "diff",
@@ -71,6 +73,7 @@ fn diffs(root: &Path, staged: bool, binary: bool) -> Result<Vec<Value>> {
         "--no-color",
         "--no-renames",
         "--submodule=short",
+        "--full-index",
     ];
     if staged {
         args.push("--cached");
@@ -124,6 +127,7 @@ fn diffs(root: &Path, staged: bool, binary: bool) -> Result<Vec<Value>> {
                 "--no-ext-diff",
                 "--no-textconv",
                 "--no-color",
+                "--full-index",
             ];
             if binary {
                 args.push("--binary");
@@ -139,6 +143,15 @@ fn diffs(root: &Path, staged: bool, binary: bool) -> Result<Vec<Value>> {
         }
     }
     Ok(files)
+}
+
+/// One file's diff up to its binary data: the text form says `Binary files … differ` where
+/// the `--binary` form carries the data, and the full `index` line pins that data.
+fn head(diff: &str) -> &str {
+    ["\nGIT binary patch\n", "\nBinary files "]
+        .into_iter()
+        .find_map(|mark| diff.split_once(mark))
+        .map_or(diff, |(head, _)| head)
 }
 
 /// Reverse-applies the diff the caller displayed, to the index (`cached`) or the working tree.
@@ -180,32 +193,32 @@ fn hunk(diff: &str, index: usize) -> Result<String> {
     Ok(header.chain(&lines[start..end]).copied().collect())
 }
 
-/// Reverts one file, or one hunk of it, in the `source` the caller displayed. The original
-/// reverts a staged change in the index and then in the working tree: when only the second
-/// step fails, or the working file already differs from the index so that Git could move the
-/// patch onto another matching block, the result is `partial-success`.
+/// Reverts one file, or one hunk of it, in the `source` the caller displayed. One capture
+/// serves both the stale check and the patch, so an edit made while the request runs can
+/// only make the check fail, never enter the patch. The original reverts a staged change in
+/// the index and then in the working tree: when only the second step fails, or the working
+/// file already differs from the index so that Git could move the patch onto another
+/// matching block, the result is `partial-success`.
 fn revert(root: &Path, path: &str, params: &Value) -> Result<&'static str> {
     let staged = match params["source"].as_str() {
         Some("staged") => true,
         Some("unstaged") => false,
         _ => bail!("Git revert source must be staged or unstaged"),
     };
-    let shown = params["diff"].as_str().context("missing Git diff")?;
-    let current = |binary| -> Result<String> {
-        diffs(root, staged, binary)?
-            .into_iter()
-            .find(|file| file["path"] == path)
-            .and_then(|file| file["diff"].as_str().map(str::to_owned))
-            .context("file is no longer in the selected changes")
-    };
+    let displayed = params["diff"].as_str().context("missing Git diff")?;
+    let current = diffs(root, staged, true)?
+        .into_iter()
+        .find(|file| file["path"] == path)
+        .and_then(|file| file["diff"].as_str().map(str::to_owned))
+        .context("file is no longer in the selected changes")?;
     ensure!(
-        current(false)? == shown,
+        head(&current) == head(displayed),
         "file changed since its diff was shown; refresh and try again"
     );
     let patch = match params.get("hunk") {
-        None | Some(Value::Null) => current(true)?,
+        None | Some(Value::Null) => current,
         Some(index) => hunk(
-            &current(true)?,
+            &current,
             index.as_u64().context("Git hunk must be an index")? as usize,
         )?,
     };

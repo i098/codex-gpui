@@ -391,13 +391,13 @@ The `git_stage` native proof checks the real index, visible diff text, partial s
 It also checks literal and newline filenames, multi-file patches, and rejects paths outside the repository.
 The file menu, file revert button, and per-hunk `Revert` controls call the existing `git-revert` host endpoint.
 It takes `cwd`, a repository-relative `path`, `source` (`unstaged` or `staged`), the `diff` text that Changes shows for that file, and an optional 0-based `hunk`.
-The host recomputes that diff and refuses a stale request (`file changed since its diff was shown`), so it never reverts a different hunk or newer edits.
+The host captures that file's `--binary` diff once, compares it with the request up to the binary data (the text form says `Binary files … differ` there; the full `index` line pins that data), and refuses a stale request (`file changed since its diff was shown`); the same capture is the patch it applies, so an edit made while the request runs can only fail the check, never enter the patch.
 An unstaged revert reverse-applies the patch to the working tree, which also deletes an untracked file and restores a deleted one.
 A staged revert reverse-applies it to the index and then to the working tree, as the original does.
 The response `status` is `partial-success` when only the index was reverted: the working-tree step failed, or the working file already differed from the index, because Git could then move the patch onto a look-alike block and erase newer edits.
 Otherwise `status` is `success` and the body is the usual `{root, unstaged, staged}`; a Git failure is an error and changes nothing.
 A hunk revert leaves the file mode alone; a whole-file revert restores binary files and modes.
-The `git_revert` native-host proof checks the real index and files for file and hunk reverts, partial results, look-alike blocks, modes, binary files, stale input, an index lock, and rejected input.
+The `git_revert` native-host proof checks the real index and files for file and hunk reverts, partial results, look-alike blocks, modes, binary files, stale input, an edit made during the request, an index lock, and rejected input.
 File and hunk actions show `Revert changes?`, `This action removes all of these changes.`, `Don't ask again`, `Cancel`, and danger `Confirm`.
 Confirm starts focused; Escape, Cancel, and an outside click dismiss without a Git request.
 Only Confirm saves `skip-revert-confirmation`; the host preference survives reload.
