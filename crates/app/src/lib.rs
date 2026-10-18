@@ -31,8 +31,8 @@ use theme::Theme;
 use ui::composer::{Approval, Composer, Permission, Submission};
 use ui::dialog::{Dialog, Kind as DialogKind, Outcome as DialogOutcome};
 use ui::screens::diff::panel::{
-    ActivateSideTab, CloseSideTab, DiffPanel, DiffRequest, FileView, OpenFile, SplitScreen, Tab,
-    with_side_tabs,
+    ActivateSideTab, CloseSideTab, DiffPanel, DiffRequest, FileView, OpenFile, RevertChanges,
+    SplitScreen, Tab, with_side_tabs,
 };
 use ui::screens::home::{HomeMain, OpenFolder};
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
@@ -932,7 +932,7 @@ impl Root {
     }
 
     fn repository_request(
-        &self,
+        &mut self,
         panel: Entity<DiffPanel>,
         cwd: &str,
         request: &DiffRequest,
@@ -941,25 +941,104 @@ impl Root {
         if panel.read(cx).pending() {
             return;
         }
-        let (endpoint, path) = match request {
-            DiffRequest::Refresh => ("git-changes", None),
-            DiffRequest::Stage(path) => ("git-stage", Some(path)),
-            DiffRequest::Unstage(path) => ("git-unstage", Some(path)),
+        let (endpoint, params, reverted) = match request {
+            DiffRequest::Refresh => ("git-changes", json!({"cwd": cwd}), None),
+            DiffRequest::Stage(path) => ("git-stage", json!({"cwd": cwd, "path": path}), None),
+            DiffRequest::Unstage(path) => ("git-unstage", json!({"cwd": cwd, "path": path}), None),
+            DiffRequest::Revert(change) => (
+                "git-revert",
+                json!({"cwd": cwd, "path": change.path, "source": change.source,
+                    "diff": change.diff, "hunk": change.hunk}),
+                Some(match change.hunk {
+                    Some(index) => format!("hunk {} in {}", index + 1, change.path),
+                    None => change.path.clone(),
+                }),
+            ),
         };
-        let request = host::Request::post(endpoint, Some(json!({"cwd": cwd, "path": path})));
+        let request = host::Request::post(endpoint, Some(params));
         let host = self.host.clone();
         panel.update(cx, |panel, cx| panel.begin_repository_request(cx));
         let read = cx.background_spawn(async move {
-            host.fetch(&request)
-                .and_then(|response| host::json_body(&response))
-                .and_then(|body| Ok(serde_json::from_value(body)?))
-                .map_err(|error| error.to_string())
+            let body = host
+                .fetch(&request)
+                .and_then(|response| host::json_body(&response));
+            body.and_then(|body| {
+                let status = if endpoint == "git-revert" {
+                    match body["status"].as_str() {
+                        Some("success") => Some(false),
+                        Some("partial-success") => Some(true),
+                        _ => anyhow::bail!("Git revert returned an invalid result"),
+                    }
+                } else {
+                    None
+                };
+                Ok((
+                    serde_json::from_value::<ui::screens::diff::panel::RepositoryChanges>(body)?,
+                    status,
+                ))
+            })
+            .map_err(|error| error.to_string())
         });
-        cx.spawn(async move |_, cx| {
+        cx.spawn(async move |this, cx| {
             let result = read.await;
-            panel.update(cx, |panel, cx| panel.set_repository(result, cx));
+            this.update(cx, |this, cx| {
+                if let Some(target) = reverted {
+                    let toast = match &result {
+                        Ok((_, Some(true))) => Toast::info(format!("Partially reverted {target}")),
+                        Ok((_, Some(false))) => Toast::info(format!("Reverted {target}")),
+                        _ => Toast::danger(format!("Failed to revert {target}")),
+                    };
+                    this.toast(toast, cx);
+                }
+                panel.update(cx, |panel, cx| {
+                    panel.set_repository(result.map(|(changes, _)| changes), cx)
+                });
+            })
+            .ok();
         })
         .detach();
+    }
+
+    fn confirm_revert(
+        &mut self,
+        panel: Entity<DiffPanel>,
+        cwd: &str,
+        change: &RevertChanges,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if panel.read(cx).pending() || self.dialog.is_some() {
+            return;
+        }
+        let request = DiffRequest::Revert(change.clone());
+        if cx
+            .try_global::<host_settings::Settings>()
+            .and_then(|settings| settings.read_all().get("skip-revert-confirmation"))
+            .and_then(Value::as_bool)
+            == Some(true)
+        {
+            self.repository_request(panel, cwd, &request, cx);
+            return;
+        }
+        let cwd = cwd.to_owned();
+        let dialog = cx.new(|cx| Dialog::new(DialogKind::RevertChanges, cx));
+        // Handle Confirm before show_dialog drops the event source.
+        cx.subscribe(&dialog, move |this, _, outcome, cx| {
+            if let DialogOutcome::RevertChanges { do_not_ask_again } = outcome {
+                if *do_not_ask_again {
+                    this.write_setting(
+                        &SettingChanged {
+                            path: "host.skip-revert-confirmation",
+                            value: Value::Bool(true),
+                        },
+                        cx,
+                    );
+                }
+                this.repository_request(panel.clone(), &cwd, &request, cx);
+            }
+        })
+        .detach();
+        self.show_dialog(dialog, window, cx);
     }
 
     /// The host's automation list, or its error; `None` means that the read has not completed.
@@ -1569,6 +1648,7 @@ impl Root {
             this.dialog = None;
             match outcome {
                 DialogOutcome::Dismiss => window.focus(&this.focus, cx),
+                DialogOutcome::RevertChanges { .. } => window.focus(&this.focus, cx),
                 DialogOutcome::DismissAnnouncement(model)
                 | DialogOutcome::UseAnnouncedModel { model, .. } => {
                     if let DialogOutcome::UseAnnouncedModel {
@@ -1744,9 +1824,16 @@ impl Root {
         let composer = self.thread_composer.clone().into();
         let diff = cx.new(|_| DiffPanel::last_turn(&self.cwd, &thread.cwd, &thread.turns));
         let cwd = thread.cwd.clone();
-        cx.subscribe(&diff, move |this, panel, request: &DiffRequest, cx| {
-            this.repository_request(panel, &cwd, request, cx);
-        })
+        cx.subscribe_in(
+            &diff,
+            window,
+            move |this, panel, request: &DiffRequest, window, cx| match request {
+                DiffRequest::Revert(change) => {
+                    this.confirm_revert(panel.clone(), &cwd, change, window, cx)
+                }
+                _ => this.repository_request(panel.clone(), &cwd, request, cx),
+            },
+        )
         .detach();
         self.diff = Some(diff);
         self.file = None;
