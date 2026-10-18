@@ -246,10 +246,10 @@ The existing replay checks the original colors, row actions, tooltips, canceled 
 | 1 | Launch to `/` | entry | Hero, announcement slot and composer. | Route Home, rail Home selected, composer focused, Recents loaded. | PASS (`launch_home`, `parity_home`) |
 | 2 | `New chat` row | click | Navigates to `/` and clears the draft. | Same. | PASS (`new_chat_row`) |
 | 3 | `⌘N` / `⌘⇧O` | shortcut | New chat on Home, composer focused. | Same. | PASS (`cmd_n_new_chat`) |
-| 4 | Hero project selector | click | Opens the project menu. | No projects. | NOT WIRED (`crates/ui/src/screens/home.rs` hero) |
+| 4 | Hero project selector | click | Opens the project menu. | Shows the selected folder and opens the native folder picker. | Native local-folder flow; no project dropdown. |
 | 5 | Beacon `Start Voice` | click | Starts a realtime voice chat. | No beacon. | NOT WIRED (`crates/ui/src/screens/home.rs`) |
 | 6 | Beacon dismiss `×` | click | Hides the banner. | No beacon. | NOT WIRED (`crates/ui/src/screens/home.rs`) |
-| 7 | `Choose project` | click | Project dropdown. | Chip has no handler. | NOT WIRED (`crates/ui/src/screens/home.rs` `utility_bar`) |
+| 7 | `Choose project` | click | Project dropdown. | Opens the native folder picker and selects a local project for new chats. | Native local-folder flow (`project_picker`); no project dropdown. |
 | 8 | `Work in` / `This computer` | click | Location menu. | Chip has no handler. | NOT WIRED (`crates/ui/src/screens/home.rs` `utility_bar`) |
 | 9 | Editor `Do anything` | focus | Caret shows. | Click focuses the editor. | PASS (`editor_click_focuses`) |
 | 10 | `+` Add files and more | click | Context menu (files, photos, @-mentions). | Opens the system file picker at once. | FAIL (`crates/ui/src/composer.rs` `add_files`: no context menu) |
@@ -708,6 +708,7 @@ The shared replay selects the dedicated `f1d_projects` adapter.
 
 Run `tools/mac.sh -l f1d-projects 'cargo test -p app --test f1d_projects -- --test-threads=1'`.
 
+
 | Recorded region | Original | Port |
 |---|---|---|
 | Project rows | [Image](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ff8c28f83516f4fb8545d34d04a67ab08498485936cb345b/project-markers/original-rows.png) | [Image](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ff8c28f83516f4fb8545d34d04a67ab08498485936cb345b/project-markers/port-rows.png) |
@@ -716,6 +717,33 @@ Run `tools/mac.sh -l f1d-projects 'cargo test -p app --test f1d_projects -- --te
 
 The [strict static report](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ff8c28f83516f4fb8545d34d04a67ab08498485936cb345b/report.html) passes all 36 cases with zero outside-text differences.
 
+
+## Native project selection and chat directories
+
+`Choose project`, the selected Home title, `⌘O`, File > Open Folder, and the `Open folder` command use GPUI's folder picker.
+The picker accepts one folder and does not change the selection or the current chat when canceled.
+The local host adds the folder to the existing `local-projects` and `project-order` records.
+It retains other projects and unrelated values in `.codex-global-state.json`.
+Selecting an existing root does not add a duplicate project.
+The sidebar uses the same host project rows as the marker flow.
+
+The app saves the selected new-chat root in `state.json`.
+The Home title, project chip, and file search use that selection.
+Changing roots stops the old file-search session, removes its results, and restarts the current query without clearing the draft.
+Home and thread composers accept only search replies for their own session.
+`thread/start` captures the selected root before its asynchronous request.
+Existing chats retain the directory from their thread data.
+`thread/resume` sends only the thread ID, without a selected-folder override.
+Changing the Home selection does not change another chat's directory.
+
+`crates/app/tests/project_picker.rs` checks two temporary repositories, cancellation, reopening an existing chat, new-chat requests, and saved selection.
+It also checks project reuse, host-state preservation, and invalid-folder errors.
+The Mac flow uses native GPUI mouse and key events with the supported headless picker response API.
+It captures the selected roots, the new chat, and the reopened app.
+The physical macOS folder dialog is not exercised by this headless check.
+Project dropdowns, worktrees, remote environments, discovery, indexing, and Git actions remain outside this native-folder slice.
+
+Run `tools/mac.sh -l cgx-project-picker 'cargo test -p app --test project_picker -- --test-threads=1'`.
 
 
 ## F3c: Model announcement (SH-142)

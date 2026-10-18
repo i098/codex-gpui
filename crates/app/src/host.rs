@@ -70,6 +70,10 @@ pub trait Host: Send + Sync {
         bail!("sidebar project state is unsupported by this host")
     }
 
+    fn add_project(&self, _root: &Path) -> Result<String> {
+        bail!("adding a local project is unsupported by this host")
+    }
+
     /// The signed-in ChatGPT identity the renderer puts on its backend requests; `None`
     /// without a ChatGPT sign-in. Call this off the UI thread for a cloud host.
     fn identity(&self) -> Option<Identity> {
@@ -672,6 +676,65 @@ impl Host for LocalHost {
         })
     }
 
+    fn add_project(&self, root: &Path) -> Result<String> {
+        let root = root
+            .canonicalize()
+            .context("resolve selected project folder")?;
+        ensure!(root.is_dir(), "selected project must be a folder");
+        let root = root.to_str().context("project path must be UTF-8")?;
+        let path = self.home.join(".codex-global-state.json");
+        let mut state: Value = match fs::read(&path) {
+            Ok(contents) => serde_json::from_slice(&contents)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => json!({}),
+            Err(error) => return Err(error).context("read project state before adding a folder"),
+        };
+        ensure!(state.is_object(), "project state must be an object");
+        if state["local-projects"].is_null() {
+            state["local-projects"] = json!({});
+        }
+        let projects = state["local-projects"]
+            .as_object_mut()
+            .context("local-projects must be an object")?;
+        if !projects.values().any(|project| {
+            project["rootPaths"].as_array().is_some_and(|roots| {
+                roots.iter().any(|path| {
+                    path.as_str().is_some_and(|path| {
+                        path == root
+                            || Path::new(path).canonicalize().ok().as_deref()
+                                == Some(Path::new(root))
+                    })
+                })
+            })
+        }) {
+            let id = crate::uuid_v4();
+            let now = chrono::Utc::now().timestamp_millis();
+            let name = Path::new(root)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(root);
+            projects.insert(
+                id.clone(),
+                json!({
+                    "id": id, "name": name, "rootPaths": [root],
+                    "createdAt": now, "updatedAt": now,
+                }),
+            );
+            if state["project-order"].is_null() {
+                state["project-order"] = json!([]);
+            }
+            state["project-order"]
+                .as_array_mut()
+                .context("project-order must be an array")?
+                .push(id.into());
+            fs::create_dir_all(&self.home)?;
+            let mut file = tempfile::NamedTempFile::new_in(&self.home)?;
+            serde_json::to_writer_pretty(&mut file, &state)?;
+            file.as_file().sync_all()?;
+            file.persist(path)?;
+        }
+        Ok(root.to_owned())
+    }
+
     fn fetch(&self, request: &Request) -> Result<Value> {
         let Request::Fetch { method, url, body } = request else {
             bail!("authenticated remote HTTP is unsupported by LocalHost");
@@ -1020,6 +1083,10 @@ impl CloudHost {
 impl Host for CloudHost {
     fn projects(&self) -> Result<Vec<Project>> {
         self.local.projects()
+    }
+
+    fn add_project(&self, root: &Path) -> Result<String> {
+        self.local.add_project(root)
     }
 
     fn fetch(&self, request: &Request) -> Result<Value> {
