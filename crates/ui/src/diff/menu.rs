@@ -23,7 +23,7 @@ impl DiffPanel {
         &self,
     ) -> impl ExactSizeIterator<Item = (&'static str, bool)> + Clone + use<> {
         let (items, count) = match &self.menu {
-            None => ([("", false); 4], 0),
+            None => ([("", false); 5], 0),
             Some(menu) if menu.kind == Kind::Source => (
                 [
                     ("Last Turn", true),
@@ -33,6 +33,7 @@ impl DiffPanel {
                         "Refresh",
                         !self.pending && self.source != DiffSource::LastTurn,
                     ),
+                    ("", false),
                 ],
                 4,
             ),
@@ -56,11 +57,12 @@ impl DiffPanel {
                         },
                         !self.pending && self.error.is_none(),
                     ),
+                    ("Revert file", !self.pending && self.error.is_none()),
                 ],
                 if self.source == DiffSource::LastTurn {
                     3
                 } else {
-                    4
+                    5
                 },
             ),
             Some(menu) => (
@@ -69,6 +71,7 @@ impl DiffPanel {
                     ("Copy path", true),
                     ("Copy relative path", true),
                     ("Toggle line wrap", true),
+                    ("", false),
                 ],
                 4,
             ),
@@ -194,6 +197,7 @@ impl DiffPanel {
         match label {
             "Stage file" => cx.emit(DiffRequest::Stage(format!("{}{}", file.dir, file.name))),
             "Unstage file" => cx.emit(DiffRequest::Unstage(format!("{}{}", file.dir, file.name))),
+            "Revert file" => self.request_revert(menu.file, None, cx),
             "Copy selection" => cx.write_to_clipboard(ClipboardItem::new_string(menu.selected)),
             "Copy path" | "Copy relative path" => {
                 let relative = format!("{}{}", file.dir, file.name);
