@@ -949,9 +949,12 @@ impl Dialog {
                         let color = t.text;
                         div()
                             .relative()
-                            .min_h(px(20.))
+                            .min_h(px(if self.kind == Kind::Commit { 21. } else { 20. }))
                             .text_size(px(14.))
-                            .line_height(px(20.))
+                            .line_height(px(if self.kind == Kind::Commit { 21. } else { 20. }))
+                            .when(self.kind == Kind::Commit, |d| {
+                                d.font_weight(gpui::FontWeight(430.))
+                            })
                             .text_color(if self.query.is_empty() {
                                 t.text_tertiary
                             } else {
@@ -1527,10 +1530,17 @@ impl Dialog {
         });
     }
 
-    /// The command-menu surface's `p-1` and border, the rows and the 31 px list rows.
+    /// The original uses 4 px gaps between its fields and between its 31 px action rows.
     fn commit_height(&self) -> f32 {
         let rows = if self.form().repo.remote { 3. } else { 1. };
-        10. + 36. + if self.creates_branch() { 44. } else { 0. } + 80. + 41. + 1. + 8. + rows * 31.
+        10. + 36.
+            + if self.creates_branch() { 33. } else { 0. }
+            + 80.
+            + 41.
+            + 12.
+            + 9.
+            + rows * 31.
+            + (rows - 1.) * 4.
     }
 
     fn commit_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
@@ -1552,6 +1562,39 @@ impl Dialog {
         } else {
             form.repo.staged
         };
+        let recorded_icon = |key: &'static str, src: &'static str, color: gpui::Hsla| {
+            canvas(
+                |_, _, _| (),
+                move |bounds, (), window, cx| {
+                    if !shapes::paint_icon(
+                        src.as_bytes(),
+                        key,
+                        bounds,
+                        false,
+                        color,
+                        None,
+                        window,
+                        cx,
+                    ) {
+                        window
+                            .paint_svg(
+                                bounds,
+                                key.into(),
+                                Some(src.as_bytes()),
+                                gpui::TransformationMatrix::unit(),
+                                color,
+                                cx,
+                            )
+                            .ok();
+                    }
+                },
+            )
+            .size(px(16.))
+            .flex_none()
+        };
+        let branch_icon = r#"<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="5.4165" cy="5" r="1.875" stroke="currentColor" stroke-width="1.33"/><circle cx="5.4165" cy="15" r="1.875" stroke="currentColor" stroke-width="1.33"/><circle cx="14.5833" cy="5" r="1.875" stroke="currentColor" stroke-width="1.33"/><path d="M5.4165 6.66664V13.3333" stroke="currentColor" stroke-width="1.33" stroke-linejoin="round"/><path d="M5.41658 12.5V11.6667C5.41658 10.7462 6.16278 10 7.08325 10H12.9166C13.8371 10 14.5833 9.25381 14.5833 8.33333V7.5" stroke="currentColor" stroke-width="1.33" stroke-linejoin="round"/></svg>"#;
+        let commit_icon = r#"<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M13.5013 10.0003C13.5013 8.06653 11.9341 6.49856 10.0003 6.49838C8.06641 6.49838 6.49837 8.06642 6.49837 10.0003C6.49855 11.9341 8.06652 13.5013 10.0003 13.5013C11.934 13.5011 13.5011 11.934 13.5013 10.0003ZM14.8314 10.0003C14.8312 12.6685 12.6685 14.8312 10.0003 14.8314C7.33198 14.8314 5.16847 12.6686 5.16829 10.0003C5.16829 7.33188 7.33187 5.1683 10.0003 5.1683C12.6686 5.16848 14.8314 7.33199 14.8314 10.0003Z" fill="currentColor"/><path d="M5 9.33497C5.36727 9.33497 5.66504 9.63274 5.66504 10C5.66504 10.3673 5.36727 10.665 5 10.665H1.25C0.882731 10.665 0.584961 10.3673 0.584961 10C0.584961 9.63274 0.882731 9.33497 1.25 9.33497H5Z" fill="currentColor"/><path d="M18.75 9.33497C19.1173 9.33497 19.415 9.63274 19.415 10C19.415 10.3673 19.1173 10.665 18.75 10.665H15C14.6327 10.665 14.335 10.3673 14.335 10C14.335 9.63274 14.6327 9.33497 15 9.33497H18.75Z" fill="currentColor"/></svg>"#;
+        let upload_icon = r#"<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M15.0001 14.9967C16.841 14.9967 18.3334 13.5044 18.3334 11.6634C18.3334 9.82246 16.841 8.33008 15.0001 8.33008C15.0001 5.56865 12.7615 3.33008 10.0001 3.33008C7.80904 3.33008 5.94715 4.73939 5.27148 6.70098C3.23605 6.97537 1.66675 8.71946 1.66675 10.8301C1.66675 12.8458 3.09817 14.5273 5 14.9134" stroke="currentColor" stroke-width="1.33" stroke-linecap="round" stroke-linejoin="round"/><path d="M7.5 12.5L10 10L12.5 12.5" stroke="currentColor" stroke-width="1.33" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 10.5V17" stroke="currentColor" stroke-width="1.33" stroke-linecap="round" stroke-linejoin="round"/></svg>"#;
         let selector = div()
             .id("commit-target")
             .role(gpui::Role::Button)
@@ -1559,18 +1602,21 @@ impl Dialog {
             .track_focus(&self.controls[2])
             .h(px(36.))
             .px(px(8.))
+            .border_1()
+            .border_color(gpui::transparent_black())
             .rounded(px(12.5))
             .flex()
             .items_center()
-            .gap(px(6.))
+            .gap(px(4.))
+            .child(recorded_icon("commit-branch", branch_icon, t.text))
             .when(self.selected == 2, |d| d.bg(t.ghost_hover))
             .child(
-                text(target, 14., 21., 430., t.text)
+                text(target, 14., 18., 430., t.text)
                     .text_ellipsis()
                     .min_w_0(),
             )
             .when(remote, |d| {
-                d.child(icon("chevron-down-small", 16., t.text_tertiary))
+                d.child(icon("chevron-down-small", 14., t.text))
                     .hover(|s| s.bg(t.ghost_hover))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.selected = 2;
@@ -1585,23 +1631,10 @@ impl Dialog {
                 items.push((branch.clone().into(), !new));
             }
             items.push(("New branch".into(), new));
-            div()
-                .id("commit-target-menu")
-                .absolute()
-                .top(px(40.))
-                .left(px(8.))
-                .w(px(220.))
-                .rounded(px(12.))
-                .shadow_sm()
-                .p(px(4.))
-                .bg(t.menu_background)
-                .border_1()
-                .border_color(t.border)
-                .flex()
-                .flex_col()
-                .child(
-                    text("Commit to", 12., 16., 430., t.text_tertiary)
-                        .h(px(24.))
+            crate::composer::popover(t, 160., |d| {
+                d.child(
+                    text("Commit to", 13., 18.5625, 430., t.text_tertiary)
+                        .h(px(26.5625))
                         .px(px(8.))
                         .flex()
                         .items_center(),
@@ -1611,17 +1644,35 @@ impl Dialog {
                         .into_iter()
                         .enumerate()
                         .map(|(index, (label, chosen))| {
+                            let new_item = label.as_ref() == "New branch";
                             div()
                                 .id(("commit-target-item", index))
-                                .h(px(32.))
+                                .h(px(28.5625))
                                 .px(px(8.))
-                                .rounded(px(8.))
+                                .rounded(px(15.))
                                 .flex()
                                 .items_center()
-                                .justify_between()
-                                .when(index == highlighted, |d| d.bg(t.list_hover))
-                                .child(text(label, 14., 20., 430., t.text).text_ellipsis())
+                                .gap(px(6.))
+                                .when(index == highlighted, |d| d.bg(t.menu_item_hover))
+                                .child(if new_item {
+                                    icon("plus", 16., t.text).into_any_element()
+                                } else {
+                                    recorded_icon("commit-branch", branch_icon, t.text)
+                                        .into_any_element()
+                                })
+                                .child(
+                                    text(label, 13., 18.5625, 430., t.text)
+                                        .text_ellipsis()
+                                        .flex_1()
+                                        .min_w_0(),
+                                )
                                 .when(chosen, |d| d.child(icon("menu-check", 16., t.text)))
+                                .on_hover(cx.listener(move |this, hovered, _, cx| {
+                                    if *hovered {
+                                        this.form_mut().menu = Some(index);
+                                        cx.notify();
+                                    }
+                                }))
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.choose_target(index);
                                     this.selected = 2;
@@ -1630,6 +1681,11 @@ impl Dialog {
                                 }))
                         }),
                 )
+            })
+            .id("commit-target-menu")
+            .absolute()
+            .top(px(43.5))
+            .left(px(6.))
         });
         let name_taken = new
             && form
@@ -1643,43 +1699,45 @@ impl Dialog {
             .aria_label("Branch name")
             .aria_value(form.branch_name.clone())
             .track_focus(&self.controls[3])
-            .mx(px(12.))
-            .mb(px(8.))
-            .h(px(36.))
-            .px(px(10.))
-            .rounded(px(10.))
-            .border_1()
-            .border_color(if self.selected == 3 {
-                rgba(0x3a83f7ff).into()
-            } else {
-                t.border_strong
-            })
+            .mt(px(4.))
+            .h(px(29.))
+            .px(px(12.))
+            .pt(px(8.))
             .flex()
             .items_center()
             .justify_between()
             .gap(px(8.))
             .cursor_text()
             .child(
-                text(
-                    if form.branch_name.is_empty() {
-                        "Create a new branch".to_owned()
-                    } else {
-                        form.branch_name.clone()
-                    },
-                    13.,
-                    18.,
-                    430.,
-                    if form.branch_name.is_empty() {
-                        t.text_tertiary
-                    } else {
-                        t.text
-                    },
-                )
-                .text_ellipsis()
-                .min_w_0()
-                .when(self.select_all && !form.branch_name.is_empty(), |d| {
-                    d.bg(rgba(0x3a83f766))
-                }),
+                div()
+                    .flex()
+                    .items_center()
+                    .min_w_0()
+                    .child(
+                        text(
+                            if form.branch_name.is_empty() {
+                                "codex/".to_owned()
+                            } else {
+                                form.branch_name.clone()
+                            },
+                            14.,
+                            21.,
+                            430.,
+                            if form.branch_name.is_empty() {
+                                t.text_tertiary
+                            } else {
+                                t.text
+                            },
+                        )
+                        .text_ellipsis()
+                        .min_w_0()
+                        .when(self.select_all && !form.branch_name.is_empty(), |d| {
+                            d.bg(t.text_selection)
+                        }),
+                    )
+                    .when(self.selected == 3 && !self.select_all, |d| {
+                        d.child(div().w(px(1.)).h(px(18.)).bg(t.text))
+                    }),
             )
             .when(name_taken, |d| {
                 d.child(text("Branch already exists", 12., 16., 430., t.text_error))
@@ -1701,7 +1759,10 @@ impl Dialog {
             })
             .track_focus(&self.controls[1])
             .h(px(41.))
+            .mt(px(4.))
             .px(px(12.))
+            .pt(px(8.))
+            .pb(px(12.))
             .flex()
             .items_center()
             .gap(px(8.))
@@ -1714,18 +1775,18 @@ impl Dialog {
                     .border_color(if self.selected == 1 {
                         rgba(0x3a83f7ff).into()
                     } else {
-                        t.border
+                        t.border_strong
                     })
+                    .bg(t.surface_elevated_secondary.opacity(0.96))
                     .when(form.include_unstaged, |d| {
-                        d.bg(t.text)
-                            .child(text("✓", 12., 12., 600., t.menu_background))
+                        d.child(icon("menu-check", 12., t.text))
                     }),
             )
-            .child(text("Include unstaged changes", 14., 20., 430., t.text).flex_1())
+            .child(text("Include unstaged changes", 14., 21., 430., t.text).flex_1())
             .child(if selection.files == 0 {
                 text("No changes", 12., 16., 430., t.text_tertiary).into_any_element()
             } else {
-                crate::screens::diff::panel::stats(selection.additions, selection.deletions, 12., t)
+                crate::screens::diff::panel::stats(selection.additions, selection.deletions, 14., t)
                     .into_any_element()
             })
             .on_click(cx.listener(|this, _, window, cx| {
@@ -1752,7 +1813,7 @@ impl Dialog {
                 let (enabled, reason) = state[index - 4];
                 let on = enabled && highlighted == Some(index);
                 let color = match (enabled, on) {
-                    (false, _) => t.text_tertiary,
+                    (false, _) => t.text.opacity(0.25),
                     (true, true) => t.text,
                     (true, false) => t.text.opacity(0.75),
                 };
@@ -1769,9 +1830,15 @@ impl Dialog {
                     .items_center()
                     .gap(px(8.))
                     .when(on, |d| d.bg(t.ghost_hover))
-                    .child(div().size(px(16.)).flex_none().when(index != 4, |slot| {
-                        slot.child(icon("composer-arrow-up", 16., color))
-                    }))
+                    .child(recorded_icon(
+                        if index == 4 {
+                            "commit-action"
+                        } else {
+                            "commit-upload"
+                        },
+                        if index == 4 { commit_icon } else { upload_icon },
+                        color,
+                    ))
                     .child(text(label, 14., 21., 430., color).flex_1().min_w_0())
                     .when(on, |d| {
                         d.child(
@@ -1817,12 +1884,20 @@ impl Dialog {
                     cx,
                 )
                 .h(px(80.))
+                .mt(px(4.))
                 .px(px(12.))
                 .py(px(8.)),
             )
             .child(include)
-            .child(div().h(px(1.)).bg(t.border))
-            .child(div().py(px(4.)).flex().flex_col().children(rows))
+            .child(div().mt(px(4.)).h(px(1.)).bg(t.border))
+            .child(
+                div()
+                    .py(px(4.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .children(rows),
+            )
             .children(menu)
     }
 }
@@ -2106,7 +2181,7 @@ impl Render for Dialog {
                     } else {
                         24.
                     }))
-                    .overflow_hidden()
+                    .when(!commit, |d| d.overflow_hidden())
                     .map(|d| {
                         if announcement {
                             d.child(shapes::decoration(shapes::Decoration {
@@ -2134,6 +2209,13 @@ impl Render for Dialog {
                                         gpui::transparent_black()
                                     },
                                 )),
+                                shadows: vec![crate::composer::shadow(
+                                    rgba(0x00000030).into(),
+                                    16.,
+                                    32.,
+                                    -8.,
+                                    false,
+                                )],
                                 ..Default::default()
                             }))
                         } else if !schedule {

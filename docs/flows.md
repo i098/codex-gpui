@@ -420,7 +420,9 @@ Revert, hunk actions, and remote Git remain separate work. Commit and push are i
 The thread route's `Commit or push` command (`git.commit`) runs the original's rule.
 When the selected changes are not empty it opens the commit form; otherwise it pushes the commits that the branch is ahead by.
 When neither is possible the command does nothing; the original hides it, and the port's command list is static.
-The form is the original's 420 px dialog.
+The form uses the retained original's 420 × 289 px surface and 20 px corners.
+It uses 4 px field and action gaps, 14 px text, and the original commit/cloud-upload icons.
+The native capture also renders the original's blank-message and new-branch states with its `+5 -1` selection at 1280 × 832.
 `Commit to` lists the current branch and `New branch`, offered only when a remote exists; a detached HEAD starts on `New branch`.
 The new name is prefilled with `git-branch-prefix` (default `codex/`) and the first five words of the chat title.
 `Include unstaged changes` (default on, kept for the session) shows `+N -M` of the selection or `No changes`.

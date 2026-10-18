@@ -169,6 +169,25 @@ fn commit_branch_and_push_use_real_repositories() -> Result<()> {
     ensure!(fx.read(|root, _| root.dialog().is_none()));
     ensure!(remote_head("main")? == base);
 
+    // Match the retained original form's +5 -1 selection without changing the commit cases.
+    fs::write(
+        root.join("a.txt"),
+        "reference\nline 2\nline 3\nline 4\nline 5\n",
+    )?;
+    open_form(&mut fx)?;
+    fx.shot()?.save(scratch.join("original-state-blank.png"))?;
+    fx.type_text("Add proof files")?;
+    fx.shot()?.save(scratch.join("original-state-filled.png"))?;
+    fx.keys("cmd-a backspace shift-tab enter")?;
+    fx.shot()?
+        .save(scratch.join("original-state-target-menu.png"))?;
+    fx.keys("down enter tab cmd-a")?;
+    fx.type_text("feature/proof")?;
+    fx.shot()?
+        .save(scratch.join("original-state-new-branch.png"))?;
+    fx.keys("escape")?;
+    git(root, &["checkout", "-q", "--", "a.txt"])?;
+
     // `Commit`: staged, unstaged and untracked files, with a typed message.
     fs::write(root.join("a.txt"), "base\nunstaged\n")?;
     fs::write(root.join("b.txt"), "staged\n")?;
