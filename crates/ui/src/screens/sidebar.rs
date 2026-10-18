@@ -1620,6 +1620,7 @@ pub struct CommandMenu {
     focus: FocusHandle,
     /// A thread is open: its commands show (`Search files`, `Mark as unread`, ...).
     thread_open: bool,
+    git_available: bool,
     /// Bumped on every query change; a debounced search only fires for the latest.
     search_gen: usize,
     /// `thread/search` in flight: the spinner next to `Chats`.
@@ -2225,9 +2226,21 @@ impl CommandMenu {
             selected: 0,
             focus: cx.focus_handle(),
             thread_open,
+            git_available: false,
             search_gen: 0,
             searching: false,
         }
+    }
+
+    pub fn set_git_available(&mut self, available: bool, cx: &mut Context<Self>) {
+        self.git_available = available;
+        let count = self
+            .visible()
+            .iter()
+            .map(|(_, rows)| rows.len())
+            .sum::<usize>();
+        self.selected = self.selected.min(count.saturating_sub(1));
+        cx.notify();
     }
 
     /// Keep registered groups; rank matches within each group.
@@ -2251,6 +2264,7 @@ impl CommandMenu {
                 let mut ranked = suggested
                     .chain(items.iter())
                     .filter(|item| self.thread_open || !item.thread_only)
+                    .filter(|item| item.label != "Commit or push" || self.git_available)
                     .filter_map(|item| {
                         let rank = if query.is_empty() {
                             Some((0, 0))
@@ -3083,29 +3097,31 @@ fn menu_row(
                 ..Default::default()
             }))
         })
-        .child(div().size(px(16.)).flex_none().map(|slot| {
-            if item.unread {
-                // `size-5` box with a `scale-50` `icon-xs` dot: 8 px `info-solid`, centred.
-                slot.flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        div()
-                            .size(px(8.))
-                            .child(shapes::decoration(shapes::Decoration {
-                                radius: Corners::all(Theme::RADIUS_FULL),
-                                fill: Some(t.info_solid.opacity(row_opacity)),
-                                ..Default::default()
-                            })),
-                    )
-            } else {
-                slot.children(item.icon.map(|name| {
-                    // `navigateForward` is the back arrow with `-scale-x-100`.
-                    icon(name, 16., fg.opacity(row_opacity))
-                        .when(item.label == "Forward", |i| i.flip_x())
-                }))
-            }
-        }))
+        .when(item.label != "Commit or push", |d| {
+            d.child(div().size(px(16.)).flex_none().map(|slot| {
+                if item.unread {
+                    // `size-5` box with a `scale-50` `icon-xs` dot: 8 px `info-solid`, centred.
+                    slot.flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            div()
+                                .size(px(8.))
+                                .child(shapes::decoration(shapes::Decoration {
+                                    radius: Corners::all(Theme::RADIUS_FULL),
+                                    fill: Some(t.info_solid.opacity(row_opacity)),
+                                    ..Default::default()
+                                })),
+                        )
+                } else {
+                    slot.children(item.icon.map(|name| {
+                        // `navigateForward` is the back arrow with `-scale-x-100`.
+                        icon(name, 16., fg.opacity(row_opacity))
+                            .when(item.label == "Forward", |i| i.flip_x())
+                    }))
+                }
+            }))
+        })
         .child(
             div()
                 .flex_1()

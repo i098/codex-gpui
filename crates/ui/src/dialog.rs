@@ -102,7 +102,6 @@ pub struct CommitRepository {
     /// `None` on a detached HEAD.
     pub branch: Option<String>,
     pub branches: Vec<String>,
-    pub remote: bool,
     pub ahead: usize,
     pub staged: Selection,
     pub all: Selection,
@@ -182,12 +181,13 @@ impl Dialog {
     pub fn commit(repo: CommitRepository, cx: &mut Context<Self>) -> Self {
         let form = CommitForm {
             include_unstaged: repo.include_unstaged,
-            new_branch: repo.remote && repo.branch.is_none(),
+            new_branch: repo.branch.is_none(),
             branch_name: repo.new_branch_name.clone(),
             menu: None,
             repo,
         };
         Self {
+            selected: if form.repo.all.files == 0 { 6 } else { 0 },
             commit: Some(form),
             ..Self::new(Kind::Commit, cx)
         }
@@ -387,11 +387,9 @@ impl Dialog {
                 cx.notify();
             }
             (Kind::Commit, 2) => {
-                if self.form().repo.remote {
-                    let highlighted = self.menu_selection();
-                    self.form_mut().menu = Some(highlighted);
-                    cx.notify();
-                }
+                let highlighted = self.menu_selection();
+                self.form_mut().menu = Some(highlighted);
+                cx.notify();
             }
             (Kind::Commit, 4) => self.submit_commit(CommitStep::Commit, cx),
             (Kind::Commit, 5) => self.submit_commit(CommitStep::CommitAndPush, cx),
@@ -1504,25 +1502,20 @@ impl Dialog {
         self.commit.as_mut().expect("commit form")
     }
 
-    /// A new branch is only offered where there is a remote to push it to.
-    fn creates_branch(&self) -> bool {
-        let form = self.form();
-        form.new_branch && form.repo.remote
-    }
-
     fn commit_tab_order(&self) -> Vec<usize> {
-        let remote = self.form().repo.remote;
         let mut order = Vec::new();
-        order.extend(remote.then_some(2));
-        order.extend(self.creates_branch().then_some(3));
-        order.extend([0, 1, 4]);
-        order.extend(remote.then_some([5, 6]).into_iter().flatten());
+        order.push(2);
+        order.extend(self.form().new_branch.then_some(3));
+        if self.form().repo.all.files > 0 {
+            order.extend([0, 1]);
+        }
+        order.extend([4, 5, 6]);
         order
     }
 
     /// The `Commit to` item that is chosen: the current branch comes first.
     fn menu_selection(&self) -> usize {
-        usize::from(self.form().repo.branch.is_some() && self.creates_branch())
+        usize::from(self.form().repo.branch.is_some() && self.form().new_branch)
     }
 
     fn choose_target(&mut self, item: usize) {
@@ -1537,7 +1530,7 @@ impl Dialog {
     fn commit_state(&self) -> [(bool, Option<&'static str>); 3] {
         let form = self.form();
         let name = form.branch_name.trim();
-        let new = self.creates_branch();
+        let new = form.new_branch;
         let blocked = new
             && (name.is_empty()
                 || name.ends_with('/')
@@ -1569,29 +1562,27 @@ impl Dialog {
             step,
             message: self.query.trim().to_owned(),
             include_unstaged: form.include_unstaged,
-            new_branch: self
-                .creates_branch()
-                .then(|| form.branch_name.trim().to_owned()),
+            new_branch: form.new_branch.then(|| form.branch_name.trim().to_owned()),
         });
     }
 
     /// The original uses 4 px gaps between its fields and between its 31 px action rows.
     fn commit_height(&self) -> f32 {
-        let rows = if self.form().repo.remote { 3. } else { 1. };
         10. + 36.
-            + if self.creates_branch() { 33. } else { 0. }
-            + 80.
-            + 41.
-            + 12.
+            + if self.form().new_branch { 33. } else { 0. }
+            + if self.form().repo.all.files > 0 {
+                80. + 41. + 8.
+            } else {
+                0.
+            }
+            + 4.
             + 9.
-            + rows * 31.
-            + (rows - 1.) * 4.
+            + 101.
     }
 
     fn commit_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
         let form = self.form();
-        let remote = form.repo.remote;
-        let new = self.creates_branch();
+        let new = form.new_branch;
         let state = self.commit_state();
         let target: SharedString = if new {
             "New branch".into()
@@ -1660,15 +1651,13 @@ impl Dialog {
                     .text_ellipsis()
                     .min_w_0(),
             )
-            .when(remote, |d| {
-                d.child(icon("chevron-down-small", 14., t.text))
-                    .hover(|s| s.bg(t.ghost_hover))
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.selected = 2;
-                        this.controls[2].focus(window, cx);
-                        this.activate(cx);
-                    }))
-            });
+            .child(icon("chevron-down-small", 14., t.text))
+            .hover(|s| s.bg(t.ghost_hover))
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.selected = 2;
+                this.controls[2].focus(window, cx);
+                this.activate(cx);
+            }));
         let menu = form.menu.map(|highlighted| {
             let current = form.repo.branch.clone();
             let mut items: Vec<(SharedString, bool)> = Vec::new();
@@ -1839,11 +1828,7 @@ impl Dialog {
                 this.controls[1].focus(window, cx);
                 this.activate(cx);
             }));
-        let labels = [
-            (4, "Commit", true),
-            (5, "Commit and push", remote),
-            (6, "Push", remote),
-        ];
+        let labels = [(4, "Commit"), (5, "Commit and push"), (6, "Push")];
         // cmdk keeps one row selected whatever has the key focus: the focused row, else the
         // first that runs.
         let highlighted = if (4..=6).contains(&self.selected) {
@@ -1851,68 +1836,65 @@ impl Dialog {
         } else {
             (0..3).find(|i| state[*i].0).map(|i| i + 4)
         };
-        let rows = labels
-            .into_iter()
-            .filter(|(_, _, shown)| *shown)
-            .map(|(index, label, _)| {
-                let (enabled, reason) = state[index - 4];
-                let on = enabled && highlighted == Some(index);
-                let color = match (enabled, on) {
-                    (false, _) => t.text.opacity(0.25),
-                    (true, true) => t.text,
-                    (true, false) => t.text.opacity(0.75),
-                };
-                let row = div()
-                    .id(("commit-row", index))
-                    .role(gpui::Role::Button)
-                    .aria_label(label)
-                    .track_focus(&self.controls[index])
-                    .relative()
-                    .py(px(5.))
-                    .px(px(8.))
-                    .rounded(px(12.5))
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .when(on, |d| d.bg(t.ghost_hover))
-                    .child(recorded_icon(
-                        if index == 4 {
-                            "commit-action"
-                        } else {
-                            "commit-upload"
+        let rows = labels.into_iter().map(|(index, label)| {
+            let (enabled, reason) = state[index - 4];
+            let on = enabled && highlighted == Some(index);
+            let color = match (enabled, on) {
+                (false, _) => t.text.opacity(0.25),
+                (true, true) => t.text,
+                (true, false) => t.text.opacity(0.75),
+            };
+            let row = div()
+                .id(("commit-row", index))
+                .role(gpui::Role::Button)
+                .aria_label(label)
+                .track_focus(&self.controls[index])
+                .relative()
+                .py(px(5.))
+                .px(px(8.))
+                .rounded(px(12.5))
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .when(on, |d| d.bg(t.ghost_hover))
+                .child(recorded_icon(
+                    if index == 4 {
+                        "commit-action"
+                    } else {
+                        "commit-upload"
+                    },
+                    if index == 4 { commit_icon } else { upload_icon },
+                    color,
+                ))
+                .child(text(label, 14., 21., 430., color).flex_1().min_w_0())
+                .when(on, |d| {
+                    d.child(
+                        div().flex_none().h(px(21.)).pt(px(3.)).child(
+                            div()
+                                .h(px(16.))
+                                .px(px(6.))
+                                .rounded(px(10.))
+                                .bg(t.text_alpha_10)
+                                .flex()
+                                .items_center()
+                                .child(text("⌘↵", 12., 12., 430., t.text).opacity(0.8)),
+                        ),
+                    )
+                })
+                .when(enabled, |d| {
+                    d.hover(|s| s.bg(t.ghost_hover)).on_click(cx.listener(
+                        move |this, _, window, cx| {
+                            this.selected = index;
+                            this.controls[index].focus(window, cx);
+                            this.activate(cx);
                         },
-                        if index == 4 { commit_icon } else { upload_icon },
-                        color,
                     ))
-                    .child(text(label, 14., 21., 430., color).flex_1().min_w_0())
-                    .when(on, |d| {
-                        d.child(
-                            div().flex_none().h(px(21.)).pt(px(3.)).child(
-                                div()
-                                    .h(px(16.))
-                                    .px(px(6.))
-                                    .rounded(px(10.))
-                                    .bg(t.text_alpha_10)
-                                    .flex()
-                                    .items_center()
-                                    .child(text("⌘↵", 12., 12., 430., t.text).opacity(0.8)),
-                            ),
-                        )
-                    })
-                    .when(enabled, |d| {
-                        d.hover(|s| s.bg(t.ghost_hover)).on_click(cx.listener(
-                            move |this, _, window, cx| {
-                                this.selected = index;
-                                this.controls[index].focus(window, cx);
-                                this.activate(cx);
-                            },
-                        ))
-                    });
-                match reason.filter(|_| !enabled) {
-                    Some(reason) => tooltip(row, reason, None, Side::Top).into_any_element(),
-                    None => row.into_any_element(),
-                }
-            });
+                });
+            match reason.filter(|_| !enabled) {
+                Some(reason) => tooltip(row, reason, None, Side::Top).into_any_element(),
+                None => row.into_any_element(),
+            }
+        });
         div()
             .relative()
             .p(px(5.))
@@ -1920,20 +1902,22 @@ impl Dialog {
             .flex_col()
             .child(selector)
             .when(new, |d| d.child(branch_name))
-            .child(
-                self.editor(
-                    "commit-message",
-                    "Commit message",
-                    "Commit message (leave blank to generate)…",
-                    t,
-                    cx,
+            .when(form.repo.all.files > 0, |d| {
+                d.child(
+                    self.editor(
+                        "commit-message",
+                        "Commit message",
+                        "Commit message (leave blank to generate)…",
+                        t,
+                        cx,
+                    )
+                    .h(px(80.))
+                    .mt(px(4.))
+                    .px(px(12.))
+                    .py(px(8.)),
                 )
-                .h(px(80.))
-                .mt(px(4.))
-                .px(px(12.))
-                .py(px(8.)),
-            )
-            .child(include)
+                .child(include)
+            })
             .child(div().mt(px(4.)).h(px(1.)).bg(t.border))
             .child(
                 div()
@@ -1952,18 +1936,17 @@ impl Dialog {
     /// The visible rows with whether each runs and its tooltip when it does not.
     pub fn commit_rows(&self) -> Vec<(&'static str, bool, Option<&'static str>)> {
         let state = self.commit_state();
-        let mut rows = vec![("Commit", state[0].0, state[0].1)];
-        if self.form().repo.remote {
-            rows.push(("Commit and push", state[1].0, state[1].1));
-            rows.push(("Push", state[2].0, state[2].1));
-        }
-        rows
+        vec![
+            ("Commit", state[0].0, state[0].1),
+            ("Commit and push", state[1].0, state[1].1),
+            ("Push", state[2].0, state[2].1),
+        ]
     }
 
     /// `New branch` with its name, or the branch the commit lands on.
     pub fn commit_target(&self) -> (bool, String) {
         let form = self.form();
-        if self.creates_branch() {
+        if form.new_branch {
             (true, form.branch_name.clone())
         } else {
             (false, form.repo.branch.clone().unwrap_or_default())
@@ -2155,12 +2138,7 @@ impl Render for Dialog {
                         Kind::ScheduleTask => "Schedule a task".into(),
                         Kind::Rename => "Rename chat".into(),
                         Kind::FullAccess => "Turn on Full Access?".into(),
-                        Kind::Commit => if self.form().repo.remote {
-                            "Commit or push"
-                        } else {
-                            "Commit"
-                        }
-                        .into(),
+                        Kind::Commit => "Commit or push".into(),
                         Kind::ModelAnnouncement => self
                             .announcement
                             .as_ref()
