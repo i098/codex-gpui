@@ -1135,17 +1135,18 @@ impl Root {
     }
 
     /// HC-033: a printable key (no ⌘/⌃, not Space) typed outside an editable, with no
-    /// dialog, menu or popover open, goes to the route's composer and focuses it. Popovers
-    /// hold plain focus handles; page controls and the composers are tab stops.
+    /// dialog, menu or popover open, goes to the route's composer and focuses it.
+    /// Content ancestors can hold plain focus handles without being popovers.
     fn type_anywhere(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
         let Some(text) = keystroke.key_char.as_deref() else {
             return;
         };
         let printable = text.chars().count() == 1 && !text.chars().all(char::is_whitespace);
-        let in_popover = window
-            .focused(cx)
-            .is_some_and(|focus| !focus.tab_stop && focus != self.focus);
+        let route_focus = self.route_focus(cx);
+        let in_popover = window.focused(cx).is_some_and(|focus| {
+            !focus.tab_stop && focus != self.focus && !focus.contains(&route_focus, window)
+        });
         let editing = window
             .context_stack()
             .iter()
@@ -1155,7 +1156,7 @@ impl Root {
             || keystroke.modifiers.control
             || self.dialog.is_some()
             || self.command_menu.is_some()
-            || self.route_focus(cx) == self.focus
+            || route_focus == self.focus
             || in_popover
             || editing
         {

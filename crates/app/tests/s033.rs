@@ -100,3 +100,35 @@ fn escape_and_type_anywhere_match_the_original() -> Result<()> {
     ensure!(fx.composer_text()? == "abc", "Copy changed the text");
     Ok(())
 }
+
+#[test]
+fn popup_typing_does_not_reach_the_composer() -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        return Ok(());
+    }
+    let mut fx = Fx::new()?;
+    fx.type_text("draft")?;
+    for at in [(1030., 790.), (522.5, 790.)] {
+        fx.click(at)?;
+        let composer = fx.composer();
+        ensure!(
+            fx.cx.update_window(fx.window, |_, window, cx| composer
+                .read(cx)
+                .menu_state(window)
+                .0)?,
+            "the popup did not open"
+        );
+        fx.type_text("x")?;
+        ensure!(fx.composer_text()? == "draft", "the popup captured text");
+        ensure!(!fx.composer_focused()?, "the popup lost focus");
+        fx.keys("escape")?;
+    }
+    fx.click((800., 200.))?;
+    fx.type_text("a")?;
+    ensure!(fx.composer_text()? == "drafta", "content typing was lost");
+    ensure!(
+        fx.composer_focused()?,
+        "content typing did not focus the editor"
+    );
+    Ok(())
+}
