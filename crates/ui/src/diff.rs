@@ -105,6 +105,44 @@ pub struct FileDiff {
     pub open: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum DiffSource {
+    LastTurn,
+    Unstaged,
+    Staged,
+}
+
+impl DiffSource {
+    fn label(self) -> &'static str {
+        match self {
+            Self::LastTurn => "Last Turn",
+            Self::Unstaged => "Unstaged",
+            Self::Staged => "Staged",
+        }
+    }
+}
+
+pub enum DiffRequest {
+    Refresh,
+    Stage(String),
+    Unstage(String),
+}
+
+#[derive(serde::Deserialize)]
+pub struct RepositoryChanges {
+    pub root: String,
+    pub unstaged: Vec<RepositoryFile>,
+    pub staged: Vec<RepositoryFile>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct RepositoryFile {
+    pub path: String,
+    pub diff: String,
+}
+
+impl gpui::EventEmitter<DiffRequest> for DiffPanel {}
+
 pub struct DiffPanel {
     pub files: Vec<FileDiff>,
     focus: Option<FocusHandle>,
@@ -118,6 +156,11 @@ pub struct DiffPanel {
     menu: Option<menu::Menu>,
     workspace: String,
     wrap: bool,
+    source: DiffSource,
+    turn_files: Vec<FileDiff>,
+    repository: Option<RepositoryChanges>,
+    pending: bool,
+    error: Option<String>,
 }
 
 impl DiffPanel {
@@ -209,7 +252,117 @@ impl DiffPanel {
             menu: None,
             workspace: workspace_root.to_owned(),
             wrap: false,
+            source: DiffSource::LastTurn,
+            turn_files: Vec::new(),
+            repository: None,
+            pending: false,
+            error: None,
         }
+    }
+
+    pub fn pending(&self) -> bool {
+        self.pending
+    }
+
+    pub fn repository_error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+
+    pub fn begin_repository_request(&mut self, cx: &mut Context<Self>) {
+        self.pending = true;
+        self.error = None;
+        cx.notify();
+    }
+
+    pub fn set_repository(
+        &mut self,
+        result: Result<RepositoryChanges, String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.pending = false;
+        match result {
+            Ok(repository) => {
+                self.repository = Some(repository);
+                self.error = None;
+            }
+            Err(error) => {
+                self.repository = None;
+                self.error = Some(error);
+            }
+        }
+        if self.source != DiffSource::LastTurn {
+            self.show_repository();
+        }
+        cx.notify();
+    }
+
+    fn select_source(&mut self, source: DiffSource, cx: &mut Context<Self>) {
+        if self.source == DiffSource::LastTurn && source != self.source {
+            self.turn_files = std::mem::take(&mut self.files);
+        }
+        if source == DiffSource::LastTurn && source != self.source {
+            let files = std::mem::take(&mut self.turn_files);
+            self.replace_files(files);
+        }
+        self.source = source;
+        if source != DiffSource::LastTurn {
+            self.show_repository();
+            if !self.pending {
+                cx.emit(DiffRequest::Refresh);
+            }
+        }
+        cx.notify();
+    }
+
+    fn show_repository(&mut self) {
+        let files = self
+            .repository
+            .as_ref()
+            .map(|repository| {
+                match self.source {
+                    DiffSource::Staged => &repository.staged,
+                    _ => &repository.unstaged,
+                }
+                .iter()
+                .map(|file| {
+                    let split = file.path.rfind('/').map_or(0, |i| i + 1);
+                    let mut hunks = parse(&file.diff);
+                    let count = |kind| {
+                        hunks
+                            .iter()
+                            .flat_map(|h| &h.lines)
+                            .filter(|l| l.kind == kind)
+                            .count()
+                    };
+                    let (added, removed) = (count(Kind::Added), count(Kind::Removed));
+                    if hunks.is_empty() {
+                        hunks.push(Hunk {
+                            separator: None,
+                            lines: file
+                                .diff
+                                .lines()
+                                .map(|line| Line {
+                                    kind: Kind::Context,
+                                    number: 0,
+                                    text: line.to_owned().into(),
+                                    matches: Vec::new(),
+                                })
+                                .collect(),
+                        });
+                    }
+                    FileDiff {
+                        dir: file.path[..split].to_owned().into(),
+                        name: file.path[split..].to_owned().into(),
+                        added,
+                        removed,
+                        hunks,
+                        open: true,
+                    }
+                })
+                .collect()
+            })
+            .unwrap_or_default();
+        self.replace_files(files);
     }
 
     pub fn search(&self) -> Option<(&str, usize)> {
@@ -290,7 +443,11 @@ impl DiffPanel {
             }
             _ => return,
         };
-        self.replace_files(files);
+        if self.source == DiffSource::LastTurn {
+            self.replace_files(files);
+        } else {
+            self.turn_files = files;
+        }
         cx.notify();
     }
 
@@ -532,7 +689,7 @@ impl DiffPanel {
         .with_priority(3)
     }
 
-    fn header(&self, t: &Theme, wide: bool, clamped: bool) -> Div {
+    fn header(&self, t: &Theme, wide: bool, clamped: bool, cx: &Context<Self>) -> Div {
         let added = self.files.iter().map(|f| f.added).sum();
         let removed = self.files.iter().map(|f| f.removed).sum();
         let tool = |name| round_icon(name, 28., t);
@@ -571,6 +728,14 @@ impl DiffPanel {
                 capsule(t, clamped)
                     .child(
                         div()
+                            .id("diff-source")
+                            .role(gpui::Role::Button)
+                            .aria_label("Changes source")
+                            .focusable()
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
+                                this.open_menu(0, menu::Kind::Source, event.position(), window, cx);
+                            }))
                             .relative()
                             .h(px(28.))
                             .flex()
@@ -579,7 +744,7 @@ impl DiffPanel {
                             .pl(px(12.))
                             .pr(px(6.))
                             .child(lens())
-                            .child(text("Last Turn", 13., 20., 430., t.text))
+                            .child(text(self.source.label(), 13., 20., 430., t.text))
                             .child(icon("diff-chevron-down", 12., t.text)),
                     )
                     .child(stats(added, removed, 14., t).mr(px(4.))),
@@ -594,7 +759,17 @@ impl DiffPanel {
                             div()
                                 .flex()
                                 .gap(px(6.))
-                                .child(tool("diff-refresh"))
+                                .child(
+                                    tool("diff-refresh")
+                                        .id("diff-refresh")
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            if this.source != DiffSource::LastTurn && !this.pending
+                                            {
+                                                cx.emit(DiffRequest::Refresh);
+                                            }
+                                        })),
+                                )
                                 .child(lensed("diff-word-wrap"))
                                 .child(tool("diff-load-full-files"))
                                 .child(tool("diff-word-diffs")),
@@ -694,8 +869,22 @@ impl Render for DiffPanel {
                                 ..Default::default()
                             })),
                     )
-                    .child(self.header(&t, wide, panel_clamped(window, cx))),
+                    .child(self.header(&t, wide, panel_clamped(window, cx), cx)),
             )
+            .when(self.source != DiffSource::LastTurn, |d| {
+                let status = if self.pending {
+                    Some("Loading changes…")
+                } else if let Some(error) = &self.error {
+                    Some(error.as_str())
+                } else if self.files.is_empty() {
+                    Some("No changes")
+                } else {
+                    None
+                };
+                d.children(status.map(|status| {
+                    text(status.to_owned(), 13., 20., 400., t.text_tertiary).m(px(12.))
+                }))
+            })
             .child(
                 div()
                     .id("diff-files")

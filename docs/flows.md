@@ -380,15 +380,26 @@ The body menu also wraps long code lines without changing the copied text.
 The editor entry stays disabled until the native `openIn` service exists.
 Comment actions (S075/S082), file tabs (S186), and external targets remain outside this slice, as firstmate approved.
 
+Local Changes uses the existing desktop host for `git-changes`, `git-stage`, and `git-unstage`.
+Each request uses the open thread's absolute `cwd`; file actions also send one repository-relative `path`.
+The response body contains `root`, `unstaged`, and `staged`; each file contains `path` and its unified `diff`.
+The selector keeps Last Turn and adds Unstaged, Staged, and Refresh.
+Each local file menu stages or unstages the whole file; unstage preserves the working tree.
+Reads and mutations run off the UI thread, with loading and error states in the panel.
+Tracked files use one bulk Git diff per source; untracked files use separate comparisons.
+The `git_stage` native proof checks the real index, visible diff text, partial staging, deletion, lock recovery, and unborn repositories.
+It also checks literal and newline filenames, multi-file patches, and rejects paths outside the repository.
+Revert, hunk actions, commit, push, and remote Git remain separate work.
+
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Open Changes panel | entry | `⌥⌘B` or `View changes`. | Both open the last turn's diff (`Last Turn` source). A file link opens the File viewer, as S009 records. | PASS (`changes_panel_keys`, `view_changes_opens_panel`, `s009`); strict pixels FAIL (`parity_diff`) |
 | 2 | `/diff` window | entry | Single file diff. | — | NOT WIRED (`crates/app/src/main.rs`: one window only) |
-| 3 | Source selector | click | Uncommitted / Staged / … | — | NOT WIRED (`crates/ui/src/diff.rs`) |
+| 3 | Source selector | click | Uncommitted / Staged / … | Last Turn, Unstaged, Staged, and Refresh read the open thread's local repository. | PARTIAL (`git_stage`; other sources remain separate) |
 | 4 | Show / Hide files | click | Toggles the file tree. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 5 | File tree filter | focus | `Filter files…`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Copy path and Collapse/Expand work. Open in editor remains disabled pending host services. | PARTIAL (`s027::diff_selection_and_hover_replay`) |
+| 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Copy path and Collapse/Expand work. Local sources add Stage file or Unstage file. Open in editor remains disabled. | PARTIAL (`s027::diff_selection_and_hover_replay`, `git_stage`) |
 | 7 | Hunk revert / stage | click | Revert, Stage / Unstage hunk. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 8 | Revert all | click | `Revert changes?` dialog. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 9 | Split / unified toggle | click | Switch diff layout. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
@@ -397,10 +408,10 @@ Comment actions (S075/S082), file tabs (S186), and external targets remain outsi
 | 12 | `⌘F` in diff | shortcut | `Search diff…`. | Focus the panel, open find, and type a query; matches highlight and update with the diff. | PASS (`s028::streamed_diff_and_find_replay`) |
 | 13 | `⌘L` | shortcut | Go to line. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 14 | Line hover | hover | No background change in the recorded Last Turn state; no `data-hovered` attribute. | No background change. | PASS (`s027::diff_selection_and_hover_replay`; corrects DT-014) |
-| 15 | No changes | empty | `No file changes yet`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 16 | Not a git repo | empty | `Create a Git repository`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 17 | Loading | loading | `Loading diff`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 18 | Load failure | error | `Couldn't load changes`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
+| 15 | No changes | empty | `No file changes yet`. | Local sources show `No changes`. | PARTIAL (`git_stage`; Last Turn unchanged) |
+| 16 | Not a git repo | empty | `Create a Git repository`. | Local sources show the Git error; repository creation remains separate. | PARTIAL (`crates/ui/src/diff.rs`) |
+| 17 | Loading | loading | `Loading diff`. | Local sources show `Loading changes…` and disable mutations until completion. | PARTIAL (`crates/ui/src/diff.rs`) |
+| 18 | Load failure | error | `Couldn't load changes`. | Local sources show the host error; Refresh retries the read. | PARTIAL (`git_stage` checks index-lock failure and recovery) |
 | 19 | Too large | error | `Diff too large to display`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 20 | Resize | resize | Split → inline for narrow panes. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 
