@@ -1,21 +1,42 @@
 //! Modal surfaces recorded in `refs/interactions/f3b.json`; the Scheduled sidebar's `New task`
 //! create dialog in `refs/interactions/s036.json`.
+//! The model-upgrade announcement is recorded in `refs/interactions/f3c.json`.
 use crate::{Copy, Cut, Paste, SelectAll, icon::icon, motion::ButtonVisual, text};
+use bridge::types::Model;
 use gpui::{
-    App, Context, Corners, Div, EventEmitter, FocusHandle, Focusable, InteractiveElement as _,
-    IntoElement, KeyDownEvent, MouseButton, ParentElement as _, Render, ScrollHandle, SharedString,
-    Stateful, StatefulInteractiveElement as _, Styled as _, Window, div, point,
-    prelude::FluentBuilder as _, px, rgba,
+    App, Bounds, Context, Corners, Div, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, ParentElement as _, Pixels,
+    Render, RenderImage, ScrollHandle, SharedString, Stateful, StatefulInteractiveElement as _,
+    Styled as _, Window, canvas, div, point, prelude::FluentBuilder as _, px, rgba, size,
+};
+use image::{Frame, RgbaImage};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    sync::{Arc, LazyLock},
 };
 use theme::{ActiveTheme as _, Theme};
 
 type Shortcut = (&'static str, &'static str, &'static [&'static str]);
+
+type AnnouncementArtworkCache = Rc<RefCell<Option<(Bounds<Pixels>, f32, Arc<RenderImage>, bool)>>>;
+
+struct ModelAnnouncement {
+    model: SharedString,
+    reasoning_effort: SharedString,
+    label: SharedString,
+    title: SharedString,
+    message: SharedString,
+    primary_label: SharedString,
+    artwork: AnnouncementArtworkCache,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Kind {
     Shortcuts,
     CloseWindow,
     FullAccess,
+    ModelAnnouncement,
     /// `Schedule a task`: the Scheduled sidebar's `New task` create editor (AM-005).
     ScheduleTask,
     /// `Rename chat` from a Recents row's menu (RS-091, refs/interactions/s002.json): the
@@ -26,6 +47,11 @@ pub enum Kind {
 pub enum Outcome {
     Dismiss,
     FullAccess,
+    DismissAnnouncement(SharedString),
+    UseAnnouncedModel {
+        model: SharedString,
+        reasoning_effort: SharedString,
+    },
     CloseWindow {
         do_not_ask_again: bool,
     },
@@ -58,6 +84,7 @@ pub struct Dialog {
     repeat_open: bool,
     saving: bool,
     error: Option<String>,
+    announcement: Option<ModelAnnouncement>,
 }
 impl EventEmitter<Outcome> for Dialog {}
 impl Focusable for Dialog {
@@ -83,6 +110,7 @@ impl Dialog {
             repeat_open: false,
             saving: false,
             error: None,
+            announcement: None,
         }
     }
     /// `Rename chat` for `thread`, its input prefilled with `title` and all of it selected.
@@ -94,6 +122,30 @@ impl Dialog {
             ..Self::new(Kind::Rename, cx)
         }
     }
+    /// Builds the recorded model-upgrade surface from original model metadata.
+    pub fn model_announcement(model: &Model, message: String, cx: &mut Context<Self>) -> Self {
+        let label = crate::composer::model_label(&model.display_name);
+        Self {
+            announcement: Some(ModelAnnouncement {
+                model: model.model.clone().into(),
+                reasoning_effort: model.default_reasoning_effort.clone().into(),
+                title: format!("Introducing {label}").into(),
+                primary_label: format!("Try {label} now").into(),
+                label: label.into(),
+                message: message.into(),
+                artwork: Rc::new(RefCell::new(None)),
+            }),
+            ..Self::new(Kind::ModelAnnouncement, cx)
+        }
+    }
+    /// Evicts the announcement image when its dialog leaves the window.
+    pub fn release_artwork(&self, window: &mut Window) {
+        if let Some(announcement) = &self.announcement
+            && let Some((_, _, image, _)) = announcement.artwork.borrow_mut().take()
+        {
+            window.drop_image(image).ok();
+        }
+    }
     pub fn kind(&self) -> Kind {
         self.kind
     }
@@ -103,7 +155,7 @@ impl Dialog {
     pub fn do_not_ask_again(&self) -> bool {
         self.do_not_ask_again
     }
-    pub fn focused_control(&self) -> &'static str {
+    pub fn focused_control(&self) -> &str {
         match (self.kind, self.selected) {
             (Kind::Shortcuts, 0) => "Search shortcuts",
             (Kind::Shortcuts, _) => "Close dialog",
@@ -112,6 +164,15 @@ impl Dialog {
             (Kind::CloseWindow, _) => "Do not ask me again",
             (Kind::FullAccess, 0) => "Cancel",
             (Kind::FullAccess, _) => "Confirm",
+            (Kind::ModelAnnouncement, 0) => "Close",
+            (Kind::ModelAnnouncement, 1) => "Continue with current model",
+            (Kind::ModelAnnouncement, _) => {
+                &self
+                    .announcement
+                    .as_ref()
+                    .expect("model announcement")
+                    .primary_label
+            }
             (Kind::ScheduleTask, 0) => "Instructions…",
             (Kind::ScheduleTask, 1) => "Cancel",
             (Kind::ScheduleTask, 2) => "Close dialog",
@@ -183,6 +244,13 @@ impl Dialog {
     pub fn visible_titles(&self) -> Vec<&'static str> {
         self.visible().map(|(_, title, _)| *title).collect()
     }
+    fn dismiss(&self, cx: &mut Context<Self>) {
+        if let Some(announcement) = &self.announcement {
+            cx.emit(Outcome::DismissAnnouncement(announcement.model.clone()));
+        } else {
+            cx.emit(Outcome::Dismiss);
+        }
+    }
     fn activate(&mut self, cx: &mut Context<Self>) {
         match (self.kind, self.selected) {
             (Kind::ScheduleTask, _) if self.saving => {}
@@ -206,6 +274,13 @@ impl Dialog {
             }
             (Kind::ScheduleTask, 0 | 4) => {}
             (Kind::FullAccess, 1) => cx.emit(Outcome::FullAccess),
+            (Kind::ModelAnnouncement, 2) => {
+                let announcement = self.announcement.as_ref().expect("model announcement");
+                cx.emit(Outcome::UseAnnouncedModel {
+                    model: announcement.model.clone(),
+                    reasoning_effort: announcement.reasoning_effort.clone(),
+                });
+            }
             (Kind::CloseWindow, 1) => cx.emit(Outcome::CloseWindow {
                 do_not_ask_again: self.do_not_ask_again,
             }),
@@ -217,7 +292,7 @@ impl Dialog {
                 thread: self.thread.clone(),
                 name: self.query.clone(),
             }),
-            _ => cx.emit(Outcome::Dismiss),
+            _ => self.dismiss(cx),
         }
     }
     fn instruction_selection(&self) -> std::ops::Range<usize> {
@@ -335,7 +410,7 @@ impl Dialog {
                     cx.notify();
                 }
             }
-            "escape" => cx.emit(Outcome::Dismiss),
+            "escape" => self.dismiss(cx),
             "tab" => {
                 let count = match self.kind {
                     Kind::Shortcuts | Kind::FullAccess => 2,
@@ -360,8 +435,10 @@ impl Dialog {
                 self.insert("\n", cx)
             }
             "enter" | "space"
-                if matches!(self.kind, Kind::CloseWindow | Kind::FullAccess)
-                    || (self.selected != 0 && !self.editing()) =>
+                if matches!(
+                    self.kind,
+                    Kind::CloseWindow | Kind::FullAccess | Kind::ModelAnnouncement
+                ) || (self.selected != 0 && !self.editing()) =>
             {
                 self.activate(cx)
             }
@@ -438,6 +515,165 @@ impl Dialog {
                 this.activate(cx);
             }))
     }
+    fn announcement_button(
+        &self,
+        index: usize,
+        label: SharedString,
+        t: &Theme,
+        cx: &Context<Self>,
+    ) -> Stateful<Div> {
+        let primary = index == 2;
+        div()
+            .id(("announcement-button", index))
+            .role(gpui::Role::Button)
+            .aria_label(label.clone())
+            .track_focus(&self.controls[index])
+            .h(px(36.))
+            .px(px(20.))
+            .flex_none()
+            .rounded(px(18.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(shapes::decoration(shapes::Decoration {
+                radius: Corners::all(px(18.)),
+                fill: Some(if primary { t.text } else { t.text_alpha_5 }),
+                shadows: if self.selected == index {
+                    vec![crate::composer::shadow(
+                        rgba(0x3a83f7ff).into(),
+                        0.,
+                        0.,
+                        2.,
+                        false,
+                    )]
+                } else {
+                    Vec::new()
+                },
+                ..Default::default()
+            }))
+            .child(text(
+                label,
+                14.,
+                18.,
+                430.,
+                if primary {
+                    t.surface_elevated_secondary
+                } else {
+                    t.text
+                },
+            ))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.selected = index;
+                this.controls[index].focus(window, cx);
+                this.activate(cx);
+            }))
+    }
+
+    fn announcement_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        let announcement = self.announcement.as_ref().expect("model announcement");
+        div()
+            .size_full()
+            .relative()
+            .flex()
+            .flex_col()
+            .gap(px(40.))
+            .pb(px(40.))
+            .child(
+                div()
+                    .relative()
+                    .w_full()
+                    .h(px(214.))
+                    .flex_none()
+                    .child(
+                        div()
+                            .id("announcement-artwork")
+                            .role(gpui::Role::Image)
+                            .aria_label(announcement.label.clone())
+                            .size_full()
+                            .child(announcement_artwork(announcement.artwork.clone())),
+                    )
+                    .child(
+                        div()
+                            .id("announcement-close")
+                            .role(gpui::Role::Button)
+                            .aria_label("Close")
+                            .track_focus(&self.controls[0])
+                            .absolute()
+                            .right(px(14.))
+                            .top(px(14.))
+                            .size(px(20.))
+                            .rounded(px(4.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .when(self.selected == 0, |d| {
+                                d.child(shapes::decoration(shapes::Decoration {
+                                    radius: Corners::all(px(4.)),
+                                    shadows: vec![crate::composer::shadow(
+                                        rgba(0x3a83f7ff).into(),
+                                        0.,
+                                        0.,
+                                        2.,
+                                        false,
+                                    )],
+                                    ..Default::default()
+                                }))
+                            })
+                            .child(icon("close", 16., rgba(0xffffffff).into()))
+                            .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))),
+                    ),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .px(px(32.))
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(24.))
+                    .child(
+                        div()
+                            .w_full()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(text(announcement.title.clone(), 20., 28., 600., t.text))
+                            .child(
+                                text(
+                                    announcement.message.clone(),
+                                    14.,
+                                    21.,
+                                    430.,
+                                    t.text_tertiary,
+                                )
+                                .w_full()
+                                .whitespace_normal()
+                                .text_center(),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .gap(px(12.))
+                            .child(self.announcement_button(
+                                1,
+                                "Continue with current model".into(),
+                                t,
+                                cx,
+                            ))
+                            .child(self.announcement_button(
+                                2,
+                                announcement.primary_label.clone(),
+                                t,
+                                cx,
+                            )),
+                    ),
+            )
+    }
+
     fn full_access_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
         let mut capabilities = div()
             .p(px(12.))
@@ -1090,6 +1326,85 @@ const REPEAT: [(&str, &str); 8] = [
     ("Saturdays", "SA"),
     ("Sundays", "SU"),
 ];
+// Original gradient-e8375b62d61e.png, retained unchanged for SH-142.
+static ANNOUNCEMENT_ARTWORK: LazyLock<RgbaImage> = LazyLock::new(|| {
+    let mut image = image::load_from_memory(include_bytes!(
+        "../../../assets/ui/announcement/gradient.png"
+    ))
+    .expect("original announcement PNG")
+    .to_rgba8();
+    shapes::premultiply(&mut image);
+    image
+});
+
+fn announcement_artwork(cache: AnnouncementArtworkCache) -> impl IntoElement {
+    let radius = Corners {
+        top_left: px(16.),
+        top_right: px(16.),
+        ..Default::default()
+    };
+    canvas(
+        move |bounds, window, _| {
+            let scale = window.scale_factor();
+            let mut cached = cache.borrow_mut();
+            if let Some((previous, previous_scale, image, rounded)) = &*cached
+                && *previous == bounds
+                && *previous_scale == scale
+            {
+                return (image.clone(), *rounded);
+            }
+            if let Some((_, _, image, _)) = cached.take() {
+                window.drop_image(image).ok();
+            }
+            let image = &*ANNOUNCEMENT_ARTWORK;
+            let device = |value: Pixels| (f32::from(value) * scale).round() as u32;
+            let (width, height) = (device(bounds.size.width), device(bounds.size.height));
+            let factor =
+                (width as f32 / image.width() as f32).max(height as f32 / image.height() as f32);
+            let axis = |boxed: f32, length: f32| {
+                let start = ((boxed - length) / 2. + 0.5).floor();
+                (start, ((boxed + length) / 2. + 0.5).floor() - start)
+            };
+            let (x, image_width) = axis(width as f32, image.width() as f32 * factor);
+            let (y, image_height) = axis(height as f32, image.height() as f32 * factor);
+            let logical = |value: f32| px(value / scale);
+            let destination = Bounds::new(
+                bounds.origin + point(logical(x), logical(y)),
+                size(logical(image_width), logical(image_height)),
+            );
+            let raster = shapes::raster_images(
+                &[(image, destination)],
+                bounds,
+                radius,
+                shapes::Corner::Round,
+                rgba(0x00000000).into(),
+                window,
+            );
+            let rounded = raster.is_none();
+            let raster = Arc::new(raster.unwrap_or_else(|| {
+                let scaled = image::imageops::resize(
+                    image,
+                    image_width as u32,
+                    image_height as u32,
+                    image::imageops::FilterType::Triangle,
+                );
+                let pixels =
+                    image::imageops::crop_imm(&scaled, (-x) as u32, (-y) as u32, width, height)
+                        .to_image();
+                RenderImage::new([Frame::new(pixels)])
+            }));
+            *cached = Some((bounds, scale, raster.clone(), rounded));
+            (raster, rounded)
+        },
+        move |bounds, (image, rounded), window, _| {
+            let corners = if rounded { radius } else { Corners::default() };
+            window
+                .paint_image(bounds, bounds, corners, image, 0, false)
+                .ok();
+        },
+    )
+    .size_full()
+}
 
 /// The editor's default `Time`: 9:00 AM in the local zone, named like the original's
 /// `Intl` short zone name (`PT`, `GMT+2`).
@@ -1127,12 +1442,14 @@ impl Render for Dialog {
         let shortcuts_height =
             (124. + visible.len() as f32 * 36. + sections as f32 * 40.).clamp(520., 560.);
         let schedule = self.kind == Kind::ScheduleTask;
+        let announcement = self.kind == Kind::ModelAnnouncement;
         let (width, height): (f32, f32) = match self.kind {
             Kind::Shortcuts => (600., shortcuts_height),
             Kind::CloseWindow => (420., 171.),
             Kind::ScheduleTask => (680., 422.),
             Kind::Rename => (420., 185.),
             Kind::FullAccess => (520., 420.),
+            Kind::ModelAnnouncement => (480., 432.),
         };
         let width = width.min(f32::from(viewport.width) * 0.92);
         let height = height.min(f32::from(viewport.height) * 0.92);
@@ -1142,6 +1459,7 @@ impl Render for Dialog {
             Kind::ScheduleTask => self.schedule_content(t, cx),
             Kind::Rename => self.rename_content(t, cx),
             Kind::FullAccess => self.full_access_content(t, cx),
+            Kind::ModelAnnouncement => self.announcement_content(t, cx),
         };
         // `codex-dialog-overlay`: the schedule dialog's `_dimmedOverlay` is rgba(0,0,0,.5) with
         // blur(1px); the blur is not drawn (flat fills are unchanged by it).
@@ -1161,18 +1479,24 @@ impl Render for Dialog {
             })
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(|_, _, _, cx| cx.emit(Outcome::Dismiss)),
+                cx.listener(|this, _, _, cx| this.dismiss(cx)),
             )
             .child(
                 div()
                     .id("modal-dialog")
                     .role(gpui::Role::Dialog)
                     .aria_label(match self.kind {
-                        Kind::Shortcuts => "Keyboard shortcuts",
-                        Kind::CloseWindow => "Are you sure you want to close the window?",
-                        Kind::ScheduleTask => "Schedule a task",
-                        Kind::Rename => "Rename chat",
-                        Kind::FullAccess => "Turn on Full Access?",
+                        Kind::Shortcuts => "Keyboard shortcuts".into(),
+                        Kind::CloseWindow => "Are you sure you want to close the window?".into(),
+                        Kind::ScheduleTask => "Schedule a task".into(),
+                        Kind::Rename => "Rename chat".into(),
+                        Kind::FullAccess => "Turn on Full Access?".into(),
+                        Kind::ModelAnnouncement => self
+                            .announcement
+                            .as_ref()
+                            .expect("model announcement")
+                            .title
+                            .clone(),
                     })
                     .on_key_down(cx.listener(Self::key))
                     .on_action(cx.listener(|this, _: &SelectAll, _, cx| {
@@ -1225,10 +1549,29 @@ impl Render for Dialog {
                     .top(px(top))
                     .w(px(width))
                     .h(px(height))
-                    .rounded(px(if schedule { 30. } else { 24. }))
+                    .rounded(px(if announcement {
+                        16.
+                    } else if schedule {
+                        30.
+                    } else {
+                        24.
+                    }))
                     .overflow_hidden()
                     .map(|d| {
-                        if !schedule {
+                        if announcement {
+                            d.child(shapes::decoration(shapes::Decoration {
+                                radius: Corners::all(px(16.)),
+                                fill: Some(t.surface_elevated_secondary),
+                                shadows: vec![crate::composer::shadow(
+                                    rgba(0x0000001a).into(),
+                                    4.,
+                                    8.,
+                                    -2.,
+                                    false,
+                                )],
+                                ..Default::default()
+                            }))
+                        } else if !schedule {
                             d.child(shapes::backdrop_blur(
                                 px(24.),
                                 shapes::Fill::Color,
