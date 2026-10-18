@@ -625,6 +625,14 @@ impl Composer {
         cx.notify();
     }
 
+    pub fn set_model_and_effort(&mut self, model: &str, effort: &str, cx: &mut Context<Self>) {
+        if let Some(index) = self.models.iter().position(|option| option.id == model) {
+            self.model = index;
+            self.effort = effort.into();
+            cx.notify();
+        }
+    }
+
     pub fn on_submit(&mut self, f: impl Fn(&Submission, &mut Window, &mut App) + 'static) {
         self.on_submit = Some(Rc::new(f));
     }
@@ -1465,6 +1473,41 @@ impl Render for Composer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_selection_preserves_other_composer_choices() {
+        use gpui::{AppContext as _, HeadlessAppContext};
+        let mut app = HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            std::sync::Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        app.update(|cx| {
+            let composer = cx.new(|cx| Composer::new("Do anything", false, cx));
+            composer.update(cx, |composer, cx| {
+                composer.models = ["original", "announced"]
+                    .map(|id| ModelOption {
+                        id: id.into(),
+                        label: id.into(),
+                        efforts: vec!["medium".into(), "high".into()],
+                    })
+                    .into();
+                composer.permission = Permission::FullAccess;
+                composer.set_queue_mode(true, cx);
+                composer.set_text("Keep this draft", cx);
+                composer.set_model_and_effort("announced", "high", cx);
+                assert_eq!(composer.current_model().unwrap().id, "announced");
+                assert_eq!(composer.effort, "high");
+                composer.set_model_and_effort("missing", "low", cx);
+                assert_eq!(composer.current_model().unwrap().id, "announced");
+                assert_eq!(composer.effort, "high");
+                assert_eq!(composer.permission, Permission::FullAccess);
+                assert!(composer.queue_mode);
+                assert_eq!(composer.default_selection, (0, "medium".into()));
+                assert_eq!(composer.content, "Keep this draft");
+            });
+        });
+    }
 
     #[test]
     fn formats_model_names() {

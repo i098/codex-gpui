@@ -724,6 +724,7 @@ Add rendering and query changes stay in S018.
 `crates/app/tests/f1a.rs` checks the bordered pill at both offsets.
 The selected offset gives vertical bounds `742..772`; the unchanged default gives `745..775`.
 The existing recording still checks all 34 actions and 13 default tooltips.
+The F1a fixture loads `common::recorded_host_settings()` before `Root` starts, matching the recorded model-upgrade history.
 
 The [native original capture](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/b3cf204103d640697ec41c58541aab67d5f63b6dde0c7fba/original-add.png) retains the original Add tooltip.
 The [port capture](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/b3cf204103d640697ec41c58541aab67d5f63b6dde0c7fba/s018-add-after.png) uses the S018 smoke snapshot with the offset setter.
