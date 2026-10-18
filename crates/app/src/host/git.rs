@@ -321,6 +321,7 @@ fn commit_flow(endpoint: &str, root: &Path, params: &Value) -> Option<Result<Val
         "git-commit-diff" => commit_diff(root, include),
         "git-commit" => commit(root, include, params),
         "git-push" => push(root, params),
+        "git-checkout" => checkout(root, params),
         _ => return None,
     })
 }
@@ -497,6 +498,112 @@ fn create_branch(root: &Path, params: &Value) -> Result<Option<Value>> {
     }
     let created = git(root, &["checkout", "-b", name])?;
     Ok((!created.success).then(|| failed("branch", created.failure())))
+}
+
+fn checkout(root: &Path, params: &Value) -> Result<Value> {
+    let branch = params["branch"].as_str();
+    let new_branch = params["newBranch"].as_str();
+    ensure!(
+        branch.is_some() != new_branch.is_some(),
+        "provide exactly one of branch or newBranch"
+    );
+    if let Some(name) = new_branch {
+        if name.trim() != name || name.is_empty() || name.starts_with('-') || name == "HEAD" {
+            return Ok(failed("branch", "Invalid branch name"));
+        }
+        if !git(root, &["rev-parse", "--verify", "-q", "HEAD"])?.success {
+            return Ok(failed(
+                "branch",
+                "Commit changes to create and checkout a new branch",
+            ));
+        }
+        if let Some(failure) = create_branch(root, params)? {
+            return Ok(failure);
+        }
+    } else {
+        let name = branch.unwrap().trim();
+        if name.is_empty() {
+            return Ok(failed("checkout", "Branch name is required"));
+        }
+        let reference = format!("refs/heads/{name}");
+        let mut checkout = command(root, &["checkout"]);
+        checkout.env("LC_ALL", "C");
+        let mut found = false;
+        if !name.starts_with('-') && git(root, &["check-ref-format", &reference])?.success {
+            if git(root, &["show-ref", "--verify", "--quiet", &reference])?.success {
+                checkout.args([name, "--"]);
+                found = true;
+            } else {
+                let pattern = format!("refs/remotes/*/{name}");
+                let remotes = checked(run(
+                    root,
+                    &["for-each-ref", "--count=2", "--format=%(refname)", &pattern],
+                )?)?;
+                let remotes = String::from_utf8(remotes)?;
+                let mut refs = remotes.lines();
+                if let Some(remote) = refs.next() {
+                    if refs.next().is_some() {
+                        return Ok(failed(
+                            "checkout",
+                            format!("Branch '{name}' exists on multiple remotes"),
+                        ));
+                    }
+                    checkout.args(["--track", "-b", name, remote, "--"]);
+                    found = true;
+                }
+            }
+        }
+        if !found {
+            let commit = git(
+                root,
+                &[
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    "--end-of-options",
+                    &format!("{name}^{{commit}}"),
+                ],
+            )?;
+            if !commit.success {
+                return Ok(failed(
+                    "checkout",
+                    format!("Branch or ref '{name}' was not found"),
+                ));
+            }
+            checkout.args(["--detach", commit.stdout.trim(), "--"]);
+        }
+        let output = checkout.output().context("run local Git checkout")?;
+        let result = Git {
+            success: output.status.success(),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        };
+        if !result.success {
+            let mut failure = failed("checkout", result.failure());
+            let mut collecting = false;
+            let mut paths = Vec::new();
+            for line in result.stderr.lines() {
+                if line.ends_with("would be overwritten by checkout:") {
+                    collecting = true;
+                } else if collecting {
+                    if line.starts_with('\t') {
+                        paths.push(line.trim());
+                    } else {
+                        collecting = false;
+                    }
+                }
+            }
+            failure["errorType"] = if !paths.is_empty() {
+                "blocked-by-working-tree-changes"
+            } else {
+                "unknown"
+            }
+            .into();
+            failure["conflictedPaths"] = json!(paths);
+            return Ok(failure);
+        }
+    }
+    Ok(json!({"status": "success", "branch": current_branch(root)?}))
 }
 
 fn commit(root: &Path, include: bool, params: &Value) -> Result<Value> {

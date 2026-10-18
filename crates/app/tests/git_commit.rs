@@ -777,3 +777,109 @@ fn queued_git_actions_preserve_the_subtract_checkout() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn checkout_dispatch_preserves_changes_and_resolves_branches() -> Result<()> {
+    let scratch = tempfile::tempdir()?;
+    let root = scratch.path();
+    let home = tempfile::tempdir()?;
+    let host = LocalHost::new(home.path());
+    let call = |params: Value| -> Result<Value> {
+        let mut params = params;
+        params["cwd"] = json!(root);
+        json_body(&host.fetch(&Request::post("git-checkout", Some(params)))?)
+    };
+    git(root, &["init", "-q", "-b", "main"])?;
+    git(root, &["config", "user.email", "proof@example.invalid"])?;
+    git(root, &["config", "user.name", "Branch proof"])?;
+    ensure!(call(json!({"newBranch": "unborn"}))?["status"] == "error");
+    ensure!(git(root, &["symbolic-ref", "--short", "HEAD"])? == "main");
+    fs::write(root.join("tracked"), "base\n")?;
+    git(root, &["add", "tracked"])?;
+    git(root, &["commit", "-qm", "base"])?;
+    let base = git(root, &["rev-parse", "HEAD"])?;
+    for name in ["", "-bad", "HEAD", "bad..name", "bad name", "ends/", "main"] {
+        ensure!(call(json!({"newBranch": name}))?["status"] == "error");
+        ensure!(git(root, &["rev-parse", "HEAD"])? == base);
+        ensure!(git(root, &["symbolic-ref", "--short", "HEAD"])? == "main");
+    }
+    ensure!(call(json!({"branch": "main", "newBranch": "both"})).is_err());
+    ensure!(call(json!({})).is_err());
+    ensure!(call(json!({"newBranch": "feature/proof"}))?["branch"] == "feature/proof");
+    ensure!(git(root, &["rev-parse", "refs/heads/feature/proof"])? == base);
+    fs::write(root.join("tracked"), "feature\n")?;
+    fs::write(root.join("collision"), "feature file\n")?;
+    git(root, &["add", "-A"])?;
+    git(root, &["commit", "-qm", "feature"])?;
+    let feature = git(root, &["rev-parse", "HEAD"])?;
+    ensure!(call(json!({"branch": "main"}))?["branch"] == "main");
+    fs::write(root.join("tracked"), "dirty\n")?;
+    for staged in [false, true] {
+        if staged {
+            git(root, &["add", "tracked"])?;
+        }
+        let before = git(root, &["status", "--porcelain"])?;
+        ensure!(call(json!({"branch": "main"}))?["status"] == "success");
+        let blocked = call(json!({"branch": "feature/proof"}))?;
+        ensure!(blocked["errorType"] == "blocked-by-working-tree-changes");
+        ensure!(blocked["conflictedPaths"] == json!(["tracked"]));
+        ensure!(git(root, &["symbolic-ref", "--short", "HEAD"])? == "main");
+        ensure!(git(root, &["rev-parse", "HEAD"])? == base);
+        ensure!(git(root, &["status", "--porcelain"])? == before);
+        ensure!(fs::read_to_string(root.join("tracked"))? == "dirty\n");
+    }
+    fs::write(root.join("collision"), "untracked\n")?;
+    let blocked = call(json!({"branch": "feature/proof"}))?;
+    ensure!(blocked["errorType"] == "blocked-by-working-tree-changes");
+    ensure!(blocked["conflictedPaths"] == json!(["tracked", "collision"]));
+    ensure!(git(root, &["symbolic-ref", "--short", "HEAD"])? == "main");
+    ensure!(fs::read_to_string(root.join("tracked"))? == "dirty\n");
+    ensure!(fs::read_to_string(root.join("collision"))? == "untracked\n");
+    git(root, &["reset", "--hard", "HEAD"])?;
+    let blocked = call(json!({"branch": "feature/proof"}))?;
+    ensure!(blocked["errorType"] == "blocked-by-working-tree-changes");
+    ensure!(blocked["conflictedPaths"] == json!(["collision"]));
+    ensure!(fs::read_to_string(root.join("collision"))? == "untracked\n");
+    fs::remove_file(root.join("collision"))?;
+    fs::write(root.join("unrelated"), "keep me\n")?;
+    ensure!(call(json!({"branch": "feature/proof"}))?["status"] == "success");
+    ensure!(fs::read_to_string(root.join("unrelated"))? == "keep me\n");
+    ensure!(git(root, &["rev-parse", "HEAD"])? == feature);
+    ensure!(call(json!({"branch": base}))?["branch"].is_null());
+    ensure!(git(root, &["rev-parse", "HEAD"])? == base);
+    ensure!(call(json!({"newBranch": "from-detached"}))?["branch"] == "from-detached");
+    for name in ["missing", "--force", "tracked"] {
+        ensure!(call(json!({"branch": name}))?["status"] == "error");
+        ensure!(git(root, &["symbolic-ref", "--short", "HEAD"])? == "from-detached");
+    }
+    let remote = tempfile::tempdir()?;
+    git(remote.path(), &["init", "-q", "--bare", "-b", "main"])?;
+    git(
+        root,
+        &["remote", "add", "origin", remote.path().to_str().unwrap()],
+    )?;
+    git(root, &["push", "-q", "origin", "feature/proof:remote-only"])?;
+    ensure!(call(json!({"branch": "remote-only"}))?["branch"] == "remote-only");
+    ensure!(git(root, &["rev-parse", "HEAD"])? == feature);
+    ensure!(git(root, &["rev-parse", "--abbrev-ref", "@{upstream}"])? == "origin/remote-only");
+    git(root, &["push", "-q", "origin", "main:ambiguous"])?;
+    git(
+        root,
+        &["remote", "add", "second", remote.path().to_str().unwrap()],
+    )?;
+    git(root, &["fetch", "-q", "second"])?;
+    let refused = call(json!({"branch": "ambiguous"}))?;
+    ensure!(refused["status"] == "error");
+    ensure!(
+        refused["error"]
+            .as_str()
+            .unwrap()
+            .contains("multiple remotes")
+    );
+    ensure!(git(root, &["symbolic-ref", "--short", "HEAD"])? == "remote-only");
+    ensure!(git(remote.path(), &["rev-parse", "refs/heads/remote-only"])? == feature);
+    println!(
+        "PASS: LocalHost git-checkout changes real refs; invalid/existing names, current/detached refs, tracked/staged/untracked protection, safe dirty checkout, local remote tracking and ambiguity"
+    );
+    Ok(())
+}
