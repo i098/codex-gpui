@@ -380,6 +380,7 @@ pub struct Root {
     archive_page: Option<Entity<ArchivedChats>>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
+    settings_page: Option<Entity<settings::SettingsPage>>,
     /// `⌘K` command menu over the window.
     command_menu: Option<Entity<CommandMenu>>,
     dialog: Option<Entity<Dialog>>,
@@ -589,6 +590,7 @@ impl Root {
             page: None,
             archive_page: None,
             settings_section: None,
+            settings_page: None,
             command_menu: None,
             dialog: None,
             login: None,
@@ -620,6 +622,7 @@ impl Root {
         window.on_window_should_close(cx, move |window, cx| {
             this.update(cx, |this, cx| {
                 if this.state.confirm_before_close != ConfirmBeforeClose::Always {
+                    this.flush_settings(cx);
                     return true;
                 }
                 this.open_dialog(DialogKind::CloseWindow, window, cx);
@@ -627,6 +630,11 @@ impl Root {
             })
             .unwrap_or(true)
         });
+        cx.on_app_quit(|this, cx| {
+            this.flush_settings(cx);
+            async {}
+        })
+        .detach();
         window.focus(&root.focus, cx);
         // The DOM's body: when the focused element goes (a closed find bar or menu blurs, a
         // node leaves the tree), the root takes focus so the key bindings keep working.
@@ -1197,6 +1205,8 @@ impl Root {
     /// Shows the route (loading its thread if needed), pushes history into the shell and
     /// persists the state.
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.flush_settings(cx);
+        self.settings_page = None;
         self.suggestion_load = None;
         let (can_back, can_forward) = (!self.back.is_empty(), !self.forward.is_empty());
         self.archive_page = None;
@@ -1213,6 +1223,7 @@ impl Root {
                 config["host"]["confirm-before-close"] = json!(self.state.confirm_before_close);
                 let section = self.settings_section.take();
                 let (shell, page) = settings::shell(&config, &self.skills, section, cx);
+                self.settings_page = Some(page.clone());
                 cx.subscribe(&page, |this, page, e: &SettingChanged, cx| {
                     this.write_setting(e, cx);
                     if e.path.starts_with("host.") && e.path != settings::THEME {
@@ -1591,6 +1602,7 @@ impl Root {
                         this.config["host"]["confirm-before-close"] = "never".into();
                         this.state.save();
                     }
+                    this.flush_settings(cx);
                     window.remove_window();
                 }
                 DialogOutcome::Rename { thread, name } => {
@@ -1617,6 +1629,7 @@ impl Root {
             return self.close_side(side, window, cx);
         }
         if self.state.confirm_before_close == ConfirmBeforeClose::Never {
+            self.flush_settings(cx);
             window.remove_window();
         } else {
             self.open_dialog(DialogKind::CloseWindow, window, cx);
@@ -2235,6 +2248,15 @@ impl Root {
         log_err(task, cx);
     }
 
+    fn flush_settings(&mut self, cx: &mut Context<Self>) {
+        if let Some(page) = self.settings_page.clone() {
+            let pending = page.update(cx, |page, _| page.take_pending_instructions());
+            for change in pending {
+                self.write_setting(&change, cx);
+            }
+        }
+    }
+
     /// Window preferences keep their state storage; other host settings use the desktop service.
     fn write_setting(&mut self, e: &SettingChanged, cx: &mut Context<Self>) {
         if e.path == settings::THEME {
@@ -2263,7 +2285,56 @@ impl Root {
             };
             if let Err(error) = result {
                 eprintln!("codex-gpui: settings.write({key}): {error:#}");
-                self.toast(Toast::danger("Couldn't save your changes. Try again"), cx);
+                let message = match key {
+                    "git-branch-prefix" => "Failed to save branch prefix",
+                    "git-pull-request-merge-method" => "Failed to save pull request merge method",
+                    "git-always-force-push" => "Failed to save force push setting",
+                    "git-create-pull-request-as-draft" => {
+                        "Failed to save draft pull request setting"
+                    }
+                    "git-review-mode" => "Could not save Git diff setting",
+                    "git-pr-watch-auto-merge" => "Failed to save automatic PR merging",
+                    "git-commit-instructions"
+                    | "git-pr-instructions"
+                    | "git-pr-watch-instructions" => "Failed to save instructions",
+                    _ => "Couldn't save your changes. Try again",
+                };
+                self.toast(Toast::danger(message), cx);
+            } else {
+                let message = match key {
+                    "git-branch-prefix" => Some("Saved branch prefix".to_owned()),
+                    "git-pull-request-merge-method" => {
+                        Some("Saved pull request merge method".to_owned())
+                    }
+                    "git-always-force-push" => Some(format!(
+                        "Always force push {}",
+                        if e.value == true {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        }
+                    )),
+                    "git-create-pull-request-as-draft" => Some(format!(
+                        "Create draft pull requests {}",
+                        if e.value == true {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        }
+                    )),
+                    "git-pr-watch-auto-merge" => Some(format!(
+                        "Automatic PR merging {}",
+                        if e.value == true {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        }
+                    )),
+                    _ => None,
+                };
+                if let Some(message) = message {
+                    self.toast(Toast::info(message), cx);
+                }
             }
             return;
         }
@@ -2292,8 +2363,19 @@ impl Root {
     ) {
         self.qa_work_started = true;
         let bridge = self.bridge.clone();
+        let review_delivery = params["keyPath"] == "desktop.reviewDelivery";
         let task = cx.spawn(async move |this, cx| -> Result<()> {
-            bridge.request::<_, Value>(method, params).await?;
+            if let Err(error) = bridge.request::<_, Value>(method, params).await {
+                if review_delivery {
+                    this.update(cx, |this, cx| {
+                        this.toast(
+                            Toast::danger("Could not save review delivery preference"),
+                            cx,
+                        );
+                    })?;
+                }
+                return Err(error);
+            }
             this.update(cx, |this, _| apply(&mut this.config))
         });
         log_err(task, cx);
