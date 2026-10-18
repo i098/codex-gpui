@@ -77,6 +77,17 @@ with (profile/"session.lock").open("a+") as lock:
                 self.assertTrue(self.bundle.exists())
                 self.assertFalse((self.profile / "restart.json").exists())
 
+    def test_native_foreground_overrides_an_inactive_heartbeat(self):
+        with self.owner() as process:
+            native = sync.native_state()
+            native["frontmost"] = process.pid
+            native["apps"][0]["active"] = True
+            with patch.object(sync, "native_state", return_value=native):
+                self.assertFalse(sync.discard_candidate(self.candidate))
+            self.assertIsNone(process.poll())
+            self.assertEqual(self.work.read_text(), "preserve this draft")
+            self.assertFalse((self.profile / "restart.json").exists())
+
     def test_wrong_runtime_revision_does_not_close_owner(self):
         with self.owner(revision="b" * 40) as process:
             with self.assertRaisesRegex(RuntimeError, "identity is not verified"):

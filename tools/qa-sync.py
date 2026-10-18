@@ -185,6 +185,10 @@ def close_ready(profile, bundle, revision):
         return True
     if not state["ready"] or state["active"]:
         return False
+    native = native_state()
+    if native["frontmost"] == state["pid"] or any(
+            app["pid"] == state["pid"] and app["active"] for app in native["apps"]):
+        return False
     request = profile / "restart.json"
     atomic_json(request, {key: state[key] for key in ("pid", "revision", "executable")})
     try:
@@ -195,6 +199,8 @@ def close_ready(profile, bundle, revision):
                 return True
             if process["pid"] != state["pid"]:
                 raise RuntimeError("QA process changed during the close handshake")
+            if process["active"]:
+                return False
             time.sleep(0.2)
         return False
     finally:
@@ -205,9 +211,8 @@ def launch(bundle, revision, profile=PROFILE, smoke=False):
     before = native_state()["frontmost"]
     existing = process_for(bundle)
     if not existing:
-        args = ["/usr/bin/open", "-g", "-n", str(bundle)]
+        args = ["/usr/bin/open", "-g", "-j", "-n", str(bundle)]
         if smoke:
-            args.insert(1, "-j")
             args += ["--args", "--qa-smoke-profile", str(profile)]
         run(*args)
     deadline = time.monotonic() + 45

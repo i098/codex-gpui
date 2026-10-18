@@ -137,6 +137,7 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "image",
+ "objc2-app-kit 0.3.2",
  "parity",
  "parking_lot",
  "pollster 0.4.0",

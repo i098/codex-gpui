@@ -81,12 +81,14 @@ QA starts signed out; it never copies normal credentials, settings, history, or 
 It can read the existing ChatGPT app-server executable without changing that app.
 The normal Codex GPUI profile and launch behavior stay unchanged.
 
-Programmatic startup uses `open -g` and an unfocused QA window.
-Startup probes also use `open -j` to keep their temporary windows hidden.
+Programmatic startup uses `open -g -j` and keeps QA hidden.
+Open QA from its installed bundle or Dock icon when you want its window.
 If the installed revision already matches main but its process has stopped, the updater starts the installed bundle again.
 After QA gains focus, starts a turn, changes model settings, or starts sign-in, close QA when ready to update.
 The updater keeps its candidate pending until that close.
 It also refuses to close during a draft, attachment work, an approval, a running turn, or unverified readiness.
+Native foreground activity also prevents closing QA, even when its last heartbeat or window reports inactive.
+An observed application activation keeps the existing manual-close protection.
 A shared profile lock prevents a reopened QA process from racing with bundle replacement.
 It does not promise to preserve drafts, open views, navigation history, or running sessions.
 It never force-quits an app.
