@@ -1427,12 +1427,62 @@ impl Root {
         self.show_dialog(dialog, window, cx);
     }
 
+    fn create_task(
+        &mut self,
+        prompt: String,
+        rrule: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(dialog) = self.dialog.clone() else {
+            return;
+        };
+        let host = self.host.clone();
+        let name: String = prompt
+            .lines()
+            .next()
+            .unwrap_or(&prompt)
+            .chars()
+            .take(80)
+            .collect();
+        let params = json!({"name": name, "prompt": prompt, "rrule": rrule, "cwds": [self.cwd]});
+        let write = cx.background_spawn(async move {
+            host.fetch(&host::Request::post("create-automation", Some(params)))
+                .and_then(|response| host::json_body(&response))
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = write.await;
+            this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(_) => {
+                        this.dialog = None;
+                        window.focus(&this.focus, cx);
+                        this.load_automations(cx);
+                    }
+                    Err(error) => dialog.update(cx, |dialog, cx| {
+                        dialog.schedule_result(format!("Could not create task: {error}"), cx);
+                    }),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     fn show_dialog(&mut self, dialog: Entity<Dialog>, window: &mut Window, cx: &mut Context<Self>) {
         if self.dialog.is_some() {
             return;
         }
         self.command_menu = None;
         cx.subscribe_in(&dialog, window, |this, dialog, outcome, window, cx| {
+            if let DialogOutcome::ScheduleTask { prompt, rrule } = outcome {
+                this.create_task(prompt.clone(), rrule.clone(), window, cx);
+                return;
+            }
+            if dialog.read(cx).saving() {
+                return;
+            }
             dialog.read(cx).release_artwork(window);
             this.dialog = None;
             match outcome {
@@ -1465,6 +1515,7 @@ impl Root {
                     window.focus(&this.focus, cx);
                     this.rename(thread.clone(), name.clone(), window, cx);
                 }
+                DialogOutcome::ScheduleTask { .. } => unreachable!(),
             }
             cx.notify();
         })
