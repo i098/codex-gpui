@@ -715,6 +715,8 @@ The dialog keeps the original image, title, message, button labels, focus order,
 The tests cover both primary responses, the secondary button, Escape, Close, outside clicks, and the stored once-only history.
 
 The primary action writes the model and reasoning effort with `config/batchWrite`.
+A successful write updates only the two model fields in each composer.
+Permissions, queue mode, Reset defaults and drafts remain unchanged.
 A rejected write keeps the current model and shows the original error message.
 `Root` stores the model ID for both outcomes.
 `seen-model-upgrade-list` uses the existing global host-settings store.

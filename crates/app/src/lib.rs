@@ -2037,17 +2037,17 @@ impl Root {
                 .await;
             this.update(cx, |this, cx| {
                 if done.is_ok() {
-                    this.config["model"] = model.into();
-                    this.config["model_reasoning_effort"] = effort.into();
                     let composers = [
                         this.home.read(cx).composer.clone(),
                         this.thread_composer.clone(),
                     ];
                     for composer in composers {
                         composer.update(cx, |composer, cx| {
-                            composer.set_models(&this.models, &this.config, cx);
+                            composer.set_model_and_effort(&model, &effort, cx);
                         });
                     }
+                    this.config["model"] = model.into();
+                    this.config["model_reasoning_effort"] = effort.into();
                 } else {
                     this.toast(Toast::danger("Couldn’t update model settings"), cx);
                 }

@@ -7,7 +7,7 @@ use common::*;
 use gpui::Focusable as _;
 use serde_json::{Value, json};
 use std::{fs, path::PathBuf};
-use ui::dialog::Kind;
+use ui::{composer::Permission, dialog::Kind};
 
 fn recording() -> Result<Value> {
     Ok(serde_json::from_str(include_str!(
@@ -285,5 +285,41 @@ fn selected_or_default_announced_model_persists_without_a_dialog() -> Result<()>
             "the selected or default model was not persisted"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn changing_models_preserves_an_explicit_approval_choice() -> Result<()> {
+    let rec = recording()?;
+    let mut lines = script(None, |_| {})?;
+    let config = lines
+        .iter_mut()
+        .find_map(|line| line.pointer_mut("/msg/result/config")?.as_object_mut())
+        .context("recorded startup config")?;
+    config.insert("approval_policy".into(), "never".into());
+    config.insert("sandbox_mode".into(), "danger-full-access".into());
+    lines.extend(exchange(
+        "config/batchWrite",
+        rec["branches"]["primarySuccess"]["wireResponse"]["result"].clone(),
+    ));
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    let composer = fx.composer();
+    ensure!(
+        composer.read_with(&fx.cx, |composer, _| composer.permission()) == Permission::FullAccess
+    );
+    fx.shot()?;
+    fx.click(fx.at("home", "Custom")?)?;
+    fx.keys("down enter")?;
+    ensure!(composer.read_with(&fx.cx, |composer, _| composer.permission()) == Permission::Ask);
+    fx.click(fx.at("home", "GPT-6 Astra")?)?;
+    fx.keys("down enter")?;
+    fx.keys("down enter")?;
+    fx.wait("the model write", |fx| {
+        fx.read(|root, _| root.config()["model"] == rec["announcement"]["model"])
+    })?;
+    ensure!(
+        composer.read_with(&fx.cx, |composer, _| composer.permission()) == Permission::Ask,
+        "changing the model restored a broader approval mode"
+    );
     Ok(())
 }
