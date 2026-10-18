@@ -380,15 +380,26 @@ The body menu also wraps long code lines without changing the copied text.
 The editor entry stays disabled until the native `openIn` service exists.
 Comment actions (S075/S082), file tabs (S186), and external targets remain outside this slice, as firstmate approved.
 
+Local Changes uses the existing desktop host for `git-changes`, `git-stage`, and `git-unstage`.
+Each request uses the open thread's absolute `cwd`; file actions also send one repository-relative `path`.
+The response body contains `root`, `unstaged`, and `staged`; each file contains `path` and its unified `diff`.
+The selector keeps Last Turn and adds Unstaged, Staged, and Refresh.
+Each local file menu stages or unstages the whole file; unstage preserves the working tree.
+Reads and mutations run off the UI thread, with loading and error states in the panel.
+Tracked files use one bulk Git diff per source; untracked files use separate comparisons.
+The `git_stage` native proof checks the real index, visible diff text, partial staging, deletion, lock recovery, and unborn repositories.
+It also checks literal and newline filenames, multi-file patches, and rejects paths outside the repository.
+Revert, hunk actions, commit, push, and remote Git remain separate work.
+
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Open Changes panel | entry | `⌥⌘B` or `View changes`. | Both open the last turn's diff (`Last Turn` source). A file link opens the File viewer, as S009 records. | PASS (`changes_panel_keys`, `view_changes_opens_panel`, `s009`); strict pixels FAIL (`parity_diff`) |
 | 2 | `/diff` window | entry | Single file diff. | — | NOT WIRED (`crates/app/src/main.rs`: one window only) |
-| 3 | Source selector | click | Uncommitted / Staged / … | — | NOT WIRED (`crates/ui/src/diff.rs`) |
+| 3 | Source selector | click | Uncommitted / Staged / … | Last Turn, Unstaged, Staged, and Refresh read the open thread's local repository. | PARTIAL (`git_stage`; other sources remain separate) |
 | 4 | Show / Hide files | click | Toggles the file tree. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 5 | File tree filter | focus | `Filter files…`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Copy path and Collapse/Expand work. Open in editor remains disabled pending host services. | PARTIAL (`s027::diff_selection_and_hover_replay`) |
+| 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Copy path and Collapse/Expand work. Local sources add Stage file or Unstage file. Open in editor remains disabled. | PARTIAL (`s027::diff_selection_and_hover_replay`, `git_stage`) |
 | 7 | Hunk revert / stage | click | Revert, Stage / Unstage hunk. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 8 | Revert all | click | `Revert changes?` dialog. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 9 | Split / unified toggle | click | Switch diff layout. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
@@ -397,10 +408,10 @@ Comment actions (S075/S082), file tabs (S186), and external targets remain outsi
 | 12 | `⌘F` in diff | shortcut | `Search diff…`. | Focus the panel, open find, and type a query; matches highlight and update with the diff. | PASS (`s028::streamed_diff_and_find_replay`) |
 | 13 | `⌘L` | shortcut | Go to line. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 14 | Line hover | hover | No background change in the recorded Last Turn state; no `data-hovered` attribute. | No background change. | PASS (`s027::diff_selection_and_hover_replay`; corrects DT-014) |
-| 15 | No changes | empty | `No file changes yet`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 16 | Not a git repo | empty | `Create a Git repository`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 17 | Loading | loading | `Loading diff`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 18 | Load failure | error | `Couldn't load changes`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
+| 15 | No changes | empty | `No file changes yet`. | Local sources show `No changes`. | PARTIAL (`git_stage`; Last Turn unchanged) |
+| 16 | Not a git repo | empty | `Create a Git repository`. | Local sources show the Git error; repository creation remains separate. | PARTIAL (`crates/ui/src/diff.rs`) |
+| 17 | Loading | loading | `Loading diff`. | Local sources show `Loading changes…` and disable mutations until completion. | PARTIAL (`crates/ui/src/diff.rs`) |
+| 18 | Load failure | error | `Couldn't load changes`. | Local sources show the host error; Refresh retries the read. | PARTIAL (`git_stage` checks index-lock failure and recovery) |
 | 19 | Too large | error | `Diff too large to display`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 20 | Resize | resize | Split → inline for narrow panes. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 
@@ -734,6 +745,33 @@ Project dropdowns, worktrees, remote environments, discovery, indexing, and Git 
 
 Run `tools/mac.sh -l cgx-project-picker 'cargo test -p app --test project_picker -- --test-threads=1'`.
 
+
+## F3c: Model announcement (SH-142)
+
+`crates/app/tests/f3c.rs` checks the recorded GPT-6.1 Sol announcement on the Mac headless app.
+The recording is `refs/interactions/f3c.json`.
+The dialog keeps the original image, title, message, button labels, focus order, and dismissal controls.
+The tests cover both primary responses, the secondary button, Escape, Close, outside clicks, and the stored once-only history.
+
+The primary action writes the model and reasoning effort with `config/batchWrite`.
+A successful write updates only the two model fields in each composer.
+Permissions, queue mode, Reset defaults and drafts remain unchanged.
+A rejected write keeps the current model and shows the original error message.
+`Root` stores the model ID for both outcomes.
+`seen-model-upgrade-list` uses the existing global host-settings store.
+Each dismissal test reads the resulting file and starts a new app context without changing that file.
+The new context does not show the same announcement.
+
+The shared replay uses the recording's empty initial history.
+Ordinary replay data keeps the original baseline history from `tools/route1/oracle.json`.
+The ordinary checks use the separate fixture-preparation prerequisite.
+No original profile, sign-in flow, or legacy dialog assertion changes.
+
+[Original announcement](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ddae05ee78165eadfc0a754e40daeb9a03ee71e3bb4b0d16/original-announcement.png).
+[Port announcement](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ddae05ee78165eadfc0a754e40daeb9a03ee71e3bb4b0d16/announcement-open.png).
+The retained port image uses the same dialog source as the integrated feature.
+The [strict static report](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ddae05ee78165eadfc0a754e40daeb9a03ee71e3bb4b0d16/report.html) passes all 36 cases with zero outside-text differences.
+The scoped issue is [SH-142](https://github.com/i098/codex-gpui/issues/184).
 
 ## Shared tooltip side offset
 

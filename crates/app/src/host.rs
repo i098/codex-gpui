@@ -38,6 +38,8 @@ use std::time::Duration;
 use ui::screens::sidebar::Project;
 use url::Url;
 
+mod git;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "transport", content = "request", rename_all = "kebab-case")]
 pub enum Request {
@@ -489,6 +491,68 @@ impl LocalHost {
         Ok(json!({"items": items}))
     }
 
+    fn create_automation(&self, params: &Value) -> Result<Value> {
+        let required = |key| {
+            params[key]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .with_context(|| format!("missing automation {key}"))
+        };
+        let name = required("name")?;
+        let prompt = required("prompt")?;
+        let rrule = required("rrule")?;
+        let mut parts = rrule.split(';');
+        match parts.next() {
+            Some("FREQ=DAILY") => {}
+            Some("FREQ=WEEKLY") => ensure!(
+                matches!(
+                    parts.next(),
+                    Some(
+                        "BYDAY=MO"
+                            | "BYDAY=TU"
+                            | "BYDAY=WE"
+                            | "BYDAY=TH"
+                            | "BYDAY=FR"
+                            | "BYDAY=SA"
+                            | "BYDAY=SU"
+                    )
+                ),
+                "invalid weekly schedule"
+            ),
+            _ => bail!("unsupported schedule frequency"),
+        }
+        let hour = parts
+            .next()
+            .and_then(|s| s.strip_prefix("BYHOUR="))
+            .and_then(|s| s.parse::<u8>().ok());
+        let minute = parts
+            .next()
+            .and_then(|s| s.strip_prefix("BYMINUTE="))
+            .and_then(|s| s.parse::<u8>().ok());
+        ensure!(
+            hour.is_some_and(|h| h < 24)
+                && minute.is_some_and(|m| m < 60)
+                && parts.next().is_none(),
+            "invalid schedule time"
+        );
+        let cwds: Vec<String> = serde_json::from_value(params["cwds"].clone())?;
+        ensure!(
+            !cwds.is_empty() && cwds.iter().all(|cwd| Path::new(cwd).is_absolute()),
+            "task requires an absolute local project path"
+        );
+        let id = device_id();
+        let now = chrono::Utc::now().timestamp_millis();
+        let raw = json!({
+            "version": 1, "id": id, "name": name, "prompt": prompt, "rrule": rrule,
+            "status": "ACTIVE", "cwds": cwds, "created_at": now, "updated_at": now,
+            "execution_environment": "local"
+        });
+        let contents = toml::to_string(&raw)?;
+        self.write_automation(&id, &contents)?;
+        definition(&id, &contents)
+    }
+
     /// Saves a validated original-format definition, not an automation scheduling command.
     /// Existing schedule metadata remains in the original database for its scheduler to reconcile.
     pub fn write_automation(&self, id: &str, contents: &str) -> Result<()> {
@@ -691,7 +755,9 @@ impl Host for LocalHost {
         );
         let body = match endpoint {
             "list-automations" => self.automations()?,
+            "create-automation" => self.create_automation(&params)?,
             "inbox-items" => self.inbox(&params)?,
+            "git-changes" | "git-stage" | "git-unstage" => git::fetch(endpoint, &params)?,
             "paths-exist" => {
                 let paths: Vec<String> =
                     serde_json::from_value(params.get("paths").cloned().unwrap_or(json!([])))?;
