@@ -26,10 +26,12 @@ use gpui::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashSet;
-use std::{fs, path::PathBuf, sync::Arc};
+use std::{fs, path::PathBuf, sync::Arc, time::Duration};
 use theme::Theme;
 use ui::composer::{Approval, Composer, Permission, Submission};
-use ui::dialog::{Dialog, Kind as DialogKind, Outcome as DialogOutcome};
+use ui::dialog::{
+    CommitRepository, CommitStep, Dialog, Kind as DialogKind, Outcome as DialogOutcome, Selection,
+};
 use ui::screens::diff::panel::{
     ActivateSideTab, CloseSideTab, DiffPanel, DiffRequest, FileView, OpenFile, SplitScreen, Tab,
     with_side_tabs,
@@ -407,6 +409,14 @@ pub struct Root {
     loaded: HashSet<String>,
     /// Id of the server request the composer's approval card answers.
     approval: Option<Value>,
+    /// A commit, push or branch workflow is running (the original's single workflow state).
+    git_busy: bool,
+    /// The repository the open commit form read; a later chat switch cannot redirect it.
+    commit_cwd: Option<String>,
+    /// `Include unstaged changes`, kept from one commit form to the next.
+    commit_include_unstaged: bool,
+    /// The ephemeral thread that writes a commit message.
+    generation: Option<Generation>,
     /// The `Notifications` region over the window.
     toaster: Entity<Toaster>,
     _events: Task<()>,
@@ -612,6 +622,10 @@ impl Root {
             qa_work_started: false,
             loaded: HashSet::new(),
             approval: None,
+            git_busy: false,
+            commit_cwd: None,
+            commit_include_unstaged: true,
+            generation: None,
             toaster: cx.new(|_| Toaster::new()),
             _events,
             state,
@@ -960,6 +974,113 @@ impl Root {
             panel.update(cx, |panel, cx| panel.set_repository(result, cx));
         })
         .detach();
+    }
+
+    /// `git.commit` (`Commit or push`): the commit form when the repository has changes to
+    /// commit, else a push of the commits the branch is ahead by, as the original's command.
+    fn commit_or_push(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(thread) = self.thread.clone() else {
+            return;
+        };
+        if self.git_busy || self.dialog.is_some() {
+            return;
+        }
+        let view = thread.read(cx);
+        let (cwd, title) = (view.cwd().to_owned(), view.header_title().to_string());
+        let prefix = git_setting(cx, "git-branch-prefix").unwrap_or_else(|| "codex/".into());
+        let name = branch_name(&prefix, &title);
+        let include = self.commit_include_unstaged;
+        let host = self.host.clone();
+        let repository = cwd.clone();
+        let read = cx.background_spawn(async move {
+            git_call(&*host, "git-commit-status", json!({"cwd": repository}))
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let status = read
+                .await
+                .and_then(|status| commit_repository(&status, include, name));
+            this.update_in(cx, |this, window, cx| {
+                // The chat changed while Git answered: the answer is for another repository.
+                let current = this.thread.as_ref().map(|thread| thread.read(cx).cwd());
+                if current != Some(cwd.as_str()) {
+                    return;
+                }
+                match status {
+                    Ok(repo) => {
+                        let selection = if include { repo.all } else { repo.staged };
+                        if selection.files > 0 {
+                            let dialog = cx.new(|cx| Dialog::commit(repo, cx));
+                            this.commit_cwd = Some(cwd);
+                            this.show_dialog(dialog, window, cx);
+                        } else if repo.remote && repo.branch.is_some() && repo.ahead > 0 {
+                            let push = GitRequest {
+                                cwd,
+                                step: CommitStep::Push,
+                                message: String::new(),
+                                include_unstaged: include,
+                                new_branch: None,
+                            };
+                            this.git_workflow(push, window, cx);
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!("codex-gpui: cannot read Git status: {error:#}");
+                        this.toast(Toast::danger("Commit is unavailable right now"), cx);
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Creates the branch, commits and pushes in `cwd` as the submitted form chose, then
+    /// toasts the result like the original and refreshes the Changes panel.
+    fn git_workflow(&mut self, request: GitRequest, window: &mut Window, cx: &mut Context<Self>) {
+        if self.git_busy {
+            return;
+        }
+        self.git_busy = true;
+        let run = GitRun {
+            host: self.host.clone(),
+            bridge: self.bridge.clone(),
+            model: generation_model(&self.models),
+            cwd: request.cwd.clone(),
+            instructions: git_setting(cx, "git-commit-instructions").unwrap_or_default(),
+        };
+        cx.spawn_in(window, async move |this, cx| {
+            let outcome = commit_workflow(&this, cx, &run, request).await;
+            this.update(cx, |this, cx| {
+                this.finish_git_workflow(outcome, &run.cwd, cx)
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn finish_git_workflow(&mut self, outcome: GitOutcome, cwd: &str, cx: &mut Context<Self>) {
+        self.git_busy = false;
+        match outcome {
+            GitOutcome::Done(title) => self.toast(Toast::info(title), cx),
+            GitOutcome::Failed { title, detail } => {
+                eprintln!(
+                    "codex-gpui: {title}: {}",
+                    detail.as_deref().unwrap_or_default()
+                );
+                let mut toast = Toast::danger(title);
+                if let Some(detail) = detail {
+                    toast = toast.action("Copy error", move |_, cx| {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(detail.clone()))
+                    });
+                }
+                self.toast(toast, cx);
+            }
+        }
+        if let (Some(panel), Some(thread)) = (self.diff.clone(), self.thread.clone())
+            && thread.read(cx).cwd() == cwd
+        {
+            self.repository_request(panel, cwd, &DiffRequest::Refresh, cx);
+        }
     }
 
     /// The host's automation list, or its error; `None` means that the read has not completed.
@@ -1597,6 +1718,25 @@ impl Root {
                     window.focus(&this.focus, cx);
                     this.rename(thread.clone(), name.clone(), window, cx);
                 }
+                DialogOutcome::Commit {
+                    step,
+                    message,
+                    include_unstaged,
+                    new_branch,
+                } => {
+                    window.focus(&this.focus, cx);
+                    this.commit_include_unstaged = *include_unstaged;
+                    if let Some(cwd) = this.commit_cwd.take() {
+                        let request = GitRequest {
+                            cwd,
+                            step: *step,
+                            message: message.clone(),
+                            include_unstaged: *include_unstaged,
+                            new_branch: new_branch.clone(),
+                        };
+                        this.git_workflow(request, window, cx);
+                    }
+                }
                 DialogOutcome::ScheduleTask { .. } => unreachable!(),
             }
             cx.notify();
@@ -1660,6 +1800,7 @@ impl Root {
                 "Open Changes tab" => window.dispatch_action(Box::new(OpenChangesPanel), cx),
                 "New tab" => window.dispatch_action(Box::new(ToggleChangesPanel), cx),
                 "Open terminal" => window.dispatch_action(Box::new(OpenBackgroundTerminal), cx),
+                "Commit or push" => self.commit_or_push(window, cx),
                 "Manage scheduled tasks" => window.dispatch_action(Box::new(OpenScheduled), cx),
                 label => {
                     if let Some(section) = settings::section(label) {
@@ -2310,6 +2451,35 @@ impl Root {
     /// Every server message: streamed into the open thread and the sign-in view, plus
     /// Recents updates and approval prompts.
     pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        if let Event::Notification { method, params } = &event
+            && let Some(generation) = &mut self.generation
+            && params["threadId"].as_str() == Some(&generation.thread)
+        {
+            match method.as_str() {
+                "item/agentMessage/delta" => generation
+                    .text
+                    .get_or_insert_default()
+                    .push_str(params["delta"].as_str().unwrap_or_default()),
+                "item/completed" if params["item"]["type"] == "agentMessage" => {
+                    generation.text = params["item"]["text"].as_str().map(str::to_owned)
+                }
+                "turn/completed" => {
+                    let status = params["turn"]["status"].as_str().unwrap_or_default();
+                    let result = if status == "completed" {
+                        Ok(generation.text.take())
+                    } else {
+                        let error = params["turn"]["error"]["message"].as_str();
+                        Err(match error {
+                            Some(error) => format!("Structured turn failed: {error}"),
+                            None => format!("Structured turn ended with status {status}."),
+                        })
+                    };
+                    generation.done.try_send(result).ok();
+                }
+                _ => {}
+            }
+            return;
+        }
         if matches!(&event, Event::Notification { method, .. } if method == "turn/started")
             || matches!(&event, Event::Request { .. })
         {
@@ -2343,7 +2513,7 @@ impl Root {
         }
         match event {
             Event::Notification { method, params } => match method.as_str() {
-                "thread/started" => {
+                "thread/started" if params["thread"]["ephemeral"] != true => {
                     if let Ok(n) = serde_json::from_value::<ThreadStartedNotification>(params) {
                         self.add_thread(&n.thread, cx);
                     }
@@ -2560,6 +2730,417 @@ async fn turn_start(bridge: &Bridge, thread_id: &str, s: &Submission) -> Result<
     }
     bridge.request::<_, Value>("turn/start", params).await?;
     Ok(())
+}
+
+/// The ephemeral app-server thread that writes a commit message, and what it has said.
+struct Generation {
+    thread: String,
+    text: Option<String>,
+    done: async_channel::Sender<Result<Option<String>, String>>,
+}
+
+/// What a submitted commit form, or the push-only command, asks of one repository.
+struct GitRequest {
+    cwd: String,
+    step: CommitStep,
+    message: String,
+    include_unstaged: bool,
+    new_branch: Option<String>,
+}
+
+/// What one commit workflow needs off the UI thread.
+struct GitRun {
+    host: Arc<dyn host::Host>,
+    bridge: Arc<Bridge>,
+    model: String,
+    cwd: String,
+    instructions: String,
+}
+
+enum GitOutcome {
+    Done(String),
+    Failed {
+        title: String,
+        detail: Option<String>,
+    },
+}
+
+impl GitOutcome {
+    fn failed(title: impl Into<String>, detail: Option<String>) -> Self {
+        Self::Failed {
+            title: title.into(),
+            detail,
+        }
+    }
+}
+
+/// A host setting of the original's Git page (`git-branch-prefix`, `git-commit-instructions`).
+fn git_setting(cx: &App, key: &str) -> Option<String> {
+    cx.try_global::<host_settings::Settings>()?
+        .read_all()
+        .get(key)?
+        .as_str()
+        .map(str::to_owned)
+}
+
+fn git_call(host: &dyn host::Host, endpoint: &str, params: Value) -> Result<Value> {
+    host::json_body(&host.fetch(&host::Request::post(endpoint, Some(params)))?)
+}
+
+impl GitRun {
+    async fn call(
+        &self,
+        cx: &AsyncWindowContext,
+        endpoint: &'static str,
+        params: Value,
+    ) -> Result<Value, String> {
+        let host = self.host.clone();
+        cx.background_executor()
+            .spawn(async move { git_call(&*host, endpoint, params) })
+            .await
+            .map_err(|error| format!("{error:#}"))
+    }
+}
+
+fn commit_repository(
+    status: &Value,
+    include_unstaged: bool,
+    new_branch_name: String,
+) -> Result<CommitRepository> {
+    anyhow::ensure!(status["staged"].is_object(), "missing Git status");
+    let selection = |key: &str| {
+        let count = |field: &str| status[key][field].as_u64().unwrap_or_default() as usize;
+        Selection {
+            files: count("files"),
+            additions: count("additions"),
+            deletions: count("deletions"),
+        }
+    };
+    Ok(CommitRepository {
+        branch: status["branch"].as_str().map(str::to_owned),
+        branches: status["branches"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|branch| branch.as_str().map(str::to_owned))
+            .collect(),
+        remote: status["remote"].is_string(),
+        ahead: status["commitsAhead"].as_u64().unwrap_or_default() as usize,
+        staged: selection("staged"),
+        all: selection("all"),
+        include_unstaged,
+        new_branch_name,
+    })
+}
+
+/// The original's default new branch: the prefix and the first five words of the chat title.
+fn branch_name(prefix: &str, title: &str) -> String {
+    let slug = title
+        .trim()
+        .to_lowercase()
+        .split_whitespace()
+        .take(5)
+        .map(|word| {
+            word.chars()
+                .filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+                .collect::<String>()
+        })
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    format!("{}{slug}", prefix.trim())
+}
+
+/// `Committed to {branch}` and `Pushed {branch}` come from the step that finished last.
+fn git_result(done: &Value) -> Result<Option<String>, GitOutcome> {
+    if done["status"] == "success" {
+        return Ok(done["branch"].as_str().map(str::to_owned));
+    }
+    let title = match done["stage"].as_str() {
+        Some("branch") => "Failed to create branch",
+        Some("push") => "Failed to push changes",
+        _ => "Failed to commit changes",
+    };
+    Err(GitOutcome::failed(
+        title,
+        done["error"].as_str().map(str::to_owned),
+    ))
+}
+
+async fn commit_workflow(
+    this: &WeakEntity<Root>,
+    cx: &mut AsyncWindowContext,
+    run: &GitRun,
+    request: GitRequest,
+) -> GitOutcome {
+    let GitRequest {
+        step,
+        message,
+        include_unstaged,
+        new_branch,
+        ..
+    } = request;
+    let mut branch = None;
+    if step != CommitStep::Push {
+        let message = if message.is_empty() {
+            match generate_message(this, cx, run, include_unstaged).await {
+                Ok(Some(message)) => message,
+                Ok(None) => return GitOutcome::failed("Couldn't generate a commit message", None),
+                Err(error) => {
+                    return GitOutcome::failed(
+                        format!("Failed to generate commit message: {error}"),
+                        Some(error),
+                    );
+                }
+            }
+        } else {
+            message
+        };
+        let params = json!({
+            "cwd": run.cwd,
+            "message": message,
+            "includeUnstaged": include_unstaged,
+            "newBranch": new_branch,
+        });
+        match run.call(cx, "git-commit", params).await {
+            Ok(done) => match git_result(&done) {
+                Ok(committed) => branch = committed,
+                Err(failed) => return failed,
+            },
+            Err(error) => return GitOutcome::failed("Failed to commit changes", Some(error)),
+        }
+    }
+    if step != CommitStep::Commit {
+        let new_branch = new_branch.filter(|_| step == CommitStep::Push);
+        let params = json!({"cwd": run.cwd, "newBranch": new_branch});
+        match run.call(cx, "git-push", params).await {
+            Ok(done) => match git_result(&done) {
+                Ok(pushed) => branch = pushed,
+                Err(failed) => return failed,
+            },
+            Err(error) => return GitOutcome::failed("Failed to push changes", Some(error)),
+        }
+    }
+    let target = branch.filter(|branch| !branch.is_empty());
+    GitOutcome::Done(match (step, target) {
+        (CommitStep::Commit, Some(branch)) => format!("Committed to {branch}"),
+        (CommitStep::Commit, None) => "Committed to your branch".into(),
+        (_, Some(branch)) => format!("Pushed {branch}"),
+        (_, None) => "Pushed your branch".into(),
+    })
+}
+
+const COMMIT_MESSAGE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The model the original generates commit messages with (`ephemeralGenerationModel`), else
+/// the default model that supports low reasoning effort.
+fn generation_model(models: &[Model]) -> String {
+    const DEFAULT: &str = "gpt-6-luna";
+    if models.is_empty() || models.iter().any(|model| model.model == DEFAULT) {
+        return DEFAULT.into();
+    }
+    let low = |model: &&Model| {
+        !model.hidden
+            && model
+                .supported_reasoning_efforts
+                .iter()
+                .any(|effort| effort["reasoningEffort"] == "low")
+    };
+    models
+        .iter()
+        .filter(low)
+        .find(|model| model.is_default)
+        .or_else(|| models.iter().find(low))
+        .map_or_else(|| DEFAULT.into(), |model| model.model.clone())
+}
+
+/// Writes a commit message the way the original's `generate-commit-message` does: an
+/// ephemeral read-only app-server thread answers the diff prompt with structured output.
+async fn generate_message(
+    this: &WeakEntity<Root>,
+    cx: &mut AsyncWindowContext,
+    run: &GitRun,
+    include_unstaged: bool,
+) -> Result<Option<String>, String> {
+    let diff = run
+        .call(
+            cx,
+            "git-commit-diff",
+            json!({"cwd": run.cwd, "includeUnstaged": include_unstaged}),
+        )
+        .await
+        .ok()
+        .and_then(|diff| diff["unifiedDiff"].as_str().map(str::to_owned));
+    let prompt = generation_prompt(&run.instructions, diff.as_deref());
+    let prompt = prompt.trim();
+    if prompt.is_empty() {
+        return Ok(None);
+    }
+    let prompt: String = prompt.chars().take(20_000).collect();
+    let started: Value = run
+        .bridge
+        .request(
+            "thread/start",
+            json!({
+                "model": run.model,
+                "modelProvider": null,
+                "allowProviderModelFallback": true,
+                "cwd": run.cwd,
+                "approvalPolicy": "never",
+                "permissions": ":read-only",
+                "runtimeWorkspaceRoots": [],
+                "config": {
+                    "features.enable_fanout": false,
+                    "features.multi_agent": false,
+                    "features.multi_agent_v2": false,
+                    "web_search": "disabled",
+                    "mcp_servers.codex_app": {"enabled": false, "command": ""},
+                    "model_reasoning_effort": "low",
+                },
+                "personality": null,
+                "ephemeral": true,
+                "threadSource": "commit_message",
+                "experimentalRawEvents": false,
+                "dynamicTools": null,
+                "serviceTier": null,
+            }),
+        )
+        .await
+        .map_err(|error| format!("{error:#}"))?;
+    let thread = started["thread"]["id"]
+        .as_str()
+        .ok_or("the app-server started no thread")?
+        .to_owned();
+    let (done, answer) = async_channel::bounded(1);
+    this.update(cx, |this, _| {
+        this.generation = Some(Generation {
+            thread: thread.clone(),
+            text: None,
+            done: done.clone(),
+        });
+    })
+    .map_err(|error| error.to_string())?;
+    let executor = cx.background_executor().clone();
+    let timeout = executor.spawn({
+        let (executor, done) = (executor.clone(), done.clone());
+        async move {
+            executor.timer(COMMIT_MESSAGE_TIMEOUT).await;
+            done.try_send(Err("Timed out waiting for structured result.".into()))
+                .ok();
+        }
+    });
+    let turn = run
+        .bridge
+        .request::<_, Value>(
+            "turn/start",
+            json!({
+                "threadId": thread,
+                "input": [{"type": "text", "text": generation_instructions(&prompt), "text_elements": []}],
+                "outputSchema": COMMIT_MESSAGE_SCHEMA.clone(),
+            }),
+        )
+        .await;
+    let result = match turn {
+        Ok(_) => answer
+            .recv()
+            .await
+            .unwrap_or_else(|_| Err("the app-server closed".into())),
+        Err(error) => Err(format!("{error:#}")),
+    };
+    drop(timeout);
+    this.update(cx, |this, _| this.generation = None).ok();
+    run.bridge
+        .request::<_, Value>("thread/unsubscribe", json!({"threadId": thread}))
+        .await
+        .ok();
+    Ok(parse_commit_message(result?.as_deref()))
+}
+
+static COMMIT_MESSAGE_SCHEMA: std::sync::LazyLock<Value> = std::sync::LazyLock::new(|| {
+    json!({
+        "type": "object",
+        "properties": {"message": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 4000,
+            "pattern": "^[^\\r\\n]{1,72}(?:\\r?\\n[\\s\\S]*)?$",
+        }},
+        "required": ["message"],
+        "additionalProperties": false,
+    })
+});
+
+/// The structured answer's `message` when it meets the original's bounds.
+fn parse_commit_message(text: Option<&str>) -> Option<String> {
+    let answer: Value = serde_json::from_str(text?.trim()).ok()?;
+    let message = answer["message"].as_str()?;
+    let subject = message.split('\n').next()?;
+    let subject = subject.strip_suffix('\r').unwrap_or(subject);
+    let length = message.chars().count();
+    let valid = (8..=4000).contains(&length)
+        && (1..=72).contains(&subject.chars().count())
+        && !subject.contains('\r');
+    valid.then(|| message.trim().to_owned())
+}
+
+/// The original's context for generation: custom instructions, then the changed tracked
+/// files' diff, or its size when it is over 1000 changed lines.
+fn generation_prompt(instructions: &str, diff: Option<&str>) -> String {
+    const UNTRACKED: &str = "Untracked changes are not included.";
+    let mut parts = Vec::new();
+    let instructions = instructions.trim();
+    if !instructions.is_empty() {
+        parts.push(format!(
+            "Custom commit instructions (follow these for commit message content and formatting):\n{instructions}\n"
+        ));
+    }
+    let diff = diff.filter(|diff| !diff.trim().is_empty());
+    if let Some(diff) = diff {
+        let (mut files, mut added, mut removed, mut in_hunk) = (0, 0, 0, false);
+        for line in diff.split('\n') {
+            let line = line.strip_suffix('\r').unwrap_or(line);
+            if line.starts_with("diff --git ") {
+                (files, in_hunk) = (files + 1, false);
+            } else if line.starts_with("@@") {
+                in_hunk = true;
+            } else if in_hunk && line.starts_with('+') {
+                added += 1;
+            } else if in_hunk && line.starts_with('-') {
+                removed += 1;
+            }
+        }
+        parts.push(if added + removed > 1000 {
+            format!(
+                "Changes:\nDiff too large to include inline.\nSummary: {files} changed files, +{added}/-{removed} lines.\n\n{UNTRACKED}"
+            )
+        } else {
+            format!("Changes:\n{diff}\n{UNTRACKED}")
+        });
+    }
+    parts.join("\n\n")
+}
+
+/// The original's commit-message prompt (`Using the supplied git context below ...`).
+fn generation_instructions(context: &str) -> String {
+    [
+        "Using the supplied git context below, generate a git commit message.",
+        "Write the result into the structured response field message.",
+        "message must contain plain commit-message text only, not JSON, field labels, or code fences.",
+        "Custom commit instructions for message content and formatting override the fallback rules below.",
+        "Make 0 tool calls.",
+        "Bounds:",
+        "- Keep the complete message under 4000 characters.",
+        "- Keep the subject under 72 characters.",
+        "Fallback rules:",
+        "- Generate a concise single-line subject.",
+        "- Use an imperative verb first.",
+        "- Do not add a scope prefix unless the context already clearly uses one.",
+        "- Do not include markdown, quotes, or trailing punctuation.",
+        "",
+        "Diff context:",
+        context,
+    ]
+    .join("\n")
 }
 
 impl Render for Root {

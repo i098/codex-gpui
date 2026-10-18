@@ -1,6 +1,7 @@
 //! Modal surfaces recorded in `refs/interactions/f3b.json`; the Scheduled sidebar's `New task`
 //! create dialog in `refs/interactions/s036.json`.
 //! The model-upgrade announcement is recorded in `refs/interactions/f3c.json`.
+use crate::tooltip::{Side, tooltip};
 use crate::{Copy, Cut, Paste, SelectAll, icon::icon, motion::ButtonVisual, text};
 use bridge::types::Model;
 use gpui::{
@@ -42,6 +43,8 @@ pub enum Kind {
     /// `Rename chat` from a Recents row's menu (RS-091, refs/interactions/s002.json): the
     /// `Chat title` input, prefilled and selected, `Cancel`, `Save` and `Close dialog`.
     Rename,
+    /// `Commit or push` (DT-139): the original's commit form for the open thread's repository.
+    Commit,
 }
 #[derive(Clone)]
 pub enum Outcome {
@@ -64,11 +67,58 @@ pub enum Outcome {
         prompt: String,
         rrule: String,
     },
+    /// A submitted commit form: the app creates the branch, commits and pushes.
+    Commit {
+        step: CommitStep,
+        message: String,
+        include_unstaged: bool,
+        new_branch: Option<String>,
+    },
+}
+
+/// The rows of the commit form: `Commit`, `Commit and push` and `Push`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CommitStep {
+    Commit,
+    CommitAndPush,
+    Push,
+}
+
+/// Files and lines of one change selection.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Selection {
+    pub files: usize,
+    pub additions: usize,
+    pub deletions: usize,
+}
+
+/// What the host reports about the repository when the commit form opens.
+#[derive(Clone, Debug, Default)]
+pub struct CommitRepository {
+    /// `None` on a detached HEAD.
+    pub branch: Option<String>,
+    pub branches: Vec<String>,
+    pub remote: bool,
+    pub ahead: usize,
+    pub staged: Selection,
+    pub all: Selection,
+    pub include_unstaged: bool,
+    /// The prefilled name of a new branch (`codex/` plus the chat title).
+    pub new_branch_name: String,
+}
+
+struct CommitForm {
+    repo: CommitRepository,
+    include_unstaged: bool,
+    new_branch: bool,
+    branch_name: String,
+    /// The highlighted `Commit to` item while that list is open.
+    menu: Option<usize>,
 }
 
 pub struct Dialog {
     kind: Kind,
-    controls: [FocusHandle; 6],
+    controls: [FocusHandle; 7],
     selected: usize,
     /// The text of the search, chat title, or task instructions.
     query: String,
@@ -85,6 +135,7 @@ pub struct Dialog {
     saving: bool,
     error: Option<String>,
     announcement: Option<ModelAnnouncement>,
+    commit: Option<CommitForm>,
 }
 impl EventEmitter<Outcome> for Dialog {}
 impl Focusable for Dialog {
@@ -111,6 +162,7 @@ impl Dialog {
             saving: false,
             error: None,
             announcement: None,
+            commit: None,
         }
     }
     /// `Rename chat` for `thread`, its input prefilled with `title` and all of it selected.
@@ -120,6 +172,20 @@ impl Dialog {
             select_all: true,
             thread,
             ..Self::new(Kind::Rename, cx)
+        }
+    }
+    /// `Commit or push` for the repository `repo` describes.
+    pub fn commit(repo: CommitRepository, cx: &mut Context<Self>) -> Self {
+        let form = CommitForm {
+            include_unstaged: repo.include_unstaged,
+            new_branch: repo.remote && repo.branch.is_none(),
+            branch_name: repo.new_branch_name.clone(),
+            menu: None,
+            repo,
+        };
+        Self {
+            commit: Some(form),
+            ..Self::new(Kind::Commit, cx)
         }
     }
     /// Builds the recorded model-upgrade surface from original model metadata.
@@ -182,6 +248,13 @@ impl Dialog {
             (Kind::Rename, 0) => "Chat title",
             (Kind::Rename, 1) => "Save",
             (Kind::Rename, _) => "Cancel",
+            (Kind::Commit, 0) => "Commit message",
+            (Kind::Commit, 1) => "Include unstaged changes",
+            (Kind::Commit, 2) => "Commit to",
+            (Kind::Commit, 3) => "Branch name",
+            (Kind::Commit, 4) => "Commit",
+            (Kind::Commit, 5) => "Commit and push",
+            (Kind::Commit, _) => "Push",
         }
     }
     /// The whole query is selected (typing replaces it).
@@ -191,16 +264,22 @@ impl Dialog {
     fn editing(&self) -> bool {
         (matches!(
             self.kind,
-            Kind::Shortcuts | Kind::Rename | Kind::ScheduleTask
+            Kind::Shortcuts | Kind::Rename | Kind::ScheduleTask | Kind::Commit
         ) && self.selected == 0)
             || (self.kind == Kind::ScheduleTask && self.selected == 4)
+            || (self.kind == Kind::Commit && self.selected == 3)
+    }
+
+    /// The focused input takes `Enter` as a new line and keeps a caret and selection.
+    fn multiline(&self) -> bool {
+        matches!(self.kind, Kind::ScheduleTask | Kind::Commit) && self.selected == 0
     }
 
     fn input(&mut self) -> &mut String {
-        if self.kind == Kind::ScheduleTask && self.selected == 4 {
-            &mut self.schedule_time
-        } else {
-            &mut self.query
+        match (self.kind, self.selected) {
+            (Kind::ScheduleTask, 4) => &mut self.schedule_time,
+            (Kind::Commit, 3) => &mut self.form_mut().branch_name,
+            _ => &mut self.query,
         }
     }
 
@@ -292,6 +371,22 @@ impl Dialog {
                 thread: self.thread.clone(),
                 name: self.query.clone(),
             }),
+            (Kind::Commit, 1) => {
+                let form = self.form_mut();
+                form.include_unstaged = !form.include_unstaged;
+                cx.notify();
+            }
+            (Kind::Commit, 2) => {
+                if self.form().repo.remote {
+                    let highlighted = self.menu_selection();
+                    self.form_mut().menu = Some(highlighted);
+                    cx.notify();
+                }
+            }
+            (Kind::Commit, 4) => self.submit_commit(CommitStep::Commit, cx),
+            (Kind::Commit, 5) => self.submit_commit(CommitStep::CommitAndPush, cx),
+            (Kind::Commit, 6) => self.submit_commit(CommitStep::Push, cx),
+            (Kind::Commit, 0 | 3) => {}
             _ => self.dismiss(cx),
         }
     }
@@ -326,7 +421,7 @@ impl Dialog {
         if !self.editing() || self.saving {
             return;
         }
-        if self.kind == Kind::ScheduleTask && self.selected == 0 {
+        if self.multiline() {
             let value: String = value
                 .chars()
                 .filter(|c| !c.is_control() || *c == '\n')
@@ -366,10 +461,22 @@ impl Dialog {
             cx.stop_propagation();
             return;
         }
+        if self.kind == Kind::Commit && self.form().menu.is_some() {
+            let count = 1 + usize::from(self.form().repo.branch.is_some());
+            let highlighted = self.form().menu.unwrap_or_default();
+            match k.key.as_str() {
+                "up" => self.form_mut().menu = Some((highlighted + count - 1) % count),
+                "down" => self.form_mut().menu = Some((highlighted + 1) % count),
+                "enter" | "space" => self.choose_target(highlighted),
+                "escape" | "tab" => self.form_mut().menu = None,
+                _ => {}
+            }
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
         match k.key.as_str() {
-            "left" | "right" | "home" | "end" | "backspace" | "delete"
-                if self.kind == Kind::ScheduleTask && self.selected == 0 =>
-            {
+            "left" | "right" | "home" | "end" | "backspace" | "delete" if self.multiline() => {
                 let range = self.instruction_selection();
                 let cursor = self.instruction_cursor;
                 let next = match k.key.as_str() {
@@ -412,16 +519,13 @@ impl Dialog {
             }
             "escape" => self.dismiss(cx),
             "tab" => {
-                let count = match self.kind {
-                    Kind::Shortcuts | Kind::FullAccess => 2,
-                    Kind::ScheduleTask => 6,
-                    _ => 3,
+                let order: Vec<usize> = match self.kind {
+                    Kind::Shortcuts | Kind::FullAccess => vec![0, 1],
+                    Kind::ScheduleTask => vec![0, 3, 4, 5, 1, 2],
+                    Kind::Commit => self.commit_tab_order(),
+                    _ => vec![0, 1, 2],
                 };
-                let order: &[usize] = if self.kind == Kind::ScheduleTask {
-                    &[0, 3, 4, 5, 1, 2]
-                } else {
-                    &[0, 1, 2][..count]
-                };
+                let count = order.len();
                 let current = order.iter().position(|i| *i == self.selected).unwrap_or(0);
                 self.selected =
                     order[(current + if k.modifiers.shift { count - 1 } else { 1 }) % count];
@@ -429,11 +533,20 @@ impl Dialog {
                 cx.notify();
                 self.select_all = false;
             }
+            // `Cmd+Enter` runs the focused row of the form, else `Commit`.
+            "enter"
+                if self.kind == Kind::Commit && (k.modifiers.platform || k.modifiers.control) =>
+            {
+                let step = match self.selected {
+                    5 => CommitStep::CommitAndPush,
+                    6 => CommitStep::Push,
+                    _ => CommitStep::Commit,
+                };
+                self.submit_commit(step, cx);
+            }
             // Enter in the title input submits the form; Space types.
             "enter" if self.kind == Kind::Rename && self.selected == 0 => self.activate(cx),
-            "enter" if self.kind == Kind::ScheduleTask && self.selected == 0 => {
-                self.insert("\n", cx)
-            }
+            "enter" if self.multiline() => self.insert("\n", cx),
             "enter" | "space"
                 if matches!(
                     self.kind,
@@ -775,6 +888,107 @@ impl Dialog {
                     .child(self.button(1, "Close Window", 128., t, cx)),
             )
     }
+    /// The multi-line text input of `Instructions…` and `Commit message`: lines with the
+    /// selection and caret, scrolling with the caret. The caller sizes and frames it.
+    fn editor(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        placeholder: &'static str,
+        t: &Theme,
+        cx: &Context<Self>,
+    ) -> Stateful<Div> {
+        div()
+            .id(id)
+            .role(gpui::Role::TextInput)
+            .aria_label(label)
+            .aria_value(self.query.clone())
+            .track_focus(&self.controls[0])
+            .cursor_text()
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll)
+            .children(
+                self.query
+                    .split('\n')
+                    .scan(0usize, |start, line| {
+                        let offset = *start;
+                        *start += line.len() + 1;
+                        Some((offset, line))
+                    })
+                    .map(|(start, line)| {
+                        let selection = self.instruction_selection();
+                        let selected =
+                            selection.start.max(start)..selection.end.min(start + line.len());
+                        let input = gpui::StyledText::new(
+                            if self.query.is_empty() {
+                                placeholder
+                            } else if line.is_empty() {
+                                " "
+                            } else {
+                                line
+                            }
+                            .to_owned(),
+                        )
+                        .with_highlights(
+                            (selected.start < selected.end).then(|| {
+                                (
+                                    (selected.start - start)..(selected.end - start),
+                                    gpui::HighlightStyle {
+                                        background_color: Some(t.text_selection),
+                                        ..Default::default()
+                                    },
+                                )
+                            }),
+                        );
+                        let layout = input.layout().clone();
+                        let caret = (self.selected == 0
+                            && selection.is_empty()
+                            && self.instruction_cursor >= start
+                            && self.instruction_cursor <= start + line.len())
+                        .then_some(self.instruction_cursor.saturating_sub(start));
+                        let color = t.text;
+                        div()
+                            .relative()
+                            .min_h(px(20.))
+                            .text_size(px(14.))
+                            .line_height(px(20.))
+                            .text_color(if self.query.is_empty() {
+                                t.text_tertiary
+                            } else {
+                                t.text
+                            })
+                            .whitespace_normal()
+                            .child(input)
+                            .child(
+                                gpui::canvas(
+                                    |_, _, _| (),
+                                    move |_, (), window, _| {
+                                        if let Some(cursor) = caret
+                                            && let Some(position) =
+                                                layout.position_for_index(cursor)
+                                        {
+                                            window.paint_quad(gpui::fill(
+                                                gpui::Bounds::new(
+                                                    position,
+                                                    gpui::size(px(1.), px(18.)),
+                                                ),
+                                                color,
+                                            ));
+                                        }
+                                    },
+                                )
+                                .absolute()
+                                .inset_0(),
+                            )
+                    }),
+            )
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.selected = 0;
+                this.select_all = false;
+                this.controls[0].focus(window, cx);
+                cx.notify();
+            }))
+    }
     /// The local task editor keeps the draft until the host confirms the write.
     fn schedule_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
         let label = t.text.opacity(0.65);
@@ -806,103 +1020,20 @@ impl Dialog {
             .flex_col()
             .child(text("Schedule a task", 16., 26., 590., t.text))
             .child(
-                div()
-                    .id("schedule-instructions")
-                    .role(gpui::Role::TextInput)
-                    .aria_label("Instructions…")
-                    .aria_value(self.query.clone())
-                    .track_focus(&self.controls[0])
-                    .mt(px(20.))
-                    .h(px(122.))
-                    .rounded(px(20.))
-                    .border_1()
-                    .border_color(t.border)
-                    .px(px(18.))
-                    .py(px(16.))
-                    .cursor_text()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll)
-                    .children(
-                        self.query
-                            .split('\n')
-                            .scan(0usize, |start, line| {
-                                let offset = *start;
-                                *start += line.len() + 1;
-                                Some((offset, line))
-                            })
-                            .map(|(start, line)| {
-                                let selection = self.instruction_selection();
-                                let selected = selection.start.max(start)
-                                    ..selection.end.min(start + line.len());
-                                let input = gpui::StyledText::new(
-                                    if self.query.is_empty() {
-                                        "Instructions…"
-                                    } else if line.is_empty() {
-                                        " "
-                                    } else {
-                                        line
-                                    }
-                                    .to_owned(),
-                                )
-                                .with_highlights(
-                                    (selected.start < selected.end).then(|| {
-                                        (
-                                            (selected.start - start)..(selected.end - start),
-                                            gpui::HighlightStyle {
-                                                background_color: Some(t.text_selection),
-                                                ..Default::default()
-                                            },
-                                        )
-                                    }),
-                                );
-                                let layout = input.layout().clone();
-                                let caret = (self.selected == 0
-                                    && selection.is_empty()
-                                    && self.instruction_cursor >= start
-                                    && self.instruction_cursor <= start + line.len())
-                                .then_some(self.instruction_cursor.saturating_sub(start));
-                                let color = t.text;
-                                div()
-                                    .relative()
-                                    .min_h(px(20.))
-                                    .text_size(px(14.))
-                                    .line_height(px(20.))
-                                    .text_color(if self.query.is_empty() {
-                                        t.text_tertiary
-                                    } else {
-                                        t.text
-                                    })
-                                    .whitespace_normal()
-                                    .child(input)
-                                    .child(
-                                        gpui::canvas(
-                                            |_, _, _| (),
-                                            move |_, (), window, _| {
-                                                if let Some(cursor) = caret
-                                                    && let Some(position) =
-                                                        layout.position_for_index(cursor)
-                                                {
-                                                    window.paint_quad(gpui::fill(
-                                                        gpui::Bounds::new(
-                                                            position,
-                                                            gpui::size(px(1.), px(18.)),
-                                                        ),
-                                                        color,
-                                                    ));
-                                                }
-                                            },
-                                        )
-                                        .absolute()
-                                        .inset_0(),
-                                    )
-                            }),
-                    )
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.selected = 0;
-                        this.select_all = false;
-                        this.controls[0].focus(window, cx);
-                        cx.notify();
-                    })),
+                self.editor(
+                    "schedule-instructions",
+                    "Instructions…",
+                    "Instructions…",
+                    t,
+                    cx,
+                )
+                .mt(px(20.))
+                .h(px(122.))
+                .rounded(px(20.))
+                .border_1()
+                .border_color(t.border)
+                .px(px(18.))
+                .py(px(16.)),
             )
             .child(
                 div()
@@ -1316,6 +1447,414 @@ impl Dialog {
     }
 }
 
+impl Dialog {
+    fn form(&self) -> &CommitForm {
+        self.commit.as_ref().expect("commit form")
+    }
+
+    fn form_mut(&mut self) -> &mut CommitForm {
+        self.commit.as_mut().expect("commit form")
+    }
+
+    /// A new branch is only offered where there is a remote to push it to.
+    fn creates_branch(&self) -> bool {
+        let form = self.form();
+        form.new_branch && form.repo.remote
+    }
+
+    fn commit_tab_order(&self) -> Vec<usize> {
+        let remote = self.form().repo.remote;
+        let mut order = Vec::new();
+        order.extend(remote.then_some(2));
+        order.extend(self.creates_branch().then_some(3));
+        order.extend([0, 1, 4]);
+        order.extend(remote.then_some([5, 6]).into_iter().flatten());
+        order
+    }
+
+    /// The `Commit to` item that is chosen: the current branch comes first.
+    fn menu_selection(&self) -> usize {
+        usize::from(self.form().repo.branch.is_some() && self.creates_branch())
+    }
+
+    fn choose_target(&mut self, item: usize) {
+        let current = self.form().repo.branch.is_some();
+        let form = self.form_mut();
+        form.new_branch = !(current && item == 0);
+        form.menu = None;
+    }
+
+    /// `(enabled, why not)` of `Commit`, `Commit and push` and `Push` (the original's
+    /// `review.commit.disabled.*` and `localConversationPage.push*` tooltips).
+    fn commit_state(&self) -> [(bool, Option<&'static str>); 3] {
+        let form = self.form();
+        let name = form.branch_name.trim();
+        let new = self.creates_branch();
+        let blocked = new
+            && (name.is_empty()
+                || name.ends_with('/')
+                || form.repo.branches.iter().any(|branch| branch == name));
+        let selection = if form.include_unstaged {
+            form.repo.all
+        } else {
+            form.repo.staged
+        };
+        let no_changes = (selection.files == 0).then_some("No changes to commit");
+        let commit = (!blocked && no_changes.is_none(), no_changes);
+        let nothing_to_push = (form.repo.ahead == 0).then_some("No new commits to push");
+        let push = if new {
+            nothing_to_push
+        } else if form.repo.branch.is_none() {
+            Some("Branch information unavailable")
+        } else {
+            nothing_to_push
+        };
+        [commit, commit, (!blocked && push.is_none(), push)]
+    }
+
+    fn submit_commit(&mut self, step: CommitStep, cx: &mut Context<Self>) {
+        if !self.commit_state()[step as usize].0 {
+            return;
+        }
+        let form = self.form();
+        cx.emit(Outcome::Commit {
+            step,
+            message: self.query.trim().to_owned(),
+            include_unstaged: form.include_unstaged,
+            new_branch: self
+                .creates_branch()
+                .then(|| form.branch_name.trim().to_owned()),
+        });
+    }
+
+    /// The command-menu surface's `p-1` and border, the rows and the 31 px list rows.
+    fn commit_height(&self) -> f32 {
+        let rows = if self.form().repo.remote { 3. } else { 1. };
+        10. + 36. + if self.creates_branch() { 44. } else { 0. } + 80. + 41. + 1. + 8. + rows * 31.
+    }
+
+    fn commit_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        let form = self.form();
+        let remote = form.repo.remote;
+        let new = self.creates_branch();
+        let state = self.commit_state();
+        let target: SharedString = if new {
+            "New branch".into()
+        } else {
+            form.repo
+                .branch
+                .clone()
+                .unwrap_or_else(|| "-".into())
+                .into()
+        };
+        let selection = if form.include_unstaged {
+            form.repo.all
+        } else {
+            form.repo.staged
+        };
+        let selector = div()
+            .id("commit-target")
+            .role(gpui::Role::Button)
+            .aria_label("Commit to")
+            .track_focus(&self.controls[2])
+            .h(px(36.))
+            .px(px(8.))
+            .rounded(px(12.5))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .when(self.selected == 2, |d| d.bg(t.ghost_hover))
+            .child(
+                text(target, 14., 21., 430., t.text)
+                    .text_ellipsis()
+                    .min_w_0(),
+            )
+            .when(remote, |d| {
+                d.child(icon("chevron-down-small", 16., t.text_tertiary))
+                    .hover(|s| s.bg(t.ghost_hover))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.selected = 2;
+                        this.controls[2].focus(window, cx);
+                        this.activate(cx);
+                    }))
+            });
+        let menu = form.menu.map(|highlighted| {
+            let current = form.repo.branch.clone();
+            let mut items: Vec<(SharedString, bool)> = Vec::new();
+            if let Some(branch) = &current {
+                items.push((branch.clone().into(), !new));
+            }
+            items.push(("New branch".into(), new));
+            div()
+                .id("commit-target-menu")
+                .absolute()
+                .top(px(40.))
+                .left(px(8.))
+                .w(px(220.))
+                .rounded(px(12.))
+                .shadow_sm()
+                .p(px(4.))
+                .bg(t.menu_background)
+                .border_1()
+                .border_color(t.border)
+                .flex()
+                .flex_col()
+                .child(
+                    text("Commit to", 12., 16., 430., t.text_tertiary)
+                        .h(px(24.))
+                        .px(px(8.))
+                        .flex()
+                        .items_center(),
+                )
+                .children(
+                    items
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, (label, chosen))| {
+                            div()
+                                .id(("commit-target-item", index))
+                                .h(px(32.))
+                                .px(px(8.))
+                                .rounded(px(8.))
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .when(index == highlighted, |d| d.bg(t.list_hover))
+                                .child(text(label, 14., 20., 430., t.text).text_ellipsis())
+                                .when(chosen, |d| d.child(icon("menu-check", 16., t.text)))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.choose_target(index);
+                                    this.selected = 2;
+                                    this.controls[2].focus(window, cx);
+                                    cx.notify();
+                                }))
+                        }),
+                )
+        });
+        let name_taken = new
+            && form
+                .repo
+                .branches
+                .iter()
+                .any(|branch| branch == form.branch_name.trim());
+        let branch_name = div()
+            .id("commit-branch-name")
+            .role(gpui::Role::TextInput)
+            .aria_label("Branch name")
+            .aria_value(form.branch_name.clone())
+            .track_focus(&self.controls[3])
+            .mx(px(12.))
+            .mb(px(8.))
+            .h(px(36.))
+            .px(px(10.))
+            .rounded(px(10.))
+            .border_1()
+            .border_color(if self.selected == 3 {
+                rgba(0x3a83f7ff).into()
+            } else {
+                t.border_strong
+            })
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(px(8.))
+            .cursor_text()
+            .child(
+                text(
+                    if form.branch_name.is_empty() {
+                        "Create a new branch".to_owned()
+                    } else {
+                        form.branch_name.clone()
+                    },
+                    13.,
+                    18.,
+                    430.,
+                    if form.branch_name.is_empty() {
+                        t.text_tertiary
+                    } else {
+                        t.text
+                    },
+                )
+                .text_ellipsis()
+                .min_w_0()
+                .when(self.select_all && !form.branch_name.is_empty(), |d| {
+                    d.bg(rgba(0x3a83f766))
+                }),
+            )
+            .when(name_taken, |d| {
+                d.child(text("Branch already exists", 12., 16., 430., t.text_error))
+            })
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.selected = 3;
+                this.select_all = true;
+                this.controls[3].focus(window, cx);
+                cx.notify();
+            }));
+        let include = div()
+            .id("commit-include")
+            .role(gpui::Role::CheckBox)
+            .aria_label("Include unstaged changes")
+            .aria_toggled(if form.include_unstaged {
+                gpui::Toggled::True
+            } else {
+                gpui::Toggled::False
+            })
+            .track_focus(&self.controls[1])
+            .h(px(41.))
+            .px(px(12.))
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .child(
+                div()
+                    .size(px(14.))
+                    .flex_none()
+                    .rounded(px(5.))
+                    .border_1()
+                    .border_color(if self.selected == 1 {
+                        rgba(0x3a83f7ff).into()
+                    } else {
+                        t.border
+                    })
+                    .when(form.include_unstaged, |d| {
+                        d.bg(t.text)
+                            .child(text("✓", 12., 12., 600., t.menu_background))
+                    }),
+            )
+            .child(text("Include unstaged changes", 14., 20., 430., t.text).flex_1())
+            .child(if selection.files == 0 {
+                text("No changes", 12., 16., 430., t.text_tertiary).into_any_element()
+            } else {
+                crate::screens::diff::panel::stats(selection.additions, selection.deletions, 12., t)
+                    .into_any_element()
+            })
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.selected = 1;
+                this.controls[1].focus(window, cx);
+                this.activate(cx);
+            }));
+        let labels = [
+            (4, "Commit", true),
+            (5, "Commit and push", remote),
+            (6, "Push", remote),
+        ];
+        // cmdk keeps one row selected whatever has the key focus: the focused row, else the
+        // first that runs.
+        let highlighted = if (4..=6).contains(&self.selected) {
+            Some(self.selected)
+        } else {
+            (0..3).find(|i| state[*i].0).map(|i| i + 4)
+        };
+        let rows = labels
+            .into_iter()
+            .filter(|(_, _, shown)| *shown)
+            .map(|(index, label, _)| {
+                let (enabled, reason) = state[index - 4];
+                let on = enabled && highlighted == Some(index);
+                let color = match (enabled, on) {
+                    (false, _) => t.text_tertiary,
+                    (true, true) => t.text,
+                    (true, false) => t.text.opacity(0.75),
+                };
+                let row = div()
+                    .id(("commit-row", index))
+                    .role(gpui::Role::Button)
+                    .aria_label(label)
+                    .track_focus(&self.controls[index])
+                    .relative()
+                    .py(px(5.))
+                    .px(px(8.))
+                    .rounded(px(12.5))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .when(on, |d| d.bg(t.ghost_hover))
+                    .child(div().size(px(16.)).flex_none().when(index != 4, |slot| {
+                        slot.child(icon("composer-arrow-up", 16., color))
+                    }))
+                    .child(text(label, 14., 21., 430., color).flex_1().min_w_0())
+                    .when(on, |d| {
+                        d.child(
+                            div().flex_none().h(px(21.)).pt(px(3.)).child(
+                                div()
+                                    .h(px(16.))
+                                    .px(px(6.))
+                                    .rounded(px(10.))
+                                    .bg(t.text_alpha_10)
+                                    .flex()
+                                    .items_center()
+                                    .child(text("⌘↵", 12., 12., 430., t.text).opacity(0.8)),
+                            ),
+                        )
+                    })
+                    .when(enabled, |d| {
+                        d.hover(|s| s.bg(t.ghost_hover)).on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.selected = index;
+                                this.controls[index].focus(window, cx);
+                                this.activate(cx);
+                            },
+                        ))
+                    });
+                match reason.filter(|_| !enabled) {
+                    Some(reason) => tooltip(row, reason, None, Side::Top).into_any_element(),
+                    None => row.into_any_element(),
+                }
+            });
+        div()
+            .relative()
+            .p(px(5.))
+            .flex()
+            .flex_col()
+            .child(selector)
+            .when(new, |d| d.child(branch_name))
+            .child(
+                self.editor(
+                    "commit-message",
+                    "Commit message",
+                    "Commit message (leave blank to generate)…",
+                    t,
+                    cx,
+                )
+                .h(px(80.))
+                .px(px(12.))
+                .py(px(8.)),
+            )
+            .child(include)
+            .child(div().h(px(1.)).bg(t.border))
+            .child(div().py(px(4.)).flex().flex_col().children(rows))
+            .children(menu)
+    }
+}
+
+/// What a test reads from the open commit form.
+impl Dialog {
+    /// The visible rows with whether each runs and its tooltip when it does not.
+    pub fn commit_rows(&self) -> Vec<(&'static str, bool, Option<&'static str>)> {
+        let state = self.commit_state();
+        let mut rows = vec![("Commit", state[0].0, state[0].1)];
+        if self.form().repo.remote {
+            rows.push(("Commit and push", state[1].0, state[1].1));
+            rows.push(("Push", state[2].0, state[2].1));
+        }
+        rows
+    }
+
+    /// `New branch` with its name, or the branch the commit lands on.
+    pub fn commit_target(&self) -> (bool, String) {
+        let form = self.form();
+        if self.creates_branch() {
+            (true, form.branch_name.clone())
+        } else {
+            (false, form.repo.branch.clone().unwrap_or_default())
+        }
+    }
+
+    pub fn commit_includes_unstaged(&self) -> bool {
+        self.form().include_unstaged
+    }
+}
+
 const REPEAT: [(&str, &str); 8] = [
     ("Daily", ""),
     ("Mondays", "MO"),
@@ -1443,6 +1982,7 @@ impl Render for Dialog {
             (124. + visible.len() as f32 * 36. + sections as f32 * 40.).clamp(520., 560.);
         let schedule = self.kind == Kind::ScheduleTask;
         let announcement = self.kind == Kind::ModelAnnouncement;
+        let commit = self.kind == Kind::Commit;
         let (width, height): (f32, f32) = match self.kind {
             Kind::Shortcuts => (600., shortcuts_height),
             Kind::CloseWindow => (420., 171.),
@@ -1450,6 +1990,7 @@ impl Render for Dialog {
             Kind::Rename => (420., 185.),
             Kind::FullAccess => (520., 420.),
             Kind::ModelAnnouncement => (480., 432.),
+            Kind::Commit => (420., self.commit_height()),
         };
         let width = width.min(f32::from(viewport.width) * 0.92);
         let height = height.min(f32::from(viewport.height) * 0.92);
@@ -1460,6 +2001,7 @@ impl Render for Dialog {
             Kind::Rename => self.rename_content(t, cx),
             Kind::FullAccess => self.full_access_content(t, cx),
             Kind::ModelAnnouncement => self.announcement_content(t, cx),
+            Kind::Commit => self.commit_content(t, cx),
         };
         // `codex-dialog-overlay`: the schedule dialog's `_dimmedOverlay` is rgba(0,0,0,.5) with
         // blur(1px); the blur is not drawn (flat fills are unchanged by it).
@@ -1491,6 +2033,12 @@ impl Render for Dialog {
                         Kind::ScheduleTask => "Schedule a task".into(),
                         Kind::Rename => "Rename chat".into(),
                         Kind::FullAccess => "Turn on Full Access?".into(),
+                        Kind::Commit => if self.form().repo.remote {
+                            "Commit or push"
+                        } else {
+                            "Commit"
+                        }
+                        .into(),
                         Kind::ModelAnnouncement => self
                             .announcement
                             .as_ref()
@@ -1511,7 +2059,7 @@ impl Render for Dialog {
                         cx.stop_propagation();
                     }))
                     .on_action(cx.listener(|this, _: &Copy, _, cx| {
-                        if this.kind == Kind::ScheduleTask && this.selected == 0 {
+                        if this.multiline() {
                             cx.write_to_clipboard(gpui::ClipboardItem::new_string(
                                 this.query[this.instruction_selection()].to_owned(),
                             ));
@@ -1526,7 +2074,7 @@ impl Render for Dialog {
                         cx.stop_propagation();
                     }))
                     .on_action(cx.listener(|this, _: &Cut, _, cx| {
-                        if this.kind == Kind::ScheduleTask && this.selected == 0 && !this.saving {
+                        if this.multiline() && !this.saving {
                             cx.write_to_clipboard(gpui::ClipboardItem::new_string(
                                 this.query[this.instruction_selection()].to_owned(),
                             ));
@@ -1551,6 +2099,8 @@ impl Render for Dialog {
                     .h(px(height))
                     .rounded(px(if announcement {
                         16.
+                    } else if commit {
+                        20.
                     } else if schedule {
                         30.
                     } else {
@@ -1569,6 +2119,21 @@ impl Render for Dialog {
                                     -2.,
                                     false,
                                 )],
+                                ..Default::default()
+                            }))
+                        } else if commit {
+                            // The command menu's surface, which the original's commit form uses.
+                            d.child(shapes::decoration(shapes::Decoration {
+                                radius: Corners::all(px(20.)),
+                                fill: Some(t.surface_elevated_secondary),
+                                border: Some((
+                                    px(1.),
+                                    if t.appearance == theme::Appearance::Dark {
+                                        t.border
+                                    } else {
+                                        gpui::transparent_black()
+                                    },
+                                )),
                                 ..Default::default()
                             }))
                         } else if !schedule {

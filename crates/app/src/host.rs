@@ -757,7 +757,8 @@ impl Host for LocalHost {
             "list-automations" => self.automations()?,
             "create-automation" => self.create_automation(&params)?,
             "inbox-items" => self.inbox(&params)?,
-            "git-changes" | "git-stage" | "git-unstage" => git::fetch(endpoint, &params)?,
+            "git-changes" | "git-stage" | "git-unstage" | "git-commit-status"
+            | "git-commit-diff" | "git-commit" | "git-push" => git::fetch(endpoint, &params)?,
             "paths-exist" => {
                 let paths: Vec<String> =
                     serde_json::from_value(params.get("paths").cloned().unwrap_or(json!([])))?;

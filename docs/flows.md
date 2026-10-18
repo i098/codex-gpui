@@ -389,7 +389,7 @@ Reads and mutations run off the UI thread, with loading and error states in the 
 Tracked files use one bulk Git diff per source; untracked files use separate comparisons.
 The `git_stage` native proof checks the real index, visible diff text, partial staging, deletion, lock recovery, and unborn repositories.
 It also checks literal and newline filenames, multi-file patches, and rejects paths outside the repository.
-Revert, hunk actions, commit, push, and remote Git remain separate work.
+Revert, hunk actions, and remote Git remain separate work. Commit and push are in DT-139 below.
 
 
 | # | Item | Kind | Original | Port | Status |
@@ -414,6 +414,27 @@ Revert, hunk actions, commit, push, and remote Git remain separate work.
 | 18 | Load failure | error | `Couldn't load changes`. | Local sources show the host error; Refresh retries the read. | PARTIAL (`git_stage` checks index-lock failure and recovery) |
 | 19 | Too large | error | `Diff too large to display`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 20 | Resize | resize | Split → inline for narrow panes. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
+
+### DT-139: Commit or push
+
+The thread route's `Commit or push` command (`git.commit`) runs the original's rule.
+When the selected changes are not empty it opens the commit form; otherwise it pushes the commits that the branch is ahead by.
+When neither is possible the command does nothing; the original hides it, and the port's command list is static.
+The form is the original's 420 px dialog.
+`Commit to` lists the current branch and `New branch`, offered only when a remote exists; a detached HEAD starts on `New branch`.
+The new name is prefilled with `git-branch-prefix` (default `codex/`) and the first five words of the chat title.
+`Include unstaged changes` (default on, kept for the session) shows `+N -M` of the selection or `No changes`.
+`Commit`, `Commit and push` and `Push` carry the original's tooltips: `No changes to commit`, `No new commits to push`, `Branch information unavailable`.
+An empty or taken name disables all three rows.
+`Cmd+Enter` runs the focused row, else `Commit`.
+The host adds explicit `git-commit-status`, `git-commit-diff`, `git-commit` and `git-push` to the `git-changes` arm; no other `git-*` name is accepted.
+`git-commit` creates the branch, stages everything when unstaged changes are included, then commits; `git-push` sets the upstream of a branch that has none, as the original's push does.
+A blank message is written as the original's `generate-commit-message` does: an ephemeral read-only app-server thread (`thread/start` with `ephemeral`, then `turn/start` with a structured `message` schema) answers the original prompt, and the thread is unsubscribed.
+The generation model is `gpt-6-luna` unless the model list lacks it.
+Failures toast `Failed to create branch`, `Failed to commit changes`, `Failed to push changes` or `Failed to generate commit message: …` with `Copy error`; success toasts `Committed to {branch}` or `Pushed {branch}`.
+The `git_commit` native proof drives all of this with keys and a mouse click against owned repositories and a local bare remote.
+Its message generation answers from a crafted replay exchange, because the fixtures hold no recording of it.
+The `codex_git_commit` attribution trailer, the header `Git actions` menu, `Create PR`, and branch switching remain separate work.
 
 ## 14.7 Settings, login and onboarding
 
