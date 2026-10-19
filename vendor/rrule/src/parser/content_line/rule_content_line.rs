@@ -183,7 +183,7 @@ fn props_to_rrule(
     let by_second = props
         .get(&RRuleProperty::BySecond)
         .map(|by_second| {
-            parse_str_to_vec(by_second, |second| second < 60)
+            parse_str_to_vec(by_second, |second| second <= 60)
                 .map_err(|_| ParseError::InvalidBySecond(by_second.into()))
         })
         .transpose()?
@@ -330,5 +330,17 @@ mod tests {
             res.unwrap_err(),
             ParseError::InvalidByMinute("4,5,64".into())
         );
+    }
+
+    #[test]
+    fn accepts_bysecond_60_and_rejects_61() {
+        let mut props = HashMap::new();
+        props.insert(RRuleProperty::Freq, "DAILY".into());
+        props.insert(RRuleProperty::BySecond, "0,60".into());
+        assert_eq!(props_to_rrule(&props).unwrap().by_second, [0, 60]);
+
+        props.insert(RRuleProperty::BySecond, "61".into());
+        let res = props_to_rrule(&props);
+        assert_eq!(res.unwrap_err(), ParseError::InvalidBySecond("61".into()));
     }
 }
