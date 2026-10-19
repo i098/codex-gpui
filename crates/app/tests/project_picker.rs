@@ -171,12 +171,21 @@ fn sidebar_project_rows_start_chats_in_their_own_roots_and_leave_open_chats_alon
     fx.cx.run_until_parked();
     assert_eq!(saved_root()?.as_deref(), Some(alpha.as_str()));
 
+    fx.hover((900., 10.))?;
+    fx.shot()?.save(format!(
+        "{}/project-select-beta-before.png",
+        env!("CARGO_TARGET_TMPDIR")
+    ))?;
     fx.hover((label, row(1.)))?;
     fx.click((icon, row(1.)))?;
     fx.wait("beta new chat", |_| {
         saved_root().ok().flatten().as_deref() == Some(beta.as_str())
     })?;
     assert!(fx.composer_focused()?);
+    fx.shot()?.save(format!(
+        "{}/project-select-beta-after.png",
+        env!("CARGO_TARGET_TMPDIR")
+    ))?;
 
     // An open chat keeps its own folder while another project is selected.
     fx.keys("cmd-1")?;
