@@ -14,14 +14,13 @@ pub(super) fn next_run(
     zone: Tz,
     salt: &str,
 ) -> Option<(i64, i64)> {
+    // Like the original's JavaScript Date: `TZ` wins, and an unknown or missing zone is UTC.
     let zone = if zone.is_local() {
         std::env::var("TZ")
             .ok()
-            .filter(|name| !name.is_empty())
-            .or_else(|| iana_time_zone::get_timezone().ok())?
-            .parse::<chrono_tz::Tz>()
-            .ok()?
-            .into()
+            .or_else(|| iana_time_zone::get_timezone().ok())
+            .and_then(|name| name.parse::<chrono_tz::Tz>().ok())
+            .map_or(Tz::UTC, Tz::from)
     } else {
         zone
     };
