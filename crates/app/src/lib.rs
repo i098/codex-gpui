@@ -40,7 +40,8 @@ use ui::screens::home::{HomeMain, OpenFolder};
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
 use ui::screens::sidebar::{
     ArchiveThread, ArchivedChats, CommandMenu, CommandMenuEvent, HomeSidebar, LoadMore, OpenThread,
-    PINNED_SECTION_ID, PinThread, RenameThread, SEARCH_LIMIT, SearchHit, title as thread_title,
+    PINNED_SECTION_ID, PinThread, RenameThread, SEARCH_LIMIT, SearchHit, SelectProject,
+    title as thread_title,
 };
 use ui::screens::terminal::Xterm;
 use ui::screens::thread::view::{
@@ -584,14 +585,7 @@ impl Root {
             focus: cx.focus_handle(),
             home: cx.new(|_| HomeMain {
                 composer: home_composer,
-                project: state.project_root.as_ref().map(|root| {
-                    std::path::Path::new(root)
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .unwrap_or(root)
-                        .to_owned()
-                        .into()
-                }),
+                project: state.project_root.as_deref().map(project_name),
             }),
             thread_composer,
             thread: None,
@@ -928,27 +922,10 @@ impl Root {
                 this.picking_project = false;
                 match result {
                     Ok(Some((root, projects))) => {
-                        this.qa_work_started = true;
                         this.project_load = None;
                         this.sidebar
                             .update(cx, |sidebar, cx| sidebar.set_projects(projects, cx));
-                        this.home.update(cx, |home, cx| {
-                            home.project = Some(
-                                std::path::Path::new(&root)
-                                    .file_name()
-                                    .and_then(|name| name.to_str())
-                                    .unwrap_or(&root)
-                                    .to_owned()
-                                    .into(),
-                            );
-                            home.composer.update(cx, |composer, cx| {
-                                composer.set_search_roots(vec![root.clone()], cx);
-                            });
-                            cx.notify();
-                        });
-                        this.state.project_root = Some(root);
-                        this.navigate(Route::Home, window, cx);
-                        this.save(window, cx);
+                        this.select_project(root, window, cx);
                     }
                     Ok(None) => {}
                     Err(error) => {
@@ -960,6 +937,22 @@ impl Root {
             .ok();
         })
         .detach();
+    }
+
+    /// Makes `root` the folder new chats start in (`thread/start` cwd) and shows it on Home.
+    /// Open chats keep the cwd they were started in.
+    fn select_project(&mut self, root: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.qa_work_started = true;
+        self.home.update(cx, |home, cx| {
+            home.project = Some(project_name(&root));
+            home.composer.update(cx, |composer, cx| {
+                composer.set_search_roots(vec![root.clone()], cx);
+            });
+            cx.notify();
+        });
+        self.state.project_root = Some(root);
+        self.navigate(Route::Home, window, cx);
+        self.save(window, cx);
     }
 
     fn repository_request(
@@ -3172,6 +3165,16 @@ async fn resume_if(
     Ok(())
 }
 
+/// The Home chip label for a project root: its folder name.
+fn project_name(root: &str) -> SharedString {
+    std::path::Path::new(root)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(root)
+        .to_owned()
+        .into()
+}
+
 /// `None` (the server's default) when `model/list` gave the picker nothing.
 fn model(s: &Submission) -> Option<&str> {
     (!s.model.is_empty()).then_some(s.model.as_str())
@@ -3762,6 +3765,9 @@ impl Render for Root {
                 this.show_dialog(dialog, window, cx);
             }))
             .on_action(cx.listener(|this, a: &ForkThread, window, cx| this.fork(&a.0, window, cx)))
+            .on_action(cx.listener(|this, a: &SelectProject, window, cx| {
+                this.select_project(a.0.clone(), window, cx)
+            }))
             .on_action(cx.listener(|this, edit: &EditMessage, window, cx| {
                 this.edit_message(edit.clone(), window, cx)
             }))

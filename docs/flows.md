@@ -791,7 +791,17 @@ The label's stable element ID makes GPUI apply hover dimensions during layout.
 An image check protects the control regions for 100-character names at rest and on hover.
 
 Default Recents, pins, status indicators, and paging retain their existing checks.
-Project activation, menus, hover-card actions, and project thread paging are outside RS-081.
+Project menus, hover-card actions, and project thread paging are outside RS-081.
+
+RS-069 and RS-070 select an existing project in the sidebar.
+A click on a row, or on its hover `new-chat` icon, dispatches `SelectProject(root)` with the project's first stored root path.
+`Root::select_project` sets `State.project_root` (persisted by the existing state save), the Home chip and the file-search root, then opens Home.
+The icon also runs `NewChat`, so the composer is empty and focused.
+`thread/start` takes its `cwd` from `State.project_root`.
+Open chats keep the `cwd` the server stored with them, and selecting a project does not change them.
+A missing folder, or a project with no root path, ignores both clicks.
+`project_picker` clicks two owned projects and a deleted one, and checks the logged `thread/start` working directories.
+The row click does not expand or collapse the folder, because the port lists no per-project chats.
 The shared replay selects the dedicated `f1d_projects` adapter.
 
 Run `tools/mac.sh -l f1d-projects 'cargo test -p app --test f1d_projects -- --test-threads=1'`.
