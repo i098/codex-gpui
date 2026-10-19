@@ -50,6 +50,8 @@ pub struct Project {
     pub id: SharedString,
     pub label: SharedString,
     pub new_chat_label: SharedString,
+    /// The project's first local root path; the cwd of a chat started in it.
+    pub root: Option<SharedString>,
     pub worktree: bool,
     pub missing: bool,
     pub expanded: bool,
@@ -242,6 +244,12 @@ impl EventEmitter<LoadMore> for HomeSidebar {}
 #[action(namespace = sidebar, no_json)]
 pub struct ArchiveThread(pub String);
 
+/// A project row's click or new-chat icon: make this root (a project's local root path) the
+/// folder new chats start in.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = sidebar, no_json)]
+pub struct SelectProject(pub String);
+
 /// A row's `Pin chat` / `Unpin chat`: `thread/section/move` of the thread (its id) into the
 /// Pinned section (`true`) or out of it (`false`).
 #[derive(Clone, PartialEq, Action)]
@@ -345,6 +353,8 @@ impl HomeSidebar {
                 let group = project.id.clone();
                 let color = theme.text_default_nav;
                 let label_width = if project.worktree { 204. } else { 240. };
+                // A deleted or moved folder cannot host a chat.
+                let selectable = project.root.clone().filter(|_| !project.missing);
                 let content = div()
                     .absolute()
                     .inset_0()
@@ -421,10 +431,23 @@ impl HomeSidebar {
                             )
                             .child(
                                 div()
+                                    .id("project-new-chat")
                                     .size(px(20.))
                                     .flex()
                                     .items_center()
                                     .justify_center()
+                                    .role(gpui::Role::Button)
+                                    .aria_label(project.new_chat_label.clone())
+                                    .when_some(selectable.clone(), |button, root| {
+                                        button.cursor_pointer().on_click(move |_, window, cx| {
+                                            cx.stop_propagation();
+                                            window.dispatch_action(
+                                                Box::new(SelectProject(root.to_string())),
+                                                cx,
+                                            );
+                                            window.dispatch_action(Box::new(crate::NewChat), cx);
+                                        })
+                                    })
                                     .opacity(if project.missing { 0.4 } else { 1. })
                                     .child(icon("new-chat", 14., theme.text_tertiary)),
                             ),
@@ -439,6 +462,11 @@ impl HomeSidebar {
                     .role(gpui::Role::ListItem)
                     .aria_label(project.label.clone())
                     .child(content)
+                    .when_some(selectable, |row, root| {
+                        row.cursor_pointer().on_click(move |_, window, cx| {
+                            window.dispatch_action(Box::new(SelectProject(root.to_string())), cx)
+                        })
+                    })
                     .when(project.missing, |row| {
                         row.child(tooltip(
                             div()

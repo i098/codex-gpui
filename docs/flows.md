@@ -322,9 +322,9 @@ The headless S010 replay has no AppKit view; it checks the missing-handle path w
 | 9 | Attachment chip remove | click | Removes the attachment. | Handler exists (`remove-attachment`). | FAIL (no flow: attachments come only from the system file picker, which the headless window does not answer) |
 | 10 | Model picker | click | `Select model`, `Select effort`, Fast. | Opens; a model or effort choice writes `model` and `model_reasoning_effort` with `config/batchWrite` (the original's `writeModel`); parity: see `parity_composer`. | PASS (`model_picker_popover`, `effort_pick_writes_config`, `parity_composer`) |
 | 11 | Permissions dropdown | click | Ask / Approve for me / Full access / Custom. | Opens. | PASS (`permissions_popover`) |
-| 12 | Submit while running | click | Stop; with text Queue or Steer. | Stop appears when the composer is empty. Queue and Steer remain unimplemented. | FAIL (CP-108 follow-up) |
+| 12 | Submit while running | click | Stop; with text Queue or Steer. | Stop interrupts the active turn. Queue adds a server-owned submission; Steer sends input into the active turn. | PASS (`s023`, `s023b`) |
 | 13 | Stop | click | `turn/interrupt`. | Sends the active thread and turn IDs; completion removes Stop. Errors show `Failed to stop chat`. | PASS (`s023::stop_interrupts_only_the_active_turn`) |
-| 14 | Queued message row | click | Steer, Edit, Delete, Retry. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
+| 14 | Queued message row | click | Steer, Edit, Delete, Retry. | Steer sends the selected submission once. Delete removes it; Cmd+Z restores its text, identity, order, and chat location. Edit, menus, side chats, and Retry remain outside this slice. | PARTIAL (CP-113/114 pass in `s023b`; CP-115/116 remain open) |
 | 15 | Submit blocked | error | `Unable to send message`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 16 | Upload in progress | loading | `Files uploading…`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 17 | Upload failure | error | `Unable to upload file`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
@@ -355,6 +355,18 @@ The S023 test replays `refs/interactions/s023.json`, recorded from the original 
 It checks the Stop pixels, request, error toast, focus, completion, and inactive click.
 Firstmate authorized a separate CP-108 follow-up after the corrected recording stub still emitted no `turn/steer` request.
 
+S023b covers CP-113 and CP-114 with the existing headless native Metal/CoreText application and the real Root/bridge path.
+The isolated local protocol fixture retains server queue IDs and the original `clientUserMessageId` and input.
+Native mouse and key input queues three messages, steers one row, deletes another, changes chats, and restores with Cmd+Z.
+The checks preserve remaining rows, paginated order, Unicode text, editor history, and the `Queued message restored` feedback.
+The Steer and undo checks retain the exact pixels of the remaining queued message.
+An idle Steer starts the existing queued submission through `thread/queue/start`.
+A refused queue deletion does not send an accepted steer again.
+A failed restore reorder retains the undo entry and does not add the message twice.
+The original S023b recording, pixel probes, and references remain unchanged.
+Captured images are headless native application frames, not installed-window desktop captures.
+Run `tools/mac.sh -l queue-actions 'cargo test -p app --test s023b -- --test-threads=1'`.
+
 ## 14.6 Diff view
 
 `Root` opens the Changes panel beside the open thread (`⌥⌘B`, `View changes`, the summary's `Changes` row) through `ui::screens::diff::panel::with_side_panel`, which the `diff` screen builder also uses.
@@ -377,7 +389,12 @@ The test compares the port's pixels before and after the same hover.
 The header menu copies the displayed path and collapses or expands the file.
 The body menu copies selected text, absolute paths, or displayed relative paths.
 The body menu also wraps long code lines without changing the copied text.
-The editor entry stays disabled until the native `openIn` service exists.
+The header icon and the `Open in editor` menu item send the file's absolute path to the desktop host's `open-file` endpoint with the thread `cwd`.
+The app adds `target` from the host setting `open-in-target-preferences`: `perPath[cwd]`, else `global`.
+Without a target the host opens the file with the system default app.
+The host runs macOS `open [-a App] file` after it resolves the path, symlinks included, to a regular file under the Git root of `cwd`.
+A missing file, a path outside the project, an unknown target, or an opener failure shows the `Unable to open in editor` toast and changes nothing else.
+`s027::open_in_editor_native_input_reaches_the_host_opener` runs the real host with a controlled opener executable on an owned repository.
 Comment actions (S075/S082), file tabs (S186), and external targets remain outside this slice, as firstmate approved.
 
 Local Changes uses the existing desktop host for `git-changes`, `git-stage`, and `git-unstage`.
@@ -418,7 +435,7 @@ Commit and push are in DT-139 below.
 | 3 | Source selector | click | Uncommitted / Staged / … | Last Turn, Unstaged, Staged, and Refresh read the open thread's local repository. | PARTIAL (`git_stage`; other sources remain separate) |
 | 4 | Show / Hide files | click | Toggles the file tree. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 5 | File tree filter | focus | `Filter files…`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Copy path and Collapse/Expand work. Local sources add Stage file, Unstage file, and confirmed Revert file. Open in editor remains disabled. | PARTIAL (`s027::diff_selection_and_hover_replay`, `git_stage`, `git_revert_ui`) |
+| 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Copy path and Collapse/Expand work. Open in editor works from the header icon and the menu. Local sources add Stage file, Unstage file, and confirmed Revert file. | PARTIAL (`s027::diff_selection_and_hover_replay`, `s027::open_in_editor_native_input_reaches_the_host_opener`, `git_stage`, `git_revert_ui`) |
 | 7 | Hunk revert / stage | click | Revert, Stage / Unstage hunk. | Local staged and unstaged hunks have confirmed Revert controls. Hunk staging and unstaging remain separate. | PARTIAL (`git_revert_ui`) |
 | 8 | Revert all | click | `Revert changes?` dialog. | File and hunk actions use the original confirmation and saved skip preference. Section-wide Revert all remains separate. | PARTIAL (`git_revert_ui`) |
 | 9 | Split / unified toggle | click | Switch diff layout. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
@@ -573,6 +590,16 @@ It sends no host request, starts no conversation, and writes no preference or ta
 The route stays `Scheduled`, and every card stays enabled.
 `s035b::suggestion_click_says_unsupported_and_sends_nothing` checks the toast, the empty request log, the route, and the cards.
 
+`LocalHost` implements the original `automation-update` status change for local tasks (issue https://github.com/i098/codex-gpui/issues/226).
+It accepts `{id, status}` or the original full cron or heartbeat body; any other changed field fails.
+`PAUSED` clears `next_run_at` and `next_run_nominal_at`.
+`ACTIVE` recalculates the original nominal and actual next run with `GF`/`KF`/`JF`/`XF` and the persisted `.run-jitter-salt`; it never reuses a cached time.
+A rule without a future run returns the original `Automation schedule has no future runs…` error.
+The update keeps the task identity, the definition and the unrelated TOML and database fields, and restores the TOML when the database commit fails.
+It returns the original `{item}` shape.
+The recurrence uses the vendored `rrule` 0.14.0 with the original limits: `INTERVAL` and `COUNT` up to the JavaScript safe integers, iteration through year 9999, and `BYSECOND=60` moved into the next minute.
+The `host` checks match the retained original oracle; the row actions do not call this endpoint yet.
+
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Rail `Scheduled` | entry | Automations page, `ScheduledSidebar`. | `Route::Scheduled` with `ScheduledSidebar` and the page. | PASS (`rail_scheduled`, `parity_automations`) |
@@ -582,7 +609,7 @@ The route stays `Scheduled`, and every card stays enabled.
 | 5 | Search | focus | Filters; `No matching tasks`. | Dispatches `SearchTasks`; no handler. | NOT WIRED (no host: `list-automations`) |
 | 6 | Status filter | click | All / Active / Paused. | — | NOT WIRED (no host: `list-automations`) |
 | 7 | Task row | click | Detail panel. | — | NOT WIRED (no host: `list-automations`) |
-| 8 | Row actions | click | Edit, Run now, Pause, Delete. | — | NOT WIRED (no host: `automation-update`, `automation-delete`) |
+| 8 | Row actions | click | Edit, Run now, Pause, Delete. | — | NOT WIRED (UI; `LocalHost` has `automation-update` pause/resume, no `automation-delete`) |
 | 9 | Editor fields | focus | Name, Prompt, schedule. | — | NOT WIRED (no host: `automation-create`) |
 | 10 | Previous runs | click | Run chat, mark read, archive. | — | NOT WIRED (no host: `inbox-items`, `automation-run-archive`) |
 | 11 | Row hover | hover | Row highlight. | No task rows; suggestion hover matches the original recording. | FAIL (no task rows; suggestion hover passes `s035::suggestion_hover_matches_original`) |
@@ -797,7 +824,17 @@ The label's stable element ID makes GPUI apply hover dimensions during layout.
 An image check protects the control regions for 100-character names at rest and on hover.
 
 Default Recents, pins, status indicators, and paging retain their existing checks.
-Project activation, menus, hover-card actions, and project thread paging are outside RS-081.
+Project menus, hover-card actions, and project thread paging are outside RS-081.
+
+RS-069 and RS-070 select an existing project in the sidebar.
+A click on a row, or on its hover `new-chat` icon, dispatches `SelectProject(root)` with the project's first stored root path.
+`Root::select_project` sets `State.project_root` (persisted by the existing state save), the Home chip and the file-search root, then opens Home.
+The icon also runs `NewChat`, so the composer is empty and focused.
+`thread/start` takes its `cwd` from `State.project_root`.
+Open chats keep the `cwd` the server stored with them, and selecting a project does not change them.
+A missing folder, or a project with no root path, ignores both clicks.
+`project_picker` clicks two owned projects and a deleted one, and checks the logged `thread/start` working directories.
+The row click does not expand or collapse the folder, because the port lists no per-project chats.
 The shared replay selects the dedicated `f1d_projects` adapter.
 
 Run `tools/mac.sh -l f1d-projects 'cargo test -p app --test f1d_projects -- --test-threads=1'`.
@@ -838,6 +875,18 @@ The physical macOS folder dialog is not exercised by this headless check.
 Project dropdowns, worktrees, remote environments, discovery, indexing, and Git actions remain outside this native-folder slice.
 
 Run `tools/mac.sh -l cgx-project-picker 'cargo test -p app --test project_picker -- --test-threads=1'`.
+
+A refused `thread/start` from Home (CP-120) shows the `Error starting chat` toast and stays on Home.
+The Home composer takes back the submitted text and the submission's attachments, ahead of anything typed since.
+The model, effort, permission choices and the selected project did not change, so a second send starts the chat in the same project with the same attachment.
+The toast carries only that title; the app-server's error text goes to the process log.
+Text with mention chips comes back as the plain prompt text that was sent, as in the thread composer's refused-send path.
+A refused `turn/start` after a successful `thread/start` is a separate case and is not handled here.
+
+`crates/app/tests/start_failure.rs` selects a temporary project, attaches a file to the Home composer and sends a prompt that the replayed app-server refuses.
+It then checks the toast, the route, the restored text, and that a second send starts in the same project with the same attachment.
+
+Run `tools/mac.sh -l cgx-asap-workable 'cargo test -p app --test start_failure -- --test-threads=1'`.
 
 
 ## F3c: Model announcement (SH-142)

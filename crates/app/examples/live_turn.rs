@@ -1,7 +1,9 @@
-//! Live proof: the real root view on a real `codex app-server`, headless. Types the prompt
-//! into the Home composer with key events, presses Enter, waits for `turn/completed`,
-//! checks the thread view shows `pong`, prints the transcript and saves
-//! `live-1-home.png`, `live-2-streaming.png` and `live-3-done.png` to `OUT`.
+//! Live proof: the real root view on a real `codex app-server`, or on the ACP agent in
+//! `$CODEX_GPUI_ACP` (`omp acp`), headless. Types the prompt into the Home composer with key
+//! events, presses Enter, waits for `turn/completed`, checks the thread view shows `pong`,
+//! prints the transcript and saves `live-1-home.png`, `live-2-streaming.png` and
+//! `live-3-done.png` to `$LIVE_ROOT/live`. `$LIVE_ROOT` (default `/tmp/cgx-mac`) also holds
+//! the project `proj-live` and the Codex home `home-live`.
 //! Run on the Mac: `cargo run -p app --example live_turn`.
 
 use anyhow::{Context as _, Result, ensure};
@@ -11,16 +13,26 @@ use gpui::{AnyWindowHandle, AppContext as _, Entity, HeadlessAppContext, Keystro
 use std::time::{Duration, Instant};
 use std::{fs, sync::Arc};
 
-const CODEX_HOME: &str = "/tmp/cgx-mac/home-live";
-const CWD: &str = "/tmp/cgx-mac/proj-live";
-const OUT: &str = "/tmp/cgx-mac/live";
 const PROMPT: &str = "Reply with the single word: pong";
 const TIMEOUT: Duration = Duration::from_secs(120);
 
 fn main() -> Result<()> {
-    let mut cmd = bridge::default_command();
-    cmd.env("CODEX_HOME", CODEX_HOME).current_dir(CWD);
-    let (bridge, events) = bridge::Bridge::spawn(cmd)?;
+    let dir = std::env::var("LIVE_ROOT").unwrap_or_else(|_| "/tmp/cgx-mac".into());
+    let (cwd, out) = (format!("{dir}/proj-live"), format!("{dir}/live"));
+    fs::create_dir_all(&cwd)?;
+    let (bridge, events) = match bridge::acp_command() {
+        Some(mut acp) => {
+            acp.current_dir(&cwd);
+            bridge::Bridge::spawn_acp(acp)?
+        }
+        None => {
+            let mut cmd = bridge::default_command();
+            cmd.env("CODEX_HOME", format!("{dir}/home-live"))
+                .current_dir(&cwd);
+            bridge::Bridge::spawn(cmd)?
+        }
+    };
+    let acp = bridge.is_acp();
 
     let mut cx = HeadlessAppContext::with_platform(
         textsys::text_system(),
@@ -35,13 +47,13 @@ fn main() -> Result<()> {
     // The app-server answers on its own threads: let the scheduler wait for real I/O.
     cx.allow_parking();
     let window = cx.open_window(size(px(1280.), px(832.)), |window, cx| {
-        cx.new(|cx| Root::new(State::default(), bridge, events, CWD.into(), window, cx))
+        cx.new(|cx| Root::new(State::default(), bridge, events, cwd, window, cx))
     })?;
     let root = cx.read_window(&window, |root, _| root)?;
     let handle: AnyWindowHandle = window.into();
-    fs::create_dir_all(OUT)?;
+    fs::create_dir_all(&out)?;
     let shot = |cx: &mut HeadlessAppContext, name: &str| -> Result<()> {
-        let path = format!("{OUT}/{name}");
+        let path = format!("{out}/{name}");
         cx.capture_screenshot(handle)?.save(&path)?;
         println!("saved {path}");
         Ok(())
@@ -51,6 +63,14 @@ fn main() -> Result<()> {
     pump(&mut cx, started, "startup", |cx| {
         root.read_with(cx, |r, _| r.ready())
     })?;
+    if acp {
+        let toasts = root.read_with(&cx, |r, cx| r.toasts(cx));
+        println!("toasts: {toasts:?}");
+        ensure!(
+            toasts.iter().any(|t| t.contains("over ACP")),
+            "no ACP capability toast"
+        );
+    }
     cx.update_window(handle, |_, window, cx| {
         for c in PROMPT.chars() {
             let key = c.to_string();
@@ -99,7 +119,7 @@ fn main() -> Result<()> {
                     }
                 }
             }
-            ThreadItem::AgentMessage { text, .. } => println!("codex: {text}"),
+            ThreadItem::AgentMessage { text, .. } => println!("agent: {text}"),
             other => println!("item:  {other:?}"),
         }
     }
