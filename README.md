@@ -21,12 +21,15 @@ The workspace also builds on Linux, with GPUI's no-op text system, for CI (fmt, 
 Set `CODEX_GPUI_ACP` to the command line of an [Agent Client Protocol](https://agentclientprotocol.com) agent to use that agent instead of `codex app-server`:
 
 ```sh
-CODEX_GPUI_ACP="omp acp" cargo run -p app --release
+CODEX_GPUI_ACP="omp acp --model anthropic/claude-sonnet-5-5" cargo run -p app --release
 ```
 
 The app then speaks ACP v1 over stdio to the agent (`crates/bridge/src/acp.rs`); without the variable it uses `codex app-server` as before.
+Set the model and other agent settings on the agent's command line; the app does not select them.
 The app shows a toast after it connects: `<agent> over ACP: only chats, streaming, Stop and approvals work`.
 Arbitrary interactive CLIs are not compatible; the agent must speak ACP.
+The backend uses only the ACP methods that every agent must have.
+It does not use optional agent capabilities (`loadSession`, session list, image prompts, model and mode config options), also when the agent advertises them.
 
 | Feature | Codex app-server | ACP agent |
 |---|---|---|
@@ -36,12 +39,12 @@ Arbitrary interactive CLIs are not compatible; the agent must speak ACP.
 | Tool calls | Yes | `tool_call` updates become tool items (not drawn, as for Codex MCP tool calls) |
 | Stop (`turn/interrupt`) | Yes | `session/cancel`; open permission requests are answered `cancelled` |
 | Turn end and errors | Yes | `end_turn` is completed, `cancelled` is interrupted, other stop reasons and errors are failed |
-| Approvals | Yes | `session/request_permission` keeps its request id; Allow is `allow_once`, Allow similar is `allow_always`, Decline is `reject_once`; an option that the agent does not offer is never chosen instead, and the answer is `cancelled` |
+| Approvals | Yes | `session/request_permission` keeps its request id, and the prompt lists the agent's option labels; Allow and Allow similar choose the `allow_once` option, Decline chooses `reject_once`; `allow_always` is never chosen, because it can outlive the session; without the matching option the answer is `cancelled` |
 | Recents and reopen a chat | Yes | Chats of this run only |
-| Model, effort, Fast mode, permission mode | Yes | No; the agent uses its own settings |
+| Model, effort, Fast mode, permission mode | Yes | No; the agent's command line and settings apply |
 | Attachments, file mentions, skills | Yes | No |
 | Steer, queue, edit, revert, fork, rename, pin, archive | Yes | No |
-| Account, sign-in, usage, config writes | Yes | No; no OpenAI sign-in is necessary |
+| Account, sign-in, usage, config | Yes | No; the app does not ask for them |
 | Commit message generation | Yes | No |
 
 An unsupported method gets the JSON-RPC error `<method> is not supported by the ACP backend`, and the app shows its usual failure state.

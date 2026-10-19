@@ -136,10 +136,6 @@ impl State {
                 let params = json!({ "cwd": cwd, "mcpServers": [] });
                 return self.call(Call::NewSession(id, cwd), "session/new", params);
             }
-            // ACP has no account, model catalog or Codex config, and needs no OpenAI sign-in.
-            "account/read" => Ok(json!({ "account": null, "requiresOpenaiAuth": false })),
-            "model/list" => Ok(json!({ "data": [], "nextCursor": null })),
-            "config/read" => Ok(json!({ "config": {} })),
             "thread/list" => {
                 let data: Vec<&Value> = self.sessions.iter().rev().map(|s| &s.thread).collect();
                 Ok(json!({ "data": data, "nextCursor": null }))
@@ -248,9 +244,10 @@ impl State {
         let Some((_, options)) = self.permissions.remove(&id.to_string()) else {
             return Ok(());
         };
+        // ACP `allow_always` can outlive this session, so the app's session-wide Allow similar
+        // only grants this one request.
         let kind = match result["decision"].as_str() {
-            Some("accept") => "allow_once",
-            Some("acceptForSession") => "allow_always",
+            Some("accept" | "acceptForSession") => "allow_once",
             Some("decline") => "reject_once",
             _ => "",
         };
@@ -460,13 +457,14 @@ impl State {
             ("session/request_permission", Some(i)) => {
                 let thread = &self.sessions[i].thread;
                 let tool = &params["toolCall"];
+                let options = params["options"].as_array().cloned().unwrap_or_default();
+                let labels: Vec<&str> = options.iter().filter_map(|o| o["name"].as_str()).collect();
                 let request = json!({
                     "threadId": thread["id"], "turnId": turn_id(thread),
                     "itemId": tool["toolCallId"], "command": tool["title"], "cwd": thread["cwd"],
-                    "reason": format!("{} asks over ACP", self.agent),
+                    "reason": format!("{} asks over ACP: {}", self.agent, labels.join(", ")),
                 });
                 let sid = thread["id"].as_str().unwrap_or_default().to_owned();
-                let options = params["options"].as_array().cloned().unwrap_or_default();
                 self.permissions.insert(id.to_string(), (sid, options));
                 self.sink.event(Event::Request {
                     id,
@@ -608,13 +606,15 @@ mod tests {
             "update": { "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": text } } } })
     }
 
-    fn permission(id: &str) -> Value {
+    /// A permission request offering one option per kind; the option id is the kind.
+    fn permission(id: &str, kinds: &[&str]) -> Value {
+        let options: Vec<Value> = kinds
+            .iter()
+            .map(|kind| json!({ "optionId": kind, "name": format!("Label {kind}"), "kind": kind }))
+            .collect();
         json!({ "jsonrpc": "2.0", "id": id, "method": "session/request_permission", "params": {
             "sessionId": "s1", "toolCall": { "toolCallId": "t1", "title": "rm -rf build" },
-            "options": [
-                { "optionId": "yes", "name": "Allow", "kind": "allow_once" },
-                { "optionId": "no", "name": "Reject", "kind": "reject_once" },
-            ] } })
+            "options": options } })
     }
 
     fn start(bridge: &Bridge) -> String {
@@ -691,10 +691,14 @@ mod tests {
                 move |msg| match (msg["method"].as_str(), msg["id"].as_str()) {
                     (Some("session/prompt"), _) => {
                         prompt = msg["id"].clone();
-                        vec![permission("p1")]
+                        vec![permission(
+                            "p1",
+                            &["allow_once", "allow_always", "reject_once"],
+                        )]
                     }
-                    (None, Some("p1")) => vec![permission("p2")],
-                    (None, Some("p2")) => vec![permission("p3")],
+                    (None, Some("p1")) => vec![permission("p2", &["allow_always", "reject_once"])],
+                    (None, Some("p2")) => vec![permission("p3", &["allow_once", "reject_once"])],
+                    (None, Some("p3")) => vec![permission("p4", &["allow_once"])],
                     (Some("session/cancel"), _) => vec![result(
                         &json!({ "id": prompt }),
                         json!({ "stopReason": "cancelled" }),
@@ -709,36 +713,47 @@ mod tests {
                 return msg["result"]["outcome"].clone();
             }
         };
-        // The agent did not offer `allow_always`: no other option is picked for it.
+        // Allow similar (this session) never becomes ACP `allow_always`, which can outlive it.
         let (id, params) = request(&events);
         assert_eq!(
             (id.as_str(), params["command"].as_str()),
             (Some("p1"), Some("rm -rf build"))
         );
+        assert_eq!(
+            params["reason"],
+            "fake asks over ACP: Label allow_once, Label allow_always, Label reject_once"
+        );
         bridge
             .respond(id, json!({ "decision": "acceptForSession" }))
             .unwrap();
-        assert_eq!(answer("p1"), json!({ "outcome": "cancelled" }));
+        assert_eq!(
+            answer("p1"),
+            json!({ "outcome": "selected", "optionId": "allow_once" })
+        );
+        // Without a one-time option, Allow picks no broader one.
+        let (id, _) = request(&events);
+        bridge.respond(id, json!({ "decision": "accept" })).unwrap();
+        assert_eq!(answer("p2"), json!({ "outcome": "cancelled" }));
         let (id, _) = request(&events);
         bridge
             .respond(id, json!({ "decision": "decline" }))
             .unwrap();
         assert_eq!(
-            answer("p2"),
-            json!({ "outcome": "selected", "optionId": "no" })
+            answer("p3"),
+            json!({ "outcome": "selected", "optionId": "reject_once" })
         );
         // Stop answers the open request `cancelled`; the turn ends interrupted.
         let (id, params) = request(&events);
-        assert_eq!(id, "p3");
+        assert_eq!(id, "p4");
         let turn = params["turnId"].as_str().unwrap();
         block_on(bridge.turn_interrupt("s1", turn)).unwrap();
-        assert_eq!(answer("p3"), json!({ "outcome": "cancelled" }));
+        assert_eq!(answer("p4"), json!({ "outcome": "cancelled" }));
         let seen = until(&events, "turn/completed");
         assert_eq!(seen.last().unwrap().1["turn"]["status"], "interrupted");
         // A late click on the stopped prompt sends nothing: the next message the agent gets
         // is the next request.
         bridge
-            .respond(json!("p3"), json!({ "decision": "accept" }))
+            .respond(json!("p4"), json!({ "decision": "accept" }))
             .unwrap();
         let _: Value = block_on(bridge.request("thread/start", json!({ "cwd": "/tmp" }))).unwrap();
         assert_eq!(got.recv_blocking().unwrap()["method"], "session/new");

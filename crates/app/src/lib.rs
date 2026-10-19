@@ -670,26 +670,38 @@ impl Root {
     }
 
     /// `initialize`, then account, Recents, models and config; shows the route once ready.
-    /// On an ACP agent a toast says which features work (README `ACP backend`).
+    /// An ACP agent has no Codex account, model catalog, config or skills: the app asks only
+    /// for Recents, and a toast says which features work (README `ACP backend`).
     fn connect(&self, window: &Window, cx: &mut Context<Self>) {
         let (bridge, cwd) = (self.bridge.clone(), self.cwd.clone());
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let server = bridge
                 .initialize("codex-gpui", env!("CARGO_PKG_VERSION"))
                 .await?;
-            let account = bridge.account_read().await?;
+            let acp = bridge.is_acp();
+            let account = if acp {
+                None
+            } else {
+                Some(bridge.account_read().await?)
+            };
             let threads = bridge.thread_list().await?;
-            let mut catalog: ModelCatalog = bridge.request("model/list", json!({})).await?;
-            let config: ConfigReadResponse = bridge
-                .request("config/read", json!({ "includeLayers": false, "cwd": cwd }))
-                .await?;
-            // Only the settings page reads it (home directory), so a failure is not fatal.
-            let skills = bridge
-                .request("skills/list", json!({ "cwds": [cwd] }))
-                .await
-                .unwrap_or(Value::Null);
+            let (mut catalog, config, skills) = if acp {
+                let config = ConfigReadResponse { config: json!({}) };
+                (ModelCatalog { data: Vec::new() }, config, Value::Null)
+            } else {
+                let catalog: ModelCatalog = bridge.request("model/list", json!({})).await?;
+                let config: ConfigReadResponse = bridge
+                    .request("config/read", json!({ "includeLayers": false, "cwd": cwd }))
+                    .await?;
+                // Only the settings page reads it (home directory), so a failure is not fatal.
+                let skills = bridge
+                    .request("skills/list", json!({ "cwds": [cwd] }))
+                    .await
+                    .unwrap_or(Value::Null);
+                (catalog, config, skills)
+            };
             this.update_in(cx, |this, window, cx| {
-                if account.account.is_none() && account.requires_openai_auth {
+                if account.is_some_and(|a| a.account.is_none() && a.requires_openai_auth) {
                     this.login = Some(cx.new(Login::new));
                 }
                 this.set_threads(&threads.data, cx);
