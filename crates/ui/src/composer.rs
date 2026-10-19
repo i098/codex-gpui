@@ -433,9 +433,11 @@ type ApprovalHandler = Rc<dyn Fn(ApprovalDecision, &mut Window, &mut App)>;
 /// `(model id, effort)` after the user picks them.
 type ModelHandler = Rc<dyn Fn(&str, &str, &mut App)>;
 
-/// What a queued row's `Queued message actions` menu asks of the app.
+/// What a queued row's buttons and `Queued message actions` menu ask of the app.
 #[derive(Clone)]
 pub enum QueueAction {
+    Steer(String),
+    Delete(String),
     /// `Edit message`: the queued submission with this id returns to the composer.
     Edit(String),
     /// `Turn off queueing` / `Turn on queueing`: the new `Follow-up behavior` is queue (`true`).
@@ -455,7 +457,6 @@ const QUEUE_ACTIONS: &str = "Queued message actions";
 const QUEUE_EDIT: &str = "queuedEdit";
 const QUEUE_SWITCH: &str = "queuedQueueing";
 const QUEUE_MENU_WIDTH: f32 = 220.;
-
 pub struct Composer {
     focus_handle: FocusHandle,
     placeholder: SharedString,
@@ -476,6 +477,9 @@ pub struct Composer {
     lines: Vec<WrappedLine>,
     bounds: Option<Bounds<Pixels>>,
     attachments: Vec<attach::Attachment>,
+    /// The attachments of the last submission, until the next one: [`Self::restore_submission`]
+    /// puts them back when starting the chat failed.
+    submitted: Vec<attach::Attachment>,
     pending_attachments: usize,
     attachment_error: Option<&'static str>,
     /// A file drag is over the composer's drop target (`data-composer-drag-active`).
@@ -509,6 +513,7 @@ pub struct Composer {
     queue_mode: bool,
     /// The app-server's queued follow-ups of the open thread, shown in a tray over the card.
     queued: Vec<QueuedMessage>,
+    queue_pending: bool,
     on_submit: Option<SubmitHandler>,
     on_cancel_edit: Option<CancelEditHandler>,
     edit_pending: bool,
@@ -549,6 +554,7 @@ impl Composer {
             lines: Vec::new(),
             bounds: None,
             attachments: Vec::new(),
+            submitted: Vec::new(),
             pending_attachments: 0,
             attachment_error: None,
             drag_active: false,
@@ -573,6 +579,7 @@ impl Composer {
             stop_armed: None,
             queue_mode: false,
             queued: Vec::new(),
+            queue_pending: false,
             on_submit: None,
             on_cancel_edit: None,
             edit_pending: false,
@@ -820,6 +827,83 @@ impl Composer {
         cx.notify();
     }
 
+    pub fn set_queue_pending(&mut self, pending: bool, cx: &mut Context<Self>) {
+        self.queue_pending = pending;
+        cx.notify();
+    }
+
+    pub fn remove_queued(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.queued.retain(|row| row.submission.id != id);
+        cx.notify();
+    }
+
+    fn activate_queued(
+        &mut self,
+        action: QueueAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.queue_pending {
+            self.focus_handle.focus(window, cx);
+            cx.emit(action);
+        }
+    }
+
+    fn queue_button(
+        &self,
+        action: QueueAction,
+        label: &'static str,
+        tooltip: &'static str,
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> crate::tooltip::Tooltip {
+        let kind = match &action {
+            QueueAction::Steer(_) => "queued-steer",
+            _ => "queued-delete",
+        };
+        let key_action = action.clone();
+        crate::tooltip::tooltip(
+            div()
+                .id(kind)
+                .h(px(24.))
+                .min_w(px(24.))
+                .px(px(4.))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(6.))
+                .role(gpui::Role::Button)
+                .aria_label(label)
+                .aria_disabled(self.queue_pending)
+                .focusable()
+                .tab_index(0)
+                .focus_visible(menu::trigger_focus)
+                .opacity(if self.queue_pending { 0.4 } else { 1. })
+                .when(!self.queue_pending, |d| d.hover(|s| s.bg(t.ghost_hover)))
+                .child(match action {
+                    QueueAction::Steer(_) => {
+                        text("Steer", 12., 20., 400., t.text).into_any_element()
+                    }
+                    _ => icon("close", 14., t.text_tertiary).into_any_element(),
+                })
+                .on_key_down(
+                    cx.listener(move |this, event: &gpui::KeyDownEvent, window, cx| {
+                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                            this.activate_queued(key_action.clone(), window, cx);
+                            cx.stop_propagation();
+                        }
+                    }),
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.activate_queued(action.clone(), window, cx);
+                })),
+            tooltip,
+            None,
+            crate::tooltip::Side::Top,
+        )
+    }
+
     fn queue_menu_button(
         &self,
         id: String,
@@ -837,10 +921,12 @@ impl Composer {
                 .rounded(px(6.))
                 .role(gpui::Role::Button)
                 .aria_label(QUEUE_ACTIONS)
+                .aria_disabled(self.queue_pending)
                 .focusable()
                 .tab_index(0)
                 .focus_visible(menu::trigger_focus)
-                .hover(|s| s.bg(t.ghost_hover))
+                .opacity(if self.queue_pending { 0.4 } else { 1. })
+                .when(!self.queue_pending, |d| d.hover(|s| s.bg(t.ghost_hover)))
                 .child(icon("diff-more", 14., t.text_tertiary))
                 // Enter would submit the draft: the key belongs to the button.
                 .on_key_down(cx.listener(|_, event: &gpui::KeyDownEvent, _, cx| {
@@ -850,7 +936,9 @@ impl Composer {
                 }))
                 .on_click(
                     cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
-                        this.open_queue_menu(&id, event.position(), window, cx);
+                        if !this.queue_pending {
+                            this.open_queue_menu(&id, event.position(), window, cx);
+                        }
                     }),
                 ),
             QUEUE_ACTIONS,
@@ -898,6 +986,15 @@ impl Composer {
         }
     }
 
+    /// Puts a failed submission back: its text and its attachments, ahead of what was typed
+    /// since (the draft stays whole when starting the chat was refused).
+    pub fn restore_submission(&mut self, text: &str, cx: &mut Context<Self>) {
+        let mut restored = std::mem::take(&mut self.submitted);
+        restored.append(&mut self.attachments);
+        self.attachments = restored;
+        self.restore_text(text, cx);
+    }
+
     /// Open the model picker (`Select effort`), as `⌘⇧M`-style commands and the menu do.
     pub fn open_model_picker(&mut self, cx: &mut Context<Self>) {
         self.menu = Some(Menu::Effort);
@@ -908,6 +1005,17 @@ impl Composer {
 
     fn current_model(&self) -> Option<&ModelOption> {
         self.models.get(self.model)
+    }
+
+    /// Makes model `index` the selection, keeping the effort when the model supports it.
+    fn select_model(&mut self, index: usize) {
+        self.model = index;
+        let efforts = &self.models[index].efforts;
+        if !efforts.contains(&self.effort)
+            && let Some(first) = efforts.first()
+        {
+            self.effort = first.clone();
+        }
     }
 
     /// Reports the picked model and effort to [`Self::on_model`].
@@ -950,7 +1058,10 @@ impl Composer {
             } else {
                 self.prompt()
             },
-            attachments: self.attachments.drain(..).map(|a| a.path).collect(),
+            attachments: {
+                self.submitted = std::mem::take(&mut self.attachments);
+                self.submitted.iter().map(|a| a.path.clone()).collect()
+            },
             model: self
                 .current_model()
                 .map(|m| m.id.clone())
@@ -1204,13 +1315,7 @@ impl Composer {
                 }
             }
             Some(Menu::Models) => {
-                self.model = index;
-                let efforts = &self.models[index].efforts;
-                if !efforts.contains(&self.effort)
-                    && let Some(first) = efforts.first()
-                {
-                    self.effort = first.clone();
-                }
+                self.select_model(index);
                 self.toggle_menu(Menu::Effort, window, cx);
                 self.picked(cx);
             }
@@ -1600,8 +1705,8 @@ impl Render for Composer {
             );
         let card = card.when(self.slash.open, |d| d.child(self.slash_menu(&t, cx)));
         // The queued-follow-up tray (`bg-surface-elevated-secondary`, border-x border-t) sits
-        // on the card's top edge, 13 px in from its sides; rows (handle, text, `…` actions)
-        // are 32 px with a 1 px gap. ponytail: the original's Steer and Delete are not here.
+        // on the card's top edge, 13 px inside its sides; rows (handle, text, Steer, Delete,
+        // `…` actions) have a 32 px height and a 1 px gap.
         let tray = (!self.queued.is_empty()).then(|| {
             div()
                 .mx(px(13.))
@@ -1629,6 +1734,20 @@ impl Render for Composer {
                             430.,
                             t.text,
                         )))
+                        .child(self.queue_button(
+                            QueueAction::Steer(row.submission.id.clone()),
+                            "Steer",
+                            "Submit without interrupting the model",
+                            &t,
+                            cx,
+                        ))
+                        .child(self.queue_button(
+                            QueueAction::Delete(row.submission.id.clone()),
+                            "Delete queued message",
+                            "Delete queued message",
+                            &t,
+                            cx,
+                        ))
                         .child(self.queue_menu_button(row.submission.id.clone(), &t, cx))
                 }))
         });

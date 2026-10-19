@@ -8,12 +8,13 @@ pub mod host;
 pub mod host_settings;
 pub mod qa;
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, ensure};
 use async_channel::Receiver;
 use bridge::types::{
     ApprovalDecision, CommandApprovalRequest, ConfigReadResponse, FileChangeApprovalRequest, Model,
-    Thread, ThreadItem, ThreadListResponse, ThreadQueueListResponse, ThreadReadResponse,
-    ThreadSection, ThreadStartResponse, ThreadStartedNotification, ThreadStatus, TurnStatus,
+    QueuedSubmission, Thread, ThreadItem, ThreadListResponse, ThreadQueueListResponse,
+    ThreadReadResponse, ThreadSection, ThreadStartResponse, ThreadStartedNotification,
+    ThreadStatus, TurnStatus,
 };
 use bridge::{Bridge, Event};
 use gpui::{
@@ -40,7 +41,8 @@ use ui::screens::home::{HomeMain, OpenFolder};
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
 use ui::screens::sidebar::{
     ArchiveThread, ArchivedChats, CommandMenu, CommandMenuEvent, HomeSidebar, LoadMore, OpenThread,
-    PINNED_SECTION_ID, PinThread, RenameThread, SEARCH_LIMIT, SearchHit, title as thread_title,
+    PINNED_SECTION_ID, PinThread, RenameThread, SEARCH_LIMIT, SearchHit, SelectProject,
+    title as thread_title,
 };
 use ui::screens::terminal::Xterm;
 use ui::screens::thread::view::{
@@ -349,6 +351,14 @@ struct ModelAvailability {
 
 const LEGACY_MODEL_ANNOUNCEMENTS: [&str; 2] = ["gpt-5.4", "gpt-5.5"];
 
+#[derive(Clone)]
+struct DeletedQueuedMessage {
+    thread_id: String,
+    submission: QueuedSubmission,
+    previous: Option<String>,
+    next: Option<String>,
+}
+
 pub struct Root {
     /// Window size, sidebar and route, saved back on every change.
     state: State,
@@ -390,6 +400,8 @@ pub struct Root {
     /// `⌘K` command menu over the window.
     command_menu: Option<Entity<CommandMenu>>,
     dialog: Option<Entity<Dialog>>,
+    /// The open dialog came from the composer: its close returns focus there.
+    dialog_to_composer: bool,
     /// Signed out: replaces the whole window.
     login: Option<Entity<Login>>,
     bridge: Arc<Bridge>,
@@ -412,6 +424,11 @@ pub struct Root {
     qa_work_started: bool,
     /// Threads started or resumed by this app-server; others need `thread/resume` first.
     loaded: HashSet<String>,
+    queue_load: Option<Task<()>>,
+    queue_pending: bool,
+    deleted_queued: Vec<DeletedQueuedMessage>,
+    /// A successful steer must never be sent again when its queue deletion fails.
+    steered_queued: HashSet<(String, String)>,
     /// Id of the server request the composer's approval card answers.
     approval: Option<Value>,
     /// A commit, push or branch workflow is running (the original's single workflow state).
@@ -486,6 +503,14 @@ impl Root {
             });
             composer
         });
+        cx.subscribe_in(
+            &thread_composer,
+            window,
+            |this, _, action: &QueueAction, window, cx| {
+                this.queue_action(action, window, cx);
+            },
+        )
+        .detach();
         for composer in [&home_composer, &thread_composer] {
             cx.subscribe_in(composer, window, |this, _, command: &ui::composer::SlashCommand, window, cx| {
                 match command {
@@ -506,18 +531,25 @@ impl Root {
                             this.open_settings_section(section, window, cx);
                         }
                     }
+                    ui::composer::SlashCommand::Compact => this.compact(window, cx),
+                    ui::composer::SlashCommand::Fork => this.fork_chat(0, window, cx),
+                    ui::composer::SlashCommand::Rename => {
+                        if let Route::Thread(id) = this.state.route.clone() {
+                            this.open_rename(id, true, window, cx);
+                        }
+                    }
+                    ui::composer::SlashCommand::Pin => {
+                        if let Route::Thread(id) = this.state.route.clone() {
+                            let pinned = this.threads.iter().any(|t| {
+                                t.id == id
+                                    && t.section.as_ref().is_some_and(|s| s.id == PINNED_SECTION_ID)
+                            });
+                            this.set_pinned(id, !pinned, window, cx);
+                        }
+                    }
                 }
             }).detach();
         }
-        cx.subscribe_in(
-            &thread_composer,
-            window,
-            |this, _, action: &QueueAction, window, cx| match action {
-                QueueAction::Edit(id) => this.edit_queued(id.clone(), window, cx),
-                QueueAction::Queueing(queue) => this.set_queueing(*queue, cx),
-            },
-        )
-        .detach();
         let sidebar = cx.new(|_| HomeSidebar::new(&[], None));
         cx.subscribe_in(
             &sidebar,
@@ -595,14 +627,7 @@ impl Root {
             focus: cx.focus_handle(),
             home: cx.new(|_| HomeMain {
                 composer: home_composer,
-                project: state.project_root.as_ref().map(|root| {
-                    std::path::Path::new(root)
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .unwrap_or(root)
-                        .to_owned()
-                        .into()
-                }),
+                project: state.project_root.as_deref().map(project_name),
             }),
             thread_composer,
             queue_edit: None,
@@ -618,6 +643,7 @@ impl Root {
             settings_page: None,
             command_menu: None,
             dialog: None,
+            dialog_to_composer: false,
             login: None,
             host: Arc::new(host::CloudHost::from_env(host::app_server_credentials(
                 bridge.clone(),
@@ -638,6 +664,10 @@ impl Root {
             ready: false,
             qa_work_started: false,
             loaded: HashSet::new(),
+            queue_load: None,
+            queue_pending: false,
+            deleted_queued: Vec::new(),
+            steered_queued: HashSet::new(),
             approval: None,
             git_busy: None,
             git_status_load: None,
@@ -682,25 +712,56 @@ impl Root {
     }
 
     /// `initialize`, then account, Recents, models and config; shows the route once ready.
+    /// An ACP agent has no Codex account, model catalog, config or skills: the app asks only
+    /// for Recents, and a toast says which features work (README `ACP backend`).
     fn connect(&self, window: &Window, cx: &mut Context<Self>) {
         let (bridge, cwd) = (self.bridge.clone(), self.cwd.clone());
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            bridge
+            let server = bridge
                 .initialize("codex-gpui", env!("CARGO_PKG_VERSION"))
                 .await?;
-            let account = bridge.account_read().await?;
+            let acp = bridge.is_acp();
+            let account = if acp {
+                None
+            } else {
+                Some(bridge.account_read().await?)
+            };
             let threads = bridge.thread_list().await?;
-            let mut catalog: ModelCatalog = bridge.request("model/list", json!({})).await?;
-            let config: ConfigReadResponse = bridge
-                .request("config/read", json!({ "includeLayers": false, "cwd": cwd }))
-                .await?;
-            // Only the settings page reads it (home directory), so a failure is not fatal.
-            let skills = bridge
-                .request("skills/list", json!({ "cwds": [cwd] }))
-                .await
-                .unwrap_or(Value::Null);
+            let (mut catalog, config, skills) = if acp {
+                // The picker's one row says the agent picks: an empty id sends no model, and
+                // an empty effort shows no effort label.
+                let model = Model {
+                    id: String::new(),
+                    model: String::new(),
+                    display_name: "Agent model".into(),
+                    description: "Set on the agent's command line".into(),
+                    hidden: false,
+                    default_reasoning_effort: String::new(),
+                    supported_reasoning_efforts: Vec::new(),
+                    is_default: true,
+                };
+                let data = vec![CatalogModel {
+                    model,
+                    availability_nux: None,
+                }];
+                let config = ConfigReadResponse {
+                    config: json!({ "model_reasoning_effort": "" }),
+                };
+                (ModelCatalog { data }, config, Value::Null)
+            } else {
+                let catalog: ModelCatalog = bridge.request("model/list", json!({})).await?;
+                let config: ConfigReadResponse = bridge
+                    .request("config/read", json!({ "includeLayers": false, "cwd": cwd }))
+                    .await?;
+                // Only the settings page reads it (home directory), so a failure is not fatal.
+                let skills = bridge
+                    .request("skills/list", json!({ "cwds": [cwd] }))
+                    .await
+                    .unwrap_or(Value::Null);
+                (catalog, config, skills)
+            };
             this.update_in(cx, |this, window, cx| {
-                if account.account.is_none() && account.requires_openai_auth {
+                if account.is_some_and(|a| a.account.is_none() && a.requires_openai_auth) {
                     this.login = Some(cx.new(Login::new));
                 }
                 this.set_threads(&threads.data, cx);
@@ -764,6 +825,13 @@ impl Root {
                 this.ready = true;
                 this.select_route(cx);
                 this.sync(window, cx);
+                if bridge.is_acp() {
+                    let note = format!(
+                        "{} over ACP: only chats, streaming, Stop and approvals work",
+                        server.user_agent
+                    );
+                    this.toast(Toast::info(note), cx);
+                }
                 if let Some((index, message)) = announcement {
                     let dialog =
                         cx.new(|cx| Dialog::model_announcement(&this.models[index], message, cx));
@@ -893,20 +961,34 @@ impl Root {
     }
 
     fn load_projects(&mut self, cx: &mut Context<Self>) {
-        self.sidebar
-            .update(cx, |sidebar, cx| sidebar.set_projects(Vec::new(), cx));
+        self.set_projects(Vec::new(), cx);
         let host = self.host.clone();
         let read = cx.background_spawn(async move { host.projects() });
         self.project_load = Some(cx.spawn(async move |this, cx| {
             let result = read.await;
             this.update(cx, |this, cx| match result {
-                Ok(projects) => this
-                    .sidebar
-                    .update(cx, |sidebar, cx| sidebar.set_projects(projects, cx)),
+                Ok(projects) => this.set_projects(projects, cx),
                 Err(error) => eprintln!("codex-gpui: cannot read sidebar projects: {error:#}"),
             })
             .ok();
         }));
+    }
+
+    /// The sidebar's projects, and Home's `/project` choices: the ones with a root on disk.
+    fn set_projects(
+        &mut self,
+        projects: Vec<ui::screens::sidebar::Project>,
+        cx: &mut Context<Self>,
+    ) {
+        let choices = projects
+            .iter()
+            .filter(|project| !project.missing)
+            .filter_map(|project| Some((project.label.clone(), project.root.as_ref()?.to_string())))
+            .collect();
+        let composer = self.home.read(cx).composer.clone();
+        composer.update(cx, |composer, _| composer.set_slash_projects(choices));
+        self.sidebar
+            .update(cx, |sidebar, cx| sidebar.set_projects(projects, cx));
     }
 
     fn open_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -940,27 +1022,10 @@ impl Root {
                 this.picking_project = false;
                 match result {
                     Ok(Some((root, projects))) => {
-                        this.qa_work_started = true;
                         this.project_load = None;
                         this.sidebar
                             .update(cx, |sidebar, cx| sidebar.set_projects(projects, cx));
-                        this.home.update(cx, |home, cx| {
-                            home.project = Some(
-                                std::path::Path::new(&root)
-                                    .file_name()
-                                    .and_then(|name| name.to_str())
-                                    .unwrap_or(&root)
-                                    .to_owned()
-                                    .into(),
-                            );
-                            home.composer.update(cx, |composer, cx| {
-                                composer.set_search_roots(vec![root.clone()], cx);
-                            });
-                            cx.notify();
-                        });
-                        this.state.project_root = Some(root);
-                        this.navigate(Route::Home, window, cx);
-                        this.save(window, cx);
+                        this.select_project(root, window, cx);
                     }
                     Ok(None) => {}
                     Err(error) => {
@@ -972,6 +1037,22 @@ impl Root {
             .ok();
         })
         .detach();
+    }
+
+    /// Makes `root` the folder new chats start in (`thread/start` cwd) and shows it on Home.
+    /// Open chats keep the cwd they were started in.
+    fn select_project(&mut self, root: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.qa_work_started = true;
+        self.home.update(cx, |home, cx| {
+            home.project = Some(project_name(&root));
+            home.composer.update(cx, |composer, cx| {
+                composer.set_search_roots(vec![root.clone()], cx);
+            });
+            cx.notify();
+        });
+        self.state.project_root = Some(root);
+        self.navigate(Route::Home, window, cx);
+        self.save(window, cx);
     }
 
     fn repository_request(
@@ -997,6 +1078,7 @@ impl Root {
                     None => change.path.clone(),
                 }),
             ),
+            DiffRequest::Open(_) => return,
         };
         let request = host::Request::post(endpoint, Some(params));
         let host = self.host.clone();
@@ -1039,6 +1121,37 @@ impl Root {
                 this.refresh_git_actions(cx);
             })
             .ok();
+        })
+        .detach();
+    }
+
+    /// The header icon and `Open in editor`: the host opens the file in the editor chosen by the
+    /// original's `open-in-target-preferences` (`perPath` for the project, else `global`).
+    fn open_in_editor(&mut self, cwd: &str, path: &str, cx: &mut Context<Self>) {
+        let target = cx
+            .try_global::<host_settings::Settings>()
+            .and_then(|settings| settings.read_all().get("open-in-target-preferences"))
+            .and_then(|preferences| {
+                preferences["perPath"][cwd]
+                    .as_str()
+                    .or(preferences["global"].as_str())
+            })
+            .map(str::to_owned);
+        let request = host::Request::post(
+            "open-file",
+            Some(json!({"hostId": "local", "cwd": cwd, "path": path, "target": target})),
+        );
+        let host = self.host.clone();
+        let path = path.to_owned();
+        let opened = cx.background_spawn(async move { host.fetch(&request) });
+        cx.spawn(async move |this, cx| {
+            if let Err(error) = opened.await {
+                eprintln!("codex-gpui: cannot open {path} in the editor: {error:#}");
+                this.update(cx, |this, cx| {
+                    this.toast(Toast::danger("Unable to open in editor"), cx)
+                })
+                .ok();
+            }
         })
         .detach();
     }
@@ -1771,6 +1884,14 @@ impl Root {
             let panel = self.side_tabs_view(&view, cx);
             with_side_tabs(self.shell.clone(), view, panel, cx)
         });
+        if let Some(id) = thread_id
+            && self
+                .thread
+                .as_ref()
+                .is_some_and(|view| view.read(cx).id() == id)
+        {
+            self.list_queue(id, cx);
+        }
         self.save(window, cx);
         cx.notify();
     }
@@ -1788,17 +1909,25 @@ impl Root {
     }
 
     /// HC-033: a printable key (no ⌘/⌃, not Space) typed outside an editable, with no
-    /// dialog, menu or popover open, goes to the route's composer and focuses it. Popovers
-    /// hold plain focus handles; page controls and the composers are tab stops.
+    /// dialog, menu or popover open, goes to the route's composer and focuses it.
+    /// Content ancestors can hold plain focus handles without being popovers.
+    /// The thread transcript is the composer's sibling, so only its exact focus is allowed.
     fn type_anywhere(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
         let Some(text) = keystroke.key_char.as_deref() else {
             return;
         };
         let printable = text.chars().count() == 1 && !text.chars().all(char::is_whitespace);
-        let in_popover = window
-            .focused(cx)
-            .is_some_and(|focus| !focus.tab_stop && focus != self.focus);
+        let route_focus = self.route_focus(cx);
+        let in_popover = window.focused(cx).is_some_and(|focus| {
+            !focus.tab_stop
+                && focus != self.focus
+                && !focus.contains(&route_focus, window)
+                && !self
+                    .thread
+                    .as_ref()
+                    .is_some_and(|thread| thread.read(cx).transcript_focused(window))
+        });
         let editing = window
             .context_stack()
             .iter()
@@ -1808,7 +1937,7 @@ impl Root {
             || keystroke.modifiers.control
             || self.dialog.is_some()
             || self.command_menu.is_some()
-            || self.route_focus(cx) == self.focus
+            || route_focus == self.focus
             || in_popover
             || editing
         {
@@ -2087,13 +2216,18 @@ impl Root {
             }
             dialog.read(cx).release_artwork(window);
             this.dialog = None;
+            let focus = if std::mem::take(&mut this.dialog_to_composer) {
+                this.composer(cx).focus_handle(cx)
+            } else {
+                this.focus.clone()
+            };
             match outcome {
                 DialogOutcome::Dismiss => {
                     if git_dialog {
                         this.commit_cwd = None;
                         window.focus(&this.composer(cx).focus_handle(cx), cx);
                     } else {
-                        window.focus(&this.focus, cx);
+                        window.focus(&focus, cx);
                     }
                 }
                 DialogOutcome::RevertChanges { .. } => window.focus(&this.focus, cx),
@@ -2123,7 +2257,7 @@ impl Root {
                     window.remove_window();
                 }
                 DialogOutcome::Rename { thread, name } => {
-                    window.focus(&this.focus, cx);
+                    window.focus(&focus, cx);
                     this.rename(thread.clone(), name.clone(), window, cx);
                 }
                 DialogOutcome::Commit {
@@ -2281,10 +2415,11 @@ impl Root {
             .turns
             .iter()
             .any(|turn| turn.status == TurnStatus::InProgress);
-        // The composer is shared: the new thread's queue arrives with `thread/queue/changed`.
+        // The composer is shared; load the selected thread's own queue after navigation.
         self.thread_composer.update(cx, |c, cx| {
             c.set_running(running, cx);
             c.set_queued(Vec::new(), cx);
+            c.set_queue_pending(self.queue_pending, cx);
             c.set_search_roots(vec![thread.cwd.clone()], cx);
         });
         let route = Route::Thread(thread.id.clone());
@@ -2303,6 +2438,7 @@ impl Root {
                 DiffRequest::Revert(change) => {
                     this.confirm_revert(panel.clone(), &cwd, change, window, cx)
                 }
+                DiffRequest::Open(path) => this.open_in_editor(&cwd, path, cx),
                 _ => this.repository_request(panel.clone(), &cwd, request, cx),
             },
         )
@@ -2345,10 +2481,21 @@ impl Root {
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let mut params = json!({ "cwd": cwd, "model": model(&s) });
             apply_permissions(&mut params, s.permission);
-            let mut thread = bridge
+            let mut thread = match bridge
                 .request::<_, ThreadStartResponse>("thread/start", params)
-                .await?
-                .thread;
+                .await
+            {
+                Ok(started) => started.thread,
+                Err(error) => {
+                    // The draft, its attachments and the chosen project stay as they were.
+                    this.update(cx, |this, cx| {
+                        let composer = this.home.read(cx).composer.clone();
+                        composer.update(cx, |c, cx| c.restore_submission(&s.text, cx));
+                        this.toast(Toast::danger("Error starting chat"), cx);
+                    })?;
+                    return Err(error);
+                }
+            };
             // Title the new chat (Recents row, header) with its prompt until it has a preview.
             if thread.preview.is_empty() {
                 thread.preview = s.text.clone();
@@ -2426,22 +2573,182 @@ impl Root {
         log_err(task, cx);
     }
 
-    /// `thread/queue/list`: the queued follow-ups of thread `id`, shown over the composer.
-    fn list_queue(&self, id: String, cx: &mut Context<Self>) {
+    fn list_queue(&mut self, id: String, cx: &mut Context<Self>) {
+        if self.queue_pending
+            || !matches!(&self.state.route, Route::Thread(current) if current == &id)
+        {
+            return;
+        }
+        let bridge = self.bridge.clone();
+        self.queue_load = Some(cx.spawn(async move |this, cx| {
+            let result = read_queue(&bridge, &id).await;
+            this.update(cx, |this, cx| match result {
+                Ok(rows) if matches!(&this.state.route, Route::Thread(current) if current == &id) =>
+                {
+                    this.thread_composer
+                        .update(cx, |composer, cx| composer.set_queued(rows, cx));
+                }
+                Ok(_) => {}
+                Err(error) => eprintln!("codex-gpui: failed to read queued messages: {error:#}"),
+            })
+            .ok();
+        }));
+    }
+
+    fn queue_action(&mut self, action: &QueueAction, window: &mut Window, cx: &mut Context<Self>) {
+        match action {
+            QueueAction::Edit(id) => return self.edit_queued(id.clone(), window, cx),
+            QueueAction::Queueing(queue) => return self.set_queueing(*queue, cx),
+            _ => {}
+        }
+        if self.queue_pending {
+            return;
+        }
+        let Route::Thread(thread_id) = self.state.route.clone() else {
+            return;
+        };
+        let (QueueAction::Steer(id) | QueueAction::Delete(id)) = action else {
+            return;
+        };
+        let rows = self.thread_composer.read(cx).queued();
+        let Some(at) = rows.iter().position(|row| row.submission.id == *id) else {
+            return;
+        };
+        let deleted = DeletedQueuedMessage {
+            thread_id: thread_id.clone(),
+            submission: rows[at].submission.clone(),
+            previous: at
+                .checked_sub(1)
+                .map(|i| rows[i].submission.client_user_message_id.clone()),
+            next: rows
+                .get(at + 1)
+                .map(|row| row.submission.client_user_message_id.clone()),
+        };
+        let steer = matches!(action, QueueAction::Steer(_));
+        let turn_id = self.thread.as_ref().and_then(|view| {
+            view.read(cx)
+                .turns()
+                .iter()
+                .rev()
+                .find(|turn| turn.status == TurnStatus::InProgress)
+                .map(|turn| turn.id.clone())
+        });
+        let key = (
+            thread_id.clone(),
+            deleted.submission.client_user_message_id.clone(),
+        );
+        let already_steered = self.steered_queued.contains(&key);
+        let resume = !self.loaded.contains(&thread_id);
+        self.begin_queue_action(cx);
+        let bridge = self.bridge.clone();
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let result = async {
+                resume_if(resume, &bridge, &this, &thread_id, cx).await?;
+                if steer && !already_steered {
+                    if let Some(turn_id) = turn_id {
+                        bridge.request::<_, Value>("turn/steer", json!({
+                            "threadId": thread_id,
+                            "input": deleted.submission.input,
+                            "clientUserMessageId": deleted.submission.client_user_message_id,
+                            "expectedTurnId": turn_id,
+                        })).await?;
+                        this.update(cx, |this, _| {
+                            this.steered_queued.insert(key.clone());
+                        })?;
+                    } else {
+                        bridge.request::<_, Value>("thread/queue/start", json!({
+                            "threadId": thread_id, "queuedSubmissionId": deleted.submission.id,
+                        })).await?;
+                        return Ok(());
+                    }
+                }
+                let response: Value = bridge
+                    .request(
+                        "thread/queue/delete",
+                        json!({
+                            "threadId": thread_id, "queuedSubmissionId": deleted.submission.id,
+                        }),
+                    )
+                    .await?;
+                ensure!(
+                    response["deleted"] == true,
+                    "The queued message was not deleted"
+                );
+                this.update(cx, |this, _| {
+                    let accepted = this.steered_queued.remove(&key);
+                    if !steer && !accepted {
+                        this.deleted_queued.push(deleted.clone());
+                    }
+                })?;
+                Ok(())
+            }
+            .await;
+            this.update(cx, |this, cx| {
+                if result.is_ok()
+                    && matches!(&this.state.route, Route::Thread(current) if current == &thread_id)
+                {
+                    this.thread_composer.update(cx, |composer, cx| {
+                        composer.remove_queued(&deleted.submission.id, cx);
+                    });
+                }
+                if result.is_err() {
+                    this.toast(
+                        Toast::danger(if steer {
+                            "Error submitting message"
+                        } else {
+                            "Failed to delete queued message"
+                        }),
+                        cx,
+                    );
+                }
+                this.finish_queue_action(cx);
+            })?;
+            result
+        });
+        log_err(task, cx);
+    }
+
+    fn begin_queue_action(&mut self, cx: &mut Context<Self>) {
+        self.queue_pending = true;
+        self.queue_load = None;
+        self.thread_composer
+            .update(cx, |composer, cx| composer.set_queue_pending(true, cx));
+    }
+
+    fn finish_queue_action(&mut self, cx: &mut Context<Self>) {
+        self.queue_pending = false;
+        self.thread_composer
+            .update(cx, |composer, cx| composer.set_queue_pending(false, cx));
+        if let Route::Thread(id) = self.state.route.clone() {
+            self.list_queue(id, cx);
+        }
+    }
+
+    fn undo_queued(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(deleted) = self.deleted_queued.last().cloned() else {
+            cx.propagate();
+            return;
+        };
+        cx.stop_propagation();
+        if self.queue_pending {
+            return;
+        }
+        self.begin_queue_action(cx);
+        self.navigate(Route::Thread(deleted.thread_id.clone()), window, cx);
         let bridge = self.bridge.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {
-            let list: ThreadQueueListResponse = bridge
-                .request(
-                    "thread/queue/list",
-                    json!({ "threadId": id, "cursor": null }),
-                )
-                .await?;
+            let result = restore_queued(&bridge, &deleted).await;
             this.update(cx, |this, cx| {
-                if this.thread.as_ref().is_some_and(|v| v.read(cx).id() == id) {
-                    this.thread_composer
-                        .update(cx, |c, cx| c.set_queued(list.data, cx));
+                match &result {
+                    Ok(()) => {
+                        this.deleted_queued.pop();
+                        this.toast(Toast::info("Queued message restored"), cx);
+                    }
+                    Err(_) => this.toast(Toast::danger("Failed to restore queued message"), cx),
                 }
-            })
+                this.finish_queue_action(cx);
+            })?;
+            result
         });
         log_err(task, cx);
     }
@@ -2451,6 +2758,9 @@ impl Root {
     /// again where it was ([`restore_place`]). A submission already gone only refreshes the
     /// tray; one the composer cannot show stays queued.
     fn edit_queued(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.queue_pending {
+            return;
+        }
         let Some(view) = &self.thread else { return };
         let thread_id = view.read(cx).id().to_owned();
         let composer = self.thread_composer.read(cx);
@@ -2468,6 +2778,7 @@ impl Root {
             self.toast(Toast::danger("Couldn’t edit this queued message"), cx);
             return;
         }
+        self.begin_queue_action(cx);
         let bridge = self.bridge.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let params = json!({ "threadId": thread_id, "queuedSubmissionId": id });
@@ -2489,7 +2800,7 @@ impl Root {
                     Ok(_) => {}
                     Err(_) => this.toast(Toast::danger("Couldn’t edit this queued message"), cx),
                 }
-                this.list_queue(thread_id, cx);
+                this.finish_queue_action(cx);
             })?;
             result.map(drop)
         });
@@ -2622,28 +2933,108 @@ impl Root {
     /// later turns, and opens the new chat.
     fn fork(&mut self, turn_id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(view) = &self.thread else { return };
-        let view = view.read(cx);
-        let id = view.id().to_owned();
-        let Some(later) = view.turns().iter().rev().position(|t| t.id == turn_id) else {
+        let Some(later) = view
+            .read(cx)
+            .turns()
+            .iter()
+            .rev()
+            .position(|t| t.id == turn_id)
+        else {
             return;
         };
+        self.fork_chat(later, window, cx);
+    }
+
+    /// `thread/fork` of the open chat in its workspace, `thread/rollback` of its last `later`
+    /// turns, then opens the new chat; a refusal shows `Failed to fork chat`.
+    fn fork_chat(&mut self, later: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(view) = &self.thread else { return };
+        let id = view.read(cx).id().to_owned();
         let bridge = self.bridge.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            // Both answer `{ thread }`, like `thread/read`.
-            let mut read: ThreadReadResponse = bridge
-                .request("thread/fork", json!({ "threadId": id }))
-                .await?;
-            if later > 0 {
-                let params = json!({ "threadId": read.thread.id, "numTurns": later });
-                read = bridge.request("thread/rollback", params).await?;
+            let forked = async {
+                // Both answer `{ thread }`, like `thread/read`.
+                let mut read: ThreadReadResponse = bridge
+                    .request("thread/fork", json!({ "threadId": id }))
+                    .await?;
+                if later > 0 {
+                    let params = json!({ "threadId": read.thread.id, "numTurns": later });
+                    read = bridge.request("thread/rollback", params).await?;
+                }
+                Ok::<_, anyhow::Error>(read)
             }
-            this.update_in(cx, |this, window, cx| {
-                this.loaded.insert(read.thread.id.clone());
-                this.add_thread(&read.thread, cx);
-                this.show_thread(read.thread, window, cx);
-            })
+            .await;
+            match forked {
+                Ok(read) => this.update_in(cx, |this, window, cx| {
+                    this.loaded.insert(read.thread.id.clone());
+                    this.add_thread(&read.thread, cx);
+                    this.show_thread(read.thread, window, cx);
+                }),
+                Err(error) => {
+                    this.update(cx, |this, cx| {
+                        this.toast(Toast::danger("Failed to fork chat"), cx)
+                    })?;
+                    Err(error)
+                }
+            }
         });
         log_err(task, cx);
+    }
+
+    /// `/compact`: `thread/compact/start` on the open chat, resumed first when this app-server
+    /// has not loaded it. A running turn refuses it; a failed request shows `Failed to compact chat`.
+    fn compact(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(view) = &self.thread else { return };
+        let view = view.read(cx);
+        let id = view.id().to_owned();
+        let running = view
+            .turns()
+            .iter()
+            .any(|turn| turn.status == TurnStatus::InProgress);
+        if running {
+            self.toast(
+                Toast::danger("Compact is disabled while a chat is in progress"),
+                cx,
+            );
+            return;
+        }
+        let resume = !self.loaded.contains(&id);
+        let bridge = self.bridge.clone();
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let started = async {
+                resume_if(resume, &bridge, &this, &id, cx).await?;
+                bridge
+                    .request::<_, Value>("thread/compact/start", json!({ "threadId": id }))
+                    .await
+                    .map(drop)
+            }
+            .await;
+            if started.is_err() {
+                this.update(cx, |this, cx| {
+                    this.toast(Toast::danger("Failed to compact chat"), cx)
+                })?;
+            }
+            started
+        });
+        log_err(task, cx);
+    }
+
+    /// Opens `Rename chat` for `id`. From the composer, closing it returns focus there.
+    fn open_rename(
+        &mut self,
+        id: String,
+        from_composer: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.dialog.is_some() {
+            return;
+        }
+        let title = self.threads.iter().find(|t| t.id == id).map(thread_title);
+        let title = title.unwrap_or_default().to_string();
+        let dialog = cx.new(|cx| Dialog::rename(id, title, cx));
+        self.show_dialog(dialog, window, cx);
+        self.dialog_to_composer = from_composer;
     }
 
     /// `thread/section/move` into or out of the Pinned section: the row moves at once (no toast);
@@ -3254,6 +3645,16 @@ async fn resume_if(
     Ok(())
 }
 
+/// The Home chip label for a project root: its folder name.
+fn project_name(root: &str) -> SharedString {
+    std::path::Path::new(root)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(root)
+        .to_owned()
+        .into()
+}
+
 /// `None` (the server's default) when `model/list` gave the picker nothing.
 fn model(s: &Submission) -> Option<&str> {
     (!s.model.is_empty()).then_some(s.model.as_str())
@@ -3378,6 +3779,24 @@ async fn turn_start(
     Ok(())
 }
 
+async fn read_queue(bridge: &Bridge, thread_id: &str) -> Result<Vec<QueuedSubmission>> {
+    let mut rows = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let page: ThreadQueueListResponse = bridge
+            .request(
+                "thread/queue/list",
+                json!({ "threadId": thread_id, "cursor": cursor }),
+            )
+            .await?;
+        rows.extend(page.data);
+        cursor = page.next_cursor;
+        if cursor.is_none() {
+            return Ok(rows);
+        }
+    }
+}
+
 /// The ephemeral app-server thread that writes a commit message, and what it has said.
 struct Generation {
     thread: String,
@@ -3418,6 +3837,59 @@ impl GitOutcome {
             detail,
         }
     }
+}
+
+async fn restore_queued(bridge: &Bridge, deleted: &DeletedQueuedMessage) -> Result<()> {
+    let mut rows = read_queue(bridge, &deleted.thread_id).await?;
+    let client_id = &deleted.submission.client_user_message_id;
+    if !rows
+        .iter()
+        .any(|row| &row.client_user_message_id == client_id)
+    {
+        bridge
+            .request::<_, Value>(
+                "thread/queue/add",
+                json!({
+                    "threadId": deleted.thread_id, "input": deleted.submission.input,
+                    "clientUserMessageId": client_id,
+                }),
+            )
+            .await?;
+        rows = read_queue(bridge, &deleted.thread_id).await?;
+    }
+    let original_position = rows
+        .iter()
+        .position(|row| &row.client_user_message_id == client_id)
+        .context("The restored queued message is no longer queued")?;
+    let restored_id = rows.remove(original_position).id;
+    let position = deleted
+        .next
+        .as_ref()
+        .and_then(|next| {
+            rows.iter()
+                .position(|row| &row.client_user_message_id == next)
+        })
+        .or_else(|| {
+            deleted.previous.as_ref().and_then(|previous| {
+                rows.iter()
+                    .position(|row| &row.client_user_message_id == previous)
+                    .map(|at| at + 1)
+            })
+        })
+        .unwrap_or(rows.len());
+    if position != original_position {
+        let mut order: Vec<_> = rows.into_iter().map(|row| row.id).collect();
+        order.insert(position, restored_id);
+        bridge
+            .request::<_, Value>(
+                "thread/queue/reorder",
+                json!({
+                    "threadId": deleted.thread_id, "queuedSubmissionIds": order,
+                }),
+            )
+            .await?;
+    }
+    Ok(())
 }
 
 /// A host setting of the original's Git page (`git-branch-prefix`, `git-commit-instructions`).
@@ -3809,6 +4281,9 @@ impl Render for Root {
             .font_family(ui::SANS)
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::type_anywhere))
+            .capture_action(cx.listener(|this, _: &Undo, window, cx| {
+                this.undo_queued(window, cx);
+            }))
             .on_action(cx.listener(|this, _: &FindInThread, window, cx| {
                 if matches!(this.state.route, Route::Thread(_)) {
                     if this.side == Some(SidePanel::Changes)
@@ -3914,12 +4389,12 @@ impl Render for Root {
                 this.set_pinned(a.0.clone(), a.1, window, cx)
             }))
             .on_action(cx.listener(|this, a: &RenameThread, window, cx| {
-                let title = this.threads.iter().find(|t| t.id == a.0).map(thread_title);
-                let title = title.unwrap_or_default().to_string();
-                let dialog = cx.new(|cx| Dialog::rename(a.0.clone(), title, cx));
-                this.show_dialog(dialog, window, cx);
+                this.open_rename(a.0.clone(), false, window, cx)
             }))
             .on_action(cx.listener(|this, a: &ForkThread, window, cx| this.fork(&a.0, window, cx)))
+            .on_action(cx.listener(|this, a: &SelectProject, window, cx| {
+                this.select_project(a.0.clone(), window, cx)
+            }))
             .on_action(cx.listener(|this, edit: &EditMessage, window, cx| {
                 this.edit_message(edit.clone(), window, cx)
             }))
