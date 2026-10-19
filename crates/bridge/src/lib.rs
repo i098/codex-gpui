@@ -9,14 +9,18 @@
 //!
 //! The API is runtime-agnostic: one reader thread per connection, `async-channel` for
 //! replies and events, so GPUI's executors (or any other) can drive it.
+//!
+//! A `Backend` carries the client's messages: `Lines` writes them to `codex app-server` (or
+//! a replay) as they are; `acp::Acp` translates them for an Agent Client Protocol agent.
 
+mod acp;
 mod replay;
 pub mod types;
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 
@@ -65,11 +69,67 @@ type Reply = Result<Value, RpcError>;
 /// `None` once the server has closed stdout: later requests fail instead of hanging.
 type Pending = Arc<Mutex<Option<HashMap<i64, Sender<Reply>>>>>;
 
+/// Where a [`Bridge`] sends the client's requests, notifications and answers.
+trait Backend: Send {
+    fn send(&mut self, msg: &Value) -> Result<()>;
+}
+
+/// Newline-delimited JSON as is: the `codex app-server` transport.
+struct Lines(Box<dyn Write + Send>);
+
+impl Backend for Lines {
+    fn send(&mut self, msg: &Value) -> Result<()> {
+        let mut line = serde_json::to_string(msg)?;
+        line.push('\n');
+        self.0.write_all(line.as_bytes())?;
+        self.0.flush()?;
+        Ok(())
+    }
+}
+
+/// Where server messages land: answers wake their [`Bridge::request`], the rest are events.
+#[derive(Clone)]
+struct Sink {
+    pending: Pending,
+    events: Sender<Event>,
+}
+
+impl Sink {
+    fn new() -> (Sink, Receiver<Event>) {
+        let (events, rx) = async_channel::unbounded();
+        let pending = Arc::new(Mutex::new(Some(HashMap::new())));
+        (Sink { pending, events }, rx)
+    }
+
+    fn reply(&self, id: i64, reply: Reply) {
+        if let Some(waiter) = self.pending.lock().as_mut().and_then(|map| map.remove(&id)) {
+            let _ = waiter.try_send(reply);
+        }
+    }
+
+    fn event(&self, event: Event) {
+        let _ = self.events.try_send(event);
+    }
+
+    fn notify(&self, method: &str, params: Value) {
+        self.event(Event::Notification {
+            method: method.into(),
+            params,
+        });
+    }
+
+    /// Dropping the waiters wakes them with "closed"; later requests fail at once.
+    fn close(&self) {
+        self.pending.lock().take();
+    }
+}
+
 pub struct Bridge {
-    writer: Mutex<Box<dyn Write + Send>>,
+    backend: Mutex<Box<dyn Backend>>,
     pending: Pending,
     next_id: AtomicI64,
     child: Option<Child>,
+    acp: bool,
 }
 
 /// `$CODEX_BIN`, else the binary bundled in ChatGPT.app, else `codex` on `PATH`; runs `app-server`.
@@ -84,17 +144,29 @@ pub fn default_command() -> Command {
     cmd
 }
 
+/// `$CODEX_GPUI_ACP` split on whitespace (`omp acp`): an ACP agent to run instead of
+/// `codex app-server`, with [`Bridge::spawn_acp`].
+pub fn acp_command() -> Option<Command> {
+    let line = std::env::var("CODEX_GPUI_ACP").ok()?;
+    let mut words = line.split_whitespace();
+    let mut cmd = Command::new(words.next()?);
+    cmd.args(words);
+    Some(cmd)
+}
+
 impl Bridge {
     /// Spawns the app-server with piped stdin/stdout; stderr is left as configured on `cmd`.
-    pub fn spawn(mut cmd: Command) -> Result<(Bridge, Receiver<Event>)> {
-        let mut child = cmd
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .with_context(|| format!("spawning {:?}", cmd.get_program()))?;
-        let stdin = child.stdin.take().context("no stdin")?;
-        let stdout = child.stdout.take().context("no stdout")?;
+    pub fn spawn(cmd: Command) -> Result<(Bridge, Receiver<Event>)> {
+        let (child, stdout, stdin) = spawn_piped(cmd)?;
         Ok(Self::from_io(stdout, stdin, Some(child)))
+    }
+
+    /// Spawns an Agent Client Protocol agent (`omp acp`, ...) and talks to it through
+    /// `acp::Acp`: chats, streaming, Stop and permission prompts. The other app-server
+    /// methods fail with a "not supported by the ACP backend" error.
+    pub fn spawn_acp(cmd: Command) -> Result<(Bridge, Receiver<Event>)> {
+        let (child, stdout, stdin) = spawn_piped(cmd)?;
+        Ok(Self::acp_io(stdout, stdin, Some(child)))
     }
 
     /// Serves responses and notifications from a recorded JSONL transcript (see `replay.rs`).
@@ -113,17 +185,37 @@ impl Bridge {
         write: impl Write + Send + 'static,
         child: Option<Child>,
     ) -> (Bridge, Receiver<Event>) {
-        let pending: Pending = Arc::new(Mutex::new(Some(HashMap::new())));
-        let (events_tx, events) = async_channel::unbounded();
-        let reader_pending = pending.clone();
-        std::thread::spawn(move || read_loop(BufReader::new(read), &reader_pending, &events_tx));
-        let bridge = Bridge {
-            writer: Mutex::new(Box::new(write)),
+        let (sink, events) = Sink::new();
+        let pending = sink.pending.clone();
+        std::thread::spawn(move || read_loop(BufReader::new(read), &sink));
+        let backend = Box::new(Lines(Box::new(write)));
+        (Self::new(backend, pending, child, false), events)
+    }
+
+    fn acp_io(
+        read: impl Read + Send + 'static,
+        write: impl Write + Send + 'static,
+        child: Option<Child>,
+    ) -> (Bridge, Receiver<Event>) {
+        let (sink, events) = Sink::new();
+        let pending = sink.pending.clone();
+        let backend = Box::new(acp::Acp::start(read, Lines(Box::new(write)), sink));
+        (Self::new(backend, pending, child, true), events)
+    }
+
+    fn new(backend: Box<dyn Backend>, pending: Pending, child: Option<Child>, acp: bool) -> Self {
+        Bridge {
+            backend: Mutex::new(backend),
             pending,
             next_id: AtomicI64::new(1),
             child,
-        };
-        (bridge, events)
+            acp,
+        }
+    }
+
+    /// Whether this connection runs an ACP agent ([`Bridge::spawn_acp`]).
+    pub fn is_acp(&self) -> bool {
+        self.acp
     }
 
     pub async fn request<P: Serialize, R: DeserializeOwned>(
@@ -163,12 +255,7 @@ impl Bridge {
     }
 
     fn write(&self, msg: &Value) -> Result<()> {
-        let mut line = serde_json::to_string(msg)?;
-        line.push('\n');
-        let mut writer = self.writer.lock();
-        writer.write_all(line.as_bytes())?;
-        writer.flush()?;
-        Ok(())
+        self.backend.lock().send(msg)
     }
 
     /// Sends `initialize` (opting into the experimental API, like the desktop app), then `initialized`.
@@ -234,6 +321,17 @@ impl Drop for Bridge {
     }
 }
 
+fn spawn_piped(mut cmd: Command) -> Result<(Child, ChildStdout, ChildStdin)> {
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("spawning {:?}", cmd.get_program()))?;
+    let stdin = child.stdin.take().context("no stdin")?;
+    let stdout = child.stdout.take().context("no stdout")?;
+    Ok((child, stdout, stdin))
+}
+
 /// `{"method", "params"}`, leaving `params` out when it serializes to `null`.
 fn message(method: &str, params: impl Serialize) -> Result<Value> {
     let mut msg = json!({ "method": method });
@@ -255,7 +353,7 @@ struct Incoming {
     error: Option<RpcError>,
 }
 
-fn read_loop(reader: impl BufRead, pending: &Pending, events: &Sender<Event>) {
+fn read_loop(reader: impl BufRead, sink: &Sink) {
     for line in reader.lines() {
         let Ok(line) = line else { break };
         if line.trim().is_empty() {
@@ -268,29 +366,20 @@ fn read_loop(reader: impl BufRead, pending: &Pending, events: &Sender<Event>) {
                 continue;
             }
         };
-        let event = match (msg.method, msg.id) {
-            (Some(method), Some(id)) => Event::Request {
+        match (msg.method, msg.id) {
+            (Some(method), Some(id)) => sink.event(Event::Request {
                 id,
                 method,
                 params: msg.params,
-            },
-            (Some(method), None) => Event::Notification {
-                method,
-                params: msg.params,
-            },
+            }),
+            (Some(method), None) => sink.notify(&method, msg.params),
             (None, Some(id)) => {
-                let waiter = id
-                    .as_i64()
-                    .and_then(|id| pending.lock().as_mut().and_then(|map| map.remove(&id)));
-                if let Some(waiter) = waiter {
-                    let _ = waiter.try_send(msg.error.map_or(Ok(msg.result), Err));
+                if let Some(id) = id.as_i64() {
+                    sink.reply(id, msg.error.map_or(Ok(msg.result), Err));
                 }
-                continue;
             }
-            (None, None) => continue,
-        };
-        let _ = events.try_send(event);
+            (None, None) => {}
+        }
     }
-    // Dropping the senders wakes every waiter with "closed".
-    pending.lock().take();
+    sink.close();
 }

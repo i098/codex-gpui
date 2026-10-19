@@ -670,10 +670,11 @@ impl Root {
     }
 
     /// `initialize`, then account, Recents, models and config; shows the route once ready.
+    /// On an ACP agent a toast says which features work (README `ACP backend`).
     fn connect(&self, window: &Window, cx: &mut Context<Self>) {
         let (bridge, cwd) = (self.bridge.clone(), self.cwd.clone());
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            bridge
+            let server = bridge
                 .initialize("codex-gpui", env!("CARGO_PKG_VERSION"))
                 .await?;
             let account = bridge.account_read().await?;
@@ -752,6 +753,13 @@ impl Root {
                 this.ready = true;
                 this.select_route(cx);
                 this.sync(window, cx);
+                if bridge.is_acp() {
+                    let note = format!(
+                        "{} over ACP: only chats, streaming, Stop and approvals work",
+                        server.user_agent
+                    );
+                    this.toast(Toast::info(note), cx);
+                }
                 if let Some((index, message)) = announcement {
                     let dialog =
                         cx.new(|cx| Dialog::model_announcement(&this.models[index], message, cx));
