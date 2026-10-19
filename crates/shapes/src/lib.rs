@@ -208,11 +208,23 @@ pub fn top_fade(fade: Pixels) -> impl IntoElement {
 /// <right>), transparent)` over its parent (`.text-fade-truncate` has `left` 0), which must be
 /// a `.layer()` element, like [`top_fade`]: put it last. macOS only, like [`top_fade`].
 pub fn x_fade(left: Pixels, right: Pixels) -> impl IntoElement {
+    x_fade_with(move || (left, right))
+}
+
+/// [`x_fade`] whose `(left, right)` distances come from `edges`, called once while the element
+/// paints, after prepaint and layout of the whole frame. State that prepaint updates (a
+/// `ScrollHandle`'s viewport size and maximum offset) is current there, but not when the
+/// element is built: read it inside `edges`, never before. `edges` is not called where nothing
+/// is painted (not macOS).
+pub fn x_fade_with(edges: impl FnOnce() -> (Pixels, Pixels) + 'static) -> impl IntoElement {
     cover(move |bounds, window, cx| {
         #[cfg(target_os = "macos")]
-        mask::paint_x_fade(left, right, bounds, window, cx);
+        {
+            let (left, right) = edges();
+            mask::paint_x_fade(left, right, bounds, window, cx);
+        }
         #[cfg(not(target_os = "macos"))]
-        let _ = (left, right, bounds, window, cx);
+        let _ = (edges, bounds, window, cx);
     })
 }
 

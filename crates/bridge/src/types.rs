@@ -14,6 +14,21 @@ pub struct InitializeResponse {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct QueuedSubmission {
+    pub id: String,
+    pub input: Vec<Value>,
+    pub client_user_message_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadQueueListResponse {
+    pub data: Vec<QueuedSubmission>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Thread {
     pub id: String,
     pub preview: String,

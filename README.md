@@ -16,6 +16,40 @@ The app drives the real `codex app-server` over stdio, the same JSON-RPC transpo
 
 The workspace also builds on Linux, with GPUI's no-op text system, for CI (fmt, clippy, tests).
 
+## ACP backend
+
+Set `CODEX_GPUI_ACP` to the command line of an [Agent Client Protocol](https://agentclientprotocol.com) agent to use that agent instead of `codex app-server`:
+
+```sh
+CODEX_GPUI_ACP="omp acp --model anthropic/claude-sonnet-5-5" cargo run -p app --release
+```
+
+The app then speaks ACP v1 over stdio to the agent (`crates/bridge/src/acp.rs`); without the variable it uses `codex app-server` as before.
+Set the model and other agent settings on the agent's command line; the app does not select them.
+The app shows a toast after it connects: `<agent> over ACP: only chats, streaming, Stop and approvals work`.
+Arbitrary interactive CLIs are not compatible; the agent must speak ACP.
+The backend uses only the ACP methods that every agent must have.
+It does not use optional agent capabilities (`loadSession`, session list, image prompts, model and mode config options), also when the agent advertises them.
+
+| Feature | Codex app-server | ACP agent |
+|---|---|---|
+| New chat (`thread/start`) | Yes | `session/new` in the project folder, no MCP servers |
+| Send a message (`turn/start`) | Yes | `session/prompt`, text only; one turn at a time per chat |
+| Streamed reply | Yes | `agent_message_chunk` updates become `item/agentMessage/delta` |
+| Tool calls | Yes | Not shown; a `tool_call` update ends the current reply message, so the text after it is a new message |
+| Stop (`turn/interrupt`) | Yes | `session/cancel`; open permission requests are answered `cancelled` |
+| Turn end and errors | Yes | `end_turn` is completed, `cancelled` is interrupted, other stop reasons and errors are failed |
+| Approvals | Yes | `session/request_permission` keeps its request id, and the prompt lists the agent's option labels; Allow and Allow similar choose the `allow_once` option, Decline chooses `reject_once`; `allow_always` is never chosen, because it can outlive the session; without the matching option the answer is `cancelled` |
+| Recents and reopen a chat | Yes | Chats of this run only |
+| Model, effort, Fast mode, permission mode | Yes | No; the agent's command line and settings apply |
+| Attachments, file mentions, skills | Yes | No |
+| Steer, queue, edit, revert, fork, rename, pin, archive | Yes | No |
+| Account, sign-in, usage, config | Yes | No; the app does not ask for them |
+| Commit message generation | Yes | No |
+
+An unsupported method gets the JSON-RPC error `<method> is not supported by the ACP backend`, and the app shows its usual failure state.
+The client offers no file system or terminal capability, so the agent uses its own tools.
+
 ## Build and run
 
 ```sh
@@ -26,6 +60,18 @@ The app keeps its window state in `~/Library/Application Support/codex-gpui/stat
 Host settings use the local `settings.write(key, value)` service and persist beside that file in `host-settings.json`.
 Theme and window-close preferences remain in `state.json`.
 The S034 replay checks the menu-bar switch, its saved values, and Back navigation against `refs/interactions/s034.json`.
+
+Settings > Git stores branch, merge, push, draft, diff, and pull request instruction preferences in `host-settings.json`.
+Review delivery uses the existing app-server config store.
+Branch prefix saves on blur or Enter; multiline instructions save after three idle seconds or when the page closes.
+The focused `cargo test -p app --test git_settings -- --test-threads=1` native replay verifies saved values after reopening Git settings.
+This page does not implement Git operations or active pull request watchers, and it does not complete other settings pages.
+
+Scheduled > New task accepts instructions, a daily or weekly repeat, and a local time in `HH:MM` format.
+Create saves the definition through `create-automation` to `CODEX_HOME/automations/<id>/automation.toml`.
+The app reloads the task list after a successful write and retains the draft if the write fails.
+The existing host schedules and executes these definitions; this app does not start another scheduler.
+Run `cargo test -p app --test task_create -- --test-threads=1` on macOS for the native creation and reload proof.
 
 ## Release bundle
 
@@ -109,7 +155,7 @@ That command does not close QA or any normal app.
 
 | Crate | Role |
 |---|---|
-| `bridge` | Client for `codex app-server`: newline-delimited JSON-RPC over stdio, hand-written protocol types, replay of recorded sessions. |
+| `bridge` | Client for `codex app-server`: newline-delimited JSON-RPC over stdio, hand-written protocol types, replay of recorded sessions, and the ACP backend. |
 | `ui` | The window shell (titlebar, navigation rail, sidebar, main panel), the 9 screens in `screens/`, the composer, the thread view, the diff view and the icons. |
 | `shapes` | Box decorations that land on Chromium's pixels: rounded and squircle corners, borders, `box-shadow`, backdrop blur, SVG icon paths. It links Skia. |
 | `textsys` | A GPUI text system that puts glyphs on the same pixels as Chromium on macOS. It also holds the vendored `gpui` and `gpui_apple`. |
@@ -180,9 +226,11 @@ tools/mac.sh 'cargo run -p app --example live_turn'
 ```
 
 The example runs the real root view, headless, on a real `codex app-server`.
+With `CODEX_GPUI_ACP` set, it runs on that ACP agent instead and also checks the ACP toast.
 It types a prompt into the Home composer with key events and pushes Enter.
 It waits for `turn/completed` and checks that the thread view shows `pong`.
 It prints the transcript and saves `live-1-home.png`, `live-2-streaming.png` and `live-3-done.png`.
+`$LIVE_ROOT` (default `/tmp/cgx-mac`) holds the project, the Codex home and the screenshots.
 
 ## Frame benchmark
 

@@ -697,3 +697,468 @@ fn unbundled_suggestion_icon_shows_its_emoji() -> Result<()> {
     );
     Ok(())
 }
+
+#[path = "../src/host/automation_schedule.rs"]
+mod automation_schedule;
+
+fn update_database(home: &std::path::Path) -> Result<Connection> {
+    let db = database(home)?;
+    db.execute_batch(
+        "ALTER TABLE automations ADD COLUMN cwds TEXT;
+         ALTER TABLE automations ADD COLUMN target_type TEXT;
+         ALTER TABLE automations ADD COLUMN project_id TEXT;
+         ALTER TABLE automations ADD COLUMN model TEXT;
+         ALTER TABLE automations ADD COLUMN reasoning_effort TEXT;
+         ALTER TABLE automations ADD COLUMN created_at INTEGER;
+         ALTER TABLE automations ADD COLUMN updated_at INTEGER;
+         ALTER TABLE automations ADD COLUMN kind TEXT;
+         ALTER TABLE automations ADD COLUMN target_thread_id TEXT;
+         ALTER TABLE automations ADD COLUMN execution_environment TEXT;
+         ALTER TABLE automations ADD COLUMN local_environment_config_path TEXT;
+         ALTER TABLE automations ADD COLUMN plugin_template_id TEXT;
+         ALTER TABLE automations ADD COLUMN notification_policy TEXT;
+         ALTER TABLE automations ADD COLUMN auto_archive INTEGER;
+         ALTER TABLE automations ADD COLUMN legacy_automation_id TEXT;",
+    )?;
+    Ok(db)
+}
+
+fn update_status(host: &LocalHost, status: &str) -> Result<Value> {
+    let list = json_body(&host.fetch(&Request::post("list-automations", None))?)?;
+    let item = &list["items"][0];
+    let mut body = json!({"id": "task", "status": status});
+    for key in [
+        "kind",
+        "name",
+        "prompt",
+        "model",
+        "reasoningEffort",
+        "notificationPolicy",
+        "rrule",
+    ] {
+        body[key] = item[key].clone();
+    }
+    if item["kind"] == "heartbeat" {
+        body["targetThreadId"] = item["targetThreadId"].clone();
+    } else {
+        for key in [
+            "autoArchive",
+            "executionEnvironment",
+            "localEnvironmentConfigPath",
+        ] {
+            body[key] = item[key].clone();
+        }
+        body["projectId"] = item["target"]["projectId"].clone();
+    }
+    json_body(&host.fetch(&Request::post("automation-update", Some(body)))?)
+}
+
+fn unrelated_database_fields(
+    db: &Connection,
+) -> Result<std::collections::BTreeMap<String, rusqlite::types::Value>> {
+    Ok(
+        db.query_row("SELECT * FROM automations WHERE id='task'", [], |row| {
+            row.as_ref()
+                .column_names()
+                .into_iter()
+                .enumerate()
+                .filter(|(_, name)| {
+                    !["status", "next_run_at", "next_run_nominal_at", "updated_at"].contains(name)
+                })
+                .map(|(index, name)| Ok((name.to_owned(), row.get(index)?)))
+                .collect()
+        })?,
+    )
+}
+
+#[test]
+fn automation_status_persists_without_changing_definition_or_identity() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let host = LocalHost::new(home.path());
+    let definition = definition("task", 20)
+        .replace("FREQ=DAILY;BYHOUR=9", "FREQ=MINUTELY;INTERVAL=30")
+        + "custom_field = \"retained\"\n";
+    host.write_automation("task", &definition)?;
+    let db = update_database(home.path())?;
+    fs::write(
+        home.path().join("automations/.run-jitter-salt"),
+        "fixed-salt\n",
+    )?;
+    let before = chrono::Utc::now().timestamp_millis();
+    let resumed = update_status(&host, "ACTIVE")?["item"].clone();
+    let after = chrono::Utc::now().timestamp_millis();
+    let next = resumed["nextRunAt"].as_i64().unwrap();
+    assert!(next > before && next <= after + 30 * 60_000);
+    assert_eq!(resumed["nextRunNominalAt"], next);
+    db.execute("UPDATE automations SET legacy_automation_id='retained-id', last_run_at=123 WHERE id='task'", [])?;
+    let unrelated = unrelated_database_fields(&db)?;
+    let fresh = LocalHost::new(home.path());
+    let readback = json_body(&fresh.fetch(&Request::post("list-automations", None))?)?;
+    assert_eq!(readback["items"][0]["nextRunAt"], next);
+    assert_eq!(readback["items"][0]["status"], "ACTIVE");
+    let paused = update_status(&fresh, "PAUSED")?["item"].clone();
+    assert_eq!(paused["nextRunAt"], Value::Null);
+    assert_eq!(paused["nextRunNominalAt"], Value::Null);
+    assert_eq!(paused["lastRunAt"], 123);
+    let row: (String, Option<i64>, Option<i64>, String) = db.query_row(
+        "SELECT status, next_run_at, next_run_nominal_at, legacy_automation_id FROM automations WHERE id='task'",
+        [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+    assert_eq!(row, ("PAUSED".into(), None, None, "retained-id".into()));
+    assert_eq!(unrelated_database_fields(&db)?, unrelated);
+    let mut expected: toml::Table = toml::from_str(&definition)?;
+    let actual: toml::Table = toml::from_str(&fs::read_to_string(
+        home.path().join("automations/task/automation.toml"),
+    )?)?;
+    expected.insert("updated_at".into(), actual["updated_at"].clone());
+    assert_eq!(actual, expected);
+    let readback =
+        json_body(&LocalHost::new(home.path()).fetch(&Request::post("list-automations", None))?)?;
+    assert_eq!(readback["items"][0], paused);
+    assert_eq!(
+        fs::read_to_string(home.path().join("automations/.run-jitter-salt"))?,
+        "fixed-salt\n"
+    );
+    update_status(&LocalHost::new(home.path()), "ACTIVE")?;
+    assert_eq!(unrelated_database_fields(&db)?, unrelated);
+    Ok(())
+}
+
+#[test]
+fn automation_update_restores_definition_when_database_commit_fails() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let host = LocalHost::new(home.path());
+    host.write_automation("task", &definition("task", 20))?;
+    let db = update_database(home.path())?;
+    update_status(&host, "ACTIVE")?;
+    let path = home.path().join("automations/task/automation.toml");
+    let original = fs::read(&path)?;
+    let before = json_body(&host.fetch(&Request::post("list-automations", None))?)?;
+    db.execute_batch("BEGIN; SELECT * FROM automations;")?;
+    let error = update_status(&host, "PAUSED").unwrap_err();
+    assert!(
+        format!("{error:#}").contains("database is locked"),
+        "{error:#}"
+    );
+    db.execute_batch("ROLLBACK")?;
+    assert_eq!(fs::read(&path)?, original);
+    assert_eq!(
+        json_body(&LocalHost::new(home.path()).fetch(&Request::post("list-automations", None))?)?,
+        before
+    );
+    Ok(())
+}
+
+#[test]
+fn automation_update_rejects_invalid_schedule_and_definition_changes() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let host = LocalHost::new(home.path());
+    let definition = definition("task", 20).replace("FREQ=DAILY;BYHOUR=9", "FREQ=DAILY;COUNT=1");
+    host.write_automation("task", &definition)?;
+    let db = update_database(home.path())?;
+    db.execute("INSERT INTO automations(id,status,rrule,next_run_at) VALUES ('task','ACTIVE','FREQ=DAILY;COUNT=1',9999999999999)", [])?;
+    assert_eq!(
+        update_status(&host, "ACTIVE").unwrap_err().to_string(),
+        automation_schedule::NO_FUTURE_RUN
+    );
+    let changed = host.fetch(&Request::post(
+        "automation-update",
+        Some(json!({
+            "id": "task", "status": "PAUSED", "prompt": "overwrite"
+        })),
+    ));
+    assert!(
+        changed
+            .unwrap_err()
+            .to_string()
+            .contains("cannot change prompt")
+    );
+    assert_eq!(
+        fs::read_to_string(home.path().join("automations/task/automation.toml"))?,
+        definition
+    );
+    assert_eq!(
+        db.query_row(
+            "SELECT next_run_at FROM automations WHERE id='task'",
+            [],
+            |row| row.get::<_, i64>(0)
+        )?,
+        9999999999999
+    );
+    Ok(())
+}
+
+#[test]
+fn automation_recurrence_matches_original_timezone_and_jitter_boundaries() {
+    let zone = rrule::Tz::America__New_York;
+    for (rule, now, actual, nominal) in [
+        (
+            "FREQ=DAILY;BYHOUR=2;BYMINUTE=30",
+            "2026-03-08T06:00:00Z",
+            1772955202000,
+            1772955000000,
+        ),
+        (
+            "FREQ=DAILY;BYHOUR=2;BYMINUTE=30",
+            "2026-03-08T08:00:00Z",
+            1773041340000,
+            1773041400000,
+        ),
+        (
+            "FREQ=DAILY;BYHOUR=1;BYMINUTE=30",
+            "2026-11-01T05:45:00Z",
+            1793600832000,
+            1793601000000,
+        ),
+        (
+            "FREQ=HOURLY;INTERVAL=3;BYHOUR=8,14;BYMINUTE=15",
+            "2026-10-18T10:35:00Z",
+            1792325490000,
+            1792325700000,
+        ),
+        (
+            "FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1;BYHOUR=9;BYMINUTE=0",
+            "2026-10-18T08:00:00Z",
+            1793365200000,
+            1793365200000,
+        ),
+        (
+            "DTSTART:20261017T090000Z\nRRULE:FREQ=DAILY;COUNT=3",
+            "2026-10-18T10:00:00Z",
+            1792400396000,
+            1792400400000,
+        ),
+        (
+            "DTSTART;TZID=America/New_York:20260307T023000\nRRULE:FREQ=DAILY;COUNT=3",
+            "2026-03-08T06:00:00Z",
+            1773023538000,
+            1773023400000,
+        ),
+        (
+            "DTSTART;TZID=America/New_York:20261031T013000\nRRULE:FREQ=DAILY;COUNT=3",
+            "2026-11-01T05:45:00Z",
+            1793583033000,
+            1793583000000,
+        ),
+        (
+            "DTSTART:20261017T090000Z\nRRULE:FREQ=DAILY;COUNT=5\nEXDATE:20261019T090000Z\nRDATE:20261018T120000Z",
+            "2026-10-18T10:00:00Z",
+            1792324800000,
+            1792324800000,
+        ),
+        // Original second 60 moves into the next minute, also across midnight, BYSETPOS and a DST gap.
+        (
+            "FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=60",
+            "2026-10-18T08:00:00Z",
+            1792328399000,
+            1792328460000,
+        ),
+        (
+            "FREQ=DAILY;BYHOUR=23;BYMINUTE=59;BYSECOND=60",
+            "2026-10-18T08:00:00Z",
+            1792382366000,
+            1792382400000,
+        ),
+        (
+            "FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1;BYHOUR=9;BYMINUTE=0;BYSECOND=0,60",
+            "2026-10-18T08:00:00Z",
+            1793365260000,
+            1793365260000,
+        ),
+        (
+            "FREQ=DAILY;BYHOUR=1;BYMINUTE=59;BYSECOND=60",
+            "2026-03-08T06:00:00Z",
+            1772952961000,
+            1772953200000,
+        ),
+        // Original safe-integer INTERVAL and COUNT beyond u16/u32, up to year 9999.
+        (
+            "FREQ=HOURLY;INTERVAL=65536",
+            "2026-10-18T08:00:00Z",
+            2028240035000,
+            2028240000000,
+        ),
+        (
+            "FREQ=SECONDLY;INTERVAL=4294967296",
+            "2026-10-18T08:00:00Z",
+            6087277696000,
+            6087277696000,
+        ),
+        (
+            "FREQ=MINUTELY;INTERVAL=4000000000",
+            "2026-10-18T08:00:00Z",
+            241792310201000,
+            241792310400000,
+        ),
+        (
+            "FREQ=YEARLY;INTERVAL=7973",
+            "2026-10-18T08:00:00Z",
+            253395849600000,
+            253395849600000,
+        ),
+        (
+            "DTSTART:20261017T090000Z\nRRULE:FREQ=DAILY;COUNT=4294967297",
+            "2026-10-18T08:00:00Z",
+            1792314174000,
+            1792314000000,
+        ),
+    ] {
+        let now = chrono::DateTime::parse_from_rfc3339(now)
+            .unwrap()
+            .timestamp_millis();
+        assert_eq!(
+            automation_schedule::next_run(rule, "cron", "task", now, zone, "fixed-salt"),
+            Some((actual, nominal)),
+            "{rule}"
+        );
+    }
+    let now = 1792312632345;
+    assert_eq!(
+        automation_schedule::next_run(
+            "FREQ=MINUTELY;INTERVAL=30",
+            "heartbeat",
+            "task",
+            now,
+            zone,
+            "fixed-salt"
+        ),
+        Some((now + 1_800_000, now + 1_800_000))
+    );
+    for rule in [
+        "FREQ=DAILY;COUNT=1",
+        "FREQ=MONTHLY;BYMONTH=2;BYMONTHDAY=31",
+        "FREQ=MINUTELY;INTERVAL=60;BYMINUTE=5",
+        "FREQ=HOURLY;INTERVAL=0",
+        // After year 9999, beyond the safe-integer limit, an unreachable second, and qP's hourly step limit.
+        "FREQ=YEARLY;INTERVAL=7974",
+        "FREQ=SECONDLY;INTERVAL=9007199254740992",
+        "FREQ=DAILY;COUNT=9007199254740992;BYHOUR=9;BYMINUTE=0",
+        "FREQ=SECONDLY;BYSECOND=60",
+        "FREQ=HOURLY;INTERVAL=2501999792984",
+    ] {
+        assert_eq!(
+            automation_schedule::next_run(rule, "cron", "task", now, zone, "fixed-salt"),
+            None,
+            "{rule}"
+        );
+    }
+}
+
+#[test]
+fn automation_resume_reuses_persisted_jitter_after_a_fresh_host() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let host = LocalHost::new(home.path());
+    let definition = definition("task", 20).replace(
+        "FREQ=DAILY;BYHOUR=9",
+        "DTSTART:20400101T090000Z\\nRRULE:FREQ=DAILY;COUNT=2",
+    );
+    host.write_automation("task", &definition)?;
+    let _db = update_database(home.path())?;
+    let first = update_status(&host, "ACTIVE")?;
+    let salt = fs::read_to_string(home.path().join("automations/.run-jitter-salt"))?;
+    update_status(&host, "PAUSED")?;
+    let second = update_status(&LocalHost::new(home.path()), "ACTIVE")?;
+    assert_eq!(first["item"]["nextRunAt"], second["item"]["nextRunAt"]);
+    assert_eq!(
+        first["item"]["nextRunNominalAt"],
+        second["item"]["nextRunNominalAt"]
+    );
+    assert_eq!(
+        fs::read_to_string(home.path().join("automations/.run-jitter-salt"))?,
+        salt
+    );
+    Ok(())
+}
+
+#[test]
+fn automation_heartbeat_status_retains_its_thread_and_original_fields() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let host = LocalHost::new(home.path());
+    let definition = definition("task", 20)
+        .replace(
+            "kind = \"cron\"",
+            "kind = \"heartbeat\"\ntarget_thread_id = \"retained-thread\"",
+        )
+        .replace("FREQ=DAILY;BYHOUR=9", "FREQ=MINUTELY;INTERVAL=30");
+    host.write_automation("task", &definition)?;
+    let db = update_database(home.path())?;
+    let active = update_status(&host, "ACTIVE")?["item"].clone();
+    assert_eq!(
+        active["nextRunNominalAt"].as_i64().unwrap(),
+        active["updatedAt"].as_i64().unwrap() + 1_800_000
+    );
+    assert_eq!(active["targetThreadId"], "retained-thread");
+    assert_eq!(active["nextRunAt"], active["nextRunNominalAt"]);
+    let unrelated = unrelated_database_fields(&db)?;
+    let paused = update_status(&LocalHost::new(home.path()), "PAUSED")?["item"].clone();
+    assert_eq!(paused["targetThreadId"], "retained-thread");
+    assert_eq!(paused["nextRunAt"], Value::Null);
+    assert_eq!(unrelated_database_fields(&db)?, unrelated);
+    let mut expected: toml::Table = toml::from_str(&definition)?;
+    let actual: toml::Table = toml::from_str(&fs::read_to_string(
+        home.path().join("automations/task/automation.toml"),
+    )?)?;
+    expected.insert("updated_at".into(), actual["updated_at"].clone());
+    assert_eq!(actual, expected);
+    Ok(())
+}
+
+#[test]
+fn automation_update_rejects_missing_invalid_and_account_owned_targets() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let host = LocalHost::new(home.path());
+    let request = |id: &str| {
+        Request::post(
+            "automation-update",
+            Some(json!({"id": id, "status": "ACTIVE"})),
+        )
+    };
+    assert_eq!(
+        host.fetch(&request("missing")).unwrap_err().to_string(),
+        "Automation does not exist in the app and could not be updated. It may have been deleted manually by the user."
+    );
+    assert_eq!(
+        host.fetch(&request("../escape")).unwrap_err().to_string(),
+        "invalid automation id"
+    );
+    assert!(!home.path().join("automations").exists());
+    let definition = definition("task", 20);
+    host.write_automation("task", &definition)?;
+    let db = update_database(home.path())?;
+    db.execute("INSERT INTO automations(id,account_id,status,rrule,next_run_at) VALUES ('task','other-account','ACTIVE','original-rule',123)", [])?;
+    let before = unrelated_database_fields(&db)?;
+    assert_eq!(
+        host.fetch(&request("task")).unwrap_err().to_string(),
+        "cannot write an account-owned automation through LocalHost"
+    );
+    assert_eq!(unrelated_database_fields(&db)?, before);
+    assert_eq!(
+        db.query_row(
+            "SELECT next_run_at FROM automations WHERE id='task'",
+            [],
+            |row| row.get::<_, i64>(0)
+        )?,
+        123
+    );
+    assert_eq!(
+        fs::read_to_string(home.path().join("automations/task/automation.toml"))?,
+        definition
+    );
+    assert!(!home.path().join("automations/.run-jitter-salt").exists());
+    Ok(())
+}
+
+#[test]
+fn automation_resume_schedules_when_the_jitter_salt_cannot_be_saved() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let host = LocalHost::new(home.path());
+    host.write_automation("task", &definition("task", 20))?;
+    let _db = update_database(home.path())?;
+    let salt = home.path().join("automations/.run-jitter-salt");
+    fs::create_dir(&salt)?;
+    let resumed = update_status(&host, "ACTIVE")?["item"].clone();
+    assert_eq!(resumed["status"], "ACTIVE");
+    assert!(resumed["nextRunAt"].as_i64().unwrap() >= resumed["updatedAt"].as_i64().unwrap());
+    assert!(salt.is_dir());
+    Ok(())
+}

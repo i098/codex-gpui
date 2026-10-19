@@ -6,6 +6,7 @@ use std::path::{Component, Path, PathBuf};
 pub(super) enum Kind {
     Header,
     Body,
+    Source,
 }
 
 pub(super) struct Menu {
@@ -22,11 +23,24 @@ impl DiffPanel {
         &self,
     ) -> impl ExactSizeIterator<Item = (&'static str, bool)> + Clone + use<> {
         let (items, count) = match &self.menu {
-            None => ([("", false); 4], 0),
+            None => ([("", false); 5], 0),
+            Some(menu) if menu.kind == Kind::Source => (
+                [
+                    ("Last Turn", true),
+                    ("Unstaged", true),
+                    ("Staged", true),
+                    (
+                        "Refresh",
+                        !self.pending && self.source != DiffSource::LastTurn,
+                    ),
+                    ("", false),
+                ],
+                4,
+            ),
             Some(menu) if menu.kind == Kind::Header => (
                 [
                     ("Copy path", true),
-                    ("Open in editor", false),
+                    ("Open in editor", true),
                     (
                         if self.files[menu.file].open {
                             "Collapse file"
@@ -35,9 +49,21 @@ impl DiffPanel {
                         },
                         true,
                     ),
-                    ("", false),
+                    (
+                        if self.source == DiffSource::Staged {
+                            "Unstage file"
+                        } else {
+                            "Stage file"
+                        },
+                        !self.pending && self.error.is_none(),
+                    ),
+                    ("Revert file", !self.pending && self.error.is_none()),
                 ],
-                3,
+                if self.source == DiffSource::LastTurn {
+                    3
+                } else {
+                    5
+                },
             ),
             Some(menu) => (
                 [
@@ -45,6 +71,7 @@ impl DiffPanel {
                     ("Copy path", true),
                     ("Copy relative path", true),
                     ("Toggle line wrap", true),
+                    ("", false),
                 ],
                 4,
             ),
@@ -136,6 +163,28 @@ impl DiffPanel {
         cx.notify();
     }
 
+    /// The directory a displayed file path is relative to.
+    fn file_root(&self) -> &str {
+        if self.source == DiffSource::LastTurn {
+            &self.workspace
+        } else {
+            self.repository
+                .as_ref()
+                .map_or(self.workspace.as_str(), |r| r.root.as_str())
+        }
+    }
+
+    pub(super) fn request_open(&self, file: usize, cx: &mut Context<Self>) {
+        let Some(file) = self.files.get(file) else {
+            return;
+        };
+        let relative = format!("{}{}", file.dir, file.name);
+        cx.emit(DiffRequest::Open(absolute_path(
+            self.file_root(),
+            &relative,
+        )));
+    }
+
     fn close_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(menu) = self.menu.take()
             && let Some(focus) = menu.return_focus
@@ -154,15 +203,32 @@ impl DiffPanel {
         if let Some(focus) = menu.return_focus {
             window.focus(&focus, cx);
         }
+        if menu.kind == Kind::Source {
+            match label {
+                "Last Turn" => self.select_source(DiffSource::LastTurn, cx),
+                "Unstaged" => self.select_source(DiffSource::Unstaged, cx),
+                "Staged" => self.select_source(DiffSource::Staged, cx),
+                "Refresh" => cx.emit(DiffRequest::Refresh),
+                _ => unreachable!(),
+            }
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
+        let root = self.file_root().to_owned();
         let file = &mut self.files[menu.file];
         match label {
+            "Stage file" => cx.emit(DiffRequest::Stage(format!("{}{}", file.dir, file.name))),
+            "Unstage file" => cx.emit(DiffRequest::Unstage(format!("{}{}", file.dir, file.name))),
+            "Revert file" => self.request_revert(menu.file, None, cx),
+            "Open in editor" => self.request_open(menu.file, cx),
             "Copy selection" => cx.write_to_clipboard(ClipboardItem::new_string(menu.selected)),
             "Copy path" | "Copy relative path" => {
                 let relative = format!("{}{}", file.dir, file.name);
                 let path = if menu.kind == Kind::Header || label == "Copy relative path" {
                     relative
                 } else {
-                    absolute_path(&self.workspace, &relative)
+                    absolute_path(&root, &relative)
                 };
                 cx.write_to_clipboard(ClipboardItem::new_string(path));
             }
@@ -219,7 +285,11 @@ impl DiffPanel {
             .pl_0()
             .id("diff-menu")
             .role(Role::Menu)
-            .aria_label("File actions")
+            .aria_label(if menu.kind == Kind::Source {
+                "Changes source"
+            } else {
+                "File actions"
+            })
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation());
         deferred(

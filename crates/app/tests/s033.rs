@@ -100,3 +100,91 @@ fn escape_and_type_anywhere_match_the_original() -> Result<()> {
     ensure!(fx.composer_text()? == "abc", "Copy changed the text");
     Ok(())
 }
+
+#[test]
+fn popup_typing_does_not_reach_the_composer() -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        return Ok(());
+    }
+    let mut fx = Fx::new()?;
+    fx.type_text("draft")?;
+    for at in [(1030., 790.), (522.5, 790.)] {
+        fx.click(at)?;
+        let composer = fx.composer();
+        ensure!(
+            fx.cx.update_window(fx.window, |_, window, cx| composer
+                .read(cx)
+                .menu_state(window)
+                .0)?,
+            "the popup did not open"
+        );
+        fx.type_text("x")?;
+        ensure!(fx.composer_text()? == "draft", "the popup captured text");
+        ensure!(!fx.composer_focused()?, "the popup lost focus");
+        fx.keys("escape")?;
+    }
+    fx.click((800., 200.))?;
+    fx.type_text("a")?;
+    ensure!(fx.composer_text()? == "drafta", "content typing was lost");
+    ensure!(
+        fx.composer_focused()?,
+        "content typing did not focus the editor"
+    );
+    Ok(())
+}
+
+#[test]
+fn thread_content_typing_preserves_editing_and_popup_isolation() -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        return Ok(());
+    }
+    let mut fx = Fx::new()?;
+    fx.keys("cmd-2")?;
+    fx.wait_thread(common::SUBTRACT)?;
+    let image = fx.shot()?;
+    let y = image.height() * 65 / 100;
+    let center = image.width() / 2;
+    let color = image.get_pixel(center, y);
+    let mut left = center;
+    let mut right = center;
+    while left > 0 && image.get_pixel(left - 1, y) == color {
+        left -= 1;
+    }
+    while right + 1 < image.width() && image.get_pixel(right + 1, y) == color {
+        right += 1;
+    }
+    ensure!(right - left > image.width() / 2, "no blank transcript span");
+    let scale = image.width() as f32 / fx.size.0;
+    fx.click(((left + right) as f32 / (2. * scale), y as f32 / scale))?;
+    fx.type_text("a")?;
+    ensure!(fx.composer_text()? == "a", "thread content typing was lost");
+    ensure!(
+        fx.composer_focused()?,
+        "thread typing did not focus the editor"
+    );
+    fx.keys("left")?;
+    fx.type_text("b")?;
+    ensure!(
+        fx.composer_text()? == "ba",
+        "thread editing changed the cursor position"
+    );
+    for at in [(1030., 790.), (522.5, 790.)] {
+        fx.click(at)?;
+        let composer = fx.composer();
+        ensure!(
+            fx.cx.update_window(fx.window, |_, window, cx| composer
+                .read(cx)
+                .menu_state(window)
+                .0)?,
+            "the thread popup did not open"
+        );
+        fx.type_text("x")?;
+        ensure!(
+            fx.composer_text()? == "ba",
+            "thread popup input reached the draft"
+        );
+        ensure!(!fx.composer_focused()?, "the thread popup lost focus");
+        fx.keys("escape")?;
+    }
+    Ok(())
+}
