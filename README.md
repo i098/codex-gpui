@@ -38,7 +38,8 @@ Create saves the definition through `create-automation` to `CODEX_HOME/automatio
 The app reloads the task list after a successful write and retains the draft if the write fails.
 The existing host schedules these definitions; this app does not start another scheduler.
 The row menu's `Run now` sends `automation-run-now`; the host starts one `codex app-server` thread and turn per task folder.
-It runs only local tasks with project folders, and every other task fails with the reason in the `Could not start scheduled task` toast.
+It runs only tasks with the local environment and either project folders or a project target (the project's first root from `.codex-global-state.json`).
+Worktree tasks, which are the original default, projectless tasks and heartbeat tasks fail with the reason in the `Could not start scheduled task` toast.
 Run `cargo test -p app --test task_create -- --test-threads=1` on macOS for the native creation and reload proof.
 Run `cargo test -p app --test automation_run_now` for the `Run now` requests over a stdio app-server stub.
 

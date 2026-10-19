@@ -112,7 +112,7 @@ fn run_now_refuses_tasks_it_cannot_run_before_touching_the_app_server() -> Resul
         run(&host, "wt")
             .unwrap_err()
             .to_string()
-            .contains("Only local tasks")
+            .contains("no worktree service")
     );
     let heartbeat = "version = 1\nid = \"hb\"\nname = \"H\"\nprompt = \"p\"\nstatus = \"ACTIVE\"\nkind = \"heartbeat\"\ntarget_thread_id = \"t\"\ncreated_at = 1\nupdated_at = 1\n";
     host.write_automation("hb", heartbeat)?;
@@ -123,6 +123,47 @@ fn run_now_refuses_tasks_it_cannot_run_before_touching_the_app_server() -> Resul
             .contains("Heartbeat")
     );
     ensure!(requests(&log)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn run_now_resolves_a_project_target_to_its_first_root() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let log = dir.path().join("requests.jsonl");
+    let root = dir.path().join("project");
+    fs::create_dir(&root)?;
+    fs::write(
+        dir.path().join(".codex-global-state.json"),
+        json!({"local-projects": {"p": {"id": "p1", "name": "P", "rootPaths": [root]}}})
+            .to_string(),
+    )?;
+    let host = host(dir.path(), &log, false)?;
+    let task = |id: &str, target: &str| {
+        format!(
+            "version = 1\nid = \"{id}\"\nname = \"N\"\nprompt = \"p\"\nstatus = \"ACTIVE\"\ncwds = []\ncreated_at = 1\nupdated_at = 1\nexecution_environment = \"local\"\n{target}"
+        )
+    };
+    host.write_automation(
+        "known",
+        &task(
+            "known",
+            "[target]\ntype = \"project\"\nproject_id = \"p1\"\n",
+        ),
+    )?;
+    host.write_automation(
+        "lost",
+        &task(
+            "lost",
+            "[target]\ntype = \"project\"\nproject_id = \"gone\"\n",
+        ),
+    )?;
+    host.write_automation("free", &task("free", "[target]\ntype = \"projectless\"\n"))?;
+    for id in ["lost", "free"] {
+        ensure!(run(&host, id).is_err());
+    }
+    ensure!(requests(&log)?.is_empty());
+    ensure!(run(&host, "known")? == json!({"success": true}));
+    ensure!(requests(&log)?[0]["params"]["cwd"] == json!(root));
     Ok(())
 }
 

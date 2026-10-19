@@ -585,7 +585,9 @@ Choosing it sends `automation-run-now` with `{id, collaborationMode, permissions
 The new thread then appears in Recents through `thread/started`; no run record is written, because the original host's run tracking is not ported.
 A refusal or `success: false` shows the danger toast `Could not start scheduled task`, with the reason on one line.
 Event-triggered tasks (`## When this happens` prompts) have the item disabled with the tooltip `Automations triggered by events can’t be run manually`; the host refuses them too.
-Worktree, project-target and heartbeat tasks need the original's git worker or renderer state, so the host refuses them instead of running them elsewhere.
+The local environment with project folders or a project target (its first root from `.codex-global-state.json`) runs.
+Worktree (the original default), projectless and heartbeat tasks are refused: the host has no worktree service, workspace-directory creation or renderer thread state.
+No sandbox or approval settings from the user's config are sent, no run row is written and the project assignment of the new thread is not stored.
 `automation_run_now` checks the requests the app-server receives and the refusals; the live `Root` flow needs macOS.
 
 | # | Item | Kind | Original | Port | Status |

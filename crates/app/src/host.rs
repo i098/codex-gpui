@@ -566,11 +566,29 @@ impl LocalHost {
         definition(&id, &contents)
     }
 
+    /// The first root folder of the original sidebar project `id` (`local-projects` in
+    /// `.codex-global-state.json`), like the original's `cl` then `en(project.roots)`.
+    fn project_root(&self, id: &str) -> Result<String> {
+        let state: Value = fs::read(self.home.join(".codex-global-state.json"))
+            .ok()
+            .and_then(|contents| serde_json::from_slice(&contents).ok())
+            .unwrap_or(Value::Null);
+        state["local-projects"]
+            .as_object()
+            .into_iter()
+            .flat_map(|projects| projects.values())
+            .find(|project| project["id"] == id)
+            .and_then(|project| project["rootPaths"][0].as_str())
+            .map(str::to_owned)
+            .context("Scheduled run skipped: no folders configured")
+    }
+
     /// The original's `automation-run-now` for a local task: one app-server thread per task
     /// folder, titled with the task name, then a turn with the original's run preamble and the
     /// prompt. A run that cannot start fails with the reason; no run is recorded or faked.
-    /// The original also runs worktree, project-target and heartbeat tasks; those need its git
-    /// worker and renderer state, so they fail here instead of running somewhere else.
+    /// The original also runs worktree (its default), projectless and heartbeat tasks; those
+    /// need its worktree service, workspace directories and renderer state, none of which this
+    /// host has, so they fail here instead of running somewhere else.
     fn automation_run_now(&self, params: &Value) -> Result<Value> {
         let id = params["id"].as_str().context("missing automation id")?;
         let item = self
@@ -590,15 +608,21 @@ impl LocalHost {
             "Heartbeat tasks cannot be run from this app yet"
         );
         ensure!(
-            item["target"].is_null() && item["executionEnvironment"] == "local",
-            "Only local tasks with project folders can be run from this app yet"
+            item["executionEnvironment"] == "local",
+            "Worktree tasks cannot be run from this app yet: it has no worktree service"
         );
-        let cwds: Vec<&str> = item["cwds"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .collect();
+        let cwds: Vec<String> = match item["target"]["type"].as_str() {
+            None => item["cwds"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|cwd| cwd.as_str().map(str::to_owned))
+                .collect(),
+            Some("project") => {
+                vec![self.project_root(item["target"]["projectId"].as_str().unwrap_or_default())?]
+            }
+            Some(_) => bail!("Projectless tasks cannot be run from this app yet"),
+        };
         ensure!(
             !cwds.is_empty(),
             "Scheduled run skipped: no folders configured"
@@ -623,7 +647,7 @@ impl LocalHost {
         );
         let effort = item["reasoningEffort"].as_str().unwrap_or("medium");
         let mut first_error = None;
-        for cwd in cwds {
+        for cwd in &cwds {
             let started = pollster::block_on(async {
                 let mut start = json!({ "cwd": cwd });
                 if let Some(model) = item["model"].as_str() {
