@@ -451,6 +451,9 @@ pub struct Composer {
     lines: Vec<WrappedLine>,
     bounds: Option<Bounds<Pixels>>,
     attachments: Vec<attach::Attachment>,
+    /// The attachments of the last submission, until the next one: [`Self::restore_submission`]
+    /// puts them back when starting the chat failed.
+    submitted: Vec<attach::Attachment>,
     pending_attachments: usize,
     attachment_error: Option<&'static str>,
     /// A file drag is over the composer's drop target (`data-composer-drag-active`).
@@ -524,6 +527,7 @@ impl Composer {
             lines: Vec::new(),
             bounds: None,
             attachments: Vec::new(),
+            submitted: Vec::new(),
             pending_attachments: 0,
             attachment_error: None,
             drag_active: false,
@@ -758,6 +762,15 @@ impl Composer {
         }
     }
 
+    /// Puts a failed submission back: its text and its attachments, ahead of what was typed
+    /// since (the draft stays whole when starting the chat was refused).
+    pub fn restore_submission(&mut self, text: &str, cx: &mut Context<Self>) {
+        let mut restored = std::mem::take(&mut self.submitted);
+        restored.append(&mut self.attachments);
+        self.attachments = restored;
+        self.restore_text(text, cx);
+    }
+
     /// Open the model picker (`Select effort`), as `⌘⇧M`-style commands and the menu do.
     pub fn open_model_picker(&mut self, cx: &mut Context<Self>) {
         self.menu = Some(Menu::Effort);
@@ -810,7 +823,10 @@ impl Composer {
             } else {
                 self.prompt()
             },
-            attachments: self.attachments.drain(..).map(|a| a.path).collect(),
+            attachments: {
+                self.submitted = std::mem::take(&mut self.attachments);
+                self.submitted.iter().map(|a| a.path.clone()).collect()
+            },
             model: self
                 .current_model()
                 .map(|m| m.id.clone())

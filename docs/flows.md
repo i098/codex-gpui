@@ -833,6 +833,18 @@ Project dropdowns, worktrees, remote environments, discovery, indexing, and Git 
 
 Run `tools/mac.sh -l cgx-project-picker 'cargo test -p app --test project_picker -- --test-threads=1'`.
 
+A refused `thread/start` from Home (CP-120) shows the `Error starting chat` toast and stays on Home.
+The Home composer takes back the submitted text and the submission's attachments, ahead of anything typed since.
+The model, effort, permission choices and the selected project did not change, so a second send starts the chat in the same project with the same attachment.
+The toast carries only that title; the app-server's error text goes to the process log.
+Text with mention chips comes back as the plain prompt text that was sent, as in the thread composer's refused-send path.
+A refused `turn/start` after a successful `thread/start` is a separate case and is not handled here.
+
+`crates/app/tests/start_failure.rs` selects a temporary project, attaches a file to the Home composer and sends a prompt that the replayed app-server refuses.
+It then checks the toast, the route, the restored text, and that a second send starts in the same project with the same attachment.
+
+Run `tools/mac.sh -l cgx-asap-workable 'cargo test -p app --test start_failure -- --test-threads=1'`.
+
 
 ## F3c: Model announcement (SH-142)
 
