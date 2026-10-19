@@ -168,12 +168,15 @@ impl IterInfo {
             .collect()
     }
 
+    /// `BYSECOND=60` becomes a leap second, which `add_time_to_date` moves into the next minute.
     pub fn min_timeset(&self, hour: u8, minute: u8) -> Vec<NaiveTime> {
+        let (hour, minute) = (u32::from(hour), u32::from(minute));
         self.rrule
             .by_second
             .iter()
-            .filter_map(|second| {
-                NaiveTime::from_hms_opt(u32::from(hour), u32::from(minute), u32::from(*second))
+            .filter_map(|&second| match second {
+                60 => NaiveTime::from_hms_nano_opt(hour, minute, 59, 1_000_000_000),
+                second => NaiveTime::from_hms_opt(hour, minute, u32::from(second)),
             })
             .collect()
     }
@@ -245,26 +248,12 @@ impl IterInfo {
 
                 self.get_timeset_unchecked(hour, minute, second)
             }
-            _ => {
-                let timeset = self
-                    .rrule
-                    .by_hour
-                    .iter()
-                    .flat_map(|hour| {
-                        self.rrule.by_minute.iter().flat_map(move |minute| {
-                            self.rrule.by_second.iter().filter_map(move |second| {
-                                NaiveTime::from_hms_opt(
-                                    u32::from(*hour),
-                                    u32::from(*minute),
-                                    u32::from(*second),
-                                )
-                            })
-                        })
-                    })
-                    .collect();
-
-                timeset
-            }
+            _ => self
+                .rrule
+                .by_hour
+                .iter()
+                .flat_map(|hour| self.hour_timeset(*hour))
+                .collect(),
         }
     }
 

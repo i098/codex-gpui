@@ -389,7 +389,12 @@ The test compares the port's pixels before and after the same hover.
 The header menu copies the displayed path and collapses or expands the file.
 The body menu copies selected text, absolute paths, or displayed relative paths.
 The body menu also wraps long code lines without changing the copied text.
-The editor entry stays disabled until the native `openIn` service exists.
+The header icon and the `Open in editor` menu item send the file's absolute path to the desktop host's `open-file` endpoint with the thread `cwd`.
+The app adds `target` from the host setting `open-in-target-preferences`: `perPath[cwd]`, else `global`.
+Without a target the host opens the file with the system default app.
+The host runs macOS `open [-a App] file` after it resolves the path, symlinks included, to a regular file under the Git root of `cwd`.
+A missing file, a path outside the project, an unknown target, or an opener failure shows the `Unable to open in editor` toast and changes nothing else.
+`s027::open_in_editor_native_input_reaches_the_host_opener` runs the real host with a controlled opener executable on an owned repository.
 Comment actions (S075/S082), file tabs (S186), and external targets remain outside this slice, as firstmate approved.
 
 Local Changes uses the existing desktop host for `git-changes`, `git-stage`, and `git-unstage`.
@@ -430,7 +435,7 @@ Commit and push are in DT-139 below.
 | 3 | Source selector | click | Uncommitted / Staged / … | Last Turn, Unstaged, Staged, and Refresh read the open thread's local repository. | PARTIAL (`git_stage`; other sources remain separate) |
 | 4 | Show / Hide files | click | Toggles the file tree. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 5 | File tree filter | focus | `Filter files…`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Copy path and Collapse/Expand work. Local sources add Stage file, Unstage file, and confirmed Revert file. Open in editor remains disabled. | PARTIAL (`s027::diff_selection_and_hover_replay`, `git_stage`, `git_revert_ui`) |
+| 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Copy path and Collapse/Expand work. Open in editor works from the header icon and the menu. Local sources add Stage file, Unstage file, and confirmed Revert file. | PARTIAL (`s027::diff_selection_and_hover_replay`, `s027::open_in_editor_native_input_reaches_the_host_opener`, `git_stage`, `git_revert_ui`) |
 | 7 | Hunk revert / stage | click | Revert, Stage / Unstage hunk. | Local staged and unstaged hunks have confirmed Revert controls. Hunk staging and unstaging remain separate. | PARTIAL (`git_revert_ui`) |
 | 8 | Revert all | click | `Revert changes?` dialog. | File and hunk actions use the original confirmation and saved skip preference. Section-wide Revert all remains separate. | PARTIAL (`git_revert_ui`) |
 | 9 | Split / unified toggle | click | Switch diff layout. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
@@ -590,10 +595,34 @@ When the original database exists, a `pending:` row in `automation_runs` opens b
 `turn/completed` for the thread then sets the run to `PENDING_REVIEW` (`finish_automation_run`); a `failed_runs_only` task is read when the turn completed and unread otherwise.
 A refusal or `success: false` shows the danger toast `Could not start scheduled task`, with the reason on one line.
 Event-triggered tasks (`## When this happens` prompts) have the item disabled with the tooltip `Automations triggered by events can’t be run manually`; the host refuses them too.
-The local environment with project folders or a project target (its first root from `.codex-global-state.json`) runs.
-Worktree (the original default), projectless and heartbeat tasks are refused: the host has no worktree service, workspace-directory creation or renderer thread state.
+The project folders or project target (its first root from `.codex-global-state.json`) run, in a new worktree for the original default environment (`create_worktree` and `set_owner_thread`, removed again when no thread starts) or in the folder for `local`; outside a Git repository the run happens in the folder.
+Projectless and heartbeat tasks are refused: the host has no workspace-directory creation or renderer thread state.
 Not yet carried over: the project assignment of the new thread, `autoArchive`, the desktop notification, the unread dot on the rail, `lastRunAt` and next-run updates.
 `automation_run_now` checks the requests the app-server receives and the refusals; the live `Root` flow needs macOS.
+
+`LocalHost` implements the original `automation-update` status change for local tasks (issue https://github.com/i098/codex-gpui/issues/226).
+It accepts `{id, status}` or the original full cron or heartbeat body; any other changed field fails.
+`PAUSED` clears `next_run_at` and `next_run_nominal_at`.
+`ACTIVE` recalculates the original nominal and actual next run with `GF`/`KF`/`JF`/`XF` and the persisted `.run-jitter-salt`; it never reuses a cached time.
+A rule without a future run returns the original `Automation schedule has no future runs…` error.
+The update keeps the task identity, the definition and the unrelated TOML and database fields, and restores the TOML when the database commit fails.
+It returns the original `{item}` shape.
+The recurrence uses the vendored `rrule` 0.14.0 with the original limits: `INTERVAL` and `COUNT` up to the JavaScript safe integers, iteration through year 9999, and `BYSECOND=60` moved into the next minute.
+The `host` checks match the retained original oracle; the row actions do not call this endpoint yet.
+
+`LocalHost` also creates the worktree that the default Run now path needs (issue https://github.com/i098/codex-gpui/issues/254).
+`create-worktree` and `set-worktree-owner-thread` follow the original git worker (`D2`, `e4`) and the automation start `Ol`.
+A cwd outside a Git repository makes no worktree, and the original then runs in the cwd.
+The start is the remote default branch, else `HEAD`: the local branch, or its upstream when only the upstream moved, with a local tracking branch for a remote-only start.
+The worktree is `<worktrees root>/<4 hex>/<repo>` with the `.codex-worktree-name` marker and a 4-digit suffix when the name is taken; the default root is `$CODEX_HOME/worktrees`.
+`git worktree add --detach` runs without clean or smudge filters, and a start branch that is not the default branch is recorded in `codex-synced-branch.json`.
+Ignored `AGENTS.override.md` files and the ignored files that `.worktreeinclude` names are copied only as regular files, never through a symlinked directory or over an existing file.
+The selected local environment is stored in `codex.localEnvironmentConfigPath`, and its setup script runs in the user's login environment with `CODEX_SOURCE_TREE_PATH` and `CODEX_WORKTREE_PATH`; the exported variables go to `codex-shell-environment.json`.
+Like the original, Git's `extensions.worktreeConfig` is enabled in the repository when Git requires it for that store.
+A failure removes only the worktree that the call made, after its cleanup script, without `--force`; a worktree with changes is kept and the error says so.
+`set-worktree-owner-thread` writes `codex-thread.json` for a linked worktree only.
+`crates/app/tests/automation_worktree.rs` proves these effects against disposable repositories and a local bare remote, and the `host::git` unit tests prove the cleanup refusals and the name collision.
+Run now calls `create_worktree` and `set_owner_thread` directly for worktree tasks.
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
@@ -604,7 +633,7 @@ Not yet carried over: the project assignment of the new thread, `autoArchive`, t
 | 5 | Search | focus | Filters; `No matching tasks`. | Dispatches `SearchTasks`; no handler. | NOT WIRED (no host: `list-automations`) |
 | 6 | Status filter | click | All / Active / Paused. | — | NOT WIRED (no host: `list-automations`) |
 | 7 | Task row | click | Detail panel. | — | NOT WIRED (no host: `list-automations`) |
-| 8 | Row actions | click | Edit, Run now, Pause, Delete. | `Run now` runs through `automation-run-now`; no Edit, Pause or Delete. | PARTIAL (`automation_run_now`; NOT WIRED: `automation-update`, `automation-delete`) |
+| 8 | Row actions | click | Edit, Run now, Pause, Delete. | `Run now` runs through `automation-run-now`; no Edit, Pause or Delete in the UI. | PARTIAL (`automation_run_now`; `LocalHost` has `automation-update` pause/resume, no `automation-delete`) |
 | 9 | Editor fields | focus | Name, Prompt, schedule. | — | NOT WIRED (no host: `automation-create`) |
 | 10 | Previous runs | click | Run chat, mark read, archive. | — | NOT WIRED (no host: `inbox-items`, `automation-run-archive`) |
 | 11 | Row hover | hover | Row highlight. | No task rows; suggestion hover matches the original recording. | FAIL (no task rows; suggestion hover passes `s035::suggestion_hover_matches_original`) |
@@ -819,7 +848,17 @@ The label's stable element ID makes GPUI apply hover dimensions during layout.
 An image check protects the control regions for 100-character names at rest and on hover.
 
 Default Recents, pins, status indicators, and paging retain their existing checks.
-Project activation, menus, hover-card actions, and project thread paging are outside RS-081.
+Project menus, hover-card actions, and project thread paging are outside RS-081.
+
+RS-069 and RS-070 select an existing project in the sidebar.
+A click on a row, or on its hover `new-chat` icon, dispatches `SelectProject(root)` with the project's first stored root path.
+`Root::select_project` sets `State.project_root` (persisted by the existing state save), the Home chip and the file-search root, then opens Home.
+The icon also runs `NewChat`, so the composer is empty and focused.
+`thread/start` takes its `cwd` from `State.project_root`.
+Open chats keep the `cwd` the server stored with them, and selecting a project does not change them.
+A missing folder, or a project with no root path, ignores both clicks.
+`project_picker` clicks two owned projects and a deleted one, and checks the logged `thread/start` working directories.
+The row click does not expand or collapse the folder, because the port lists no per-project chats.
 The shared replay selects the dedicated `f1d_projects` adapter.
 
 Run `tools/mac.sh -l f1d-projects 'cargo test -p app --test f1d_projects -- --test-threads=1'`.
@@ -860,6 +899,18 @@ The physical macOS folder dialog is not exercised by this headless check.
 Project dropdowns, worktrees, remote environments, discovery, indexing, and Git actions remain outside this native-folder slice.
 
 Run `tools/mac.sh -l cgx-project-picker 'cargo test -p app --test project_picker -- --test-threads=1'`.
+
+A refused `thread/start` from Home (CP-120) shows the `Error starting chat` toast and stays on Home.
+The Home composer takes back the submitted text and the submission's attachments, ahead of anything typed since.
+The model, effort, permission choices and the selected project did not change, so a second send starts the chat in the same project with the same attachment.
+The toast carries only that title; the app-server's error text goes to the process log.
+Text with mention chips comes back as the plain prompt text that was sent, as in the thread composer's refused-send path.
+A refused `turn/start` after a successful `thread/start` is a separate case and is not handled here.
+
+`crates/app/tests/start_failure.rs` selects a temporary project, attaches a file to the Home composer and sends a prompt that the replayed app-server refuses.
+It then checks the toast, the route, the restored text, and that a second send starts in the same project with the same attachment.
+
+Run `tools/mac.sh -l cgx-asap-workable 'cargo test -p app --test start_failure -- --test-threads=1'`.
 
 
 ## F3c: Model announcement (SH-142)

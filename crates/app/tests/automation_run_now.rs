@@ -17,7 +17,7 @@ while IFS= read -r line; do
     *'"model/list"'*) printf '{"id":%s,"result":{"data":%s}}\n' "$id" "$MODELS" ;;
     *'"config/read"'*) printf '{"id":%s,"result":{"config":%s}}\n' "$id" "$CONFIG" ;;
     *'"configRequirements/read"'*) printf '{"id":%s,"result":{"requirements":%s}}\n' "$id" "$REQUIREMENTS" ;;
-    *'"thread/start"'*) printf '{"id":%s,"result":{"thread":{"id":"thread-%s"}}}\n' "$id" "$id" ;;
+    *'"thread/start"'*) [ -z "$FAIL_THREAD" ] || { printf '{"id":%s,"error":{"code":-32000,"message":"no thread"}}\n' "$id"; continue; }; printf '{"id":%s,"result":{"thread":{"id":"thread-%s"}}}\n' "$id" "$id" ;;
     *'"turn/start"'*REFUSE*) printf '{"id":%s,"error":{"code":-32000,"message":"model unavailable"}}\n' "$id" ;;
     *'"turn/start"'*) [ -z "$SLOW" ] || sleep 2; printf '{"id":%s,"result":{}}\n' "$id" ;;
     *) printf '{"id":%s,"result":{}}\n' "$id" ;;
@@ -129,15 +129,6 @@ fn run_now_refuses_tasks_it_cannot_run_before_touching_the_app_server() -> Resul
             .unwrap_err()
             .to_string()
             .contains("triggered by events")
-    );
-    // The original's default environment is a worktree, which needs its git worker.
-    let worktree = "version = 1\nid = \"wt\"\nname = \"W\"\nprompt = \"p\"\nstatus = \"ACTIVE\"\ncwds = [\"/tmp\"]\ncreated_at = 1\nupdated_at = 1\n";
-    host.write_automation("wt", worktree)?;
-    ensure!(
-        run(&host, "wt")
-            .unwrap_err()
-            .to_string()
-            .contains("no worktree service")
     );
     let heartbeat = "version = 1\nid = \"hb\"\nname = \"H\"\nprompt = \"p\"\nstatus = \"ACTIVE\"\nkind = \"heartbeat\"\ntarget_thread_id = \"t\"\ncreated_at = 1\nupdated_at = 1\n";
     host.write_automation("hb", heartbeat)?;
@@ -471,5 +462,174 @@ fn row_menu_run_now_starts_the_task_through_the_app_server() -> Result<()> {
     shot(&mut fx, "5-event-task-disabled")?;
     fx.click((250., 277.))?;
     ensure!(requests(&log)?.len() == 3, "an event task starts nothing");
+    Ok(())
+}
+
+fn git(repo: &Path, args: &[&str]) -> Result<String> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .output()?;
+    ensure!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    Ok(String::from_utf8(out.stdout)?.trim().to_owned())
+}
+
+fn repository(root: &Path) -> Result<std::path::PathBuf> {
+    let repo = root.join("repo");
+    fs::create_dir_all(&repo)?;
+    git(&repo, &["init", "-q"])?;
+    fs::write(repo.join("a.txt"), "a")?;
+    git(&repo, &["add", "."])?;
+    git(
+        &repo,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    )?;
+    Ok(repo)
+}
+
+/// A task of the original's default environment: no `execution_environment`, so a worktree.
+fn worktree_task(host: &LocalHost, id: &str, cwd: &Path) -> Result<()> {
+    let toml = format!(
+        "version = 1\nid = \"{id}\"\nname = \"W\"\nprompt = \"p\"\nstatus = \"ACTIVE\"\ncwds = [{cwd:?}]\ncreated_at = 1\nupdated_at = 1\n"
+    );
+    host.write_automation(id, &toml)
+}
+
+#[test]
+fn a_default_task_runs_in_a_new_worktree_that_its_thread_owns() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let home = dir.path().join("home");
+    let repo = repository(dir.path())?;
+    let log = dir.path().join("requests.jsonl");
+    let host = host(&home, &log, false)?;
+    worktree_task(&host, "wt", &repo)?;
+    ensure!(run(&host, "wt")? == json!({"success": true}));
+    let sent = requests(&log)?;
+    let (start, turn) = (&sent[0]["params"], &sent[2]["params"]);
+    let cwd = std::path::PathBuf::from(start["cwd"].as_str().unwrap_or_default());
+    ensure!(
+        cwd.starts_with(home.join("worktrees")) && cwd.ends_with("repo"),
+        "{cwd:?}"
+    );
+    ensure!(turn["cwd"] == start["cwd"] && cwd.join("a.txt").is_file());
+    // The thread owns the worktree, and the turn may write the worktree and the source repository.
+    let owner = git(&cwd, &["rev-parse", "--git-path", "codex-thread.json"])?;
+    let owner: Value = serde_json::from_str(&fs::read_to_string(cwd.join(owner))?)?;
+    ensure!(owner["ownerThreadId"] == turn["threadId"]);
+    let roots = turn["sandboxPolicy"]["writableRoots"].to_string();
+    ensure!(roots.contains(&*cwd.to_string_lossy()) && roots.contains(&*repo.to_string_lossy()));
+    Ok(())
+}
+
+#[test]
+fn a_default_task_outside_git_runs_in_its_folder() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let log = dir.path().join("requests.jsonl");
+    let host = host(&dir.path().join("home"), &log, false)?;
+    let plain = dir.path().join("plain");
+    fs::create_dir(&plain)?;
+    worktree_task(&host, "wt", &plain)?;
+    ensure!(run(&host, "wt")? == json!({"success": true}));
+    ensure!(requests(&log)?[0]["params"]["cwd"] == json!(plain));
+    ensure!(!dir.path().join("home/worktrees").exists());
+    Ok(())
+}
+
+#[test]
+fn a_thread_that_does_not_start_leaves_no_worktree_behind() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let home = dir.path().join("home");
+    let repo = repository(dir.path())?;
+    let log = dir.path().join("requests.jsonl");
+    let host = host_with(&home, &log, false, &[("FAIL_THREAD", "1")])?;
+    worktree_task(&host, "wt", &repo)?;
+    let error = run(&host, "wt").unwrap_err().to_string();
+    ensure!(error.contains("no thread"), "{error}");
+    ensure!(
+        git(&repo, &["worktree", "list", "--porcelain"])?
+            .matches("worktree ")
+            .count()
+            == 1
+    );
+    ensure!(
+        requests(&log)?.len() == 1,
+        "only the refused thread/start was sent"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_default_path_has_config_permissions_run_rows_and_keeps_its_worktree() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let home = dir.path().join("home");
+    fs::create_dir_all(home.join("sqlite"))?;
+    let db = rusqlite::Connection::open(home.join("sqlite/codex.db"))?;
+    db.execute(RUNS, [])?;
+    db.execute(AUTOMATIONS, [])?;
+    drop(db);
+    let repo = repository(dir.path())?;
+    let log = dir.path().join("requests.jsonl");
+    let config = r#"{"sandbox_mode":"workspace-write"}"#;
+    let host = host_with(&home, &log, false, &[("CONFIG", config)])?;
+    worktree_task(&host, "wt", &repo)?;
+    ensure!(run(&host, "wt")? == json!({"success": true}));
+    let sent = requests(&log)?;
+    let turn = &sent[2]["params"];
+    let (cwd, thread) = (
+        turn["cwd"].as_str().unwrap_or_default(),
+        turn["threadId"].as_str().unwrap_or_default(),
+    );
+    ensure!(sent[0]["params"]["sandbox"] == "workspace-write" && turn["approvalPolicy"] == "never");
+    ensure!(
+        turn["sandboxPolicy"]["writableRoots"][0] == json!(repo),
+        "the source repository is writable"
+    );
+    let rows = runs(&home)?;
+    ensure!(rows.len() == 1 && rows[0].0 == thread && rows[0].1 == "IN_PROGRESS");
+    ensure!(
+        rows[0].4.as_deref() == repo.to_str(),
+        "the row names the source folder, not the worktree"
+    );
+    ensure!(host.finish_run(thread, true)?);
+    ensure!(runs(&home)?[0].1 == "PENDING_REVIEW");
+    ensure!(
+        Path::new(cwd).join("a.txt").is_file(),
+        "a finished run keeps its worktree"
+    );
+
+    // A turn the server refuses may already have produced work: the worktree stays, owned.
+    let refused = repository(&dir.path().join("second"))?;
+    fs::write(refused.join("REFUSE"), "")?;
+    worktree_task(&host, "refused", &refused)?;
+    host.write_automation(
+        "refused",
+        &fs::read_to_string(home.join("automations/refused/automation.toml"))?
+            .replace("\"p\"", "\"REFUSE this\""),
+    )?;
+    ensure!(run(&host, "refused").is_err());
+    ensure!(
+        git(&refused, &["worktree", "list", "--porcelain"])?
+            .matches("worktree ")
+            .count()
+            == 2
+    );
+    ensure!(
+        runs(&home)?
+            .iter()
+            .any(|r| r.1 == "ARCHIVED" && r.3.as_deref() == Some("auto"))
+    );
     Ok(())
 }

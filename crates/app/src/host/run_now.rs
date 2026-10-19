@@ -10,6 +10,7 @@
 //! database.
 
 use super::LocalHost;
+use super::git;
 use anyhow::{Context as _, Result, bail, ensure};
 use rusqlite::{OpenFlags, params};
 use serde_json::{Value, json};
@@ -490,12 +491,12 @@ impl LocalHost {
         Ok(changed > 0)
     }
 
-    /// The original's `automation-run-now` for a local task: one app-server thread per task
-    /// folder, titled with the task name, then a turn with the original's run preamble and the
-    /// prompt. A run that cannot start fails with the reason. The original also runs worktree
-    /// (its default), projectless and heartbeat tasks; those need its worktree service,
-    /// workspace directories and renderer thread state, none of which this host has, so they
-    /// fail here instead of running somewhere else.
+    /// The original's `automation-run-now` for a task: one app-server thread per task folder, in
+    /// a new worktree of the folder's repository for the original default environment, titled
+    /// with the task name, then a turn with the original's run preamble and the prompt. A run
+    /// that cannot start fails with the reason. The original also runs projectless and heartbeat
+    /// tasks; those need workspace directories and renderer thread state, which this host does
+    /// not have, so they fail here instead of running somewhere else.
     pub(super) fn automation_run_now(&self, params: &Value) -> Result<Value> {
         let id = params["id"].as_str().context("missing automation id")?;
         let item = self
@@ -515,9 +516,16 @@ impl LocalHost {
             "Heartbeat tasks cannot be run from this app yet"
         );
         ensure!(
-            item["executionEnvironment"] == "local",
-            "Worktree tasks cannot be run from this app yet: it has no worktree service"
+            matches!(
+                item["executionEnvironment"].as_str(),
+                Some("local" | "worktree")
+            ),
+            "Unknown automation execution environment"
         );
+        let worktree_env = item["executionEnvironment"] == "worktree";
+        let local_environment = item["localEnvironmentConfigPath"]
+            .as_str()
+            .map(std::path::PathBuf::from);
         let cwds: Vec<String> = match item["target"]["type"].as_str() {
             None => item["cwds"]
                 .as_array()
@@ -588,7 +596,23 @@ impl LocalHost {
         for cwd in &cwds {
             let pending = format!("pending:{}", super::device_id());
             let started = self.begin_run(id, &pending, name, cwd).and_then(|()| {
-                let (config, thread_id) = pollster::block_on(async {
+                // The original's default: the run happens in a fresh worktree of the folder's
+                // repository, or in the folder itself when it is no repository.
+                let worktree = if worktree_env {
+                    git::create_worktree(
+                        &self.home.join("worktrees"),
+                        std::path::Path::new(cwd),
+                        None,
+                        local_environment.as_deref(),
+                    )?
+                } else {
+                    None
+                };
+                let run_cwd = worktree.as_ref().map_or_else(
+                    || cwd.clone(),
+                    |w| w.workspace_root.to_string_lossy().into_owned(),
+                );
+                let started = pollster::block_on(async {
                     let saved: Value = bridge
                         .request("config/read", json!({"includeLayers": false, "cwd": cwd}))
                         .await?;
@@ -603,7 +627,7 @@ impl LocalHost {
                     let thread: Value = bridge
                         .request(
                             "thread/start",
-                            json!({"cwd": cwd, "model": model, "approvalPolicy": first.approval_policy,
+                            json!({"cwd": run_cwd, "model": model, "approvalPolicy": first.approval_policy,
                                 "approvalsReviewer": first.reviewer, "sandbox": first.sandbox_mode(),
                                 "threadSource": "automation"}),
                         )
@@ -612,12 +636,26 @@ impl LocalHost {
                         .as_str()
                         .context("thread/start returned no thread")?;
                     Ok::<_, anyhow::Error>((config, thread_id.to_owned()))
-                })?;
+                });
+                let (config, thread_id) = match started {
+                    Ok(started) => started,
+                    Err(error) => {
+                        // No thread owns the worktree yet, so the helper may remove it.
+                        if let Some(worktree) = &worktree {
+                            let _ = git::remove_unstarted_worktree(&self.home.join("worktrees"), worktree);
+                        }
+                        return Err(error);
+                    }
+                };
+                if let Some(worktree) = &worktree {
+                    // The original only logs a failure to record the owner.
+                    let _ = git::set_owner_thread(&worktree.git_root, &thread_id);
+                }
                 // From here the row follows the thread, so a failure archives that row.
                 let _ = self.name_run(id, &pending, &thread_id, name, cwd);
                 (|| {
-                    let mut roots = vec![cwd.clone(), memory.clone()];
-                    roots.extend(git_roots(cwd, cwd));
+                    let mut roots = vec![cwd.clone(), run_cwd.clone(), memory.clone()];
+                    roots.extend(git_roots(cwd, &run_cwd));
                     let mut seen = std::collections::HashSet::new();
                     roots.retain(|root| seen.insert(root.clone()));
                     let turn = permissions(&roots, &config, &requirements, agent_mode.as_deref(), false)?;
@@ -632,7 +670,7 @@ impl LocalHost {
                         bridge
                             .request::<_, Value>(
                                 "turn/start",
-                                json!({"threadId": thread_id, "cwd": cwd, "model": model, "effort": effort,
+                                json!({"threadId": thread_id, "cwd": run_cwd, "model": model, "effort": effort,
                                     "approvalPolicy": turn.approval_policy, "approvalsReviewer": turn.reviewer,
                                     "sandboxPolicy": turn.sandbox_policy,
                                     "input": [{ "type": "text", "text": text, "text_elements": [] }]}),

@@ -41,7 +41,8 @@ use ui::screens::home::{HomeMain, OpenFolder};
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
 use ui::screens::sidebar::{
     ArchiveThread, ArchivedChats, CommandMenu, CommandMenuEvent, HomeSidebar, LoadMore, OpenThread,
-    PINNED_SECTION_ID, PinThread, RenameThread, SEARCH_LIMIT, SearchHit, title as thread_title,
+    PINNED_SECTION_ID, PinThread, RenameThread, SEARCH_LIMIT, SearchHit, SelectProject,
+    title as thread_title,
 };
 use ui::screens::terminal::Xterm;
 use ui::screens::thread::view::{
@@ -608,14 +609,7 @@ impl Root {
             focus: cx.focus_handle(),
             home: cx.new(|_| HomeMain {
                 composer: home_composer,
-                project: state.project_root.as_ref().map(|root| {
-                    std::path::Path::new(root)
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .unwrap_or(root)
-                        .to_owned()
-                        .into()
-                }),
+                project: state.project_root.as_deref().map(project_name),
             }),
             thread_composer,
             thread: None,
@@ -700,25 +694,56 @@ impl Root {
     }
 
     /// `initialize`, then account, Recents, models and config; shows the route once ready.
+    /// An ACP agent has no Codex account, model catalog, config or skills: the app asks only
+    /// for Recents, and a toast says which features work (README `ACP backend`).
     fn connect(&self, window: &Window, cx: &mut Context<Self>) {
         let (bridge, cwd) = (self.bridge.clone(), self.cwd.clone());
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            bridge
+            let server = bridge
                 .initialize("codex-gpui", env!("CARGO_PKG_VERSION"))
                 .await?;
-            let account = bridge.account_read().await?;
+            let acp = bridge.is_acp();
+            let account = if acp {
+                None
+            } else {
+                Some(bridge.account_read().await?)
+            };
             let threads = bridge.thread_list().await?;
-            let mut catalog: ModelCatalog = bridge.request("model/list", json!({})).await?;
-            let config: ConfigReadResponse = bridge
-                .request("config/read", json!({ "includeLayers": false, "cwd": cwd }))
-                .await?;
-            // Only the settings page reads it (home directory), so a failure is not fatal.
-            let skills = bridge
-                .request("skills/list", json!({ "cwds": [cwd] }))
-                .await
-                .unwrap_or(Value::Null);
+            let (mut catalog, config, skills) = if acp {
+                // The picker's one row says the agent picks: an empty id sends no model, and
+                // an empty effort shows no effort label.
+                let model = Model {
+                    id: String::new(),
+                    model: String::new(),
+                    display_name: "Agent model".into(),
+                    description: "Set on the agent's command line".into(),
+                    hidden: false,
+                    default_reasoning_effort: String::new(),
+                    supported_reasoning_efforts: Vec::new(),
+                    is_default: true,
+                };
+                let data = vec![CatalogModel {
+                    model,
+                    availability_nux: None,
+                }];
+                let config = ConfigReadResponse {
+                    config: json!({ "model_reasoning_effort": "" }),
+                };
+                (ModelCatalog { data }, config, Value::Null)
+            } else {
+                let catalog: ModelCatalog = bridge.request("model/list", json!({})).await?;
+                let config: ConfigReadResponse = bridge
+                    .request("config/read", json!({ "includeLayers": false, "cwd": cwd }))
+                    .await?;
+                // Only the settings page reads it (home directory), so a failure is not fatal.
+                let skills = bridge
+                    .request("skills/list", json!({ "cwds": [cwd] }))
+                    .await
+                    .unwrap_or(Value::Null);
+                (catalog, config, skills)
+            };
             this.update_in(cx, |this, window, cx| {
-                if account.account.is_none() && account.requires_openai_auth {
+                if account.is_some_and(|a| a.account.is_none() && a.requires_openai_auth) {
                     this.login = Some(cx.new(Login::new));
                 }
                 this.set_threads(&threads.data, cx);
@@ -782,6 +807,13 @@ impl Root {
                 this.ready = true;
                 this.select_route(cx);
                 this.sync(window, cx);
+                if bridge.is_acp() {
+                    let note = format!(
+                        "{} over ACP: only chats, streaming, Stop and approvals work",
+                        server.user_agent
+                    );
+                    this.toast(Toast::info(note), cx);
+                }
                 if let Some((index, message)) = announcement {
                     let dialog =
                         cx.new(|cx| Dialog::model_announcement(&this.models[index], message, cx));
@@ -958,27 +990,10 @@ impl Root {
                 this.picking_project = false;
                 match result {
                     Ok(Some((root, projects))) => {
-                        this.qa_work_started = true;
                         this.project_load = None;
                         this.sidebar
                             .update(cx, |sidebar, cx| sidebar.set_projects(projects, cx));
-                        this.home.update(cx, |home, cx| {
-                            home.project = Some(
-                                std::path::Path::new(&root)
-                                    .file_name()
-                                    .and_then(|name| name.to_str())
-                                    .unwrap_or(&root)
-                                    .to_owned()
-                                    .into(),
-                            );
-                            home.composer.update(cx, |composer, cx| {
-                                composer.set_search_roots(vec![root.clone()], cx);
-                            });
-                            cx.notify();
-                        });
-                        this.state.project_root = Some(root);
-                        this.navigate(Route::Home, window, cx);
-                        this.save(window, cx);
+                        this.select_project(root, window, cx);
                     }
                     Ok(None) => {}
                     Err(error) => {
@@ -990,6 +1005,22 @@ impl Root {
             .ok();
         })
         .detach();
+    }
+
+    /// Makes `root` the folder new chats start in (`thread/start` cwd) and shows it on Home.
+    /// Open chats keep the cwd they were started in.
+    fn select_project(&mut self, root: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.qa_work_started = true;
+        self.home.update(cx, |home, cx| {
+            home.project = Some(project_name(&root));
+            home.composer.update(cx, |composer, cx| {
+                composer.set_search_roots(vec![root.clone()], cx);
+            });
+            cx.notify();
+        });
+        self.state.project_root = Some(root);
+        self.navigate(Route::Home, window, cx);
+        self.save(window, cx);
     }
 
     fn repository_request(
@@ -1015,6 +1046,7 @@ impl Root {
                     None => change.path.clone(),
                 }),
             ),
+            DiffRequest::Open(_) => return,
         };
         let request = host::Request::post(endpoint, Some(params));
         let host = self.host.clone();
@@ -1057,6 +1089,37 @@ impl Root {
                 this.refresh_git_actions(cx);
             })
             .ok();
+        })
+        .detach();
+    }
+
+    /// The header icon and `Open in editor`: the host opens the file in the editor chosen by the
+    /// original's `open-in-target-preferences` (`perPath` for the project, else `global`).
+    fn open_in_editor(&mut self, cwd: &str, path: &str, cx: &mut Context<Self>) {
+        let target = cx
+            .try_global::<host_settings::Settings>()
+            .and_then(|settings| settings.read_all().get("open-in-target-preferences"))
+            .and_then(|preferences| {
+                preferences["perPath"][cwd]
+                    .as_str()
+                    .or(preferences["global"].as_str())
+            })
+            .map(str::to_owned);
+        let request = host::Request::post(
+            "open-file",
+            Some(json!({"hostId": "local", "cwd": cwd, "path": path, "target": target})),
+        );
+        let host = self.host.clone();
+        let path = path.to_owned();
+        let opened = cx.background_spawn(async move { host.fetch(&request) });
+        cx.spawn(async move |this, cx| {
+            if let Err(error) = opened.await {
+                eprintln!("codex-gpui: cannot open {path} in the editor: {error:#}");
+                this.update(cx, |this, cx| {
+                    this.toast(Toast::danger("Unable to open in editor"), cx)
+                })
+                .ok();
+            }
         })
         .detach();
     }
@@ -2378,6 +2441,7 @@ impl Root {
                 DiffRequest::Revert(change) => {
                     this.confirm_revert(panel.clone(), &cwd, change, window, cx)
                 }
+                DiffRequest::Open(path) => this.open_in_editor(&cwd, path, cx),
                 _ => this.repository_request(panel.clone(), &cwd, request, cx),
             },
         )
@@ -2420,10 +2484,21 @@ impl Root {
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let mut params = json!({ "cwd": cwd, "model": model(&s) });
             apply_permissions(&mut params, s.permission);
-            let mut thread = bridge
+            let mut thread = match bridge
                 .request::<_, ThreadStartResponse>("thread/start", params)
-                .await?
-                .thread;
+                .await
+            {
+                Ok(started) => started.thread,
+                Err(error) => {
+                    // The draft, its attachments and the chosen project stay as they were.
+                    this.update(cx, |this, cx| {
+                        let composer = this.home.read(cx).composer.clone();
+                        composer.update(cx, |c, cx| c.restore_submission(&s.text, cx));
+                        this.toast(Toast::danger("Error starting chat"), cx);
+                    })?;
+                    return Err(error);
+                }
+            };
             // Title the new chat (Recents row, header) with its prompt until it has a preview.
             if thread.preview.is_empty() {
                 thread.preview = s.text.clone();
@@ -3406,6 +3481,16 @@ async fn resume_if(
     Ok(())
 }
 
+/// The Home chip label for a project root: its folder name.
+fn project_name(root: &str) -> SharedString {
+    std::path::Path::new(root)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(root)
+        .to_owned()
+        .into()
+}
+
 /// `None` (the server's default) when `model/list` gave the picker nothing.
 fn model(s: &Submission) -> Option<&str> {
     (!s.model.is_empty()).then_some(s.model.as_str())
@@ -4075,6 +4160,9 @@ impl Render for Root {
                 this.show_dialog(dialog, window, cx);
             }))
             .on_action(cx.listener(|this, a: &ForkThread, window, cx| this.fork(&a.0, window, cx)))
+            .on_action(cx.listener(|this, a: &SelectProject, window, cx| {
+                this.select_project(a.0.clone(), window, cx)
+            }))
             .on_action(cx.listener(|this, edit: &EditMessage, window, cx| {
                 this.edit_message(edit.clone(), window, cx)
             }))

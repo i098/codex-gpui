@@ -1,18 +1,29 @@
-use anyhow::{Context as _, Result, bail, ensure};
+use anyhow::{Context as _, Result, anyhow, bail, ensure};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::io::Write as _;
-use std::path::{Component, Path};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fs;
+use std::hash::BuildHasher as _;
+use std::io::{ErrorKind, Read as _, Write as _};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
-fn command(root: &Path, args: &[&str]) -> Command {
+/// Git in `root` without pathspec options: `check-ignore` rejects `--literal-pathspecs`, and
+/// the original's `ls-files` calls use pathspec magic.
+fn plain_command(root: &Path) -> Command {
     let mut command = Command::new("git");
     command
-        .arg("--literal-pathspecs")
         .args(["-c", "core.quotePath=false"])
-        .args(args)
         .current_dir(root)
         .env("GIT_OPTIONAL_LOCKS", "0")
         .env("GIT_TERMINAL_PROMPT", "0");
+    command
+}
+
+fn command(root: &Path, args: &[&str]) -> Command {
+    let mut command = plain_command(root);
+    command.arg("--literal-pathspecs").args(args);
     command
 }
 
@@ -671,4 +682,1058 @@ fn push(root: &Path, params: &Value) -> Result<Value> {
         return Ok(failed("push", pushed.failure()));
     }
     Ok(json!({"status": "success", "branch": branch}))
+}
+
+/// A worktree made for one automation run: its Git root, and the source cwd's counterpart in
+/// it, where the thread runs (original `worktreeGitRoot`, `worktreeWorkspaceRoot`).
+pub(super) struct Worktree {
+    pub git_root: PathBuf,
+    pub workspace_root: PathBuf,
+}
+
+/// The reservation marker the original writes in each `<worktrees root>/<id>` directory.
+const MARKER: &str = ".codex-worktree-name";
+/// The owner-thread file in a worktree's Git directory (`e4`).
+const OWNER: &str = "codex-thread.json";
+const SHELL_ENVIRONMENT: &str = "codex-shell-environment.json";
+const OVERRIDE: &str = "AGENTS.override.md";
+const NO_ENVIRONMENT: &str = "__none__";
+/// Variables a setup script never hands on (`Ewe`).
+const UNSHARED: [&str; 9] = [
+    "CODEX_SOURCE_TREE_PATH",
+    "CODEX_WORKTREE_PATH",
+    "CODEX_SETUP_EXIT_CODE",
+    "OLDPWD",
+    "PWD",
+    "SHELLOPTS",
+    "SHLVL",
+    "_",
+    "CODEX_SHELL",
+];
+const LOGIN_ENV: &str = "printf '\\0%s\\0' '_SHELL_ENV_DELIMITER_'; command env -0 || exit; printf '\\0%s\\0' '_SHELL_ENV_DELIMITER_'; exit";
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Owner<'a> {
+    version: u8,
+    owner_thread_id: &'a str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncedBranch<'a> {
+    branch: &'a str,
+    last_synced_tree_ref: &'a str,
+}
+
+#[derive(Serialize)]
+struct ShellEnvironment {
+    version: u8,
+    set: BTreeMap<String, String>,
+    exclude: Vec<String>,
+}
+
+/// A local-environment file, `.codex/environments/<name>.toml` (`UF`).
+#[derive(Deserialize)]
+struct Environment {
+    version: Option<i64>,
+    #[allow(dead_code)]
+    name: String,
+    setup: Scripts,
+    cleanup: Option<Scripts>,
+}
+
+#[derive(Deserialize)]
+struct Scripts {
+    script: String,
+    darwin: Option<Script>,
+    linux: Option<Script>,
+    win32: Option<Script>,
+}
+
+#[derive(Deserialize)]
+struct Script {
+    script: String,
+}
+
+impl Scripts {
+    /// This platform's script when it has one, else the shared one (`Lwe`).
+    fn current(&self) -> &str {
+        let platform = if cfg!(target_os = "macos") {
+            &self.darwin
+        } else if cfg!(windows) {
+            &self.win32
+        } else {
+            &self.linux
+        };
+        platform
+            .as_ref()
+            .map(|s| s.script.trim())
+            .filter(|s| !s.is_empty())
+            .unwrap_or(self.script.trim())
+    }
+}
+
+/// Creates the worktree an automation runs in under `worktrees_root` (original git worker
+/// `create-worktree`, `D2`). `Ok(None)` when `cwd` is in no Git repository: the original
+/// then runs in `cwd` itself. `starting_ref` `None` is the automation's start (`Ol`): the
+/// remote default branch, else `HEAD`. A failure removes what this call made, except a
+/// worktree Git refuses to remove because it has changes.
+pub(super) fn create_worktree(
+    worktrees_root: &Path,
+    cwd: &Path,
+    starting_ref: Option<&str>,
+    local_env_path: Option<&Path>,
+) -> Result<Option<Worktree>> {
+    let Some(source) = answer(cwd, &["rev-parse", "--show-toplevel"])? else {
+        return Ok(None);
+    };
+    let source = PathBuf::from(source);
+    let prefix = answer(cwd, &["rev-parse", "--show-prefix"])?.unwrap_or_default();
+    let default = default_branch(&source)?;
+    let name = starting_ref
+        .map(str::to_owned)
+        .or_else(|| default.clone())
+        .unwrap_or_else(|| "HEAD".to_owned());
+    fs::create_dir_all(worktrees_root)?;
+    if cfg!(target_os = "macos") {
+        fs::write(worktrees_root.join(".metadata_never_index"), "")?;
+    }
+    let repository = source
+        .file_name()
+        .context("Failed to resolve the worktree repository.")?;
+    let id = format!("{:04x}", random() & 0xffff);
+    let reserved = reserve(worktrees_root, &id).context(
+        "Could not reserve the worktree directory. Check the worktrees directory permissions.",
+    )?;
+    let git_root = reserved.join(repository);
+    let prefix = prefix.trim_end_matches('/');
+    let workspace_root = if prefix.is_empty() {
+        git_root.clone()
+    } else {
+        git_root.join(prefix)
+    };
+    let worktree = Worktree {
+        git_root,
+        workspace_root,
+    };
+    let start = match starting_commit(&source, &name)
+        .and_then(|start| add_worktree(&source, &worktree.git_root, &start).map(|()| start))
+    {
+        Ok(start) => start,
+        Err(error) => {
+            let _ = fs::remove_dir_all(&reserved);
+            return Err(error);
+        }
+    };
+    let prepared = prepare(
+        &source,
+        cwd,
+        &worktree,
+        &name,
+        &start,
+        default.as_deref(),
+        local_env_path,
+    );
+    if let Err(error) = prepared {
+        return Err(match remove_unstarted_worktree(worktrees_root, &worktree) {
+            Ok(()) => error,
+            Err(kept) => anyhow!(
+                "{error:#}; the new worktree {} was kept: {kept:#}",
+                worktree.git_root.display()
+            ),
+        });
+    }
+    Ok(Some(worktree))
+}
+
+/// Records the thread that owns a worktree (`set-worktree-owner-thread`, `e4`).
+pub(super) fn set_owner_thread(git_root: &Path, thread_id: &str) -> Result<()> {
+    ensure!(
+        linked_root(git_root)?,
+        "Failed to set thread worktree owner"
+    );
+    write_json(
+        &git_path(git_root, OWNER)?,
+        &Owner {
+            version: 1,
+            owner_thread_id: thread_id,
+        },
+    )
+}
+
+/// Removes a worktree `create_worktree` made that no thread owns, after its environment's
+/// cleanup script (`R0` without `--force`): Git refuses a worktree with changes, and this
+/// refuses any path that is not a marked reservation directly under `worktrees_root`.
+pub(super) fn remove_unstarted_worktree(worktrees_root: &Path, worktree: &Worktree) -> Result<()> {
+    let root = &worktree.git_root;
+    let reserved = root.parent().context("worktree has no reservation")?;
+    let owned = reserved.parent().is_some_and(|parent| {
+        fs::canonicalize(parent).ok() == fs::canonicalize(worktrees_root).ok()
+    }) && fs::symlink_metadata(reserved.join(MARKER)).is_ok_and(|m| m.is_file())
+        && linked_root(root)?;
+    ensure!(
+        owned && !git_path(root, OWNER)?.exists(),
+        "refusing to remove {}: not an unstarted automation worktree",
+        root.display()
+    );
+    let selected = answer(
+        root,
+        &[
+            "config",
+            "--worktree",
+            "--get",
+            "codex.localEnvironmentConfigPath",
+        ],
+    )?
+    .filter(|path| path != NO_ENVIRONMENT);
+    if let Some(config) = selected.map(PathBuf::from)
+        && let Ok(environment) = environment(&config)
+    {
+        let script = environment.cleanup.as_ref().map_or("", Scripts::current);
+        if !script.is_empty() {
+            run_script(
+                &root.join(script_dir(&config)),
+                script,
+                "Cleanup script",
+                &[],
+            )?;
+        }
+    }
+    let removed = git(root, &["worktree", "remove", &root.to_string_lossy()])?;
+    ensure!(removed.success, "{}", removed.failure());
+    fs::remove_file(reserved.join(MARKER))?;
+    let _ = fs::remove_dir(reserved);
+    Ok(())
+}
+
+/// Trimmed stdout of a successful Git call that printed something.
+fn answer(root: &Path, args: &[&str]) -> Result<Option<String>> {
+    let output = git(root, args)?;
+    let text = output.stdout.trim();
+    Ok((output.success && !text.is_empty()).then(|| text.to_owned()))
+}
+
+fn commit_id(root: &Path, reference: &str) -> Result<Option<String>> {
+    let commit = format!("{reference}^{{commit}}");
+    answer(root, &["rev-parse", "--verify", "--quiet", &commit])
+}
+
+fn has_commit(root: &Path, reference: &str) -> Result<bool> {
+    Ok(commit_id(root, reference)?.is_some())
+}
+
+/// True when `root` is the top of a linked worktree, not a main checkout.
+fn linked_root(root: &Path) -> Result<bool> {
+    let Some(top) = answer(root, &["rev-parse", "--show-toplevel"])? else {
+        return Ok(false);
+    };
+    let git_dir = answer(root, &["rev-parse", "--absolute-git-dir"])?;
+    let common = answer(
+        root,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?;
+    Ok(fs::canonicalize(top)? == fs::canonicalize(root)? && git_dir.is_some() && git_dir != common)
+}
+
+/// `name` in the Git directory of the checkout at `root` (`X1`).
+fn git_path(root: &Path, name: &str) -> Result<PathBuf> {
+    let path =
+        answer(root, &["rev-parse", "--git-path", name])?.context("No git repository found")?;
+    Ok(root.join(path))
+}
+
+fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
+    fs::write(path, serde_json::to_string_pretty(value)? + "\n")?;
+    Ok(())
+}
+
+fn random() -> u64 {
+    std::collections::hash_map::RandomState::new().hash_one(Instant::now())
+}
+
+/// Creates `<root>/<4 hex digits>` and its marker for one new worktree (`ETe`, `GTe`); a
+/// taken name gets a random 4-digit suffix, at most five times.
+fn reserve(root: &Path, id: &str) -> Result<PathBuf> {
+    let mut dir = root.join(id);
+    let mut attempt = 0;
+    while let Err(error) = fs::create_dir(&dir) {
+        if attempt == 5 || fs::symlink_metadata(&dir).is_err() {
+            return Err(error.into());
+        }
+        attempt += 1;
+        dir = root.join(format!("{id}-{:04}", random() % 10_000));
+    }
+    if let Err(error) = fs::write(dir.join(MARKER), "") {
+        let _ = fs::remove_dir_all(&dir);
+        return Err(error.into());
+    }
+    Ok(dir)
+}
+
+/// Remotes, `origin` first (`g0`).
+fn remotes(root: &Path) -> Result<Vec<String>> {
+    let mut remotes: Vec<String> = git(root, &["remote"])?
+        .stdout
+        .lines()
+        .map(str::trim)
+        .filter(|remote| !remote.is_empty())
+        .map(str::to_owned)
+        .collect();
+    remotes.sort_by_key(|remote| remote != "origin");
+    Ok(remotes)
+}
+
+/// `(remote, branch)` of `<remote>/<branch>`, by the first remote that prefixes it.
+fn split_remote<'a>(name: &'a str, remotes: &'a [String]) -> Option<(&'a str, &'a str)> {
+    remotes.iter().find_map(|remote| {
+        let branch = name.strip_prefix(remote.as_str())?.strip_prefix('/')?;
+        Some((remote.as_str(), branch))
+    })
+}
+
+/// The remote default branch name (`h2`): for each remote, its `HEAD`, else what
+/// `git remote show` reports, else `main` or `master`.
+fn default_branch(root: &Path) -> Result<Option<String>> {
+    for remote in remotes(root)? {
+        let prefix = format!("refs/remotes/{remote}/");
+        let head = answer(root, &["symbolic-ref", "--quiet", &format!("{prefix}HEAD")])?;
+        if let Some(branch) = head.and_then(|head| Some(head.strip_prefix(&prefix)?.to_owned())) {
+            return Ok(Some(branch));
+        }
+        let shown = bounded(&mut command(root, &["remote", "show", &remote]))?;
+        let branch = shown.and_then(|text| {
+            let line = text
+                .lines()
+                .find_map(|l| l.trim().strip_prefix("HEAD branch:"))?;
+            Some(line.trim().to_owned())
+        });
+        if let Some(branch) = branch.filter(|b| !b.is_empty() && b != "(unknown)") {
+            return Ok(Some(branch));
+        }
+        for branch in ["main", "master"] {
+            let reference = format!("{prefix}{branch}");
+            if git(root, &["show-ref", "--verify", "--quiet", &reference])?.success {
+                return Ok(Some(branch.to_owned()));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Stdout of `command` when it succeeds within the ten seconds the original gives network
+/// and login-shell probes.
+fn bounded(command: &mut Command) -> Result<Option<String>> {
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("run local command")?;
+    let mut stdout = child.stdout.take().context("command stdout")?;
+    let reader = std::thread::spawn(move || {
+        let mut text = Vec::new();
+        stdout.read_to_end(&mut text).map(|_| text)
+    });
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(None);
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let text = reader
+        .join()
+        .map_err(|_| anyhow!("command reader panicked"))??;
+    Ok(status
+        .success()
+        .then(|| String::from_utf8_lossy(&text).into_owned()))
+}
+
+/// What `git worktree add` starts from for branch `name` (`vwe`, `x0`): the local branch, or
+/// its upstream when only the upstream moved; else a remote-tracking branch, fetched when
+/// only the remote has it; else `name` as a commit.
+fn starting_commit(root: &Path, name: &str) -> Result<String> {
+    if name == "HEAD" || name == "@" {
+        return Ok(name.to_owned());
+    }
+    let local = if name.starts_with("refs/heads/") {
+        Some(name.to_owned())
+    } else if name.starts_with("refs/") {
+        None
+    } else {
+        Some(format!("refs/heads/{name}"))
+    };
+    let upstream = format!("{name}@{{u}}");
+    let upstream = answer(
+        root,
+        &[
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            &upstream,
+        ],
+    )?;
+    if let Some(upstream) = upstream {
+        let remote = format!("refs/remotes/{upstream}");
+        let target = if has_commit(root, &remote)? {
+            remote
+        } else if upstream.starts_with("refs/") {
+            upstream
+        } else {
+            format!("refs/heads/{upstream}")
+        };
+        let base = local.unwrap_or_else(|| name.to_owned());
+        let range = format!("{base}...{target}");
+        let counts = answer(root, &["rev-list", "--left-right", "--count", &range])?;
+        let counts = counts.as_deref().and_then(|counts| {
+            let mut counts = counts.split_whitespace().map(str::parse::<u64>);
+            Some((counts.next()?.ok()?, counts.next()?.ok()?))
+        });
+        let only_upstream_moved = counts.is_some_and(|(ahead, behind)| ahead == 0 && behind > 0);
+        return Ok(if only_upstream_moved { target } else { base });
+    }
+    if let Some(local) = local
+        && has_commit(root, &local)?
+    {
+        return Ok(local);
+    }
+    let remotes = remotes(root)?;
+    let tracking = name.starts_with("refs/remotes/");
+    if tracking && has_commit(root, name)? {
+        return Ok(name.to_owned());
+    }
+    let short = name.strip_prefix("refs/remotes/").unwrap_or(name);
+    let candidates: Vec<(&str, &str)> = if name.starts_with("refs/") && !tracking {
+        Vec::new()
+    } else if let Some(pair) = split_remote(short, &remotes) {
+        vec![pair]
+    } else if tracking {
+        Vec::new()
+    } else {
+        remotes
+            .iter()
+            .map(|remote| (remote.as_str(), name))
+            .collect()
+    };
+    for (remote, branch) in &candidates {
+        let reference = format!("refs/remotes/{remote}/{branch}");
+        if has_commit(root, &reference)? {
+            return Ok(reference);
+        }
+    }
+    let mut unverified = false;
+    for (remote, branch) in &candidates {
+        let reference = format!("refs/remotes/{remote}/{branch}");
+        let head = format!("refs/heads/{branch}");
+        let listed = run(root, &["ls-remote", "--exit-code", remote, &head])?;
+        match listed.status.code() {
+            Some(0) => {
+                let refspec = format!("+{head}:{reference}");
+                let fetched = git(root, &["fetch", remote, &refspec])?;
+                ensure!(
+                    fetched.success && has_commit(root, &reference)?,
+                    "Failed to fetch the worktree starting ref"
+                );
+                return Ok(reference);
+            }
+            Some(2) => {}
+            _ => unverified = true,
+        }
+    }
+    if let Some(sha) = commit_id(root, name)? {
+        return Ok(sha);
+    }
+    ensure!(!unverified, "Failed to validate the worktree starting ref");
+    Ok(name.to_owned())
+}
+
+/// `git worktree add --detach` without clean or smudge filters and tree attributes (`STe`,
+/// `z0`), then a local branch tracking a remote-tracking start that has none (`CTe`).
+fn add_worktree(source: &Path, path: &Path, start: &str) -> Result<()> {
+    let found = run(
+        source,
+        &[
+            "config",
+            "--name-only",
+            "--get-regexp",
+            r"^filter\..*\.(clean|smudge|process|required)$",
+        ],
+    )?;
+    ensure!(
+        found.status.success() || found.status.code() == Some(1),
+        "git config filter discovery failed: {}",
+        String::from_utf8_lossy(&found.stderr).trim()
+    );
+    // `--get-regexp` already matched the four filter keys.
+    let filters: std::collections::BTreeSet<String> = String::from_utf8_lossy(&found.stdout)
+        .lines()
+        .filter_map(|line| {
+            Some(
+                line.trim()
+                    .strip_prefix("filter.")?
+                    .rsplit_once('.')?
+                    .0
+                    .to_owned(),
+            )
+        })
+        .collect();
+    let mut args = vec![
+        "-c".to_owned(),
+        "attr.tree=".to_owned(),
+        "-c".to_owned(),
+        "core.attributesFile=".to_owned(),
+    ];
+    for name in &filters {
+        for setting in ["clean=", "smudge=", "process=", "required=false"] {
+            args.extend(["-c".to_owned(), format!("filter.{name}.{setting}")]);
+        }
+    }
+    let path_text = path.to_str().context("worktree path must be UTF-8")?;
+    args.extend(["worktree", "add", "--detach", path_text, start].map(str::to_owned));
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let added = git(source, &args)?;
+    ensure!(
+        added.success,
+        "git worktree add failed: {}",
+        added.failure()
+    );
+    let Some(rest) = start.strip_prefix("refs/remotes/") else {
+        return Ok(());
+    };
+    let remotes = remotes(source)?;
+    let Some((_, branch)) = split_remote(rest, &remotes) else {
+        return Ok(());
+    };
+    if branch.is_empty() || branch == "HEAD" || has_commit(source, &format!("refs/heads/{branch}"))?
+    {
+        return Ok(());
+    }
+    let tracked = git(source, &["branch", "--track", branch, start])?;
+    if !tracked.success {
+        let _ = git(source, &["worktree", "remove", path_text]);
+        bail!("{}", tracked.failure());
+    }
+    Ok(())
+}
+
+/// Everything after `git worktree add` (`D2`): the synced branch, the copied ignored files,
+/// the environment selection, and its setup script with the variables it exports.
+fn prepare(
+    source: &Path,
+    cwd: &Path,
+    worktree: &Worktree,
+    name: &str,
+    start: &str,
+    default: Option<&str>,
+    local_env_path: Option<&Path>,
+) -> Result<()> {
+    let root = &worktree.git_root;
+    if let Some(branch) = synced_branch(source, name, start, default)? {
+        let branch = format!("refs/heads/{branch}");
+        let tree = answer(source, &["rev-parse", &format!("{branch}^{{tree}}")])?
+            .context("Failed to resolve tree")?;
+        write_json(
+            &git_path(root, "codex-synced-branch.json")?,
+            &SyncedBranch {
+                branch: &branch,
+                last_synced_tree_ref: &tree,
+            },
+        )?;
+    }
+    copy_ignored(source, root)?;
+    let selected = local_env_path.and_then(|path| {
+        select_environment(source, root, path).unwrap_or_else(|_| Some(path.to_owned()))
+    });
+    let stored = selected.as_deref().map(Path::to_string_lossy);
+    // The original only logs a failed store.
+    let _ = store_environment(root, stored.as_deref().unwrap_or(NO_ENVIRONMENT));
+    let Some(config) = selected else {
+        return Ok(());
+    };
+    let environment = environment(&config)?;
+    let script = environment.setup.current();
+    let exported = if script.is_empty() {
+        None
+    } else {
+        let injected = [
+            ("CODEX_SOURCE_TREE_PATH", cwd),
+            ("CODEX_WORKTREE_PATH", worktree.workspace_root.as_path()),
+        ];
+        run_script(
+            &root.join(script_dir(&config)),
+            script,
+            "Setup script",
+            &injected,
+        )?
+    };
+    // The original only logs a failed store.
+    let _ = git_path(root, SHELL_ENVIRONMENT).and_then(|path| match exported {
+        Some(exported) => write_json(&path, &exported),
+        None => match fs::remove_file(&path) {
+            Err(error) if error.kind() != ErrorKind::NotFound => Err(error.into()),
+            _ => Ok(()),
+        },
+    });
+    Ok(())
+}
+
+/// The branch a later sync compares the worktree with (`WTe`): kept only when it is not the
+/// remote default branch.
+fn synced_branch(
+    source: &Path,
+    name: &str,
+    start: &str,
+    default: Option<&str>,
+) -> Result<Option<String>> {
+    let branch = if name == "HEAD" || name == "@" {
+        current_branch(source)?
+    } else {
+        let candidate = if let Some(branch) = start.strip_prefix("refs/heads/") {
+            Some(branch.to_owned())
+        } else if let Some(rest) = start.strip_prefix("refs/remotes/") {
+            let remotes = remotes(source)?;
+            split_remote(rest, &remotes)
+                .map(|(_, branch)| branch.to_owned())
+                .filter(|branch| !branch.is_empty() && branch != "HEAD")
+        } else {
+            None
+        };
+        match candidate {
+            Some(branch) if has_commit(source, &format!("refs/heads/{branch}"))? => Some(branch),
+            _ => None,
+        }
+    };
+    Ok(branch.filter(|branch| Some(branch.as_str()) != default))
+}
+
+fn plain(root: &Path, args: &[&str]) -> Result<Output> {
+    plain_command(root)
+        .args(args)
+        .output()
+        .context("run local Git")
+}
+
+/// `git ls-files --others --ignored -z`.
+fn ignored(root: &Path, args: &[&str]) -> Result<Vec<String>> {
+    let listing = ["ls-files", "--others", "--ignored", "-z"];
+    let output = plain(root, &[&listing[..], args].concat())?;
+    Ok(checked(output)?
+        .split(|byte| *byte == 0)
+        .filter_map(|path| std::str::from_utf8(path).ok())
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
+        .collect())
+}
+
+/// The ignored files the original copies into a new local worktree (`BTe`, `UTe`): every
+/// `AGENTS.override.md`, and the ignored files `.worktreeinclude` names.
+fn copy_ignored(source: &Path, worktree: &Path) -> Result<()> {
+    let overrides = ignored(
+        source,
+        &["--exclude-standard", "--", &format!(":(glob)**/{OVERRIDE}")],
+    )?;
+    for path in overrides
+        .iter()
+        .filter(|path| *path == OVERRIDE || path.ends_with(&format!("/{OVERRIDE}")))
+    {
+        copy_new(source, worktree, path, OVERRIDE)?;
+    }
+    match fs::metadata(source.join(".worktreeinclude")) {
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        other => other?,
+    };
+    let standard: HashSet<String> = ignored(source, &["--exclude-standard"])?
+        .into_iter()
+        .collect();
+    for path in ignored(source, &["--exclude-from=.worktreeinclude"])? {
+        if standard.contains(&path) {
+            copy_new(source, worktree, &path, ".worktreeinclude")?;
+        }
+    }
+    Ok(())
+}
+
+/// Copies regular file `relative` from `source` to the same place in `worktree` (`k2`, `j2`),
+/// never through a symlinked worktree directory and never over an existing file.
+fn copy_new(source: &Path, worktree: &Path, relative: &str, label: &str) -> Result<()> {
+    let relative = Path::new(relative);
+    ensure!(
+        relative
+            .components()
+            .all(|part| matches!(part, Component::Normal(_))),
+        "Cannot copy {label} from outside the workspace"
+    );
+    let from = source.join(relative);
+    let metadata = match fs::symlink_metadata(&from) {
+        Ok(metadata) if metadata.is_file() => metadata,
+        Err(error) if error.kind() != ErrorKind::NotFound => return Err(error.into()),
+        _ => return Ok(()),
+    };
+    let to = worktree.join(relative);
+    let mut dir = worktree.to_owned();
+    for part in relative.parent().into_iter().flat_map(Path::components) {
+        dir.push(part);
+        match fs::symlink_metadata(&dir) {
+            Ok(metadata) => ensure!(
+                !metadata.file_type().is_symlink(),
+                "Cannot copy {label} through a symlinked workspace path"
+            ),
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                fs::create_dir_all(to.parent().unwrap_or(worktree))?;
+                break;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    let mut file = match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&to)
+    {
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => return Ok(()),
+        file => file?,
+    };
+    std::io::copy(&mut fs::File::open(&from)?, &mut file)?;
+    file.set_permissions(metadata.permissions())?;
+    Ok(())
+}
+
+/// The environment file the worktree uses (`VTe`): its copy in the worktree, copied there
+/// when the source has it untracked; `None` when it is tracked but absent at the start.
+fn select_environment(source: &Path, worktree: &Path, path: &Path) -> Result<Option<PathBuf>> {
+    let Some(relative) = path.strip_prefix(source).ok().filter(|relative| {
+        relative
+            .components()
+            .all(|part| matches!(part, Component::Normal(_)))
+    }) else {
+        return Ok(Some(path.to_owned()));
+    };
+    let target = worktree.join(relative);
+    let regular = |target: &Path| -> Result<Option<PathBuf>> {
+        ensure!(
+            fs::symlink_metadata(target)?.is_file(),
+            "Selected local environment configuration is not a regular file"
+        );
+        Ok(Some(target.to_owned()))
+    };
+    let relative_text = relative
+        .to_str()
+        .context("environment path must be UTF-8")?;
+    match fs::symlink_metadata(&target) {
+        Ok(_) => {
+            let mut dir = worktree.to_owned();
+            for part in relative.parent().into_iter().flat_map(Path::components) {
+                dir.push(part);
+                ensure!(
+                    !fs::symlink_metadata(&dir)?.file_type().is_symlink(),
+                    "Cannot copy selected local environment through a symlinked workspace path"
+                );
+            }
+            return regular(&target);
+        }
+        Err(error) if error.kind() != ErrorKind::NotFound => return Err(error.into()),
+        Err(_) => {}
+    }
+    let tracked = run(
+        source,
+        &["ls-files", "--error-unmatch", "--", relative_text],
+    )?;
+    match tracked.status.code() {
+        Some(0) => return Ok(None),
+        Some(1) => {}
+        _ => bail!("Failed to check selected environment tracking"),
+    }
+    let ignored = plain(source, &["check-ignore", "--quiet", "--", relative_text])?;
+    match ignored.status.code() {
+        Some(0) => {
+            let there = plain(worktree, &["check-ignore", "--quiet", "--", relative_text])?;
+            if there.status.code() != Some(0) {
+                return Ok(Some(path.to_owned()));
+            }
+        }
+        Some(1) => {}
+        _ => return Ok(Some(path.to_owned())),
+    }
+    copy_new(
+        source,
+        worktree,
+        relative_text,
+        "selected local environment",
+    )?;
+    regular(&target)
+}
+
+/// Stores the selection in the worktree's own Git config (`DEe`), enabling
+/// `extensions.worktreeConfig` when Git requires it, like the original.
+fn store_environment(worktree: &Path, value: &str) -> Result<()> {
+    let args = [
+        "config",
+        "--worktree",
+        "codex.localEnvironmentConfigPath",
+        value,
+    ];
+    let stored = git(worktree, &args)?;
+    if stored.success {
+        return Ok(());
+    }
+    ensure!(
+        stored.stderr.to_lowercase().contains("worktreeconfig"),
+        "{}",
+        stored.failure()
+    );
+    checked(run(
+        worktree,
+        &["config", "extensions.worktreeConfig", "true"],
+    )?)?;
+    checked(run(worktree, &args)?)?;
+    Ok(())
+}
+
+/// Reads an environment file (`l$`).
+fn environment(path: &Path) -> Result<Environment> {
+    let shown = path.display();
+    let table: toml::Table = fs::read_to_string(path)
+        .map_err(anyhow::Error::from)
+        .and_then(|text| Ok(text.parse()?))
+        .map_err(|e| anyhow!("Failed to parse environment config at {shown}: {e}"))?;
+    let environment: Environment = toml::Value::Table(table)
+        .try_into()
+        .map_err(|e| anyhow!("Invalid environment config at {shown}: {e}"))?;
+    ensure!(
+        environment.version.unwrap_or(1) >= 1,
+        "Invalid environment config at {shown}: version must be at least 1"
+    );
+    Ok(environment)
+}
+
+/// The directory a script runs in, relative to its Git root (`cCe`, `lCe`): the project that
+/// holds `.codex/environments/<file>`.
+fn script_dir(config: &Path) -> PathBuf {
+    let marked = |dir: &Path| dir.join(".codex").exists() || dir.join(".git").exists();
+    let dir = config.parent().unwrap_or(config);
+    let codex = dir.parent().filter(|codex| {
+        dir.file_name() == Some("environments".as_ref())
+            && codex.file_name() == Some(".codex".as_ref())
+    });
+    let project = match codex {
+        Some(_) if marked(dir) => dir,
+        Some(codex) if marked(codex) => codex,
+        Some(codex) => codex.parent().unwrap_or(codex),
+        None => dir.ancestors().find(|dir| marked(dir)).unwrap_or(config),
+    };
+    let root = project
+        .ancestors()
+        .find(|dir| dir.join(".git").exists())
+        .unwrap_or(project);
+    project
+        .strip_prefix(root)
+        .unwrap_or(Path::new(""))
+        .to_owned()
+}
+
+fn shell_quote(path: &Path) -> String {
+    format!("'{}'", path.to_string_lossy().replace('\'', r"'\''"))
+}
+
+/// Runs a local-environment script in `dir` with the user's login environment (`T0`);
+/// returns the variables a setup script exported (`kwe`).
+fn run_script(
+    dir: &Path,
+    script: &str,
+    kind: &str,
+    injected: &[(&str, &Path)],
+) -> Result<Option<ShellEnvironment>> {
+    let scratch = tempfile::tempdir()?;
+    let file = scratch.path().join("setup_script.sh");
+    let wrapper = scratch.path().join("setup_wrapper.sh");
+    let before = scratch.path().join("before_env.txt");
+    let after = scratch.path().join("captured_env.txt");
+    fs::write(&file, script.replace("\r\n", "\n"))?;
+    fs::write(
+        &wrapper,
+        [
+            "set -xeo pipefail".to_owned(),
+            format!("capture_path={}", shell_quote(&after)),
+            format!("before_capture_path={}", shell_quote(&before)),
+            r#"env > "$before_capture_path""#.to_owned(),
+            r#"trap 'code=$?; if [ "$code" -eq 0 ]; then env > "$capture_path"; fi' EXIT"#
+                .to_owned(),
+            format!(". {}", shell_quote(&file)),
+        ]
+        .join("\n"),
+    )?;
+    let env = login_env(dir);
+    let status = Command::new("bash")
+        .arg(&wrapper)
+        .current_dir(dir)
+        .env_clear()
+        .envs(&env)
+        .envs([
+            ("COLORTERM", "truecolor"),
+            ("FORCE_COLOR", "1"),
+            ("TERM", "xterm-256color"),
+        ])
+        .envs(injected.iter().copied())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|e| anyhow!("{kind} failed: {e}"))?;
+    match status.code() {
+        Some(0) => {}
+        Some(code) => bail!("{kind} exited with code {code}"),
+        None => bail!("{kind} exited with {status}"),
+    }
+    let read = |path: &Path| {
+        fs::read_to_string(path).map(|text| parse_env(text.trim_start_matches('\u{feff}').lines()))
+    };
+    Ok(match (read(&before), read(&after)) {
+        (Ok(before), Ok(after)) => exported(&before, &after),
+        _ => None,
+    })
+}
+
+/// `env` output as variables (`E0`).
+fn parse_env<'a>(lines: impl Iterator<Item = &'a str>) -> HashMap<String, String> {
+    lines
+        .filter_map(|line| line.split_once('='))
+        .filter(|(key, _)| !key.is_empty())
+        .map(|(key, value)| (key.to_owned(), value.to_owned()))
+        .collect()
+}
+
+/// The variables a script set or removed (`kwe`), without shell bookkeeping.
+fn exported(
+    before: &HashMap<String, String>,
+    after: &HashMap<String, String>,
+) -> Option<ShellEnvironment> {
+    let multiline =
+        |value: Option<&String>| value.is_some_and(|v| v.contains('\n') || v.contains('\r'));
+    let mut set = BTreeMap::new();
+    let mut exclude = Vec::new();
+    let keys: HashSet<&String> = before.keys().chain(after.keys()).collect();
+    for key in keys {
+        if UNSHARED.contains(&key.as_str())
+            || key.starts_with("BASH_FUNC_")
+            || multiline(before.get(key))
+            || multiline(after.get(key))
+        {
+            continue;
+        }
+        match after.get(key) {
+            None => exclude.push(key.clone()),
+            Some(value) if before.get(key) != Some(value) => {
+                set.insert(key.clone(), value.clone());
+            }
+            Some(_) => {}
+        }
+    }
+    exclude.sort();
+    (!set.is_empty() || !exclude.is_empty()).then_some(ShellEnvironment {
+        version: 1,
+        set,
+        exclude,
+    })
+}
+
+/// The user's login-shell environment over this process's (`bxe`), which a launch from the
+/// Dock lacks; this process's alone when no shell answers.
+fn login_env(dir: &Path) -> HashMap<String, String> {
+    let mut env: HashMap<String, String> = std::env::vars().collect();
+    let user = std::env::var("SHELL")
+        .ok()
+        .filter(|shell| !shell.is_empty())
+        .unwrap_or_else(|| "/bin/sh".to_owned());
+    let mut shells = vec![user.as_str()];
+    shells.extend(["/bin/zsh", "/bin/bash"].into_iter().filter(|s| *s != user));
+    for shell in shells {
+        let mut probe = Command::new(shell);
+        probe.args(["-ilc", LOGIN_ENV]).current_dir(dir).envs([
+            ("CODEX_SHELL", "1"),
+            ("DISABLE_AUTO_UPDATE", "true"),
+            ("ZSH_TMUX_AUTOSTARTED", "true"),
+            ("ZSH_TMUX_AUTOSTART", "false"),
+        ]);
+        let Ok(Some(output)) = bounded(&mut probe) else {
+            continue;
+        };
+        let mut parts = output.split("\0_SHELL_ENV_DELIMITER_\0");
+        if let (Some(_), Some(vars), Some(_)) = (parts.next(), parts.next(), parts.next()) {
+            env.extend(parse_env(vars.split('\0')));
+            env.remove("CODEX_SHELL");
+            return env;
+        }
+    }
+    env
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unstarted_removal_refuses_foreign_and_owned_worktrees() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let source = dir.path().join("repo");
+        let init = Command::new("git")
+            .args(["init", "-q", "-b", "main"])
+            .arg(&source)
+            .output()?;
+        checked(init)?;
+        let commit = [
+            "-c",
+            "user.name=C",
+            "-c",
+            "user.email=c@example.com",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "base",
+        ];
+        checked(run(&source, &commit)?)?;
+        let root = dir.path().join("worktrees");
+        let worktree = create_worktree(&root, &source, None, None)?.context("repository")?;
+        let elsewhere = dir.path().join("elsewhere");
+        fs::create_dir(&elsewhere)?;
+        assert!(remove_unstarted_worktree(&elsewhere, &worktree).is_err());
+        // The main checkout is refused even inside a marked reservation.
+        fs::write(dir.path().join(MARKER), "")?;
+        let main = Worktree {
+            git_root: source.clone(),
+            workspace_root: source.clone(),
+        };
+        let parent = dir.path().parent().context("temporary parent")?;
+        assert!(remove_unstarted_worktree(parent, &main).is_err());
+        set_owner_thread(&worktree.git_root, "thread-1")?;
+        assert!(remove_unstarted_worktree(&root, &worktree).is_err());
+        assert!(worktree.git_root.join(".git").is_file());
+        fs::remove_file(git_path(&worktree.git_root, OWNER)?)?;
+        remove_unstarted_worktree(&root, &worktree)?;
+        assert!(!worktree.git_root.parent().unwrap().exists());
+        assert!(source.join(".git").is_dir());
+        Ok(())
+    }
+
+    #[test]
+    fn a_taken_reservation_name_gets_a_suffix_and_stays_untouched() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        fs::create_dir(dir.path().join("abcd"))?;
+        let reserved = reserve(dir.path(), "abcd")?;
+        let name = reserved
+            .file_name()
+            .and_then(|n| n.to_str())
+            .context("name")?;
+        let suffix = name.strip_prefix("abcd-").context("collision suffix")?;
+        assert!(suffix.len() == 4 && suffix.bytes().all(|b| b.is_ascii_digit()));
+        assert!(reserved.join(MARKER).is_file());
+        assert_eq!(fs::read_dir(dir.path().join("abcd"))?.count(), 0);
+        Ok(())
+    }
 }

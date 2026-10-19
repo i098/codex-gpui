@@ -275,12 +275,12 @@ fn validate_by_minute(
 }
 
 // By_second:
-// - Can be a value from 0 to 59.
+// - Can be a value from 0 to 60. Like the original, 60 moves into the next minute.
 fn validate_by_second(
     rrule: &RRule<Unvalidated>,
     _dt_start: &chrono::DateTime<Tz>,
 ) -> Result<(), ValidationError> {
-    validate_range_for_vec(&(0..=59), &rrule.by_second, "BYSECOND")
+    validate_range_for_vec(&(0..=60), &rrule.by_second, "BYSECOND")
 }
 
 fn validate_by_easter(
@@ -749,5 +749,39 @@ mod tests {
                 "{freq}"
             );
         }
+    }
+
+    #[test]
+    fn moves_bysecond_60_into_the_next_minute() {
+        let start = "DTSTART:20261018T080000Z\nRRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0;";
+        assert_eq!(
+            dates(&format!("{start}BYSECOND=60"), 2),
+            ["2026-10-18T09:01:00+00:00", "2026-10-19T09:01:00+00:00"]
+        );
+        // Ordering before BYSETPOS keeps 60 after 59.
+        assert_eq!(
+            dates(&format!("{start}BYSECOND=0,59,60;BYSETPOS=-1"), 1),
+            ["2026-10-18T09:01:00+00:00"]
+        );
+        // EXDATE matches the normalized time.
+        assert_eq!(
+            dates(
+                &format!("{start}BYSECOND=60;COUNT=2\nEXDATE:20261018T090100Z"),
+                3
+            ),
+            ["2026-10-19T09:01:00+00:00"]
+        );
+        // COUNT counts 60 in order, and the last minute of a year moves into the next year.
+        assert_eq!(
+            dates(
+                "DTSTART:20261231T235959Z\nRRULE:FREQ=DAILY;COUNT=3;BYHOUR=23;BYMINUTE=59;BYSECOND=59,60",
+                4
+            ),
+            [
+                "2026-12-31T23:59:59+00:00",
+                "2027-01-01T00:00:00+00:00",
+                "2027-01-01T23:59:59+00:00"
+            ]
+        );
     }
 }
