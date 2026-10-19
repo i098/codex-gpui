@@ -8,12 +8,13 @@ pub mod host;
 pub mod host_settings;
 pub mod qa;
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, ensure};
 use async_channel::Receiver;
 use bridge::types::{
     ApprovalDecision, CommandApprovalRequest, ConfigReadResponse, FileChangeApprovalRequest, Model,
-    Thread, ThreadItem, ThreadListResponse, ThreadReadResponse, ThreadSection, ThreadStartResponse,
-    ThreadStartedNotification, ThreadStatus, TurnStatus,
+    QueuedSubmission, Thread, ThreadItem, ThreadListResponse, ThreadQueueListResponse,
+    ThreadReadResponse, ThreadSection, ThreadStartResponse, ThreadStartedNotification,
+    ThreadStatus, TurnStatus,
 };
 use bridge::{Bridge, Event};
 use gpui::{
@@ -28,7 +29,7 @@ use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::{fs, path::PathBuf, sync::Arc, time::Duration};
 use theme::Theme;
-use ui::composer::{Approval, Composer, Permission, Submission};
+use ui::composer::{Approval, Composer, Permission, QueueAction, Submission};
 use ui::dialog::{
     CommitRepository, CommitStep, Dialog, Kind as DialogKind, Outcome as DialogOutcome, Selection,
 };
@@ -349,6 +350,14 @@ struct ModelAvailability {
 
 const LEGACY_MODEL_ANNOUNCEMENTS: [&str; 2] = ["gpt-5.4", "gpt-5.5"];
 
+#[derive(Clone)]
+struct DeletedQueuedMessage {
+    thread_id: String,
+    submission: QueuedSubmission,
+    previous: Option<String>,
+    next: Option<String>,
+}
+
 pub struct Root {
     /// Window size, sidebar and route, saved back on every change.
     state: State,
@@ -410,6 +419,11 @@ pub struct Root {
     qa_work_started: bool,
     /// Threads started or resumed by this app-server; others need `thread/resume` first.
     loaded: HashSet<String>,
+    queue_load: Option<Task<()>>,
+    queue_pending: bool,
+    deleted_queued: Vec<DeletedQueuedMessage>,
+    /// A successful steer must never be sent again when its queue deletion fails.
+    steered_queued: HashSet<(String, String)>,
     /// Id of the server request the composer's approval card answers.
     approval: Option<Value>,
     /// A commit, push or branch workflow is running (the original's single workflow state).
@@ -484,6 +498,14 @@ impl Root {
             });
             composer
         });
+        cx.subscribe_in(
+            &thread_composer,
+            window,
+            |this, _, action: &QueueAction, window, cx| {
+                this.queue_action(action, window, cx);
+            },
+        )
+        .detach();
         for composer in [&home_composer, &thread_composer] {
             cx.subscribe_in(composer, window, |this, _, command: &ui::composer::SlashCommand, window, cx| {
                 match command {
@@ -626,6 +648,10 @@ impl Root {
             ready: false,
             qa_work_started: false,
             loaded: HashSet::new(),
+            queue_load: None,
+            queue_pending: false,
+            deleted_queued: Vec::new(),
+            steered_queued: HashSet::new(),
             approval: None,
             git_busy: None,
             git_status_load: None,
@@ -1759,6 +1785,14 @@ impl Root {
             let panel = self.side_tabs_view(&view, cx);
             with_side_tabs(self.shell.clone(), view, panel, cx)
         });
+        if let Some(id) = thread_id
+            && self
+                .thread
+                .as_ref()
+                .is_some_and(|view| view.read(cx).id() == id)
+        {
+            self.list_queue(id, cx);
+        }
         self.save(window, cx);
         cx.notify();
     }
@@ -2269,10 +2303,11 @@ impl Root {
             .turns
             .iter()
             .any(|turn| turn.status == TurnStatus::InProgress);
-        // The composer is shared: the new thread's queue arrives with `thread/queue/changed`.
+        // The composer is shared; load the selected thread's own queue after navigation.
         self.thread_composer.update(cx, |c, cx| {
             c.set_running(running, cx);
             c.set_queued(Vec::new(), cx);
+            c.set_queue_pending(self.queue_pending, cx);
             c.set_search_roots(vec![thread.cwd.clone()], cx);
         });
         let route = Route::Thread(thread.id.clone());
@@ -2401,38 +2436,175 @@ impl Root {
         log_err(task, cx);
     }
 
-    /// `thread/queue/list`: the queued follow-ups of thread `id`, shown over the composer.
-    fn list_queue(&self, id: String, cx: &mut Context<Self>) {
+    fn list_queue(&mut self, id: String, cx: &mut Context<Self>) {
+        if self.queue_pending
+            || !matches!(&self.state.route, Route::Thread(current) if current == &id)
+        {
+            return;
+        }
+        let bridge = self.bridge.clone();
+        self.queue_load = Some(cx.spawn(async move |this, cx| {
+            let result = read_queue(&bridge, &id).await;
+            this.update(cx, |this, cx| match result {
+                Ok(rows) if matches!(&this.state.route, Route::Thread(current) if current == &id) =>
+                {
+                    this.thread_composer
+                        .update(cx, |composer, cx| composer.set_queued(rows, cx));
+                }
+                Ok(_) => {}
+                Err(error) => eprintln!("codex-gpui: failed to read queued messages: {error:#}"),
+            })
+            .ok();
+        }));
+    }
+
+    fn queue_action(&mut self, action: &QueueAction, window: &mut Window, cx: &mut Context<Self>) {
+        if self.queue_pending {
+            return;
+        }
+        let Route::Thread(thread_id) = self.state.route.clone() else {
+            return;
+        };
+        let (QueueAction::Steer(id) | QueueAction::Delete(id)) = action;
+        let rows = self.thread_composer.read(cx).queued();
+        let Some(at) = rows.iter().position(|row| row.submission.id == *id) else {
+            return;
+        };
+        let deleted = DeletedQueuedMessage {
+            thread_id: thread_id.clone(),
+            submission: rows[at].submission.clone(),
+            previous: at
+                .checked_sub(1)
+                .map(|i| rows[i].submission.client_user_message_id.clone()),
+            next: rows
+                .get(at + 1)
+                .map(|row| row.submission.client_user_message_id.clone()),
+        };
+        let steer = matches!(action, QueueAction::Steer(_));
+        let turn_id = self.thread.as_ref().and_then(|view| {
+            view.read(cx)
+                .turns()
+                .iter()
+                .rev()
+                .find(|turn| turn.status == TurnStatus::InProgress)
+                .map(|turn| turn.id.clone())
+        });
+        let key = (
+            thread_id.clone(),
+            deleted.submission.client_user_message_id.clone(),
+        );
+        let already_steered = self.steered_queued.contains(&key);
+        let resume = !self.loaded.contains(&thread_id);
+        self.begin_queue_action(cx);
+        let bridge = self.bridge.clone();
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let result = async {
+                resume_if(resume, &bridge, &this, &thread_id, cx).await?;
+                if steer && !already_steered {
+                    if let Some(turn_id) = turn_id {
+                        bridge.request::<_, Value>("turn/steer", json!({
+                            "threadId": thread_id,
+                            "input": deleted.submission.input,
+                            "clientUserMessageId": deleted.submission.client_user_message_id,
+                            "expectedTurnId": turn_id,
+                        })).await?;
+                        this.update(cx, |this, _| {
+                            this.steered_queued.insert(key.clone());
+                        })?;
+                    } else {
+                        bridge.request::<_, Value>("thread/queue/start", json!({
+                            "threadId": thread_id, "queuedSubmissionId": deleted.submission.id,
+                        })).await?;
+                        return Ok(());
+                    }
+                }
+                let response: Value = bridge
+                    .request(
+                        "thread/queue/delete",
+                        json!({
+                            "threadId": thread_id, "queuedSubmissionId": deleted.submission.id,
+                        }),
+                    )
+                    .await?;
+                ensure!(
+                    response["deleted"] == true,
+                    "The queued message was not deleted"
+                );
+                this.update(cx, |this, _| {
+                    let accepted = this.steered_queued.remove(&key);
+                    if !steer && !accepted {
+                        this.deleted_queued.push(deleted.clone());
+                    }
+                })?;
+                Ok(())
+            }
+            .await;
+            this.update(cx, |this, cx| {
+                if result.is_ok()
+                    && matches!(&this.state.route, Route::Thread(current) if current == &thread_id)
+                {
+                    this.thread_composer.update(cx, |composer, cx| {
+                        composer.remove_queued(&deleted.submission.id, cx);
+                    });
+                }
+                if result.is_err() {
+                    this.toast(
+                        Toast::danger(if steer {
+                            "Error submitting message"
+                        } else {
+                            "Failed to delete queued message"
+                        }),
+                        cx,
+                    );
+                }
+                this.finish_queue_action(cx);
+            })?;
+            result
+        });
+        log_err(task, cx);
+    }
+
+    fn begin_queue_action(&mut self, cx: &mut Context<Self>) {
+        self.queue_pending = true;
+        self.queue_load = None;
+        self.thread_composer
+            .update(cx, |composer, cx| composer.set_queue_pending(true, cx));
+    }
+
+    fn finish_queue_action(&mut self, cx: &mut Context<Self>) {
+        self.queue_pending = false;
+        self.thread_composer
+            .update(cx, |composer, cx| composer.set_queue_pending(false, cx));
+        if let Route::Thread(id) = self.state.route.clone() {
+            self.list_queue(id, cx);
+        }
+    }
+
+    fn undo_queued(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(deleted) = self.deleted_queued.last().cloned() else {
+            cx.propagate();
+            return;
+        };
+        cx.stop_propagation();
+        if self.queue_pending {
+            return;
+        }
+        self.begin_queue_action(cx);
+        self.navigate(Route::Thread(deleted.thread_id.clone()), window, cx);
         let bridge = self.bridge.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {
-            let list: Value = bridge
-                .request(
-                    "thread/queue/list",
-                    json!({ "threadId": id, "cursor": null }),
-                )
-                .await?;
-            let rows = list["data"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(|row| {
-                    row["input"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter_map(|part| part["text"].as_str())
-                        .collect::<String>()
-                        .trim_end()
-                        .to_owned()
-                        .into()
-                })
-                .collect();
+            let result = restore_queued(&bridge, &deleted).await;
             this.update(cx, |this, cx| {
-                if this.thread.as_ref().is_some_and(|v| v.read(cx).id() == id) {
-                    this.thread_composer
-                        .update(cx, |c, cx| c.set_queued(rows, cx));
+                match &result {
+                    Ok(()) => {
+                        this.deleted_queued.pop();
+                        this.toast(Toast::info("Queued message restored"), cx);
+                    }
+                    Err(_) => this.toast(Toast::danger("Failed to restore queued message"), cx),
                 }
-            })
+                this.finish_queue_action(cx);
+            })?;
+            result
         });
         log_err(task, cx);
     }
@@ -3220,6 +3392,24 @@ async fn turn_start(bridge: &Bridge, thread_id: &str, s: &Submission) -> Result<
     Ok(())
 }
 
+async fn read_queue(bridge: &Bridge, thread_id: &str) -> Result<Vec<QueuedSubmission>> {
+    let mut rows = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let page: ThreadQueueListResponse = bridge
+            .request(
+                "thread/queue/list",
+                json!({ "threadId": thread_id, "cursor": cursor }),
+            )
+            .await?;
+        rows.extend(page.data);
+        cursor = page.next_cursor;
+        if cursor.is_none() {
+            return Ok(rows);
+        }
+    }
+}
+
 /// The ephemeral app-server thread that writes a commit message, and what it has said.
 struct Generation {
     thread: String,
@@ -3260,6 +3450,59 @@ impl GitOutcome {
             detail,
         }
     }
+}
+
+async fn restore_queued(bridge: &Bridge, deleted: &DeletedQueuedMessage) -> Result<()> {
+    let mut rows = read_queue(bridge, &deleted.thread_id).await?;
+    let client_id = &deleted.submission.client_user_message_id;
+    if !rows
+        .iter()
+        .any(|row| &row.client_user_message_id == client_id)
+    {
+        bridge
+            .request::<_, Value>(
+                "thread/queue/add",
+                json!({
+                    "threadId": deleted.thread_id, "input": deleted.submission.input,
+                    "clientUserMessageId": client_id,
+                }),
+            )
+            .await?;
+        rows = read_queue(bridge, &deleted.thread_id).await?;
+    }
+    let original_position = rows
+        .iter()
+        .position(|row| &row.client_user_message_id == client_id)
+        .context("The restored queued message is no longer queued")?;
+    let restored_id = rows.remove(original_position).id;
+    let position = deleted
+        .next
+        .as_ref()
+        .and_then(|next| {
+            rows.iter()
+                .position(|row| &row.client_user_message_id == next)
+        })
+        .or_else(|| {
+            deleted.previous.as_ref().and_then(|previous| {
+                rows.iter()
+                    .position(|row| &row.client_user_message_id == previous)
+                    .map(|at| at + 1)
+            })
+        })
+        .unwrap_or(rows.len());
+    if position != original_position {
+        let mut order: Vec<_> = rows.into_iter().map(|row| row.id).collect();
+        order.insert(position, restored_id);
+        bridge
+            .request::<_, Value>(
+                "thread/queue/reorder",
+                json!({
+                    "threadId": deleted.thread_id, "queuedSubmissionIds": order,
+                }),
+            )
+            .await?;
+    }
+    Ok(())
 }
 
 /// A host setting of the original's Git page (`git-branch-prefix`, `git-commit-instructions`).
@@ -3651,6 +3894,9 @@ impl Render for Root {
             .font_family(ui::SANS)
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::type_anywhere))
+            .capture_action(cx.listener(|this, _: &Undo, window, cx| {
+                this.undo_queued(window, cx);
+            }))
             .on_action(cx.listener(|this, _: &FindInThread, window, cx| {
                 if matches!(this.state.route, Route::Thread(_)) {
                     if this.side == Some(SidePanel::Changes)
