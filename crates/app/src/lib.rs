@@ -2439,10 +2439,21 @@ impl Root {
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let mut params = json!({ "cwd": cwd, "model": model(&s) });
             apply_permissions(&mut params, s.permission);
-            let mut thread = bridge
+            let mut thread = match bridge
                 .request::<_, ThreadStartResponse>("thread/start", params)
-                .await?
-                .thread;
+                .await
+            {
+                Ok(started) => started.thread,
+                Err(error) => {
+                    // The draft, its attachments and the chosen project stay as they were.
+                    this.update(cx, |this, cx| {
+                        let composer = this.home.read(cx).composer.clone();
+                        composer.update(cx, |c, cx| c.restore_submission(&s.text, cx));
+                        this.toast(Toast::danger("Error starting chat"), cx);
+                    })?;
+                    return Err(error);
+                }
+            };
             // Title the new chat (Recents row, header) with its prompt until it has a preview.
             if thread.preview.is_empty() {
                 thread.preview = s.text.clone();
