@@ -304,31 +304,110 @@ impl Dialog {
                 .child(self.button(1, "Confirm", 115., t, cx)))
     }
 
+    /// The original `Log out?` dialog (`refs/interactions/logout.json`, 1280×832, scale 1): a
+    /// 380 px card centered in the window, 20 px padding, 12 px between the title, the body and
+    /// the button row, 32 px buttons sized to their text plus 16 px each side, 12 px apart,
+    /// 20 px from the right and bottom edges, and a 24 px close button 16 px from the corner.
+    /// ponytail: the original's `Signed in as <email>` line is omitted; the app does not read the email.
     fn logout_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
         div()
+            .relative()
             .p(px(20.))
             .flex()
             .flex_col()
             .gap(px(12.))
             .child(text("Log out?", 20., 28., 600., t.text))
-            .child(
-                text(
-                    "You’ll need to sign in again to keep using Codex",
-                    14.,
-                    20.,
-                    430.,
-                    t.text_secondary,
-                )
-                .whitespace_normal(),
-            )
+            .child(text(
+                "You’ll need to sign in again to keep using Codex",
+                14.,
+                21.,
+                430.,
+                t.text,
+            ))
             .child(
                 div()
                     .flex()
                     .justify_end()
                     .gap(px(12.))
-                    .child(self.button(0, "Cancel", 80., t, cx))
-                    .child(self.button(1, "Log out", 88., t, cx)),
+                    .child(self.logout_button(0, "Cancel", t, cx))
+                    .child(self.logout_button(1, "Log out", t, cx)),
             )
+            .child(
+                div()
+                    .id("logout-close")
+                    .role(gpui::Role::Button)
+                    .aria_label("Close dialog")
+                    .absolute()
+                    .right(px(16.))
+                    .top(px(16.))
+                    .size(px(24.))
+                    .rounded(px(4.))
+                    .hover(|s| s.bg(t.ghost_hover))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icon("close", 16., t.text.opacity(0.8)))
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(Outcome::Dismiss))),
+            )
+    }
+
+    /// `Cancel` is the ghost button and `Log out` the danger button: 32 px high, `px-4` and a
+    /// 1 px transparent border, radius 12.5, the 2 px ring outside the box when focused.
+    fn logout_button(
+        &self,
+        index: usize,
+        label: &'static str,
+        t: &Theme,
+        cx: &Context<Self>,
+    ) -> Stateful<Div> {
+        let danger = index == 1;
+        div()
+            .id(("dialog-button", index))
+            .role(gpui::Role::Button)
+            .aria_label(label)
+            .track_focus(&self.controls[index])
+            .h(px(32.))
+            // `px-4` plus the original's 1 px transparent border, so the painted box is the border box.
+            .px(px(17.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .relative()
+            .when(danger, |d| {
+                d.child(shapes::decoration(shapes::Decoration {
+                    radius: Corners::all(px(12.5)),
+                    corner: shapes::Corner::Squircle,
+                    fill: Some(t.text_error.opacity(0.1)),
+                    ..Default::default()
+                }))
+            })
+            .when(self.selected == index, |d| {
+                d.child(div().absolute().inset(px(-2.)).child(shapes::decoration(
+                    shapes::Decoration {
+                        radius: Corners::all(px(14.5)),
+                        corner: shapes::Corner::Squircle,
+                        border: Some((px(2.), rgba(0x3a83f7ff).into())),
+                        ..Default::default()
+                    },
+                )))
+            })
+            .hover(|s| s.opacity(0.85))
+            .child(text(
+                label,
+                14.,
+                18.,
+                430.,
+                if danger {
+                    t.text_error
+                } else {
+                    t.text_tertiary
+                },
+            ))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.selected = index;
+                this.controls[index].focus(window, cx);
+                this.activate(cx);
+            }))
     }
 
     fn close_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
@@ -806,7 +885,7 @@ impl Render for Dialog {
             Kind::ScheduleTask => (680., 422.),
             Kind::Rename => (420., 185.),
             Kind::FullAccess => (520., 420.),
-            Kind::LogOut => (420., 152.),
+            Kind::LogOut => (380., 145.),
         };
         let width = width.min(f32::from(viewport.width) * 0.92);
         let height = height.min(f32::from(viewport.height) * 0.92);
@@ -886,8 +965,12 @@ impl Render for Dialog {
                     .top(px(top))
                     .w(px(width))
                     .h(px(height))
-                    .rounded(px(if schedule { 30. } else { 24. }))
-                    .overflow_hidden()
+                    .rounded(px(match self.kind {
+                        Kind::ScheduleTask => 30.,
+                        Kind::LogOut => 25.,
+                        _ => 24.,
+                    }))
+                    .when(self.kind != Kind::LogOut, |d| d.overflow_hidden())
                     .map(|d| {
                         if !schedule {
                             d.child(shapes::backdrop_blur(
@@ -895,7 +978,16 @@ impl Render for Dialog {
                                 shapes::Fill::Color,
                                 false,
                                 shapes::Decoration {
-                                    radius: Corners::all(px(24.)),
+                                    radius: Corners::all(px(if self.kind == Kind::LogOut {
+                                        25.
+                                    } else {
+                                        24.
+                                    })),
+                                    corner: if self.kind == Kind::LogOut {
+                                        shapes::Corner::Squircle
+                                    } else {
+                                        shapes::Corner::default()
+                                    },
                                     fill: Some(gpui::Hsla {
                                         a: 0.9,
                                         ..t.menu_background

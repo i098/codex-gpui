@@ -3,7 +3,7 @@
 #[path = "common/mod.rs"]
 mod common;
 
-use anyhow::{Result, ensure};
+use anyhow::{Context as _, Result, ensure};
 use app::Route;
 use common::{Fx, GREETING, exchange, script};
 use serde_json::json;
@@ -30,11 +30,29 @@ fn shot(fx: &mut Fx, name: &str) -> Result<()> {
     Ok(())
 }
 
-/// The recorded focus ring (`rgb(58, 131, 247)`, 2 px outside the box) at a 1280-wide point.
-fn ring_at(fx: &mut Fx, x: f32, y: f32) -> Result<bool> {
+/// Bounding box `[left, top, right, bottom]`, in 1280-wide points, of the recorded focus ring
+/// (`rgb(58, 131, 247)`) inside the dialog area, or `None` when no pixel has that colour.
+fn ring_box(fx: &mut Fx) -> Result<Option<[f32; 4]>> {
     let image = fx.shot()?;
     let scale = image.width() as f32 / 1280.;
-    Ok(image.get_pixel((x * scale) as u32, (y * scale) as u32).0[..3] == [58, 131, 247])
+    let mut found: Option<[u32; 4]> = None;
+    for y in (320. * scale) as u32..(500. * scale) as u32 {
+        for x in (440. * scale) as u32..(840. * scale) as u32 {
+            if image.get_pixel(x, y).0[..3] == [58, 131, 247] {
+                let [l, t, r, b] = found.unwrap_or([x, y, x, y]);
+                found = Some([l.min(x), t.min(y), r.max(x + 1), b.max(y + 1)]);
+            }
+        }
+    }
+    Ok(found.map(|b| b.map(|v| v as f32 / scale)))
+}
+
+/// The original `Log out?` card is 380 wide and centered in the window; its 32 px buttons sit
+/// 20 px from the bottom and right edges (`refs/interactions/logout.json`), so the 2 px ring
+/// around a button is 36 high and ends 18 above the card bottom.
+fn ring_fits(ring: [f32; 4]) -> bool {
+    let card_bottom = 832. / 2. + 145. / 2.;
+    (ring[3] - ring[1] - 36.).abs() <= 0.6 && (ring[3] - (card_bottom - 18.)).abs() <= 0.6
 }
 
 #[test]
@@ -99,9 +117,10 @@ fn logout_requires_confirmation_and_preserves_the_session_on_failure() -> Result
     let requests = fx.sent()?;
     open_logout(&mut fx)?;
     shot(&mut fx, "confirmation")?;
+    let cancel = ring_box(&mut fx)?.context("Cancel ring")?;
     ensure!(
-        !ring_at(&mut fx, 731., 448.)?,
-        "Cancel shows a focus ring before any Tab"
+        ring_fits(cancel),
+        "Cancel must be ringed and 20 px above the card bottom when the dialog opens"
     );
     ensure!(
         fx.read(|root, _| root.dialog().is_some()),
@@ -121,9 +140,14 @@ fn logout_requires_confirmation_and_preserves_the_session_on_failure() -> Result
     ensure!(fx.read(|root, _| root.dialog().is_some()));
     fx.keys("tab")?;
     shot(&mut fx, "keyboard-focus")?;
+    let logout = ring_box(&mut fx)?.context("Log out ring")?;
     ensure!(
-        ring_at(&mut fx, 741., 448.)?,
-        "Tab must ring Log out outside its box"
+        ring_fits(logout) && (logout[2] - 812.).abs() <= 0.6,
+        "Tab must ring Log out, 20 px from the card's right edge"
+    );
+    ensure!(
+        cancel[1] == logout[1] && cancel[3] == logout[3],
+        "Cancel {cancel:?} and Log out {logout:?} must share top and bottom"
     );
     fx.keys("enter")?;
     fx.wait("logout failure", |fx| {
