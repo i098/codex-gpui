@@ -57,27 +57,36 @@ impl DateTimeIter {
         }
     }
 
-    fn increment_yearly(&mut self, interval: u16) -> Result<(), RRuleError> {
-        self.year += i32::from(interval);
-        checks::check_year_range(self.year)?;
+    fn increment_yearly(&mut self, interval: u64) -> Result<(), RRuleError> {
+        self.add_years(interval)?;
         self.fix_day()
     }
 
-    fn increment_monthly(&mut self, interval: u16) -> Result<(), RRuleError> {
-        self.month += u32::from(interval);
-        if self.month > 12 {
-            let mut year_div = u16::try_from(self.month).map_err(|_| {
+    /// A year beyond `i32` is also beyond `YEAR_RANGE`, which ends the iteration.
+    fn add_years(&mut self, years: u64) -> Result<(), RRuleError> {
+        self.year = i32::try_from(years)
+            .ok()
+            .and_then(|years| self.year.checked_add(years))
+            .ok_or_else(|| {
+                RRuleError::new_iter_err(
+                    "Encountered a too high new year. Please decrease the rrule interval.",
+                )
+            })?;
+        checks::check_year_range(self.year)?;
+        Ok(())
+    }
+
+    fn increment_monthly(&mut self, interval: u64) -> Result<(), RRuleError> {
+        let month = interval
+            .checked_add(u64::from(self.month) - 1)
+            .ok_or_else(|| {
                 RRuleError::new_iter_err(
                     "Encountered a too high new month. Please decrease the rrule interval.",
                 )
-            })? / 12;
-            self.month %= 12;
-            if self.month == 0 {
-                self.month = 12;
-                year_div -= 1;
-            }
-            self.year += i32::from(year_div);
-            checks::check_year_range(self.year)?;
+            })?;
+        self.month = u32::try_from(month % 12).expect("range 0-11 is covered by u32") + 1;
+        if month >= 12 {
+            self.add_years(month / 12)?;
         }
         Ok(())
     }
@@ -100,22 +109,21 @@ impl DateTimeIter {
         (year_day_mod + year_start_weekday) % 7
     }
 
-    fn increment_weekly(&mut self, interval: u16, week_start: Weekday) -> Result<(), RRuleError> {
+    fn increment_weekly(&mut self, interval: u64, week_start: Weekday) -> Result<(), RRuleError> {
         let weekday = self.get_weekday();
         let option_week_start = week_start.num_days_from_monday();
-        let interval = u32::from(interval);
+        let interval = checked_mul_u32(days(interval)?, 7, Some("please decrease `INTERVAL`"))?;
         // Calculate the amount of day to move forward.
         let day_delta = if option_week_start > weekday {
             // `weekday` and `option_week_start` can only be in range `0..=6`
             // `option_week_start` > `weekday` so:
             // `(weekday + 1 + 6 - option_week_start)` > 0 so can never be negative.
-            interval * 7 - (weekday + 7 - option_week_start)
+            interval - (weekday + 7 - option_week_start)
         } else {
             // This can also never be negative
-            interval * 7 - (weekday - option_week_start)
+            interval - (weekday - option_week_start)
         };
-        self.day += day_delta;
-        self.fix_day()
+        self.increment_daily(u64::from(day_delta))
     }
 
     fn days_in_month(&self) -> u32 {
@@ -152,35 +160,31 @@ impl DateTimeIter {
         Ok(())
     }
 
-    fn increment_daily(&mut self, interval: u16) -> Result<(), RRuleError> {
-        self.day += u32::from(interval);
+    fn increment_daily(&mut self, interval: u64) -> Result<(), RRuleError> {
+        self.day = checked_add_u32(
+            self.day,
+            days(interval)?,
+            Some("please decrease `INTERVAL`"),
+        )?;
         self.fix_day()
     }
 
     fn increment_hourly(
         &mut self,
-        interval: u16,
+        interval: u64,
         by_hour: &[u8],
         increment_day: bool,
     ) -> Result<(), RRuleError> {
+        let mut hour = u64::from(self.hour);
         if increment_day {
             // Jump to one iteration before the next day
-            let temp_value = (23 - self.hour) / u32::from(interval);
-            self.hour += checked_mul_u32(
-                temp_value,
-                u32::from(interval),
-                Some("please decrease `INTERVAL`"),
-            )?;
+            hour += (23 - hour) / interval * interval;
         }
 
         let mut prev_hours = HashSet::new();
         loop {
-            self.hour = checked_add_u32(
-                self.hour,
-                u32::from(interval),
-                Some("please decrease `INTERVAL`"),
-            )?;
-            let new_hours = u8::try_from(self.hour % 24).expect("range 0-23 is covered by u8");
+            hour = add(hour, interval)?;
+            let new_hours = u8::try_from(hour % 24).expect("range 0-23 is covered by u8");
             if by_hour.is_empty() || by_hour.iter().any(|bh| *bh == new_hours) {
                 break;
             }
@@ -192,10 +196,8 @@ impl DateTimeIter {
             prev_hours.insert(new_hours);
         }
 
-        let new_days = u16::try_from(self.hour / 24).map_err(|_| {
-            RRuleError::new_iter_err("unexpected high hour, please decrease the interval")
-        })?;
-        self.hour %= 24;
+        self.hour = u32::try_from(hour % 24).expect("range 0-23 is covered by u32");
+        let new_days = hour / 24;
         if new_days > 0 {
             self.increment_daily(new_days)
         } else {
@@ -205,32 +207,27 @@ impl DateTimeIter {
 
     fn increment_minutely(
         &mut self,
-        interval: u16,
+        interval: u64,
         by_hour: &[u8],
         by_minute: &[u8],
         increment_day: bool,
     ) -> Result<(), RRuleError> {
+        let mut minute = u64::from(self.minute);
         if increment_day {
             // Jump to one iteration before the next day
-            let minutes_total = self.hour * 60 + self.minute;
-            let temp_value = (MINUTES_IN_A_DAY - 1 - minutes_total) / u32::from(interval);
-            self.minute += checked_mul_u32(
-                temp_value,
-                u32::from(interval),
-                Some("please decrease `INTERVAL`"),
-            )?;
+            let minutes_total = u64::from(self.hour * 60) + minute;
+            minute += (u64::from(MINUTES_IN_A_DAY) - 1 - minutes_total) / interval * interval;
         }
 
         let mut prev_values = HashSet::new();
         loop {
-            self.minute += u32::from(interval);
-            let hours_div = u16::try_from(self.minute / 60).map_err(|_| {
-                RRuleError::new_iter_err("unexpected high minute, please decrease interval")
-            })?;
+            minute = add(minute, interval)?;
+            let hours_div = minute / 60;
             if hours_div > 0 {
-                self.minute %= 60;
+                minute %= 60;
                 self.increment_hourly(hours_div, by_hour, increment_day)?;
             }
+            self.minute = u32::try_from(minute).expect("range 0-59 is covered by u32");
 
             let hours = u8::try_from(self.hour % 24).expect("range 0-23 is covered by u8");
             let minutes = u8::try_from(self.minute % 60).expect("range 0-59 is covered by u8");
@@ -254,33 +251,28 @@ impl DateTimeIter {
 
     fn increment_secondly(
         &mut self,
-        interval: u16,
+        interval: u64,
         by_hour: &[u8],
         by_minute: &[u8],
         by_second: &[u8],
         increment_day: bool,
     ) -> Result<(), RRuleError> {
+        let mut second = u64::from(self.second);
         if increment_day {
             // Jump to one iteration before the next day
-            let total_seconds = self.hour * 3600 + self.minute * 60 + self.second;
-            let temp_value = (SECONDS_IN_A_DAY - 1 - total_seconds) / u32::from(interval);
-            self.second += checked_mul_u32(
-                temp_value,
-                u32::from(interval),
-                Some("please decrease `INTERVAL`"),
-            )?;
+            let total_seconds = u64::from(self.hour * 3600 + self.minute * 60) + second;
+            second += (u64::from(SECONDS_IN_A_DAY) - 1 - total_seconds) / interval * interval;
         }
 
         let mut prev_values = HashSet::new();
         loop {
-            self.second += u32::from(interval);
-            let minutes_div = u16::try_from(self.second / 60).map_err(|_| {
-                RRuleError::new_iter_err("unexpected high second, please decrease interval")
-            })?;
+            second = add(second, interval)?;
+            let minutes_div = second / 60;
             if minutes_div > 0 {
-                self.second %= 60;
+                second %= 60;
                 self.increment_minutely(minutes_div, by_hour, by_minute, increment_day)?;
             }
+            self.second = u32::try_from(second).expect("range 0-59 is covered by u32");
 
             let hours = u8::try_from(self.hour % 24).expect("range 0-23 is covered by u8");
             let minutes = u8::try_from(self.minute % 60).expect("range 0-59 is covered by u8");
@@ -303,6 +295,23 @@ impl DateTimeIter {
 
         Ok(())
     }
+}
+
+/// More than `u32::MAX` days is also beyond `YEAR_RANGE`, which ends the iteration.
+fn days(days: u64) -> Result<u32, RRuleError> {
+    u32::try_from(days).map_err(|_| {
+        RRuleError::new_iter_err(
+            "Encountered too many new days. Please decrease the rrule interval.",
+        )
+    })
+}
+
+fn add(value: u64, interval: u64) -> Result<u64, RRuleError> {
+    value.checked_add(interval).ok_or_else(|| {
+        RRuleError::new_iter_err(format!(
+            "Could not add numbers, would overflow (`{value} + {interval}`), please decrease `INTERVAL`."
+        ))
+    })
 }
 
 impl From<&chrono::DateTime<Tz>> for DateTimeIter {

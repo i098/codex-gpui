@@ -20,7 +20,7 @@ pub(crate) struct RRuleIter {
     pub(crate) finished: bool,
     /// Number of events that should still be generated before the end.
     /// Counter always goes down after each iteration.
-    pub(crate) count: Option<u32>,
+    pub(crate) count: Option<u64>,
     /// If the iterator should be using iterator limits.
     pub(crate) limited: bool,
     /// If the iterator has been stopped by the iterator limits.
@@ -55,7 +55,7 @@ impl RRuleIter {
     fn try_add_datetime(
         dt: chrono::DateTime<Tz>,
         rrule: &RRule,
-        count: &mut Option<u32>,
+        count: &mut Option<u64>,
         buffer: &mut VecDeque<chrono::DateTime<Tz>>,
         dt_start: &chrono::DateTime<Tz>,
     ) -> bool {

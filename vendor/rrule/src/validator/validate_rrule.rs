@@ -9,13 +9,18 @@ use super::ValidationError;
 pub(crate) static MONTH_RANGE: RangeInclusive<u8> = 1..=12;
 
 /// Range of values that a year can be.
-/// Range: `-10_000..=10_000`
-pub(crate) static YEAR_RANGE: RangeInclusive<i32> = -10_000..=10_000;
+/// Range: `-10_000..=9_999`; like the original recurrence iterator, iteration stops after 9999.
+pub(crate) static YEAR_RANGE: RangeInclusive<i32> = -10_000..=9_999;
+
+/// Range of values that `INTERVAL` and `COUNT` can be: the JavaScript safe integers.
+/// Range: `0..=9_007_199_254_740_991`
+static SAFE_INTEGER_RANGE: RangeInclusive<u64> = 0..=9_007_199_254_740_991;
 
 type Validator =
     &'static dyn Fn(&RRule<Unvalidated>, &chrono::DateTime<Tz>) -> Result<(), ValidationError>;
 
-const VALIDATION_PIPELINE: [Validator; 11] = [
+const VALIDATION_PIPELINE: [Validator; 12] = [
+    &validate_interval_and_count,
     &validate_until,
     &validate_by_set_pos,
     &validate_by_month,
@@ -42,6 +47,19 @@ pub(crate) fn validate_rrule_forced(
     VALIDATION_PIPELINE
         .into_iter()
         .try_for_each(|validator| validator(rrule, dt_start))
+}
+
+// Interval and count:
+// - Can be a value up to the largest JavaScript safe integer.
+fn validate_interval_and_count(
+    rrule: &RRule<Unvalidated>,
+    _dt_start: &chrono::DateTime<Tz>,
+) -> Result<(), ValidationError> {
+    validate_range_for_vec(&SAFE_INTEGER_RANGE, &[rrule.interval], "INTERVAL")?;
+    if let Some(count) = rrule.count {
+        validate_range_for_vec(&SAFE_INTEGER_RANGE, &[count], "COUNT")?;
+    }
+    Ok(())
 }
 
 // Until:
@@ -639,6 +657,97 @@ mod tests {
                 err,
                 ValidationError::DtStartUntilMismatchTimezone { .. }
             ));
+        }
+    }
+
+    #[test]
+    fn accepts_javascript_safe_interval_and_count() {
+        let dt_start = UTC.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap();
+        let largest = 9_007_199_254_740_991;
+        let rrule = RRule {
+            interval: largest,
+            count: Some(largest),
+            ..Default::default()
+        };
+        assert_eq!(validate_rrule_forced(&rrule, &dt_start), Ok(()));
+        let tests = [
+            (
+                "INTERVAL",
+                RRule {
+                    interval: largest + 1,
+                    ..Default::default()
+                },
+            ),
+            (
+                "COUNT",
+                RRule {
+                    count: Some(largest + 1),
+                    ..Default::default()
+                },
+            ),
+        ];
+        for (field, rrule) in tests {
+            assert_eq!(
+                validate_rrule_forced(&rrule, &dt_start),
+                Err(ValidationError::InvalidFieldValueRange {
+                    field: field.into(),
+                    value: (largest + 1).to_string(),
+                    start_idx: "0".into(),
+                    end_idx: largest.to_string(),
+                })
+            );
+        }
+    }
+
+    fn dates(rule: &str, limit: u16) -> Vec<String> {
+        let set: crate::RRuleSet = rule.parse().unwrap();
+        set.all(limit)
+            .dates
+            .iter()
+            .map(|date| date.to_rfc3339())
+            .collect()
+    }
+
+    #[test]
+    fn iterates_intervals_and_counts_beyond_u16_and_u32() {
+        let start = "DTSTART:20261018T080000Z\nRRULE:";
+        let rule = format!("{start}FREQ=HOURLY;INTERVAL=65536;COUNT=4294967296");
+        let set: crate::RRuleSet = rule.parse().unwrap();
+        assert_eq!(set.get_rrule()[0].get_interval(), 65_536);
+        assert_eq!(set.get_rrule()[0].get_count(), Some(4_294_967_296));
+        assert_eq!(
+            dates(&rule, 3),
+            [
+                "2026-10-18T08:00:00+00:00",
+                "2034-04-10T00:00:00+00:00",
+                "2041-09-30T16:00:00+00:00"
+            ]
+        );
+        assert_eq!(
+            dates(&format!("{start}FREQ=SECONDLY;INTERVAL=4294967296"), 2),
+            ["2026-10-18T08:00:00+00:00", "2162-11-24T14:28:16+00:00"]
+        );
+    }
+
+    #[test]
+    fn stops_iteration_after_year_9999() {
+        assert_eq!(
+            dates("DTSTART:99991231T000000Z\nRRULE:FREQ=DAILY", 3),
+            ["9999-12-31T00:00:00+00:00"]
+        );
+        for freq in [
+            "YEARLY", "MONTHLY", "WEEKLY", "DAILY", "HOURLY", "MINUTELY", "SECONDLY",
+        ] {
+            assert_eq!(
+                dates(
+                    &format!(
+                        "DTSTART:20261018T080000Z\nRRULE:FREQ={freq};INTERVAL=9007199254740991"
+                    ),
+                    3
+                ),
+                ["2026-10-18T08:00:00+00:00"],
+                "{freq}"
+            );
         }
     }
 }
