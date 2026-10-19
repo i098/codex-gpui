@@ -587,13 +587,24 @@ The conversation prepare, its stream, and the navigation into the started conver
 
 `LocalHost` implements the original `automation-update` status change for local tasks (issue https://github.com/i098/codex-gpui/issues/226).
 It accepts `{id, status}` or the original full cron or heartbeat body; any other changed field fails.
+Like the original `ugi`, a task without a target sends its first cwd as `projectId`; the host compares that value with the stored cwd.
 `PAUSED` clears `next_run_at` and `next_run_nominal_at`.
 `ACTIVE` recalculates the original nominal and actual next run with `GF`/`KF`/`JF`/`XF` and the persisted `.run-jitter-salt`; it never reuses a cached time.
 A rule without a future run returns the original `Automation schedule has no future runs…` error.
 The update keeps the task identity, the definition and the unrelated TOML and database fields, and restores the TOML when the database commit fails.
 It returns the original `{item}` shape.
 The recurrence uses the vendored `rrule` 0.14.0 with the original limits: `INTERVAL` and `COUNT` up to the JavaScript safe integers, iteration through year 9999, and `BYSECOND=60` moved into the next minute.
-The `host` checks match the retained original oracle; the row actions do not call this endpoint yet.
+The `host` checks match the retained original oracle.
+
+AM-022, AM-023 and AM-028 use the existing sidebar task list.
+The `Scheduled task actions` menu opens under the row button like the original (right edge 1 px inside the button, 220 px wide); its first item is `Pause` or `Resume`.
+The row status control shows `Pause` or `Resume` on hover or keyboard focus, with a named accessible action.
+Both send `automation-update` with the original cron or heartbeat request, block duplicate writes and refetch the list.
+Success shows `Successfully paused automation` or `Successfully resumed automation`; the row shows `Paused` only after the host reports PAUSED.
+An error keeps the stored state and shows `Could not update scheduled task` with the host error description.
+`s037::task_status_controls_persist_through_the_real_local_host` pauses through the menu with keyboard events, restarts the app on a fresh `LocalHost`, resumes with the pointer and fails a real definition write.
+It checks the TOML, the database row, the recalculated next run and the unchanged task fields.
+It uses an isolated headless native Root and a task-owned `CODEX_HOME`, not an installed window.
 
 `LocalHost` also creates the worktree that the default Run now path needs (issue https://github.com/i098/codex-gpui/issues/254).
 `create-worktree` and `set-worktree-owner-thread` follow the original git worker (`D2`, `e4`) and the automation start `Ol`.
@@ -617,11 +628,11 @@ Run now does not call it yet; run records, model and config selection, and the U
 | 4 | `Create` menu | click | Create with Codex / ChatGPT / manually. | — | NOT WIRED (no host: `automation-create`) |
 | 5 | Search | focus | Filters; `No matching tasks`. | Dispatches `SearchTasks`; no handler. | NOT WIRED (no host: `list-automations`) |
 | 6 | Status filter | click | All / Active / Paused. | — | NOT WIRED (no host: `list-automations`) |
-| 7 | Task row | click | Detail panel. | — | NOT WIRED (no host: `list-automations`) |
-| 8 | Row actions | click | Edit, Run now, Pause, Delete. | — | NOT WIRED (UI; `LocalHost` has `automation-update` pause/resume, no `automation-delete`) |
+| 7 | Task row | click | Detail panel. | Selects the task and opens its thread. | PASS (`s037::task_row_hover_and_click_match_original`) |
+| 8 | Row actions | click | Edit, Run now, Pause, Delete. | `Pause` / `Resume` in the row menu and the row status control persist through `automation-update`. Other actions remain outside this slice. | PARTIAL (`s037::task_status_controls_persist_through_the_real_local_host`) |
 | 9 | Editor fields | focus | Name, Prompt, schedule. | — | NOT WIRED (no host: `automation-create`) |
 | 10 | Previous runs | click | Run chat, mark read, archive. | — | NOT WIRED (no host: `inbox-items`, `automation-run-archive`) |
-| 11 | Row hover | hover | Row highlight. | No task rows; suggestion hover matches the original recording. | FAIL (no task rows; suggestion hover passes `s035::suggestion_hover_matches_original`) |
+| 11 | Row hover | hover | Row highlight. | The recorded row fill and actions match; the status icon changes to Pause on hover or keyboard focus. | PASS (`s037::task_row_hover_and_click_match_original`; suggestion hover: `s035::suggestion_hover_matches_original`) |
 | 12 | Focus ring | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/screens/automations.rs`) |
 | 13 | No tasks | empty | `No scheduled tasks`, suggestions. | `No scheduled tasks`, server suggestions and distinct landing examples, up to six cards. | PASS (`rail_scheduled`, `parity_automations`, `host::scheduled_suggestions_follow_late_reads_and_host_replacement`) |
 | 14 | Loading | loading | `Loading scheduled tasks…`. | — | NOT WIRED (no host: `list-automations`) |
