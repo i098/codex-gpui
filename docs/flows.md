@@ -582,12 +582,17 @@ The conversation prepare, its stream, and the navigation into the started conver
 `Run now` (AM-021) is the first item of the row `Scheduled task actions` menu, as in `run-now-11e55df28c95.js`.
 Choosing it sends `automation-run-now` with `{id, collaborationMode, permissions}`; the row reads `Starting run…` and an info toast shows until the host answers.
 `LocalHost` starts one app-server thread per task folder, titles it with the task name, and sends the original's run preamble and the prompt as the first turn.
-The new thread then appears in Recents through `thread/started`; no run record is written, because the original host's run tracking is not ported.
+The new thread then appears in Recents through `thread/started`.
+Before each thread the host reads the user's saved config (`config/read` for the folder) and the config requirements, and picks the model from `model/list` like the original (`Pr`): the task's model, else `gpt-5.3-codex`, else the default.
+The sandbox and approvals follow the original's agent-mode rules (`Al`): the saved `sandbox_mode` and `approval_policy`, or `auto`; an unattended run sets `never` when the requirements allow it, and the turn's sandbox adds the folder, `$CODEX_HOME/automations/<id>` and the git roots.
+The mode the user last picked is read from `agent-mode-by-host-id` in the global state [INFERENCE: the persisted-atom table is assumed].
+When the original database exists, a `pending:` row in `automation_runs` opens before the thread, takes the thread id, and is archived (`auto`) if the thread or turn fails to start.
+`turn/completed` for the thread then sets the run to `PENDING_REVIEW` (`finish_automation_run`); a `failed_runs_only` task is read when the turn completed and unread otherwise.
 A refusal or `success: false` shows the danger toast `Could not start scheduled task`, with the reason on one line.
 Event-triggered tasks (`## When this happens` prompts) have the item disabled with the tooltip `Automations triggered by events can’t be run manually`; the host refuses them too.
 The local environment with project folders or a project target (its first root from `.codex-global-state.json`) runs.
 Worktree (the original default), projectless and heartbeat tasks are refused: the host has no worktree service, workspace-directory creation or renderer thread state.
-No sandbox or approval settings from the user's config are sent, no run row is written and the project assignment of the new thread is not stored.
+Not yet carried over: the project assignment of the new thread, `autoArchive`, the desktop notification, the unread dot on the rail, `lastRunAt` and next-run updates.
 `automation_run_now` checks the requests the app-server receives and the refusals; the live `Root` flow needs macOS.
 
 | # | Item | Kind | Original | Port | Status |

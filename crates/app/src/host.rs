@@ -41,6 +41,7 @@ use ui::screens::sidebar::Project;
 use url::Url;
 
 mod git;
+mod run_now;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "transport", content = "request", rename_all = "kebab-case")]
@@ -74,6 +75,12 @@ pub trait Host: Send + Sync {
 
     fn add_project(&self, _root: &Path) -> Result<String> {
         bail!("adding a local project is unsupported by this host")
+    }
+
+    /// The original's turn-completed update of an automation run: an open run of `thread_id`
+    /// becomes `PENDING_REVIEW`. `false` when the thread is no open run or the host has none.
+    fn finish_automation_run(&self, _thread_id: &str, _completed: bool) -> Result<bool> {
+        Ok(false)
     }
 
     /// The signed-in ChatGPT identity the renderer puts on its backend requests; `None`
@@ -566,124 +573,6 @@ impl LocalHost {
         definition(&id, &contents)
     }
 
-    /// The first root folder of the original sidebar project `id` (`local-projects` in
-    /// `.codex-global-state.json`), like the original's `cl` then `en(project.roots)`.
-    fn project_root(&self, id: &str) -> Result<String> {
-        let state: Value = fs::read(self.home.join(".codex-global-state.json"))
-            .ok()
-            .and_then(|contents| serde_json::from_slice(&contents).ok())
-            .unwrap_or(Value::Null);
-        state["local-projects"]
-            .as_object()
-            .into_iter()
-            .flat_map(|projects| projects.values())
-            .find(|project| project["id"] == id)
-            .and_then(|project| project["rootPaths"][0].as_str())
-            .map(str::to_owned)
-            .context("Scheduled run skipped: no folders configured")
-    }
-
-    /// The original's `automation-run-now` for a local task: one app-server thread per task
-    /// folder, titled with the task name, then a turn with the original's run preamble and the
-    /// prompt. A run that cannot start fails with the reason; no run is recorded or faked.
-    /// The original also runs worktree (its default), projectless and heartbeat tasks; those
-    /// need its worktree service, workspace directories and renderer state, none of which this
-    /// host has, so they fail here instead of running somewhere else.
-    fn automation_run_now(&self, params: &Value) -> Result<Value> {
-        let id = params["id"].as_str().context("missing automation id")?;
-        let item = self
-            .automations()?
-            .get("items")
-            .and_then(Value::as_array)
-            .and_then(|items| items.iter().find(|item| item["id"] == id))
-            .cloned()
-            .context("Automation not found.")?;
-        let prompt = item["prompt"].as_str().unwrap_or_default();
-        ensure!(
-            !ui::screens::automations::event_triggered(prompt),
-            "Automations triggered by events can’t be run manually"
-        );
-        ensure!(
-            item["kind"] == "cron",
-            "Heartbeat tasks cannot be run from this app yet"
-        );
-        ensure!(
-            item["executionEnvironment"] == "local",
-            "Worktree tasks cannot be run from this app yet: it has no worktree service"
-        );
-        let cwds: Vec<String> = match item["target"]["type"].as_str() {
-            None => item["cwds"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|cwd| cwd.as_str().map(str::to_owned))
-                .collect(),
-            Some("project") => {
-                vec![self.project_root(item["target"]["projectId"].as_str().unwrap_or_default())?]
-            }
-            Some(_) => bail!("Projectless tasks cannot be run from this app yet"),
-        };
-        ensure!(
-            !cwds.is_empty(),
-            "Scheduled run skipped: no folders configured"
-        );
-        let bridge = self
-            .bridge
-            .as_ref()
-            .context("The app server is not connected")?;
-        let name = item["name"].as_str().unwrap_or_default();
-        let last = item["lastRunAt"].as_i64().map_or_else(
-            || "never".to_owned(),
-            |ms| {
-                let at = chrono::DateTime::from_timestamp_millis(ms).unwrap_or_default();
-                format!(
-                    "{} ({ms})",
-                    at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-                )
-            },
-        );
-        let text = format!(
-            "Automation: {name}\n\nAutomation ID: {id}\nAutomation memory: $CODEX_HOME/automations/{id}/memory.md\nLast run: {last}\n\n{prompt}"
-        );
-        let effort = item["reasoningEffort"].as_str().unwrap_or("medium");
-        let mut first_error = None;
-        for cwd in &cwds {
-            let started = pollster::block_on(async {
-                let mut start = json!({ "cwd": cwd });
-                if let Some(model) = item["model"].as_str() {
-                    start["model"] = model.into();
-                }
-                let thread: Value = bridge.request("thread/start", start).await?;
-                let thread_id = thread["thread"]["id"]
-                    .as_str()
-                    .context("thread/start returned no thread")?;
-                // The title is cosmetic: the original only logs a failure to set it.
-                let _ = bridge
-                    .request::<_, Value>(
-                        "thread/name/set",
-                        json!({ "threadId": thread_id, "name": name }),
-                    )
-                    .await;
-                let mut turn = json!({
-                    "threadId": thread_id, "cwd": cwd, "effort": effort,
-                    "input": [{ "type": "text", "text": text, "text_elements": [] }],
-                });
-                if let Some(model) = item["model"].as_str() {
-                    turn["model"] = model.into();
-                }
-                bridge.request::<_, Value>("turn/start", turn).await?;
-                Ok::<(), anyhow::Error>(())
-            });
-            if let Err(error) = started {
-                first_error.get_or_insert(error);
-            }
-        }
-        match first_error {
-            Some(error) => Err(error),
-            None => Ok(json!({ "success": true })),
-        }
-    }
-
     /// Saves a validated original-format definition, not an automation scheduling command.
     /// Existing schedule metadata remains in the original database for its scheduler to reconcile.
     pub fn write_automation(&self, id: &str, contents: &str) -> Result<()> {
@@ -805,6 +694,10 @@ impl Host for LocalHost {
         project_rows(&state, &self.home, |path, _| {
             Ok(Some(Path::new(path).exists()))
         })
+    }
+
+    fn finish_automation_run(&self, thread_id: &str, completed: bool) -> Result<bool> {
+        self.finish_run(thread_id, completed)
     }
 
     fn add_project(&self, root: &Path) -> Result<String> {
@@ -1228,6 +1121,10 @@ impl Host for CloudHost {
 
     fn add_project(&self, root: &Path) -> Result<String> {
         self.local.add_project(root)
+    }
+
+    fn finish_automation_run(&self, thread_id: &str, completed: bool) -> Result<bool> {
+        self.local.finish_run(thread_id, completed)
     }
 
     fn fetch(&self, request: &Request) -> Result<Value> {

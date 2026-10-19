@@ -3244,9 +3244,19 @@ impl Root {
                     }
                 }
                 // Completion can leave the selected thread unread, including a background terminal.
+                // It also finishes the thread's open automation run, like the original host.
                 "turn/completed" => {
                     if let Some(id) = params["threadId"].as_str() {
                         self.sidebar.update(cx, |s, cx| s.set_unread(id, cx));
+                        let host = self.host.clone();
+                        let (id, completed) =
+                            (id.to_owned(), params["turn"]["status"] == "completed");
+                        cx.background_spawn(async move {
+                            if let Err(error) = host.finish_automation_run(&id, completed) {
+                                eprintln!("codex-gpui: failed to finish automation run: {error:#}");
+                            }
+                        })
+                        .detach();
                     }
                     self.refresh_threads(cx)
                 }

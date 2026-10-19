@@ -7,10 +7,16 @@ use serde_json::{Value, json};
 use std::{fs, path::Path, process::Command, sync::Arc};
 
 const SERVER: &str = r#"
+[ -n "$CONFIG" ] || CONFIG='{}'
+[ -n "$MODELS" ] || MODELS='[]'
+[ -n "$REQUIREMENTS" ] || REQUIREMENTS='null'
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG"
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
   case "$line" in
+    *'"model/list"'*) printf '{"id":%s,"result":{"data":%s}}\n' "$id" "$MODELS" ;;
+    *'"config/read"'*) printf '{"id":%s,"result":{"config":%s}}\n' "$id" "$CONFIG" ;;
+    *'"configRequirements/read"'*) printf '{"id":%s,"result":{"requirements":%s}}\n' "$id" "$REQUIREMENTS" ;;
     *'"thread/start"'*) printf '{"id":%s,"result":{"thread":{"id":"thread-%s"}}}\n' "$id" "$id" ;;
     *'"turn/start"'*REFUSE*) printf '{"id":%s,"error":{"code":-32000,"message":"model unavailable"}}\n' "$id" ;;
     *'"turn/start"'*) [ -z "$SLOW" ] || sleep 2; printf '{"id":%s,"result":{}}\n' "$id" ;;
@@ -20,7 +26,13 @@ done
 "#;
 
 fn host(home: &Path, log: &Path, slow: bool) -> Result<LocalHost> {
+    host_with(home, log, slow, &[])
+}
+
+/// `env` sets the stub's `CONFIG`, `MODELS` and `REQUIREMENTS` answers (JSON).
+fn host_with(home: &Path, log: &Path, slow: bool, env: &[(&str, &str)]) -> Result<LocalHost> {
     let mut server = Command::new("sh");
+    server.envs(env.iter().copied());
     server
         .arg("-c")
         .arg(SERVER)
@@ -44,12 +56,24 @@ fn run(host: &LocalHost, id: &str) -> Result<Value> {
     ))?)
 }
 
-fn requests(log: &Path) -> Result<Vec<Value>> {
+fn all_requests(log: &Path) -> Result<Vec<Value>> {
     fs::read_to_string(log)
         .unwrap_or_default()
         .lines()
         .map(|line| Ok(serde_json::from_str(line)?))
         .collect()
+}
+
+/// The thread and turn requests of a run, without the config and model reads before them.
+fn requests(log: &Path) -> Result<Vec<Value>> {
+    let mut sent = all_requests(log)?;
+    sent.retain(|r| {
+        matches!(
+            r["method"].as_str(),
+            Some("thread/start" | "thread/name/set" | "turn/start")
+        )
+    });
+    Ok(sent)
 }
 
 #[test]
@@ -64,9 +88,10 @@ fn run_now_starts_a_titled_thread_and_turn_with_the_task_prompt() -> Result<()> 
     let methods: Vec<_> = sent.iter().map(|r| r["method"].as_str().unwrap()).collect();
     ensure!(methods == ["thread/start", "thread/name/set", "turn/start"]);
     ensure!(sent[0]["params"]["cwd"] == json!(dir.path()));
-    ensure!(sent[1]["params"] == json!({"threadId": "thread-1", "name": "Review"}));
+    let thread = sent[2]["params"]["threadId"].as_str().unwrap_or_default();
+    ensure!(sent[1]["params"] == json!({"threadId": thread, "name": "Review"}));
     let turn = &sent[2]["params"];
-    ensure!(turn["threadId"] == "thread-1");
+    ensure!(turn["threadId"] == thread);
     ensure!(turn["effort"] == "medium");
     let text = turn["input"][0]["text"].as_str().unwrap_or_default();
     ensure!(text.starts_with(&format!("Automation: Review\n\nAutomation ID: {id}\n")));
@@ -123,6 +148,154 @@ fn run_now_refuses_tasks_it_cannot_run_before_touching_the_app_server() -> Resul
             .contains("Heartbeat")
     );
     ensure!(requests(&log)?.is_empty());
+    Ok(())
+}
+
+const AUTOMATIONS: &str = "CREATE TABLE automations (id TEXT PRIMARY KEY, next_run_at INTEGER,
+    next_run_nominal_at INTEGER, last_run_at INTEGER, rrule TEXT, status TEXT, account_id TEXT,
+    user_id TEXT, installation_id TEXT)";
+
+const RUNS: &str =
+    "CREATE TABLE automation_runs (thread_id TEXT PRIMARY KEY, automation_id TEXT NOT NULL,
+    status TEXT NOT NULL, read_at INTEGER, thread_title TEXT, source_cwd TEXT, inbox_title TEXT,
+    inbox_summary TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+    archived_user_message TEXT, archived_assistant_message TEXT, archived_reason TEXT)";
+
+/// `(thread_id, status, read_at, archived_reason, source_cwd)`.
+type Run = (String, String, Option<i64>, Option<String>, Option<String>);
+
+fn runs(home: &Path) -> Result<Vec<Run>> {
+    let db = rusqlite::Connection::open(home.join("sqlite/codex.db"))?;
+    let mut query = db.prepare(
+        "SELECT thread_id, status, read_at, archived_reason, source_cwd FROM automation_runs ORDER BY thread_id",
+    )?;
+    let rows = query.query_map([], |r| {
+        Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+    })?;
+    Ok(rows.collect::<std::result::Result<_, _>>()?)
+}
+
+#[test]
+fn run_now_uses_the_saved_config_and_the_listed_model() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let log = dir.path().join("requests.jsonl");
+    let models = r#"[{"model":"gpt-6.1-sol","isDefault":true,"defaultReasoningEffort":"low","supportedReasoningEfforts":[{"reasoningEffort":"low"}]}]"#;
+    let config = r#"{"sandbox_mode":"read-only","approval_policy":"untrusted"}"#;
+    let requirements =
+        r#"{"allowedSandboxModes":["read-only"],"allowedApprovalPolicies":["untrusted"]}"#;
+    let host = host_with(
+        dir.path(),
+        &log,
+        false,
+        &[
+            ("MODELS", models),
+            ("CONFIG", config),
+            ("REQUIREMENTS", requirements),
+        ],
+    )?;
+    let id = create(&host, dir.path(), "Review local changes")?;
+    ensure!(run(&host, &id)? == json!({"success": true}));
+    let sent = all_requests(&log)?;
+    let methods: Vec<_> = sent.iter().map(|r| r["method"].as_str().unwrap()).collect();
+    ensure!(
+        methods
+            == [
+                "model/list",
+                "configRequirements/read",
+                "config/read",
+                "thread/start",
+                "thread/name/set",
+                "turn/start"
+            ],
+        "{methods:?}"
+    );
+    ensure!(sent[2]["params"] == json!({"includeLayers": false, "cwd": dir.path()}));
+    let (start, turn) = (&sent[3]["params"], &sent[5]["params"]);
+    // The task names no model, and the original's own default is listed: it wins, with its effort.
+    ensure!(
+        start["model"] == "gpt-6.1-sol"
+            && turn["model"] == "gpt-6.1-sol"
+            && turn["effort"] == "low"
+    );
+    ensure!(start["sandbox"] == "read-only" && start["approvalPolicy"] == "untrusted");
+    ensure!(turn["sandboxPolicy"]["type"] == "readOnly" && turn["approvalPolicy"] == "untrusted");
+    Ok(())
+}
+
+#[test]
+fn run_now_opens_moves_finishes_and_archives_the_run_row() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    fs::create_dir_all(dir.path().join("sqlite"))?;
+    let db = rusqlite::Connection::open(dir.path().join("sqlite/codex.db"))?;
+    db.execute(RUNS, [])?;
+    db.execute(AUTOMATIONS, [])?;
+    drop(db);
+    let log = dir.path().join("requests.jsonl");
+    let host = host(dir.path(), &log, false)?;
+    let id = create(&host, dir.path(), "Review local changes")?;
+    ensure!(run(&host, &id)? == json!({"success": true}));
+    let thread = requests(&log)?[2]["params"]["threadId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let thread = thread.as_str();
+    let rows = runs(dir.path())?;
+    ensure!(
+        rows.len() == 1 && rows[0].0 == thread,
+        "the pending row took the thread id: {rows:?}"
+    );
+    ensure!(rows[0].1 == "IN_PROGRESS" && rows[0].4.as_deref() == dir.path().to_str());
+    ensure!(!host.finish_run("unknown-thread", true)?);
+    ensure!(host.finish_run(thread, true)?);
+    ensure!(runs(dir.path())?[0].1 == "PENDING_REVIEW" && runs(dir.path())?[0].2.is_none());
+    ensure!(
+        !host.finish_run(thread, true)?,
+        "a finished run does not finish twice"
+    );
+
+    // A refused turn archives the run it opened.
+    let refused = create(&host, dir.path(), "REFUSE this")?;
+    ensure!(run(&host, &refused).is_err());
+    let archived = runs(dir.path())?;
+    ensure!(archived.len() == 2);
+    ensure!(
+        archived
+            .iter()
+            .any(|r| r.1 == "ARCHIVED" && r.3.as_deref() == Some("auto"))
+    );
+    ensure!(archived.iter().all(|r| !r.0.starts_with("pending:")));
+    Ok(())
+}
+
+#[test]
+fn a_muted_task_reads_its_completed_run_and_keeps_a_failed_one_unread() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    fs::create_dir_all(dir.path().join("sqlite"))?;
+    let db = rusqlite::Connection::open(dir.path().join("sqlite/codex.db"))?;
+    db.execute(RUNS, [])?;
+    db.execute(AUTOMATIONS, [])?;
+    drop(db);
+    let log = dir.path().join("requests.jsonl");
+    let host = host(dir.path(), &log, false)?;
+    let toml = format!(
+        "version = 1\nid = \"muted\"\nname = \"M\"\nprompt = \"p\"\nstatus = \"ACTIVE\"\ncwds = [{:?}]\ncreated_at = 1\nupdated_at = 1\nexecution_environment = \"local\"\nnotification_policy = \"failed_runs_only\"\n",
+        dir.path()
+    );
+    host.write_automation("muted", &toml)?;
+    run(&host, "muted")?;
+    run(&host, "muted")?;
+    let threads: Vec<String> = runs(dir.path())?.into_iter().map(|r| r.0).collect();
+    ensure!(threads.len() == 2);
+    ensure!(host.finish_run(&threads[0], true)? && host.finish_run(&threads[1], false)?);
+    let rows = runs(dir.path())?;
+    ensure!(
+        rows[0].1 == "PENDING_REVIEW" && rows[0].2.is_some(),
+        "completed and muted: read"
+    );
+    ensure!(
+        rows[1].1 == "PENDING_REVIEW" && rows[1].2.is_none(),
+        "failed: unread"
+    );
     Ok(())
 }
 
