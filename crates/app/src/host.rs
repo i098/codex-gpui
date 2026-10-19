@@ -12,7 +12,7 @@
 //! (`getAuthStatus` with `includeToken`) plus the account route from `account/read`, retries once
 //! after a 401 with a refreshed token, and answers the original wire shapes, including errors.
 //! The token never reaches logs, errors, or `Debug` output.
-//! Local fetches support `list-automations`, `create-automation`, `automation-update`, `inbox-items`, the `git-*` endpoints, and `paths-exist`; other endpoints return errors.
+//! Local fetches support `list-automations`, `create-automation`, `automation-update`, `inbox-items`, the `git-*` endpoints, `create-worktree`, `set-worktree-owner-thread`, and `paths-exist`; other endpoints return errors.
 //! `Root` loads the automation list off the UI thread when the Scheduled route opens.
 //! Consumers read the result through `Root::automations`; this service slice does not change the static screens.
 //!
@@ -503,6 +503,32 @@ impl LocalHost {
         Ok(json!({"items": items}))
     }
 
+    /// The original git worker's `create-worktree`, default local root
+    /// `$CODEX_HOME/worktrees`. Without `startingState` it starts where an automation run
+    /// does: the remote default branch, else `HEAD`.
+    fn create_worktree(&self, params: &Value) -> Result<Value> {
+        let cwd = Path::new(params["cwd"].as_str().context("missing worktree cwd")?);
+        let root = params["worktreesRoot"]
+            .as_str()
+            .map(str::trim)
+            .filter(|root| !root.is_empty())
+            .map_or_else(|| self.home.join("worktrees"), PathBuf::from);
+        ensure!(
+            cwd.is_absolute() && root.is_absolute(),
+            "worktree paths must be absolute"
+        );
+        let start = &params["startingState"];
+        ensure!(
+            start.is_null() || (start["type"] == "branch" && start["remoteRef"].is_null()),
+            "unsupported worktree starting state"
+        );
+        let environment = params["localEnvironmentConfigPath"].as_str().map(Path::new);
+        let worktree = git::create_worktree(&root, cwd, start["branchName"].as_str(), environment)?
+            .context("Not a git repository")?;
+        Ok(json!({"worktreeGitRoot": worktree.git_root,
+            "worktreeWorkspaceRoot": worktree.workspace_root, "setupError": null}))
+    }
+
     fn create_automation(&self, params: &Value) -> Result<Value> {
         let required = |key| {
             params[key]
@@ -936,6 +962,16 @@ impl Host for LocalHost {
             "git-changes" | "git-stage" | "git-unstage" | "git-revert" | "git-commit-status"
             | "git-commit-diff" | "git-commit" | "git-push" | "git-checkout" => {
                 git::fetch(endpoint, &params)?
+            }
+            "create-worktree" => self.create_worktree(&params)?,
+            "set-worktree-owner-thread" => {
+                let worktree = params["worktree"].as_str().context("missing worktree")?;
+                let thread = params["conversationId"]
+                    .as_str()
+                    .context("missing conversationId")?;
+                git::set_owner_thread(Path::new(worktree), thread)
+                    .context("Failed to set thread worktree owner")?;
+                json!({"success": true})
             }
             "open-file" => open_file(&self.opener, &params)?,
             "paths-exist" => {
