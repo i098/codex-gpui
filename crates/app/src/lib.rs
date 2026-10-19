@@ -686,8 +686,26 @@ impl Root {
             };
             let threads = bridge.thread_list().await?;
             let (mut catalog, config, skills) = if acp {
-                let config = ConfigReadResponse { config: json!({}) };
-                (ModelCatalog { data: Vec::new() }, config, Value::Null)
+                // The picker's one row says the agent picks: an empty id sends no model, and
+                // an empty effort shows no effort label.
+                let model = Model {
+                    id: String::new(),
+                    model: String::new(),
+                    display_name: "Agent model".into(),
+                    description: "Set on the agent's command line".into(),
+                    hidden: false,
+                    default_reasoning_effort: String::new(),
+                    supported_reasoning_efforts: Vec::new(),
+                    is_default: true,
+                };
+                let data = vec![CatalogModel {
+                    model,
+                    availability_nux: None,
+                }];
+                let config = ConfigReadResponse {
+                    config: json!({ "model_reasoning_effort": "" }),
+                };
+                (ModelCatalog { data }, config, Value::Null)
             } else {
                 let catalog: ModelCatalog = bridge.request("model/list", json!({})).await?;
                 let config: ConfigReadResponse = bridge
