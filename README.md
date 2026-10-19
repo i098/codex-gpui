@@ -36,7 +36,7 @@ It does not use optional agent capabilities (`loadSession`, session list, image 
 | New chat (`thread/start`) | Yes | `session/new` in the project folder, no MCP servers |
 | Send a message (`turn/start`) | Yes | `session/prompt`, text only; one turn at a time per chat |
 | Streamed reply | Yes | `agent_message_chunk` updates become `item/agentMessage/delta` |
-| Tool calls | Yes | `tool_call` updates become tool items (not drawn, as for Codex MCP tool calls) |
+| Tool calls | Yes | Not shown; a `tool_call` update ends the current reply message, so the text after it is a new message |
 | Stop (`turn/interrupt`) | Yes | `session/cancel`; open permission requests are answered `cancelled` |
 | Turn end and errors | Yes | `end_turn` is completed, `cancelled` is interrupted, other stop reasons and errors are failed |
 | Approvals | Yes | `session/request_permission` keeps its request id, and the prompt lists the agent's option labels; Allow and Allow similar choose the `allow_once` option, Decline chooses `reject_once`; `allow_always` is never chosen, because it can outlive the session; without the matching option the answer is `cancelled` |

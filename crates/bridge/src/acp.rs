@@ -383,7 +383,8 @@ impl State {
         self.sink.notify("thread/status/changed", status);
     }
 
-    /// `session/update` of a running turn: streamed text and tool calls.
+    /// `session/update` of a running turn: streamed text. A tool call ends the current
+    /// agent message; the thread view draws no tool items, so none is kept.
     fn update(&mut self, params: &Value) {
         let Some(i) = self.index(params["sessionId"].as_str()) else {
             return;
@@ -413,37 +414,7 @@ impl State {
                     json!({ "threadId": sid, "turnId": turn, "itemId": id, "delta": delta });
                 sink.notify("item/agentMessage/delta", params);
             }
-            Some("tool_call") => {
-                close_message(session, sink);
-                let item = json!({
-                    "type": "mcpToolCall", "id": update["toolCallId"], "server": self.agent,
-                    "tool": update["title"].as_str().unwrap_or("tool"), "status": "inProgress",
-                });
-                if let Some(t) = last_turn(&mut session.thread) {
-                    items(t).push(item.clone());
-                }
-                let params = json!({ "threadId": sid, "turnId": turn, "item": item });
-                sink.notify("item/started", params);
-            }
-            Some("tool_call_update") => {
-                let status = match update["status"].as_str() {
-                    Some(status @ ("completed" | "failed")) => status,
-                    _ => return,
-                };
-                let Some(item) = last_turn(&mut session.thread).and_then(|t| {
-                    items(t)
-                        .iter_mut()
-                        .find(|i| i["type"] == "mcpToolCall" && i["id"] == update["toolCallId"])
-                }) else {
-                    return;
-                };
-                item["status"] = status.into();
-                if let Some(title) = update["title"].as_str() {
-                    item["tool"] = title.into();
-                }
-                let params = json!({ "threadId": sid, "turnId": turn, "item": item });
-                sink.notify("item/completed", params);
-            }
+            Some("tool_call") => close_message(session, sink),
             _ => {}
         }
     }
