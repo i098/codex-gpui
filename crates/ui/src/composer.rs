@@ -438,6 +438,8 @@ type ModelHandler = Rc<dyn Fn(&str, &str, &mut App)>;
 pub enum QueueAction {
     /// `Edit message`: the queued submission with this id returns to the composer.
     Edit(String),
+    /// `Open in side chat`: the queued submission with this id continues in a side chat.
+    SideChat(String),
     /// `Turn off queueing` / `Turn on queueing`: the new `Follow-up behavior` is queue (`true`).
     Queueing(bool),
 }
@@ -453,6 +455,7 @@ pub struct QueuedMessage {
 
 const QUEUE_ACTIONS: &str = "Queued message actions";
 const QUEUE_EDIT: &str = "queuedEdit";
+const QUEUE_SIDE_CHAT: &str = "queuedSideChat";
 const QUEUE_SWITCH: &str = "queuedQueueing";
 const QUEUE_MENU_WIDTH: f32 = 220.;
 
@@ -509,6 +512,9 @@ pub struct Composer {
     queue_mode: bool,
     /// The app-server's queued follow-ups of the open thread, shown in a tray over the card.
     queued: Vec<QueuedMessage>,
+    /// The app can continue a queued row in a side chat: the row's menu offers `Open in side
+    /// chat`, as the original does when its host passes `onOpenSideChatMessage`.
+    side_chat: bool,
     on_submit: Option<SubmitHandler>,
     on_cancel_edit: Option<CancelEditHandler>,
     edit_pending: bool,
@@ -573,6 +579,7 @@ impl Composer {
             stop_armed: None,
             queue_mode: false,
             queued: Vec::new(),
+            side_chat: false,
             on_submit: None,
             on_cancel_edit: None,
             edit_pending: false,
@@ -758,6 +765,10 @@ impl Composer {
         &self.queued
     }
 
+    pub fn set_side_chat(&mut self, available: bool) {
+        self.side_chat = available;
+    }
+
     /// `Edit message`: the queued draft returns to the editor. A draft already there stays
     /// below it ([`Self::restore_text`]) and the images join the current attachments.
     pub fn load_queued(
@@ -784,13 +795,15 @@ impl Composer {
     ) {
         match id {
             QUEUE_EDIT => cx.emit(QueueAction::Edit(subject)),
+            QUEUE_SIDE_CHAT => cx.emit(QueueAction::SideChat(subject)),
             QUEUE_SWITCH => cx.emit(QueueAction::Queueing(!self.queue_mode)),
             _ => self.activate_context_item(id, subject, window, cx),
         }
     }
 
-    /// The row's `Queued message actions` menu (`composer.queuedMessage.more`): `Edit message`
-    /// and the follow-up behavior switch, at the pointer like the editor's context menu.
+    /// The row's `Queued message actions` menu (`composer.queuedMessage.more`): `Edit message`,
+    /// `Open in side chat` where the app offers it, and the follow-up behavior switch, at the
+    /// pointer like the editor's context menu.
     fn open_queue_menu(
         &mut self,
         id: &str,
@@ -801,18 +814,19 @@ impl Composer {
         use crate::screens::thread::view::menu::{ContextMenu, Item};
         self.menu = None;
         self.slash.reset();
-        let items = vec![
-            Item::new(QUEUE_EDIT, "Edit message", true),
-            Item::new(
-                QUEUE_SWITCH,
-                if self.queue_mode {
-                    "Turn off queueing"
-                } else {
-                    "Turn on queueing"
-                },
-                true,
-            ),
-        ];
+        let mut items = vec![Item::new(QUEUE_EDIT, "Edit message", true)];
+        if self.side_chat {
+            items.push(Item::new(QUEUE_SIDE_CHAT, "Open in side chat", true));
+        }
+        items.push(Item::new(
+            QUEUE_SWITCH,
+            if self.queue_mode {
+                "Turn off queueing"
+            } else {
+                "Turn on queueing"
+            },
+            true,
+        ));
         // The original's dropdown is `align: end` under the button: the menu's right edge
         // meets the button's.
         let at = gpui::point(at.x - px(QUEUE_MENU_WIDTH - 12.), at.y + px(4.));
