@@ -11,10 +11,10 @@ pub mod qa;
 use anyhow::{Context as _, Result, ensure};
 use async_channel::Receiver;
 use bridge::types::{
-    ApprovalDecision, CommandApprovalRequest, ConfigReadResponse, FileChangeApprovalRequest, Model,
-    QueuedSubmission, Thread, ThreadItem, ThreadListResponse, ThreadQueueListResponse,
-    ThreadReadResponse, ThreadSection, ThreadStartResponse, ThreadStartedNotification,
-    ThreadStatus, TurnStatus,
+    Account, AccountReadResponse, ApprovalDecision, CommandApprovalRequest, ConfigReadResponse,
+    FileChangeApprovalRequest, Model, QueuedSubmission, Thread, ThreadItem, ThreadListResponse,
+    ThreadQueueListResponse, ThreadReadResponse, ThreadSection, ThreadStartResponse,
+    ThreadStartedNotification, ThreadStatus, TurnStatus,
 };
 use bridge::{Bridge, Event};
 use gpui::{
@@ -51,7 +51,7 @@ use ui::screens::thread::view::{
 use ui::screens::{automations, mobile};
 use ui::toast::{Toast, Toaster};
 use ui::{
-    Copy, Cut, GoBack, GoForward, NewChat, OpenBackgroundTerminal, OpenChangesPanel,
+    Copy, Cut, GoBack, GoForward, LogOut, NewChat, OpenBackgroundTerminal, OpenChangesPanel,
     OpenCommandMenu, OpenMobileSetup, OpenScheduled, OpenSettings, Paste, Redo, SelectAll,
     SetTheme, Shell, ShowKeyboardShortcuts, ToggleChangesPanel, ToggleSidebar, Undo,
 };
@@ -147,6 +147,7 @@ pub fn menus() -> Vec<Menu> {
     vec![
         Menu::new("Codex").items([
             MenuItem::action("Settings…", OpenSettings),
+            MenuItem::action("Log Out", LogOut),
             MenuItem::separator(),
             MenuItem::os_submenu("Services", SystemMenuType::Services),
             MenuItem::separator(),
@@ -322,6 +323,14 @@ fn utc_offset() -> i64 {
 }
 
 /// Runs `task` to the end and prints its error.
+/// The original shows `Signed in as <email>` for ChatGPT sign-ins only.
+fn chatgpt_email(account: &AccountReadResponse) -> Option<String> {
+    match &account.account {
+        Some(Account::Chatgpt { email, .. }) => email.clone(),
+        _ => None,
+    }
+}
+
 fn log_err(task: Task<Result<()>>, cx: &App) {
     cx.foreground_executor()
         .spawn(async move {
@@ -404,6 +413,9 @@ pub struct Root {
     dialog_to_composer: bool,
     /// Signed out: replaces the whole window.
     login: Option<Entity<Login>>,
+    logout_pending: bool,
+    /// The signed-in ChatGPT account's email (`account/read`), shown in the logout dialog.
+    account_email: Option<String>,
     bridge: Arc<Bridge>,
     host: Arc<dyn host::Host>,
     project_load: Option<Task<()>>,
@@ -650,6 +662,8 @@ impl Root {
             dialog: None,
             dialog_to_composer: false,
             login: None,
+            logout_pending: false,
+            account_email: None,
             host: Arc::new(host::CloudHost::from_env(host::app_server_credentials(
                 bridge.clone(),
             ))),
@@ -766,6 +780,7 @@ impl Root {
                 (catalog, config, skills)
             };
             this.update_in(cx, |this, window, cx| {
+                this.account_email = account.as_ref().and_then(chatgpt_email);
                 if account.is_some_and(|a| a.account.is_none() && a.requires_openai_auth) {
                     this.login = Some(cx.new(Login::new));
                 }
@@ -1684,6 +1699,9 @@ impl Root {
                 )
                 .await;
             this.update(cx, |this, cx| {
+                if this.signed_out() {
+                    return;
+                }
                 this.loading_more = false;
                 match page {
                     Ok(mut page) => {
@@ -1703,6 +1721,9 @@ impl Root {
 
     /// Puts `thread` at the top of Recents.
     fn add_thread(&mut self, thread: &Thread, cx: &mut Context<Self>) {
+        if self.signed_out() {
+            return;
+        }
         self.threads.retain(|t| t.id != thread.id);
         self.threads.insert(0, thread.clone());
         self.sidebar.update(cx, |s, cx| s.add_thread(thread, cx));
@@ -2235,6 +2256,7 @@ impl Root {
                         window.focus(&focus, cx);
                     }
                 }
+                DialogOutcome::LogOut => this.logout(window, cx),
                 DialogOutcome::RevertChanges { .. } => window.focus(&this.focus, cx),
                 DialogOutcome::DismissAnnouncement(model)
                 | DialogOutcome::UseAnnouncedModel { model, .. } => {
@@ -2296,6 +2318,66 @@ impl Root {
         cx.notify();
     }
 
+    fn logout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.logout_pending || self.signed_out() {
+            return;
+        }
+        self.logout_pending = true;
+        self.qa_work_started = true;
+        window.focus(&self.route_focus(cx), cx);
+        let bridge = self.bridge.clone();
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let result = bridge
+                .request::<_, Value>("account/logout", json!({}))
+                .await;
+            this.update_in(cx, |this, window, cx| {
+                this.logout_pending = false;
+                match result {
+                    Ok(_) => {
+                        this.login = Some(cx.new(Login::new));
+                        this.account_email = None;
+                        this.command_menu = None;
+                        this.dialog = None;
+                        this.thread = None;
+                        this.diff = None;
+                        this.file = None;
+                        this.split = None;
+                        this.tabs.clear();
+                        this.side = None;
+                        this.loaded.clear();
+                        this.approval = None;
+                        this.set_threads(&[], cx);
+                        this.set_next_cursor(None, cx);
+                        this.automation_load = None;
+                        this.project_load = None;
+                        this.suggestion_load = None;
+                        this.automations = None;
+                        this.scheduled = None;
+                        this.suggestions = None;
+                        this.back.clear();
+                        this.forward.clear();
+                        this.state.route = Route::Home;
+                        this.toaster = cx.new(|_| Toaster::new());
+                        for composer in [
+                            this.home.read(cx).composer.clone(),
+                            this.thread_composer.clone(),
+                        ] {
+                            composer.update(cx, |composer, cx| composer.clear_session(cx));
+                        }
+                        this.sync(window, cx);
+                    }
+                    Err(error) => {
+                        eprintln!("codex-gpui: logout: {error:#}");
+                        this.toast(Toast::danger("Could not log out. Try again."), cx);
+                        window.focus(&this.route_focus(cx), cx);
+                    }
+                }
+                cx.notify();
+            })
+        });
+        log_err(task, cx);
+    }
+
     /// `⌘W`: Electron main runs `closeTab` (`close-active-app-shell-tab`) while the thread
     /// route's panel shows a tab, else the window closes.
     fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2352,6 +2434,7 @@ impl Root {
                 "Open terminal" => window.dispatch_action(Box::new(OpenBackgroundTerminal), cx),
                 "Commit or push" => self.open_git_form(DialogKind::Commit, window, cx),
                 "Manage scheduled tasks" => window.dispatch_action(Box::new(OpenScheduled), cx),
+                "Log out" => window.dispatch_action(Box::new(LogOut), cx),
                 label => {
                     if let Some(section) = settings::section(label) {
                         self.open_settings_section(section, window, cx);
@@ -2416,6 +2499,9 @@ impl Root {
     }
 
     fn show_thread(&mut self, thread: Thread, window: &mut Window, cx: &mut Context<Self>) {
+        if self.signed_out() {
+            return;
+        }
         let running = thread
             .turns
             .iter()
@@ -3476,6 +3562,19 @@ impl Root {
     /// Every server message: streamed into the open thread and the sign-in view, plus
     /// Recents updates and approval prompts.
     pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        if let Some(login) = &self.login {
+            login.update(cx, |login, cx| login.apply(&event, cx));
+            if matches!(&event, Event::Notification { method, params }
+                if method == "account/login/completed" && params["success"] == true)
+            {
+                self.login = None;
+                self.read_account_email(cx);
+                self.refresh_threads(cx);
+                self.load_projects(cx);
+                cx.notify();
+            }
+            return;
+        }
         if let Event::Notification { method, params } = &event
             && let Some(generation) = &mut self.generation
             && params["threadId"].as_str() == Some(&generation.thread)
@@ -3533,9 +3632,6 @@ impl Root {
                     .update(cx, |c, cx| c.set_running(running, cx));
             }
         }
-        if let Some(login) = &self.login {
-            login.update(cx, |login, cx| login.apply(&event, cx));
-        }
         match event {
             Event::Notification { method, params } => match method.as_str() {
                 "thread/started" if params["thread"]["ephemeral"] != true => {
@@ -3588,10 +3684,6 @@ impl Root {
                         composer.update(cx, |c, cx| c.apply_file_search(completed, &params, cx));
                     }
                 }
-                "account/login/completed" if params["success"] == true => {
-                    self.login = None;
-                    cx.notify();
-                }
                 _ => {}
             },
             // ponytail: other server requests (user input, permissions) stay unanswered;
@@ -3607,11 +3699,27 @@ impl Root {
     }
 
     /// Reads the first `thread/list` page again; threads of later loaded pages stay after it.
+    /// Reads the email of the account that just signed in; a failure leaves the dialog without it.
+    fn read_account_email(&self, cx: &mut Context<Self>) {
+        let bridge = self.bridge.clone();
+        let task = cx.spawn(async move |this, cx| -> Result<()> {
+            let account = bridge.account_read().await?;
+            this.update(cx, |this, _| this.account_email = chatgpt_email(&account))
+        });
+        log_err(task, cx);
+    }
+
     fn refresh_threads(&self, cx: &mut Context<Self>) {
         let bridge = self.bridge.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {
             let mut list = bridge.thread_list().await?;
             this.update(cx, |this, cx| {
+                if this.signed_out() {
+                    return;
+                }
+                if this.threads.is_empty() {
+                    this.set_next_cursor(list.next_cursor, cx);
+                }
                 let fresh: HashSet<&str> = list.data.iter().map(|t| t.id.as_str()).collect();
                 let rest: Vec<Thread> = this
                     .threads
@@ -4325,11 +4433,25 @@ fn generation_instructions(context: &str) -> String {
 
 impl Render for Root {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let content: AnyElement = match (&self.login, &self.page, &self.split) {
-            (Some(login), ..) => login.clone().into_any_element(),
-            (None, Some(page), _) => page.clone().into_any_element(),
-            (None, None, Some(split)) => split.clone().into_any_element(),
-            (None, None, None) => self.shell.clone().into_any_element(),
+        if let Some(login) = &self.login {
+            return div()
+                .size_full()
+                .relative()
+                .font_family(ui::SANS)
+                .track_focus(&self.focus)
+                .on_action(cx.listener(|this, _: &CloseWindow, window, cx| {
+                    this.close_window(window, cx);
+                }))
+                .on_action(|_: &Minimize, window, _| window.minimize_window())
+                .on_action(|_: &Zoom, window, _| window.zoom_window())
+                .child(login.clone())
+                .children(self.dialog.clone())
+                .into_any_element();
+        }
+        let content: AnyElement = match (&self.page, &self.split) {
+            (Some(page), _) => page.clone().into_any_element(),
+            (None, Some(split)) => split.clone().into_any_element(),
+            (None, None) => self.shell.clone().into_any_element(),
         };
         let root = div()
             .size_full()
@@ -4373,6 +4495,13 @@ impl Render for Root {
             )
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
                 this.navigate(Route::Settings, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &LogOut, window, cx| {
+                if !this.logout_pending {
+                    let email = this.account_email.clone();
+                    let dialog = cx.new(|cx| Dialog::logout(email, cx));
+                    this.show_dialog(dialog, window, cx);
+                }
             }))
             .on_action(cx.listener(|this, _: &OpenScheduled, window, cx| {
                 this.navigate(Route::Scheduled, window, cx)
@@ -4489,6 +4618,6 @@ impl Render for Root {
             .children(self.command_menu.clone())
             .child(self.toaster.clone())
             .children(self.dialog.clone());
-        features::actions(root, cx)
+        features::actions(root, cx).into_any_element()
     }
 }

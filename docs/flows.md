@@ -150,6 +150,21 @@ Cells give `outside count / text percent`; the owned empty `CODEX_HOME` excludes
 | 19 | `⌘⌥1`…`⌘⌥6` | shortcut | Go to recent chat N (`recentThread1..6`: the chats by last update, newest first). | `GoToRecentChat`: the Nth Recents thread by `updatedAt`; past the end does nothing. | PASS (`recent_chat_keys`) |
 | 20 | `⌘+`, `⌘-`, `⌘0` | shortcut | Zoom in, zoom out, actual size. | — | NOT WIRED (`crates/ui/src/lib.rs`: no UI scale) |
 
+### Account logout (RS-036, SH-088)
+
+The command menu, profile menu, and Codex ▸ Log Out open the same confirmation dialog.
+Cancel and Escape send no request.
+Confirm sends `account/logout`.
+Success shows Login and clears the open chat, Recents, panels, and navigation history.
+Failure shows an error and keeps the chat and draft usable.
+Signed-out shortcuts cannot reopen the old account view.
+Logout also clears attachments from both composers and ignores unfinished attachment work from the previous session.
+After sign-in, Recents can load the remaining pages.
+
+Run the focused native replay with `cargo test -p app --test account_logout -- --test-threads=1`.
+It uses replayed success and failure responses and an isolated local host.
+This proves headless native behavior, not live installed-window acceptance.
+
 ## 14.1 Left rail
 
 | # | Item | Kind | Original | Port | Status |
@@ -161,7 +176,7 @@ Cells give `outside count / text percent`; the owned empty `CODEX_HOME` excludes
 | 5 | Explore `…` | click | Opens the Explore menu; blue dot. | Dot shows; no menu. | NOT WIRED (outside v1 scope (no screen): the menu holds the secondary destinations) |
 | 6 | Code Review | click | Navigates to `/pull-requests`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
 | 7 | Sites | click | Navigates to `/sites`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
-| 8 | Profile avatar | click | Opens the profile menu. | Menu above the avatar: `Settings`, `Help` ▸ `Set up mobile`; a click outside or on the avatar closes it. | PASS (`profile_menu_settings`, `profile_menu_dismiss`, `profile_menu_mobile`) |
+| 8 | Profile avatar | click | Opens the profile menu. | Menu above the avatar: `Settings`, `Log out`, `Help` ▸ `Set up mobile`; a click outside or on the avatar closes it. | PASS (`profile_menu_settings`, `profile_menu_dismiss`, `profile_menu_mobile`; logout: `account_logout`) |
 | 9 | Rail item hover | hover | Tooltip on the right side with label and shortcut. | Hover fill shows (4716 px repainted); a tooltip with the item's label opens 200 ms after the pointer enters (at once when another was open), 2 px right of the item; `Explore` and the avatar have none; it closes on leave, press or Escape. | PASS (`rail_hover_fill`; tooltip: `crates/app/tests/f1a.rs` against `refs/interactions/f1a.json`) |
 | 10 | Drag a rail item | click | Reorders pinned items. | — | NOT WIRED (`crates/ui/src/lib.rs` `Shell::rail`) |
 | 11 | Focus ring | focus ring | 2 px ring on the 36×36 button. | No tab stops. | NOT WIRED (`crates/ui/src/lib.rs` `Shell::rail`: no focus handles or `focus_visible` ring) |

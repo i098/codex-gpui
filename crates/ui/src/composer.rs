@@ -481,6 +481,7 @@ pub struct Composer {
     /// puts them back when starting the chat failed.
     submitted: Vec<attach::Attachment>,
     pending_attachments: usize,
+    attachment_generation: u64,
     attachment_error: Option<&'static str>,
     /// A file drag is over the composer's drop target (`data-composer-drag-active`).
     drag_active: bool,
@@ -556,6 +557,7 @@ impl Composer {
             attachments: Vec::new(),
             submitted: Vec::new(),
             pending_attachments: 0,
+            attachment_generation: 0,
             attachment_error: None,
             drag_active: false,
             models: Vec::new(),
@@ -975,6 +977,20 @@ impl Composer {
         self.slash.reset();
         self.end_search(cx);
         cx.notify();
+    }
+
+    /// Clears account-bound drafts and invalidates pending attachment work.
+    pub fn clear_session(&mut self, cx: &mut Context<Self>) {
+        self.attachment_generation = self.attachment_generation.wrapping_add(1);
+        self.attachments.clear();
+        self.pending_attachments = 0;
+        self.attachment_error = None;
+        self.context_menu = None;
+        self.menu = None;
+        self.set_text("", cx);
+        self.set_queued(Vec::new(), cx);
+        self.set_running(false, cx);
+        self.set_approval(None, cx);
     }
 
     pub fn restore_text(&mut self, text: &str, cx: &mut Context<Self>) {
