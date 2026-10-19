@@ -894,6 +894,17 @@ impl Composer {
         self.models.get(self.model)
     }
 
+    /// Makes model `index` the selection, keeping the effort when the model supports it.
+    fn select_model(&mut self, index: usize) {
+        self.model = index;
+        let efforts = &self.models[index].efforts;
+        if !efforts.contains(&self.effort)
+            && let Some(first) = efforts.first()
+        {
+            self.effort = first.clone();
+        }
+    }
+
     /// Reports the picked model and effort to [`Self::on_model`].
     fn picked(&self, cx: &mut App) {
         if let (Some(f), Some(model)) = (self.on_model.clone(), self.current_model()) {
@@ -1191,13 +1202,7 @@ impl Composer {
                 }
             }
             Some(Menu::Models) => {
-                self.model = index;
-                let efforts = &self.models[index].efforts;
-                if !efforts.contains(&self.effort)
-                    && let Some(first) = efforts.first()
-                {
-                    self.effort = first.clone();
-                }
+                self.select_model(index);
                 self.toggle_menu(Menu::Effort, window, cx);
                 self.picked(cx);
             }

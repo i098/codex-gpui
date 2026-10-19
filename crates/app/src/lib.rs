@@ -398,6 +398,8 @@ pub struct Root {
     /// `⌘K` command menu over the window.
     command_menu: Option<Entity<CommandMenu>>,
     dialog: Option<Entity<Dialog>>,
+    /// The open dialog came from the composer: its close returns focus there.
+    dialog_to_composer: bool,
     /// Signed out: replaces the whole window.
     login: Option<Entity<Login>>,
     bridge: Arc<Bridge>,
@@ -529,6 +531,22 @@ impl Root {
                             this.open_settings_section(section, window, cx);
                         }
                     }
+                    ui::composer::SlashCommand::Compact => this.compact(window, cx),
+                    ui::composer::SlashCommand::Fork => this.fork_chat(0, window, cx),
+                    ui::composer::SlashCommand::Rename => {
+                        if let Route::Thread(id) = this.state.route.clone() {
+                            this.open_rename(id, true, window, cx);
+                        }
+                    }
+                    ui::composer::SlashCommand::Pin => {
+                        if let Route::Thread(id) = this.state.route.clone() {
+                            let pinned = this.threads.iter().any(|t| {
+                                t.id == id
+                                    && t.section.as_ref().is_some_and(|s| s.id == PINNED_SECTION_ID)
+                            });
+                            this.set_pinned(id, !pinned, window, cx);
+                        }
+                    }
                 }
             }).detach();
         }
@@ -624,6 +642,7 @@ impl Root {
             settings_page: None,
             command_menu: None,
             dialog: None,
+            dialog_to_composer: false,
             login: None,
             host: Arc::new(
                 host::CloudHost::from_env(host::app_server_credentials(bridge.clone()))
@@ -943,20 +962,34 @@ impl Root {
     }
 
     fn load_projects(&mut self, cx: &mut Context<Self>) {
-        self.sidebar
-            .update(cx, |sidebar, cx| sidebar.set_projects(Vec::new(), cx));
+        self.set_projects(Vec::new(), cx);
         let host = self.host.clone();
         let read = cx.background_spawn(async move { host.projects() });
         self.project_load = Some(cx.spawn(async move |this, cx| {
             let result = read.await;
             this.update(cx, |this, cx| match result {
-                Ok(projects) => this
-                    .sidebar
-                    .update(cx, |sidebar, cx| sidebar.set_projects(projects, cx)),
+                Ok(projects) => this.set_projects(projects, cx),
                 Err(error) => eprintln!("codex-gpui: cannot read sidebar projects: {error:#}"),
             })
             .ok();
         }));
+    }
+
+    /// The sidebar's projects, and Home's `/project` choices: the ones with a root on disk.
+    fn set_projects(
+        &mut self,
+        projects: Vec<ui::screens::sidebar::Project>,
+        cx: &mut Context<Self>,
+    ) {
+        let choices = projects
+            .iter()
+            .filter(|project| !project.missing)
+            .filter_map(|project| Some((project.label.clone(), project.root.as_ref()?.to_string())))
+            .collect();
+        let composer = self.home.read(cx).composer.clone();
+        composer.update(cx, |composer, _| composer.set_slash_projects(choices));
+        self.sidebar
+            .update(cx, |sidebar, cx| sidebar.set_projects(projects, cx));
     }
 
     fn open_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1925,17 +1958,25 @@ impl Root {
     }
 
     /// HC-033: a printable key (no ⌘/⌃, not Space) typed outside an editable, with no
-    /// dialog, menu or popover open, goes to the route's composer and focuses it. Popovers
-    /// hold plain focus handles; page controls and the composers are tab stops.
+    /// dialog, menu or popover open, goes to the route's composer and focuses it.
+    /// Content ancestors can hold plain focus handles without being popovers.
+    /// The thread transcript is the composer's sibling, so only its exact focus is allowed.
     fn type_anywhere(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
         let Some(text) = keystroke.key_char.as_deref() else {
             return;
         };
         let printable = text.chars().count() == 1 && !text.chars().all(char::is_whitespace);
-        let in_popover = window
-            .focused(cx)
-            .is_some_and(|focus| !focus.tab_stop && focus != self.focus);
+        let route_focus = self.route_focus(cx);
+        let in_popover = window.focused(cx).is_some_and(|focus| {
+            !focus.tab_stop
+                && focus != self.focus
+                && !focus.contains(&route_focus, window)
+                && !self
+                    .thread
+                    .as_ref()
+                    .is_some_and(|thread| thread.read(cx).transcript_focused(window))
+        });
         let editing = window
             .context_stack()
             .iter()
@@ -1945,7 +1986,7 @@ impl Root {
             || keystroke.modifiers.control
             || self.dialog.is_some()
             || self.command_menu.is_some()
-            || self.route_focus(cx) == self.focus
+            || route_focus == self.focus
             || in_popover
             || editing
         {
@@ -2224,13 +2265,18 @@ impl Root {
             }
             dialog.read(cx).release_artwork(window);
             this.dialog = None;
+            let focus = if std::mem::take(&mut this.dialog_to_composer) {
+                this.composer(cx).focus_handle(cx)
+            } else {
+                this.focus.clone()
+            };
             match outcome {
                 DialogOutcome::Dismiss => {
                     if git_dialog {
                         this.commit_cwd = None;
                         window.focus(&this.composer(cx).focus_handle(cx), cx);
                     } else {
-                        window.focus(&this.focus, cx);
+                        window.focus(&focus, cx);
                     }
                 }
                 DialogOutcome::RevertChanges { .. } => window.focus(&this.focus, cx),
@@ -2260,7 +2306,7 @@ impl Root {
                     window.remove_window();
                 }
                 DialogOutcome::Rename { thread, name } => {
-                    window.focus(&this.focus, cx);
+                    window.focus(&focus, cx);
                     this.rename(thread.clone(), name.clone(), window, cx);
                 }
                 DialogOutcome::Commit {
@@ -2849,28 +2895,108 @@ impl Root {
     /// later turns, and opens the new chat.
     fn fork(&mut self, turn_id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(view) = &self.thread else { return };
-        let view = view.read(cx);
-        let id = view.id().to_owned();
-        let Some(later) = view.turns().iter().rev().position(|t| t.id == turn_id) else {
+        let Some(later) = view
+            .read(cx)
+            .turns()
+            .iter()
+            .rev()
+            .position(|t| t.id == turn_id)
+        else {
             return;
         };
+        self.fork_chat(later, window, cx);
+    }
+
+    /// `thread/fork` of the open chat in its workspace, `thread/rollback` of its last `later`
+    /// turns, then opens the new chat; a refusal shows `Failed to fork chat`.
+    fn fork_chat(&mut self, later: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(view) = &self.thread else { return };
+        let id = view.read(cx).id().to_owned();
         let bridge = self.bridge.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            // Both answer `{ thread }`, like `thread/read`.
-            let mut read: ThreadReadResponse = bridge
-                .request("thread/fork", json!({ "threadId": id }))
-                .await?;
-            if later > 0 {
-                let params = json!({ "threadId": read.thread.id, "numTurns": later });
-                read = bridge.request("thread/rollback", params).await?;
+            let forked = async {
+                // Both answer `{ thread }`, like `thread/read`.
+                let mut read: ThreadReadResponse = bridge
+                    .request("thread/fork", json!({ "threadId": id }))
+                    .await?;
+                if later > 0 {
+                    let params = json!({ "threadId": read.thread.id, "numTurns": later });
+                    read = bridge.request("thread/rollback", params).await?;
+                }
+                Ok::<_, anyhow::Error>(read)
             }
-            this.update_in(cx, |this, window, cx| {
-                this.loaded.insert(read.thread.id.clone());
-                this.add_thread(&read.thread, cx);
-                this.show_thread(read.thread, window, cx);
-            })
+            .await;
+            match forked {
+                Ok(read) => this.update_in(cx, |this, window, cx| {
+                    this.loaded.insert(read.thread.id.clone());
+                    this.add_thread(&read.thread, cx);
+                    this.show_thread(read.thread, window, cx);
+                }),
+                Err(error) => {
+                    this.update(cx, |this, cx| {
+                        this.toast(Toast::danger("Failed to fork chat"), cx)
+                    })?;
+                    Err(error)
+                }
+            }
         });
         log_err(task, cx);
+    }
+
+    /// `/compact`: `thread/compact/start` on the open chat, resumed first when this app-server
+    /// has not loaded it. A running turn refuses it; a failed request shows `Failed to compact chat`.
+    fn compact(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(view) = &self.thread else { return };
+        let view = view.read(cx);
+        let id = view.id().to_owned();
+        let running = view
+            .turns()
+            .iter()
+            .any(|turn| turn.status == TurnStatus::InProgress);
+        if running {
+            self.toast(
+                Toast::danger("Compact is disabled while a chat is in progress"),
+                cx,
+            );
+            return;
+        }
+        let resume = !self.loaded.contains(&id);
+        let bridge = self.bridge.clone();
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let started = async {
+                resume_if(resume, &bridge, &this, &id, cx).await?;
+                bridge
+                    .request::<_, Value>("thread/compact/start", json!({ "threadId": id }))
+                    .await
+                    .map(drop)
+            }
+            .await;
+            if started.is_err() {
+                this.update(cx, |this, cx| {
+                    this.toast(Toast::danger("Failed to compact chat"), cx)
+                })?;
+            }
+            started
+        });
+        log_err(task, cx);
+    }
+
+    /// Opens `Rename chat` for `id`. From the composer, closing it returns focus there.
+    fn open_rename(
+        &mut self,
+        id: String,
+        from_composer: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.dialog.is_some() {
+            return;
+        }
+        let title = self.threads.iter().find(|t| t.id == id).map(thread_title);
+        let title = title.unwrap_or_default().to_string();
+        let dialog = cx.new(|cx| Dialog::rename(id, title, cx));
+        self.show_dialog(dialog, window, cx);
+        self.dialog_to_composer = from_composer;
     }
 
     /// `thread/section/move` into or out of the Pinned section: the row moves at once (no toast);
@@ -4154,10 +4280,7 @@ impl Render for Root {
                 this.set_pinned(a.0.clone(), a.1, window, cx)
             }))
             .on_action(cx.listener(|this, a: &RenameThread, window, cx| {
-                let title = this.threads.iter().find(|t| t.id == a.0).map(thread_title);
-                let title = title.unwrap_or_default().to_string();
-                let dialog = cx.new(|cx| Dialog::rename(a.0.clone(), title, cx));
-                this.show_dialog(dialog, window, cx);
+                this.open_rename(a.0.clone(), false, window, cx)
             }))
             .on_action(cx.listener(|this, a: &ForkThread, window, cx| this.fork(&a.0, window, cx)))
             .on_action(cx.listener(|this, a: &SelectProject, window, cx| {
