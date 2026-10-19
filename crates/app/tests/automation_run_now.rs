@@ -191,15 +191,53 @@ fn row_menu_run_now_starts_the_task_through_the_app_server() -> Result<()> {
     fx.click((302., 190.))?;
     ensure!(open_menu(&fx).as_deref() == Some("plain"));
     shot(&mut fx, "2-menu-open")?;
-    fx.click((250., 228.))?;
+    // The click without running the app to rest: the host call is queued, not yet sent, so the
+    // pending state is real. `Fx::click` would run the queued call to its end first.
+    fx.hover((250., 228.))?;
+    let at = gpui::point(gpui::px(250.), gpui::px(228.));
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        for event in [
+            gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
+                button: gpui::MouseButton::Left,
+                position: at,
+                modifiers: gpui::Modifiers::default(),
+                click_count: 1,
+                first_mouse: false,
+            }),
+            gpui::PlatformInput::MouseUp(gpui::MouseUpEvent {
+                button: gpui::MouseButton::Left,
+                position: at,
+                modifiers: gpui::Modifiers::default(),
+                click_count: 1,
+            }),
+        ] {
+            window.dispatch_event(event, cx);
+        }
+    })?;
     ensure!(open_menu(&fx).is_none());
     ensure!(fx.read(|r, cx| r.toasts(cx)) == ["Starting run…"]);
-    fx.wait("the app-server received the turn", |_| {
-        requests(&log).is_ok_and(|sent| sent.len() == 3)
-    })?;
+    let starting = |fx: &Fx| {
+        fx.read(|r, cx| {
+            r.scheduled_sidebar()
+                .is_some_and(|s| s.read(cx).is_starting("plain"))
+        })
+    };
+    ensure!(starting(&fx), "the row is Starting run…");
+    ensure!(
+        requests(&log).unwrap_or_default().is_empty(),
+        "nothing sent yet"
+    );
+    if let Some(out) = &shots {
+        fs::create_dir_all(out)?;
+        let pending = fx.cx.capture_screenshot(fx.window)?;
+        pending.save(format!("{out}/3-starting-run.png"))?;
+    }
+    // Release the queued call: the app-server receives the thread and turn, holds the turn for
+    // two seconds, then answers.
+    fx.wait("the run's answer", |fx| !starting(fx))?;
     let sent = requests(&log)?;
+    ensure!(sent.len() == 3 && sent[2]["method"] == "turn/start");
     ensure!(sent[0]["params"]["cwd"] == json!(dir.path()));
-    ensure!(sent[2]["method"] == "turn/start");
     ensure!(
         sent[2]["params"]["input"][0]["text"]
             .as_str()
@@ -209,15 +247,7 @@ fn row_menu_run_now_starts_the_task_through_the_app_server() -> Result<()> {
         fx.read(|r, cx| r.toasts(cx)) == ["Starting run…"],
         "a started run shows no error"
     );
-    shot(&mut fx, "3-run-started")?;
-    // The headless executor runs the host call to its end inside `click`, so the row's
-    // `Starting run…` is drawn here from the same set that `Root` pushes while a run is open.
-    let sidebar = fx.read(|r, _| r.scheduled_sidebar().cloned().unwrap());
-    fx.cx
-        .update(|cx| sidebar.update(cx, |s, cx| s.set_starting(["plain".to_owned()].into(), cx)));
-    shot(&mut fx, "4-starting-row")?;
-    fx.cx
-        .update(|cx| sidebar.update(cx, |s, cx| s.set_starting(Default::default(), cx)));
+    shot(&mut fx, "4-run-started")?;
 
     fx.hover((150., 239.))?;
     fx.click((302., 239.))?;

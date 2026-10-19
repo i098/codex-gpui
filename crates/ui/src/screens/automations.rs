@@ -352,6 +352,11 @@ impl ScheduledSidebar {
         cx.notify();
     }
 
+    /// The task's run is starting.
+    pub fn is_starting(&self, id: &str) -> bool {
+        self.starting.contains(id)
+    }
+
     /// The task whose actions menu is open.
     pub fn open_menu(&self) -> Option<&str> {
         self.menu.as_ref().map(|menu| menu.id.as_str())
