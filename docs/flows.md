@@ -567,6 +567,17 @@ The click puts the card in `Starting…` (rays spinner, status text) and disable
 The oracle answers that read with the host's 499, so the recorded outcome is the toast `Couldn’t start this suggested task` and the cards enabled again.
 The conversation prepare, its stream, and the navigation into the started conversation are not recorded and not wired.
 
+Task delete (AM-026, AM-027) opens from the sidebar row's `Scheduled task actions` button, whose menu has `Delete` (Escape closes it).
+The dialog `Delete {name}?` names the task the host lists, starts on `Cancel`, and sends nothing until `Delete scheduled task`.
+Escape and `Cancel` close it without a request and return focus to the row's button; both are ignored while the delete runs.
+Confirm sends `automation-delete` through `LocalHost`, which removes the definition directory, its cached `automations` row and its `automation_runs` like the original `aI`.
+The answer is `{item, success, status}`; `deleted` and `not_found` succeed, and account-owned rows are never touched.
+Success drops the row at once, reads the list again, and closes the deleted task's page to `Scheduled`.
+Failure closes the dialog like the original, shows the toast `Could not delete scheduled task` with `Copy error` for the host status, and keeps the task for another try.
+The toast has no description line (`Try again` in the original) because the shared toast has none.
+The page-list row's inline delete icon and tooltip (AM-029) belong to the original page list, which the native route does not draw.
+`crates/app/tests/task_delete.rs` proves the host contract in disposable stores and, on macOS, the native Escape, Cancel, confirm, failed removal and retry path.
+
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Rail `Scheduled` | entry | Automations page, `ScheduledSidebar`. | `Route::Scheduled` with `ScheduledSidebar` and the page. | PASS (`rail_scheduled`, `parity_automations`) |
@@ -576,7 +587,7 @@ The conversation prepare, its stream, and the navigation into the started conver
 | 5 | Search | focus | Filters; `No matching tasks`. | Dispatches `SearchTasks`; no handler. | NOT WIRED (no host: `list-automations`) |
 | 6 | Status filter | click | All / Active / Paused. | — | NOT WIRED (no host: `list-automations`) |
 | 7 | Task row | click | Detail panel. | — | NOT WIRED (no host: `list-automations`) |
-| 8 | Row actions | click | Edit, Run now, Pause, Delete. | — | NOT WIRED (no host: `automation-update`, `automation-delete`) |
+| 8 | Row actions | click | Edit, Run now, Pause, Delete. | The sidebar row's button opens a menu with `Delete` only. | PARTIAL (`Delete` passes `task_delete`; Edit, Run now and Pause NOT WIRED: no host `automation-update`) |
 | 9 | Editor fields | focus | Name, Prompt, schedule. | — | NOT WIRED (no host: `automation-create`) |
 | 10 | Previous runs | click | Run chat, mark read, archive. | — | NOT WIRED (no host: `inbox-items`, `automation-run-archive`) |
 | 11 | Row hover | hover | Row highlight. | No task rows; suggestion hover matches the original recording. | FAIL (no task rows; suggestion hover passes `s035::suggestion_hover_matches_original`) |

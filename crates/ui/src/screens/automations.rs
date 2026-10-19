@@ -5,14 +5,15 @@
 
 use crate::{Shell, icon::icon, icon_button, motion::ButtonVisual, text};
 use gpui::{
-    Action, AnyView, App, AppContext as _, Context, Corners, Div, Entity, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, Render, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, Window, actions, canvas, div, img,
-    prelude::FluentBuilder as _, px,
+    Action, Anchor, AnyView, App, AppContext as _, BoxShadow, ClickEvent, Context, Corners, Div,
+    Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement,
+    Pixels, Point, Render, Role, SharedString, Stateful, StatefulInteractiveElement, Styled,
+    Window, actions, anchored, canvas, deferred, div, img, point, prelude::FluentBuilder as _, px,
+    rgb,
 };
 use serde::Deserialize;
 use serde_json::Value;
-use std::{fs, path::Path};
+use std::{collections::HashMap, fs, path::Path};
 use theme::{ActiveTheme as _, Theme};
 
 actions!(
@@ -39,6 +40,13 @@ pub struct StartSuggestedTask {
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = automations, no_json)]
 pub struct OpenAutomation {
+    pub id: String,
+}
+
+/// Row menu `Delete`: asks to delete the task `id` (AM-026); the app confirms first.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = automations, no_json)]
+pub struct DeleteAutomation {
     pub id: String,
 }
 
@@ -269,6 +277,8 @@ fn shell_with(
         tasks,
         selected: selected.as_ref().map(|(task, _)| task.id.clone()),
         utc_offset,
+        focus: HashMap::new(),
+        menu: None,
     });
     let mut page = None;
     let main: AnyView = match selected {
@@ -303,6 +313,17 @@ pub struct ScheduledSidebar {
     tasks: Vec<Task>,
     selected: Option<String>,
     utc_offset: i64,
+    /// Each row's `Scheduled task actions` button, by task id.
+    focus: HashMap<String, FocusHandle>,
+    menu: Option<TaskMenu>,
+}
+
+/// The open row menu: its task, where it opened, and its focus while open.
+struct TaskMenu {
+    id: String,
+    position: Point<Pixels>,
+    active: bool,
+    focus: FocusHandle,
 }
 
 impl ScheduledSidebar {
@@ -311,10 +332,143 @@ impl ScheduledSidebar {
         cx.notify();
     }
 
-    fn row(&self, task: &Task, t: &Theme) -> impl IntoElement {
+    /// Whether a row menu is open.
+    pub fn menu_open(&self) -> bool {
+        self.menu.is_some()
+    }
+
+    /// The row's `Scheduled task actions` button, where focus returns after its menu or a
+    /// dialog from it closes.
+    pub fn trigger_focus(&self, id: &str) -> Option<FocusHandle> {
+        self.focus.get(id).cloned()
+    }
+
+    fn open_menu(
+        &mut self,
+        id: String,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let focus = cx.focus_handle();
+        window.focus(&focus, cx);
+        self.menu = Some(TaskMenu {
+            id,
+            position,
+            active: false,
+            focus,
+        });
+        cx.notify();
+    }
+
+    fn close_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<TaskMenu> {
+        let menu = self.menu.take()?;
+        if let Some(trigger) = self.focus.get(&menu.id) {
+            window.focus(trigger, cx);
+        }
+        cx.notify();
+        Some(menu)
+    }
+
+    fn delete(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(menu) = self.close_menu(window, cx) {
+            window.dispatch_action(Box::new(DeleteAutomation { id: menu.id }), cx);
+        }
+    }
+
+    fn menu_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        match event.keystroke.key.as_str() {
+            "escape" => {
+                self.close_menu(window, cx);
+            }
+            "enter" | "space" => self.delete(window, cx),
+            "up" | "down" | "home" | "end" => {
+                if let Some(menu) = &mut self.menu {
+                    menu.active = true;
+                }
+            }
+            "tab" => {}
+            _ => return,
+        }
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    fn menu_overlay(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
+        let menu = self.menu.as_ref().expect("open task menu");
+        let t = cx.theme();
+        // ponytail: only `Delete` exists; Edit, Run now, Share and Pause join this list with
+        // their own slices.
+        let item = div()
+            .id("task-menu-delete")
+            .role(Role::MenuItem)
+            .aria_label("Delete")
+            .when(menu.active, |d| {
+                d.aria_active_descendant().bg(t.menu_item_hover)
+            })
+            .h(px(29.))
+            .px(px(8.))
+            .rounded(px(12.))
+            .flex()
+            .items_center()
+            .cursor_pointer()
+            .on_hover(cx.listener(|this, hovered, _, cx| {
+                if *hovered && let Some(menu) = &mut this.menu {
+                    menu.active = true;
+                    cx.notify();
+                }
+            }))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(|this, _, window, cx| this.delete(window, cx)))
+            .child(text("Delete", 13., 18.571_428, 430., t.text));
+        let popup = crate::composer::popover(t, 220., |d| d.child(item))
+            .ml_0()
+            .pl_0()
+            .id("task-menu")
+            .role(Role::Menu)
+            .aria_label("Scheduled task actions")
+            .track_focus(&menu.focus)
+            .on_key_down(cx.listener(Self::menu_key))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation());
+        deferred(
+            anchored().position(point(px(0.), px(0.))).child(
+                div()
+                    .w(window.viewport_size().width)
+                    .h(window.viewport_size().height)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, window, cx| {
+                            this.close_menu(window, cx);
+                        }),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(|this, _, window, cx| {
+                            this.close_menu(window, cx);
+                        }),
+                    )
+                    .child(
+                        anchored()
+                            .position(menu.position)
+                            .anchor(Anchor::TopLeft)
+                            .snap_to_window_with_margin(px(8.))
+                            .child(popup),
+                    ),
+            ),
+        )
+        .with_priority(4)
+    }
+
+    fn row(&self, task: &Task, window: &Window, cx: &Context<Self>) -> impl IntoElement {
+        let t = cx.theme();
         let fill = fill(px(12.5), t.ghost_hover);
         let group = SharedString::from(format!("task-row-{}", task.id));
         let id = task.id.clone();
+        let trigger = self.focus[&task.id].clone();
+        let open = self.menu.as_ref().is_some_and(|menu| menu.id == task.id);
+        let actions_shown = open || trigger.is_focused(window);
+        let menu_id = task.id.clone();
         let mut secondary = div().h(px(16.)).pr(px(5.)).flex().items_center();
         if let Some(next) = task.next_run_at {
             secondary = secondary
@@ -338,7 +492,7 @@ impl ScheduledSidebar {
             .flex()
             .flex_col()
             .gap(px(2.))
-            .child(if self.selected.as_deref() == Some(&task.id) {
+            .child(if open || self.selected.as_deref() == Some(&task.id) {
                 fill
             } else {
                 fill.opacity(0.)
@@ -364,23 +518,39 @@ impl ScheduledSidebar {
                     .flex()
                     .items_center()
                     .justify_end()
-                    .opacity(0.)
+                    .opacity(if actions_shown { 1. } else { 0. })
                     .group_hover(group.clone(), |s| s.opacity(1.))
                     .child(
                         div()
                             .id(SharedString::from(format!("{group}-actions")))
+                            .role(Role::Button)
+                            .aria_label("Scheduled task actions")
+                            .track_focus(&trigger)
+                            .tab_index(0)
+                            .focus_visible(|style| {
+                                style.shadow(vec![BoxShadow {
+                                    color: rgb(0x3a83f7).into(),
+                                    offset: point(px(0.), px(0.)),
+                                    blur_radius: px(0.),
+                                    spread_radius: px(2.),
+                                    inset: true,
+                                }])
+                            })
                             .size(px(28.))
                             .flex()
                             .items_center()
                             .justify_center()
                             .rounded(px(9.375))
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                                this.open_menu(menu_id.clone(), event.position(), window, cx)
+                            }))
                             .child(ButtonVisual {
                                 glyph: icon("thread-chat-actions", 16., t.text_tertiary),
                                 radius: px(9.375),
                                 hover: t.ghost_hover,
                                 foreground: t.text.opacity(0.85),
-                                selected: false,
+                                selected: open,
                             }),
                     ),
             )
@@ -388,10 +558,23 @@ impl ScheduledSidebar {
 }
 
 impl Render for ScheduledSidebar {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let tasks = &self.tasks;
+        self.focus
+            .retain(|id, _| tasks.iter().any(|task| task.id == *id));
+        for task in tasks {
+            if !self.focus.contains_key(&task.id) {
+                self.focus.insert(task.id.clone(), cx.focus_handle());
+            }
+        }
         let t = cx.theme();
         let hover_bg = t.list_hover;
-        let rows: Vec<_> = self.tasks.iter().map(|task| self.row(task, t)).collect();
+        let rows: Vec<_> = self
+            .tasks
+            .iter()
+            .map(|task| self.row(task, window, cx))
+            .collect();
+        let overlay = self.menu.is_some().then(|| self.menu_overlay(window, cx));
         div()
             .size_full()
             .flex()
@@ -483,6 +666,7 @@ impl Render for ScheduledSidebar {
                         d.child(div().flex().flex_col().gap(px(1.)).children(rows))
                     }),
             )
+            .children(overlay)
     }
 }
 

@@ -1488,6 +1488,11 @@ impl Root {
             .map_or_else(Vec::new, automations::tasks)
     }
 
+    /// The Scheduled routes' sidebar.
+    pub fn scheduled(&self) -> Option<&Entity<automations::ScheduledSidebar>> {
+        self.scheduled.as_ref()
+    }
+
     /// The Scheduled empty page, when the route shows it.
     pub fn suggestions(&self) -> Option<&Entity<automations::AutomationsPage>> {
         self.suggestions.as_ref()
@@ -2016,6 +2021,95 @@ impl Root {
         .detach();
     }
 
+    /// Row menu `Delete` (AM-026): the confirmation names the task the host lists.
+    fn confirm_delete_task(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(task) = self.tasks().into_iter().find(|task| task.id == id) else {
+            return;
+        };
+        let dialog = cx.new(|cx| Dialog::delete_task(task.id, task.name.to_string(), cx));
+        self.show_dialog(dialog, window, cx);
+    }
+
+    /// `Delete scheduled task`: `automation-delete` for the confirmed task. Like the
+    /// original, the dialog closes either way; a failure toasts and the task stays listed.
+    fn delete_task(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let host = self.host.clone();
+        let params = json!({"id": id});
+        let write = cx.background_spawn(async move {
+            host.fetch(&host::Request::post("automation-delete", Some(params)))
+                .and_then(|response| host::json_body(&response))
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = write.await;
+            this.update_in(cx, |this, window, cx| {
+                this.dialog = None;
+                match result {
+                    Ok(body) if body["success"] == true => this.task_deleted(&id, window, cx),
+                    failure => {
+                        let detail = match failure {
+                            Ok(body) => format!(
+                                "automation-delete: {}",
+                                body["status"].as_str().unwrap_or("no status")
+                            ),
+                            Err(error) => format!("{error:#}"),
+                        };
+                        eprintln!("codex-gpui: could not delete scheduled task: {detail}");
+                        this.toast(
+                            Toast::danger("Could not delete scheduled task").action(
+                                "Copy error",
+                                move |_, cx| {
+                                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                        detail.clone(),
+                                    ))
+                                },
+                            ),
+                            cx,
+                        );
+                        this.focus_task_trigger(&id, window, cx);
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The list drops the deleted task at once (the original filters its cached list), then
+    /// the host is read again; a deleted task's page closes to the Scheduled page.
+    fn task_deleted(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(Ok(list)) = &mut self.automations
+            && let Some(items) = list["items"].as_array_mut()
+        {
+            items.retain(|item| item["id"] != id);
+        }
+        let tasks = self.tasks();
+        if let Some(sidebar) = &self.scheduled {
+            sidebar.update(cx, |sidebar, cx| sidebar.set_tasks(tasks, cx));
+        }
+        let route = Route::Automation(id.to_owned());
+        self.back.retain(|r| *r != route);
+        self.forward.retain(|r| *r != route);
+        window.focus(&self.focus, cx);
+        if self.state.route == route {
+            self.state.route = Route::Scheduled;
+            self.sync(window, cx);
+            self.select_route(cx);
+        } else {
+            self.load_automations(cx);
+        }
+    }
+
+    /// Focus returns to the task's `Scheduled task actions` button.
+    fn focus_task_trigger(&self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let trigger = self
+            .scheduled
+            .as_ref()
+            .and_then(|sidebar| sidebar.read(cx).trigger_focus(id))
+            .unwrap_or_else(|| self.focus.clone());
+        window.focus(&trigger, cx);
+    }
+
     fn show_dialog(&mut self, dialog: Entity<Dialog>, window: &mut Window, cx: &mut Context<Self>) {
         if self.dialog.is_some() {
             return;
@@ -2032,6 +2126,10 @@ impl Root {
             thread.update(cx, |view, cx| view.close_summary(cx));
         }
         cx.subscribe_in(&dialog, window, move |this, dialog, outcome, window, cx| {
+            if let DialogOutcome::DeleteTask { id } = outcome {
+                this.delete_task(id.clone(), window, cx);
+                return;
+            }
             if let DialogOutcome::ScheduleTask { prompt, rrule } = outcome {
                 this.create_task(prompt.clone(), rrule.clone(), window, cx);
                 return;
@@ -2080,6 +2178,9 @@ impl Root {
                     if git_dialog {
                         this.commit_cwd = None;
                         window.focus(&this.composer(cx).focus_handle(cx), cx);
+                    } else if dialog.read(cx).kind() == DialogKind::DeleteTask {
+                        let id = dialog.read(cx).task().to_owned();
+                        this.focus_task_trigger(&id, window, cx);
                     } else {
                         window.focus(&this.focus, cx);
                     }
@@ -2134,6 +2235,7 @@ impl Root {
                     }
                 }
                 DialogOutcome::ScheduleTask { .. }
+                | DialogOutcome::DeleteTask { .. }
                 | DialogOutcome::CheckoutBranch { .. }
                 | DialogOutcome::CommitBeforeCheckout => unreachable!(),
             }
@@ -3691,6 +3793,11 @@ impl Render for Root {
             .on_action(
                 cx.listener(|this, a: &automations::OpenAutomation, window, cx| {
                     this.navigate(Route::Automation(a.id.clone()), window, cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|this, a: &automations::DeleteAutomation, window, cx| {
+                    this.confirm_delete_task(&a.id, window, cx)
                 }),
             )
             .on_action(cx.listener(|this, _: &automations::NewTask, window, cx| {
