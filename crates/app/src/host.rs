@@ -394,11 +394,21 @@ pub fn json_body(response: &Value) -> Result<Value> {
 
 pub struct LocalHost {
     home: PathBuf,
+    opener: PathBuf,
 }
 
 impl LocalHost {
     pub fn new(home: impl Into<PathBuf>) -> Self {
-        Self { home: home.into() }
+        Self {
+            home: home.into(),
+            opener: "/usr/bin/open".into(),
+        }
+    }
+
+    /// Launches editors through `opener`, which takes macOS `open`'s `[-a App] file` arguments.
+    pub fn with_opener(mut self, opener: impl Into<PathBuf>) -> Self {
+        self.opener = opener.into();
+        self
     }
 
     pub fn from_env() -> Self {
@@ -761,6 +771,7 @@ impl Host for LocalHost {
             | "git-commit-diff" | "git-commit" | "git-push" | "git-checkout" => {
                 git::fetch(endpoint, &params)?
             }
+            "open-file" => open_file(&self.opener, &params)?,
             "paths-exist" => {
                 let paths: Vec<String> =
                     serde_json::from_value(params.get("paths").cloned().unwrap_or(json!([])))?;
@@ -779,6 +790,74 @@ impl Host for LocalHost {
             "headers": {"content-type": "application/json"}, "bodyJsonString": body.to_string()}),
         )
     }
+}
+
+/// The original's editor targets (`openIn.getTargets` ids) and their macOS application names.
+const EDITORS: [(&str, &str); 11] = [
+    ("vscode", "Visual Studio Code"),
+    ("vscodeInsiders", "Visual Studio Code - Insiders"),
+    ("cursor", "Cursor"),
+    ("devin", "Devin Desktop"),
+    ("bbedit", "BBEdit"),
+    ("emacs", "Emacs"),
+    ("sublimeText", "Sublime Text"),
+    ("zed", "Zed"),
+    ("windsurf", "Windsurf"),
+    ("antigravity", "Antigravity"),
+    ("xcode", "Xcode"),
+];
+
+/// `open-file`: opens `path`, a file inside the project of `cwd`, in the editor `target` (the
+/// default app without one). The path must resolve, symlinks included, to a regular file under
+/// the Git root of `cwd` (`cwd` itself outside a repository). `opener` reports its own failure.
+fn open_file(opener: &Path, params: &Value) -> Result<Value> {
+    let cwd = Path::new(params["cwd"].as_str().context("missing cwd")?);
+    let path = Path::new(params["path"].as_str().context("missing path")?);
+    ensure!(
+        cwd.is_absolute() && path.is_absolute(),
+        "cwd and path must be absolute"
+    );
+    let root = std::process::Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map_or_else(
+            || cwd.to_path_buf(),
+            |root| PathBuf::from(root.trim_end_matches('\n')),
+        );
+    let root = root.canonicalize().context("resolve the project folder")?;
+    let file = path
+        .canonicalize()
+        .with_context(|| format!("{} no longer exists", path.display()))?;
+    ensure!(file.starts_with(&root), "file is outside the project");
+    ensure!(file.is_file(), "{} is not a file", file.display());
+    let mut command = std::process::Command::new(opener);
+    match params["target"].as_str() {
+        None | Some("systemDefault") => {}
+        Some(id) => {
+            let app = EDITORS
+                .iter()
+                .find(|(known, _)| *known == id)
+                .map(|(_, app)| *app)
+                .with_context(|| format!("unsupported editor target: {id}"))?;
+            command.args(["-a", app]);
+        }
+    }
+    let output = command
+        .arg(&file)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .with_context(|| format!("run {}", opener.display()))?;
+    ensure!(
+        output.status.success(),
+        "editor failed: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    Ok(json!({"path": file}))
 }
 
 /// The sign-in the cloud transport attaches: the ChatGPT token and the workspace route.

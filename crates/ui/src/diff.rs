@@ -127,6 +127,8 @@ pub enum DiffRequest {
     Stage(String),
     Unstage(String),
     Revert(RevertChanges),
+    /// Open this absolute path in the configured editor.
+    Open(String),
 }
 
 #[derive(Clone)]
@@ -1779,8 +1781,21 @@ fn file_header(
                         .id(("diff-open-editor", i))
                         .role(gpui::Role::Button)
                         .aria_label("Open in editor")
-                        .aria_disabled(true)
-                        .on_click(|_, _, cx| cx.stop_propagation()),
+                        .focusable()
+                        .tab_index(0)
+                        .focus_visible(|s| s.border_2().border_color(rgb(0x3a83f7)))
+                        .cursor_pointer()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+                            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                this.request_open(i, cx);
+                                cx.stop_propagation();
+                            }
+                        }))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.request_open(i, cx);
+                            cx.stop_propagation();
+                        })),
                 )
                 .child(
                     small("diff-more")
