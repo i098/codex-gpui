@@ -1582,17 +1582,6 @@ impl Root {
         self.suggestions.as_ref()
     }
 
-    /// A suggestion card click. The original's guided start needs an Apple DeviceCheck token
-    /// (`GET /ios/attestation_challenge`) before it sends any conversation request, and this
-    /// host cannot make one, so this release sends nothing and says so with the existing
-    /// danger toast (captain decision 110; `docs/flows.md`, Slice S035b).
-    fn start_suggested_task(&mut self, cx: &mut Context<Self>) {
-        self.toast(
-            Toast::danger("Starting suggested tasks isn’t supported in this version"),
-            cx,
-        );
-    }
-
     fn set_threads(&mut self, threads: &[Thread], cx: &mut Context<Self>) {
         self.threads = threads.to_vec();
         self.sidebar.update(cx, |s, cx| s.set_threads(threads, cx));
@@ -4008,8 +3997,12 @@ impl Render for Root {
                 this.open_dialog(DialogKind::ScheduleTask, window, cx)
             }))
             .on_action(
+                // Unsupported in this release: `docs/flows.md`, Slice S035b.
                 cx.listener(|this, _: &automations::StartSuggestedTask, _, cx| {
-                    this.start_suggested_task(cx)
+                    this.toast(
+                        Toast::danger("Starting suggested tasks isn’t supported in this version"),
+                        cx,
+                    )
                 }),
             )
             .on_action(cx.listener(|this, _: &OpenMobileSetup, window, cx| {

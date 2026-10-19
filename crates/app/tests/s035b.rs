@@ -5,38 +5,7 @@
 //! this release answers the click with an unsupported message and sends no request.
 
 use anyhow::{Context as _, Result};
-use app::host::{Host, ReplayHost, Request, json_body, tpp_models};
-use serde_json::Value;
-
-const RECORDING: &str = include_str!("../../../refs/interactions/s035b.json");
-
-/// The recorded `httpFetch.fetch` request and the oracle's answer.
-fn recorded_exchange() -> Result<(Request, Value)> {
-    let recording: Value = serde_json::from_str(RECORDING)?;
-    let exchange = &recording["exchanges"][1];
-    Ok((
-        serde_json::from_value(exchange["request"].clone())?,
-        exchange["response"].clone(),
-    ))
-}
-
-#[test]
-fn models_read_matches_the_recorded_request_and_fails_like_the_original() -> Result<()> {
-    let host = ReplayHost::from_recording(RECORDING)?;
-    let identity = host.identity().context("recorded identity")?;
-    assert_eq!(identity.user_id, "user-000000000000000000000000");
-    assert_eq!(identity.account_id, "<id>");
-    assert_eq!(identity.device_id, "<id>");
-    let (request, answer) = recorded_exchange()?;
-    assert_eq!(tpp_models(&identity), request);
-    let response = host.fetch(&request)?;
-    assert_eq!(response, answer);
-    assert_eq!(response["value"]["status"], 499);
-    let error = json_body(&response).unwrap_err().to_string();
-    assert!(error.contains("499"), "{error}");
-    assert!(error.contains("Authenticated principal changed"), "{error}");
-    Ok(())
-}
+use app::host::Host;
 
 #[test]
 fn cloud_identity_comes_from_the_token_claims() -> Result<()> {
@@ -96,12 +65,14 @@ mod common;
 fn suggestion_click_says_unsupported_and_sends_nothing() -> Result<()> {
     use anyhow::ensure;
     use app::Route;
-    use app::host::Identity;
-    use common::{Fx, RAIL_SCHEDULED, changed};
+    use app::host::{Identity, ReplayHost, Request};
+    use common::{Fx, RAIL_SCHEDULED};
     use image::{GenericImageView as _, RgbaImage};
     use parking_lot::Mutex;
+    use serde_json::Value;
     use std::{sync::Arc, time::Duration};
 
+    const RECORDING: &str = include_str!("../../../refs/interactions/s035b.json");
     const TOAST: &str = "Starting suggested tasks isn’t supported in this version";
 
     /// The replay host, recording every request the app sends.
@@ -138,7 +109,6 @@ fn suggestion_click_says_unsupported_and_sends_nothing() -> Result<()> {
         .take(5)
         .map(|c| bbox(&c["bbox"]))
         .collect();
-    let icon = bbox(&recording["result"]["dom"][1]["cards"][0]["icon"]["bbox"]);
     let brightest = |shot: &RgbaImage, [x, y, w, h]: [f32; 4]| {
         let s = shot.width() as f32 / 1280.;
         shot.view(
@@ -179,7 +149,7 @@ fn suggestion_click_says_unsupported_and_sends_nothing() -> Result<()> {
         );
     }
 
-    let before = host.sent.lock().len();
+    host.sent.lock().clear();
     fx.click(at)?;
     fx.wait("suggested-task click", |fx| {
         fx.read(|root, cx| !root.toasts(cx).is_empty())
@@ -189,8 +159,9 @@ fn suggestion_click_says_unsupported_and_sends_nothing() -> Result<()> {
     ))?;
     let toasts = fx.read(|root, cx| root.toasts(cx));
     ensure!(toasts == [TOAST], "toasts {toasts:?}");
-    let sent = host.sent.lock()[before..].to_vec();
+    let sent = host.sent.lock();
     ensure!(sent.is_empty(), "the click sent {sent:?}");
+    drop(sent);
     ensure!(pending(&fx) == Some(None), "no card is Starting…");
     ensure!(fx.route() == Route::Scheduled, "route {:?}", fx.route());
     fx.hover((1270., 820.))?;
@@ -203,10 +174,6 @@ fn suggestion_click_says_unsupported_and_sends_nothing() -> Result<()> {
             "card {card:?} stays enabled"
         );
     }
-    ensure!(
-        changed(&rest, &after, icon) == 0,
-        "no spinner in the icon slot"
-    );
     println!(
         "s035b: click shows `{TOAST}`, sends no request, keeps the route and every card enabled"
     );

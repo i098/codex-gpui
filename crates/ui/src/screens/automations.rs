@@ -24,8 +24,7 @@ actions!(
         SearchTasks,
         /// Sidebar `Filter tasks` (ownership `Personal` / `Team`).
         FilterTasks,
-        /// A suggested-task card was clicked. Unsupported in this release: the app answers
-        /// with a message and starts nothing.
+        /// A suggested-task card was clicked (unsupported; see S035b).
         StartSuggestedTask,
     ]
 );

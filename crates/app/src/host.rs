@@ -91,29 +91,6 @@ pub struct Identity {
     pub device_id: String,
 }
 
-/// The webview client's models read that starts a suggested task's guided conversation
-/// (`conversation-actions` `J`: `query.getOrFetch` of the TPP models before the conversation
-/// is prepared), as recorded in `refs/interactions/s035b.json`.
-pub fn tpp_models(identity: &Identity) -> Request {
-    Request::Http(json!({
-        "url": "/tpp/models/?iim=false&include_icons=false",
-        "method": "GET",
-        "headers": {
-            "x-openai-web-frontend": "codex_webview",
-            "x-oai-mcp-form-version": "2",
-            "x-openai-codex-window-type": "electron",
-            "OAI-Language": "en-US",
-            "oai-did": identity.device_id,
-            "X-OpenAI-Attach-Auth": "1",
-            "X-OpenAI-Attach-Desktop-Surface": "1",
-            "X-OpenAI-Attach-Integrity-State": "1",
-            "ChatGPT-Account-ID": identity.account_id,
-        },
-        "expectedIdentity": {"accountId": identity.account_id, "userId": identity.user_id},
-        "returnErrorResponse": true,
-    }))
-}
-
 /// The Scheduled page's read-only suggestion request.
 pub fn suggested_automations() -> Request {
     Request::Http(json!({
