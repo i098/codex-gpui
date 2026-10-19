@@ -788,8 +788,8 @@ They do not replace original-versus-native appearance approval or the strict pix
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Profile menu → Help → `Set up mobile` | entry | `/codex-mobile`. | `Route::Mobile`: sidebar closed, no rail item selected. | PASS (`profile_menu_mobile`, `parity_mobile`) |
-| 2 | Initial step | click | `Get started` reads `/wham/remote/control/mfa_requirement`; `Later` (dialog only). | `GetStarted`: loading button, then the MFA or allow-host step; a failed read shows `Couldn’t check security requirements. Try again`. The original's `/accounts/mfa_info` check is not ported. | PASS (`mobile_get_started_follows_the_recorded_mfa_requirement`) |
-| 3 | Allow host step | click | `Allow`: `remoteControl/enable`. | Step view; `Allow` has no handler. | NOT WIRED (`crates/app/src/lib.rs`: no `remoteControl/enable`) |
+| 2 | Initial step | click | `Get started` reads `/wham/remote/control/mfa_requirement`; `Later` (dialog only). | `GetStarted`: loading button, then the MFA or allow-host step; a failed read or a body without a `requirement` shows `Couldn’t check security requirements. Try again`. The original's `/accounts/mfa_info` check is not ported. | PASS (`mobile_get_started_follows_the_recorded_mfa_requirement`) |
+| 3 | Allow host step | click | `Allow`: `remoteControl/enable`. | Step view; `Allow` is disabled with `Remote control can’t be turned on from this app yet`. | NOT WIRED (`crates/app/src/lib.rs`: no `remoteControl/enable`) |
 | 4 | MFA required | error | `Turn on Multi-Factor Authentication`, `Continue on chatgpt.com`. | Step view; the button opens `chatgpt.com/#settings/Security`. | PASS (`mobile_get_started_follows_the_recorded_mfa_requirement`) |
 | 5 | Waiting / pairing step | loading | QR code, pairing code. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
 | 6 | Pairing unavailable | error | `Pairing code unavailable`. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |

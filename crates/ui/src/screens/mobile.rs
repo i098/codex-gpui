@@ -300,12 +300,13 @@ impl Render for MobileSetupPage {
         } else {
             t.text_inverse
         };
-        // `loading` disables the button: no hover fill.
-        let button_bg = if self.hovered && !pending {
-            t.button_primary_solid_hover
-        } else {
-            t.button_primary_solid
-        };
+        // `loading` and the unwired `Allow` disable the button: no hover fill.
+        let button_bg =
+            if self.hovered && !matches!(step, SetupStep::Pending | SetupStep::AllowHost) {
+                t.button_primary_solid_hover
+            } else {
+                t.button_primary_solid
+            };
         // A `size="large"` primary button: 36 px pill, 14/18 label after the loading spinner.
         let button = |id: &'static str, label: &'static str| -> Stateful<Div> {
             div()
@@ -368,9 +369,17 @@ impl Render for MobileSetupPage {
                     .child(text(description, 16., 24., 430., t.text_tertiary).whitespace_normal()),
             );
         let column = match step {
-            // ponytail: `Allow` (`remoteControl/enable`) is not wired; remote-control
-            // enablement is a separate, unauthorized slice.
-            SetupStep::AllowHost => column.child(button("allow-host", "Allow").px(px(20.))),
+            // `Allow` would enable remote control (`remoteControl/enable`), which this app does
+            // not support yet: the button is disabled and says so.
+            SetupStep::AllowHost => column
+                .child(button("allow-host", "Allow").px(px(20.)).opacity(0.5))
+                .child(text(
+                    "Remote control can’t be turned on from this app yet",
+                    13.,
+                    18.571_428,
+                    430.,
+                    t.text_tertiary,
+                )),
             SetupStep::MfaRequired => column.child(
                 button("continue-on-chatgpt", "Continue on chatgpt.com")
                     .px(px(20.))
