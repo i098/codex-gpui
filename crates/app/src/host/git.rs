@@ -9,15 +9,21 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
-fn command(root: &Path, args: &[&str]) -> Command {
+/// Git in `root` without pathspec options: `check-ignore` rejects `--literal-pathspecs`, and
+/// the original's `ls-files` calls use pathspec magic.
+fn plain_command(root: &Path) -> Command {
     let mut command = Command::new("git");
     command
-        .arg("--literal-pathspecs")
         .args(["-c", "core.quotePath=false"])
-        .args(args)
         .current_dir(root)
         .env("GIT_OPTIONAL_LOCKS", "0")
         .env("GIT_TERMINAL_PROMPT", "0");
+    command
+}
+
+fn command(root: &Path, args: &[&str]) -> Command {
+    let mut command = plain_command(root);
+    command.arg("--literal-pathspecs").args(args);
     command
 }
 
@@ -680,7 +686,6 @@ fn push(root: &Path, params: &Value) -> Result<Value> {
 
 /// A worktree made for one automation run: its Git root, and the source cwd's counterpart in
 /// it, where the thread runs (original `worktreeGitRoot`, `worktreeWorkspaceRoot`).
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Worktree {
     pub git_root: PathBuf,
     pub workspace_root: PathBuf,
@@ -693,7 +698,6 @@ const OWNER: &str = "codex-thread.json";
 const SHELL_ENVIRONMENT: &str = "codex-shell-environment.json";
 const OVERRIDE: &str = "AGENTS.override.md";
 const NO_ENVIRONMENT: &str = "__none__";
-const SETUP: &str = "Setup script";
 /// Variables a setup script never hands on (`Ewe`).
 const UNSHARED: [&str; 9] = [
     "CODEX_SOURCE_TREE_PATH",
@@ -910,9 +914,13 @@ fn answer(root: &Path, args: &[&str]) -> Result<Option<String>> {
     Ok((output.success && !text.is_empty()).then(|| text.to_owned()))
 }
 
-fn has_commit(root: &Path, reference: &str) -> Result<bool> {
+fn commit_id(root: &Path, reference: &str) -> Result<Option<String>> {
     let commit = format!("{reference}^{{commit}}");
-    Ok(answer(root, &["rev-parse", "--verify", "--quiet", &commit])?.is_some())
+    answer(root, &["rev-parse", "--verify", "--quiet", &commit])
+}
+
+fn has_commit(root: &Path, reference: &str) -> Result<bool> {
+    Ok(commit_id(root, reference)?.is_some())
 }
 
 /// True when `root` is the top of a linked worktree, not a main checkout.
@@ -972,10 +980,7 @@ fn remotes(root: &Path) -> Result<Vec<String>> {
         .filter(|remote| !remote.is_empty())
         .map(str::to_owned)
         .collect();
-    if let Some(index) = remotes.iter().position(|remote| remote == "origin") {
-        let origin = remotes.remove(index);
-        remotes.insert(0, origin);
-    }
+    remotes.sort_by_key(|remote| remote != "origin");
     Ok(remotes)
 }
 
@@ -1141,8 +1146,7 @@ fn starting_commit(root: &Path, name: &str) -> Result<String> {
             _ => unverified = true,
         }
     }
-    let commit = format!("{name}^{{commit}}");
-    if let Some(sha) = answer(root, &["rev-parse", "--verify", "--quiet", &commit])? {
+    if let Some(sha) = commit_id(root, name)? {
         return Ok(sha);
     }
     ensure!(!unverified, "Failed to validate the worktree starting ref");
@@ -1166,11 +1170,17 @@ fn add_worktree(source: &Path, path: &Path, start: &str) -> Result<()> {
         "git config filter discovery failed: {}",
         String::from_utf8_lossy(&found.stderr).trim()
     );
+    // `--get-regexp` already matched the four filter keys.
     let filters: std::collections::BTreeSet<String> = String::from_utf8_lossy(&found.stdout)
         .lines()
         .filter_map(|line| {
-            let (name, key) = line.trim().strip_prefix("filter.")?.rsplit_once('.')?;
-            matches!(key, "clean" | "smudge" | "process" | "required").then(|| name.to_owned())
+            Some(
+                line.trim()
+                    .strip_prefix("filter.")?
+                    .rsplit_once('.')?
+                    .0
+                    .to_owned(),
+            )
         })
         .collect();
     let mut args = vec![
@@ -1255,7 +1265,12 @@ fn prepare(
             ("CODEX_SOURCE_TREE_PATH", cwd),
             ("CODEX_WORKTREE_PATH", worktree.workspace_root.as_path()),
         ];
-        run_script(&root.join(script_dir(&config)), script, SETUP, &injected)?
+        run_script(
+            &root.join(script_dir(&config)),
+            script,
+            "Setup script",
+            &injected,
+        )?
     };
     // The original only logs a failed store.
     let _ = git_path(root, SHELL_ENVIRONMENT).and_then(|path| match exported {
@@ -1297,15 +1312,9 @@ fn synced_branch(
     Ok(branch.filter(|branch| Some(branch.as_str()) != default))
 }
 
-/// Git without `--literal-pathspecs`, which `check-ignore` rejects and which turns off the
-/// pathspec magic the original's `ls-files` calls use.
 fn plain(root: &Path, args: &[&str]) -> Result<Output> {
-    Command::new("git")
-        .args(["-c", "core.quotePath=false"])
+    plain_command(root)
         .args(args)
-        .current_dir(root)
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .env("GIT_TERMINAL_PROMPT", "0")
         .output()
         .context("run local Git")
 }
@@ -1352,7 +1361,7 @@ fn copy_ignored(source: &Path, worktree: &Path) -> Result<()> {
 
 /// Copies regular file `relative` from `source` to the same place in `worktree` (`k2`, `j2`),
 /// never through a symlinked worktree directory and never over an existing file.
-fn copy_new(source: &Path, worktree: &Path, relative: &str, label: &str) -> Result<bool> {
+fn copy_new(source: &Path, worktree: &Path, relative: &str, label: &str) -> Result<()> {
     let relative = Path::new(relative);
     ensure!(
         relative
@@ -1364,7 +1373,7 @@ fn copy_new(source: &Path, worktree: &Path, relative: &str, label: &str) -> Resu
     let metadata = match fs::symlink_metadata(&from) {
         Ok(metadata) if metadata.is_file() => metadata,
         Err(error) if error.kind() != ErrorKind::NotFound => return Err(error.into()),
-        _ => return Ok(false),
+        _ => return Ok(()),
     };
     let to = worktree.join(relative);
     let mut dir = worktree.to_owned();
@@ -1387,12 +1396,12 @@ fn copy_new(source: &Path, worktree: &Path, relative: &str, label: &str) -> Resu
         .create_new(true)
         .open(&to)
     {
-        Err(error) if error.kind() == ErrorKind::AlreadyExists => return Ok(false),
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => return Ok(()),
         file => file?,
     };
     std::io::copy(&mut fs::File::open(&from)?, &mut file)?;
     file.set_permissions(metadata.permissions())?;
-    Ok(true)
+    Ok(())
 }
 
 /// The environment file the worktree uses (`VTe`): its copy in the worktree, copied there
@@ -1559,22 +1568,18 @@ fn run_script(
         ]
         .join("\n"),
     )?;
-    let mut env = login_env(dir);
-    for (key, value) in [
-        ("COLORTERM", "truecolor"),
-        ("FORCE_COLOR", "1"),
-        ("TERM", "xterm-256color"),
-    ] {
-        env.insert(key.to_owned(), value.to_owned());
-    }
-    for (key, value) in injected {
-        env.insert((*key).to_owned(), value.to_string_lossy().into_owned());
-    }
+    let env = login_env(dir);
     let status = Command::new("bash")
         .arg(&wrapper)
         .current_dir(dir)
         .env_clear()
         .envs(&env)
+        .envs([
+            ("COLORTERM", "truecolor"),
+            ("FORCE_COLOR", "1"),
+            ("TERM", "xterm-256color"),
+        ])
+        .envs(injected.iter().copied())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -1585,19 +1590,18 @@ fn run_script(
         Some(code) => bail!("{kind} exited with code {code}"),
         None => bail!("{kind} exited with {status}"),
     }
-    if kind == SETUP {
-        let read = |path: &Path| fs::read_to_string(path).map(|text| parse_env(&text));
-        if let (Ok(before), Ok(after)) = (read(&before), read(&after)) {
-            return Ok(exported(&before, &after));
-        }
-    }
-    Ok(None)
+    let read = |path: &Path| {
+        fs::read_to_string(path).map(|text| parse_env(text.trim_start_matches('\u{feff}').lines()))
+    };
+    Ok(match (read(&before), read(&after)) {
+        (Ok(before), Ok(after)) => exported(&before, &after),
+        _ => None,
+    })
 }
 
 /// `env` output as variables (`E0`).
-fn parse_env(text: &str) -> HashMap<String, String> {
-    text.trim_start_matches('\u{feff}')
-        .lines()
+fn parse_env<'a>(lines: impl Iterator<Item = &'a str>) -> HashMap<String, String> {
+    lines
         .filter_map(|line| line.split_once('='))
         .filter(|(key, _)| !key.is_empty())
         .map(|(key, value)| (key.to_owned(), value.to_owned()))
@@ -1661,12 +1665,7 @@ fn login_env(dir: &Path) -> HashMap<String, String> {
         };
         let mut parts = output.split("\0_SHELL_ENV_DELIMITER_\0");
         if let (Some(_), Some(vars), Some(_)) = (parts.next(), parts.next(), parts.next()) {
-            env.extend(
-                vars.split('\0')
-                    .filter_map(|var| var.split_once('='))
-                    .filter(|(key, _)| !key.is_empty())
-                    .map(|(key, value)| (key.to_owned(), value.to_owned())),
-            );
+            env.extend(parse_env(vars.split('\0')));
             env.remove("CODEX_SHELL");
             return env;
         }
