@@ -56,10 +56,187 @@ fn proxy() {
     common::proxy_child();
 }
 
+/// A `Root` on a real proxy child that replays `lines` and logs every client request, with
+/// the Home sidebar at 1280x832. Returns the window, the replay file and the request log.
+#[cfg(target_os = "macos")]
+fn isolated_root(
+    dir: &std::path::Path,
+    lines: &[Value],
+    state_path: &std::path::Path,
+) -> Result<(common::Fx, std::path::PathBuf, std::path::PathBuf)> {
+    use app::{Root, State, ThemeSetting};
+    use bridge::Bridge;
+    use common::{CWD, Fx};
+    use std::process::Command;
+
+    let recording = dir.join("replay.jsonl");
+    fs::write(
+        &recording,
+        lines
+            .iter()
+            .map(|line| format!("{line}\n"))
+            .collect::<String>(),
+    )?;
+    let log = dir.join("requests.jsonl");
+    fs::write(&log, "")?;
+    let mut command = Command::new(std::env::current_exe()?);
+    command
+        .args(["--exact", "proxy", "--nocapture", "--quiet"])
+        .env("CGX_PROXY_SCRIPT", &recording)
+        .env("CGX_PROXY_LOG", &log);
+    let (bridge, events) = Bridge::spawn(command)?;
+    let mut fx = Fx::new()?;
+    fx.root = fx.cx.update_window(fx.window, |_, window, cx| {
+        window.replace_root(cx, |window, cx| {
+            Root::new(
+                State {
+                    theme: ThemeSetting::Dark,
+                    path: Some(state_path.to_owned()),
+                    ..State::default()
+                },
+                bridge,
+                events,
+                CWD.into(),
+                window,
+                cx,
+            )
+        })
+    })?;
+    fx.wait("isolated root", |fx| fx.read(|root, _| root.ready()))?;
+    Ok((fx, recording, log))
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn sidebar_project_rows_start_chats_in_their_own_roots_and_leave_open_chats_alone() -> Result<()> {
+    use app::{Route, State};
+    use common::{GREETING, exchange, recorded_thread, script};
+    use std::sync::Arc;
+
+    let temp = tempfile::tempdir()?;
+    let [alpha, beta, gone] = ["alpha", "beta", "gone"].map(|name| temp.path().join(name));
+    let legacy = temp.path().join("legacy");
+    for root in [&alpha, &beta, &gone] {
+        fs::create_dir(root)?;
+    }
+    let state_path = temp.path().join("state.json");
+    let host = Arc::new(LocalHost::new(temp.path().join("codex")));
+    let [alpha, beta, gone] = [alpha, beta, gone].map(|root| host.add_project(&root).unwrap());
+    fs::remove_dir(&gone)?;
+
+    let mut lines = script(None, |_| {})?;
+    let mut existing = recorded_thread(GREETING)?;
+    existing["cwd"] = json!(legacy);
+    for line in &mut lines {
+        if line.pointer("/msg/result/thread/id") == Some(&json!(GREETING)) {
+            line["msg"]["result"]["thread"]["cwd"] = json!(legacy);
+        }
+    }
+    for (id, root) in [("row-beta", &beta), ("row-alpha", &alpha)] {
+        let mut new = existing.clone();
+        new["id"] = id.into();
+        new["cwd"] = json!(root);
+        new["turns"] = json!([]);
+        let start = json!({"thread": new, "model": "gpt-6.1-sol", "cwd": root});
+        lines.extend(exchange("thread/start", start));
+        lines.extend(exchange(
+            "turn/start",
+            json!({"turn": {"id": id, "items": [], "status": "completed", "error": null}}),
+        ));
+    }
+    let (mut fx, _, log) = isolated_root(temp.path(), &lines, &state_path)?;
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
+    fx.wait("three project rows", |fx| {
+        fx.read(|root, cx| root.sidebar().read(cx).projects().len() == 3)
+    })?;
+    let saved_root = || -> Result<Option<String>> {
+        Ok(serde_json::from_slice::<State>(&fs::read(&state_path)?)?.project_root)
+    };
+    // Project rows are 30 px apart + 1 px gap from y 203 (the recorded f1d layout); the
+    // new-chat icon is the 20 px box 8 px inside the row's right edge.
+    let row = |index: f32| 218. + 31. * index;
+    let (label, icon) = (150., 314.);
+
+    fx.click((label, row(0.)))?;
+    fx.wait("alpha row selection", |_| {
+        saved_root().ok().flatten().as_deref() == Some(alpha.as_str())
+    })?;
+    assert_eq!(fx.route(), Route::Home);
+
+    // A deleted folder offers no chat: neither its row nor its icon select it.
+    fx.hover((label, row(2.)))?;
+    fx.click((label, row(2.)))?;
+    fx.click((icon, row(2.)))?;
+    fx.cx.run_until_parked();
+    assert_eq!(saved_root()?.as_deref(), Some(alpha.as_str()));
+
+    fx.hover((900., 10.))?;
+    fx.shot()?.save(format!(
+        "{}/project-select-beta-before.png",
+        env!("CARGO_TARGET_TMPDIR")
+    ))?;
+    fx.hover((label, row(1.)))?;
+    fx.click((icon, row(1.)))?;
+    fx.wait("beta new chat", |_| {
+        saved_root().ok().flatten().as_deref() == Some(beta.as_str())
+    })?;
+    assert!(fx.composer_focused()?);
+    fx.shot()?.save(format!(
+        "{}/project-select-beta-after.png",
+        env!("CARGO_TARGET_TMPDIR")
+    ))?;
+
+    // An open chat keeps its own folder while another project is selected.
+    fx.keys("cmd-1")?;
+    fx.wait_thread(GREETING)?;
+    assert_eq!(
+        fx.read(|root, cx| root.thread().unwrap().read(cx).cwd().to_owned()),
+        legacy.to_str().unwrap()
+    );
+    assert_eq!(saved_root()?.as_deref(), Some(beta.as_str()));
+    fx.keys("cmd-n")?;
+    fx.type_text("Start in beta.")?;
+    fx.keys("enter")?;
+    fx.wait_thread("row-beta")?;
+    assert_eq!(
+        fx.read(|root, cx| root.thread().unwrap().read(cx).cwd().to_owned()),
+        beta
+    );
+
+    fx.hover((label, row(0.)))?;
+    fx.click((icon, row(0.)))?;
+    fx.wait("alpha new chat", |_| {
+        saved_root().ok().flatten().as_deref() == Some(alpha.as_str())
+    })?;
+    assert_eq!(fx.route(), Route::Home);
+    fx.type_text("Start in alpha.")?;
+    fx.keys("enter")?;
+    fx.wait_thread("row-alpha")?;
+    assert_eq!(
+        fx.read(|root, cx| root.thread().unwrap().read(cx).cwd().to_owned()),
+        alpha
+    );
+    fx.shot()?.save(format!(
+        "{}/project-select-alpha-chat.png",
+        env!("CARGO_TARGET_TMPDIR")
+    ))?;
+    let starts: Vec<String> = fs::read_to_string(&log)?
+        .lines()
+        .map(serde_json::from_str::<Value>)
+        .collect::<serde_json::Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|request| request["method"] == "thread/start")
+        .map(|start| start["params"]["cwd"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(starts, [beta, alpha]);
+    Ok(())
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn project_selection_changes_new_chats_but_not_existing_chats() -> Result<()> {
-    use app::{Root, Route, State, ThemeSetting};
+    use app::{Root, Route, State};
     use bridge::Bridge;
     use common::{CWD, Fx, GREETING, exchange, recorded_thread, script};
     use std::{process::Command, sync::Arc};
@@ -109,40 +286,7 @@ fn project_selection_changes_new_chats_but_not_existing_chats() -> Result<()> {
             }}),
         ));
     }
-    let recording = temp.path().join("replay.jsonl");
-    fs::write(
-        &recording,
-        lines
-            .iter()
-            .map(|line| format!("{line}\n"))
-            .collect::<String>(),
-    )?;
-    let log = temp.path().join("requests.jsonl");
-    fs::write(&log, "")?;
-    let mut command = Command::new(std::env::current_exe()?);
-    command
-        .args(["--exact", "proxy", "--nocapture", "--quiet"])
-        .env("CGX_PROXY_SCRIPT", &recording)
-        .env("CGX_PROXY_LOG", &log);
-    let (bridge, events) = Bridge::spawn(command)?;
-    let mut fx = Fx::new()?;
-    fx.root = fx.cx.update_window(fx.window, |_, window, cx| {
-        window.replace_root(cx, |window, cx| {
-            Root::new(
-                State {
-                    theme: ThemeSetting::Dark,
-                    path: Some(state_path.clone()),
-                    ..State::default()
-                },
-                bridge,
-                events,
-                CWD.into(),
-                window,
-                cx,
-            )
-        })
-    })?;
-    fx.wait("isolated root", |fx| fx.read(|root, _| root.ready()))?;
+    let (mut fx, recording, log) = isolated_root(temp.path(), &lines, &state_path)?;
     fx.root
         .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
     fx.cx.run_until_parked();

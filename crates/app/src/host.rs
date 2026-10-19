@@ -291,6 +291,7 @@ fn project_rows(
             } else {
                 format!("Start new chat in {label}").into()
             },
+            root: root.map(|root| root.to_owned().into()),
             worktree,
             missing,
             expanded: state["electron-persisted-atom-state"][&expanded_key] != false,
