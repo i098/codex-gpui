@@ -1,0 +1,787 @@
+use std::ops::RangeInclusive;
+
+use crate::{Frequency, NWeekday, RRule, Tz, Unvalidated};
+
+use super::ValidationError;
+
+/// Range of values that a month can be.
+/// Range: `1..=12`
+pub(crate) static MONTH_RANGE: RangeInclusive<u8> = 1..=12;
+
+/// Range of values that a year can be.
+/// Range: `-10_000..=9_999`; like the original recurrence iterator, iteration stops after 9999.
+pub(crate) static YEAR_RANGE: RangeInclusive<i32> = -10_000..=9_999;
+
+/// Range of values that `INTERVAL` and `COUNT` can be: the JavaScript safe integers.
+/// Range: `0..=9_007_199_254_740_991`
+static SAFE_INTEGER_RANGE: RangeInclusive<u64> = 0..=9_007_199_254_740_991;
+
+type Validator =
+    &'static dyn Fn(&RRule<Unvalidated>, &chrono::DateTime<Tz>) -> Result<(), ValidationError>;
+
+const VALIDATION_PIPELINE: [Validator; 12] = [
+    &validate_interval_and_count,
+    &validate_until,
+    &validate_by_set_pos,
+    &validate_by_month,
+    &validate_by_month_day,
+    &validate_by_year_day,
+    &validate_by_week_number,
+    &validate_by_weekday,
+    &validate_by_hour,
+    &validate_by_minute,
+    &validate_by_second,
+    &validate_by_easter,
+];
+
+/// Check if rules are valid as defined by the RFC and crate limitations.
+/// It checks all values in the [`RRule`] and makes sure that they are in
+/// the accepted ranges. If the function returns `Ok`, no errors where found.
+///
+/// This check should always be done and just enforces limits set by the standard.
+/// Validation will always be enforced and can not be disabled using feature flags.
+pub(crate) fn validate_rrule_forced(
+    rrule: &RRule<Unvalidated>,
+    dt_start: &chrono::DateTime<Tz>,
+) -> Result<(), ValidationError> {
+    VALIDATION_PIPELINE
+        .into_iter()
+        .try_for_each(|validator| validator(rrule, dt_start))
+}
+
+// Interval and count:
+// - Can be a value up to the largest JavaScript safe integer.
+fn validate_interval_and_count(
+    rrule: &RRule<Unvalidated>,
+    _dt_start: &chrono::DateTime<Tz>,
+) -> Result<(), ValidationError> {
+    validate_range_for_vec(&SAFE_INTEGER_RANGE, &[rrule.interval], "INTERVAL")?;
+    if let Some(count) = rrule.count {
+        validate_range_for_vec(&SAFE_INTEGER_RANGE, &[count], "COUNT")?;
+    }
+    Ok(())
+}
+
+// Until:
+// - Timezones are correctly synced as specified in the RFC
+// - Value should be later than `dt_start`.
+fn validate_until(
+    rrule: &RRule<Unvalidated>,
+    dt_start: &chrono::DateTime<Tz>,
+) -> Result<(), ValidationError> {
+    match rrule.until {
+        Some(until) => {
+            match dt_start.timezone() {
+                Tz::Local(_) => {
+                    let allowed_timezones = vec![Tz::LOCAL, Tz::UTC];
+                    if !allowed_timezones.contains(&until.timezone()) {
+                        return Err(ValidationError::DtStartUntilMismatchTimezone {
+                            dt_start_tz: dt_start.timezone().name().into(),
+                            until_tz: until.timezone().name().into(),
+                            expected: allowed_timezones
+                                .into_iter()
+                                .map(|tz| tz.name().into())
+                                .collect(),
+                        });
+                    }
+                }
+                Tz::Tz(_) => {
+                    if until.timezone() != Tz::UTC {
+                        return Err(ValidationError::DtStartUntilMismatchTimezone {
+                            dt_start_tz: dt_start.timezone().name().into(),
+                            until_tz: until.timezone().name().into(),
+                            expected: vec!["UTC".into()],
+                        });
+                    }
+                }
+            }
+
+            if until < *dt_start {
+                return Err(ValidationError::UntilBeforeStart {
+                    until: until.to_rfc3339(),
+                    dt_start: dt_start.to_rfc3339(),
+                });
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+// By_set_pos:
+// - Can be a value from -366 to -1 and 1 to 366 depending on `freq`
+fn validate_by_set_pos(
+    rrule: &RRule<Unvalidated>,
+    _dt_start: &chrono::DateTime<Tz>,
+) -> Result<(), ValidationError> {
+    validate_not_equal_for_vec(&0, &rrule.by_set_pos, "BYSETPOS")?;
+    let range = match rrule.freq {
+        Frequency::Yearly | Frequency::Daily => -366..=366, // TODO is the daily range correct?
+        Frequency::Monthly => -31..=31,
+        Frequency::Weekly => -53..=53,
+        Frequency::Hourly => -24..=24,
+        Frequency::Minutely | Frequency::Secondly => -60..=60,
+    };
+    if let Err(value) = validate_range_for_vec_error(&range, &rrule.by_set_pos) {
+        return Err(ValidationError::InvalidFieldValueRangeWithFreq {
+            field: "BYSETPOS".into(),
+            value: value.to_string(),
+            freq: rrule.freq,
+            start_idx: range.start().to_string(),
+            end_idx: range.end().to_string(),
+        });
+    }
+    // - It MUST only be used in conjunction with another BYxxx rule part.
+    if !rrule.by_set_pos.is_empty()
+        && rrule.by_easter.is_none()
+        && rrule.by_hour.is_empty()
+        && rrule.by_minute.is_empty()
+        && rrule.by_second.is_empty()
+        && rrule.by_month_day.is_empty()
+        && rrule.by_month.is_empty()
+        && rrule.by_year_day.is_empty()
+        && rrule.by_week_no.is_empty()
+        && rrule.by_weekday.is_empty()
+    {
+        return Err(ValidationError::BySetPosWithoutByRule);
+    }
+    Ok(())
+}
+
+// By_month:
+// - Can be a value from 1 to 12.
+fn validate_by_month(
+    rrule: &RRule<Unvalidated>,
+    _dt_start: &chrono::DateTime<Tz>,
+) -> Result<(), ValidationError> {
+    validate_range_for_vec(&MONTH_RANGE, &rrule.by_month, "BYMONTH")
+}
+
+// By_month_day:
+// - Can be a value from -31 to -1 and 1 to 31.
+fn validate_by_month_day(
+    rrule: &RRule<Unvalidated>,
+    _dt_start: &chrono::DateTime<Tz>,
+) -> Result<(), ValidationError> {
+    validate_not_equal_for_vec(&0, &rrule.by_month_day, "BYMONTHDAY")?;
+    validate_range_for_vec(&(-31..=31), &rrule.by_month_day, "BYMONTHDAY")?;
+    // - MUST NOT be specified when the FREQ rule part is set to WEEKLY.
+    //   Validated below
+    if !rrule.by_month_day.is_empty() {
+        let valid = rrule.freq != Frequency::Weekly;
+        if !valid {
+            return Err(ValidationError::InvalidByRuleAndFrequency {
+                by_rule: "BYMONTHDAY".into(),
+                freq: rrule.freq,
+            });
+        }
+    }
+    Ok(())
+}
+
+// By_year_day:
+// - Can be a value from -366 to -1 and 1 to 366.
+fn validate_by_year_day(
+    rrule: &RRule<Unvalidated>,
+    _dt_start: &chrono::DateTime<Tz>,
+) -> Result<(), ValidationError> {
+    validate_not_equal_for_vec(&0, &rrule.by_year_day, "BYYEARDAY")?;
+    validate_range_for_vec(&(-366..=366), &rrule.by_year_day, "BYYEARDAY")?;
+    // - MUST NOT be specified when the FREQ rule part is set to DAILY, WEEKLY, or MONTHLY.
+    //   Validated below
+    if !rrule.by_year_day.is_empty() {
+        let valid = !matches!(
+            rrule.freq,
+            Frequency::Monthly | Frequency::Weekly | Frequency::Daily
+        );
+        if !valid {
+            return Err(ValidationError::InvalidByRuleAndFrequency {
+                by_rule: "BYYEARDAY".into(),
+                freq: rrule.freq,
+            });
+        }
+    }
+    Ok(())
+}
+// By_week_no:
+// - Can be a value from -53 to -1 and 1 to 53.
+fn validate_by_week_number(
+    rrule: &RRule<Unvalidated>,
+    _dt_start: &chrono::DateTime<Tz>,
+) -> Result<(), ValidationError> {
+    validate_not_equal_for_vec(&0, &rrule.by_week_no, "BYWEEKNO")?;
+    validate_range_for_vec(&(-53..=53), &rrule.by_week_no, "BYWEEKNO")?;
+    // - MUST NOT be used when the FREQ rule part is set to anything other than YEARLY.
+    //   Validated below
+    if !rrule.by_week_no.is_empty() {
+        let valid = rrule.freq == Frequency::Yearly;
+        if !valid {
+            return Err(ValidationError::InvalidByRuleAndFrequency {
+                by_rule: "BYWEEKNO".into(),
+                freq: rrule.freq,
+            });
+        }
+    }
+    Ok(())
+}
+
+// By_weekday:
+// - Check if value for `Nth` is within range.
+//   The Range depends on frequency and can only happen weekly, so `/7` from normal count.
+fn validate_by_weekday(
+    rrule: &RRule<Unvalidated>,
+    _dt_start: &chrono::DateTime<Tz>,
+) -> Result<(), ValidationError> {
+    let range = match rrule.freq {
+        Frequency::Yearly | Frequency::Daily => (-366 / 7)..=(366 / 7 + 1), // TODO is the daily range correct?
+        Frequency::Monthly => (-31 / 7)..=(31 / 7 + 1),
+        Frequency::Weekly => (-53 / 7)..=(53 / 7 + 1),
+        Frequency::Hourly => (-24 / 7)..=(24 / 7 + 1),
+        Frequency::Minutely | Frequency::Secondly => (-60 / 7)..=(60 / 7 + 1),
+    };
+    for item in &rrule.by_weekday {
+        if let NWeekday::Nth(number, _weekday) = item {
+            // If value not in range = error
+            if !range.contains(number) {
+                return Err(ValidationError::InvalidFieldValueRangeWithFreq {
+                    field: "BYDAY".into(),
+                    value: number.to_string(),
+                    freq: rrule.freq,
+                    start_idx: range.start().to_string(),
+                    end_idx: range.end().to_string(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+// By_hour:
+// - Can be a value from 0 to 23.
+fn validate_by_hour(
+    rrule: &RRule<Unvalidated>,
+    _dt_start: &chrono::DateTime<Tz>,
+) -> Result<(), ValidationError> {
+    validate_range_for_vec(&(0..=23), &rrule.by_hour, "BYHOUR")
+}
+
+// By_minute:
+// - Can be a value from 0 to 59.
+fn validate_by_minute(
+    rrule: &RRule<Unvalidated>,
+    _dt_start: &chrono::DateTime<Tz>,
+) -> Result<(), ValidationError> {
+    validate_range_for_vec(&(0..=59), &rrule.by_minute, "BYMINUTE")
+}
+
+// By_second:
+// - Can be a value from 0 to 60. Like the original, 60 moves into the next minute.
+fn validate_by_second(
+    rrule: &RRule<Unvalidated>,
+    _dt_start: &chrono::DateTime<Tz>,
+) -> Result<(), ValidationError> {
+    validate_range_for_vec(&(0..=60), &rrule.by_second, "BYSECOND")
+}
+
+fn validate_by_easter(
+    rrule: &RRule<Unvalidated>,
+    _dt_start: &chrono::DateTime<Tz>,
+) -> Result<(), ValidationError> {
+    #[cfg(feature = "by-easter")]
+    {
+        // By_easter:
+        // - Can be a value from -366 to 366.
+        //   Validated below
+        if let Some(by_easter) = &rrule.by_easter {
+            validate_range_for_vec(&(-366..=366), &[*by_easter], "BYEASTER")?;
+        }
+        // - Can only be used on frequency: Yearly, Monthly, Daily
+        //   Validated below
+        if rrule.by_easter.is_some() {
+            let valid = matches!(
+                rrule.freq,
+                Frequency::Yearly | Frequency::Monthly | Frequency::Daily
+            );
+            if !valid {
+                return Err(ValidationError::InvalidByRuleAndFrequency {
+                    by_rule: "BYEASTER".into(),
+                    freq: rrule.freq,
+                });
+            }
+        }
+        // - Can only be used when `by_hour`, `by_minute` and `by_second` are used.
+        //   TODO don't know why this is true, but seems to loop forever otherwise.
+        if rrule.by_easter.is_some()
+            && (rrule.by_hour.is_empty()
+                || rrule.by_minute.is_empty()
+                || rrule.by_second.is_empty())
+        {
+            return Err(ValidationError::InvalidByRuleWithByEaster);
+        }
+    }
+    #[cfg(not(feature = "by-easter"))]
+    {
+        if rrule.by_easter.is_some() {
+            log::warn!(
+                "The `by-easter` feature flag is not set, but `by_easter` is used.\
+                The `by_easter` will be ignored, as if it was set to `None`."
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_range_for_vec_error<'a, T: PartialOrd>(
+    range: &RangeInclusive<T>,
+    list: &'a [T],
+) -> Result<(), &'a T> {
+    for item in list {
+        // If value not in range = error
+        if !range.contains(item) {
+            return Err(item);
+        }
+    }
+    Ok(())
+}
+
+fn validate_range_for_vec<T: PartialOrd + ToString>(
+    range: &RangeInclusive<T>,
+    list: &[T],
+    field: &str,
+) -> Result<(), ValidationError> {
+    for item in list {
+        // If value not in range = error
+        if !range.contains(item) {
+            return Err(ValidationError::InvalidFieldValueRange {
+                field: field.to_string(),
+                value: item.to_string(),
+                start_idx: range.start().to_string(),
+                end_idx: range.end().to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_not_equal_for_vec<T: PartialEq<T> + ToString>(
+    value: &T,
+    list: &[T],
+    field: &str,
+) -> Result<(), ValidationError> {
+    if list.iter().any(|item| item == value) {
+        return Err(ValidationError::InvalidFieldValue {
+            field: field.to_string(),
+            value: value.to_string(),
+        });
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::TimeZone;
+
+    use crate::core::Tz;
+
+    use super::*;
+
+    const UTC: Tz = Tz::UTC;
+
+    #[test]
+    fn rejects_by_set_pos_without_byxxx_rule() {
+        let rrule = RRule {
+            by_set_pos: vec![-1],
+            ..Default::default()
+        };
+        let dt_start = UTC.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap();
+        let res = validate_rrule_forced(&rrule, &dt_start);
+        assert!(res.is_err());
+        let err = res.unwrap_err();
+        assert_eq!(err, ValidationError::BySetPosWithoutByRule);
+
+        // When creating RRule directly,
+        // if `rrule.by_set_hour` is empty, then it is going to default to
+        // `dt_start.hour()`, therefore, there is always a BYXXX
+        // rule, and the rrule is accepted.
+        let res = rrule.build(dt_start);
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn rejects_by_rule_field_with_invalid_value() {
+        let tests = [
+            (
+                "BYSETPOS",
+                RRule {
+                    by_set_pos: vec![0],
+                    ..Default::default()
+                },
+            ),
+            (
+                "BYSETPOS",
+                RRule {
+                    by_set_pos: vec![1, -2, 0],
+                    ..Default::default()
+                },
+            ),
+            (
+                "BYMONTHDAY",
+                RRule {
+                    by_month_day: vec![0],
+                    ..Default::default()
+                },
+            ),
+            (
+                "BYYEARDAY",
+                RRule {
+                    by_year_day: vec![0],
+                    ..Default::default()
+                },
+            ),
+        ];
+        for (field, rrule) in tests {
+            let res =
+                validate_rrule_forced(&rrule, &UTC.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap());
+            assert!(res.is_err());
+            let err = res.unwrap_err();
+            assert_eq!(
+                err,
+                ValidationError::InvalidFieldValue {
+                    field: field.into(),
+                    value: "0".into()
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_by_rule_field_with_value_outside_allowed_range() {
+        let tests = [
+            (
+                "BYMONTHDAY",
+                RRule {
+                    by_month_day: vec![34],
+                    ..Default::default()
+                },
+                "34",
+                "-31",
+                "31",
+            ),
+            (
+                "BYYEARDAY",
+                RRule {
+                    by_year_day: vec![17, 400],
+                    ..Default::default()
+                },
+                "400",
+                "-366",
+                "366",
+            ),
+        ];
+        for (field, rrule, value, start_idx, end_idx) in tests {
+            let res =
+                validate_rrule_forced(&rrule, &UTC.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap());
+            assert!(res.is_err());
+            let err = res.unwrap_err();
+            assert_eq!(
+                err,
+                ValidationError::InvalidFieldValueRange {
+                    field: field.into(),
+                    value: value.into(),
+                    start_idx: start_idx.into(),
+                    end_idx: end_idx.into()
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_by_rule_value_outside_allowed_freq_range() {
+        let tests = [
+            (
+                "BYSETPOS",
+                RRule {
+                    freq: Frequency::Hourly,
+                    by_set_pos: vec![30],
+                    ..Default::default()
+                },
+                "30",
+                "-24",
+                "24",
+            ),
+            (
+                "BYSETPOS",
+                RRule {
+                    freq: Frequency::Yearly,
+                    by_set_pos: vec![400],
+                    ..Default::default()
+                },
+                "400",
+                "-366",
+                "366",
+            ),
+        ];
+        for (field, rrule, value, start_idx, end_idx) in tests {
+            let res =
+                validate_rrule_forced(&rrule, &UTC.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap());
+            assert!(res.is_err());
+            let err = res.unwrap_err();
+            assert_eq!(
+                err,
+                ValidationError::InvalidFieldValueRangeWithFreq {
+                    field: field.into(),
+                    freq: rrule.freq,
+                    value: value.into(),
+                    start_idx: start_idx.into(),
+                    end_idx: end_idx.into(),
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_by_rule_and_freq_combos() {
+        let tests = [
+            (
+                "BYMONTHDAY",
+                RRule {
+                    freq: Frequency::Weekly,
+                    by_month_day: vec![-1],
+                    ..Default::default()
+                },
+            ),
+            (
+                "BYYEARDAY",
+                RRule {
+                    freq: Frequency::Monthly,
+                    by_year_day: vec![120],
+                    ..Default::default()
+                },
+            ),
+            (
+                "BYYEARDAY",
+                RRule {
+                    freq: Frequency::Weekly,
+                    by_year_day: vec![120],
+                    ..Default::default()
+                },
+            ),
+            (
+                "BYYEARDAY",
+                RRule {
+                    freq: Frequency::Daily,
+                    by_year_day: vec![120],
+                    ..Default::default()
+                },
+            ),
+        ];
+        for (field, rrule) in tests {
+            let res =
+                validate_rrule_forced(&rrule, &UTC.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap());
+            assert!(res.is_err());
+            let err = res.unwrap_err();
+            assert_eq!(
+                err,
+                ValidationError::InvalidByRuleAndFrequency {
+                    by_rule: field.into(),
+                    freq: rrule.freq
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_start_date_after_until() {
+        let rrule = RRule {
+            until: Some(UTC.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap()),
+            ..Default::default()
+        };
+        let dt_start = UTC.with_ymd_and_hms(2020, 1, 2, 0, 0, 0).unwrap();
+        let res = validate_rrule_forced(&rrule, &dt_start);
+        assert!(res.is_err());
+        let err = res.unwrap_err();
+        assert_eq!(
+            err,
+            ValidationError::UntilBeforeStart {
+                until: rrule.until.unwrap().to_rfc3339(),
+                dt_start: dt_start.to_rfc3339()
+            }
+        );
+    }
+
+    #[test]
+    fn allows_until_with_compatible_timezone() {
+        fn t(start_tz: Tz, until_tz: Tz) -> (chrono::DateTime<Tz>, chrono::DateTime<Tz>) {
+            (
+                start_tz.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap(),
+                until_tz.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap(),
+            )
+        }
+
+        let tests = [t(Tz::LOCAL, Tz::LOCAL), t(Tz::LOCAL, UTC), t(UTC, UTC)];
+
+        for (start_date, until) in tests {
+            let rrule = RRule {
+                until: Some(until),
+                ..Default::default()
+            };
+            let res = validate_rrule_forced(&rrule, &start_date);
+            assert!(res.is_ok());
+        }
+    }
+
+    #[test]
+    fn rejects_until_with_incompatible_timezone() {
+        fn t(start_tz: Tz, until_tz: Tz) -> (chrono::DateTime<Tz>, chrono::DateTime<Tz>) {
+            (
+                start_tz.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap(),
+                until_tz.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap(),
+            )
+        }
+
+        let tests = [
+            t(Tz::UTC, Tz::LOCAL),
+            t(Tz::Europe__Berlin, Tz::LOCAL),
+            t(Tz::LOCAL, Tz::Europe__Berlin),
+        ];
+
+        for (start_date, until) in tests {
+            let rrule = RRule {
+                until: Some(until),
+                ..Default::default()
+            };
+            let res = validate_rrule_forced(&rrule, &start_date);
+            assert!(res.is_err());
+            let err = res.unwrap_err();
+            assert!(matches!(
+                err,
+                ValidationError::DtStartUntilMismatchTimezone { .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn accepts_javascript_safe_interval_and_count() {
+        let dt_start = UTC.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap();
+        let largest = 9_007_199_254_740_991;
+        let rrule = RRule {
+            interval: largest,
+            count: Some(largest),
+            ..Default::default()
+        };
+        assert_eq!(validate_rrule_forced(&rrule, &dt_start), Ok(()));
+        let tests = [
+            (
+                "INTERVAL",
+                RRule {
+                    interval: largest + 1,
+                    ..Default::default()
+                },
+            ),
+            (
+                "COUNT",
+                RRule {
+                    count: Some(largest + 1),
+                    ..Default::default()
+                },
+            ),
+        ];
+        for (field, rrule) in tests {
+            assert_eq!(
+                validate_rrule_forced(&rrule, &dt_start),
+                Err(ValidationError::InvalidFieldValueRange {
+                    field: field.into(),
+                    value: (largest + 1).to_string(),
+                    start_idx: "0".into(),
+                    end_idx: largest.to_string(),
+                })
+            );
+        }
+    }
+
+    fn dates(rule: &str, limit: u16) -> Vec<String> {
+        let set: crate::RRuleSet = rule.parse().unwrap();
+        set.all(limit)
+            .dates
+            .iter()
+            .map(|date| date.to_rfc3339())
+            .collect()
+    }
+
+    #[test]
+    fn iterates_intervals_and_counts_beyond_u16_and_u32() {
+        let start = "DTSTART:20261018T080000Z\nRRULE:";
+        let rule = format!("{start}FREQ=HOURLY;INTERVAL=65536;COUNT=4294967296");
+        let set: crate::RRuleSet = rule.parse().unwrap();
+        assert_eq!(set.get_rrule()[0].get_interval(), 65_536);
+        assert_eq!(set.get_rrule()[0].get_count(), Some(4_294_967_296));
+        assert_eq!(
+            dates(&rule, 3),
+            [
+                "2026-10-18T08:00:00+00:00",
+                "2034-04-10T00:00:00+00:00",
+                "2041-09-30T16:00:00+00:00"
+            ]
+        );
+        assert_eq!(
+            dates(&format!("{start}FREQ=SECONDLY;INTERVAL=4294967296"), 2),
+            ["2026-10-18T08:00:00+00:00", "2162-11-24T14:28:16+00:00"]
+        );
+    }
+
+    #[test]
+    fn stops_iteration_after_year_9999() {
+        assert_eq!(
+            dates("DTSTART:99991231T000000Z\nRRULE:FREQ=DAILY", 3),
+            ["9999-12-31T00:00:00+00:00"]
+        );
+        for freq in [
+            "YEARLY", "MONTHLY", "WEEKLY", "DAILY", "HOURLY", "MINUTELY", "SECONDLY",
+        ] {
+            assert_eq!(
+                dates(
+                    &format!(
+                        "DTSTART:20261018T080000Z\nRRULE:FREQ={freq};INTERVAL=9007199254740991"
+                    ),
+                    3
+                ),
+                ["2026-10-18T08:00:00+00:00"],
+                "{freq}"
+            );
+        }
+    }
+
+    #[test]
+    fn moves_bysecond_60_into_the_next_minute() {
+        let start = "DTSTART:20261018T080000Z\nRRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0;";
+        assert_eq!(
+            dates(&format!("{start}BYSECOND=60"), 2),
+            ["2026-10-18T09:01:00+00:00", "2026-10-19T09:01:00+00:00"]
+        );
+        // Ordering before BYSETPOS keeps 60 after 59.
+        assert_eq!(
+            dates(&format!("{start}BYSECOND=0,59,60;BYSETPOS=-1"), 1),
+            ["2026-10-18T09:01:00+00:00"]
+        );
+        // EXDATE matches the normalized time.
+        assert_eq!(
+            dates(
+                &format!("{start}BYSECOND=60;COUNT=2\nEXDATE:20261018T090100Z"),
+                3
+            ),
+            ["2026-10-19T09:01:00+00:00"]
+        );
+        // COUNT counts 60 in order, and the last minute of a year moves into the next year.
+        assert_eq!(
+            dates(
+                "DTSTART:20261231T235959Z\nRRULE:FREQ=DAILY;COUNT=3;BYHOUR=23;BYMINUTE=59;BYSECOND=59,60",
+                4
+            ),
+            [
+                "2026-12-31T23:59:59+00:00",
+                "2027-01-01T00:00:00+00:00",
+                "2027-01-01T23:59:59+00:00"
+            ]
+        );
+    }
+}

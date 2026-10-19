@@ -38,6 +38,8 @@ use std::time::Duration;
 use ui::screens::sidebar::Project;
 use url::Url;
 
+mod git;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "transport", content = "request", rename_all = "kebab-case")]
 pub enum Request {
@@ -66,6 +68,10 @@ pub trait Host: Send + Sync {
     /// Reads the original sidebar project state off the UI thread.
     fn projects(&self) -> Result<Vec<Project>> {
         bail!("sidebar project state is unsupported by this host")
+    }
+
+    fn add_project(&self, _root: &Path) -> Result<String> {
+        bail!("adding a local project is unsupported by this host")
     }
 
     /// The signed-in ChatGPT identity the renderer puts on its backend requests; `None`
@@ -388,11 +394,21 @@ pub fn json_body(response: &Value) -> Result<Value> {
 
 pub struct LocalHost {
     home: PathBuf,
+    opener: PathBuf,
 }
 
 impl LocalHost {
     pub fn new(home: impl Into<PathBuf>) -> Self {
-        Self { home: home.into() }
+        Self {
+            home: home.into(),
+            opener: "/usr/bin/open".into(),
+        }
+    }
+
+    /// Launches editors through `opener`, which takes macOS `open`'s `[-a App] file` arguments.
+    pub fn with_opener(mut self, opener: impl Into<PathBuf>) -> Self {
+        self.opener = opener.into();
+        self
     }
 
     pub fn from_env() -> Self {
@@ -483,6 +499,68 @@ impl LocalHost {
         }
         items.sort_by_key(|v| std::cmp::Reverse(v["updatedAt"].as_i64().unwrap_or_default()));
         Ok(json!({"items": items}))
+    }
+
+    fn create_automation(&self, params: &Value) -> Result<Value> {
+        let required = |key| {
+            params[key]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .with_context(|| format!("missing automation {key}"))
+        };
+        let name = required("name")?;
+        let prompt = required("prompt")?;
+        let rrule = required("rrule")?;
+        let mut parts = rrule.split(';');
+        match parts.next() {
+            Some("FREQ=DAILY") => {}
+            Some("FREQ=WEEKLY") => ensure!(
+                matches!(
+                    parts.next(),
+                    Some(
+                        "BYDAY=MO"
+                            | "BYDAY=TU"
+                            | "BYDAY=WE"
+                            | "BYDAY=TH"
+                            | "BYDAY=FR"
+                            | "BYDAY=SA"
+                            | "BYDAY=SU"
+                    )
+                ),
+                "invalid weekly schedule"
+            ),
+            _ => bail!("unsupported schedule frequency"),
+        }
+        let hour = parts
+            .next()
+            .and_then(|s| s.strip_prefix("BYHOUR="))
+            .and_then(|s| s.parse::<u8>().ok());
+        let minute = parts
+            .next()
+            .and_then(|s| s.strip_prefix("BYMINUTE="))
+            .and_then(|s| s.parse::<u8>().ok());
+        ensure!(
+            hour.is_some_and(|h| h < 24)
+                && minute.is_some_and(|m| m < 60)
+                && parts.next().is_none(),
+            "invalid schedule time"
+        );
+        let cwds: Vec<String> = serde_json::from_value(params["cwds"].clone())?;
+        ensure!(
+            !cwds.is_empty() && cwds.iter().all(|cwd| Path::new(cwd).is_absolute()),
+            "task requires an absolute local project path"
+        );
+        let id = device_id();
+        let now = chrono::Utc::now().timestamp_millis();
+        let raw = json!({
+            "version": 1, "id": id, "name": name, "prompt": prompt, "rrule": rrule,
+            "status": "ACTIVE", "cwds": cwds, "created_at": now, "updated_at": now,
+            "execution_environment": "local"
+        });
+        let contents = toml::to_string(&raw)?;
+        self.write_automation(&id, &contents)?;
+        definition(&id, &contents)
     }
 
     /// Saves a validated original-format definition, not an automation scheduling command.
@@ -608,6 +686,65 @@ impl Host for LocalHost {
         })
     }
 
+    fn add_project(&self, root: &Path) -> Result<String> {
+        let root = root
+            .canonicalize()
+            .context("resolve selected project folder")?;
+        ensure!(root.is_dir(), "selected project must be a folder");
+        let root = root.to_str().context("project path must be UTF-8")?;
+        let path = self.home.join(".codex-global-state.json");
+        let mut state: Value = match fs::read(&path) {
+            Ok(contents) => serde_json::from_slice(&contents)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => json!({}),
+            Err(error) => return Err(error).context("read project state before adding a folder"),
+        };
+        ensure!(state.is_object(), "project state must be an object");
+        if state["local-projects"].is_null() {
+            state["local-projects"] = json!({});
+        }
+        let projects = state["local-projects"]
+            .as_object_mut()
+            .context("local-projects must be an object")?;
+        if !projects.values().any(|project| {
+            project["rootPaths"].as_array().is_some_and(|roots| {
+                roots.iter().any(|path| {
+                    path.as_str().is_some_and(|path| {
+                        path == root
+                            || Path::new(path).canonicalize().ok().as_deref()
+                                == Some(Path::new(root))
+                    })
+                })
+            })
+        }) {
+            let id = crate::uuid_v4();
+            let now = chrono::Utc::now().timestamp_millis();
+            let name = Path::new(root)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(root);
+            projects.insert(
+                id.clone(),
+                json!({
+                    "id": id, "name": name, "rootPaths": [root],
+                    "createdAt": now, "updatedAt": now,
+                }),
+            );
+            if state["project-order"].is_null() {
+                state["project-order"] = json!([]);
+            }
+            state["project-order"]
+                .as_array_mut()
+                .context("project-order must be an array")?
+                .push(id.into());
+            fs::create_dir_all(&self.home)?;
+            let mut file = tempfile::NamedTempFile::new_in(&self.home)?;
+            serde_json::to_writer_pretty(&mut file, &state)?;
+            file.as_file().sync_all()?;
+            file.persist(path)?;
+        }
+        Ok(root.to_owned())
+    }
+
     fn fetch(&self, request: &Request) -> Result<Value> {
         let Request::Fetch { method, url, body } = request else {
             bail!("authenticated remote HTTP is unsupported by LocalHost");
@@ -628,7 +765,13 @@ impl Host for LocalHost {
         );
         let body = match endpoint {
             "list-automations" => self.automations()?,
+            "create-automation" => self.create_automation(&params)?,
             "inbox-items" => self.inbox(&params)?,
+            "git-changes" | "git-stage" | "git-unstage" | "git-revert" | "git-commit-status"
+            | "git-commit-diff" | "git-commit" | "git-push" | "git-checkout" => {
+                git::fetch(endpoint, &params)?
+            }
+            "open-file" => open_file(&self.opener, &params)?,
             "paths-exist" => {
                 let paths: Vec<String> =
                     serde_json::from_value(params.get("paths").cloned().unwrap_or(json!([])))?;
@@ -647,6 +790,74 @@ impl Host for LocalHost {
             "headers": {"content-type": "application/json"}, "bodyJsonString": body.to_string()}),
         )
     }
+}
+
+/// The original's editor targets (`openIn.getTargets` ids) and their macOS application names.
+const EDITORS: [(&str, &str); 11] = [
+    ("vscode", "Visual Studio Code"),
+    ("vscodeInsiders", "Visual Studio Code - Insiders"),
+    ("cursor", "Cursor"),
+    ("devin", "Devin Desktop"),
+    ("bbedit", "BBEdit"),
+    ("emacs", "Emacs"),
+    ("sublimeText", "Sublime Text"),
+    ("zed", "Zed"),
+    ("windsurf", "Windsurf"),
+    ("antigravity", "Antigravity"),
+    ("xcode", "Xcode"),
+];
+
+/// `open-file`: opens `path`, a file inside the project of `cwd`, in the editor `target` (the
+/// default app without one). The path must resolve, symlinks included, to a regular file under
+/// the Git root of `cwd` (`cwd` itself outside a repository). `opener` reports its own failure.
+fn open_file(opener: &Path, params: &Value) -> Result<Value> {
+    let cwd = Path::new(params["cwd"].as_str().context("missing cwd")?);
+    let path = Path::new(params["path"].as_str().context("missing path")?);
+    ensure!(
+        cwd.is_absolute() && path.is_absolute(),
+        "cwd and path must be absolute"
+    );
+    let root = std::process::Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map_or_else(
+            || cwd.to_path_buf(),
+            |root| PathBuf::from(root.trim_end_matches('\n')),
+        );
+    let root = root.canonicalize().context("resolve the project folder")?;
+    let file = path
+        .canonicalize()
+        .with_context(|| format!("{} no longer exists", path.display()))?;
+    ensure!(file.starts_with(&root), "file is outside the project");
+    ensure!(file.is_file(), "{} is not a file", file.display());
+    let mut command = std::process::Command::new(opener);
+    match params["target"].as_str() {
+        None | Some("systemDefault") => {}
+        Some(id) => {
+            let app = EDITORS
+                .iter()
+                .find(|(known, _)| *known == id)
+                .map(|(_, app)| *app)
+                .with_context(|| format!("unsupported editor target: {id}"))?;
+            command.args(["-a", app]);
+        }
+    }
+    let output = command
+        .arg(&file)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .with_context(|| format!("run {}", opener.display()))?;
+    ensure!(
+        output.status.success(),
+        "editor failed: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    Ok(json!({"path": file}))
 }
 
 /// The sign-in the cloud transport attaches: the ChatGPT token and the workspace route.
@@ -954,6 +1165,10 @@ impl CloudHost {
 impl Host for CloudHost {
     fn projects(&self) -> Result<Vec<Project>> {
         self.local.projects()
+    }
+
+    fn add_project(&self, root: &Path) -> Result<String> {
+        self.local.add_project(root)
     }
 
     fn fetch(&self, request: &Request) -> Result<Value> {

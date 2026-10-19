@@ -4,20 +4,26 @@
 use super::composer::fixture_composer;
 use crate::composer::{Composer, label, pill};
 use crate::{Shell, focus, icon::icon, rounded_clip, text};
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyView, App, AppContext as _, Context, Corners, Div, Entity, Hsla, IntoElement, ParentElement,
-    Render, Styled, Window, div, px,
+    AnyView, App, AppContext as _, Context, Corners, Div, Entity, Hsla, InteractiveElement as _,
+    IntoElement, KeyDownEvent, ParentElement, Render, SharedString,
+    StatefulInteractiveElement as _, Styled, Window, actions, div, px,
 };
 use theme::{ActiveTheme as _, Theme};
 
+actions!(home, [OpenFolder]);
+
 pub struct HomeMain {
     pub composer: Entity<Composer>,
+    pub project: Option<SharedString>,
 }
 
 impl HomeMain {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self {
             composer: fixture_composer(window, cx, Composer::home),
+            project: None,
         }
     }
 }
@@ -38,36 +44,50 @@ pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
     shell(main, cx)
 }
 
+fn open_folder_key(event: &KeyDownEvent, window: &mut Window, cx: &mut App) {
+    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+        window.dispatch_action(Box::new(OpenFolder), cx);
+        cx.stop_propagation();
+    }
+}
+
 /// `Choose project` / `This computer` chip of the utility bar. The pill is `overflow: hidden`:
 /// Skia draws its icon under that AA clip (its padding box; light has no fitted images).
 fn chip(
     id: &'static str,
     glyph: &str,
-    s: &'static str,
+    s: SharedString,
     fg: Hsla,
     t: &Theme,
     focus: &Entity<focus::ControlFocus>,
     cx: &App,
 ) -> Div {
     div().child(
-        focus::ring(pill(id, t), focus, Theme::RADIUS_FULL, px(2.), cx).child(rounded_clip(
-            px(13.),
-            shapes::Corner::Round,
-            div()
-                .h_full()
-                .flex()
-                .items_center()
-                .px(px(8.))
-                .gap(px(6.))
-                .child(icon(glyph, 16., fg))
-                .child(label(s, fg)),
-        )),
+        focus::ring(pill(id, t), focus, Theme::RADIUS_FULL, px(2.), cx)
+            .when(id == "choose-project", |chip| {
+                chip.role(gpui::Role::Button)
+                    .aria_label("Choose project")
+                    .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenFolder), cx))
+                    .on_key_down(open_folder_key)
+            })
+            .child(rounded_clip(
+                px(13.),
+                shapes::Corner::Round,
+                div()
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .px(px(8.))
+                    .gap(px(6.))
+                    .child(icon(glyph, 16., fg))
+                    .child(label(s, fg)),
+            )),
     )
 }
 
 /// `Composer utility bar` (`_rail_1hrlq` attached above the composer): project and
 /// environment.
-fn utility_bar(t: &Theme, window: &mut Window, cx: &mut App) -> Div {
+fn utility_bar(project: Option<SharedString>, t: &Theme, window: &mut Window, cx: &mut App) -> Div {
     let project_focus = focus::handle("choose-project", 0, window, cx);
     let work_focus = focus::handle("work-in", 0, window, cx);
     div().mx(px(13.)).pb(px(20.)).mb(px(-24.)).child(
@@ -101,7 +121,7 @@ fn utility_bar(t: &Theme, window: &mut Window, cx: &mut App) -> Div {
                         .child(chip(
                             "choose-project",
                             "folder",
-                            "Choose project",
+                            project.unwrap_or_else(|| "Choose project".into()),
                             t.text_tertiary,
                             t,
                             &project_focus,
@@ -110,7 +130,7 @@ fn utility_bar(t: &Theme, window: &mut Window, cx: &mut App) -> Div {
                         .child(chip(
                             "work-in",
                             "laptop",
-                            "This computer",
+                            "This computer".into(),
                             t.text,
                             t,
                             &work_focus,
@@ -125,13 +145,36 @@ fn utility_bar(t: &Theme, window: &mut Window, cx: &mut App) -> Div {
 impl Render for HomeMain {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
+        let hero_focus = focus::handle("home-project-title", 0, window, cx);
         let hero = div()
             .flex()
             .flex_col()
             .items_center()
             .gap(px(24.))
             .child(icon("codex-logo", 56., Hsla { a: 0.3, ..t.text }))
-            .child(text("What should we build?", 28., 33.6, 400., t.text));
+            .child(
+                div()
+                    .id("home-project-title")
+                    .when(self.project.is_some(), |title| {
+                        focus::ring(title, &hero_focus, px(4.), px(2.), cx)
+                            .role(gpui::Role::Button)
+                            .aria_label("Choose project")
+                            .on_key_down(open_folder_key)
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(OpenFolder), cx)
+                            })
+                    })
+                    .child(text(
+                        self.project.as_ref().map_or_else(
+                            || "What should we build?".to_owned(),
+                            |project| format!("What should we build in {project}?"),
+                        ),
+                        28.,
+                        33.6,
+                        400.,
+                        t.text,
+                    )),
+            );
         let column = div()
             .w_full()
             .max_w(px(768.))
@@ -140,7 +183,7 @@ impl Render for HomeMain {
             .flex()
             .flex_col()
             .child(div().h(px(8.)))
-            .child(utility_bar(&t, window, cx))
+            .child(utility_bar(self.project.clone(), &t, window, cx))
             .child(self.composer.clone());
         // The page column under the `home-mode-toggle` row is the file drop target.
         let page = div()
