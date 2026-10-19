@@ -561,11 +561,17 @@ Slice S035 proves suggestion hover (AM-037) with `refs/interactions/s035.json` a
 The test replays pointer entry and exit on the existing fixture screen with the original server suggestions.
 It checks the card fill, the adjacent card, and the icon colors against the Linux route1 recording.
 The existing hover implementation already matches; no production code changes are needed.
-Slice S035b proves suggestion click (AM-036) with `refs/interactions/s035b.json` and `crates/app/tests/s035b.rs`.
-The click puts the card in `Starting…` (rays spinner, status text) and disables every card at opacity 0.4.
-`Root` then reads the TPP models through the desktop host like the original's guided start (`conversation-actions` `J`).
-The oracle answers that read with the host's 499, so the recorded outcome is the toast `Couldn’t start this suggested task` and the cards enabled again.
-The conversation prepare, its stream, and the navigation into the started conversation are not recorded and not wired.
+Slice S035b covers suggestion click (AM-036) with `refs/interactions/s035b.json` and `crates/app/tests/s035b.rs`.
+In the original, the click first reads the TPP models through the desktop host (`conversation-actions` `J`).
+The recorded oracle answers that read with the host's 499 and the toast `Couldn’t start this suggested task`.
+A bounded live run on 2026-10-19 showed the next step of a successful start.
+The original asks `GET /ios/attestation_challenge` for an Apple DeviceCheck token before it sends any conversation request.
+The port's host cannot make that token (`DeviceCheck tokens are unavailable on this host`), so the start cannot succeed here.
+For this release the guided start is unsupported (captain decision 110).
+The click shows the danger toast `Starting suggested tasks isn’t supported in this version`.
+It sends no host request, starts no conversation, and writes no preference or task.
+The route stays `Scheduled`, and every card stays enabled.
+`s035b::suggestion_click_says_unsupported_and_sends_nothing` checks the toast, the empty request log, the route, and the cards.
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|

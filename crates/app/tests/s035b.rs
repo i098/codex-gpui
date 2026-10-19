@@ -1,9 +1,8 @@
-//! S035b `autos-landing`: AM-036 (a suggestion card click starts its guided conversation),
-//! replayed from `refs/interactions/s035b.json` (the original on the route1 Linux stack).
-//! The original's start reads the TPP models through the desktop host first; the oracle
-//! answers that read with the host's 499 `Authenticated principal changed`, so the recorded
-//! outcome is the danger toast `Couldn’t start this suggested task` with every card enabled
-//! again. The replay host answers the port's request only when it equals the recorded one.
+//! S035b `autos-landing`: AM-036 (a suggestion card click), against `refs/interactions/s035b.json`
+//! (the original on the route1 Linux stack). The original's start reads the TPP models through
+//! the desktop host; the oracle answers that read with the host's 499. A live run showed that
+//! a successful start next needs an Apple DeviceCheck token, which this host cannot make, so
+//! this release answers the click with an unsupported message and sends no request.
 
 use anyhow::{Context as _, Result};
 use app::host::{Host, ReplayHost, Request, json_body, tpp_models};
@@ -94,38 +93,26 @@ mod common;
 
 #[cfg(target_os = "macos")]
 #[test]
-fn suggestion_click_starts_and_fails_like_original() -> Result<()> {
+fn suggestion_click_says_unsupported_and_sends_nothing() -> Result<()> {
     use anyhow::ensure;
     use app::Route;
     use app::host::Identity;
     use common::{Fx, RAIL_SCHEDULED, changed};
-    use gpui::{
-        Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput, point,
-        px,
-    };
     use image::{GenericImageView as _, RgbaImage};
     use parking_lot::Mutex;
     use std::{sync::Arc, time::Duration};
 
-    const TOAST: &str = "Couldn’t start this suggested task";
+    const TOAST: &str = "Starting suggested tasks isn’t supported in this version";
 
-    /// Only the exact recorded TPP models request waits for `released` (at most `TIMEOUT`).
-    /// Other requests pass through so page reads cannot block the click's in-flight state,
-    /// recorded at 104 ms. While gated, the test must not run the app until it parks.
+    /// The replay host, recording every request the app sends.
     struct Recorder {
         replay: ReplayHost,
-        models: Request,
-        released: Mutex<bool>,
+        sent: Mutex<Vec<Request>>,
     }
 
     impl Host for Recorder {
         fn fetch(&self, request: &Request) -> Result<Value> {
-            if request == &self.models {
-                let started = std::time::Instant::now();
-                while !*self.released.lock() && started.elapsed() < common::TIMEOUT {
-                    std::thread::sleep(Duration::from_millis(5));
-                }
-            }
+            self.sent.lock().push(request.clone());
             self.replay.fetch(request)
         }
 
@@ -141,17 +128,17 @@ fn suggestion_click_starts_and_fails_like_original() -> Result<()> {
         step["at"]["y"].as_f64().context("y")? as f32,
     );
     let bbox = |b: &Value| ["x", "y", "w", "h"].map(|k| b[k].as_f64().unwrap() as f32);
-    let starting = &recording["result"]["dom"][1];
+    let rest_dom = &recording["result"]["dom"][0];
     // The port shows the five landing examples (no server suggestions): the first five
     // recorded card boxes.
-    let cards: Vec<[f32; 4]> = starting["cards"]
+    let cards: Vec<[f32; 4]> = rest_dom["cards"]
         .as_array()
         .context("cards")?
         .iter()
         .take(5)
         .map(|c| bbox(&c["bbox"]))
         .collect();
-    let icon = bbox(&starting["cards"][0]["icon"]["bbox"]);
+    let icon = bbox(&recording["result"]["dom"][1]["cards"][0]["icon"]["bbox"]);
     let brightest = |shot: &RgbaImage, [x, y, w, h]: [f32; 4]| {
         let s = shot.width() as f32 / 1280.;
         shot.view(
@@ -165,11 +152,11 @@ fn suggestion_click_starts_and_fails_like_original() -> Result<()> {
         .max()
         .unwrap_or(0)
     };
+    let proof = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
 
     let host = Arc::new(Recorder {
         replay: ReplayHost::from_recording(RECORDING)?,
-        models: recorded_exchange()?.0,
-        released: Mutex::new(false),
+        sent: Mutex::new(Vec::new()),
     });
     let mut fx = Fx::new()?;
     fx.root
@@ -184,18 +171,7 @@ fn suggestion_click_starts_and_fails_like_original() -> Result<()> {
     fx.hover((1270., 820.))?;
     fx.advance(Duration::from_millis(300))?;
     let rest = fx.shot()?;
-    // At rest: white title text in every card; the page background behind the card content.
-    let backdrop = rest
-        .get_pixel(
-            ((cards[0][0] + cards[0][2] - 4.) * 2.) as u32,
-            ((cards[0][1] + cards[0][3] / 2.) * 2.) as u32,
-        )
-        .0;
-    let dim = (0..3)
-        .map(|c| (f32::from(backdrop[c]) + 0.4 * (255. - f32::from(backdrop[c]))) as u8)
-        .max()
-        .unwrap()
-        + 3;
+    rest.save(proof.join("s035b-before.png"))?;
     for card in &cards {
         ensure!(
             brightest(&rest, *card) >= 240,
@@ -203,69 +179,9 @@ fn suggestion_click_starts_and_fails_like_original() -> Result<()> {
         );
     }
 
-    // The click, without running the host answer: the Starting state is observable.
-    fx.hover(at)?;
-    let position = point(px(at.0), px(at.1));
-    fx.cx.update_window(fx.window, |_, window, cx| {
-        window.dispatch_event(
-            PlatformInput::MouseDown(MouseDownEvent {
-                button: MouseButton::Left,
-                position,
-                modifiers: Modifiers::default(),
-                click_count: 1,
-                first_mouse: false,
-            }),
-            cx,
-        );
-        window.dispatch_event(
-            PlatformInput::MouseUp(MouseUpEvent {
-                button: MouseButton::Left,
-                position,
-                modifiers: Modifiers::default(),
-                click_count: 1,
-            }),
-            cx,
-        );
-    })?;
-    ensure!(
-        pending(&fx) == Some(Some(0)),
-        "the clicked card is Starting…"
-    );
-    let shot = fx.cx.capture_screenshot(fx.window)?;
-    // Every card is disabled at opacity 0.4: nothing in any card is brighter than white at
-    // 0.4 over the backdrop. The icon slot shows the rays spinner instead of the emoji.
-    for card in &cards {
-        let max = brightest(&shot, *card);
-        ensure!(
-            max <= dim,
-            "card {card:?} while starting: brightest {max} > {dim}"
-        );
-    }
-    ensure!(changed(&rest, &shot, icon) > 0, "spinner in the icon slot");
-    // A disabled card has no hover fill. Raw dispatch: `Fx::hover` runs the app until it
-    // parks, which waits for the gated host answer.
-    fx.cx.update_window(fx.window, |_, window, cx| {
-        window.dispatch_event(
-            PlatformInput::MouseMove(MouseMoveEvent {
-                position: point(
-                    px(cards[1][0] + cards[1][2] / 2.),
-                    px(cards[1][1] + cards[1][3] / 2.),
-                ),
-                pressed_button: None,
-                modifiers: Modifiers::default(),
-            }),
-            cx,
-        );
-    })?;
-    ensure!(
-        brightest(&fx.cx.capture_screenshot(fx.window)?, cards[1]) <= dim,
-        "no hover fill while disabled"
-    );
-    ensure!(pending(&fx) == Some(Some(0)), "still the first card");
-
-    // The host answers the models read with the recorded 499: toast, cards enabled.
-    *host.released.lock() = true;
-    fx.wait("suggested-task start", |fx| {
+    let before = host.sent.lock().len();
+    fx.click(at)?;
+    fx.wait("suggested-task click", |fx| {
         fx.read(|root, cx| !root.toasts(cx).is_empty())
     })?;
     fx.advance(Duration::from_millis(
@@ -273,16 +189,26 @@ fn suggestion_click_starts_and_fails_like_original() -> Result<()> {
     ))?;
     let toasts = fx.read(|root, cx| root.toasts(cx));
     ensure!(toasts == [TOAST], "toasts {toasts:?}");
-    ensure!(pending(&fx) == Some(None), "cards enabled again");
+    let sent = host.sent.lock()[before..].to_vec();
+    ensure!(sent.is_empty(), "the click sent {sent:?}");
+    ensure!(pending(&fx) == Some(None), "no card is Starting…");
     ensure!(fx.route() == Route::Scheduled, "route {:?}", fx.route());
     fx.hover((1270., 820.))?;
     fx.advance(Duration::from_millis(300))?;
-    let restored = fx.shot()?;
+    let after = fx.shot()?;
+    after.save(proof.join("s035b-after.png"))?;
     for card in &cards {
-        ensure!(brightest(&restored, *card) >= 240, "card {card:?} restored");
+        ensure!(
+            brightest(&after, *card) >= 240,
+            "card {card:?} stays enabled"
+        );
     }
+    ensure!(
+        changed(&rest, &after, icon) == 0,
+        "no spinner in the icon slot"
+    );
     println!(
-        "s035b: click shows Starting…, disables every card, sends the recorded models read, then toasts and restores"
+        "s035b: click shows `{TOAST}`, sends no request, keeps the route and every card enabled"
     );
     Ok(())
 }

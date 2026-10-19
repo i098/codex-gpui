@@ -24,16 +24,11 @@ actions!(
         SearchTasks,
         /// Sidebar `Filter tasks` (ownership `Personal` / `Team`).
         FilterTasks,
+        /// A suggested-task card was clicked. Unsupported in this release: the app answers
+        /// with a message and starts nothing.
+        StartSuggestedTask,
     ]
 );
-
-/// A suggested-task card was clicked: the page shows the card as `Starting…` and the app
-/// starts the guided setup conversation from its prompt.
-#[derive(Clone, PartialEq, Action)]
-#[action(namespace = automations, no_json)]
-pub struct StartSuggestedTask {
-    pub prompt: SharedString,
-}
 
 /// A sidebar task row was clicked: `/scheduled?automationId=<id>`.
 #[derive(Clone, PartialEq, Action)]
@@ -489,7 +484,7 @@ impl Render for ScheduledSidebar {
 /// Main column of the empty page: hero and the suggested-task grid. While `pending` (a card
 /// index) starts its conversation, that card shows the rays spinner and `Starting…` instead
 /// of its description, and every card is disabled (`disabled:opacity-40`, no hover fill, no
-/// click).
+/// click). The guided start is unsupported in this release, so only tests set `pending`.
 pub struct AutomationsPage {
     cards: Vec<Suggestion>,
     pending: Option<usize>,
@@ -564,7 +559,6 @@ impl AutomationsPage {
             }
             None => text(s.emoji.clone(), 28., 28., 430., t.text).into_any_element(),
         };
-        let prompt = s.user_message.clone();
         let description = if starting {
             "Starting…".into()
         } else {
@@ -591,17 +585,10 @@ impl AutomationsPage {
             }))
             .when(disabled, |d| d.opacity(0.4))
             .when(!disabled, |d| {
-                d.hover(move |st| st.bg(hover_bg)).on_click(cx.listener(
-                    move |this, _, window, cx| {
-                        this.set_pending(Some(i), cx);
-                        window.dispatch_action(
-                            Box::new(StartSuggestedTask {
-                                prompt: prompt.clone(),
-                            }),
-                            cx,
-                        )
-                    },
-                ))
+                d.hover(move |st| st.bg(hover_bg))
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(StartSuggestedTask), cx)
+                    })
             })
             .child(
                 div()

@@ -8,7 +8,7 @@ pub mod host;
 pub mod host_settings;
 pub mod qa;
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use async_channel::Receiver;
 use bridge::types::{
     ApprovalDecision, CommandApprovalRequest, ConfigReadResponse, FileChangeApprovalRequest, Model,
@@ -1493,35 +1493,15 @@ impl Root {
         self.suggestions.as_ref()
     }
 
-    /// A suggestion card click (`refs/interactions/s035b.json`): the card is already
-    /// `Starting…` and every card disabled. The original's guided start first reads the TPP
-    /// models through the desktop host, then prepares and streams the conversation and
-    /// navigates into it; when any step fails it shows `Couldn’t start this suggested task`
-    /// and re-enables the cards.
+    /// A suggestion card click. The original's guided start needs an Apple DeviceCheck token
+    /// (`GET /ios/attestation_challenge`) before it sends any conversation request, and this
+    /// host cannot make one, so this release sends nothing and says so with the existing
+    /// danger toast (captain decision 110; `docs/flows.md`, Slice S035b).
     fn start_suggested_task(&mut self, cx: &mut Context<Self>) {
-        let host = self.host.clone();
-        let read = cx.background_spawn(async move {
-            let identity = host.identity().context("no ChatGPT sign-in")?;
-            host.fetch(&host::tpp_models(&identity))
-                .and_then(|response| host::json_body(&response))
-        });
-        cx.spawn(async move |this, cx| {
-            let result = read.await;
-            this.update(cx, |this, cx| {
-                if let Some(page) = &this.suggestions {
-                    page.update(cx, |page, cx| page.set_pending(None, cx));
-                }
-                // ponytail: with the models in hand the original prepares the ChatGPT
-                // conversation (`/f/conversation/prepare`) and streams it; neither is recorded
-                // (the oracle refuses the start), so the port stops here and reports it.
-                if result.is_ok() {
-                    eprintln!("codex-gpui: suggested task: the conversation stream is not wired");
-                }
-                this.toast(Toast::danger("Couldn’t start this suggested task"), cx);
-            })
-            .ok();
-        })
-        .detach();
+        self.toast(
+            Toast::danger("Starting suggested tasks isn’t supported in this version"),
+            cx,
+        );
     }
 
     fn set_threads(&mut self, threads: &[Thread], cx: &mut Context<Self>) {
