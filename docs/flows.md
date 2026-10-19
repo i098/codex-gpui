@@ -437,7 +437,7 @@ Commit and push are in DT-139 below.
 ### DT-139: Commit or push
 
 The summary Changes row exposes `Git actions` on pointer hover or keyboard focus.
-Both actions open the existing form; `Push` does not push before the user selects its form row.
+Commit and Push open the existing form; Push does not run before the user selects its form row.
 The shared command menu offers `Commit or push` only when Commit or Push is available and no workflow runs.
 Git availability includes staged, unstaged, and untracked changes, independent of the form's saved checkbox.
 Disabled Git rows show the original loading or unavailable reason.
@@ -470,21 +470,38 @@ The queued-state check uses native input and captures the rendered disabled UI b
 It then drains real host work and checks the owned commit and remote refs.
 It does not park Git or fake a host response.
 Matched capture fixtures use the retained Subtract thread and an owned `+5 -1` checkout.
-The `codex_git_commit` attribution trailer, `Create PR`, and standalone Create/Switch branch controls remain separate work.
+The `codex_git_commit` attribution trailer and `Create PR` remain separate work.
 
-### Standalone branch runtime
+### Native Create branch and Switch branch
 
 `LocalHost` accepts `git-checkout` with `cwd` and exactly one of `branch` or `newBranch`.
 `branch` resolves a local branch, a unique remote branch with tracking, or a commit reference for detached checkout.
 Ambiguous remote names fail without changing the current branch.
 `newBranch` validates the name and rejects existing names and repositories without commits before creating and checking out the branch.
 Success reports the actual current branch, or null for a detached HEAD.
+The host reads full symbolic references and removes only `refs/heads/`; the branch list uses `refname:lstrip=2`.
+Disambiguated display names never replace branch identities, and a real branch named `heads/main` keeps its name.
 Git carries safe local changes and refuses checkout when it would overwrite tracked, staged, or untracked files.
 The failure reports `blocked-by-working-tree-changes`, the affected paths, and the Git error.
 The operation never forces checkout, stashes changes, or contacts a remote.
 `git_commit::checkout_dispatch_preserves_changes_and_resolves_branches` exercises the actual runtime dispatcher against disposable repositories and a local bare remote.
 It checks the resulting refs, file contents, index state, detached checkout, invalid names, and remote ambiguity.
-Standalone native Create/Switch controls remain pending; this backend change leaves the current UI unchanged.
+The Git actions menu enables Create branch on a detached HEAD and Switch branch when repository information is available.
+Switch branch opens a searchable native list with the current branch marked and its uncommitted file count.
+Keyboard navigation and pointer selection call the same checkout operation.
+Case-insensitive search retains a separate `Use {ref}` row for an exact, case-sensitive Git reference.
+Selecting the current branch closes the list without changing Git state.
+The list also offers Create and checkout new branch, except in a repository without commits.
+The create form uses the configured branch prefix and chat title.
+It removes the original input's excluded characters, rejects empty names, trailing slashes, and existing names, and shows Git validation errors.
+Failed creation keeps the name draft and current branch.
+A blocked checkout shows the conflicting paths and offers Commit and switch branch.
+That action opens the existing commit form and retries checkout only after the chosen operation succeeds.
+A failed commit keeps the message draft; closing a Git surface preserves the unsent composer draft.
+`git_commit::native_branch_controls_preserve_drafts_and_protect_changes` proves these controls with native keys and pointer input against disposable repositories.
+The scenario checks real branch refs, retained file contents, commit recovery, and an unchanged local remote.
+It also checks an exact tag checkout followed by native reattachment, a real `heads/main` branch, and committing dirty detached work.
+Its thread data uses replay fixtures, not a live installed-account session.
 
 ## 14.7 Settings, login and onboarding
 

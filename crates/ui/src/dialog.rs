@@ -18,6 +18,14 @@ use std::{
 };
 use theme::{ActiveTheme as _, Theme};
 
+fn contains_ignore_ascii_case(text: &str, query: &str) -> bool {
+    query.is_empty()
+        || text
+            .as_bytes()
+            .windows(query.len())
+            .any(|part| part.eq_ignore_ascii_case(query.as_bytes()))
+}
+
 type Shortcut = (&'static str, &'static str, &'static [&'static str]);
 
 type AnnouncementArtworkCache = Rc<RefCell<Option<(Bounds<Pixels>, f32, Arc<RenderImage>, bool)>>>;
@@ -46,6 +54,9 @@ pub enum Kind {
     Rename,
     /// `Commit or push` (DT-139): the original's commit form for the open thread's repository.
     Commit,
+    Branches,
+    CreateBranch,
+    BranchConflict,
 }
 #[derive(Clone)]
 pub enum Outcome {
@@ -78,6 +89,11 @@ pub enum Outcome {
         include_unstaged: bool,
         new_branch: Option<String>,
     },
+    CheckoutBranch {
+        name: String,
+        create: bool,
+    },
+    CommitBeforeCheckout,
 }
 
 /// The rows of the commit form: `Commit`, `Commit and push` and `Push`.
@@ -102,6 +118,7 @@ pub struct CommitRepository {
     /// `None` on a detached HEAD.
     pub branch: Option<String>,
     pub branches: Vec<String>,
+    pub has_commits: bool,
     pub ahead: usize,
     pub staged: Selection,
     pub all: Selection,
@@ -117,6 +134,13 @@ struct CommitForm {
     branch_name: String,
     /// The highlighted `Commit to` item while that list is open.
     menu: Option<usize>,
+}
+
+struct BranchForm {
+    repo: CommitRepository,
+    highlighted: usize,
+    target: Option<String>,
+    conflicts: Vec<String>,
 }
 
 pub struct Dialog {
@@ -139,6 +163,7 @@ pub struct Dialog {
     error: Option<String>,
     announcement: Option<ModelAnnouncement>,
     commit: Option<CommitForm>,
+    branch: Option<BranchForm>,
 }
 impl EventEmitter<Outcome> for Dialog {}
 impl Focusable for Dialog {
@@ -166,6 +191,7 @@ impl Dialog {
             error: None,
             announcement: None,
             commit: None,
+            branch: None,
         }
     }
     /// `Rename chat` for `thread`, its input prefilled with `title` and all of it selected.
@@ -191,6 +217,363 @@ impl Dialog {
             commit: Some(form),
             ..Self::new(Kind::Commit, cx)
         }
+    }
+
+    pub fn branches(repo: CommitRepository, kind: Kind, cx: &mut Context<Self>) -> Self {
+        Self {
+            query: if kind == Kind::CreateBranch {
+                repo.new_branch_name.clone()
+            } else {
+                String::new()
+            },
+            branch: Some(BranchForm {
+                repo,
+                highlighted: 0,
+                target: None,
+                conflicts: Vec::new(),
+            }),
+            ..Self::new(kind, cx)
+        }
+    }
+
+    pub fn checkout_target(&self) -> Option<String> {
+        self.branch.as_ref().and_then(|form| form.target.clone())
+    }
+
+    pub fn begin_checkout(&mut self, name: String, cx: &mut Context<Self>) {
+        self.branch.as_mut().unwrap().target = Some(name);
+        self.saving = true;
+        self.error = None;
+        cx.notify();
+    }
+
+    pub fn checkout_error(
+        &mut self,
+        error: String,
+        conflicts: Vec<String>,
+        cx: &mut Context<Self>,
+    ) {
+        if !conflicts.is_empty() {
+            self.kind = Kind::BranchConflict;
+            self.branch.as_mut().unwrap().conflicts = conflicts;
+            self.selected = 1;
+        }
+        self.schedule_result(error, cx);
+    }
+
+    pub fn prepare_branch_commit(&mut self, mut repo: CommitRepository, cx: &mut Context<Self>) {
+        let branch = self.branch.take();
+        repo.new_branch_name = branch.as_ref().unwrap().repo.new_branch_name.clone();
+        *self = Self::commit(repo, cx);
+        self.branch = branch;
+    }
+
+    pub fn resume_checkout(&mut self, cx: &mut Context<Self>) {
+        self.kind = Kind::Branches;
+        self.query = self.checkout_target().unwrap();
+        self.selected = 0;
+        self.saving = false;
+        cx.notify();
+    }
+
+    pub fn set_branch_repository(&mut self, mut repo: CommitRepository, cx: &mut Context<Self>) {
+        let form = self.branch.as_mut().unwrap();
+        repo.new_branch_name = std::mem::take(&mut form.repo.new_branch_name);
+        form.repo = repo;
+        cx.notify();
+    }
+
+    pub fn branch_names(&self) -> Vec<&str> {
+        let repo = &self.branch.as_ref().unwrap().repo;
+        let query = self.query.trim();
+        let mut names: Vec<_> = repo
+            .branch
+            .iter()
+            .chain(
+                repo.branches
+                    .iter()
+                    .filter(|name| Some(*name) != repo.branch.as_ref()),
+            )
+            .map(String::as_str)
+            .filter(|name| contains_ignore_ascii_case(name, query))
+            .collect();
+        if !query.is_empty() && !names.contains(&query) {
+            names.push(query);
+        }
+        names
+    }
+
+    fn branch_name_error(&self) -> Option<&'static str> {
+        let repo = &self.branch.as_ref().unwrap().repo;
+        let name = self.query.trim();
+        if !repo.has_commits {
+            Some("Commit changes to create and checkout a new branch")
+        } else if name.is_empty() {
+            Some("Enter a branch name")
+        } else if name.ends_with('/') {
+            Some("Branch name cannot end with “/”.")
+        } else if repo.branches.iter().any(|branch| branch == name) {
+            Some("Branch already exists.")
+        } else {
+            None
+        }
+    }
+
+    fn choose_branch(&mut self, cx: &mut Context<Self>) {
+        let form = self.branch.as_ref().unwrap();
+        let Some(name) = self.branch_names().get(form.highlighted).copied() else {
+            return;
+        };
+        if form.repo.branch.as_deref() == Some(name) {
+            self.dismiss(cx);
+        } else {
+            cx.emit(Outcome::CheckoutBranch {
+                name: name.to_owned(),
+                create: false,
+            });
+        }
+    }
+
+    fn branch_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        let form = self.branch.as_ref().unwrap();
+        let selecting = self.kind == Kind::Branches;
+        let conflict = self.kind == Kind::BranchConflict;
+        let title = if selecting {
+            "Switch branch"
+        } else if conflict {
+            "Commit changes to switch branch"
+        } else {
+            "Create and checkout branch"
+        };
+        let mut content = div()
+            .p(px(if selecting { 8. } else { 20. }))
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .child(text(
+                title,
+                if selecting { 13. } else { 18. },
+                24.,
+                600.,
+                t.text,
+            ));
+        if !conflict {
+            let label = if selecting {
+                "Search branches"
+            } else {
+                "Branch name"
+            };
+            content = content.child(
+                div()
+                    .id("branch-input")
+                    .role(gpui::Role::TextInput)
+                    .aria_label(label)
+                    .aria_value(self.query.clone())
+                    .aria_placeholder(label)
+                    .track_focus(&self.controls[0])
+                    .h(px(36.))
+                    .px(px(10.))
+                    .rounded(px(10.))
+                    .border_1()
+                    .border_color(if self.selected == 0 {
+                        rgba(0x3a83f7ff).into()
+                    } else {
+                        t.border_strong
+                    })
+                    .bg(t.surface_elevated_secondary)
+                    .flex()
+                    .items_center()
+                    .overflow_hidden()
+                    .cursor_text()
+                    .child(
+                        text(
+                            if self.query.is_empty() {
+                                label.to_owned()
+                            } else {
+                                self.query.clone()
+                            },
+                            13.,
+                            20.,
+                            430.,
+                            if self.query.is_empty() {
+                                t.text_tertiary
+                            } else {
+                                t.text
+                            },
+                        )
+                        .when(self.select_all && !self.query.is_empty(), |d| {
+                            d.bg(rgba(0x3a83f766))
+                        }),
+                    )
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.selected = 0;
+                        this.controls[0].focus(window, cx);
+                        cx.notify();
+                    })),
+            );
+        }
+        if selecting {
+            content =
+                content.child(
+                    div()
+                        .id("branch-list")
+                        .max_h(px(272.))
+                        .overflow_y_scroll()
+                        .track_scroll(&self.scroll)
+                        .children(self.branch_names().into_iter().enumerate().map(
+                            |(index, name)| {
+                                let current = form.repo.branch.as_deref() == Some(name);
+                                div()
+                                    .id(("branch-choice", index))
+                                    .role(gpui::Role::MenuItem)
+                                    .aria_label(name.to_owned())
+                                    .aria_disabled(self.saving)
+                                    .min_h(px(34.))
+                                    .px(px(8.))
+                                    .rounded(px(10.))
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(8.))
+                                    .when(index == form.highlighted, |d| d.bg(t.menu_item_hover))
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .child(
+                                                text(
+                                                    if !current
+                                                        && !form
+                                                            .repo
+                                                            .branches
+                                                            .iter()
+                                                            .any(|branch| branch == name)
+                                                    {
+                                                        format!("Use {name}")
+                                                    } else {
+                                                        name.to_owned()
+                                                    },
+                                                    13.,
+                                                    18.,
+                                                    430.,
+                                                    t.text,
+                                                )
+                                                .text_ellipsis(),
+                                            )
+                                            .when(current && form.repo.all.files > 0, |d| {
+                                                d.child(text(
+                                                    format!(
+                                                        "Uncommitted: {} {}",
+                                                        form.repo.all.files,
+                                                        if form.repo.all.files == 1 {
+                                                            "file"
+                                                        } else {
+                                                            "files"
+                                                        }
+                                                    ),
+                                                    11.,
+                                                    16.,
+                                                    430.,
+                                                    t.text_tertiary,
+                                                ))
+                                            }),
+                                    )
+                                    .when(current, |d| d.child(icon("menu-check", 16., t.text)))
+                                    .on_hover(cx.listener(move |this, hovered, _, cx| {
+                                        if *hovered {
+                                            this.branch.as_mut().unwrap().highlighted = index;
+                                            cx.notify();
+                                        }
+                                    }))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        if !this.saving {
+                                            this.branch.as_mut().unwrap().highlighted = index;
+                                            this.choose_branch(cx);
+                                        }
+                                    }))
+                            },
+                        )),
+                );
+            content = content.child(
+                self.button(1, "Create and checkout new branch…", 284., t, cx)
+                    .aria_disabled(!form.repo.has_commits || self.saving)
+                    .opacity(if form.repo.has_commits { 1. } else { 0.4 }),
+            );
+        } else if conflict {
+            content = content
+                .child(
+                    text(
+                        "Your changes to the following files would be overwritten by checkout:",
+                        14.,
+                        20.,
+                        430.,
+                        t.text_tertiary,
+                    )
+                    .whitespace_normal(),
+                )
+                .child(
+                    div()
+                        .id("branch-conflicts")
+                        .max_h(px(110.))
+                        .overflow_y_scroll()
+                        .children(form.conflicts.iter().map(|path| {
+                            text(path.clone(), 13., 22., 430., t.text).whitespace_normal()
+                        })),
+                )
+                .child(text(
+                    "Please commit your changes to continue",
+                    14.,
+                    20.,
+                    430.,
+                    t.text_tertiary,
+                ));
+        } else {
+            content = content.child(text(
+                self.branch_name_error().unwrap_or(""),
+                12.,
+                18.,
+                430.,
+                t.text_error,
+            ));
+        }
+        if let Some(error) = &self.error
+            && !conflict
+        {
+            content = content.child(
+                div()
+                    .id("branch-error")
+                    .max_h(px(65.))
+                    .overflow_y_scroll()
+                    .child(text(error.clone(), 12., 18., 430., t.text_error).whitespace_normal()),
+            );
+        }
+        if !selecting {
+            let label = if conflict {
+                "Commit and switch branch…"
+            } else {
+                "Create and checkout"
+            };
+            content = content.child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap(px(8.))
+                    .child(self.button(2, if conflict { "Cancel" } else { "Close" }, 70., t, cx))
+                    .child(
+                        self.button(1, label, if conflict { 225. } else { 180. }, t, cx)
+                            .aria_disabled(
+                                self.saving || !conflict && self.branch_name_error().is_some(),
+                            )
+                            .opacity(
+                                if self.saving || !conflict && self.branch_name_error().is_some() {
+                                    0.4
+                                } else {
+                                    1.
+                                },
+                            ),
+                    ),
+            );
+        }
+        content
     }
     /// Builds the recorded model-upgrade surface from original model metadata.
     pub fn model_announcement(model: &Model, message: String, cx: &mut Context<Self>) -> Self {
@@ -262,6 +645,13 @@ impl Dialog {
             (Kind::Commit, 4) => "Commit",
             (Kind::Commit, 5) => "Commit and push",
             (Kind::Commit, _) => "Push",
+            (Kind::Branches, 0) => "Search branches",
+            (Kind::CreateBranch, 0) => "Branch name",
+            (Kind::Branches | Kind::CreateBranch, 2) => "Close",
+            (Kind::BranchConflict, 2) => "Cancel",
+            (Kind::Branches, _) => "Create and checkout new branch…",
+            (Kind::CreateBranch, _) => "Create and checkout",
+            (Kind::BranchConflict, _) => "Commit and switch branch…",
         }
     }
     /// The whole query is selected (typing replaces it).
@@ -271,7 +661,12 @@ impl Dialog {
     fn editing(&self) -> bool {
         (matches!(
             self.kind,
-            Kind::Shortcuts | Kind::Rename | Kind::ScheduleTask | Kind::Commit
+            Kind::Shortcuts
+                | Kind::Rename
+                | Kind::ScheduleTask
+                | Kind::Commit
+                | Kind::Branches
+                | Kind::CreateBranch
         ) && self.selected == 0)
             || (self.kind == Kind::ScheduleTask && self.selected == 4)
             || (self.kind == Kind::Commit && self.selected == 3)
@@ -318,19 +713,18 @@ impl Dialog {
         self.saving
     }
     fn visible(&self) -> impl Iterator<Item = &'static Shortcut> + '_ {
-        let query = self.query.trim().as_bytes();
-        SHORTCUTS.iter().filter(move |(_, title, _)| {
-            query.is_empty()
-                || title
-                    .as_bytes()
-                    .windows(query.len())
-                    .any(|s| s.eq_ignore_ascii_case(query))
-        })
+        let query = self.query.trim();
+        SHORTCUTS
+            .iter()
+            .filter(move |(_, title, _)| contains_ignore_ascii_case(title, query))
     }
     pub fn visible_titles(&self) -> Vec<&'static str> {
         self.visible().map(|(_, title, _)| *title).collect()
     }
     fn dismiss(&self, cx: &mut Context<Self>) {
+        if self.saving {
+            return;
+        }
         if let Some(announcement) = &self.announcement {
             cx.emit(Outcome::DismissAnnouncement(announcement.model.clone()));
         } else {
@@ -338,8 +732,29 @@ impl Dialog {
         }
     }
     fn activate(&mut self, cx: &mut Context<Self>) {
+        if self.saving {
+            return;
+        }
         match (self.kind, self.selected) {
-            (Kind::ScheduleTask, _) if self.saving => {}
+            (Kind::Branches, 0) => self.choose_branch(cx),
+            (Kind::Branches, 1) => {
+                if self.branch.as_ref().unwrap().repo.has_commits {
+                    self.kind = Kind::CreateBranch;
+                    self.query = self.branch.as_ref().unwrap().repo.new_branch_name.clone();
+                    self.selected = 0;
+                    self.error = None;
+                    cx.notify();
+                }
+            }
+            (Kind::CreateBranch, 0 | 1) => {
+                if self.branch_name_error().is_none() {
+                    cx.emit(Outcome::CheckoutBranch {
+                        name: self.query.trim().to_owned(),
+                        create: true,
+                    });
+                }
+            }
+            (Kind::BranchConflict, 0 | 1) => cx.emit(Outcome::CommitBeforeCheckout),
             (Kind::ScheduleTask, 3) => {
                 self.repeat_open = !self.repeat_open;
                 cx.notify();
@@ -443,18 +858,21 @@ impl Dialog {
             self.select_all = false;
         }
         let multiline = self.kind == Kind::ScheduleTask && self.selected == 0;
-        self.input().extend(
-            value
-                .chars()
-                .filter(|c| !c.is_control() || (multiline && *c == '\n')),
-        );
+        let branch_name = self.kind == Kind::CreateBranch;
+        self.input().extend(value.chars().filter(|c| {
+            (!c.is_control() || (multiline && *c == '\n'))
+                && (!branch_name || !c.is_whitespace() && !"~^:?*[]\\".contains(*c))
+        }));
         self.error = None;
+        if let Some(form) = &mut self.branch {
+            form.highlighted = 0;
+        }
         self.scroll.set_offset(point(px(0.), px(0.)));
         cx.notify();
     }
     fn key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let k = &e.keystroke;
-        if self.kind == Kind::ScheduleTask && self.saving {
+        if self.saving {
             cx.stop_propagation();
             return;
         }
@@ -483,6 +901,32 @@ impl Dialog {
             cx.stop_propagation();
             return;
         }
+        if self.kind == Kind::Branches && self.selected == 0 {
+            let count = self.branch_names().len();
+            match k.key.as_str() {
+                "up" | "down" if count > 0 => {
+                    let form = self.branch.as_mut().unwrap();
+                    form.highlighted = if k.key == "down" {
+                        (form.highlighted + 1) % count
+                    } else {
+                        (form.highlighted + count - 1) % count
+                    };
+                }
+                "enter" => self.choose_branch(cx),
+                _ => {
+                    self.branch_key(e, window, cx);
+                    return;
+                }
+            }
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
+        self.branch_key(e, window, cx);
+    }
+
+    fn branch_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let k = &e.keystroke;
         match k.key.as_str() {
             "left" | "right" | "home" | "end" | "backspace" | "delete" if self.multiline() => {
                 let range = self.instruction_selection();
@@ -530,6 +974,8 @@ impl Dialog {
                 let order: Vec<usize> = match self.kind {
                     Kind::Shortcuts | Kind::FullAccess => vec![0, 1],
                     Kind::ScheduleTask => vec![0, 3, 4, 5, 1, 2],
+                    Kind::Branches => vec![0, 1],
+                    Kind::BranchConflict => vec![1, 2],
                     Kind::Commit => self.commit_tab_order(),
                     _ => vec![0, 1, 2],
                 };
@@ -553,7 +999,11 @@ impl Dialog {
                 self.submit_commit(step, cx);
             }
             // Enter in the title input submits the form; Space types.
-            "enter" if self.kind == Kind::Rename && self.selected == 0 => self.activate(cx),
+            "enter"
+                if matches!(self.kind, Kind::Rename | Kind::CreateBranch) && self.selected == 0 =>
+            {
+                self.activate(cx)
+            }
             "enter" if self.multiline() => self.insert("\n", cx),
             "enter" | "space"
                 if matches!(
@@ -564,7 +1014,10 @@ impl Dialog {
                         | Kind::RevertChanges
                 ) || (self.selected != 0 && !self.editing()) =>
             {
-                self.activate(cx)
+                self.activate(cx);
+                if self.kind == Kind::CreateBranch && self.selected == 0 {
+                    self.controls[0].focus(window, cx);
+                }
             }
             "backspace" if self.editing() && !self.saving => {
                 if self.select_all {
@@ -593,7 +1046,7 @@ impl Dialog {
         t: &Theme,
         cx: &Context<Self>,
     ) -> Stateful<Div> {
-        let primary = index == 1;
+        let primary = index == 1 && self.kind != Kind::Branches;
         div()
             .id(("dialog-button", index))
             .role(gpui::Role::Button)
@@ -640,6 +1093,9 @@ impl Dialog {
                 this.selected = index;
                 this.controls[index].focus(window, cx);
                 this.activate(cx);
+                if this.kind == Kind::CreateBranch && this.selected == 0 {
+                    this.controls[0].focus(window, cx);
+                }
             }))
     }
     fn announcement_button(
@@ -1528,6 +1984,9 @@ impl Dialog {
     /// `(enabled, why not)` of `Commit`, `Commit and push` and `Push` (the original's
     /// `review.commit.disabled.*` and `localConversationPage.push*` tooltips).
     fn commit_state(&self) -> [(bool, Option<&'static str>); 3] {
+        if self.saving {
+            return [(false, Some("Working…")); 3];
+        }
         let form = self.form();
         let name = form.branch_name.trim();
         let new = form.new_branch;
@@ -1554,6 +2013,9 @@ impl Dialog {
     }
 
     fn submit_commit(&mut self, step: CommitStep, cx: &mut Context<Self>) {
+        if self.saving {
+            return;
+        }
         if !self.commit_state()[step as usize].0 {
             return;
         }
@@ -1578,6 +2040,7 @@ impl Dialog {
             + 4.
             + 9.
             + 101.
+            + if self.error.is_some() { 65. } else { 0. }
     }
 
     fn commit_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
@@ -1927,6 +2390,19 @@ impl Dialog {
                     .gap(px(4.))
                     .children(rows),
             )
+            .when_some(self.error.as_ref(), |d, error| {
+                d.child(
+                    div()
+                        .id("commit-error")
+                        .max_h(px(65.))
+                        .overflow_y_scroll()
+                        .child(
+                            text(error.clone(), 12., 18., 430., t.text_error)
+                                .px(px(12.))
+                                .whitespace_normal(),
+                        ),
+                )
+            })
             .children(menu)
     }
 }
@@ -2095,6 +2571,16 @@ impl Render for Dialog {
             Kind::FullAccess => (520., 420.),
             Kind::ModelAnnouncement => (480., 432.),
             Kind::Commit => (420., self.commit_height()),
+            Kind::Branches => (
+                300.,
+                152. + self.branch_names().len().min(8) as f32 * 34.
+                    + if self.error.is_some() { 80. } else { 0. },
+            ),
+            Kind::CreateBranch => (420., 190. + if self.error.is_some() { 65. } else { 0. }),
+            Kind::BranchConflict => (
+                420.,
+                260. + self.branch.as_ref().unwrap().conflicts.len().min(5) as f32 * 22.,
+            ),
         };
         let width = width.min(f32::from(viewport.width) * 0.92);
         let height = height.min(f32::from(viewport.height) * 0.92);
@@ -2106,10 +2592,15 @@ impl Render for Dialog {
             Kind::FullAccess => self.full_access_content(t, cx),
             Kind::ModelAnnouncement => self.announcement_content(t, cx),
             Kind::Commit => self.commit_content(t, cx),
+            Kind::Branches | Kind::CreateBranch | Kind::BranchConflict => {
+                self.branch_content(t, cx)
+            }
         };
         // `codex-dialog-overlay`: the schedule dialog's `_dimmedOverlay` is rgba(0,0,0,.5) with
         // blur(1px); the blur is not drawn (flat fills are unchanged by it).
-        let top = if schedule {
+        let top = if self.kind == Kind::Branches {
+            126.
+        } else if schedule {
             83.
         } else {
             (f32::from(viewport.height) - height) / 2.
@@ -2118,7 +2609,9 @@ impl Render for Dialog {
             .absolute()
             .inset_0()
             .occlude()
-            .bg(if schedule {
+            .bg(if self.kind == Kind::Branches {
+                gpui::transparent_black()
+            } else if schedule {
                 t.dialog_backdrop
             } else {
                 rgba(0x00000022).into()
@@ -2139,6 +2632,9 @@ impl Render for Dialog {
                         Kind::Rename => "Rename chat".into(),
                         Kind::FullAccess => "Turn on Full Access?".into(),
                         Kind::Commit => "Commit or push".into(),
+                        Kind::Branches => "Switch branch".into(),
+                        Kind::CreateBranch => "Create and checkout branch".into(),
+                        Kind::BranchConflict => "Commit changes to switch branch".into(),
                         Kind::ModelAnnouncement => self
                             .announcement
                             .as_ref()
@@ -2193,7 +2689,11 @@ impl Render for Dialog {
                     }))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .absolute()
-                    .left(px((f32::from(viewport.width) - width) / 2.))
+                    .left(px(if self.kind == Kind::Branches {
+                        (f32::from(viewport.width) - width - 20.).max(0.)
+                    } else {
+                        (f32::from(viewport.width) - width) / 2.
+                    }))
                     .top(px(top))
                     .w(px(width))
                     .h(px(height))
