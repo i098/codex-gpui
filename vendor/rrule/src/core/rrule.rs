@@ -225,9 +225,9 @@ pub struct RRule<Stage = Validated> {
     /// For example,
     /// - A yearly frequency with an interval of `2` creates 1 event every two years.
     /// - An hourly frequency with an interval of `2` created 1 event every two hours.
-    pub(crate) interval: u16,
+    pub(crate) interval: u64,
     /// How many occurrences will be generated.
-    pub(crate) count: Option<u32>,
+    pub(crate) count: Option<u64>,
     /// The end date after which new events will no longer be generated.
     /// If the `DateTime` is equal to an instance of the event, it will be the last event.
     #[cfg_attr(feature = "serde", serde_as(as = "DisplayFromStr"))]
@@ -324,14 +324,14 @@ impl RRule<Unvalidated> {
     /// The interval between each freq iteration.
     #[must_use]
     pub fn interval(mut self, interval: u16) -> Self {
-        self.interval = interval;
+        self.interval = u64::from(interval);
         self
     }
 
     /// If given, this determines how many occurrences will be generated.
     #[must_use]
     pub fn count(mut self, count: u32) -> Self {
-        self.count = Some(count);
+        self.count = Some(u64::from(count));
         self
     }
 
@@ -777,13 +777,13 @@ impl<S> RRule<S> {
 
     /// Get the interval of the recurrence.
     #[must_use]
-    pub fn get_interval(&self) -> u16 {
+    pub fn get_interval(&self) -> u64 {
         self.interval
     }
 
     /// Get the count of the recurrence.
     #[must_use]
-    pub fn get_count(&self) -> Option<u32> {
+    pub fn get_count(&self) -> Option<u64> {
         self.count
     }
 
