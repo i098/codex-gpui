@@ -9,7 +9,9 @@
 //! `cargo test -p app --test s024` replays `refs/interactions/s024.json`, including the footer focus rings.
 
 use crate::{MONO, icon::icon, text};
-use bridge::types::{ApprovalDecision, CommandApprovalRequest, FileChangeApprovalRequest, Model};
+use bridge::types::{
+    ApprovalDecision, CommandApprovalRequest, FileChangeApprovalRequest, Model, QueuedSubmission,
+};
 use gpui::{
     AnyElement, App, AvailableSpace, Bounds, ClipboardItem, Context, Corners, CursorStyle, Div,
     ElementId, ElementInputHandler, Entity, EntityInputHandler, ExternalPaths, FocusHandle,
@@ -431,6 +433,29 @@ type ApprovalHandler = Rc<dyn Fn(ApprovalDecision, &mut Window, &mut App)>;
 /// `(model id, effort)` after the user picks them.
 type ModelHandler = Rc<dyn Fn(&str, &str, &mut App)>;
 
+/// What a queued row's `Queued message actions` menu asks of the app.
+#[derive(Clone)]
+pub enum QueueAction {
+    /// `Edit message`: the queued submission with this id returns to the composer.
+    Edit(String),
+    /// `Turn off queueing` / `Turn on queueing`: the new `Follow-up behavior` is queue (`true`).
+    Queueing(bool),
+}
+
+impl gpui::EventEmitter<QueueAction> for Composer {}
+
+/// One row of the queue tray: the app-server's submission and the text it shows.
+pub struct QueuedMessage {
+    pub submission: QueuedSubmission,
+    pub text: SharedString,
+    key: SharedString,
+}
+
+const QUEUE_ACTIONS: &str = "Queued message actions";
+const QUEUE_EDIT: &str = "queuedEdit";
+const QUEUE_SWITCH: &str = "queuedQueueing";
+const QUEUE_MENU_WIDTH: f32 = 220.;
+
 pub struct Composer {
     focus_handle: FocusHandle,
     placeholder: SharedString,
@@ -483,7 +508,7 @@ pub struct Composer {
     /// instead of steering the turn.
     queue_mode: bool,
     /// The app-server's queued follow-ups of the open thread, shown in a tray over the card.
-    queued: Vec<SharedString>,
+    queued: Vec<QueuedMessage>,
     on_submit: Option<SubmitHandler>,
     on_cancel_edit: Option<CancelEditHandler>,
     edit_pending: bool,
@@ -710,13 +735,128 @@ impl Composer {
         cx.notify();
     }
 
-    pub fn set_queued(&mut self, queued: Vec<SharedString>, cx: &mut Context<Self>) {
-        self.queued = queued;
+    pub fn set_queued(&mut self, queued: Vec<QueuedSubmission>, cx: &mut Context<Self>) {
+        self.queued = queued
+            .into_iter()
+            .map(|submission| {
+                let text = submission
+                    .input
+                    .iter()
+                    .filter_map(|part| part["text"].as_str())
+                    .collect::<String>();
+                QueuedMessage {
+                    key: submission.id.clone().into(),
+                    submission,
+                    text: text.trim_end().to_owned().into(),
+                }
+            })
+            .collect();
         cx.notify();
     }
 
-    pub fn queued(&self) -> &[SharedString] {
+    pub fn queued(&self) -> &[QueuedMessage] {
         &self.queued
+    }
+
+    /// `Edit message`: the queued draft returns to the editor. A draft already there stays
+    /// below it ([`Self::restore_text`]) and the images join the current attachments.
+    pub fn load_queued(
+        &mut self,
+        text: &str,
+        attachments: &[PathBuf],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !text.is_empty() {
+            self.restore_text(text, cx);
+        }
+        self.drop_files(attachments, cx);
+        self.focus_handle.focus(window, cx);
+    }
+
+    /// A pick in the open context menu: the queue row's, else the editor's.
+    fn activate_context(
+        &mut self,
+        id: &'static str,
+        subject: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match id {
+            QUEUE_EDIT => cx.emit(QueueAction::Edit(subject)),
+            QUEUE_SWITCH => cx.emit(QueueAction::Queueing(!self.queue_mode)),
+            _ => self.activate_context_item(id, subject, window, cx),
+        }
+    }
+
+    /// The row's `Queued message actions` menu (`composer.queuedMessage.more`): `Edit message`
+    /// and the follow-up behavior switch, at the pointer like the editor's context menu.
+    fn open_queue_menu(
+        &mut self,
+        id: &str,
+        at: gpui::Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::screens::thread::view::menu::{ContextMenu, Item};
+        self.menu = None;
+        self.slash.reset();
+        let items = vec![
+            Item::new(QUEUE_EDIT, "Edit message", true),
+            Item::new(
+                QUEUE_SWITCH,
+                if self.queue_mode {
+                    "Turn off queueing"
+                } else {
+                    "Turn on queueing"
+                },
+                true,
+            ),
+        ];
+        // The original's dropdown is `align: end` under the button: the menu's right edge
+        // meets the button's.
+        let at = gpui::point(at.x - px(QUEUE_MENU_WIDTH - 12.), at.y + px(4.));
+        self.context_menu = Some(ContextMenu::open(items, id.to_owned(), at, window, cx));
+        cx.notify();
+    }
+
+    fn queue_menu_button(
+        &self,
+        id: String,
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> crate::tooltip::Tooltip {
+        crate::tooltip::tooltip(
+            div()
+                .id(SharedString::from(format!("queued-actions-{id}")))
+                .size(px(24.))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(6.))
+                .role(gpui::Role::Button)
+                .aria_label(QUEUE_ACTIONS)
+                .focusable()
+                .tab_index(0)
+                .focus_visible(menu::trigger_focus)
+                .hover(|s| s.bg(t.ghost_hover))
+                .child(icon("diff-more", 14., t.text_tertiary))
+                // Enter would submit the draft: the key belongs to the button.
+                .on_key_down(cx.listener(|_, event: &gpui::KeyDownEvent, _, cx| {
+                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                        cx.stop_propagation();
+                    }
+                }))
+                .on_click(
+                    cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
+                        this.open_queue_menu(&id, event.position(), window, cx);
+                    }),
+                ),
+            QUEUE_ACTIONS,
+            None,
+            crate::tooltip::Side::Top,
+        )
     }
 
     /// The empty editor's text (`Work with Codex` under a thread, also while a turn runs:
@@ -1460,9 +1600,8 @@ impl Render for Composer {
             );
         let card = card.when(self.slash.open, |d| d.child(self.slash_menu(&t, cx)));
         // The queued-follow-up tray (`bg-surface-elevated-secondary`, border-x border-t) sits
-        // on the card's top edge, 13 px in from its sides; rows (handle, then the text) are
-        // 32 px with a 1 px gap. ponytail: rows show the text only; the original's Steer,
-        // Delete and actions menu on a row are not implemented.
+        // on the card's top edge, 13 px in from its sides; rows (handle, text, `…` actions)
+        // are 32 px with a 1 px gap. ponytail: the original's Steer and Delete are not here.
         let tray = (!self.queued.is_empty()).then(|| {
             div()
                 .mx(px(13.))
@@ -1476,13 +1615,21 @@ impl Render for Composer {
                 .gap(px(1.))
                 .children(self.queued.iter().map(|row| {
                     div()
+                        .id(row.key.clone())
                         .h(px(32.))
                         .px(px(10.))
                         .flex()
                         .items_center()
                         .gap(px(8.))
                         .child(icon("queue-handle", 14., t.text_tertiary))
-                        .child(text(row.clone(), 14., 20., 430., t.text))
+                        .child(div().flex_1().min_w_0().overflow_hidden().child(text(
+                            row.text.clone(),
+                            14.,
+                            20.,
+                            430.,
+                            t.text,
+                        )))
+                        .child(self.queue_menu_button(row.submission.id.clone(), &t, cx))
                 }))
         });
         div()
@@ -1497,9 +1644,13 @@ impl Render for Composer {
             .when_some(self.context_menu.as_ref(), |d, menu| {
                 d.child(menu.overlay(
                     "composer-menu",
-                    "Edit actions",
+                    if menu.items.first().is_some_and(|item| item.id == QUEUE_EDIT) {
+                        QUEUE_ACTIONS
+                    } else {
+                        "Edit actions"
+                    },
                     |this| &mut this.context_menu,
-                    Self::activate_context_item,
+                    Self::activate_context,
                     window,
                     cx,
                 ))

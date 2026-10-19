@@ -66,7 +66,7 @@ fn queued(fx: &mut Fx) -> Vec<String> {
             .read(cx)
             .queued()
             .iter()
-            .map(|s| s.to_string())
+            .map(|row| row.text.to_string())
             .collect()
     })
 }

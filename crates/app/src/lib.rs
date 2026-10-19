@@ -12,8 +12,8 @@ use anyhow::{Context as _, Result};
 use async_channel::Receiver;
 use bridge::types::{
     ApprovalDecision, CommandApprovalRequest, ConfigReadResponse, FileChangeApprovalRequest, Model,
-    Thread, ThreadItem, ThreadListResponse, ThreadReadResponse, ThreadSection, ThreadStartResponse,
-    ThreadStartedNotification, ThreadStatus, TurnStatus,
+    Thread, ThreadItem, ThreadListResponse, ThreadQueueListResponse, ThreadReadResponse,
+    ThreadSection, ThreadStartResponse, ThreadStartedNotification, ThreadStatus, TurnStatus,
 };
 use bridge::{Bridge, Event};
 use gpui::{
@@ -28,7 +28,7 @@ use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::{fs, path::PathBuf, sync::Arc, time::Duration};
 use theme::Theme;
-use ui::composer::{Approval, Composer, Permission, Submission};
+use ui::composer::{Approval, Composer, Permission, QueueAction, Submission};
 use ui::dialog::{
     CommitRepository, CommitStep, Dialog, Kind as DialogKind, Outcome as DialogOutcome, Selection,
 };
@@ -369,6 +369,8 @@ pub struct Root {
     home: Entity<HomeMain>,
     /// Docked under every open thread.
     thread_composer: Entity<Composer>,
+    /// The queued submission `Edit message` took back into the composer, until it is sent.
+    queue_edit: Option<QueueEdit>,
     thread: Option<Entity<ThreadView>>,
     diff: Option<Entity<DiffPanel>>,
     /// The file viewer of [`SidePanel::File`]; cleared with the thread.
@@ -507,6 +509,15 @@ impl Root {
                 }
             }).detach();
         }
+        cx.subscribe_in(
+            &thread_composer,
+            window,
+            |this, _, action: &QueueAction, window, cx| match action {
+                QueueAction::Edit(id) => this.edit_queued(id.clone(), window, cx),
+                QueueAction::Queueing(queue) => this.set_queueing(*queue, cx),
+            },
+        )
+        .detach();
         let sidebar = cx.new(|_| HomeSidebar::new(&[], None));
         cx.subscribe_in(
             &sidebar,
@@ -594,6 +605,7 @@ impl Root {
                 }),
             }),
             thread_composer,
+            queue_edit: None,
             thread: None,
             diff: None,
             file: None,
@@ -2347,7 +2359,7 @@ impl Root {
                 this.add_thread(&thread, cx);
                 this.show_thread(thread, window, cx);
             })?;
-            turn_start(&bridge, &id, &s).await
+            turn_start(&bridge, &id, &s, user_input(&s)).await
         });
         log_err(task, cx);
     }
@@ -2355,8 +2367,9 @@ impl Root {
     /// Thread composer: `turn/start` on the open thread, resuming it first if needed. While a
     /// turn runs (CP-108), `Follow-up behavior` decides: `Queue` adds the message to the
     /// app-server's queue (`thread/queue/add`, drained by the server when the turn ends),
-    /// `Steer` sends it into the turn (`turn/steer`). A refusal shows `Error submitting
-    /// message` and puts the text back.
+    /// `Steer` sends it into the turn (`turn/steer`). A queued draft taken back by `Edit
+    /// message` returns to its place in the queue. A refusal shows `Error submitting
+    /// message` and puts the draft back.
     fn send(&mut self, s: Submission, window: &mut Window, cx: &mut Context<Self>) {
         self.qa_work_started = true;
         let Some(view) = &self.thread else { return };
@@ -2371,12 +2384,14 @@ impl Root {
             .find(|turn| turn.status == TurnStatus::InProgress)
             .map(|turn| turn.id.clone());
         let queue = self.config["desktop"]["followUpQueueMode"] == "queue";
+        let edit = self.queue_edit.take().filter(|edit| edit.thread_id == id);
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             resume_if(resume, &bridge, &this, &id, cx).await?;
+            let mut input = user_input(&s);
+            input.extend(edit.iter().flat_map(|edit| edit.extra.clone()));
             let Some(turn_id) = running else {
-                return turn_start(&bridge, &id, &s).await;
+                return turn_start(&bridge, &id, &s, input).await;
             };
-            let input = json!([{ "type": "text", "text": s.text, "text_elements": [] }]);
             let (method, params) = if queue {
                 let params = json!({
                     "threadId": id, "input": input, "clientUserMessageId": uuid_v4(),
@@ -2386,17 +2401,27 @@ impl Root {
                 let params = json!({ "threadId": id, "input": input, "expectedTurnId": turn_id });
                 ("turn/steer", params)
             };
-            let result = bridge.request::<_, Value>(method, params).await.map(drop);
+            let result = bridge.request::<_, Value>(method, params).await;
+            if queue
+                && let (Ok(added), Some(edit)) = (&result, &edit)
+                && let Some(added) = added["queuedSubmission"]["id"].as_str()
+                && let Err(error) = restore_place(&bridge, &id, added, edit).await
+            {
+                eprintln!("codex-gpui: thread/queue/reorder: {error:#}");
+            }
             this.update(cx, |this, cx| match &result {
-                Ok(()) if queue => this.list_queue(id, cx),
-                Ok(()) => {}
+                Ok(_) if queue => this.list_queue(id, cx),
+                Ok(_) => {}
                 Err(_) => {
-                    this.thread_composer
-                        .update(cx, |c, cx| c.restore_text(&s.text, cx));
+                    this.queue_edit = edit;
+                    this.thread_composer.update(cx, |c, cx| {
+                        c.restore_text(&s.text, cx);
+                        c.drop_files(&s.attachments, cx);
+                    });
                     this.toast(Toast::danger("Error submitting message"), cx);
                 }
             })?;
-            result
+            result.map(drop)
         });
         log_err(task, cx);
     }
@@ -2405,36 +2430,83 @@ impl Root {
     fn list_queue(&self, id: String, cx: &mut Context<Self>) {
         let bridge = self.bridge.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {
-            let list: Value = bridge
+            let list: ThreadQueueListResponse = bridge
                 .request(
                     "thread/queue/list",
                     json!({ "threadId": id, "cursor": null }),
                 )
                 .await?;
-            let rows = list["data"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(|row| {
-                    row["input"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter_map(|part| part["text"].as_str())
-                        .collect::<String>()
-                        .trim_end()
-                        .to_owned()
-                        .into()
-                })
-                .collect();
             this.update(cx, |this, cx| {
                 if this.thread.as_ref().is_some_and(|v| v.read(cx).id() == id) {
                     this.thread_composer
-                        .update(cx, |c, cx| c.set_queued(rows, cx));
+                        .update(cx, |c, cx| c.set_queued(list.data, cx));
                 }
             })
         });
         log_err(task, cx);
+    }
+
+    /// `Edit message` on a queued row: `thread/queue/delete` takes the submission out of the
+    /// queue, then its text and images go back to the composer. Sending the draft queues it
+    /// again where it was ([`restore_place`]). A submission already gone only refreshes the
+    /// tray; one the composer cannot show stays queued.
+    fn edit_queued(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(view) = &self.thread else { return };
+        let thread_id = view.read(cx).id().to_owned();
+        let composer = self.thread_composer.read(cx);
+        let rows = composer.queued();
+        let Some(index) = rows.iter().position(|row| row.submission.id == id) else {
+            return;
+        };
+        let neighbour = |at: Option<usize>| {
+            at.and_then(|i| rows.get(i))
+                .map(|r| r.submission.id.clone())
+        };
+        let (previous, next) = (neighbour(index.checked_sub(1)), neighbour(Some(index + 1)));
+        let (text, images, extra) = split_input(&rows[index].submission.input);
+        if text.is_empty() && images.is_empty() {
+            self.toast(Toast::danger("Couldn’t edit this queued message"), cx);
+            return;
+        }
+        let bridge = self.bridge.clone();
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let params = json!({ "threadId": thread_id, "queuedSubmissionId": id });
+            let result = bridge
+                .request::<_, Value>("thread/queue/delete", params)
+                .await;
+            this.update_in(cx, |this, window, cx| {
+                match &result {
+                    Ok(taken) if taken["deleted"] == true => {
+                        this.queue_edit = Some(QueueEdit {
+                            thread_id: thread_id.clone(),
+                            previous,
+                            next,
+                            extra,
+                        });
+                        this.thread_composer
+                            .update(cx, |c, cx| c.load_queued(&text, &images, window, cx));
+                    }
+                    Ok(_) => {}
+                    Err(_) => this.toast(Toast::danger("Couldn’t edit this queued message"), cx),
+                }
+                this.list_queue(thread_id, cx);
+            })?;
+            result.map(drop)
+        });
+        log_err(task, cx);
+    }
+
+    /// `Turn off queueing` / `Turn on queueing`: `Follow-up behavior` as the Settings row
+    /// writes it.
+    fn set_queueing(&mut self, queue: bool, cx: &mut Context<Self>) {
+        let value = if queue { "queue" } else { "steer" };
+        self.write_setting(
+            &SettingChanged {
+                path: "desktop.followUpQueueMode",
+                value: value.into(),
+            },
+            cx,
+        );
     }
 
     fn edit_message(&mut self, edit: EditMessage, window: &mut Window, cx: &mut Context<Self>) {
@@ -2911,6 +2983,7 @@ impl Root {
         self.qa_work_started = true;
         let bridge = self.bridge.clone();
         let review_delivery = params["keyPath"] == "desktop.reviewDelivery";
+        let queue_mode = params["keyPath"] == "desktop.followUpQueueMode";
         let task = cx.spawn(async move |this, cx| -> Result<()> {
             if let Err(error) = bridge.request::<_, Value>(method, params).await {
                 if review_delivery {
@@ -2919,6 +2992,15 @@ impl Root {
                             Toast::danger("Could not save review delivery preference"),
                             cx,
                         );
+                    })?;
+                }
+                if queue_mode {
+                    // The composer shows the behavior that still applies.
+                    this.update(cx, |this, cx| {
+                        let queue = this.config["desktop"]["followUpQueueMode"] == "queue";
+                        this.thread_composer
+                            .update(cx, |c, cx| c.set_queue_mode(queue, cx));
+                        this.toast(Toast::danger("Couldn’t save your changes. Try again"), cx);
                     })?;
                 }
                 return Err(error);
@@ -3188,15 +3270,81 @@ fn apply_permissions(params: &mut Value, permission: Permission) {
     params["approvalsReviewer"] = reviewer.into();
 }
 
-/// `turn/start` with the prompt, attachments, model, effort and Fast mode.
-async fn turn_start(bridge: &Bridge, thread_id: &str, s: &Submission) -> Result<()> {
+/// What `Edit message` returns to the composer from a queued submission's input: its text, its
+/// local images, and the rest (remote images, audio, skills, mentions), which the composer
+/// cannot show and the next send passes through unchanged.
+fn split_input(input: &[Value]) -> (String, Vec<PathBuf>, Vec<Value>) {
+    let (mut text, mut images, mut extra) = (String::new(), Vec::new(), Vec::new());
+    for part in input {
+        match (part["type"].as_str(), part["path"].as_str()) {
+            (Some("text"), _) => text.push_str(part["text"].as_str().unwrap_or_default()),
+            (Some("localImage"), Some(path)) if part["detail"].is_null() => {
+                images.push(PathBuf::from(path));
+            }
+            _ => extra.push(part.clone()),
+        }
+    }
+    (text, images, extra)
+}
+
+/// A queued draft taken back by `Edit message`: where it stood in the queue, and the input
+/// the composer cannot show.
+struct QueueEdit {
+    thread_id: String,
+    previous: Option<String>,
+    next: Option<String>,
+    extra: Vec<Value>,
+}
+
+/// After an edited draft is queued again (`thread/queue/add` appends it), moves it before the
+/// submission that followed it, else after the one that preceded it, as the original restores
+/// an edit (`thread/queue/reorder`). Other positions need no reorder.
+async fn restore_place(
+    bridge: &Bridge,
+    thread_id: &str,
+    added: &str,
+    edit: &QueueEdit,
+) -> Result<()> {
+    let list: ThreadQueueListResponse = bridge
+        .request(
+            "thread/queue/list",
+            json!({ "threadId": thread_id, "cursor": null }),
+        )
+        .await?;
+    // ponytail: a reorder of a partial page would drop the rest; queues of one page only.
+    if list.next_cursor.is_some() {
+        return Ok(());
+    }
+    let mut ids: Vec<_> = list
+        .data
+        .into_iter()
+        .map(|row| row.id)
+        .filter(|id| id != added)
+        .collect();
+    let find = |id: &Option<String>| ids.iter().position(|row| Some(row) == id.as_ref());
+    let at = match (find(&edit.next), find(&edit.previous)) {
+        (Some(next), _) => next,
+        (None, Some(previous)) => previous + 1,
+        (None, None) => return Ok(()),
+    };
+    ids.insert(at, added.to_owned());
+    bridge
+        .request::<_, Value>(
+            "thread/queue/reorder",
+            json!({ "threadId": thread_id, "queuedSubmissionIds": ids }),
+        )
+        .await?;
+    Ok(())
+}
+
+/// The prompt as `turn/start` input; non-image files go in as paths the agent can open.
+fn user_input(s: &Submission) -> Vec<Value> {
     const IMAGES: [&str; 5] = ["png", "jpg", "jpeg", "gif", "webp"];
     let (images, files): (Vec<_>, Vec<_>) = s.attachments.iter().partition(|p| {
         p.extension()
             .and_then(|e| e.to_str())
             .is_some_and(|e| IMAGES.contains(&e.to_lowercase().as_str()))
     });
-    // Non-image files go in as paths the agent can open.
     let text = files
         .iter()
         .fold(s.text.clone(), |text, p| format!("{text}\n{}", p.display()));
@@ -3206,6 +3354,16 @@ async fn turn_start(bridge: &Bridge, thread_id: &str, s: &Submission) -> Result<
             .iter()
             .map(|p| json!({ "type": "localImage", "path": p })),
     );
+    input
+}
+
+/// `turn/start` with the prompt, attachments, model, effort and Fast mode.
+async fn turn_start(
+    bridge: &Bridge,
+    thread_id: &str,
+    s: &Submission,
+    input: Vec<Value>,
+) -> Result<()> {
     let mut params = json!({
         "threadId": thread_id,
         "input": input,
