@@ -3,16 +3,17 @@
 //! Host data (`list-automations`, `/suggested_automations`) comes from the recorded answers
 //! in `tools/route1/oracle.json`.
 
-use crate::{Shell, icon::icon, icon_button, motion::ButtonVisual, text};
+use crate::tooltip::{Side, tooltip};
+use crate::{Shell, composer::popover, icon::icon, icon_button, motion::ButtonVisual, text};
 use gpui::{
-    Action, AnyView, App, AppContext as _, Context, Corners, Div, Entity, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, Render, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, Window, actions, canvas, div, img,
-    prelude::FluentBuilder as _, px,
+    Action, Anchor, AnyElement, AnyView, App, AppContext as _, Context, Corners, Div, Edges,
+    Entity, FocusHandle, InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
+    SharedString, Stateful, StatefulInteractiveElement, Styled, Window, actions, anchored, canvas,
+    deferred, div, img, prelude::FluentBuilder as _, px,
 };
 use serde::Deserialize;
 use serde_json::Value;
-use std::{fs, path::Path};
+use std::{collections::HashSet, fs, path::Path};
 use theme::{ActiveTheme as _, Theme};
 
 actions!(
@@ -42,6 +43,13 @@ pub struct OpenAutomation {
     pub id: String,
 }
 
+/// `Run now` in a task row's menu: the app starts a run through the host's `automation-run-now`.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = automations, no_json)]
+pub struct RunAutomationNow {
+    pub id: String,
+}
+
 /// One `list-automations` item, as the sidebar `Upcoming` list and the task thread show it.
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -66,6 +74,18 @@ pub fn tasks(list: &Value) -> Vec<Task> {
         .flatten()
         .filter_map(|item| serde_json::from_value(item.clone()).ok())
         .collect()
+}
+
+/// An event-triggered task: its prompt is the original's `## When this happens` / `## Perform
+/// action` quote blocks (`zhi`). Only an event runs it, so `Run now` is off for it.
+pub fn event_triggered(prompt: &str) -> bool {
+    let quoted = |line: &str| line == ">" || line.starts_with("> ");
+    prompt
+        .strip_prefix("## When this happens\n")
+        .and_then(|rest| rest.split_once("\n\n## Perform action\n"))
+        .is_some_and(|(when, action)| {
+            when.lines().all(quoted) && action.lines().next().is_some_and(quoted)
+        })
 }
 
 /// A squircle `background-color` over the parent's box, blended like Blink (`shapes`), not a
@@ -269,6 +289,9 @@ fn shell_with(
         tasks,
         selected: selected.as_ref().map(|(task, _)| task.id.clone()),
         utc_offset,
+        menu: None,
+        menu_button_hovered: false,
+        starting: HashSet::new(),
     });
     let mut page = None;
     let main: AnyView = match selected {
@@ -303,7 +326,20 @@ pub struct ScheduledSidebar {
     tasks: Vec<Task>,
     selected: Option<String>,
     utc_offset: i64,
+    /// The row whose `Scheduled task actions` menu is open.
+    menu: Option<TaskMenu>,
+    /// The menu button is under the pointer: a press on it toggles the menu, not closes it.
+    menu_button_hovered: bool,
+    /// Tasks whose run is starting: their row reads `Starting run…` and `Run now` is off.
+    starting: HashSet<String>,
 }
+
+struct TaskMenu {
+    id: String,
+    focus: FocusHandle,
+}
+
+const TRIGGER_TOOLTIP: &str = "Automations triggered by events can’t be run manually";
 
 impl ScheduledSidebar {
     pub fn set_tasks(&mut self, tasks: Vec<Task>, cx: &mut Context<Self>) {
@@ -311,12 +347,96 @@ impl ScheduledSidebar {
         cx.notify();
     }
 
-    fn row(&self, task: &Task, t: &Theme) -> impl IntoElement {
+    pub fn set_starting(&mut self, starting: HashSet<String>, cx: &mut Context<Self>) {
+        self.starting = starting;
+        cx.notify();
+    }
+
+    /// The task whose actions menu is open.
+    pub fn open_menu(&self) -> Option<&str> {
+        self.menu.as_ref().map(|menu| menu.id.as_str())
+    }
+
+    fn toggle_menu(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.open_menu() == Some(id) {
+            self.menu = None;
+        } else {
+            let focus = cx.focus_handle();
+            focus.focus(window, cx);
+            self.menu = Some(TaskMenu {
+                id: id.to_owned(),
+                focus,
+            });
+        }
+        cx.notify();
+    }
+
+    fn menu_popup(&self, task: &Task, t: &Theme, cx: &Context<Self>) -> impl IntoElement {
+        let triggered = event_triggered(&task.prompt);
+        let disabled = triggered || self.starting.contains(&task.id);
+        let (id, hover) = (task.id.clone(), t.menu_item_hover);
+        let item = div()
+            .id("run-now")
+            .role(gpui::Role::MenuItem)
+            .h(px(28.5625))
+            .px(px(8.))
+            .rounded(px(12.))
+            .flex()
+            .items_center()
+            .when(disabled, |d| d.opacity(0.4).aria_disabled(true))
+            .when(!disabled, |d| {
+                d.hover(move |s| s.bg(hover))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        window.dispatch_action(Box::new(RunAutomationNow { id: id.clone() }), cx);
+                        this.menu = None;
+                        cx.notify();
+                    }))
+            })
+            .child(text("Run now", 13., 18.5714, 430., t.text));
+        let item: AnyElement = if triggered {
+            tooltip(item, TRIGGER_TOOLTIP, None, Side::Right).into_any_element()
+        } else {
+            item.into_any_element()
+        };
+        let menu = div()
+            .id("task-actions-menu")
+            .occlude()
+            .when_some(self.menu.as_ref(), |d, menu| d.track_focus(&menu.focus))
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                if event.keystroke.key == "escape" {
+                    this.menu = None;
+                    cx.notify();
+                    cx.stop_propagation();
+                }
+            }))
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                if !this.menu_button_hovered {
+                    this.menu = None;
+                    cx.notify();
+                }
+            }))
+            .child(popover(t, 220., |menu| menu.child(item)));
+        deferred(
+            div().absolute().top(px(30.)).right_0().child(
+                anchored()
+                    .anchor(Anchor::TopRight)
+                    .snap_to_window_with_margin(Edges::all(px(7.)))
+                    .child(menu),
+            ),
+        )
+        .with_priority(1)
+    }
+
+    fn row(&self, task: &Task, t: &Theme, cx: &Context<Self>) -> impl IntoElement {
         let fill = fill(px(12.5), t.ghost_hover);
         let group = SharedString::from(format!("task-row-{}", task.id));
         let id = task.id.clone();
+        let open = self.open_menu() == Some(task.id.as_str());
+        let starting = self.starting.contains(&task.id);
         let mut secondary = div().h(px(16.)).pr(px(5.)).flex().items_center();
-        if let Some(next) = task.next_run_at {
+        if let Some(next) = task.next_run_at
+            && !starting
+        {
             secondary = secondary
                 .child(text(
                     day_time(next, self.utc_offset).0,
@@ -352,7 +472,14 @@ impl ScheduledSidebar {
                     .overflow_hidden()
                     .text_ellipsis(),
             )
-            .child(secondary.child(text(task.cadence(), 12., 16., 430., t.text_tertiary)))
+            .child(
+                secondary
+                    .child(text(task.cadence(), 12., 16., 430., t.text_tertiary))
+                    .when(starting, |d| {
+                        d.child(text("·", 12., 16., 430., t.text_tertiary).mx(px(4.)))
+                            .child(text("Starting run…", 12., 16., 430., t.text_tertiary))
+                    }),
+            )
             .child(
                 div()
                     .absolute()
@@ -364,24 +491,35 @@ impl ScheduledSidebar {
                     .flex()
                     .items_center()
                     .justify_end()
-                    .opacity(0.)
+                    .opacity(if open { 1. } else { 0. })
                     .group_hover(group.clone(), |s| s.opacity(1.))
                     .child(
                         div()
                             .id(SharedString::from(format!("{group}-actions")))
+                            .relative()
                             .size(px(28.))
                             .flex()
                             .items_center()
                             .justify_center()
                             .rounded(px(9.375))
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_hover(cx.listener(|this, hovered: &bool, _, _| {
+                                this.menu_button_hovered = *hovered;
+                            }))
+                            .on_click({
+                                let id = task.id.clone();
+                                cx.listener(move |this, _, window, cx| {
+                                    this.toggle_menu(&id, window, cx)
+                                })
+                            })
                             .child(ButtonVisual {
                                 glyph: icon("thread-chat-actions", 16., t.text_tertiary),
                                 radius: px(9.375),
                                 hover: t.ghost_hover,
                                 foreground: t.text.opacity(0.85),
-                                selected: false,
-                            }),
+                                selected: open,
+                            })
+                            .when(open, |d| d.child(self.menu_popup(task, t, cx))),
                     ),
             )
     }
@@ -391,7 +529,11 @@ impl Render for ScheduledSidebar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
         let hover_bg = t.list_hover;
-        let rows: Vec<_> = self.tasks.iter().map(|task| self.row(task, t)).collect();
+        let rows: Vec<_> = self
+            .tasks
+            .iter()
+            .map(|task| self.row(task, t, cx))
+            .collect();
         div()
             .size_full()
             .flex()
@@ -902,5 +1044,18 @@ mod tests {
         assert_eq!(titles.len(), 6);
         assert_eq!(titles[0], "AP Lang practice");
         assert_eq!(titles[3], "Weekly meal plan");
+    }
+
+    #[test]
+    fn only_the_original_event_prompt_is_event_triggered() {
+        let event = "## When this happens\n> a PR opens\n>\n> in main\n\n## Perform action\n> review it\n\nTrailing";
+        assert!(super::event_triggered(event));
+        assert!(!super::event_triggered("Review the PR every day"));
+        assert!(!super::event_triggered(
+            "## When this happens\nunquoted\n\n## Perform action\n> review it"
+        ));
+        assert!(!super::event_triggered(
+            "## When this happens\n> a PR opens\n\n## Perform action\nunquoted"
+        ));
     }
 }

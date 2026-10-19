@@ -579,6 +579,15 @@ The click puts the card in `Starting…` (rays spinner, status text) and disable
 The oracle answers that read with the host's 499, so the recorded outcome is the toast `Couldn’t start this suggested task` and the cards enabled again.
 The conversation prepare, its stream, and the navigation into the started conversation are not recorded and not wired.
 
+`Run now` (AM-021) is the first item of the row `Scheduled task actions` menu, as in `run-now-11e55df28c95.js`.
+Choosing it sends `automation-run-now` with `{id, collaborationMode, permissions}`; the row reads `Starting run…` and an info toast shows until the host answers.
+`LocalHost` starts one app-server thread per task folder, titles it with the task name, and sends the original's run preamble and the prompt as the first turn.
+The new thread then appears in Recents through `thread/started`; no run record is written, because the original host's run tracking is not ported.
+A refusal or `success: false` shows the danger toast `Could not start scheduled task`, with the reason on one line.
+Event-triggered tasks (`## When this happens` prompts) have the item disabled with the tooltip `Automations triggered by events can’t be run manually`; the host refuses them too.
+Worktree, project-target and heartbeat tasks need the original's git worker or renderer state, so the host refuses them instead of running them elsewhere.
+`automation_run_now` checks the requests the app-server receives and the refusals; the live `Root` flow needs macOS.
+
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Rail `Scheduled` | entry | Automations page, `ScheduledSidebar`. | `Route::Scheduled` with `ScheduledSidebar` and the page. | PASS (`rail_scheduled`, `parity_automations`) |
@@ -588,7 +597,7 @@ The conversation prepare, its stream, and the navigation into the started conver
 | 5 | Search | focus | Filters; `No matching tasks`. | Dispatches `SearchTasks`; no handler. | NOT WIRED (no host: `list-automations`) |
 | 6 | Status filter | click | All / Active / Paused. | — | NOT WIRED (no host: `list-automations`) |
 | 7 | Task row | click | Detail panel. | — | NOT WIRED (no host: `list-automations`) |
-| 8 | Row actions | click | Edit, Run now, Pause, Delete. | — | NOT WIRED (no host: `automation-update`, `automation-delete`) |
+| 8 | Row actions | click | Edit, Run now, Pause, Delete. | `Run now` runs through `automation-run-now`; no Edit, Pause or Delete. | PARTIAL (`automation_run_now`; NOT WIRED: `automation-update`, `automation-delete`) |
 | 9 | Editor fields | focus | Name, Prompt, schedule. | — | NOT WIRED (no host: `automation-create`) |
 | 10 | Previous runs | click | Run chat, mark read, archive. | — | NOT WIRED (no host: `inbox-items`, `automation-run-archive`) |
 | 11 | Row hover | hover | Row highlight. | No task rows; suggestion hover matches the original recording. | FAIL (no task rows; suggestion hover passes `s035::suggestion_hover_matches_original`) |

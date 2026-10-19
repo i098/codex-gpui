@@ -5,14 +5,16 @@
 //! `LocalHost` reads legacy definitions from `automations/<id>/automation.toml` and local
 //! run metadata from `sqlite/codex.db` under `CODEX_HOME` (default: `~/.codex`).
 //! It never migrates the original database or reads another account's automation rows.
-//! Definition writes are atomic; scheduling and execution remain the original host's job.
+//! Definition writes are atomic; schedules stay the original host's job. `automation-run-now` starts a run on
+//! the app-server that `with_bridge` supplies.
 //! `CloudHost` adds the original's `httpFetch` service for ChatGPT backend requests (usage,
 //! beacons, hosted automations, suggested-task conversations): it consumes the renderer's
 //! `X-OpenAI-Attach-*` headers, attaches the token that `codex app-server` holds
 //! (`getAuthStatus` with `includeToken`) plus the account route from `account/read`, retries once
 //! after a 401 with a refreshed token, and answers the original wire shapes, including errors.
 //! The token never reaches logs, errors, or `Debug` output.
-//! Local fetches support `list-automations`, `inbox-items`, and `paths-exist`; other endpoints return errors.
+//! Local fetches support `list-automations`, `create-automation`, `automation-run-now`, `inbox-items`, and
+//! `paths-exist`; other endpoints return errors.
 //! `Root` loads the automation list off the UI thread when the Scheduled route opens.
 //! Consumers read the result through `Root::automations`; this service slice does not change the static screens.
 //!
@@ -394,11 +396,22 @@ pub fn json_body(response: &Value) -> Result<Value> {
 
 pub struct LocalHost {
     home: PathBuf,
+    /// The `codex app-server` that `automation-run-now` starts runs on; the original's main
+    /// process holds the same connection.
+    bridge: Option<Arc<Bridge>>,
 }
 
 impl LocalHost {
     pub fn new(home: impl Into<PathBuf>) -> Self {
-        Self { home: home.into() }
+        Self {
+            home: home.into(),
+            bridge: None,
+        }
+    }
+
+    pub fn with_bridge(mut self, bridge: Arc<Bridge>) -> Self {
+        self.bridge = Some(bridge);
+        self
     }
 
     pub fn from_env() -> Self {
@@ -551,6 +564,100 @@ impl LocalHost {
         let contents = toml::to_string(&raw)?;
         self.write_automation(&id, &contents)?;
         definition(&id, &contents)
+    }
+
+    /// The original's `automation-run-now` for a local task: one app-server thread per task
+    /// folder, titled with the task name, then a turn with the original's run preamble and the
+    /// prompt. A run that cannot start fails with the reason; no run is recorded or faked.
+    /// The original also runs worktree, project-target and heartbeat tasks; those need its git
+    /// worker and renderer state, so they fail here instead of running somewhere else.
+    fn automation_run_now(&self, params: &Value) -> Result<Value> {
+        let id = params["id"].as_str().context("missing automation id")?;
+        let item = self
+            .automations()?
+            .get("items")
+            .and_then(Value::as_array)
+            .and_then(|items| items.iter().find(|item| item["id"] == id))
+            .cloned()
+            .context("Automation not found.")?;
+        let prompt = item["prompt"].as_str().unwrap_or_default();
+        ensure!(
+            !ui::screens::automations::event_triggered(prompt),
+            "Automations triggered by events can’t be run manually"
+        );
+        ensure!(
+            item["kind"] == "cron",
+            "Heartbeat tasks cannot be run from this app yet"
+        );
+        ensure!(
+            item["target"].is_null() && item["executionEnvironment"] == "local",
+            "Only local tasks with project folders can be run from this app yet"
+        );
+        let cwds: Vec<&str> = item["cwds"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect();
+        ensure!(
+            !cwds.is_empty(),
+            "Scheduled run skipped: no folders configured"
+        );
+        let bridge = self
+            .bridge
+            .as_ref()
+            .context("The app server is not connected")?;
+        let name = item["name"].as_str().unwrap_or_default();
+        let last = item["lastRunAt"].as_i64().map_or_else(
+            || "never".to_owned(),
+            |ms| {
+                let at = chrono::DateTime::from_timestamp_millis(ms).unwrap_or_default();
+                format!(
+                    "{} ({ms})",
+                    at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+                )
+            },
+        );
+        let text = format!(
+            "Automation: {name}\n\nAutomation ID: {id}\nAutomation memory: $CODEX_HOME/automations/{id}/memory.md\nLast run: {last}\n\n{prompt}"
+        );
+        let effort = item["reasoningEffort"].as_str().unwrap_or("medium");
+        let mut first_error = None;
+        for cwd in cwds {
+            let started = pollster::block_on(async {
+                let mut start = json!({ "cwd": cwd });
+                if let Some(model) = item["model"].as_str() {
+                    start["model"] = model.into();
+                }
+                let thread: Value = bridge.request("thread/start", start).await?;
+                let thread_id = thread["thread"]["id"]
+                    .as_str()
+                    .context("thread/start returned no thread")?;
+                // The title is cosmetic: the original only logs a failure to set it.
+                let _ = bridge
+                    .request::<_, Value>(
+                        "thread/name/set",
+                        json!({ "threadId": thread_id, "name": name }),
+                    )
+                    .await;
+                let mut turn = json!({
+                    "threadId": thread_id, "cwd": cwd, "effort": effort,
+                    "input": [{ "type": "text", "text": text, "text_elements": [] }],
+                });
+                if let Some(model) = item["model"].as_str() {
+                    turn["model"] = model.into();
+                }
+                bridge.request::<_, Value>("turn/start", turn).await?;
+                Ok::<(), anyhow::Error>(())
+            });
+            if let Err(error) = started {
+                first_error.get_or_insert(error);
+            }
+        }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(json!({ "success": true })),
+        }
     }
 
     /// Saves a validated original-format definition, not an automation scheduling command.
@@ -756,6 +863,7 @@ impl Host for LocalHost {
         let body = match endpoint {
             "list-automations" => self.automations()?,
             "create-automation" => self.create_automation(&params)?,
+            "automation-run-now" => self.automation_run_now(&params)?,
             "inbox-items" => self.inbox(&params)?,
             "git-changes" | "git-stage" | "git-unstage" | "git-revert" | "git-commit-status"
             | "git-commit-diff" | "git-commit" | "git-push" | "git-checkout" => {
@@ -876,6 +984,12 @@ impl CloudHost {
             .filter(|u| !u.trim().is_empty())
             .unwrap_or_else(|| "https://chatgpt.com/backend-api".into());
         Self::new(LocalHost::from_env(), credentials, base)
+    }
+
+    /// Lets the local endpoints that start app-server work (`automation-run-now`) run.
+    pub fn with_bridge(mut self, bridge: Arc<Bridge>) -> Self {
+        self.local = self.local.with_bridge(bridge);
+        self
     }
 
     /// Cached sign-in, reloaded on `refresh`. Failures carry the original's messages only.

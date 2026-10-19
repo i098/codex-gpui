@@ -405,6 +405,8 @@ pub struct Root {
     picking_project: bool,
     automations: Option<Result<Value, String>>,
     automation_load: Option<Task<()>>,
+    /// Tasks whose `automation-run-now` has not answered; their rows read `Starting run…`.
+    running_automations: HashSet<String>,
     suggestion_load: Option<Task<()>>,
     /// The Scheduled routes' sidebar, fed the host's list when the read completes.
     scheduled: Option<Entity<automations::ScheduledSidebar>>,
@@ -629,12 +631,14 @@ impl Root {
             command_menu: None,
             dialog: None,
             login: None,
-            host: Arc::new(host::CloudHost::from_env(host::app_server_credentials(
-                bridge.clone(),
-            ))),
+            host: Arc::new(
+                host::CloudHost::from_env(host::app_server_credentials(bridge.clone()))
+                    .with_bridge(bridge.clone()),
+            ),
             bridge,
             automations: None,
             automation_load: None,
+            running_automations: HashSet::new(),
             project_load: None,
             picking_project: false,
             suggestion_load: None,
@@ -1514,6 +1518,52 @@ impl Root {
             .map_or_else(Vec::new, automations::tasks)
     }
 
+    fn sync_starting(&self, cx: &mut Context<Self>) {
+        if let Some(sidebar) = &self.scheduled {
+            let running = self.running_automations.clone();
+            sidebar.update(cx, |sidebar, cx| sidebar.set_starting(running, cx));
+        }
+    }
+
+    /// Row menu `Run now` (`run-now-11e55df28c95.js`): the host's `automation-run-now` with an
+    /// info toast and the row's `Starting run…` until it answers. A refusal or a
+    /// `success: false` answer is the original's `Could not start scheduled task` danger toast;
+    /// a started run shows as the new thread in Recents.
+    fn run_automation_now(&mut self, id: String, cx: &mut Context<Self>) {
+        if !self.running_automations.insert(id.clone()) {
+            return;
+        }
+        self.sync_starting(cx);
+        self.toast(Toast::info("Starting run…"), cx);
+        let host = self.host.clone();
+        let params = json!({ "id": id, "collaborationMode": null, "permissions": null });
+        let run = cx.background_spawn(async move {
+            host.fetch(&host::Request::post("automation-run-now", Some(params)))
+                .and_then(|response| host::json_body(&response))
+                .map_err(|error| error.to_string())
+        });
+        cx.spawn(async move |this, cx| {
+            let result = run.await;
+            this.update(cx, |this, cx| {
+                this.running_automations.remove(&id);
+                this.sync_starting(cx);
+                let title = "Could not start scheduled task";
+                match result {
+                    Ok(body) if body["success"] == true => {}
+                    Ok(_) => this.toast(Toast::danger(title), cx),
+                    Err(error) => this.toast(Toast::danger(format!("{title}: {error}")), cx),
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The Scheduled routes' task list, when a route shows it.
+    pub fn scheduled_sidebar(&self) -> Option<&Entity<automations::ScheduledSidebar>> {
+        self.scheduled.as_ref()
+    }
+
     /// The Scheduled empty page, when the route shows it.
     pub fn suggestions(&self) -> Option<&Entity<automations::AutomationsPage>> {
         self.suggestions.as_ref()
@@ -1719,6 +1769,7 @@ impl Root {
                 self.load_automations(cx);
                 let (shell, sidebar, page) = automations::shell(tasks, None, utc_offset(), cx);
                 self.scheduled = Some(sidebar);
+                self.sync_starting(cx);
                 self.suggestions = page;
                 Some(shell)
             }
@@ -1734,6 +1785,7 @@ impl Root {
                 });
                 let (shell, sidebar, page) = automations::shell(tasks, selected, utc_offset(), cx);
                 self.scheduled = Some(sidebar);
+                self.sync_starting(cx);
                 self.suggestions = page;
                 Some(shell)
             }
@@ -3937,6 +3989,11 @@ impl Render for Root {
             .on_action(
                 cx.listener(|this, a: &automations::OpenAutomation, window, cx| {
                     this.navigate(Route::Automation(a.id.clone()), window, cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|this, a: &automations::RunAutomationNow, _, cx| {
+                    this.run_automation_now(a.id.clone(), cx)
                 }),
             )
             .on_action(cx.listener(|this, _: &automations::NewTask, window, cx| {
