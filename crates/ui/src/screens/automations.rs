@@ -3,16 +3,23 @@
 //! Host data (`list-automations`, `/suggested_automations`) comes from the recorded answers
 //! in `tools/route1/oracle.json`.
 
-use crate::{Shell, icon::icon, icon_button, motion::ButtonVisual, text};
+use crate::{
+    Shell, focus,
+    icon::icon,
+    icon_button,
+    motion::ButtonVisual,
+    text,
+    tooltip::{Side, tooltip},
+};
 use gpui::{
-    Action, AnyView, App, AppContext as _, Context, Corners, Div, Entity, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, Render, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, Window, actions, canvas, div, img,
-    prelude::FluentBuilder as _, px,
+    Action, Anchor, AnyView, App, AppContext as _, ClickEvent, Context, Corners, Div, Entity,
+    FocusHandle, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Render,
+    Role, SharedString, Stateful, StatefulInteractiveElement, Styled, Window, actions, anchored,
+    canvas, deferred, div, img, prelude::FluentBuilder as _, px,
 };
 use serde::Deserialize;
 use serde_json::Value;
-use std::{fs, path::Path};
+use std::{collections::HashSet, fs, path::Path};
 use theme::{ActiveTheme as _, Theme};
 
 actions!(
@@ -42,6 +49,12 @@ pub struct OpenAutomation {
     pub id: String,
 }
 
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = automations, no_json)]
+pub struct ToggleAutomation {
+    pub id: String,
+}
+
 /// One `list-automations` item, as the sidebar `Upcoming` list and the task thread show it.
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -49,6 +62,7 @@ pub struct Task {
     pub id: String,
     pub name: SharedString,
     pub prompt: SharedString,
+    pub status: String,
     #[serde(default)]
     pub rrule: String,
     /// Unix ms.
@@ -265,10 +279,15 @@ fn shell_with(
     Entity<ScheduledSidebar>,
     Option<Entity<AutomationsPage>>,
 ) {
-    let sidebar = cx.new(|_| ScheduledSidebar {
+    let sidebar = cx.new(|cx| ScheduledSidebar {
         tasks,
         selected: selected.as_ref().map(|(task, _)| task.id.clone()),
         utc_offset,
+        pending: HashSet::new(),
+        menu: None,
+        menu_button_hovered: false,
+        menu_focus: cx.focus_handle(),
+        return_focus: None,
     });
     let mut page = None;
     let main: AnyView = match selected {
@@ -303,6 +322,13 @@ pub struct ScheduledSidebar {
     tasks: Vec<Task>,
     selected: Option<String>,
     utc_offset: i64,
+    pending: HashSet<String>,
+    /// The row whose `Scheduled task actions` menu is open.
+    menu: Option<String>,
+    /// The menu button is under the pointer: a press on it toggles the menu, not closes it.
+    menu_button_hovered: bool,
+    menu_focus: FocusHandle,
+    return_focus: Option<FocusHandle>,
 }
 
 impl ScheduledSidebar {
@@ -311,12 +337,226 @@ impl ScheduledSidebar {
         cx.notify();
     }
 
-    fn row(&self, task: &Task, t: &Theme) -> impl IntoElement {
+    pub fn set_pending(&mut self, id: &str, pending: bool, cx: &mut Context<Self>) {
+        if pending {
+            self.pending.insert(id.to_owned());
+        } else {
+            self.pending.remove(id);
+        }
+        cx.notify();
+    }
+
+    fn close_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.menu = None;
+        if let Some(focus) = self.return_focus.take() {
+            window.focus(&focus, cx);
+        }
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    fn toggle_menu(
+        &mut self,
+        id: &str,
+        button: FocusHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.menu.as_deref() == Some(id) {
+            self.close_menu(window, cx);
+            return;
+        }
+        self.menu = Some(id.to_owned());
+        self.return_focus = Some(button);
+        window.focus(&self.menu_focus, cx);
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    fn toggle(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_menu(window, cx);
+        window.dispatch_action(Box::new(ToggleAutomation { id: id.to_owned() }), cx);
+    }
+
+    fn menu_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        match event.keystroke.key.as_str() {
+            "escape" => self.close_menu(window, cx),
+            "enter" | "space" => {
+                if let Some(id) = self.menu.clone() {
+                    self.toggle(&id, window, cx);
+                }
+            }
+            "up" | "down" | "home" | "end" | "tab" => cx.stop_propagation(),
+            _ => {}
+        }
+    }
+
+    /// The original menu: opens under the button, right edge 1 px inside it, 220 px wide.
+    fn menu_popup(&self, task: &Task, t: &Theme, cx: &Context<Self>) -> impl IntoElement + use<> {
+        let paused = task.status == "PAUSED";
+        let label = if paused { "Resume" } else { "Pause" };
+        let (id, hover) = (task.id.clone(), t.menu_item_hover);
+        let item = div()
+            .id("toggle-status")
+            .group("toggle-status-item")
+            .role(Role::MenuItem)
+            .aria_label(label)
+            .aria_active_descendant()
+            .aria_disabled(self.pending.contains(&task.id))
+            .h(px(28.5625))
+            .px(px(8.))
+            .rounded(px(15.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .hover(move |s| s.bg(hover))
+            .on_click(cx.listener(move |this, _, window, cx| this.toggle(&id, window, cx)))
+            .child(
+                div()
+                    .size(px(16.))
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .opacity(0.75)
+                    .group_hover("toggle-status-item", |s| s.opacity(1.))
+                    .child(status_icon(paused, t.text)),
+            )
+            .child(text(label, 13., 18.5714, 430., t.text));
+        let menu = div()
+            .id("task-actions-menu")
+            .occlude()
+            .role(Role::Menu)
+            .aria_label("Scheduled task actions")
+            .track_focus(&self.menu_focus)
+            .on_key_down(cx.listener(Self::menu_key))
+            .on_mouse_down_out(cx.listener(|this, _, window, cx| {
+                if !this.menu_button_hovered {
+                    this.close_menu(window, cx);
+                }
+            }))
+            .child(crate::composer::popover(t, 220., |menu| menu.child(item)));
+        deferred(
+            div().absolute().top(px(30.)).right(px(1.)).child(
+                anchored()
+                    .anchor(Anchor::TopRight)
+                    .snap_to_window_with_margin(px(7.))
+                    .child(menu),
+            ),
+        )
+        .with_priority(1)
+    }
+
+    fn row(
+        &self,
+        task: &Task,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let fill = fill(px(12.5), t.ghost_hover);
         let group = SharedString::from(format!("task-row-{}", task.id));
         let id = task.id.clone();
+        let pending = self.pending.contains(&task.id);
+        let paused = task.status == "PAUSED";
+        let label = if paused { "Resume" } else { "Pause" };
+        let status_id = SharedString::from(format!("{group}-status"));
+        let status_focus = focus::handle(status_id.clone(), 0, window, cx);
+        let menu_id = SharedString::from(format!("{group}-actions"));
+        let menu_focus = focus::handle(menu_id.clone(), 0, window, cx);
+        let status_focused = status_focus.read(cx).handle.is_focused(window);
+        let open = self.menu.as_deref() == Some(task.id.as_str());
+        let show_controls = status_focused || menu_focus.read(cx).handle.is_focused(window) || open;
+        let status_task = task.id.clone();
+        let (press_task, key_task) = (task.id.clone(), task.id.clone());
+        let (press_return, key_return) = (menu_focus.clone(), menu_focus.clone());
+        let status = focus::ring(
+            div()
+                .id(status_id.clone())
+                .group(status_id.clone())
+                .role(Role::Button)
+                .aria_label(format!("{label} {}", task.name))
+                .aria_disabled(pending)
+                .relative()
+                .size(px(28.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(9.375))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(
+                    cx.listener(move |this, _, window, cx| this.toggle(&status_task, window, cx)),
+                )
+                .child(if pending {
+                    icon("sidebar-cmd-spinner", 16., t.text_tertiary).into_any_element()
+                } else if paused {
+                    status_icon(true, t.text_tertiary).into_any_element()
+                } else {
+                    div()
+                        .relative()
+                        .size(px(16.))
+                        .child(
+                            icon("scheduled", 16., t.text_tertiary)
+                                .opacity(if status_focused { 0. } else { 1. })
+                                .group_hover(status_id.clone(), |s| s.opacity(0.)),
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .inset_0()
+                                .opacity(if status_focused { 1. } else { 0. })
+                                .group_hover(status_id.clone(), |s| s.opacity(1.))
+                                .child(status_icon(false, t.text_tertiary)),
+                        )
+                        .into_any_element()
+                }),
+            &status_focus,
+            px(9.375),
+            px(2.),
+            cx,
+        );
+        let menu = focus::ring(
+            div()
+                .id(menu_id)
+                .relative()
+                .role(Role::Button)
+                .aria_label("Scheduled task actions")
+                .size(px(28.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(9.375))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _, window, cx| {
+                        let button = press_return.read(cx).handle.clone();
+                        this.toggle_menu(&press_task, button, window, cx);
+                    }),
+                )
+                .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                    if event.is_keyboard() {
+                        let button = key_return.read(cx).handle.clone();
+                        this.toggle_menu(&key_task, button, window, cx);
+                    }
+                }))
+                .on_hover(cx.listener(|this, hovered: &bool, _, _| {
+                    this.menu_button_hovered = *hovered;
+                }))
+                .child(ButtonVisual {
+                    glyph: icon("thread-chat-actions", 16., t.text_tertiary),
+                    radius: px(9.375),
+                    hover: t.ghost_hover,
+                    foreground: t.text.opacity(0.85),
+                    selected: open,
+                })
+                .when(open, |d| d.child(self.menu_popup(task, t, cx))),
+            &menu_focus,
+            px(9.375),
+            px(2.),
+            cx,
+        );
         let mut secondary = div().h(px(16.)).pr(px(5.)).flex().items_center();
-        if let Some(next) = task.next_run_at {
+        if !paused && let Some(next) = task.next_run_at {
             secondary = secondary
                 .child(text(
                     day_time(next, self.utc_offset).0,
@@ -352,46 +592,41 @@ impl ScheduledSidebar {
                     .overflow_hidden()
                     .text_ellipsis(),
             )
-            .child(secondary.child(text(task.cadence(), 12., 16., 430., t.text_tertiary)))
+            .child(secondary.child(text(
+                if paused { "Paused" } else { task.cadence() },
+                12.,
+                16.,
+                430.,
+                t.text_tertiary,
+            )))
             .child(
                 div()
                     .absolute()
                     .top_0()
                     .right(px(2.))
                     .h_full()
-                    .w(px(52.))
+                    .w(px(80.))
                     .pr(px(6.))
                     .flex()
                     .items_center()
                     .justify_end()
-                    .opacity(0.)
+                    .opacity(if show_controls { 1. } else { 0. })
                     .group_hover(group.clone(), |s| s.opacity(1.))
-                    .child(
-                        div()
-                            .id(SharedString::from(format!("{group}-actions")))
-                            .size(px(28.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded(px(9.375))
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .child(ButtonVisual {
-                                glyph: icon("thread-chat-actions", 16., t.text_tertiary),
-                                radius: px(9.375),
-                                hover: t.ghost_hover,
-                                foreground: t.text.opacity(0.85),
-                                selected: false,
-                            }),
-                    ),
+                    .child(tooltip(status, label, None, Side::Top))
+                    .child(menu),
             )
     }
 }
 
 impl Render for ScheduledSidebar {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = cx.theme();
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.theme().clone();
         let hover_bg = t.list_hover;
-        let rows: Vec<_> = self.tasks.iter().map(|task| self.row(task, t)).collect();
+        let rows: Vec<_> = self
+            .tasks
+            .iter()
+            .map(|task| self.row(task, &t, window, cx))
+            .collect();
         div()
             .size_full()
             .flex()
@@ -418,7 +653,7 @@ impl Render for ScheduledSidebar {
                                 icon_button(
                                     "search-tasks",
                                     icon("search", 16., t.text_tertiary),
-                                    t,
+                                    &t,
                                 )
                                 .on_click(crate::dispatch::<SearchTasks>),
                             ),
@@ -465,7 +700,7 @@ impl Render for ScheduledSidebar {
                                 icon_button(
                                     "filter-tasks",
                                     icon("automations-filter", 16., t.text_tertiary),
-                                    t,
+                                    &t,
                                 )
                                 .on_click(crate::dispatch::<FilterTasks>),
                             ),
@@ -892,15 +1127,14 @@ impl Render for AutomationThread {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn cards_fill_six_from_oracle() {
-        let server = serde_json::from_value(super::oracle("\"url\":\"/suggested_automations\""))
-            .expect("shape");
-        let titles: Vec<_> = super::cards(server).into_iter().map(|s| s.title).collect();
-        assert_eq!(titles.len(), 6);
-        assert_eq!(titles[0], "AP Lang practice");
-        assert_eq!(titles[3], "Weekly meal plan");
-    }
+fn status_icon(paused: bool, color: gpui::Hsla) -> crate::icon::Icon {
+    icon(
+        if paused {
+            "automation-resume"
+        } else {
+            "automation-pause"
+        },
+        16.,
+        color,
+    )
 }

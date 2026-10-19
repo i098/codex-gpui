@@ -26,7 +26,7 @@ use gpui::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::{fs, path::PathBuf, sync::Arc, time::Duration};
 use theme::Theme;
 use ui::composer::{Approval, Composer, Permission, QueueAction, Submission};
@@ -422,6 +422,7 @@ pub struct Root {
     picking_project: bool,
     automations: Option<Result<Value, String>>,
     automation_load: Option<Task<()>>,
+    automation_updates: HashMap<String, Task<()>>,
     suggestion_load: Option<Task<()>>,
     /// The Scheduled routes' sidebar, fed the host's list when the read completes.
     scheduled: Option<Entity<automations::ScheduledSidebar>>,
@@ -672,6 +673,7 @@ impl Root {
             automation_load: None,
             project_load: None,
             picking_project: false,
+            automation_updates: HashMap::new(),
             suggestion_load: None,
             scheduled: None,
             suggestions: None,
@@ -960,12 +962,18 @@ impl Root {
         &self.config
     }
 
-    /// Replaces the desktop host and cancels any pending host read.
+    /// Replaces the desktop host and cancels pending UI callbacks for its reads and updates.
     pub fn set_host(&mut self, host: Arc<dyn host::Host>, cx: &mut Context<Self>) {
         self.automation_load = None;
         self.project_load = None;
         self.suggestion_load = None;
         self.git_status_load = None;
+        self.automation_updates.clear();
+        if let Some(sidebar) = &self.scheduled {
+            for task in self.tasks() {
+                sidebar.update(cx, |sidebar, cx| sidebar.set_pending(&task.id, false, cx));
+            }
+        }
         if let Some(thread) = &self.thread {
             thread.update(cx, |view, cx| view.set_git_repository(None, cx));
         }
@@ -1574,7 +1582,6 @@ impl Root {
     }
 
     fn load_automations(&mut self, cx: &mut Context<Self>) {
-        self.automations = None;
         let host = self.host.clone();
         let read = cx.background_spawn(async move {
             host.fetch(&host::Request::post("list-automations", None))
@@ -1598,6 +1605,86 @@ impl Root {
             })
             .ok();
         }));
+    }
+
+    fn toggle_automation(&mut self, id: &str, cx: &mut Context<Self>) {
+        if self.automation_updates.contains_key(id) {
+            return;
+        }
+        let item = self
+            .automations
+            .as_ref()
+            .and_then(|list| list.as_ref().ok())
+            .and_then(|list| list["items"].as_array())
+            .and_then(|items| items.iter().find(|item| item["id"] == id));
+        let Some(item) = item else { return };
+        let status = match item["status"].as_str() {
+            Some("ACTIVE") => "PAUSED",
+            Some("PAUSED") => "ACTIVE",
+            _ => return,
+        };
+        let body = automation_update_body(item, status);
+        let id = id.to_owned();
+        self.automation_load = None;
+        if let Some(sidebar) = &self.scheduled {
+            sidebar.update(cx, |sidebar, cx| sidebar.set_pending(&id, true, cx));
+        }
+        let host = self.host.clone();
+        let expected_id = id.clone();
+        let read = cx.background_spawn(async move {
+            let response = host.fetch(&host::Request::post("automation-update", Some(body)))?;
+            let response = host::json_body(&response)?;
+            let item = response
+                .get("item")
+                .context("host response has no updated automation")?;
+            anyhow::ensure!(
+                item["id"] == expected_id && item["status"] == status,
+                "host returned a different automation or status"
+            );
+            serde_json::from_value::<automations::Task>(item.clone())?;
+            Ok::<_, anyhow::Error>(item.clone())
+        });
+        let update_key = id.clone();
+        let update = cx.spawn(async move |this, cx| {
+            let result = read.await;
+            this.update(cx, |this, cx| {
+                this.automation_updates.remove(&id);
+                if let Some(sidebar) = &this.scheduled {
+                    sidebar.update(cx, |sidebar, cx| sidebar.set_pending(&id, false, cx));
+                }
+                match result {
+                    Ok(item) => {
+                        if let Some(Ok(list)) = &mut this.automations
+                            && let Some(items) = list["items"].as_array_mut()
+                            && let Some(stored) = items.iter_mut().find(|item| item["id"] == id)
+                        {
+                            *stored = item;
+                        }
+                        let tasks = this.tasks();
+                        if let Some(sidebar) = &this.scheduled {
+                            sidebar.update(cx, |sidebar, cx| sidebar.set_tasks(tasks, cx));
+                        }
+                        this.toast(
+                            Toast::success(if status == "PAUSED" {
+                                "Successfully paused automation"
+                            } else {
+                                "Successfully resumed automation"
+                            }),
+                            cx,
+                        );
+                    }
+                    Err(error) => this.toast(
+                        Toast::danger("Could not update scheduled task")
+                            .description(error.to_string()),
+                        cx,
+                    ),
+                }
+                this.load_automations(cx);
+                cx.notify();
+            })
+            .ok();
+        });
+        self.automation_updates.insert(update_key, update);
     }
 
     fn load_suggestions(&mut self, cx: &mut Context<Self>) {
@@ -1870,6 +1957,11 @@ impl Root {
             Route::Mobile => Some(mobile::shell(cx)),
             Route::Home | Route::Thread(_) => None,
         };
+        if let Some(sidebar) = &self.scheduled {
+            for id in self.automation_updates.keys() {
+                sidebar.update(cx, |sidebar, cx| sidebar.set_pending(id, true, cx));
+            }
+        }
         if self.scheduled_route() {
             self.load_suggestions(cx);
         }
@@ -4511,6 +4603,11 @@ impl Render for Root {
                     this.navigate(Route::Automation(a.id.clone()), window, cx)
                 }),
             )
+            .on_action(
+                cx.listener(|this, action: &automations::ToggleAutomation, _, cx| {
+                    this.toggle_automation(&action.id, cx);
+                }),
+            )
             .on_action(cx.listener(|this, _: &automations::NewTask, window, cx| {
                 this.open_dialog(DialogKind::ScheduleTask, window, cx)
             }))
@@ -4620,4 +4717,32 @@ impl Render for Root {
             .children(self.dialog.clone());
         features::actions(root, cx).into_any_element()
     }
+}
+
+fn automation_update_body(item: &Value, status: &str) -> Value {
+    let heartbeat = item["kind"] == "heartbeat";
+    let mut body = json!({
+        "id": item["id"], "kind": item["kind"], "name": item["name"],
+        "prompt": item["prompt"], "status": status, "rrule": item["rrule"],
+        "notificationPolicy": item["notificationPolicy"],
+        "model": if heartbeat { Value::Null } else { item["model"].clone() },
+        "reasoningEffort": if heartbeat { Value::Null } else { item["reasoningEffort"].clone() },
+    });
+    if heartbeat {
+        body["targetThreadId"] = item["targetThreadId"].clone();
+    } else {
+        body["autoArchive"] = json!(item["autoArchive"].as_bool().unwrap_or(false));
+        body["projectId"] = match item["target"]["type"].as_str() {
+            Some("project") => item["target"]["projectId"].clone(),
+            Some("projectless") => Value::Null,
+            _ => item["cwds"]
+                .get(0)
+                .filter(|cwd| **cwd != "~")
+                .cloned()
+                .unwrap_or(Value::Null),
+        };
+        body["executionEnvironment"] = item["executionEnvironment"].clone();
+        body["localEnvironmentConfigPath"] = item["localEnvironmentConfigPath"].clone();
+    }
+    body
 }

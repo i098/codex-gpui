@@ -691,8 +691,13 @@ impl LocalHost {
             } else {
                 &item[key]
             };
+            // Original `ugi` sends a legacy task's first cwd as `projectId`.
+            let legacy_cwd = key == "projectId"
+                && item["target"].is_null()
+                && item["cwds"].get(0) == Some(value)
+                && value != "~";
             ensure!(
-                stored == value,
+                stored == value || legacy_cwd,
                 "status-only automation update cannot change {key}"
             );
         }
