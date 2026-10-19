@@ -584,6 +584,16 @@ The click puts the card in `Starting…` (rays spinner, status text) and disable
 The oracle answers that read with the host's 499, so the recorded outcome is the toast `Couldn’t start this suggested task` and the cards enabled again.
 The conversation prepare, its stream, and the navigation into the started conversation are not recorded and not wired.
 
+`LocalHost` implements the original `automation-update` status change for local tasks (issue https://github.com/i098/codex-gpui/issues/226).
+It accepts `{id, status}` or the original full cron or heartbeat body; any other changed field fails.
+`PAUSED` clears `next_run_at` and `next_run_nominal_at`.
+`ACTIVE` recalculates the original nominal and actual next run with `GF`/`KF`/`JF`/`XF` and the persisted `.run-jitter-salt`; it never reuses a cached time.
+A rule without a future run returns the original `Automation schedule has no future runs…` error.
+The update keeps the task identity, the definition and the unrelated TOML and database fields, and restores the TOML when the database commit fails.
+It returns the original `{item}` shape.
+The recurrence uses the vendored `rrule` 0.14.0 with the original limits: `INTERVAL` and `COUNT` up to the JavaScript safe integers, iteration through year 9999, and `BYSECOND=60` moved into the next minute.
+The `host` checks match the retained original oracle; the row actions do not call this endpoint yet.
+
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Rail `Scheduled` | entry | Automations page, `ScheduledSidebar`. | `Route::Scheduled` with `ScheduledSidebar` and the page. | PASS (`rail_scheduled`, `parity_automations`) |
@@ -593,7 +603,7 @@ The conversation prepare, its stream, and the navigation into the started conver
 | 5 | Search | focus | Filters; `No matching tasks`. | Dispatches `SearchTasks`; no handler. | NOT WIRED (no host: `list-automations`) |
 | 6 | Status filter | click | All / Active / Paused. | — | NOT WIRED (no host: `list-automations`) |
 | 7 | Task row | click | Detail panel. | — | NOT WIRED (no host: `list-automations`) |
-| 8 | Row actions | click | Edit, Run now, Pause, Delete. | — | NOT WIRED (no host: `automation-update`, `automation-delete`) |
+| 8 | Row actions | click | Edit, Run now, Pause, Delete. | — | NOT WIRED (UI; `LocalHost` has `automation-update` pause/resume, no `automation-delete`) |
 | 9 | Editor fields | focus | Name, Prompt, schedule. | — | NOT WIRED (no host: `automation-create`) |
 | 10 | Previous runs | click | Run chat, mark read, archive. | — | NOT WIRED (no host: `inbox-items`, `automation-run-archive`) |
 | 11 | Row hover | hover | Row highlight. | No task rows; suggestion hover matches the original recording. | FAIL (no task rows; suggestion hover passes `s035::suggestion_hover_matches_original`) |

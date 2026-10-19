@@ -5,14 +5,14 @@
 //! `LocalHost` reads legacy definitions from `automations/<id>/automation.toml` and local
 //! run metadata from `sqlite/codex.db` under `CODEX_HOME` (default: `~/.codex`).
 //! It never migrates the original database or reads another account's automation rows.
-//! Definition writes are atomic; scheduling and execution remain the original host's job.
+//! Definition writes are atomic; status updates persist local recurrence metadata without running tasks.
 //! `CloudHost` adds the original's `httpFetch` service for ChatGPT backend requests (usage,
 //! beacons, hosted automations, suggested-task conversations): it consumes the renderer's
 //! `X-OpenAI-Attach-*` headers, attaches the token that `codex app-server` holds
 //! (`getAuthStatus` with `includeToken`) plus the account route from `account/read`, retries once
 //! after a 401 with a refreshed token, and answers the original wire shapes, including errors.
 //! The token never reaches logs, errors, or `Debug` output.
-//! Local fetches support `list-automations`, `inbox-items`, and `paths-exist`; other endpoints return errors.
+//! Local fetches support `list-automations`, `create-automation`, `automation-update`, `inbox-items`, the `git-*` endpoints, and `paths-exist`; other endpoints return errors.
 //! `Root` loads the automation list off the UI thread when the Scheduled route opens.
 //! Consumers read the result through `Root::automations`; this service slice does not change the static screens.
 //!
@@ -38,6 +38,7 @@ use std::time::Duration;
 use ui::screens::sidebar::Project;
 use url::Url;
 
+mod automation_schedule;
 mod git;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -599,6 +600,169 @@ impl LocalHost {
         Ok(())
     }
 
+    fn update_automation(&self, params: &Value) -> Result<Value> {
+        let id = params["id"].as_str().context("missing automation id")?;
+        ensure!(
+            !id.is_empty() && id != "." && id != ".." && !id.contains(['/', '\\', '\0']),
+            "invalid automation id"
+        );
+        let status = params["status"]
+            .as_str()
+            .context("missing automation status")?;
+        ensure!(
+            matches!(status, "ACTIVE" | "PAUSED"),
+            "invalid automation status"
+        );
+        let missing = "Automation does not exist in the app and could not be updated. It may have been deleted manually by the user.";
+        let read_error = |error: std::io::Error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                anyhow::Error::msg(missing)
+            } else {
+                error.into()
+            }
+        };
+        let root = self
+            .home
+            .join("automations")
+            .canonicalize()
+            .map_err(read_error)?;
+        let path = root
+            .join(id)
+            .join("automation.toml")
+            .canonicalize()
+            .map_err(read_error)?;
+        ensure!(
+            root.starts_with(self.home.canonicalize()?) && path.starts_with(&root),
+            "automation directory escapes CODEX_HOME"
+        );
+        let mut db = self
+            .database(OpenFlags::SQLITE_OPEN_READ_WRITE)?
+            .context("automation database is unavailable")?;
+        let transaction = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let owned: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM automations WHERE id = ? AND
+             (account_id IS NOT NULL OR user_id IS NOT NULL OR installation_id IS NOT NULL))",
+            [id],
+            |row| row.get(0),
+        )?;
+        ensure!(
+            !owned,
+            "cannot write an account-owned automation through LocalHost"
+        );
+        let original = fs::read_to_string(&path).map_err(read_error)?;
+        let mut item = definition(id, &original)?;
+        ensure!(item["status"] != "DELETED", "{missing}");
+        for (key, value) in params
+            .as_object()
+            .context("host parameters must be an object")?
+        {
+            if matches!(key.as_str(), "id" | "status" | "hostId") {
+                continue;
+            }
+            let stored = if key == "projectId" {
+                &item["target"]["projectId"]
+            } else {
+                &item[key]
+            };
+            ensure!(
+                stored == value,
+                "status-only automation update cannot change {key}"
+            );
+        }
+        let last: Option<i64> = transaction
+            .query_row(
+                "SELECT last_run_at FROM automations WHERE id = ?",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        let rule = item["rrule"]
+            .as_str()
+            .context("missing automation recurrence")?;
+        let now = chrono::Utc::now().timestamp_millis();
+        // Resume always recalculates; a cached database time is never reused.
+        let (next, nominal) = if status == "PAUSED" {
+            (None, None)
+        } else {
+            // Original ZF: an unreadable salt is replaced, and a failed save still schedules this run.
+            let salt_path = root.join(".run-jitter-salt");
+            let salt = fs::read_to_string(&salt_path)
+                .map(|salt| salt.trim().to_owned())
+                .unwrap_or_default();
+            let salt = if salt.is_empty() {
+                let salt = device_id();
+                let _ = fs::write(&salt_path, format!("{salt}\n"));
+                salt
+            } else {
+                salt
+            };
+            let (next, nominal) = automation_schedule::next_run(
+                rule,
+                item["kind"].as_str().context("missing automation kind")?,
+                id,
+                now,
+                rrule::Tz::LOCAL,
+                &salt,
+            )
+            .context(automation_schedule::NO_FUTURE_RUN)?;
+            (Some(next), Some(nominal))
+        };
+        transaction.execute(
+            "INSERT INTO automations
+             (id, name, prompt, status, next_run_at, next_run_nominal_at, last_run_at, cwds,
+              target_type, project_id, rrule, model, reasoning_effort, created_at, updated_at,
+              kind, target_thread_id, execution_environment, local_environment_config_path,
+              plugin_template_id, notification_policy, auto_archive)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+                     ?16, ?17, ?18, ?19, ?20, ?21, ?22)
+             ON CONFLICT(id) DO UPDATE SET status=excluded.status, next_run_at=excluded.next_run_at,
+              next_run_nominal_at=excluded.next_run_nominal_at, updated_at=excluded.updated_at,
+              rrule=excluded.rrule",
+            params![
+                id,
+                item["name"].as_str(),
+                item["prompt"].as_str(),
+                status,
+                next,
+                nominal,
+                last,
+                item.get("cwds")
+                    .map_or_else(|| "[]".to_owned(), Value::to_string),
+                item["target"]["type"].as_str(),
+                item["target"]["projectId"].as_str(),
+                rule,
+                item["model"].as_str(),
+                item["reasoningEffort"].as_str(),
+                item["createdAt"].as_i64(),
+                now,
+                item["kind"].as_str(),
+                item["targetThreadId"].as_str(),
+                item["executionEnvironment"].as_str(),
+                item["localEnvironmentConfigPath"].as_str(),
+                item["pluginTemplateId"].as_str(),
+                item["notificationPolicy"].as_str(),
+                item["autoArchive"].as_bool().unwrap_or(false)
+            ],
+        )?;
+        let mut raw: toml::Table = toml::from_str(&original)?;
+        raw.insert("status".into(), status.into());
+        raw.insert("updated_at".into(), now.into());
+        self.write_automation(id, &toml::to_string(&raw)?)?;
+        if let Err(error) = transaction.commit() {
+            self.write_automation(id, &original).context(format!(
+                "restore automation after database commit failed: {error}"
+            ))?;
+            return Err(error).context("persist automation status");
+        }
+        item["status"] = json!(status);
+        item["updatedAt"] = json!(now);
+        item["nextRunAt"] = json!(next);
+        item["nextRunNominalAt"] = json!(nominal);
+        item["lastRunAt"] = json!(last);
+        Ok(json!({"item": item}))
+    }
+
     /// Applies the original inbox read-state update, restricted to local, unowned automations.
     pub fn mark_inbox_read(&self, thread_id: &str, read_at: Option<i64>) -> Result<bool> {
         let Some(db) = self.database(OpenFlags::SQLITE_OPEN_READ_WRITE)? else {
@@ -766,6 +930,7 @@ impl Host for LocalHost {
         let body = match endpoint {
             "list-automations" => self.automations()?,
             "create-automation" => self.create_automation(&params)?,
+            "automation-update" => self.update_automation(&params)?,
             "inbox-items" => self.inbox(&params)?,
             "git-changes" | "git-stage" | "git-unstage" | "git-revert" | "git-commit-status"
             | "git-commit-diff" | "git-commit" | "git-push" | "git-checkout" => {
