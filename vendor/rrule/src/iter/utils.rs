@@ -1,7 +1,7 @@
 use std::ops;
 
 use crate::core::{duration_from_midnight, Tz};
-use chrono::{NaiveDate, NaiveTime, Utc};
+use chrono::{Duration, NaiveDate, NaiveTime, Timelike, Utc};
 
 const DAY_SECS: i64 = 24 * 60 * 60;
 
@@ -77,6 +77,13 @@ pub(crate) fn add_time_to_date(
     date: NaiveDate,
     time: NaiveTime,
 ) -> Option<chrono::DateTime<Tz>> {
+    // A leap-second time is `BYSECOND=60`: like the original, it moves into the next minute.
+    if time.nanosecond() >= 1_000_000_000 {
+        let next = date
+            .and_time(time.with_nanosecond(time.nanosecond() - 1_000_000_000)?)
+            .checked_add_signed(Duration::seconds(1))?;
+        return add_time_to_date(tz, next.date(), next.time());
+    }
     if let Some(dt) = date.and_time(time).and_local_timezone(tz).single() {
         return Some(dt);
     }
@@ -125,6 +132,26 @@ mod test {
         assert_eq!(pymod(-6, 3), 0);
         assert_eq!(pymod(-6, -3), 0);
         assert_eq!(pymod(6, -3), 0);
+    }
+
+    #[test]
+    fn leap_second_time_moves_into_next_minute() {
+        let date = NaiveDate::from_ymd_opt(2026, 12, 31).unwrap();
+        let leap =
+            |hour, minute| NaiveTime::from_hms_nano_opt(hour, minute, 59, 1_000_000_000).unwrap();
+        let utc = |date: (i32, u32, u32), hour, minute| {
+            Tz::UTC
+                .with_ymd_and_hms(date.0, date.1, date.2, hour, minute, 0)
+                .unwrap()
+        };
+        assert_eq!(
+            add_time_to_date(Tz::UTC, date, leap(9, 0)),
+            Some(utc((2026, 12, 31), 9, 1))
+        );
+        assert_eq!(
+            add_time_to_date(Tz::UTC, date, leap(23, 59)),
+            Some(utc((2027, 1, 1), 0, 0))
+        );
     }
 
     #[test]
