@@ -47,11 +47,11 @@ fn ring_box(fx: &mut Fx) -> Result<Option<[f32; 4]>> {
     Ok(found.map(|b| b.map(|v| v as f32 / scale)))
 }
 
-/// The original `Log out?` card is 380 wide and centered in the window; its 32 px buttons sit
-/// 20 px from the bottom and right edges (`refs/interactions/logout.json`), so the 2 px ring
-/// around a button is 36 high and ends 18 above the card bottom.
+/// The original `Log out?` card is 380 × 170 with the `Signed in as` line, centered in the window;
+/// its 32 px buttons sit 20 px from the bottom and right edges (`refs/interactions/logout.json`),
+/// so the 2 px ring around a button is 36 high and spans y 447 to 483, as recorded.
 fn ring_fits(ring: [f32; 4]) -> bool {
-    let card_bottom = 832. / 2. + 145. / 2.;
+    let card_bottom = 832. / 2. + 170. / 2.;
     (ring[3] - ring[1] - 36.).abs() <= 0.6 && (ring[3] - (card_bottom - 18.)).abs() <= 0.6
 }
 
@@ -67,6 +67,10 @@ fn logout_requires_confirmation_and_preserves_the_session_on_failure() -> Result
     failed[1]["msg"]["error"] = json!({"code": -32603, "message": "Replay logout failure"});
     lines.extend(failed);
     lines.extend(exchange("account/logout", json!({})));
+    lines.extend(exchange(
+        "account/read",
+        json!({"account": {"type": "chatgpt", "email": "user@example.com", "planType": "promax"}, "requiresOpenaiAuth": true}),
+    ));
     let mut new_thread = common::recorded_thread(GREETING)?;
     new_thread["turns"] = json!([]);
     let pages: Vec<_> = (0..11)
@@ -248,5 +252,20 @@ fn logout_requires_confirmation_and_preserves_the_session_on_failure() -> Result
             ],
         "Previous account attachments reached a new submission: {inputs:?}"
     );
+    // The signed-in email is read again after sign-in: the card keeps its `Signed in as` line.
+    ensure!(
+        fx.sent()?
+            .iter()
+            .filter(|r| r["method"] == "account/read")
+            .count()
+            == 2,
+        "account/read must run at start and after sign-in"
+    );
+    fx.menu("Codex", "Log Out")?;
+    ensure!(
+        ring_box(&mut fx)?.is_some_and(ring_fits),
+        "the new session's logout card lost its email line"
+    );
+    shot(&mut fx, "confirmation-new-session")?;
     Ok(())
 }

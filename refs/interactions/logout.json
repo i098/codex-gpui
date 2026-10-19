@@ -10,7 +10,7 @@
   "Recorded from the original renderer (Codex 26.1007.30912) in headless Chrome: profile menu, Log out, with the replayed app-server (account user@example.com). Boxes are getBoundingClientRect values.",
   "The card is centered in the full window (640, 416), not in the chat pane. The overlay is codex-dialog-overlay, rgba(0,0,0,0.133).",
   "Cancel is the ghost button; Log out is the danger button. The 2 px ring (rgb(58,131,247)) is on Cancel when the dialog opens.",
-  "The recorded body line says ChatGPT, the native says Codex ({appName}). The native omits the Signed in as line: the app does not read the account email."
+  "The body says ChatGPT: the original build's {appName} is ChatGPT (the app is ChatGPT.app; its other strings in the port already use ChatGPT). The Signed in as line shows the account/read email for ChatGPT sign-ins."
  ],
  "overlay": {
   "x": 0,

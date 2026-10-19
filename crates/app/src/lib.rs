@@ -11,9 +11,9 @@ pub mod qa;
 use anyhow::{Context as _, Result};
 use async_channel::Receiver;
 use bridge::types::{
-    ApprovalDecision, CommandApprovalRequest, ConfigReadResponse, FileChangeApprovalRequest,
-    Thread, ThreadItem, ThreadListResponse, ThreadReadResponse, ThreadSection, ThreadStartResponse,
-    ThreadStartedNotification, ThreadStatus, TurnStatus,
+    Account, AccountReadResponse, ApprovalDecision, CommandApprovalRequest, ConfigReadResponse,
+    FileChangeApprovalRequest, Thread, ThreadItem, ThreadListResponse, ThreadReadResponse,
+    ThreadSection, ThreadStartResponse, ThreadStartedNotification, ThreadStatus, TurnStatus,
 };
 use bridge::{Bridge, Event};
 use gpui::{
@@ -312,6 +312,14 @@ fn utc_offset() -> i64 {
 }
 
 /// Runs `task` to the end and prints its error.
+/// The original shows `Signed in as <email>` for ChatGPT sign-ins only.
+fn chatgpt_email(account: &AccountReadResponse) -> Option<String> {
+    match &account.account {
+        Some(Account::Chatgpt { email, .. }) => email.clone(),
+        _ => None,
+    }
+}
+
 fn log_err(task: Task<Result<()>>, cx: &App) {
     cx.foreground_executor()
         .spawn(async move {
@@ -363,6 +371,8 @@ pub struct Root {
     /// Signed out: replaces the whole window.
     login: Option<Entity<Login>>,
     logout_pending: bool,
+    /// The signed-in ChatGPT account's email (`account/read`), shown in the logout dialog.
+    account_email: Option<String>,
     bridge: Arc<Bridge>,
     host: Arc<dyn host::Host>,
     project_load: Option<Task<()>>,
@@ -558,6 +568,7 @@ impl Root {
             dialog: None,
             login: None,
             logout_pending: false,
+            account_email: None,
             host: Arc::new(host::CloudHost::from_env(host::app_server_credentials(
                 bridge.clone(),
             ))),
@@ -626,6 +637,7 @@ impl Root {
                 .await
                 .unwrap_or(Value::Null);
             this.update_in(cx, |this, window, cx| {
+                this.account_email = chatgpt_email(&account);
                 if account.account.is_none() && account.requires_openai_auth {
                     this.login = Some(cx.new(Login::new));
                 }
@@ -1366,6 +1378,7 @@ impl Root {
                 match result {
                     Ok(_) => {
                         this.login = Some(cx.new(Login::new));
+                        this.account_email = None;
                         this.command_menu = None;
                         this.dialog = None;
                         this.thread = None;
@@ -2087,6 +2100,7 @@ impl Root {
                 if method == "account/login/completed" && params["success"] == true)
             {
                 self.login = None;
+                self.read_account_email(cx);
                 self.refresh_threads(cx);
                 self.load_projects(cx);
                 cx.notify();
@@ -2208,6 +2222,16 @@ impl Root {
     }
 
     /// Reads the first `thread/list` page again; threads of later loaded pages stay after it.
+    /// Reads the email of the account that just signed in; a failure leaves the dialog without it.
+    fn read_account_email(&self, cx: &mut Context<Self>) {
+        let bridge = self.bridge.clone();
+        let task = cx.spawn(async move |this, cx| -> Result<()> {
+            let account = bridge.account_read().await?;
+            this.update(cx, |this, _| this.account_email = chatgpt_email(&account))
+        });
+        log_err(task, cx);
+    }
+
     fn refresh_threads(&self, cx: &mut Context<Self>) {
         let bridge = self.bridge.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {
@@ -2405,7 +2429,9 @@ impl Render for Root {
             }))
             .on_action(cx.listener(|this, _: &LogOut, window, cx| {
                 if !this.logout_pending {
-                    this.open_dialog(DialogKind::LogOut, window, cx);
+                    let email = this.account_email.clone();
+                    let dialog = cx.new(|cx| Dialog::logout(email, cx));
+                    this.show_dialog(dialog, window, cx);
                 }
             }))
             .on_action(cx.listener(|this, _: &OpenScheduled, window, cx| {

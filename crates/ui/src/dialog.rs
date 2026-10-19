@@ -51,6 +51,8 @@ pub struct Dialog {
     scroll: ScrollHandle,
     /// `Rename`: the thread id.
     thread: String,
+    /// `LogOut`: the signed-in ChatGPT account's email, from `account/read`.
+    email: Option<String>,
 }
 impl EventEmitter<Outcome> for Dialog {}
 impl Focusable for Dialog {
@@ -70,6 +72,14 @@ impl Dialog {
             do_not_ask_again: false,
             scroll: ScrollHandle::new(),
             thread: String::new(),
+            email: None,
+        }
+    }
+    /// `Log out?` for the signed-in account `email`.
+    pub fn logout(email: Option<String>, cx: &mut Context<Self>) -> Self {
+        Self {
+            email,
+            ..Self::new(Kind::LogOut, cx)
         }
     }
     /// `Rename chat` for `thread`, its input prefilled with `title` and all of it selected.
@@ -308,7 +318,7 @@ impl Dialog {
     /// 380 px card centered in the window, 20 px padding, 12 px between the title, the body and
     /// the button row, 32 px buttons sized to their text plus 16 px each side, 12 px apart,
     /// 20 px from the right and bottom edges, and a 24 px close button 16 px from the corner.
-    /// ponytail: the original's `Signed in as <email>` line is omitted; the app does not read the email.
+    /// The `Signed in as <email>` line sits 4 px under the title and adds 25 px.
     fn logout_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
         div()
             .relative()
@@ -316,9 +326,24 @@ impl Dialog {
             .flex()
             .flex_col()
             .gap(px(12.))
-            .child(text("Log out?", 20., 28., 600., t.text))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .child(text("Log out?", 20., 28., 600., t.text))
+                    .children(self.email.as_ref().map(|email| {
+                        div().w(px(340.)).overflow_hidden().child(text(
+                            format!("Signed in as {email}"),
+                            14.,
+                            21.,
+                            430.,
+                            t.text_tertiary,
+                        ))
+                    })),
+            )
             .child(text(
-                "You’ll need to sign in again to keep using Codex",
+                "You’ll need to sign in again to keep using ChatGPT",
                 14.,
                 21.,
                 430.,
@@ -885,7 +910,7 @@ impl Render for Dialog {
             Kind::ScheduleTask => (680., 422.),
             Kind::Rename => (420., 185.),
             Kind::FullAccess => (520., 420.),
-            Kind::LogOut => (380., 145.),
+            Kind::LogOut => (380., 145. + if self.email.is_some() { 25. } else { 0. }),
         };
         let width = width.min(f32::from(viewport.width) * 0.92);
         let height = height.min(f32::from(viewport.height) * 0.92);
