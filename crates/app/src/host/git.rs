@@ -1407,13 +1407,26 @@ fn copy_new(source: &Path, worktree: &Path, relative: &str, label: &str) -> Resu
 /// The environment file the worktree uses (`VTe`): its copy in the worktree, copied there
 /// when the source has it untracked; `None` when it is tracked but absent at the start.
 fn select_environment(source: &Path, worktree: &Path, path: &Path) -> Result<Option<PathBuf>> {
-    let Some(relative) = path.strip_prefix(source).ok().filter(|relative| {
+    // Git reports the repository root with symlinks resolved (`/private/tmp` for `/tmp`), while
+    // the selected path may be spelled through one: compare the resolved spellings too.
+    let resolved = path
+        .parent()
+        .zip(path.file_name())
+        .and_then(|(dir, name)| Some(fs::canonicalize(dir).ok()?.join(name)));
+    let inside = path.strip_prefix(source).ok().or_else(|| {
+        resolved
+            .as_deref()?
+            .strip_prefix(fs::canonicalize(source).ok()?)
+            .ok()
+    });
+    let Some(relative) = inside.map(Path::to_owned).filter(|relative| {
         relative
             .components()
             .all(|part| matches!(part, Component::Normal(_)))
     }) else {
         return Ok(Some(path.to_owned()));
     };
+    let relative = relative.as_path();
     let target = worktree.join(relative);
     let regular = |target: &Path| -> Result<Option<PathBuf>> {
         ensure!(

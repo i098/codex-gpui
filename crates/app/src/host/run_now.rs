@@ -10,7 +10,7 @@
 //! database.
 
 use super::LocalHost;
-use super::git;
+use super::{automation_schedule, git};
 use anyhow::{Context as _, Result, bail, ensure};
 use rusqlite::{OpenFlags, params};
 use serde_json::{Value, json};
@@ -450,6 +450,98 @@ impl LocalHost {
         );
     }
 
+    /// The run salt for the schedule jitter (`ZF`): the stored one, else a new one that is kept.
+    fn jitter_salt(&self) -> String {
+        let path = self.home.join("automations/.run-jitter-salt");
+        let stored = fs::read_to_string(&path)
+            .map(|s| s.trim().to_owned())
+            .unwrap_or_default();
+        if !stored.is_empty() {
+            return stored;
+        }
+        let salt = super::device_id();
+        let _ = fs::write(&path, format!("{salt}\n"));
+        salt
+    }
+
+    /// What the original does first on a run now (`Fl`, `Il`, `Vn`): the next scheduled run is
+    /// kept when it is still ahead, else recalculated after the run's own nominal time, and the
+    /// run itself becomes the task's last run. A paused task keeps its times [INFERENCE: `QF`
+    /// is assumed to leave them alone]. Like the original, a failed write is not an error.
+    fn record_run_now(&self, item: &Value, now: i64) {
+        let Ok(Some(db)) = self.database(OpenFlags::SQLITE_OPEN_READ_WRITE) else {
+            return;
+        };
+        let (next, nominal) = (
+            item["nextRunAt"].as_i64(),
+            item["nextRunNominalAt"].as_i64(),
+        );
+        let (next, nominal) = if item["status"] != "ACTIVE" {
+            (next, nominal)
+        } else if let Some((n, m)) = next.zip(nominal).filter(|(n, m)| *n > now && *m > now) {
+            (Some(n), Some(m))
+        } else if next.is_none() && nominal.is_some() && item["lastRunAt"].is_i64() {
+            (None, nominal)
+        } else {
+            let rule = item["rrule"].as_str().unwrap_or_default();
+            let one_shot = rule.split(';').any(|part| part == "COUNT=1");
+            let after = next.filter(|n| *n <= now).and(nominal);
+            let scheduled = (!(one_shot && next.is_some_and(|n| n <= now)))
+                .then(|| {
+                    automation_schedule::next_run_after(
+                        rule,
+                        "cron",
+                        item["id"].as_str().unwrap_or_default(),
+                        now,
+                        after,
+                        rrule::Tz::LOCAL,
+                        &self.jitter_salt(),
+                    )
+                })
+                .flatten();
+            match scheduled {
+                Some((n, m)) => (Some(n), Some(m)),
+                None => (None, nominal),
+            }
+        };
+        let _ = db.execute(
+            "INSERT INTO automations
+             (id, name, prompt, status, next_run_at, next_run_nominal_at, last_run_at, cwds,
+              target_type, project_id, rrule, model, reasoning_effort, created_at, updated_at,
+              kind, target_thread_id, execution_environment, local_environment_config_path,
+              plugin_template_id, notification_policy, auto_archive)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+                     ?16, ?17, ?18, ?19, ?20, ?21, ?22)
+             ON CONFLICT(id) DO UPDATE SET next_run_at=excluded.next_run_at,
+              next_run_nominal_at=excluded.next_run_nominal_at, last_run_at=excluded.last_run_at",
+            params![
+                item["id"].as_str(),
+                item["name"].as_str(),
+                item["prompt"].as_str(),
+                item["status"].as_str(),
+                next,
+                nominal,
+                now,
+                item.get("cwds")
+                    .map_or_else(|| "[]".to_owned(), Value::to_string),
+                item["target"]["type"].as_str(),
+                item["target"]["projectId"].as_str(),
+                item["rrule"].as_str(),
+                item["model"].as_str(),
+                item["reasoningEffort"].as_str(),
+                item["createdAt"].as_i64(),
+                item["updatedAt"].as_i64(),
+                item["kind"].as_str(),
+                item["targetThreadId"].as_str(),
+                item["executionEnvironment"].as_str(),
+                item["localEnvironmentConfigPath"].as_str(),
+                item["pluginTemplateId"].as_str(),
+                item["notificationPolicy"].as_str(),
+                item["autoArchive"].as_bool().unwrap_or(false)
+            ],
+        );
+    }
+
     /// The original's turn-completed update (`oa`): an `IN_PROGRESS` run becomes
     /// `PENDING_REVIEW`. For `failed_runs_only` it is read when the turn completed and unread
     /// when it did not; otherwise its read state stays. `false` for a thread that is no open run.
@@ -546,6 +638,7 @@ impl LocalHost {
             .bridge
             .as_ref()
             .context("The app server is not connected")?;
+        self.record_run_now(&item, chrono::Utc::now().timestamp_millis());
         let name = item["name"].as_str().unwrap_or_default();
         let last = item["lastRunAt"].as_i64().map_or_else(
             || "never".to_owned(),

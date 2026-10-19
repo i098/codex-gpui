@@ -142,9 +142,13 @@ fn run_now_refuses_tasks_it_cannot_run_before_touching_the_app_server() -> Resul
     Ok(())
 }
 
-const AUTOMATIONS: &str = "CREATE TABLE automations (id TEXT PRIMARY KEY, next_run_at INTEGER,
-    next_run_nominal_at INTEGER, last_run_at INTEGER, rrule TEXT, status TEXT, account_id TEXT,
-    user_id TEXT, installation_id TEXT)";
+const AUTOMATIONS: &str = "CREATE TABLE automations (id TEXT PRIMARY KEY, name TEXT, prompt TEXT,
+    status TEXT, next_run_at INTEGER, next_run_nominal_at INTEGER, last_run_at INTEGER, cwds TEXT,
+    target_type TEXT, project_id TEXT, rrule TEXT, model TEXT, reasoning_effort TEXT,
+    created_at INTEGER, updated_at INTEGER, kind TEXT, target_thread_id TEXT,
+    execution_environment TEXT, local_environment_config_path TEXT, plugin_template_id TEXT,
+    notification_policy TEXT, auto_archive INTEGER, account_id TEXT, user_id TEXT,
+    installation_id TEXT)";
 
 const RUNS: &str =
     "CREATE TABLE automation_runs (thread_id TEXT PRIMARY KEY, automation_id TEXT NOT NULL,
@@ -631,5 +635,56 @@ fn the_default_path_has_config_permissions_run_rows_and_keeps_its_worktree() -> 
             .iter()
             .any(|r| r.1 == "ARCHIVED" && r.3.as_deref() == Some("auto"))
     );
+    Ok(())
+}
+
+fn schedule(home: &Path, id: &str) -> Result<(Option<i64>, Option<i64>, Option<i64>)> {
+    let db = rusqlite::Connection::open(home.join("sqlite/codex.db"))?;
+    Ok(db.query_row(
+        "SELECT next_run_at, next_run_nominal_at, last_run_at FROM automations WHERE id = ?",
+        [id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )?)
+}
+
+#[test]
+fn a_run_now_records_the_last_run_and_keeps_or_recalculates_the_next_one() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    fs::create_dir_all(dir.path().join("sqlite"))?;
+    let db = rusqlite::Connection::open(dir.path().join("sqlite/codex.db"))?;
+    db.execute(RUNS, [])?;
+    db.execute(AUTOMATIONS, [])?;
+    let log = dir.path().join("requests.jsonl");
+    let host = host(dir.path(), &log, false)?;
+    let rule = "FREQ=DAILY;BYHOUR=9;BYMINUTE=0";
+    let (ahead, now) = (
+        chrono::Utc::now().timestamp_millis() + 3_600_000,
+        chrono::Utc::now().timestamp_millis(),
+    );
+    let stored = |id: &str, next: i64| {
+        db.execute(
+            "INSERT INTO automations (id, next_run_at, next_run_nominal_at, rrule, status) VALUES (?, ?, ?, ?, 'ACTIVE')",
+            rusqlite::params![id, next, next, rule],
+        )
+    };
+    // A next run that is still ahead stays; the run becomes the last run.
+    let keep = create(&host, dir.path(), "keep")?;
+    stored(&keep, ahead)?;
+    ensure!(run(&host, &keep)? == json!({"success": true}));
+    let (next, nominal, last) = schedule(dir.path(), &keep)?;
+    ensure!(next == Some(ahead) && nominal == Some(ahead));
+    ensure!(last.is_some_and(|last| last >= now));
+    // A next run that is already past is recalculated to a future time.
+    let past = create(&host, dir.path(), "past")?;
+    stored(&past, 1_000)?;
+    ensure!(run(&host, &past)? == json!({"success": true}));
+    let (next, nominal, last) = schedule(dir.path(), &past)?;
+    ensure!(next.is_some_and(|next| next > now) && nominal.is_some_and(|n| n > now - 1));
+    ensure!(last.is_some_and(|last| last >= now));
+    // A task with no database row gets one, so its last run is not lost.
+    let fresh = create(&host, dir.path(), "fresh")?;
+    ensure!(run(&host, &fresh)? == json!({"success": true}));
+    let (next, _, last) = schedule(dir.path(), &fresh)?;
+    ensure!(next.is_some_and(|next| next > now) && last.is_some());
     Ok(())
 }

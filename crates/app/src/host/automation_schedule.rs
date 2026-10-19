@@ -14,6 +14,19 @@ pub(super) fn next_run(
     zone: Tz,
     salt: &str,
 ) -> Option<(i64, i64)> {
+    next_run_after(rule, kind, id, now, None, zone, salt)
+}
+
+/// `next_run` with KF's `afterNominalRunAt`: the search starts at the later of it and `now`.
+pub(super) fn next_run_after(
+    rule: &str,
+    kind: &str,
+    id: &str,
+    now: i64,
+    after: Option<i64>,
+    zone: Tz,
+    salt: &str,
+) -> Option<(i64, i64)> {
     // Like the original's JavaScript Date: `TZ` wins, and an unknown or missing zone is UTC.
     let zone = if zone.is_local() {
         std::env::var("TZ")
@@ -24,8 +37,9 @@ pub(super) fn next_run(
     } else {
         zone
     };
-    let schedule = Schedule::parse(rule, now)?;
-    let occurrence = schedule.next(now, zone)?;
+    let search = after.map_or(now, |after| after.max(now));
+    let schedule = Schedule::parse(rule, search)?;
+    let occurrence = schedule.next(search, zone)?;
     let nominal = if kind == "heartbeat" {
         schedule
             .heartbeat_interval()
