@@ -338,6 +338,7 @@ fn cloud_requests_replay_the_recorded_endpoints_with_the_original_auth_headers()
         "/beacons/home?",
         "/automations?filter=scheduled",
         "/suggested_automations",
+        "/wham/remote/control/mfa_requirement",
     ];
     let requests: Vec<Value> = endpoints.iter().map(|e| recorded_http(e)).collect();
     let answers = requests
