@@ -427,8 +427,9 @@ pub struct Root {
     deleted_queued: Vec<DeletedQueuedMessage>,
     /// A successful steer must never be sent again when its queue deletion fails.
     steered_queued: HashSet<(String, String)>,
-    /// Id of the server request the composer's approval card answers.
-    approval: Option<Value>,
+    /// Server approval requests waiting for a decision, oldest first. The thread composer
+    /// shows the open thread's oldest one.
+    approvals: Vec<PendingApproval>,
     /// A commit, push or branch workflow is running (the original's single workflow state).
     git_busy: Option<&'static str>,
     git_status_load: Option<Task<()>>,
@@ -497,7 +498,11 @@ impl Root {
                     .ok();
             });
             composer.on_approval(move |decision, _, cx| {
-                this.update(cx, |this, _| this.answer(decision)).ok();
+                // Deferred: answering refreshes this composer's card.
+                let this = this.clone();
+                cx.defer(move |cx| {
+                    this.update(cx, |this, cx| this.answer(decision, cx)).ok();
+                });
             });
             composer
         });
@@ -665,7 +670,7 @@ impl Root {
             queue_pending: false,
             deleted_queued: Vec::new(),
             steered_queued: HashSet::new(),
-            approval: None,
+            approvals: Vec::new(),
             git_busy: None,
             git_status_load: None,
             commit_cwd: None,
@@ -856,7 +861,7 @@ impl Root {
                 .all(|thread| thread.status != ThreadStatus::Active)
             && self.dialog.is_none()
             && self.command_menu.is_none()
-            && self.approval.is_none()
+            && self.approvals.is_empty()
             && self.automation_load.is_none()
             && self.state.confirm_before_close != ConfirmBeforeClose::Always
             && self.home.read(cx).composer.read(cx).restart_ready()
@@ -2456,6 +2461,7 @@ impl Root {
         )
         .detach();
         self.thread = Some(view);
+        self.show_approval(cx);
         self.refresh_git_actions(cx);
         if self.state.route == route {
             self.sync(window, cx);
@@ -3301,12 +3307,70 @@ impl Root {
         log_err(task, cx);
     }
 
-    fn answer(&mut self, decision: ApprovalDecision) {
-        if let Some(id) = self.approval.take()
-            && let Err(err) = self.bridge.respond(id, json!({ "decision": decision }))
+    /// Settles the open thread's oldest approval request (the one its card shows) with the
+    /// user's decision, then shows the next one.
+    fn answer(&mut self, decision: ApprovalDecision, cx: &mut Context<Self>) {
+        let open = self.thread.as_ref().map(|v| v.read(cx).id().to_owned());
+        let Some(i) = self
+            .approvals
+            .iter()
+            .position(|p| Some(p.thread()) == open.as_deref())
+        else {
+            return;
+        };
+        let pending = self.approvals.remove(i);
+        if let Err(err) = self
+            .bridge
+            .respond(pending.id, json!({ "decision": decision }))
         {
             eprintln!("codex-gpui: approval: {err:#}");
         }
+        self.show_approval(cx);
+    }
+
+    /// The card of `pending`; `None` for another request kind or params that do not parse.
+    fn approval_card(&self, pending: &PendingApproval, cx: &App) -> Option<Approval> {
+        let params = pending.params.clone();
+        match pending.method.as_str() {
+            "item/commandExecution/requestApproval" => {
+                let request = serde_json::from_value::<CommandApprovalRequest>(params).ok()?;
+                return Some(Approval::command(&request));
+            }
+            "item/fileChange/requestApproval" => {}
+            _ => return None,
+        }
+        let request = serde_json::from_value::<FileChangeApprovalRequest>(params).ok()?;
+        // The edited paths come from the request's thread, when it is the open one.
+        let paths: Vec<String> = self
+            .thread
+            .as_ref()
+            .map(|v| v.read(cx))
+            .filter(|view| view.id() == request.thread_id)
+            .and_then(|view| {
+                view.turns()
+                    .iter()
+                    .flat_map(|t| &t.items)
+                    .find_map(|i| match i {
+                        ThreadItem::FileChange { id, changes, .. } if *id == request.item_id => {
+                            Some(changes.iter().map(|c| c.path.clone()).collect())
+                        }
+                        _ => None,
+                    })
+            })
+            .unwrap_or_default();
+        Some(Approval::file_change(&request, &paths))
+    }
+
+    /// Puts the open thread's oldest approval request on the thread composer, or no card.
+    fn show_approval(&self, cx: &mut Context<Self>) {
+        let open = self.thread.as_ref().map(|v| v.read(cx).id().to_owned());
+        let card = self
+            .approvals
+            .iter()
+            .find(|p| Some(p.thread()) == open.as_deref())
+            .and_then(|p| self.approval_card(p, cx));
+        self.thread_composer
+            .update(cx, |c, cx| c.set_approval(card, cx));
     }
 
     /// Every server message: streamed into the open thread and the sign-in view, plus
@@ -3397,7 +3461,18 @@ impl Root {
                     if let Some(id) = params["threadId"].as_str() {
                         self.sidebar.update(cx, |s, cx| s.set_unread(id, cx));
                     }
+                    // The ended turn's requests can no longer be answered.
+                    let turn = &params["turn"]["id"];
+                    self.approvals.retain(|p| {
+                        p.params["threadId"] != params["threadId"] || p.params["turnId"] != *turn
+                    });
+                    self.show_approval(cx);
                     self.refresh_threads(cx)
+                }
+                // Answered or withdrawn elsewhere: the request leaves without an answer.
+                "serverRequest/resolved" => {
+                    self.approvals.retain(|p| p.id != params["requestId"]);
+                    self.show_approval(cx);
                 }
                 "thread/queue/changed" => {
                     if let Some(id) = params["threadId"].as_str()
@@ -3422,43 +3497,10 @@ impl Root {
             // ponytail: other server requests (user input, permissions) stay unanswered;
             // answer them when their UI lands.
             Event::Request { id, method, params } => {
-                let approval = match method.as_str() {
-                    "item/commandExecution/requestApproval" => {
-                        serde_json::from_value::<CommandApprovalRequest>(params)
-                            .ok()
-                            .map(|r| Approval::command(&r))
-                    }
-                    "item/fileChange/requestApproval" => serde_json::from_value::<
-                        FileChangeApprovalRequest,
-                    >(params)
-                    .ok()
-                    .map(|r| {
-                        let paths: Vec<String> = self
-                            .thread
-                            .as_ref()
-                            .and_then(|v| {
-                                v.read(cx)
-                                    .turns()
-                                    .iter()
-                                    .flat_map(|t| &t.items)
-                                    .find_map(|i| match i {
-                                        ThreadItem::FileChange { id, changes, .. }
-                                            if *id == r.item_id =>
-                                        {
-                                            Some(changes.iter().map(|c| c.path.clone()).collect())
-                                        }
-                                        _ => None,
-                                    })
-                            })
-                            .unwrap_or_default();
-                        Approval::file_change(&r, &paths)
-                    }),
-                    _ => None,
-                };
-                if let Some(approval) = approval {
-                    self.approval = Some(id);
-                    self.thread_composer
-                        .update(cx, |c, cx| c.set_approval(Some(approval), cx));
+                let pending = PendingApproval { id, method, params };
+                if self.approval_card(&pending, cx).is_some() {
+                    self.approvals.push(pending);
+                    self.show_approval(cx);
                 }
             }
         }
@@ -3626,6 +3668,20 @@ struct Generation {
     thread: String,
     text: Option<String>,
     done: async_channel::Sender<Result<Option<String>, String>>,
+}
+
+/// A command or file-change approval request that waits for the user's decision.
+struct PendingApproval {
+    /// The server request's id: the answer and `serverRequest/resolved` carry it.
+    id: Value,
+    method: String,
+    params: Value,
+}
+
+impl PendingApproval {
+    fn thread(&self) -> &str {
+        self.params["threadId"].as_str().unwrap_or_default()
+    }
 }
 
 /// What a submitted commit form, or the push-only command, asks of one repository.

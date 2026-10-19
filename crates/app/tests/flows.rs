@@ -1229,10 +1229,16 @@ fn allow_once(shot: &RgbaImage) -> Result<(f32, f32)> {
 
 /// A command approval request (crafted from `CommandApprovalRequest`: the sessions ran with
 /// `approvalPolicy: never`) arrives with the greeting turn; `Allow once` answers it, and the
-/// replay's reply to that answer (matched by request id) reaches the thread.
+/// replay's reply to that answer (matched by request id) reaches the thread. The turn ends
+/// after the answer, because the end of a turn withdraws its pending requests.
 fn approval_round_trip() -> Result<String> {
     const TURN: &str = "01a13de9-c4f9-7370-99bd-0512afdf8126";
     let mut lines = script(Some("sessions/greeting.jsonl"), |_| {})?;
+    let end = lines
+        .iter()
+        .rposition(|v| v["msg"]["method"] == "turn/completed")
+        .context("no turn/completed")?;
+    let end = lines.remove(end);
     let reply = lines
         .iter()
         .position(|v| v["dir"] == "recv" && v["msg"]["result"]["turn"]["id"] == TURN)
@@ -1249,6 +1255,7 @@ fn approval_round_trip() -> Result<String> {
     let item = json!({ "type": "agentMessage", "id": "approval-ack", "text": "Accepted." });
     let ack = json!({ "threadId": GREETING, "turnId": TURN, "item": item });
     lines.push(json!({ "dir": "recv", "msg": { "method": "item/completed", "params": ack } }));
+    lines.push(end);
     let mut fx = Fx::scripted(lines)?;
     fx.type_text(GREETING_PROMPT)?;
     fx.keys("enter")?;
