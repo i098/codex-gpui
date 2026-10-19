@@ -27,6 +27,18 @@ Host settings use the local `settings.write(key, value)` service and persist bes
 Theme and window-close preferences remain in `state.json`.
 The S034 replay checks the menu-bar switch, its saved values, and Back navigation against `refs/interactions/s034.json`.
 
+Settings > Git stores branch, merge, push, draft, diff, and pull request instruction preferences in `host-settings.json`.
+Review delivery uses the existing app-server config store.
+Branch prefix saves on blur or Enter; multiline instructions save after three idle seconds or when the page closes.
+The focused `cargo test -p app --test git_settings -- --test-threads=1` native replay verifies saved values after reopening Git settings.
+This page does not implement Git operations or active pull request watchers, and it does not complete other settings pages.
+
+Scheduled > New task accepts instructions, a daily or weekly repeat, and a local time in `HH:MM` format.
+Create saves the definition through `create-automation` to `CODEX_HOME/automations/<id>/automation.toml`.
+The app reloads the task list after a successful write and retains the draft if the write fails.
+The existing host schedules and executes these definitions; this app does not start another scheduler.
+Run `cargo test -p app --test task_create -- --test-threads=1` on macOS for the native creation and reload proof.
+
 ## Release bundle
 
 ```sh
@@ -69,6 +81,8 @@ It coalesces newer revisions during a build and retains a pending candidate when
 It verifies the signed bundle, compiled source revision, artifact digest, executable path, and running PID.
 It keeps the previous bundle at `updater/last-working.app`.
 It rebuilds missing temporary candidates and removes completed or superseded temporary artifacts.
+It requests a cooperative close before removing a superseded idle probe.
+It keeps the pending ownership record when a staged process cannot close safely.
 It verifies an unfinished activation or restores the backup after the new process exits.
 
 QA data stays in `~/Library/Application Support/codex-gpui-qa/profile/`.
@@ -79,10 +93,14 @@ QA starts signed out; it never copies normal credentials, settings, history, or 
 It can read the existing ChatGPT app-server executable without changing that app.
 The normal Codex GPUI profile and launch behavior stay unchanged.
 
-Programmatic startup uses `open -g` and an unfocused QA window.
+Programmatic startup uses `open -g -j` and keeps QA hidden.
+Open QA from its installed bundle or Dock icon when you want its window.
+If the installed revision already matches main but its process has stopped, the updater starts the installed bundle again.
 After QA gains focus, starts a turn, changes model settings, or starts sign-in, close QA when ready to update.
 The updater keeps its candidate pending until that close.
 It also refuses to close during a draft, attachment work, an approval, a running turn, or unverified readiness.
+Native foreground activity also prevents closing QA, even when its last heartbeat or window reports inactive.
+An observed application activation keeps the existing manual-close protection.
 A shared profile lock prevents a reopened QA process from racing with bundle replacement.
 It does not promise to preserve drafts, open views, navigation history, or running sessions.
 It never force-quits an app.
@@ -93,6 +111,8 @@ Read the current source, artifact, and runtime identities with:
 ```sh
 python3 "$HOME/Library/Application Support/codex-gpui-qa/updater/qa-sync.py" status
 ```
+
+Run the updater regression checks with `python3 -B tools/test_qa_sync.py`.
 
 Stop only the owned timer with `launchctl bootout "gui/$(id -u)/dev.codexgpui.qa-sync"`.
 That command does not close QA or any normal app.
@@ -113,6 +133,10 @@ On macOS, `textsys::show_definition(window, selection, baseline)` opens AppKit's
 The baseline uses window-local logical pixels from the top left; the adapter handles both view orientations.
 Call it on the main thread with the unchanged selection.
 Headless windows return their native-handle error; the adapter has no URL or clipboard fallback.
+
+With `test-support`, `HeadlessAppContext::did_prompt_for_paths` reports a pending path dialog.
+Use `simulate_path_prompt_response` to answer it with selected paths or `None` for cancellation.
+These hooks use `TestPlatform` without opening an OS dialog; normal app behavior does not change.
 
 `gpui` and `gpui_apple` come from Zed at a fixed revision and are vendored in `crates/textsys`.
 The workspace `[patch]` replaces the upstream crates with these copies.
@@ -220,4 +244,17 @@ Submenu arrows and model-trigger recording remain outside this replay.
 
 ```sh
 tools/mac.sh -l f2b 'cargo test -p app --test f2b -- --test-threads=1'
+```
+
+## Command-menu actions
+
+The command menu uses the existing app actions for new chats, archive, Find, navigation, six recent-chat slots, sidebar visibility, panels, and scheduled tasks.
+Find keeps focus in its search field after the menu closes.
+Panel commands keep the selected chat and the existing tabs.
+The terminal command opens an existing background command, not an interactive shell.
+Unsupported destinations remain known gaps; this change does not implement logout, git operations, cloud operations, or the project picker.
+Recorded command rows, ranking, and keyboard-editing checks remain unchanged.
+
+```sh
+tools/mac.sh -l cgx-command-dispatch 'cargo test -p app --test command_dispatch --test s025 --test s025_rank --test s026 -- --test-threads=1'
 ```

@@ -28,12 +28,17 @@ use bridge::Bridge;
 use rusqlite::{Connection, OpenFlags, OptionalExtension as _, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
+use ui::screens::sidebar::Project;
 use url::Url;
+
+mod git;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "transport", content = "request", rename_all = "kebab-case")]
@@ -59,6 +64,15 @@ impl Request {
 pub trait Host: Send + Sync {
     /// Returns the original wire response. Call this off the UI thread for a local host.
     fn fetch(&self, request: &Request) -> Result<Value>;
+
+    /// Reads the original sidebar project state off the UI thread.
+    fn projects(&self) -> Result<Vec<Project>> {
+        bail!("sidebar project state is unsupported by this host")
+    }
+
+    fn add_project(&self, _root: &Path) -> Result<String> {
+        bail!("adding a local project is unsupported by this host")
+    }
 
     /// The signed-in ChatGPT identity the renderer puts on its backend requests; `None`
     /// without a ChatGPT sign-in. Call this off the UI thread for a cloud host.
@@ -123,6 +137,7 @@ pub struct Exchange {
 
 pub struct ReplayHost {
     exchanges: Vec<Exchange>,
+    project_snapshot: Option<ProjectSnapshot>,
 }
 
 impl ReplayHost {
@@ -130,9 +145,13 @@ impl ReplayHost {
         #[derive(Deserialize)]
         struct Recording {
             exchanges: Vec<Exchange>,
+            #[serde(default)]
+            project_snapshot: Option<ProjectSnapshot>,
         }
+        let recording: Recording = serde_json::from_str(recording)?;
         Ok(Self {
-            exchanges: serde_json::from_str::<Recording>(recording)?.exchanges,
+            exchanges: recording.exchanges,
+            project_snapshot: recording.project_snapshot,
         })
     }
 
@@ -155,7 +174,10 @@ impl ReplayHost {
             };
             exchanges.push(Exchange { request, response });
         }
-        Ok(Self { exchanges })
+        Ok(Self {
+            exchanges,
+            project_snapshot: None,
+        })
     }
 }
 
@@ -166,6 +188,13 @@ impl Host for ReplayHost {
             .find(|e| e.request == *request)
             .map(|e| e.response.clone())
             .context("no recorded host response for this exact request")
+    }
+
+    fn projects(&self) -> Result<Vec<Project>> {
+        self.project_snapshot
+            .as_ref()
+            .context("no recorded sidebar project snapshot")?
+            .rows()
     }
 
     /// The identity of the first recorded request that carries one.
@@ -181,6 +210,169 @@ impl Host for ReplayHost {
             })
         })
     }
+}
+
+#[derive(Deserialize)]
+struct ProjectSnapshot {
+    state: Value,
+    codex_home: PathBuf,
+    workspace_roots: Vec<String>,
+    existing_paths: Option<Vec<String>>,
+}
+
+impl ProjectSnapshot {
+    fn rows(&self) -> Result<Vec<Project>> {
+        let existing = self.existing_paths.as_ref().map(|paths| {
+            paths
+                .iter()
+                .map(|path| {
+                    normalized_project_path(path)
+                        .trim_end_matches('/')
+                        .to_owned()
+                })
+                .collect::<HashSet<_>>()
+        });
+        project_rows(&self.state, &self.codex_home, |path, normalized| {
+            Ok(existing.as_ref().map(|existing| {
+                self.workspace_roots.iter().any(|root| root == path)
+                    && existing.contains(normalized.trim_end_matches('/'))
+            }))
+        })
+    }
+}
+
+fn project_rows(
+    state: &Value,
+    codex_home: &Path,
+    mut exists: impl FnMut(&str, &str) -> Result<Option<bool>>,
+) -> Result<Vec<Project>> {
+    let Some(projects) = state["local-projects"].as_object() else {
+        return Ok(Vec::new());
+    };
+    let managed_root = normalized_project_path(&codex_home.join("worktrees").to_string_lossy());
+    let mut rows = Vec::with_capacity(projects.len());
+    for stored in projects.values() {
+        let (Some(id), Some(name), Some(roots)) = (
+            stored["id"].as_str(),
+            stored["name"].as_str(),
+            stored["rootPaths"].as_array(),
+        ) else {
+            continue;
+        };
+        if !stored["createdAt"].is_number()
+            || !stored["updatedAt"].is_number()
+            || roots.iter().any(|root| !root.is_string())
+        {
+            continue;
+        }
+        let root = roots.first().and_then(Value::as_str);
+        let normalized = root.map(normalized_project_path);
+        let worktree = root
+            .zip(normalized.as_deref())
+            .is_some_and(|(path, normalized)| {
+                is_worktree_path(normalized, &managed_root, is_windows_path(path))
+            });
+        let missing = match root.zip(normalized.as_deref()) {
+            Some((path, normalized)) => exists(path, normalized)?.is_some_and(|exists| !exists),
+            None => false,
+        };
+        let label = if name.trim().is_empty() {
+            id
+        } else {
+            name.trim()
+        };
+        let expanded_key = format!("sidebar-project-expanded-v1-codex:{id}");
+        rows.push(Project {
+            id: id.to_owned().into(),
+            label: label.to_owned().into(),
+            new_chat_label: if worktree {
+                "New chat in this worktree".into()
+            } else {
+                format!("Start new chat in {label}").into()
+            },
+            worktree,
+            missing,
+            expanded: state["electron-persisted-atom-state"][&expanded_key] != false,
+        });
+    }
+    if let Some(order) = state["project-order"].as_array() {
+        let ranks: HashMap<_, _> = order
+            .iter()
+            .enumerate()
+            .filter_map(|(rank, id)| id.as_str().map(|id| (id, rank)))
+            .collect();
+        rows.sort_by_key(|project| ranks.get(project.id.as_ref()).copied());
+    }
+    Ok(rows)
+}
+
+fn is_windows_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    path.starts_with("//")
+        || path.starts_with("\\\\")
+        || (bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && matches!(bytes[2], b'/' | b'\\'))
+}
+
+fn normalized_project_path(path: &str) -> String {
+    let windows = is_windows_path(path);
+    let path = if path.contains('\\') {
+        Cow::Owned(path.replace('\\', "/"))
+    } else {
+        Cow::Borrowed(path)
+    };
+    let mut normalized = PathBuf::with_capacity(path.len());
+    for component in Path::new(path.as_ref()).components() {
+        match component {
+            Component::ParentDir if normalized.file_name().is_some_and(|name| name != "..") => {
+                normalized.pop();
+            }
+            Component::ParentDir if !normalized.has_root() => normalized.push(".."),
+            Component::ParentDir | Component::CurDir => {}
+            component => normalized.push(component),
+        }
+    }
+    let mut normalized = normalized
+        .into_os_string()
+        .into_string()
+        .expect("project paths are UTF-8");
+    if windows {
+        normalized.make_ascii_lowercase();
+    }
+    normalized
+}
+
+fn is_worktree_path(path: &str, managed_root: &str, windows: bool) -> bool {
+    if path
+        .strip_prefix(managed_root)
+        .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with('/'))
+    {
+        return true;
+    }
+    let workspace_root = if windows {
+        "/openai/codex/workspaces"
+    } else {
+        "/OpenAI/Codex/workspaces"
+    };
+    path.match_indices("/worktrees").any(|(index, _)| {
+        let tail = &path[index + "/worktrees".len()..];
+        if !tail.is_empty() && !tail.starts_with('/') {
+            return false;
+        }
+        let prefix = &path[..index];
+        prefix.ends_with("/.codex")
+            || prefix.ends_with("/.codex-workspaces")
+            || prefix.ends_with(workspace_root)
+            || prefix
+                .rsplit_once("/instances/")
+                .is_some_and(|(root, instance)| {
+                    !instance.is_empty()
+                        && !instance.contains('/')
+                        && (root.ends_with("/.codex-workspaces") || root.ends_with(workspace_root))
+                })
+    })
 }
 
 /// Decodes a JSON response without turning HTTP errors or binary bodies into empty data.
@@ -299,6 +491,68 @@ impl LocalHost {
         Ok(json!({"items": items}))
     }
 
+    fn create_automation(&self, params: &Value) -> Result<Value> {
+        let required = |key| {
+            params[key]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .with_context(|| format!("missing automation {key}"))
+        };
+        let name = required("name")?;
+        let prompt = required("prompt")?;
+        let rrule = required("rrule")?;
+        let mut parts = rrule.split(';');
+        match parts.next() {
+            Some("FREQ=DAILY") => {}
+            Some("FREQ=WEEKLY") => ensure!(
+                matches!(
+                    parts.next(),
+                    Some(
+                        "BYDAY=MO"
+                            | "BYDAY=TU"
+                            | "BYDAY=WE"
+                            | "BYDAY=TH"
+                            | "BYDAY=FR"
+                            | "BYDAY=SA"
+                            | "BYDAY=SU"
+                    )
+                ),
+                "invalid weekly schedule"
+            ),
+            _ => bail!("unsupported schedule frequency"),
+        }
+        let hour = parts
+            .next()
+            .and_then(|s| s.strip_prefix("BYHOUR="))
+            .and_then(|s| s.parse::<u8>().ok());
+        let minute = parts
+            .next()
+            .and_then(|s| s.strip_prefix("BYMINUTE="))
+            .and_then(|s| s.parse::<u8>().ok());
+        ensure!(
+            hour.is_some_and(|h| h < 24)
+                && minute.is_some_and(|m| m < 60)
+                && parts.next().is_none(),
+            "invalid schedule time"
+        );
+        let cwds: Vec<String> = serde_json::from_value(params["cwds"].clone())?;
+        ensure!(
+            !cwds.is_empty() && cwds.iter().all(|cwd| Path::new(cwd).is_absolute()),
+            "task requires an absolute local project path"
+        );
+        let id = device_id();
+        let now = chrono::Utc::now().timestamp_millis();
+        let raw = json!({
+            "version": 1, "id": id, "name": name, "prompt": prompt, "rrule": rrule,
+            "status": "ACTIVE", "cwds": cwds, "created_at": now, "updated_at": now,
+            "execution_environment": "local"
+        });
+        let contents = toml::to_string(&raw)?;
+        self.write_automation(&id, &contents)?;
+        definition(&id, &contents)
+    }
+
     /// Saves a validated original-format definition, not an automation scheduling command.
     /// Existing schedule metadata remains in the original database for its scheduler to reconcile.
     pub fn write_automation(&self, id: &str, contents: &str) -> Result<()> {
@@ -404,6 +658,83 @@ impl LocalHost {
 }
 
 impl Host for LocalHost {
+    fn projects(&self) -> Result<Vec<Project>> {
+        let path = self.home.join(".codex-global-state.json");
+        let contents = match fs::read(&path) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error).context("read original sidebar project state"),
+        };
+        let state: Value =
+            serde_json::from_slice(&contents).context("decode original sidebar project state")?;
+        ensure!(
+            state.is_object(),
+            "original sidebar project state must be an object"
+        );
+        project_rows(&state, &self.home, |path, _| {
+            Ok(Some(Path::new(path).exists()))
+        })
+    }
+
+    fn add_project(&self, root: &Path) -> Result<String> {
+        let root = root
+            .canonicalize()
+            .context("resolve selected project folder")?;
+        ensure!(root.is_dir(), "selected project must be a folder");
+        let root = root.to_str().context("project path must be UTF-8")?;
+        let path = self.home.join(".codex-global-state.json");
+        let mut state: Value = match fs::read(&path) {
+            Ok(contents) => serde_json::from_slice(&contents)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => json!({}),
+            Err(error) => return Err(error).context("read project state before adding a folder"),
+        };
+        ensure!(state.is_object(), "project state must be an object");
+        if state["local-projects"].is_null() {
+            state["local-projects"] = json!({});
+        }
+        let projects = state["local-projects"]
+            .as_object_mut()
+            .context("local-projects must be an object")?;
+        if !projects.values().any(|project| {
+            project["rootPaths"].as_array().is_some_and(|roots| {
+                roots.iter().any(|path| {
+                    path.as_str().is_some_and(|path| {
+                        path == root
+                            || Path::new(path).canonicalize().ok().as_deref()
+                                == Some(Path::new(root))
+                    })
+                })
+            })
+        }) {
+            let id = crate::uuid_v4();
+            let now = chrono::Utc::now().timestamp_millis();
+            let name = Path::new(root)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(root);
+            projects.insert(
+                id.clone(),
+                json!({
+                    "id": id, "name": name, "rootPaths": [root],
+                    "createdAt": now, "updatedAt": now,
+                }),
+            );
+            if state["project-order"].is_null() {
+                state["project-order"] = json!([]);
+            }
+            state["project-order"]
+                .as_array_mut()
+                .context("project-order must be an array")?
+                .push(id.into());
+            fs::create_dir_all(&self.home)?;
+            let mut file = tempfile::NamedTempFile::new_in(&self.home)?;
+            serde_json::to_writer_pretty(&mut file, &state)?;
+            file.as_file().sync_all()?;
+            file.persist(path)?;
+        }
+        Ok(root.to_owned())
+    }
+
     fn fetch(&self, request: &Request) -> Result<Value> {
         let Request::Fetch { method, url, body } = request else {
             bail!("authenticated remote HTTP is unsupported by LocalHost");
@@ -424,7 +755,12 @@ impl Host for LocalHost {
         );
         let body = match endpoint {
             "list-automations" => self.automations()?,
+            "create-automation" => self.create_automation(&params)?,
             "inbox-items" => self.inbox(&params)?,
+            "git-changes" | "git-stage" | "git-unstage" | "git-revert" | "git-commit-status"
+            | "git-commit-diff" | "git-commit" | "git-push" | "git-checkout" => {
+                git::fetch(endpoint, &params)?
+            }
             "paths-exist" => {
                 let paths: Vec<String> =
                     serde_json::from_value(params.get("paths").cloned().unwrap_or(json!([])))?;
@@ -748,6 +1084,14 @@ impl CloudHost {
 }
 
 impl Host for CloudHost {
+    fn projects(&self) -> Result<Vec<Project>> {
+        self.local.projects()
+    }
+
+    fn add_project(&self, root: &Path) -> Result<String> {
+        self.local.add_project(root)
+    }
+
     fn fetch(&self, request: &Request) -> Result<Value> {
         match request {
             Request::Http(http) => self.http(http),

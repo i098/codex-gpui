@@ -11,7 +11,7 @@ pub mod qa;
 use anyhow::{Context as _, Result, ensure};
 use async_channel::Receiver;
 use bridge::types::{
-    ApprovalDecision, CommandApprovalRequest, ConfigReadResponse, FileChangeApprovalRequest,
+    ApprovalDecision, CommandApprovalRequest, ConfigReadResponse, FileChangeApprovalRequest, Model,
     QueuedSubmission, Thread, ThreadItem, ThreadListResponse, ThreadQueueListResponse,
     ThreadReadResponse, ThreadSection, ThreadStartResponse, ThreadStartedNotification,
     ThreadStatus, TurnStatus,
@@ -20,28 +20,33 @@ use bridge::{Bridge, Event};
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Context, Entity,
     EntityInputHandler as _, FocusHandle, Focusable as _, InteractiveElement as _, IntoElement,
-    KeyBinding, KeyDownEvent, Menu, MenuItem, OsAction, ParentElement as _, Pixels, Render,
-    SharedString, Styled as _, SystemMenuType, Task, WeakEntity, Window, WindowAppearance, actions,
-    div, px,
+    KeyBinding, KeyDownEvent, Menu, MenuItem, OsAction, ParentElement as _, PathPromptOptions,
+    Pixels, Render, SharedString, Styled as _, SystemMenuType, Task, WeakEntity, Window,
+    WindowAppearance, actions, div, px,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashSet;
-use std::{fs, path::PathBuf, sync::Arc};
+use std::{fs, path::PathBuf, sync::Arc, time::Duration};
 use theme::Theme;
 use ui::composer::{Approval, Composer, Permission, QueueAction, Submission};
-use ui::dialog::{Dialog, Kind as DialogKind, Outcome as DialogOutcome};
-use ui::screens::diff::panel::{
-    ActivateSideTab, CloseSideTab, DiffPanel, FileView, OpenFile, SplitScreen, Tab, with_side_tabs,
+use ui::dialog::{
+    CommitRepository, CommitStep, Dialog, Kind as DialogKind, Outcome as DialogOutcome, Selection,
 };
-use ui::screens::home::HomeMain;
+use ui::screens::diff::panel::{
+    ActivateSideTab, CloseSideTab, DiffPanel, DiffRequest, FileView, OpenFile, RevertChanges,
+    SplitScreen, Tab, with_side_tabs,
+};
+use ui::screens::home::{HomeMain, OpenFolder};
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
 use ui::screens::sidebar::{
     ArchiveThread, ArchivedChats, CommandMenu, CommandMenuEvent, HomeSidebar, LoadMore, OpenThread,
     PINNED_SECTION_ID, PinThread, RenameThread, SEARCH_LIMIT, SearchHit, title as thread_title,
 };
 use ui::screens::terminal::Xterm;
-use ui::screens::thread::view::{Clock, EditMessage, ForkThread, RevertTurn, ThreadView};
+use ui::screens::thread::view::{
+    Clock, EditMessage, ForkThread, GitAction, RevertTurn, ThreadView,
+};
 use ui::screens::{automations, mobile};
 use ui::toast::{Toast, Toaster};
 use ui::{
@@ -95,6 +100,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-n", NewChat, None),
         KeyBinding::new("cmd-shift-o", NewChat, None),
+        KeyBinding::new("cmd-o", OpenFolder, None),
         KeyBinding::new("cmd-w", CloseWindow, None),
         KeyBinding::new("cmd-/", ShowKeyboardShortcuts, None),
         KeyBinding::new("cmd-z", Undo, None),
@@ -151,6 +157,7 @@ pub fn menus() -> Vec<Menu> {
         ]),
         Menu::new("File").items([
             MenuItem::action("New Chat", NewChat),
+            MenuItem::action("Open Folder…", OpenFolder),
             MenuItem::separator(),
             MenuItem::action("Close", CloseWindow),
         ]),
@@ -246,6 +253,7 @@ pub struct State {
     pub route: Route,
     pub theme: ThemeSetting,
     pub confirm_before_close: ConfirmBeforeClose,
+    pub project_root: Option<String>,
     #[serde(skip)]
     pub path: Option<PathBuf>,
 }
@@ -260,6 +268,7 @@ impl Default for State {
             route: Route::Home,
             theme: ThemeSetting::System,
             confirm_before_close: ConfirmBeforeClose::default(),
+            project_root: None,
             path: None,
         }
     }
@@ -321,6 +330,25 @@ fn log_err(task: Task<Result<()>>, cx: &App) {
         })
         .detach();
 }
+#[derive(Deserialize)]
+struct ModelCatalog {
+    data: Vec<CatalogModel>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CatalogModel {
+    #[serde(flatten)]
+    model: Model,
+    availability_nux: Option<ModelAvailability>,
+}
+
+#[derive(Deserialize)]
+struct ModelAvailability {
+    message: String,
+}
+
+const LEGACY_MODEL_ANNOUNCEMENTS: [&str; 2] = ["gpt-5.4", "gpt-5.5"];
 
 #[derive(Clone)]
 struct DeletedQueuedMessage {
@@ -365,6 +393,7 @@ pub struct Root {
     archive_page: Option<Entity<ArchivedChats>>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
+    settings_page: Option<Entity<settings::SettingsPage>>,
     /// `⌘K` command menu over the window.
     command_menu: Option<Entity<CommandMenu>>,
     dialog: Option<Entity<Dialog>>,
@@ -372,6 +401,8 @@ pub struct Root {
     login: Option<Entity<Login>>,
     bridge: Arc<Bridge>,
     host: Arc<dyn host::Host>,
+    project_load: Option<Task<()>>,
+    picking_project: bool,
     automations: Option<Result<Value, String>>,
     automation_load: Option<Task<()>>,
     suggestion_load: Option<Task<()>>,
@@ -383,6 +414,7 @@ pub struct Root {
     clock: Option<Clock>,
     config: Value,
     skills: Value,
+    models: Vec<Model>,
     ready: bool,
     qa_work_started: bool,
     /// Threads started or resumed by this app-server; others need `thread/resume` first.
@@ -394,6 +426,15 @@ pub struct Root {
     steered_queued: HashSet<(String, String)>,
     /// Id of the server request the composer's approval card answers.
     approval: Option<Value>,
+    /// A commit, push or branch workflow is running (the original's single workflow state).
+    git_busy: Option<&'static str>,
+    git_status_load: Option<Task<()>>,
+    /// The repository the open commit form read; a later chat switch cannot redirect it.
+    commit_cwd: Option<String>,
+    /// `Include unstaged changes`, kept from one commit form to the next.
+    commit_include_unstaged: bool,
+    /// The ephemeral thread that writes a commit message.
+    generation: Option<Generation>,
     /// The `Notifications` region over the window.
     toaster: Entity<Toaster>,
     _events: Task<()>,
@@ -433,6 +474,9 @@ impl Root {
         };
         let home_composer = cx.new(|cx| {
             let mut composer = Composer::home(window, cx);
+            if let Some(root) = &state.project_root {
+                composer.set_search_roots(vec![root.clone()], cx);
+            }
             composer.on_model(on_model(this.clone()));
             let this = this.clone();
             composer.on_submit(move |s, window, cx| {
@@ -550,7 +594,7 @@ impl Root {
                 }
             }
         });
-        let root = Self {
+        let mut root = Self {
             back: Vec::new(),
             forward: Vec::new(),
             shell,
@@ -562,6 +606,14 @@ impl Root {
             focus: cx.focus_handle(),
             home: cx.new(|_| HomeMain {
                 composer: home_composer,
+                project: state.project_root.as_ref().map(|root| {
+                    std::path::Path::new(root)
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or(root)
+                        .to_owned()
+                        .into()
+                }),
             }),
             thread_composer,
             thread: None,
@@ -573,6 +625,7 @@ impl Root {
             page: None,
             archive_page: None,
             settings_section: None,
+            settings_page: None,
             command_menu: None,
             dialog: None,
             login: None,
@@ -582,6 +635,8 @@ impl Root {
             bridge,
             automations: None,
             automation_load: None,
+            project_load: None,
+            picking_project: false,
             suggestion_load: None,
             scheduled: None,
             suggestions: None,
@@ -589,6 +644,7 @@ impl Root {
             clock: None,
             config: Value::Null,
             skills: Value::Null,
+            models: Vec::new(),
             ready: false,
             qa_work_started: false,
             loaded: HashSet::new(),
@@ -597,6 +653,11 @@ impl Root {
             deleted_queued: Vec::new(),
             steered_queued: HashSet::new(),
             approval: None,
+            git_busy: None,
+            git_status_load: None,
+            commit_cwd: None,
+            commit_include_unstaged: true,
+            generation: None,
             toaster: cx.new(|_| Toaster::new()),
             _events,
             state,
@@ -605,6 +666,7 @@ impl Root {
         window.on_window_should_close(cx, move |window, cx| {
             this.update(cx, |this, cx| {
                 if this.state.confirm_before_close != ConfirmBeforeClose::Always {
+                    this.flush_settings(cx);
                     return true;
                 }
                 this.open_dialog(DialogKind::CloseWindow, window, cx);
@@ -612,12 +674,18 @@ impl Root {
             })
             .unwrap_or(true)
         });
+        cx.on_app_quit(|this, cx| {
+            this.flush_settings(cx);
+            async {}
+        })
+        .detach();
         window.focus(&root.focus, cx);
         // The DOM's body: when the focused element goes (a closed find bar or menu blurs, a
         // node leaves the tree), the root takes focus so the key bindings keep working.
         cx.on_focus_lost(window, |this, window, cx| window.focus(&this.focus, cx))
             .detach();
         root.connect(window, cx);
+        root.load_projects(cx);
         root
     }
 
@@ -636,7 +704,7 @@ impl Root {
                 .await?;
             let account = bridge.account_read().await?;
             let threads = bridge.thread_list().await?;
-            let models = bridge.model_list().await?;
+            let mut catalog: ModelCatalog = bridge.request("model/list", json!({})).await?;
             let config: ConfigReadResponse = bridge
                 .request("config/read", json!({ "includeLayers": false, "cwd": cwd }))
                 .await?;
@@ -651,13 +719,53 @@ impl Root {
                 }
                 this.set_threads(&threads.data, cx);
                 this.set_next_cursor(threads.next_cursor, cx);
+                let announcements_allowed = this.login.is_none()
+                    && matches!(this.state.route, Route::Home | Route::Thread(_));
+                let current_model = config.config["model"].as_str().or_else(|| {
+                    catalog
+                        .data
+                        .iter()
+                        .find(|entry| !entry.model.hidden && entry.model.is_default)
+                        .map(|entry| entry.model.model.as_str())
+                });
+                if announcements_allowed
+                    && let Some(current) = current_model
+                    && !LEGACY_MODEL_ANNOUNCEMENTS.contains(&current)
+                    && catalog.data.iter().any(|entry| {
+                        entry.model.model == current && entry.availability_nux.is_some()
+                    })
+                {
+                    this.remember_model_announcement(current, cx);
+                }
+                let announcement = announcements_allowed
+                    .then(|| {
+                        catalog.data.iter().position(|entry| {
+                            entry.availability_nux.is_some()
+                                && Some(entry.model.model.as_str()) != current_model
+                                && !LEGACY_MODEL_ANNOUNCEMENTS.contains(&entry.model.model.as_str())
+                                && !Self::model_announcement_history(cx)
+                                    .iter()
+                                    .any(|seen| seen.as_str() == Some(entry.model.model.as_str()))
+                        })
+                    })
+                    .flatten()
+                    .map(|index| {
+                        let message = catalog.data[index]
+                            .availability_nux
+                            .take()
+                            .expect("eligible model announcement")
+                            .message;
+                        (index, message)
+                    });
+                let models: Vec<Model> =
+                    catalog.data.into_iter().map(|entry| entry.model).collect();
                 let composers = [
                     this.home.read(cx).composer.clone(),
                     this.thread_composer.clone(),
                 ];
                 for composer in composers {
                     composer.update(cx, |c, cx| {
-                        c.set_models(&models.data, &config.config, cx);
+                        c.set_models(&models, &config.config, cx);
                         c.set_slash_skills(&skills, cx);
                     });
                 }
@@ -666,9 +774,15 @@ impl Root {
                     serde_json::to_value(this.state.confirm_before_close)
                         .expect("close preference");
                 this.skills = skills;
+                this.models = models;
                 this.ready = true;
                 this.select_route(cx);
                 this.sync(window, cx);
+                if let Some((index, message)) = announcement {
+                    let dialog =
+                        cx.new(|cx| Dialog::model_announcement(&this.models[index], message, cx));
+                    this.show_dialog(dialog, window, cx);
+                }
             })
         });
         log_err(task, cx);
@@ -775,14 +889,560 @@ impl Root {
     /// Replaces the desktop host and cancels any pending host read.
     pub fn set_host(&mut self, host: Arc<dyn host::Host>, cx: &mut Context<Self>) {
         self.automation_load = None;
+        self.project_load = None;
         self.suggestion_load = None;
+        self.git_status_load = None;
+        if let Some(thread) = &self.thread {
+            thread.update(cx, |view, cx| view.set_git_repository(None, cx));
+        }
         self.host = host;
         self.automations = None;
+        self.load_projects(cx);
         if self.scheduled_route() {
             self.load_automations(cx);
             self.load_suggestions(cx);
         }
+        self.refresh_git_actions(cx);
         cx.notify();
+    }
+
+    fn load_projects(&mut self, cx: &mut Context<Self>) {
+        self.sidebar
+            .update(cx, |sidebar, cx| sidebar.set_projects(Vec::new(), cx));
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move { host.projects() });
+        self.project_load = Some(cx.spawn(async move |this, cx| {
+            let result = read.await;
+            this.update(cx, |this, cx| match result {
+                Ok(projects) => this
+                    .sidebar
+                    .update(cx, |sidebar, cx| sidebar.set_projects(projects, cx)),
+                Err(error) => eprintln!("codex-gpui: cannot read sidebar projects: {error:#}"),
+            })
+            .ok();
+        }));
+    }
+
+    fn open_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.picking_project {
+            return;
+        }
+        self.picking_project = true;
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Choose project".into()),
+        });
+        let host = self.host.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = async {
+                let Some(paths) = paths.await?? else {
+                    return Ok(None);
+                };
+                let Some(path) = paths.into_iter().next() else {
+                    return Ok(None);
+                };
+                cx.background_spawn(async move {
+                    let root = host.add_project(&path)?;
+                    Ok::<_, anyhow::Error>(Some((root, host.projects()?)))
+                })
+                .await
+            }
+            .await;
+            this.update_in(cx, |this, window, cx| {
+                this.picking_project = false;
+                match result {
+                    Ok(Some((root, projects))) => {
+                        this.qa_work_started = true;
+                        this.project_load = None;
+                        this.sidebar
+                            .update(cx, |sidebar, cx| sidebar.set_projects(projects, cx));
+                        this.home.update(cx, |home, cx| {
+                            home.project = Some(
+                                std::path::Path::new(&root)
+                                    .file_name()
+                                    .and_then(|name| name.to_str())
+                                    .unwrap_or(&root)
+                                    .to_owned()
+                                    .into(),
+                            );
+                            home.composer.update(cx, |composer, cx| {
+                                composer.set_search_roots(vec![root.clone()], cx);
+                            });
+                            cx.notify();
+                        });
+                        this.state.project_root = Some(root);
+                        this.navigate(Route::Home, window, cx);
+                        this.save(window, cx);
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        eprintln!("codex-gpui: cannot choose project: {error:#}");
+                        this.toast(Toast::danger("Cannot open project folder"), cx);
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn repository_request(
+        &mut self,
+        panel: Entity<DiffPanel>,
+        cwd: &str,
+        request: &DiffRequest,
+        cx: &mut Context<Self>,
+    ) {
+        if panel.read(cx).pending() {
+            return;
+        }
+        let (endpoint, params, reverted) = match request {
+            DiffRequest::Refresh => ("git-changes", json!({"cwd": cwd}), None),
+            DiffRequest::Stage(path) => ("git-stage", json!({"cwd": cwd, "path": path}), None),
+            DiffRequest::Unstage(path) => ("git-unstage", json!({"cwd": cwd, "path": path}), None),
+            DiffRequest::Revert(change) => (
+                "git-revert",
+                json!({"cwd": cwd, "path": change.path, "source": change.source,
+                    "diff": change.diff, "hunk": change.hunk}),
+                Some(match change.hunk {
+                    Some(index) => format!("hunk {} in {}", index + 1, change.path),
+                    None => change.path.clone(),
+                }),
+            ),
+        };
+        let request = host::Request::post(endpoint, Some(params));
+        let host = self.host.clone();
+        panel.update(cx, |panel, cx| panel.begin_repository_request(cx));
+        let read = cx.background_spawn(async move {
+            let body = host
+                .fetch(&request)
+                .and_then(|response| host::json_body(&response));
+            body.and_then(|body| {
+                let status = if endpoint == "git-revert" {
+                    match body["status"].as_str() {
+                        Some("success") => Some(false),
+                        Some("partial-success") => Some(true),
+                        _ => anyhow::bail!("Git revert returned an invalid result"),
+                    }
+                } else {
+                    None
+                };
+                Ok((
+                    serde_json::from_value::<ui::screens::diff::panel::RepositoryChanges>(body)?,
+                    status,
+                ))
+            })
+            .map_err(|error| error.to_string())
+        });
+        cx.spawn(async move |this, cx| {
+            let result = read.await;
+            this.update(cx, |this, cx| {
+                if let Some(target) = reverted {
+                    let toast = match &result {
+                        Ok((_, Some(true))) => Toast::info(format!("Partially reverted {target}")),
+                        Ok((_, Some(false))) => Toast::info(format!("Reverted {target}")),
+                        _ => Toast::danger(format!("Failed to revert {target}")),
+                    };
+                    this.toast(toast, cx);
+                }
+                panel.update(cx, |panel, cx| {
+                    panel.set_repository(result.map(|(changes, _)| changes), cx)
+                });
+                this.refresh_git_actions(cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn refresh_git_actions(&mut self, cx: &mut Context<Self>) {
+        let Some(thread) = self.thread.clone() else {
+            return;
+        };
+        let cwd = thread.read(cx).cwd().to_owned();
+        let host = self.host.clone();
+        let lookup = host.clone();
+        thread.update(cx, |view, cx| view.set_git_repository(None, cx));
+        self.sync_git_availability(cx);
+        let read = cx.background_spawn(async move {
+            git_call(&*lookup, "git-commit-status", json!({"cwd": cwd}))
+                .and_then(|status| commit_repository(&status, true, String::new()))
+                .map_err(|error| error.to_string())
+        });
+        self.git_status_load = Some(cx.spawn(async move |this, cx| {
+            let repository = read.await;
+            this.update(cx, |this, cx| {
+                if this.thread.as_ref() != Some(&thread) || !Arc::ptr_eq(&host, &this.host) {
+                    return;
+                }
+                thread.update(cx, |view, cx| view.set_git_repository(Some(repository), cx));
+                this.sync_git_availability(cx);
+            })
+            .ok();
+        }));
+    }
+
+    fn sync_git_availability(&self, cx: &mut Context<Self>) {
+        if let Some(menu) = &self.command_menu {
+            let available = self.git_busy.is_none()
+                && self
+                    .thread
+                    .as_ref()
+                    .is_some_and(|view| view.read(cx).git_command_available());
+            menu.update(cx, |menu, cx| menu.set_git_available(available, cx));
+        }
+    }
+
+    fn set_git_phase(&mut self, phase: Option<&'static str>, cx: &mut Context<Self>) {
+        self.git_busy = phase;
+        if let Some(thread) = &self.thread {
+            thread.update(cx, |view, cx| view.set_git_phase(phase, cx));
+        }
+        self.sync_git_availability(cx);
+    }
+
+    /// Both original header actions open the form, including a push with no local changes.
+    fn open_git_form(&mut self, kind: DialogKind, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(thread) = self.thread.clone() else {
+            return;
+        };
+        if self.git_busy.is_some() || self.dialog.is_some() {
+            return;
+        }
+        let view = thread.read(cx);
+        let (cwd, title) = (view.cwd().to_owned(), view.header_title().to_string());
+        let prefix = git_setting(cx, "git-branch-prefix").unwrap_or_else(|| "codex/".into());
+        let name = branch_name(&prefix, &title);
+        let include = self.commit_include_unstaged;
+        let host = self.host.clone();
+        let repository = cwd.clone();
+        let request_host = host.clone();
+        let read = cx.background_spawn(async move {
+            git_call(&*host, "git-commit-status", json!({"cwd": repository}))
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let status = read
+                .await
+                .and_then(|status| commit_repository(&status, include, name));
+            this.update_in(cx, |this, window, cx| {
+                if this.thread.as_ref() != Some(&thread)
+                    || !Arc::ptr_eq(&this.host, &request_host)
+                    || this.git_busy.is_some()
+                    || this.dialog.is_some()
+                {
+                    return;
+                }
+                match status {
+                    Ok(repo) => {
+                        if kind != DialogKind::Commit
+                            || repo.all.files > 0
+                            || repo.branch.is_some() && repo.ahead > 0
+                        {
+                            let dialog = cx.new(|cx| {
+                                if kind == DialogKind::Commit {
+                                    Dialog::commit(repo, cx)
+                                } else {
+                                    Dialog::branches(repo, kind, cx)
+                                }
+                            });
+                            this.commit_cwd = Some(cwd);
+                            this.show_dialog(dialog, window, cx);
+                        } else {
+                            this.toast(Toast::info("No changes to commit"), cx);
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!("codex-gpui: cannot read Git status: {error:#}");
+                        this.toast(
+                            Toast::danger(if kind == DialogKind::Commit {
+                                "Commit is unavailable right now"
+                            } else {
+                                "Branch information unavailable"
+                            }),
+                            cx,
+                        );
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn checkout_branch(
+        &mut self,
+        dialog: Entity<Dialog>,
+        name: String,
+        create: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.git_busy.is_some() {
+            return;
+        }
+        let Some(cwd) = self.commit_cwd.clone() else {
+            return;
+        };
+        dialog.update(cx, |dialog, cx| dialog.begin_checkout(name.clone(), cx));
+        self.set_git_phase(
+            Some(if create {
+                "Creating branch…"
+            } else {
+                "Switching branch…"
+            }),
+            cx,
+        );
+        let host = self.host.clone();
+        let repository = cwd.clone();
+        let mut params = json!({"cwd": repository});
+        params[if create { "newBranch" } else { "branch" }] = name.into();
+        let read = cx.background_spawn(async move {
+            let result = git_call(&*host, "git-checkout", params);
+            let repository = if result
+                .as_ref()
+                .is_ok_and(|body| body["status"] == "success")
+            {
+                None
+            } else {
+                git_call(&*host, "git-commit-status", json!({"cwd": repository}))
+                    .and_then(|status| commit_repository(&status, true, String::new()))
+                    .ok()
+            };
+            (result, repository)
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let (result, repository) = read.await;
+            this.update_in(cx, |this, window, cx| {
+                if let Some(repo) = repository {
+                    dialog.update(cx, |dialog, cx| dialog.set_branch_repository(repo, cx));
+                }
+                match result {
+                    Ok(body) if body["status"] == "success" => {
+                        if this.dialog.as_ref() == Some(&dialog) {
+                            this.dialog = None;
+                            this.commit_cwd = None;
+                            window.focus(&this.composer(cx).focus_handle(cx), cx);
+                        }
+                        let title = body["branch"].as_str().map_or_else(
+                            || "Checked out detached HEAD".to_owned(),
+                            |branch| format!("Switched to {branch}"),
+                        );
+                        this.finish_git_workflow(GitOutcome::Done(title), &cwd, cx);
+                    }
+                    result => {
+                        let (error, conflicts) = match result {
+                            Ok(body) => (
+                                body["error"]
+                                    .as_str()
+                                    .unwrap_or("Git checkout returned an invalid result")
+                                    .to_owned(),
+                                if body["errorType"] == "blocked-by-working-tree-changes" {
+                                    body["conflictedPaths"]
+                                        .as_array()
+                                        .into_iter()
+                                        .flatten()
+                                        .filter_map(|path| path.as_str().map(str::to_owned))
+                                        .collect()
+                                } else {
+                                    Vec::new()
+                                },
+                            ),
+                            Err(error) => (error.to_string(), Vec::new()),
+                        };
+                        dialog.update(cx, |dialog, cx| {
+                            dialog.checkout_error(error.clone(), conflicts, cx)
+                        });
+                        if this.dialog.as_ref() == Some(&dialog) {
+                            window.focus(&dialog.focus_handle(cx), cx);
+                        }
+                        this.finish_git_workflow(
+                            GitOutcome::failed(
+                                if create {
+                                    "Failed to create branch"
+                                } else {
+                                    "Failed to check out branch"
+                                },
+                                Some(error),
+                            ),
+                            &cwd,
+                            cx,
+                        );
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn commit_before_checkout(
+        &mut self,
+        dialog: Entity<Dialog>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(cwd) = self.commit_cwd.clone() else {
+            return;
+        };
+        let Some(target) = dialog.read(cx).checkout_target() else {
+            return;
+        };
+        dialog.update(cx, |dialog, cx| dialog.begin_checkout(target, cx));
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move {
+            git_call(&*host, "git-commit-status", json!({"cwd": cwd}))
+                .and_then(|status| commit_repository(&status, true, String::new()))
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = read.await;
+            this.update_in(cx, |this, window, cx| {
+                if this.dialog.as_ref() != Some(&dialog) {
+                    return;
+                }
+                match result {
+                    Ok(repo) => {
+                        dialog.update(cx, |dialog, cx| dialog.prepare_branch_commit(repo, cx));
+                        window.focus(&dialog.focus_handle(cx), cx);
+                    }
+                    Err(error) => {
+                        dialog.update(cx, |dialog, cx| {
+                            dialog.schedule_result(error.to_string(), cx)
+                        });
+                        this.toast(
+                            Toast::danger(format!("Failed to read changes: {error}")),
+                            cx,
+                        );
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Creates the branch, commits and pushes in `cwd` as the submitted form chose, then
+    /// toasts the result like the original and refreshes the Changes panel.
+    fn git_workflow(&mut self, request: GitRequest, window: &mut Window, cx: &mut Context<Self>) {
+        if self.git_busy.is_some() {
+            return;
+        }
+        let phase = if request.step == CommitStep::Push {
+            "Pushing changes…"
+        } else if request.message.is_empty() {
+            "Generating messages…"
+        } else if request.new_branch.is_some() {
+            "Creating branch…"
+        } else {
+            "Committing…"
+        };
+        self.set_git_phase(Some(phase), cx);
+        let run = GitRun {
+            host: self.host.clone(),
+            bridge: self.bridge.clone(),
+            model: generation_model(&self.models),
+            cwd: request.cwd.clone(),
+            instructions: git_setting(cx, "git-commit-instructions").unwrap_or_default(),
+        };
+        let continuation = self.dialog.clone().filter(|dialog| {
+            dialog.read(cx).kind() == DialogKind::Commit
+                && dialog.read(cx).checkout_target().is_some()
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let outcome = commit_workflow(&this, cx, &run, request).await;
+            this.update_in(cx, |this, window, cx| {
+                if let Some(dialog) = continuation {
+                    match &outcome {
+                        GitOutcome::Done(_) => {
+                            let target = dialog.read(cx).checkout_target().unwrap();
+                            dialog.update(cx, |dialog, cx| dialog.resume_checkout(cx));
+                            this.finish_git_workflow(outcome, &run.cwd, cx);
+                            this.checkout_branch(dialog, target, false, window, cx);
+                            return;
+                        }
+                        GitOutcome::Failed { title, detail } => {
+                            dialog.update(cx, |dialog, cx| {
+                                dialog.schedule_result(detail.as_ref().unwrap_or(title).clone(), cx)
+                            });
+                        }
+                    }
+                }
+                this.finish_git_workflow(outcome, &run.cwd, cx)
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn finish_git_workflow(&mut self, outcome: GitOutcome, cwd: &str, cx: &mut Context<Self>) {
+        self.set_git_phase(None, cx);
+        match outcome {
+            GitOutcome::Done(title) => self.toast(Toast::info(title), cx),
+            GitOutcome::Failed { title, detail } => {
+                eprintln!(
+                    "codex-gpui: {title}: {}",
+                    detail.as_deref().unwrap_or_default()
+                );
+                let mut toast = Toast::danger(title);
+                if let Some(detail) = detail {
+                    toast = toast.action("Copy error", move |_, cx| {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(detail.clone()))
+                    });
+                }
+                self.toast(toast, cx);
+            }
+        }
+        if let (Some(panel), Some(thread)) = (self.diff.clone(), self.thread.clone())
+            && thread.read(cx).cwd() == cwd
+        {
+            self.repository_request(panel, cwd, &DiffRequest::Refresh, cx);
+        } else {
+            self.refresh_git_actions(cx);
+        }
+    }
+
+    fn confirm_revert(
+        &mut self,
+        panel: Entity<DiffPanel>,
+        cwd: &str,
+        change: &RevertChanges,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if panel.read(cx).pending() || self.dialog.is_some() {
+            return;
+        }
+        let request = DiffRequest::Revert(change.clone());
+        if cx
+            .try_global::<host_settings::Settings>()
+            .and_then(|settings| settings.read_all().get("skip-revert-confirmation"))
+            .and_then(Value::as_bool)
+            == Some(true)
+        {
+            self.repository_request(panel, cwd, &request, cx);
+            return;
+        }
+        let cwd = cwd.to_owned();
+        let dialog = cx.new(|cx| Dialog::new(DialogKind::RevertChanges, cx));
+        // Handle Confirm before show_dialog drops the event source.
+        cx.subscribe(&dialog, move |this, _, outcome, cx| {
+            if let DialogOutcome::RevertChanges { do_not_ask_again } = outcome {
+                if *do_not_ask_again {
+                    this.write_setting(
+                        &SettingChanged {
+                            path: "host.skip-revert-confirmation",
+                            value: Value::Bool(true),
+                        },
+                        cx,
+                    );
+                }
+                this.repository_request(panel.clone(), &cwd, &request, cx);
+            }
+        })
+        .detach();
+        self.show_dialog(dialog, window, cx);
     }
 
     /// The host's automation list, or its error; `None` means that the read has not completed.
@@ -1020,6 +1680,8 @@ impl Root {
     /// Shows the route (loading its thread if needed), pushes history into the shell and
     /// persists the state.
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.flush_settings(cx);
+        self.settings_page = None;
         self.suggestion_load = None;
         let (can_back, can_forward) = (!self.back.is_empty(), !self.forward.is_empty());
         self.archive_page = None;
@@ -1036,6 +1698,7 @@ impl Root {
                 config["host"]["confirm-before-close"] = json!(self.state.confirm_before_close);
                 let section = self.settings_section.take();
                 let (shell, page) = settings::shell(&config, &self.skills, section, cx);
+                self.settings_page = Some(page.clone());
                 cx.subscribe(&page, |this, page, e: &SettingChanged, cx| {
                     this.write_setting(e, cx);
                     if e.path.starts_with("host.") && e.path != settings::THEME {
@@ -1294,6 +1957,9 @@ impl Root {
 
     /// `⌘K`, `⌘⇧P` and the sidebar `Search`: the command menu over live Recents, focused.
     fn open_command_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(thread) = &self.thread {
+            thread.update(cx, |view, cx| view.close_summary(cx));
+        }
         let unread = self.sidebar.read(cx).unread.clone();
         let thread_open = matches!(self.state.route, Route::Thread(_));
         let menu =
@@ -1304,6 +1970,7 @@ impl Root {
         .detach();
         window.focus(&menu.focus_handle(cx), cx);
         self.command_menu = Some(menu);
+        self.refresh_git_actions(cx);
         cx.notify();
     }
 
@@ -1311,9 +1978,76 @@ impl Root {
         self.dialog.as_ref()
     }
 
+    fn model_announcement_history(cx: &App) -> &[Value] {
+        cx.try_global::<host_settings::Settings>()
+            .and_then(|settings| settings.read_all().get("seen-model-upgrade-list"))
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
+
+    fn remember_model_announcement(&mut self, model: &str, cx: &mut Context<Self>) {
+        let seen = Self::model_announcement_history(cx);
+        if seen.iter().any(|seen| seen.as_str() == Some(model)) {
+            return;
+        }
+        let mut seen = seen.to_vec();
+        seen.push(json!(model));
+        self.write_setting(
+            &SettingChanged {
+                path: "host.seen-model-upgrade-list",
+                value: Value::Array(seen),
+            },
+            cx,
+        );
+    }
+
     fn open_dialog(&mut self, kind: DialogKind, window: &mut Window, cx: &mut Context<Self>) {
         let dialog = cx.new(|cx| Dialog::new(kind, cx));
         self.show_dialog(dialog, window, cx);
+    }
+
+    fn create_task(
+        &mut self,
+        prompt: String,
+        rrule: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(dialog) = self.dialog.clone() else {
+            return;
+        };
+        let host = self.host.clone();
+        let name: String = prompt
+            .lines()
+            .next()
+            .unwrap_or(&prompt)
+            .chars()
+            .take(80)
+            .collect();
+        let params = json!({"name": name, "prompt": prompt, "rrule": rrule, "cwds": [self.cwd]});
+        let write = cx.background_spawn(async move {
+            host.fetch(&host::Request::post("create-automation", Some(params)))
+                .and_then(|response| host::json_body(&response))
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = write.await;
+            this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(_) => {
+                        this.dialog = None;
+                        window.focus(&this.focus, cx);
+                        this.load_automations(cx);
+                    }
+                    Err(error) => dialog.update(cx, |dialog, cx| {
+                        dialog.schedule_result(format!("Could not create task: {error}"), cx);
+                    }),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn show_dialog(&mut self, dialog: Entity<Dialog>, window: &mut Window, cx: &mut Context<Self>) {
@@ -1321,10 +2055,81 @@ impl Root {
             return;
         }
         self.command_menu = None;
-        cx.subscribe_in(&dialog, window, |this, _, outcome, window, cx| {
+        let git_dialog = matches!(
+            dialog.read(cx).kind(),
+            DialogKind::Commit | DialogKind::Branches | DialogKind::CreateBranch
+        );
+        if git_dialog
+            && dialog.read(cx).kind() != DialogKind::Branches
+            && let Some(thread) = &self.thread
+        {
+            thread.update(cx, |view, cx| view.close_summary(cx));
+        }
+        cx.subscribe_in(&dialog, window, move |this, dialog, outcome, window, cx| {
+            if let DialogOutcome::ScheduleTask { prompt, rrule } = outcome {
+                this.create_task(prompt.clone(), rrule.clone(), window, cx);
+                return;
+            }
+            if let DialogOutcome::CheckoutBranch { name, create } = outcome {
+                this.checkout_branch(dialog.clone(), name.clone(), *create, window, cx);
+                return;
+            }
+            if let DialogOutcome::CommitBeforeCheckout = outcome {
+                this.commit_before_checkout(dialog.clone(), window, cx);
+                return;
+            }
+            if let DialogOutcome::Commit {
+                step,
+                message,
+                include_unstaged,
+                new_branch,
+            } = outcome
+                && let Some(target) = dialog.read(cx).checkout_target()
+            {
+                if this.git_busy.is_none()
+                    && let Some(cwd) = this.commit_cwd.clone()
+                {
+                    dialog.update(cx, |dialog, cx| dialog.begin_checkout(target, cx));
+                    this.git_workflow(
+                        GitRequest {
+                            cwd,
+                            step: *step,
+                            message: message.clone(),
+                            include_unstaged: *include_unstaged,
+                            new_branch: new_branch.clone(),
+                        },
+                        window,
+                        cx,
+                    );
+                }
+                return;
+            }
+            if dialog.read(cx).saving() {
+                return;
+            }
+            dialog.read(cx).release_artwork(window);
             this.dialog = None;
             match outcome {
-                DialogOutcome::Dismiss => window.focus(&this.focus, cx),
+                DialogOutcome::Dismiss => {
+                    if git_dialog {
+                        this.commit_cwd = None;
+                        window.focus(&this.composer(cx).focus_handle(cx), cx);
+                    } else {
+                        window.focus(&this.focus, cx);
+                    }
+                }
+                DialogOutcome::RevertChanges { .. } => window.focus(&this.focus, cx),
+                DialogOutcome::DismissAnnouncement(model)
+                | DialogOutcome::UseAnnouncedModel { model, .. } => {
+                    if let DialogOutcome::UseAnnouncedModel {
+                        reasoning_effort, ..
+                    } = outcome
+                    {
+                        this.write_model(model, reasoning_effort, cx);
+                    }
+                    this.remember_model_announcement(model, cx);
+                    window.focus(&this.focus, cx);
+                }
                 DialogOutcome::FullAccess => {
                     let composer = this.composer(cx);
                     composer.update(cx, |composer, cx| composer.confirm_full_access(cx));
@@ -1336,12 +2141,35 @@ impl Root {
                         this.config["host"]["confirm-before-close"] = "never".into();
                         this.state.save();
                     }
+                    this.flush_settings(cx);
                     window.remove_window();
                 }
                 DialogOutcome::Rename { thread, name } => {
                     window.focus(&this.focus, cx);
                     this.rename(thread.clone(), name.clone(), window, cx);
                 }
+                DialogOutcome::Commit {
+                    step,
+                    message,
+                    include_unstaged,
+                    new_branch,
+                } => {
+                    window.focus(&this.composer(cx).focus_handle(cx), cx);
+                    this.commit_include_unstaged = *include_unstaged;
+                    if let Some(cwd) = this.commit_cwd.take() {
+                        let request = GitRequest {
+                            cwd,
+                            step: *step,
+                            message: message.clone(),
+                            include_unstaged: *include_unstaged,
+                            new_branch: new_branch.clone(),
+                        };
+                        this.git_workflow(request, window, cx);
+                    }
+                }
+                DialogOutcome::ScheduleTask { .. }
+                | DialogOutcome::CheckoutBranch { .. }
+                | DialogOutcome::CommitBeforeCheckout => unreachable!(),
             }
             cx.notify();
         })
@@ -1361,15 +2189,15 @@ impl Root {
             return self.close_side(side, window, cx);
         }
         if self.state.confirm_before_close == ConfirmBeforeClose::Never {
+            self.flush_settings(cx);
             window.remove_window();
         } else {
             self.open_dialog(DialogKind::CloseWindow, window, cx);
         }
     }
 
-    /// Opens a chat or settings page, or answers the open menu's content search.
-    /// ponytail: commands whose feature the port lacks (Open folder, Show Mini, Log out, ...)
-    /// only close the menu; run them when the features land.
+    /// Runs implemented commands through the same actions as the keyboard and menus.
+    /// Unsupported destinations remain unfinished outside this dispatch slice.
     fn run_command(
         &mut self,
         event: &CommandMenuEvent,
@@ -1380,14 +2208,33 @@ impl Root {
             return self.search_threads(term.clone(), window, cx);
         }
         self.command_menu = None;
+        window.focus(&self.route_focus(cx), cx);
         match event {
             CommandMenuEvent::Dismiss | CommandMenuEvent::Search(_) => {}
             CommandMenuEvent::OpenThread(id) => {
                 self.navigate(Route::Thread(id.clone()), window, cx)
             }
             CommandMenuEvent::Command(label) => match label.as_ref() {
-                "New chat" => self.new_chat(window, cx),
-                "Manage scheduled tasks" => self.navigate(Route::Scheduled, window, cx),
+                "New chat" | "New standalone chat" => window.dispatch_action(Box::new(NewChat), cx),
+                "Open folder" => window.dispatch_action(Box::new(OpenFolder), cx),
+                "Archive chat" => window.dispatch_action(Box::new(ArchiveChat), cx),
+                "Find" => window.dispatch_action(Box::new(FindInThread), cx),
+                "Back" => window.dispatch_action(Box::new(GoBack), cx),
+                "Forward" => window.dispatch_action(Box::new(GoForward), cx),
+                "Previous chat" => window.dispatch_action(Box::new(PreviousChat), cx),
+                "Next chat" => window.dispatch_action(Box::new(NextChat), cx),
+                "Go to recent chat 1" => window.dispatch_action(Box::new(GoToRecentChat(0)), cx),
+                "Go to recent chat 2" => window.dispatch_action(Box::new(GoToRecentChat(1)), cx),
+                "Go to recent chat 3" => window.dispatch_action(Box::new(GoToRecentChat(2)), cx),
+                "Go to recent chat 4" => window.dispatch_action(Box::new(GoToRecentChat(3)), cx),
+                "Go to recent chat 5" => window.dispatch_action(Box::new(GoToRecentChat(4)), cx),
+                "Go to recent chat 6" => window.dispatch_action(Box::new(GoToRecentChat(5)), cx),
+                "Toggle sidebar" => window.dispatch_action(Box::new(ToggleSidebar), cx),
+                "Open Changes tab" => window.dispatch_action(Box::new(OpenChangesPanel), cx),
+                "New tab" => window.dispatch_action(Box::new(ToggleChangesPanel), cx),
+                "Open terminal" => window.dispatch_action(Box::new(OpenBackgroundTerminal), cx),
+                "Commit or push" => self.open_git_form(DialogKind::Commit, window, cx),
+                "Manage scheduled tasks" => window.dispatch_action(Box::new(OpenScheduled), cx),
                 label => {
                     if let Some(section) = settings::section(label) {
                         self.open_settings_section(section, window, cx);
@@ -1395,7 +2242,6 @@ impl Root {
                 }
             },
         }
-        window.focus(&self.route_focus(cx), cx);
         cx.notify();
     }
 
@@ -1462,7 +2308,7 @@ impl Root {
             c.set_running(running, cx);
             c.set_queued(Vec::new(), cx);
             c.set_queue_pending(self.queue_pending, cx);
-            c.set_search_roots(vec![thread.cwd.clone()]);
+            c.set_search_roots(vec![thread.cwd.clone()], cx);
         });
         let route = Route::Thread(thread.id.clone());
         let clock = self.clock.unwrap_or_else(|| Clock {
@@ -1471,10 +2317,36 @@ impl Root {
             elapsed_since: None,
         });
         let composer = self.thread_composer.clone().into();
-        self.diff = Some(cx.new(|_| DiffPanel::last_turn(&self.cwd, &thread.cwd, &thread.turns)));
+        let diff = cx.new(|_| DiffPanel::last_turn(&self.cwd, &thread.cwd, &thread.turns));
+        let cwd = thread.cwd.clone();
+        cx.subscribe_in(
+            &diff,
+            window,
+            move |this, panel, request: &DiffRequest, window, cx| match request {
+                DiffRequest::Revert(change) => {
+                    this.confirm_revert(panel.clone(), &cwd, change, window, cx)
+                }
+                _ => this.repository_request(panel.clone(), &cwd, request, cx),
+            },
+        )
+        .detach();
+        self.diff = Some(diff);
         self.file = None;
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
+        view.update(cx, |view, cx| view.set_git_phase(self.git_busy, cx));
+        cx.subscribe_in(
+            &view,
+            window,
+            |this, _, action: &GitAction, window, cx| match action {
+                GitAction::Refresh => this.refresh_git_actions(cx),
+                GitAction::OpenForm => this.open_git_form(DialogKind::Commit, window, cx),
+                GitAction::CreateBranch => this.open_git_form(DialogKind::CreateBranch, window, cx),
+                GitAction::SwitchBranch => this.open_git_form(DialogKind::Branches, window, cx),
+            },
+        )
+        .detach();
         self.thread = Some(view);
+        self.refresh_git_actions(cx);
         if self.state.route == route {
             self.sync(window, cx);
         } else {
@@ -1486,7 +2358,13 @@ impl Root {
     /// `turn/start`; the turn streams in through [`Self::on_event`].
     fn start_thread(&mut self, s: Submission, window: &mut Window, cx: &mut Context<Self>) {
         self.qa_work_started = true;
-        let (bridge, cwd) = (self.bridge.clone(), self.cwd.clone());
+        let bridge = self.bridge.clone();
+        let cwd = self
+            .state
+            .project_root
+            .as_ref()
+            .unwrap_or(&self.cwd)
+            .clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let mut params = json!({ "cwd": cwd, "model": model(&s) });
             apply_permissions(&mut params, s.permission);
@@ -2049,7 +2927,7 @@ impl Root {
         }
     }
 
-    /// A model picker choice: `config/batchWrite` of `model` and `model_reasoning_effort`
+    /// A model choice: `config/batchWrite` of `model` and `model_reasoning_effort`
     /// (the original's `writeModel`).
     fn write_model(&mut self, model: &str, effort: &str, cx: &mut Context<Self>) {
         let params = json!({
@@ -2062,10 +2940,40 @@ impl Root {
             "reloadUserConfig": true,
         });
         let (model, effort) = (model.to_owned(), effort.to_owned());
-        self.write_config("config/batchWrite", params, cx, move |config| {
-            config["model"] = model.into();
-            config["model_reasoning_effort"] = effort.into();
+        let bridge = self.bridge.clone();
+        let task = cx.spawn(async move |this, cx| -> Result<()> {
+            let done = bridge
+                .request::<_, Value>("config/batchWrite", params)
+                .await;
+            this.update(cx, |this, cx| {
+                if done.is_ok() {
+                    let composers = [
+                        this.home.read(cx).composer.clone(),
+                        this.thread_composer.clone(),
+                    ];
+                    for composer in composers {
+                        composer.update(cx, |composer, cx| {
+                            composer.set_model_and_effort(&model, &effort, cx);
+                        });
+                    }
+                    this.config["model"] = model.into();
+                    this.config["model_reasoning_effort"] = effort.into();
+                } else {
+                    this.toast(Toast::danger("Couldn’t update model settings"), cx);
+                }
+            })?;
+            done.map(drop)
         });
+        log_err(task, cx);
+    }
+
+    fn flush_settings(&mut self, cx: &mut Context<Self>) {
+        if let Some(page) = self.settings_page.clone() {
+            let pending = page.update(cx, |page, _| page.take_pending_instructions());
+            for change in pending {
+                self.write_setting(&change, cx);
+            }
+        }
     }
 
     /// Window preferences keep their state storage; other host settings use the desktop service.
@@ -2096,7 +3004,56 @@ impl Root {
             };
             if let Err(error) = result {
                 eprintln!("codex-gpui: settings.write({key}): {error:#}");
-                self.toast(Toast::danger("Couldn't save your changes. Try again"), cx);
+                let message = match key {
+                    "git-branch-prefix" => "Failed to save branch prefix",
+                    "git-pull-request-merge-method" => "Failed to save pull request merge method",
+                    "git-always-force-push" => "Failed to save force push setting",
+                    "git-create-pull-request-as-draft" => {
+                        "Failed to save draft pull request setting"
+                    }
+                    "git-review-mode" => "Could not save Git diff setting",
+                    "git-pr-watch-auto-merge" => "Failed to save automatic PR merging",
+                    "git-commit-instructions"
+                    | "git-pr-instructions"
+                    | "git-pr-watch-instructions" => "Failed to save instructions",
+                    _ => "Couldn't save your changes. Try again",
+                };
+                self.toast(Toast::danger(message), cx);
+            } else {
+                let message = match key {
+                    "git-branch-prefix" => Some("Saved branch prefix".to_owned()),
+                    "git-pull-request-merge-method" => {
+                        Some("Saved pull request merge method".to_owned())
+                    }
+                    "git-always-force-push" => Some(format!(
+                        "Always force push {}",
+                        if e.value == true {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        }
+                    )),
+                    "git-create-pull-request-as-draft" => Some(format!(
+                        "Create draft pull requests {}",
+                        if e.value == true {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        }
+                    )),
+                    "git-pr-watch-auto-merge" => Some(format!(
+                        "Automatic PR merging {}",
+                        if e.value == true {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        }
+                    )),
+                    _ => None,
+                };
+                if let Some(message) = message {
+                    self.toast(Toast::info(message), cx);
+                }
             }
             return;
         }
@@ -2125,8 +3082,19 @@ impl Root {
     ) {
         self.qa_work_started = true;
         let bridge = self.bridge.clone();
+        let review_delivery = params["keyPath"] == "desktop.reviewDelivery";
         let task = cx.spawn(async move |this, cx| -> Result<()> {
-            bridge.request::<_, Value>(method, params).await?;
+            if let Err(error) = bridge.request::<_, Value>(method, params).await {
+                if review_delivery {
+                    this.update(cx, |this, cx| {
+                        this.toast(
+                            Toast::danger("Could not save review delivery preference"),
+                            cx,
+                        );
+                    })?;
+                }
+                return Err(error);
+            }
             this.update(cx, |this, _| apply(&mut this.config))
         });
         log_err(task, cx);
@@ -2143,6 +3111,35 @@ impl Root {
     /// Every server message: streamed into the open thread and the sign-in view, plus
     /// Recents updates and approval prompts.
     pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        if let Event::Notification { method, params } = &event
+            && let Some(generation) = &mut self.generation
+            && params["threadId"].as_str() == Some(&generation.thread)
+        {
+            match method.as_str() {
+                "item/agentMessage/delta" => generation
+                    .text
+                    .get_or_insert_default()
+                    .push_str(params["delta"].as_str().unwrap_or_default()),
+                "item/completed" if params["item"]["type"] == "agentMessage" => {
+                    generation.text = params["item"]["text"].as_str().map(str::to_owned)
+                }
+                "turn/completed" => {
+                    let status = params["turn"]["status"].as_str().unwrap_or_default();
+                    let result = if status == "completed" {
+                        Ok(generation.text.take())
+                    } else {
+                        let error = params["turn"]["error"]["message"].as_str();
+                        Err(match error {
+                            Some(error) => format!("Structured turn failed: {error}"),
+                            None => format!("Structured turn ended with status {status}."),
+                        })
+                    };
+                    generation.done.try_send(result).ok();
+                }
+                _ => {}
+            }
+            return;
+        }
         if matches!(&event, Event::Notification { method, .. } if method == "turn/started")
             || matches!(&event, Event::Request { .. })
         {
@@ -2176,7 +3173,7 @@ impl Root {
         }
         match event {
             Event::Notification { method, params } => match method.as_str() {
-                "thread/started" => {
+                "thread/started" if params["thread"]["ephemeral"] != true => {
                     if let Ok(n) = serde_json::from_value::<ThreadStartedNotification>(params) {
                         self.add_thread(&n.thread, cx);
                     }
@@ -2210,8 +3207,10 @@ impl Root {
                 }
                 "fuzzyFileSearch/sessionUpdated" | "fuzzyFileSearch/sessionCompleted" => {
                     let completed = method == "fuzzyFileSearch/sessionCompleted";
-                    self.thread_composer
-                        .update(cx, |c, cx| c.apply_file_search(completed, &params, cx));
+                    let home = self.home.read(cx).composer.clone();
+                    for composer in [home, self.thread_composer.clone()] {
+                        composer.update(cx, |c, cx| c.apply_file_search(completed, &params, cx));
+                    }
                 }
                 "account/login/completed" if params["success"] == true => {
                     self.login = None;
@@ -2411,6 +3410,48 @@ async fn read_queue(bridge: &Bridge, thread_id: &str) -> Result<Vec<QueuedSubmis
     }
 }
 
+/// The ephemeral app-server thread that writes a commit message, and what it has said.
+struct Generation {
+    thread: String,
+    text: Option<String>,
+    done: async_channel::Sender<Result<Option<String>, String>>,
+}
+
+/// What a submitted commit form, or the push-only command, asks of one repository.
+struct GitRequest {
+    cwd: String,
+    step: CommitStep,
+    message: String,
+    include_unstaged: bool,
+    new_branch: Option<String>,
+}
+
+/// What one commit workflow needs off the UI thread.
+struct GitRun {
+    host: Arc<dyn host::Host>,
+    bridge: Arc<Bridge>,
+    model: String,
+    cwd: String,
+    instructions: String,
+}
+
+enum GitOutcome {
+    Done(String),
+    Failed {
+        title: String,
+        detail: Option<String>,
+    },
+}
+
+impl GitOutcome {
+    fn failed(title: impl Into<String>, detail: Option<String>) -> Self {
+        Self::Failed {
+            title: title.into(),
+            detail,
+        }
+    }
+}
+
 async fn restore_queued(bridge: &Bridge, deleted: &DeletedQueuedMessage) -> Result<()> {
     let mut rows = read_queue(bridge, &deleted.thread_id).await?;
     let client_id = &deleted.submission.client_user_message_id;
@@ -2464,6 +3505,381 @@ async fn restore_queued(bridge: &Bridge, deleted: &DeletedQueuedMessage) -> Resu
     Ok(())
 }
 
+/// A host setting of the original's Git page (`git-branch-prefix`, `git-commit-instructions`).
+fn git_setting(cx: &App, key: &str) -> Option<String> {
+    cx.try_global::<host_settings::Settings>()?
+        .read_all()
+        .get(key)?
+        .as_str()
+        .map(str::to_owned)
+}
+
+fn git_call(host: &dyn host::Host, endpoint: &str, params: Value) -> Result<Value> {
+    host::json_body(&host.fetch(&host::Request::post(endpoint, Some(params)))?)
+}
+
+impl GitRun {
+    async fn call(
+        &self,
+        cx: &AsyncWindowContext,
+        endpoint: &'static str,
+        params: Value,
+    ) -> Result<Value, String> {
+        let host = self.host.clone();
+        cx.background_executor()
+            .spawn(async move { git_call(&*host, endpoint, params) })
+            .await
+            .map_err(|error| format!("{error:#}"))
+    }
+}
+
+fn commit_repository(
+    status: &Value,
+    include_unstaged: bool,
+    new_branch_name: String,
+) -> Result<CommitRepository> {
+    anyhow::ensure!(status["staged"].is_object(), "missing Git status");
+    let selection = |key: &str| {
+        let count = |field: &str| status[key][field].as_u64().unwrap_or_default() as usize;
+        Selection {
+            files: count("files"),
+            additions: count("additions"),
+            deletions: count("deletions"),
+        }
+    };
+    Ok(CommitRepository {
+        branch: status["branch"].as_str().map(str::to_owned),
+        branches: status["branches"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|branch| branch.as_str().map(str::to_owned))
+            .collect(),
+        has_commits: status["hasCommits"].as_bool().unwrap_or(false),
+        ahead: status["commitsAhead"].as_u64().unwrap_or_default() as usize,
+        staged: selection("staged"),
+        all: selection("all"),
+        include_unstaged,
+        new_branch_name,
+    })
+}
+
+/// The original's default new branch: the prefix and the first five words of the chat title.
+fn branch_name(prefix: &str, title: &str) -> String {
+    let slug = title
+        .trim()
+        .to_lowercase()
+        .split_whitespace()
+        .take(5)
+        .map(|word| {
+            word.chars()
+                .filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+                .collect::<String>()
+        })
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    format!("{}{slug}", prefix.trim())
+}
+
+/// `Committed to {branch}` and `Pushed {branch}` come from the step that finished last.
+fn git_result(done: &Value) -> Result<Option<String>, GitOutcome> {
+    if done["status"] == "success" {
+        return Ok(done["branch"].as_str().map(str::to_owned));
+    }
+    let title = match done["stage"].as_str() {
+        Some("branch") => "Failed to create branch",
+        Some("push") => "Failed to push changes",
+        _ => "Failed to commit changes",
+    };
+    Err(GitOutcome::failed(
+        title,
+        done["error"].as_str().map(str::to_owned),
+    ))
+}
+
+async fn commit_workflow(
+    this: &WeakEntity<Root>,
+    cx: &mut AsyncWindowContext,
+    run: &GitRun,
+    request: GitRequest,
+) -> GitOutcome {
+    let GitRequest {
+        step,
+        message,
+        include_unstaged,
+        new_branch,
+        ..
+    } = request;
+    let mut branch = None;
+    if step != CommitStep::Push {
+        let message = if message.is_empty() {
+            match generate_message(this, cx, run, include_unstaged).await {
+                Ok(Some(message)) => message,
+                Ok(None) => return GitOutcome::failed("Couldn't generate a commit message", None),
+                Err(error) => {
+                    return GitOutcome::failed(
+                        format!("Failed to generate commit message: {error}"),
+                        Some(error),
+                    );
+                }
+            }
+        } else {
+            message
+        };
+        this.update(cx, |this, cx| this.set_git_phase(Some("Committing…"), cx))
+            .ok();
+        let params = json!({
+            "cwd": run.cwd,
+            "message": message,
+            "includeUnstaged": include_unstaged,
+            "newBranch": new_branch,
+        });
+        match run.call(cx, "git-commit", params).await {
+            Ok(done) => match git_result(&done) {
+                Ok(committed) => branch = committed,
+                Err(failed) => return failed,
+            },
+            Err(error) => return GitOutcome::failed("Failed to commit changes", Some(error)),
+        }
+    }
+    if step != CommitStep::Commit {
+        this.update(cx, |this, cx| {
+            this.set_git_phase(Some("Pushing changes…"), cx)
+        })
+        .ok();
+        let new_branch = new_branch.filter(|_| step == CommitStep::Push);
+        let params = json!({"cwd": run.cwd, "newBranch": new_branch});
+        match run.call(cx, "git-push", params).await {
+            Ok(done) => match git_result(&done) {
+                Ok(pushed) => branch = pushed,
+                Err(failed) => return failed,
+            },
+            Err(error) => return GitOutcome::failed("Failed to push changes", Some(error)),
+        }
+    }
+    let target = branch.filter(|branch| !branch.is_empty());
+    GitOutcome::Done(match (step, target) {
+        (CommitStep::Commit, Some(branch)) => format!("Committed to {branch}"),
+        (CommitStep::Commit, None) => "Committed to your branch".into(),
+        (_, Some(branch)) => format!("Pushed {branch}"),
+        (_, None) => "Pushed your branch".into(),
+    })
+}
+
+const COMMIT_MESSAGE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The model the original generates commit messages with (`ephemeralGenerationModel`), else
+/// the default model that supports low reasoning effort.
+fn generation_model(models: &[Model]) -> String {
+    const DEFAULT: &str = "gpt-6-luna";
+    if models.is_empty() || models.iter().any(|model| model.model == DEFAULT) {
+        return DEFAULT.into();
+    }
+    let low = |model: &&Model| {
+        !model.hidden
+            && model
+                .supported_reasoning_efforts
+                .iter()
+                .any(|effort| effort["reasoningEffort"] == "low")
+    };
+    models
+        .iter()
+        .filter(low)
+        .find(|model| model.is_default)
+        .or_else(|| models.iter().find(low))
+        .map_or_else(|| DEFAULT.into(), |model| model.model.clone())
+}
+
+/// Writes a commit message the way the original's `generate-commit-message` does: an
+/// ephemeral read-only app-server thread answers the diff prompt with structured output.
+async fn generate_message(
+    this: &WeakEntity<Root>,
+    cx: &mut AsyncWindowContext,
+    run: &GitRun,
+    include_unstaged: bool,
+) -> Result<Option<String>, String> {
+    let diff = run
+        .call(
+            cx,
+            "git-commit-diff",
+            json!({"cwd": run.cwd, "includeUnstaged": include_unstaged}),
+        )
+        .await
+        .ok()
+        .and_then(|diff| diff["unifiedDiff"].as_str().map(str::to_owned));
+    let prompt = generation_prompt(&run.instructions, diff.as_deref());
+    let prompt = prompt.trim();
+    if prompt.is_empty() {
+        return Ok(None);
+    }
+    let prompt: String = prompt.chars().take(20_000).collect();
+    let started: Value = run
+        .bridge
+        .request(
+            "thread/start",
+            json!({
+                "model": run.model,
+                "modelProvider": null,
+                "allowProviderModelFallback": true,
+                "cwd": run.cwd,
+                "approvalPolicy": "never",
+                "permissions": ":read-only",
+                "runtimeWorkspaceRoots": [],
+                "config": {
+                    "features.enable_fanout": false,
+                    "features.multi_agent": false,
+                    "features.multi_agent_v2": false,
+                    "web_search": "disabled",
+                    "mcp_servers.codex_app": {"enabled": false, "command": ""},
+                    "model_reasoning_effort": "low",
+                },
+                "personality": null,
+                "ephemeral": true,
+                "threadSource": "commit_message",
+                "experimentalRawEvents": false,
+                "dynamicTools": null,
+                "serviceTier": null,
+            }),
+        )
+        .await
+        .map_err(|error| format!("{error:#}"))?;
+    let thread = started["thread"]["id"]
+        .as_str()
+        .ok_or("the app-server started no thread")?
+        .to_owned();
+    let (done, answer) = async_channel::bounded(1);
+    this.update(cx, |this, _| {
+        this.generation = Some(Generation {
+            thread: thread.clone(),
+            text: None,
+            done: done.clone(),
+        });
+    })
+    .map_err(|error| error.to_string())?;
+    let executor = cx.background_executor().clone();
+    let timeout = executor.spawn({
+        let (executor, done) = (executor.clone(), done.clone());
+        async move {
+            executor.timer(COMMIT_MESSAGE_TIMEOUT).await;
+            done.try_send(Err("Timed out waiting for structured result.".into()))
+                .ok();
+        }
+    });
+    let turn = run
+        .bridge
+        .request::<_, Value>(
+            "turn/start",
+            json!({
+                "threadId": thread,
+                "input": [{"type": "text", "text": generation_instructions(&prompt), "text_elements": []}],
+                "outputSchema": COMMIT_MESSAGE_SCHEMA.clone(),
+            }),
+        )
+        .await;
+    let result = match turn {
+        Ok(_) => answer
+            .recv()
+            .await
+            .unwrap_or_else(|_| Err("the app-server closed".into())),
+        Err(error) => Err(format!("{error:#}")),
+    };
+    drop(timeout);
+    this.update(cx, |this, _| this.generation = None).ok();
+    run.bridge
+        .request::<_, Value>("thread/unsubscribe", json!({"threadId": thread}))
+        .await
+        .ok();
+    Ok(parse_commit_message(result?.as_deref()))
+}
+
+static COMMIT_MESSAGE_SCHEMA: std::sync::LazyLock<Value> = std::sync::LazyLock::new(|| {
+    json!({
+        "type": "object",
+        "properties": {"message": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 4000,
+            "pattern": "^[^\\r\\n]{1,72}(?:\\r?\\n[\\s\\S]*)?$",
+        }},
+        "required": ["message"],
+        "additionalProperties": false,
+    })
+});
+
+/// The structured answer's `message` when it meets the original's bounds.
+fn parse_commit_message(text: Option<&str>) -> Option<String> {
+    let answer: Value = serde_json::from_str(text?.trim()).ok()?;
+    let message = answer["message"].as_str()?;
+    let subject = message.split('\n').next()?;
+    let subject = subject.strip_suffix('\r').unwrap_or(subject);
+    let length = message.chars().count();
+    let valid = (8..=4000).contains(&length)
+        && (1..=72).contains(&subject.chars().count())
+        && !subject.contains('\r');
+    valid.then(|| message.trim().to_owned())
+}
+
+/// The original's context for generation: custom instructions, then the changed tracked
+/// files' diff, or its size when it is over 1000 changed lines.
+fn generation_prompt(instructions: &str, diff: Option<&str>) -> String {
+    const UNTRACKED: &str = "Untracked changes are not included.";
+    let mut parts = Vec::new();
+    let instructions = instructions.trim();
+    if !instructions.is_empty() {
+        parts.push(format!(
+            "Custom commit instructions (follow these for commit message content and formatting):\n{instructions}\n"
+        ));
+    }
+    let diff = diff.filter(|diff| !diff.trim().is_empty());
+    if let Some(diff) = diff {
+        let (mut files, mut added, mut removed, mut in_hunk) = (0, 0, 0, false);
+        for line in diff.split('\n') {
+            let line = line.strip_suffix('\r').unwrap_or(line);
+            if line.starts_with("diff --git ") {
+                (files, in_hunk) = (files + 1, false);
+            } else if line.starts_with("@@") {
+                in_hunk = true;
+            } else if in_hunk && line.starts_with('+') {
+                added += 1;
+            } else if in_hunk && line.starts_with('-') {
+                removed += 1;
+            }
+        }
+        parts.push(if added + removed > 1000 {
+            format!(
+                "Changes:\nDiff too large to include inline.\nSummary: {files} changed files, +{added}/-{removed} lines.\n\n{UNTRACKED}"
+            )
+        } else {
+            format!("Changes:\n{diff}\n{UNTRACKED}")
+        });
+    }
+    parts.join("\n\n")
+}
+
+/// The original's commit-message prompt (`Using the supplied git context below ...`).
+fn generation_instructions(context: &str) -> String {
+    [
+        "Using the supplied git context below, generate a git commit message.",
+        "Write the result into the structured response field message.",
+        "message must contain plain commit-message text only, not JSON, field labels, or code fences.",
+        "Custom commit instructions for message content and formatting override the fallback rules below.",
+        "Make 0 tool calls.",
+        "Bounds:",
+        "- Keep the complete message under 4000 characters.",
+        "- Keep the subject under 72 characters.",
+        "Fallback rules:",
+        "- Generate a concise single-line subject.",
+        "- Use an imperative verb first.",
+        "- Do not add a scope prefix unless the context already clearly uses one.",
+        "- Do not include markdown, quotes, or trailing punctuation.",
+        "",
+        "Diff context:",
+        context,
+    ]
+    .join("\n")
+}
+
 impl Render for Root {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let content: AnyElement = match (&self.login, &self.page, &self.split) {
@@ -2505,6 +3921,7 @@ impl Render for Root {
                 }
             }))
             .on_action(cx.listener(|this, _: &NewChat, window, cx| this.new_chat(window, cx)))
+            .on_action(cx.listener(|this, _: &OpenFolder, window, cx| this.open_folder(window, cx)))
             .on_action(cx.listener(|this, _: &ui::composer::Stop, _, cx| this.stop(cx)))
             .on_action(
                 cx.listener(|this, _: &ui::composer::RequestFullAccess, window, cx| {

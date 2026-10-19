@@ -246,10 +246,10 @@ The existing replay checks the original colors, row actions, tooltips, canceled 
 | 1 | Launch to `/` | entry | Hero, announcement slot and composer. | Route Home, rail Home selected, composer focused, Recents loaded. | PASS (`launch_home`, `parity_home`) |
 | 2 | `New chat` row | click | Navigates to `/` and clears the draft. | Same. | PASS (`new_chat_row`) |
 | 3 | `⌘N` / `⌘⇧O` | shortcut | New chat on Home, composer focused. | Same. | PASS (`cmd_n_new_chat`) |
-| 4 | Hero project selector | click | Opens the project menu. | No projects. | NOT WIRED (`crates/ui/src/screens/home.rs` hero) |
+| 4 | Hero project selector | click | Opens the project menu. | Shows the selected folder and opens the native folder picker. | Native local-folder flow; no project dropdown. |
 | 5 | Beacon `Start Voice` | click | Starts a realtime voice chat. | No beacon. | NOT WIRED (`crates/ui/src/screens/home.rs`) |
 | 6 | Beacon dismiss `×` | click | Hides the banner. | No beacon. | NOT WIRED (`crates/ui/src/screens/home.rs`) |
-| 7 | `Choose project` | click | Project dropdown. | Chip has no handler. | NOT WIRED (`crates/ui/src/screens/home.rs` `utility_bar`) |
+| 7 | `Choose project` | click | Project dropdown. | Opens the native folder picker and selects a local project for new chats. | Native local-folder flow (`project_picker`); no project dropdown. |
 | 8 | `Work in` / `This computer` | click | Location menu. | Chip has no handler. | NOT WIRED (`crates/ui/src/screens/home.rs` `utility_bar`) |
 | 9 | Editor `Do anything` | focus | Caret shows. | Click focuses the editor. | PASS (`editor_click_focuses`) |
 | 10 | `+` Add files and more | click | Context menu (files, photos, @-mentions). | Opens the system file picker at once. | FAIL (`crates/ui/src/composer.rs` `add_files`: no context menu) |
@@ -392,29 +392,128 @@ The body menu also wraps long code lines without changing the copied text.
 The editor entry stays disabled until the native `openIn` service exists.
 Comment actions (S075/S082), file tabs (S186), and external targets remain outside this slice, as firstmate approved.
 
+Local Changes uses the existing desktop host for `git-changes`, `git-stage`, and `git-unstage`.
+Each request uses the open thread's absolute `cwd`; file actions also send one repository-relative `path`.
+The response body contains `root`, `unstaged`, and `staged`; each file contains `path` and its unified `diff`.
+The selector keeps Last Turn and adds Unstaged, Staged, and Refresh.
+Each local file menu stages or unstages the whole file; unstage preserves the working tree.
+Reads and mutations run off the UI thread, with loading and error states in the panel.
+Tracked files use one bulk Git diff per source; untracked files use separate comparisons.
+The `git_stage` native proof checks the real index, visible diff text, partial staging, deletion, lock recovery, and unborn repositories.
+It also checks literal and newline filenames, multi-file patches, and rejects paths outside the repository.
+The file menu, file revert button, and per-hunk `Revert` controls call the existing `git-revert` host endpoint.
+It takes `cwd`, a repository-relative `path`, `source` (`unstaged` or `staged`), the `diff` text that Changes shows for that file, and an optional 0-based `hunk`.
+The host captures that file's `--binary` diff once, compares it with the request up to the binary data (the text form says `Binary files … differ` there; the full `index` line pins that data), and refuses a stale request (`file changed since its diff was shown`); the same capture is the patch it applies, so an edit made while the request runs can only fail the check, never enter the patch.
+An unstaged revert reverse-applies the patch to the working tree, which also deletes an untracked file and restores a deleted one.
+A staged revert reverse-applies it to the index and then to the working tree, as the original does.
+The response `status` is `partial-success` when only the index was reverted: the working-tree step failed, or the working file already differed from the index, because Git could then move the patch onto a look-alike block and erase newer edits.
+Otherwise `status` is `success` and the body is the usual `{root, unstaged, staged}`; a Git failure is an error and changes nothing.
+A hunk revert leaves the file mode alone; a whole-file revert restores binary files and modes.
+The `git_revert` native-host proof checks the real index and files for file and hunk reverts, partial results, look-alike blocks, modes, binary files, stale input, an edit made during the request, an index lock, and rejected input.
+File and hunk actions show `Revert changes?`, `This action removes all of these changes.`, `Don't ask again`, `Cancel`, and danger `Confirm`.
+Confirm starts focused; Escape, Cancel, and an outside click dismiss without a Git request.
+Only Confirm saves `skip-revert-confirmation`; the host preference survives reload.
+The request retains the displayed patch and source while the dialog is open.
+Success shows `Reverted {path}` or `Reverted hunk {n} in {path}`.
+Failure shows `Failed to revert` with the target and keeps the displayed changes beside the host error.
+A partial result shows `Partially reverted` with the target and refreshes both sources from the host response.
+The `git_revert_ui` native proof drives pointer and keyboard input on disposable local Git repositories.
+It checks cancellation, preference reload, file and hunk effects on disk and index, stale and locked failures, and index-only partial results.
+Remote Git, hunk staging, and section-wide `Revert all` remain separate work.
+Commit and push are in DT-139 below.
+
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Open Changes panel | entry | `⌥⌘B` or `View changes`. | Both open the last turn's diff (`Last Turn` source). A file link opens the File viewer, as S009 records. | PASS (`changes_panel_keys`, `view_changes_opens_panel`, `s009`); strict pixels FAIL (`parity_diff`) |
 | 2 | `/diff` window | entry | Single file diff. | — | NOT WIRED (`crates/app/src/main.rs`: one window only) |
-| 3 | Source selector | click | Uncommitted / Staged / … | — | NOT WIRED (`crates/ui/src/diff.rs`) |
+| 3 | Source selector | click | Uncommitted / Staged / … | Last Turn, Unstaged, Staged, and Refresh read the open thread's local repository. | PARTIAL (`git_stage`; other sources remain separate) |
 | 4 | Show / Hide files | click | Toggles the file tree. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 5 | File tree filter | focus | `Filter files…`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Copy path and Collapse/Expand work. Open in editor remains disabled pending host services. | PARTIAL (`s027::diff_selection_and_hover_replay`) |
-| 7 | Hunk revert / stage | click | Revert, Stage / Unstage hunk. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 8 | Revert all | click | `Revert changes?` dialog. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
+| 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Copy path and Collapse/Expand work. Local sources add Stage file, Unstage file, and confirmed Revert file. Open in editor remains disabled. | PARTIAL (`s027::diff_selection_and_hover_replay`, `git_stage`, `git_revert_ui`) |
+| 7 | Hunk revert / stage | click | Revert, Stage / Unstage hunk. | Local staged and unstaged hunks have confirmed Revert controls. Hunk staging and unstaging remain separate. | PARTIAL (`git_revert_ui`) |
+| 8 | Revert all | click | `Revert changes?` dialog. | File and hunk actions use the original confirmation and saved skip preference. Section-wide Revert all remains separate. | PARTIAL (`git_revert_ui`) |
 | 9 | Split / unified toggle | click | Switch diff layout. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 10 | Word wrap | click | Toggles wrap. | The body context menu toggles wrap; the header control remains separate work. | PARTIAL (`s027::diff_selection_and_hover_replay`) |
 | 11 | Mark as viewed | click | Collapses, persists. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 12 | `⌘F` in diff | shortcut | `Search diff…`. | Focus the panel, open find, and type a query; matches highlight and update with the diff. | PASS (`s028::streamed_diff_and_find_replay`) |
 | 13 | `⌘L` | shortcut | Go to line. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 14 | Line hover | hover | No background change in the recorded Last Turn state; no `data-hovered` attribute. | No background change. | PASS (`s027::diff_selection_and_hover_replay`; corrects DT-014) |
-| 15 | No changes | empty | `No file changes yet`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 16 | Not a git repo | empty | `Create a Git repository`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 17 | Loading | loading | `Loading diff`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 18 | Load failure | error | `Couldn't load changes`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
+| 15 | No changes | empty | `No file changes yet`. | Local sources show `No changes`. | PARTIAL (`git_stage`; Last Turn unchanged) |
+| 16 | Not a git repo | empty | `Create a Git repository`. | Local sources show the Git error; repository creation remains separate. | PARTIAL (`crates/ui/src/diff.rs`) |
+| 17 | Loading | loading | `Loading diff`. | Local sources show `Loading changes…` and disable mutations until completion. | PARTIAL (`crates/ui/src/diff.rs`) |
+| 18 | Load failure | error | `Couldn't load changes`. | Local sources show the host error; Refresh retries the read. | PARTIAL (`git_stage` checks index-lock failure and recovery) |
 | 19 | Too large | error | `Diff too large to display`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
 | 20 | Resize | resize | Split → inline for narrow panes. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
+
+### DT-139: Commit or push
+
+The summary Changes row exposes `Git actions` on pointer hover or keyboard focus.
+Commit and Push open the existing form; Push does not run before the user selects its form row.
+The shared command menu offers `Commit or push` only when Commit or Push is available and no workflow runs.
+Git availability includes staged, unstaged, and untracked changes, independent of the form's saved checkbox.
+Disabled Git rows show the original loading or unavailable reason.
+Arrow keys skip disabled rows, Enter selects a row, and Escape returns focus to the trigger.
+Opening the form or command list closes Summary.
+Closing the form returns focus to the current composer.
+The menu shows the active workflow phase and cannot start a second operation.
+Opening either menu reads status through the existing host; stage, revert, commit, and push results refresh it.
+Responses remain bound to the current thread entity and host.
+The dirty form uses the retained original's 420 × 289 px surface and 20 px corners.
+It uses 4 px field and action gaps, 14 px text, and the original commit/cloud-upload icons.
+The native capture also renders the original's blank-message and new-branch states with its `+5 -1` selection at 1280 × 832.
+`Commit to` lists the current branch and `New branch`; a detached HEAD starts on `New branch`.
+The new name is prefilled with `git-branch-prefix` (default `codex/`) and the first five words of the chat title.
+`Include unstaged changes` (default on, kept for the session) shows `+N -M` of the selection or `No changes`.
+`Commit`, `Commit and push` and `Push` carry the original's tooltips: `No changes to commit`, `No new commits to push`, `Branch information unavailable`.
+When no local changes exist, the form hides the message and checkbox and focuses `Push`.
+The form retains Push actions without a remote; the existing host reports a missing remote as a failure.
+An empty or taken name disables all three rows.
+`Cmd+Enter` runs the focused row, else `Commit`.
+The host explicitly routes `git-commit-status`, `git-commit-diff`, `git-commit`, `git-push`, and `git-checkout` with the existing Git actions.
+It does not accept a generic `git-*` route.
+`git-commit` creates the branch, stages everything when unstaged changes are included, then commits; `git-push` sets the upstream of a branch that has none, as the original's push does.
+A blank message is written as the original's `generate-commit-message` does: an ephemeral read-only app-server thread (`thread/start` with `ephemeral`, then `turn/start` with a structured `message` schema) answers the original prompt, and the thread is unsubscribed.
+The generation model is `gpt-6-luna` unless the model list lacks it.
+Failures toast `Failed to create branch`, `Failed to commit changes`, `Failed to push changes` or `Failed to generate commit message: …` with `Copy error`; success toasts `Committed to {branch}` or `Pushed {branch}`.
+The `git_commit` native proof drives all of this with keys and a mouse click against owned repositories and a local bare remote.
+Its message generation answers from a crafted replay exchange, because the fixtures hold no recording of it.
+The queued-state check uses native input and captures the rendered disabled UI before the background executor drains.
+It then drains real host work and checks the owned commit and remote refs.
+It does not park Git or fake a host response.
+Matched capture fixtures use the retained Subtract thread and an owned `+5 -1` checkout.
+The `codex_git_commit` attribution trailer and `Create PR` remain separate work.
+
+### Native Create branch and Switch branch
+
+`LocalHost` accepts `git-checkout` with `cwd` and exactly one of `branch` or `newBranch`.
+`branch` resolves a local branch, a unique remote branch with tracking, or a commit reference for detached checkout.
+Ambiguous remote names fail without changing the current branch.
+`newBranch` validates the name and rejects existing names and repositories without commits before creating and checking out the branch.
+Success reports the actual current branch, or null for a detached HEAD.
+The host reads full symbolic references and removes only `refs/heads/`; the branch list uses `refname:lstrip=2`.
+Disambiguated display names never replace branch identities, and a real branch named `heads/main` keeps its name.
+Git carries safe local changes and refuses checkout when it would overwrite tracked, staged, or untracked files.
+The failure reports `blocked-by-working-tree-changes`, the affected paths, and the Git error.
+The operation never forces checkout, stashes changes, or contacts a remote.
+`git_commit::checkout_dispatch_preserves_changes_and_resolves_branches` exercises the actual runtime dispatcher against disposable repositories and a local bare remote.
+It checks the resulting refs, file contents, index state, detached checkout, invalid names, and remote ambiguity.
+The Git actions menu enables Create branch on a detached HEAD and Switch branch when repository information is available.
+Switch branch opens a searchable native list with the current branch marked and its uncommitted file count.
+Keyboard navigation and pointer selection call the same checkout operation.
+Case-insensitive search retains a separate `Use {ref}` row for an exact, case-sensitive Git reference.
+Selecting the current branch closes the list without changing Git state.
+The list also offers Create and checkout new branch, except in a repository without commits.
+The create form uses the configured branch prefix and chat title.
+It removes the original input's excluded characters, rejects empty names, trailing slashes, and existing names, and shows Git validation errors.
+Failed creation keeps the name draft and current branch.
+A blocked checkout shows the conflicting paths and offers Commit and switch branch.
+That action opens the existing commit form and retries checkout only after the chosen operation succeeds.
+A failed commit keeps the message draft; closing a Git surface preserves the unsent composer draft.
+`git_commit::native_branch_controls_preserve_drafts_and_protect_changes` proves these controls with native keys and pointer input against disposable repositories.
+The scenario checks real branch refs, retained file contents, commit recovery, and an unchanged local remote.
+It also checks an exact tag checkout followed by native reattachment, a real `heads/main` branch, and committing dirty detached work.
+Its thread data uses replay fixtures, not a live installed-account session.
 
 ## 14.7 Settings, login and onboarding
 
@@ -681,6 +780,98 @@ It also checks the original hover color, expanded rows, collapse, and hidden com
 [Original screenshot](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/003c2454a49370802469ed64320fe26f160b4da61215578a/original-group-expanded.png).
 [Port screenshot](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/003c2454a49370802469ed64320fe26f160b4da61215578a/s014-group-expanded.png).
 
+## F1d projects: Worktree and missing-folder markers
+
+`crates/app/tests/f1d_projects.rs` replays `refs/interactions/f1d_projects.json` through the F4 host.
+The original fixture contains a normal project, a managed worktree, and a missing folder.
+Its collapsed-state values come from actual original row clicks.
+
+The local and cloud hosts read the original `.codex-global-state.json` project and atom keys without rewriting the file.
+Rows keep trimmed names and the original first-root marker rules.
+Roots absent from `project-order` appear first; listed roots follow the saved order.
+A missing path response does not mark every project as deleted.
+The tests check folder deletion and restoration, malformed entries, ordering, and the `worktrees-extra` prefix boundary.
+A failed filesystem probe marks only its own root as missing, without hiding healthy projects.
+
+The worktree icon reuses `thread-fork.svg` inside the original 12.5px superellipse overflow clip.
+That clip is required for the unchanged native glyph pixels to match exactly.
+The missing row uses the original 0.7 opacity and disabled-action tooltip.
+Both tooltip labels, bounds, dismissal, and `-0.15px` tracking follow the original recording.
+The worktree tooltip retains the original zero-size `contents` wrapper placement at the window origin.
+Long project names stay clear of markers and hover actions.
+The label's stable element ID makes GPUI apply hover dimensions during layout.
+An image check protects the control regions for 100-character names at rest and on hover.
+
+Default Recents, pins, status indicators, and paging retain their existing checks.
+Project activation, menus, hover-card actions, and project thread paging are outside RS-081.
+The shared replay selects the dedicated `f1d_projects` adapter.
+
+Run `tools/mac.sh -l f1d-projects 'cargo test -p app --test f1d_projects -- --test-threads=1'`.
+
+
+| Recorded region | Original | Port |
+|---|---|---|
+| Project rows | [Image](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ff8c28f83516f4fb8545d34d04a67ab08498485936cb345b/project-markers/original-rows.png) | [Image](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ff8c28f83516f4fb8545d34d04a67ab08498485936cb345b/project-markers/port-rows.png) |
+| Worktree tooltip | [Image](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ff8c28f83516f4fb8545d34d04a67ab08498485936cb345b/project-markers/original-worktree-tooltip.png) | [Image](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ff8c28f83516f4fb8545d34d04a67ab08498485936cb345b/project-markers/port-worktree-tooltip.png) |
+| Missing-folder tooltip | [Image](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ff8c28f83516f4fb8545d34d04a67ab08498485936cb345b/project-markers/original-missing-tooltip.png) | [Image](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ff8c28f83516f4fb8545d34d04a67ab08498485936cb345b/project-markers/port-missing-tooltip.png) |
+
+The [strict static report](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ff8c28f83516f4fb8545d34d04a67ab08498485936cb345b/report.html) passes all 36 cases with zero outside-text differences.
+
+
+## Native project selection and chat directories
+
+`Choose project`, the selected Home title, `⌘O`, File > Open Folder, and the `Open folder` command use GPUI's folder picker.
+The picker accepts one folder and does not change the selection or the current chat when canceled.
+The local host adds the folder to the existing `local-projects` and `project-order` records.
+It retains other projects and unrelated values in `.codex-global-state.json`.
+Selecting an existing root does not add a duplicate project.
+The sidebar uses the same host project rows as the marker flow.
+
+The app saves the selected new-chat root in `state.json`.
+The Home title, project chip, and file search use that selection.
+Changing roots stops the old file-search session, removes its results, and restarts the current query without clearing the draft.
+Home and thread composers accept only search replies for their own session.
+`thread/start` captures the selected root before its asynchronous request.
+Existing chats retain the directory from their thread data.
+`thread/resume` sends only the thread ID, without a selected-folder override.
+Changing the Home selection does not change another chat's directory.
+
+`crates/app/tests/project_picker.rs` checks two temporary repositories, cancellation, reopening an existing chat, new-chat requests, and saved selection.
+It also checks project reuse, host-state preservation, and invalid-folder errors.
+The Mac flow uses native GPUI mouse and key events with the supported headless picker response API.
+It captures the selected roots, the new chat, and the reopened app.
+The physical macOS folder dialog is not exercised by this headless check.
+Project dropdowns, worktrees, remote environments, discovery, indexing, and Git actions remain outside this native-folder slice.
+
+Run `tools/mac.sh -l cgx-project-picker 'cargo test -p app --test project_picker -- --test-threads=1'`.
+
+
+## F3c: Model announcement (SH-142)
+
+`crates/app/tests/f3c.rs` checks the recorded GPT-6.1 Sol announcement on the Mac headless app.
+The recording is `refs/interactions/f3c.json`.
+The dialog keeps the original image, title, message, button labels, focus order, and dismissal controls.
+The tests cover both primary responses, the secondary button, Escape, Close, outside clicks, and the stored once-only history.
+
+The primary action writes the model and reasoning effort with `config/batchWrite`.
+A successful write updates only the two model fields in each composer.
+Permissions, queue mode, Reset defaults and drafts remain unchanged.
+A rejected write keeps the current model and shows the original error message.
+`Root` stores the model ID for both outcomes.
+`seen-model-upgrade-list` uses the existing global host-settings store.
+Each dismissal test reads the resulting file and starts a new app context without changing that file.
+The new context does not show the same announcement.
+
+The shared replay uses the recording's empty initial history.
+Ordinary replay data keeps the original baseline history from `tools/route1/oracle.json`.
+The ordinary checks use the separate fixture-preparation prerequisite.
+No original profile, sign-in flow, or legacy dialog assertion changes.
+
+[Original announcement](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ddae05ee78165eadfc0a754e40daeb9a03ee71e3bb4b0d16/original-announcement.png).
+[Port announcement](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ddae05ee78165eadfc0a754e40daeb9a03ee71e3bb4b0d16/announcement-open.png).
+The retained port image uses the same dialog source as the integrated feature.
+The [strict static report](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/ddae05ee78165eadfc0a754e40daeb9a03ee71e3bb4b0d16/report.html) passes all 36 cases with zero outside-text differences.
+The scoped issue is [SH-142](https://github.com/i098/codex-gpui/issues/184).
 
 ## Shared tooltip side offset
 
@@ -699,7 +890,28 @@ Add rendering and query changes stay in S018.
 `crates/app/tests/f1a.rs` checks the bordered pill at both offsets.
 The selected offset gives vertical bounds `742..772`; the unchanged default gives `745..775`.
 The existing recording still checks all 34 actions and 13 default tooltips.
+The F1a fixture loads `common::recorded_host_settings()` before `Root` starts, matching the recorded model-upgrade history.
 
 The [native original capture](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/b3cf204103d640697ec41c58541aab67d5f63b6dde0c7fba/original-add.png) retains the original Add tooltip.
 The [port capture](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/b3cf204103d640697ec41c58541aab67d5f63b6dde0c7fba/s018-add-after.png) uses the S018 smoke snapshot with the offset setter.
 Both captures use the same Mac viewport and scale.
+
+## Shared tooltip keyboard focus API
+
+`Tooltip::focus_handle(&gpui::FocusHandle)` uses the trigger's existing focus handle.
+Set it when the trigger is first rendered.
+Keyboard focus opens the shared tooltip immediately.
+Blur and Escape close it without moving focus.
+Pointer focus does not reopen it.
+Hover replaces the visible provider owner, and Escape closes that active owner.
+
+`crates/app/tests/f1a.rs` checks this lifecycle in an isolated native fixture.
+The fixture uses real pointer entry before Tab and changes only the simulated TestWindow activity.
+It renders the focus event and the notified tooltip frame.
+It checks the painted tooltip fill after keyboard focus.
+It checks that the previous pill no longer paints after hover takes ownership.
+The default hover delay and `side_offset` geometry remain unchanged.
+
+This API does not complete Home focus behavior or add the separate F1d overflow predicate.
+The original Home inputs and edge probes remain unchanged.
+The scoped issue is [Add an opt-in focus API to the shared tooltip](https://github.com/i098/codex-gpui/issues/186).

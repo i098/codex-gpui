@@ -150,10 +150,15 @@ fn tick(
 ) -> Result<()> {
     let pid = std::process::id();
     let executable = std::env::current_exe()?.canonicalize()?;
+    #[cfg(target_os = "macos")]
+    let app_active = objc2_app_kit::NSRunningApplication::currentApplication().isActive();
+    #[cfg(not(target_os = "macos"))]
+    let app_active = false;
+    root.qa_work_started |= app_active;
     let ready = root.qa_restart_ready(window, cx);
     let status = json!({
         "pid": pid, "revision": REVISION, "executable": executable,
-        "profile": profile, "ready": ready, "active": window.is_window_active(),
+        "profile": profile, "ready": ready, "active": app_active || window.is_window_active(),
         "signed_out": root.signed_out(), "initialized": root.ready(),
         "time": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs(),
     });
