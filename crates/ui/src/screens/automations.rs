@@ -5,15 +5,15 @@
 
 use crate::{Shell, icon::icon, icon_button, motion::ButtonVisual, text};
 use gpui::{
-    Action, Anchor, AnyView, App, AppContext as _, BoxShadow, ClickEvent, Context, Corners, Div,
-    Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement,
-    Pixels, Point, Render, Role, SharedString, Stateful, StatefulInteractiveElement, Styled,
-    Window, actions, anchored, canvas, deferred, div, img, point, prelude::FluentBuilder as _, px,
-    rgb,
+    Action, Anchor, AnyView, App, AppContext as _, Bounds, BoxShadow, ClickEvent, Context, Corners,
+    Div, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
+    ParentElement, Pixels, Point, Render, Role, SharedString, Stateful, StatefulInteractiveElement,
+    Styled, Window, actions, anchored, canvas, deferred, div, img, point,
+    prelude::FluentBuilder as _, px, rgb,
 };
 use serde::Deserialize;
 use serde_json::Value;
-use std::{collections::HashMap, fs, path::Path};
+use std::{cell::Cell, collections::HashMap, fs, path::Path, rc::Rc};
 use theme::{ActiveTheme as _, Theme};
 
 actions!(
@@ -277,7 +277,7 @@ fn shell_with(
         tasks,
         selected: selected.as_ref().map(|(task, _)| task.id.clone()),
         utc_offset,
-        focus: HashMap::new(),
+        triggers: HashMap::new(),
         menu: None,
     });
     let mut page = None;
@@ -314,11 +314,17 @@ pub struct ScheduledSidebar {
     selected: Option<String>,
     utc_offset: i64,
     /// Each row's `Scheduled task actions` button, by task id.
-    focus: HashMap<String, FocusHandle>,
+    triggers: HashMap<String, Trigger>,
     menu: Option<TaskMenu>,
 }
 
-/// The open row menu: its task, where it opened, and its focus while open.
+/// A row's `Scheduled task actions` button: its focus and where it was last laid out.
+struct Trigger {
+    focus: FocusHandle,
+    bounds: Rc<Cell<Bounds<Pixels>>>,
+}
+
+/// The open row menu: its task, where it opens, and its focus while open.
 struct TaskMenu {
     id: String,
     position: Point<Pixels>,
@@ -326,30 +332,33 @@ struct TaskMenu {
     focus: FocusHandle,
 }
 
+/// The original's trash icon (`settings.automations.delete`), 16 px.
+const DELETE_ICON: &[u8] = br##"<svg height="16" viewBox="0 0 16 16" width="16" xmlns="http://www.w3.org/2000/svg"><path d="M6.66724 6.80762C6.95696 6.80788 7.19263 7.04322 7.19263 7.33301V10.6729C7.19256 10.9626 6.95692 11.197 6.66724 11.1973C6.37733 11.1973 6.14192 10.9627 6.14185 10.6729V7.33301C6.14185 7.04306 6.37729 6.80762 6.66724 6.80762Z" fill="currentColor"></path> <path d="M9.33325 6.80762C9.6232 6.80762 9.85864 7.04306 9.85864 7.33301V10.6729C9.85857 10.9627 9.62316 11.1973 9.33325 11.1973C9.04335 11.1973 8.80793 10.9627 8.80786 10.6729V7.33301C8.80786 7.04306 9.0433 6.80762 9.33325 6.80762Z" fill="currentColor"></path> <path fill-rule="evenodd" clip-rule="evenodd" d="M8.00024 1.25391C9.66003 1.25407 11.0236 2.52186 11.177 4.1416H13.6663C13.9562 4.1416 14.1917 4.37704 14.1917 4.66699C14.1914 4.95672 13.956 5.19238 13.6663 5.19238H13.1692L12.6995 12.1787C12.6105 13.5045 11.5096 14.5349 10.1809 14.5352H5.8313C4.50407 14.535 3.40273 13.5068 3.31177 12.1826L2.83228 5.19238H2.33325C2.04347 5.19238 1.80813 4.95672 1.80786 4.66699C1.80786 4.37704 2.0433 4.1416 2.33325 4.1416H4.82251C4.976 2.52175 6.34031 1.25391 8.00024 1.25391ZM4.35962 12.1104C4.41275 12.8838 5.05604 13.4842 5.8313 13.4844H10.1809C10.957 13.4841 11.6006 12.8828 11.6526 12.1084L12.1165 5.19238H3.88403L4.35962 12.1104ZM8.00024 2.30469C6.92101 2.30469 6.03114 3.10331 5.88306 4.1416H10.1174C9.96932 3.10342 9.07933 2.30485 8.00024 2.30469Z" fill="currentColor"></path></svg>"##;
+
 impl ScheduledSidebar {
     pub fn set_tasks(&mut self, tasks: Vec<Task>, cx: &mut Context<Self>) {
         self.tasks = tasks;
         cx.notify();
     }
 
-    /// Whether a row menu is open.
-    pub fn menu_open(&self) -> bool {
-        self.menu.is_some()
+    /// Where the open row menu's top-right corner is.
+    pub fn menu_corner(&self) -> Option<Point<Pixels>> {
+        self.menu.as_ref().map(|menu| menu.position)
     }
 
     /// The row's `Scheduled task actions` button, where focus returns after its menu or a
     /// dialog from it closes.
     pub fn trigger_focus(&self, id: &str) -> Option<FocusHandle> {
-        self.focus.get(id).cloned()
+        self.triggers.get(id).map(|trigger| trigger.focus.clone())
     }
 
-    fn open_menu(
-        &mut self,
-        id: String,
-        position: Point<Pixels>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    /// The original's Radix menu opens under its button, right edges aligned, 2 px below it.
+    fn open_menu(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(trigger) = self.triggers.get(&id) else {
+            return;
+        };
+        let bounds = trigger.bounds.get();
+        let position = point(bounds.right() - px(1.), bounds.bottom() + px(2.));
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         self.menu = Some(TaskMenu {
@@ -363,8 +372,8 @@ impl ScheduledSidebar {
 
     fn close_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<TaskMenu> {
         let menu = self.menu.take()?;
-        if let Some(trigger) = self.focus.get(&menu.id) {
-            window.focus(trigger, cx);
+        if let Some(trigger) = self.triggers.get(&menu.id) {
+            window.focus(&trigger.focus, cx);
         }
         cx.notify();
         Some(menu)
@@ -397,8 +406,8 @@ impl ScheduledSidebar {
     fn menu_overlay(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
         let menu = self.menu.as_ref().expect("open task menu");
         let t = cx.theme();
-        // ponytail: only `Delete` exists; Edit, Run now, Share and Pause join this list with
-        // their own slices.
+        // ponytail: only `Delete` exists; Pause, Run now, Edit and Share join this list, in that
+        // order above it, with their own slices.
         let item = div()
             .id("task-menu-delete")
             .role(Role::MenuItem)
@@ -406,11 +415,12 @@ impl ScheduledSidebar {
             .when(menu.active, |d| {
                 d.aria_active_descendant().bg(t.menu_item_hover)
             })
-            .h(px(29.))
+            .h(px(28.5625))
             .px(px(8.))
-            .rounded(px(12.))
+            .rounded(px(15.))
             .flex()
             .items_center()
+            .gap(px(6.))
             .cursor_pointer()
             .on_hover(cx.listener(|this, hovered, _, cx| {
                 if *hovered && let Some(menu) = &mut this.menu {
@@ -420,7 +430,30 @@ impl ScheduledSidebar {
             }))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(|this, _, window, cx| this.delete(window, cx)))
-            .child(text("Delete", 13., 18.571_428, 430., t.text));
+            .child({
+                let color = t.text_error;
+                // `opacity-75`, full on hover and focus.
+                let alpha = if menu.active { 1. } else { 0.75 };
+                div().size(px(16.)).flex_none().child(
+                    canvas(
+                        |_, _, _| {},
+                        move |bounds, (), window, cx| {
+                            shapes::paint_icon(
+                                DELETE_ICON,
+                                "task-menu-delete",
+                                bounds,
+                                false,
+                                color.opacity(alpha),
+                                None,
+                                window,
+                                cx,
+                            );
+                        },
+                    )
+                    .size(px(16.)),
+                )
+            })
+            .child(text("Delete", 13., 18.571_428, 430., t.text_error));
         let popup = crate::composer::popover(t, 220., |d| d.child(item))
             .ml_0()
             .pl_0()
@@ -451,7 +484,7 @@ impl ScheduledSidebar {
                     .child(
                         anchored()
                             .position(menu.position)
-                            .anchor(Anchor::TopLeft)
+                            .anchor(Anchor::TopRight)
                             .snap_to_window_with_margin(px(8.))
                             .child(popup),
                     ),
@@ -465,7 +498,10 @@ impl ScheduledSidebar {
         let fill = fill(px(12.5), t.ghost_hover);
         let group = SharedString::from(format!("task-row-{}", task.id));
         let id = task.id.clone();
-        let trigger = self.focus[&task.id].clone();
+        let (trigger, bounds) = {
+            let trigger = &self.triggers[&task.id];
+            (trigger.focus.clone(), trigger.bounds.clone())
+        };
         let open = self.menu.as_ref().is_some_and(|menu| menu.id == task.id);
         let actions_shown = open || trigger.is_focused(window);
         let menu_id = task.id.clone();
@@ -522,6 +558,7 @@ impl ScheduledSidebar {
                     .group_hover(group.clone(), |s| s.opacity(1.))
                     .child(
                         div()
+                            .relative()
                             .id(SharedString::from(format!("{group}-actions")))
                             .role(Role::Button)
                             .aria_label("Scheduled task actions")
@@ -541,10 +578,27 @@ impl ScheduledSidebar {
                             .items_center()
                             .justify_center()
                             .rounded(px(9.375))
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            // The original opens on pointer down; Enter and Space click.
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener({
+                                    let id = menu_id.clone();
+                                    move |this, _, window, cx| {
+                                        this.open_menu(id.clone(), window, cx);
+                                        cx.stop_propagation();
+                                    }
+                                }),
+                            )
                             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                                this.open_menu(menu_id.clone(), event.position(), window, cx)
+                                if event.is_keyboard() {
+                                    this.open_menu(menu_id.clone(), window, cx)
+                                }
                             }))
+                            .child(
+                                canvas(move |b, _, _| bounds.set(b), |_, (), _, _| {})
+                                    .absolute()
+                                    .size_full(),
+                            )
                             .child(ButtonVisual {
                                 glyph: icon("thread-chat-actions", 16., t.text_tertiary),
                                 radius: px(9.375),
@@ -560,12 +614,15 @@ impl ScheduledSidebar {
 impl Render for ScheduledSidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tasks = &self.tasks;
-        self.focus
+        self.triggers
             .retain(|id, _| tasks.iter().any(|task| task.id == *id));
         for task in tasks {
-            if !self.focus.contains_key(&task.id) {
-                self.focus.insert(task.id.clone(), cx.focus_handle());
-            }
+            self.triggers
+                .entry(task.id.clone())
+                .or_insert_with(|| Trigger {
+                    focus: cx.focus_handle(),
+                    bounds: Rc::default(),
+                });
         }
         let t = cx.theme();
         let hover_bg = t.list_hover;

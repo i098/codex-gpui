@@ -568,6 +568,7 @@ The oracle answers that read with the host's 499, so the recorded outcome is the
 The conversation prepare, its stream, and the navigation into the started conversation are not recorded and not wired.
 
 Task delete (AM-026, AM-027) opens from the sidebar row's `Scheduled task actions` button, whose menu has `Delete` (Escape closes it).
+The menu opens on pointer down, like the original's Radix menu: 220 px wide under the button, right edges 1 px apart and 2 px below it (original capture: button x 296..324 y 178..206, menu x 103..323 y 208), with the red trash `Delete` row last.
 The dialog `Delete {name}?` names the task the host lists, starts on `Cancel`, and sends nothing until `Delete scheduled task`.
 Escape and `Cancel` close it without a request and return focus to the row's button; both are ignored while the delete runs.
 Confirm sends `automation-delete` through `LocalHost`, which removes the definition directory, its cached `automations` row and its `automation_runs` like the original `aI`.

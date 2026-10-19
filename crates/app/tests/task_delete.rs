@@ -131,6 +131,14 @@ const ROW_ACTIONS: [(f32, f32); 2] = [(310., 190.), (310., 239.)];
 #[cfg(target_os = "macos")]
 fn open_dialog(fx: &mut common::Fx, row: usize) -> Result<()> {
     fx.click(ROW_ACTIONS[row])?;
+    // The original's menu hangs under the button: right edges 1 px apart, 2 px below it
+    // (captured: button x 296..324 y 178..206 of row 1, menu right 323, top 208).
+    let corner = fx.read(|r, cx| r.scheduled().and_then(|s| s.read(cx).menu_corner()));
+    let corner = corner.map(|p| (f32::from(p.x), f32::from(p.y)));
+    ensure!(
+        corner == Some((323., 208. + 49. * row as f32)),
+        "menu corner {corner:?}"
+    );
     if let Ok(output) = std::env::var("CGX_TASK_DELETE_SHOTS") {
         fs::create_dir_all(&output)?;
         let path = format!("{output}/menu.png");
