@@ -42,6 +42,8 @@ pub struct Dialog {
     kind: Kind,
     controls: [FocusHandle; 3],
     selected: usize,
+    /// Set by Tab: the focus ring shows only for keyboard focus.
+    keyboard: bool,
     /// The text of the `Shortcuts` search or the `Rename` title.
     query: String,
     select_all: bool,
@@ -62,6 +64,7 @@ impl Dialog {
             kind,
             controls: std::array::from_fn(|_| cx.focus_handle()),
             selected: 0,
+            keyboard: false,
             query: String::new(),
             select_all: false,
             do_not_ask_again: false,
@@ -166,6 +169,7 @@ impl Dialog {
                     Kind::Shortcuts | Kind::FullAccess | Kind::LogOut => 2,
                     _ => 3,
                 };
+                self.keyboard = true;
                 self.selected =
                     (self.selected + if k.modifiers.shift { count - 1 } else { 1 }) % count;
                 self.controls[self.selected].focus(window, cx);
@@ -220,19 +224,25 @@ impl Dialog {
             .items_center()
             .justify_center()
             .rounded(px(12.5))
-            .bg(if primary { t.text } else { t.list_hover })
+            // Recorded `Cancel` (f3b, rec02): `bg-text/5` with a 1 px border; primary is solid.
+            .bg(if primary { t.text } else { t.text_alpha_5 })
+            .when(!primary, |d| d.border_1().border_color(t.border))
             .when(self.kind == Kind::FullAccess, |d| {
-                d.h(px(36.)).rounded(px(18.)).bg(if primary {
+                d.h(px(36.)).rounded(px(18.)).border_0().bg(if primary {
                     t.text_error.opacity(0.1)
                 } else {
                     t.list_hover
                 })
             })
-            .border_2()
-            .border_color(if self.selected == index {
-                rgba(0x3a83f7ff)
-            } else {
-                rgba(0)
+            // The original draws the 2 px focus ring outside the box and only after Tab.
+            .when(self.keyboard && self.selected == index, |d| {
+                d.shadow(vec![gpui::BoxShadow {
+                    color: rgba(0x3a83f7ff).into(),
+                    offset: point(px(0.), px(0.)),
+                    blur_radius: px(0.),
+                    spread_radius: px(2.),
+                    inset: false,
+                }])
             })
             .hover(|s| s.opacity(0.85))
             .child(text(

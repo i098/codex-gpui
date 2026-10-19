@@ -30,6 +30,13 @@ fn shot(fx: &mut Fx, name: &str) -> Result<()> {
     Ok(())
 }
 
+/// The recorded focus ring (`rgb(58, 131, 247)`, 2 px outside the box) at a 1280-wide point.
+fn ring_at(fx: &mut Fx, x: f32, y: f32) -> Result<bool> {
+    let image = fx.shot()?;
+    let scale = image.width() as f32 / 1280.;
+    Ok(image.get_pixel((x * scale) as u32, (y * scale) as u32).0[..3] == [58, 131, 247])
+}
+
 #[test]
 fn logout_requires_confirmation_and_preserves_the_session_on_failure() -> Result<()> {
     let mut lines = script(None, |line| {
@@ -93,6 +100,10 @@ fn logout_requires_confirmation_and_preserves_the_session_on_failure() -> Result
     open_logout(&mut fx)?;
     shot(&mut fx, "confirmation")?;
     ensure!(
+        !ring_at(&mut fx, 731., 448.)?,
+        "Cancel shows a focus ring before any Tab"
+    );
+    ensure!(
         fx.read(|root, _| root.dialog().is_some()),
         "Log out must open confirmation"
     );
@@ -109,6 +120,11 @@ fn logout_requires_confirmation_and_preserves_the_session_on_failure() -> Result
     fx.click((118., 672.))?;
     ensure!(fx.read(|root, _| root.dialog().is_some()));
     fx.keys("tab")?;
+    shot(&mut fx, "keyboard-focus")?;
+    ensure!(
+        ring_at(&mut fx, 741., 448.)?,
+        "Tab must ring Log out outside its box"
+    );
     fx.keys("enter")?;
     fx.wait("logout failure", |fx| {
         !fx.read(|root, cx| root.toasts(cx).is_empty())
