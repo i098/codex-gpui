@@ -788,9 +788,9 @@ They do not replace original-versus-native appearance approval or the strict pix
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Profile menu → Help → `Set up mobile` | entry | `/codex-mobile`. | `Route::Mobile`: sidebar closed, no rail item selected. | PASS (`profile_menu_mobile`, `parity_mobile`) |
-| 2 | Initial step | click | `Get started` / `Later`. | Dispatches `GetStarted`; no handler, no `Later`. | NOT WIRED (`crates/ui/src/screens/mobile.rs`: no allow-host step view) |
-| 3 | Allow host step | click | `remoteControl/enable`. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`, then `crates/app/src/lib.rs`) |
-| 4 | MFA required | error | `Turn on Multi-Factor Authentication`. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
+| 2 | Initial step | click | `Get started` reads `/wham/remote/control/mfa_requirement`; `Later` (dialog only). | `GetStarted`: loading button, then the MFA or allow-host step; a failed read shows `Couldn’t check security requirements. Try again`. The original's `/accounts/mfa_info` check is not ported. | PASS (`mobile_get_started_follows_the_recorded_mfa_requirement`) |
+| 3 | Allow host step | click | `Allow`: `remoteControl/enable`. | Step view; `Allow` has no handler. | NOT WIRED (`crates/app/src/lib.rs`: no `remoteControl/enable`) |
+| 4 | MFA required | error | `Turn on Multi-Factor Authentication`, `Continue on chatgpt.com`. | Step view; the button opens `chatgpt.com/#settings/Security`. | PASS (`mobile_get_started_follows_the_recorded_mfa_requirement`) |
 | 5 | Waiting / pairing step | loading | QR code, pairing code. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
 | 6 | Pairing unavailable | error | `Pairing code unavailable`. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
 | 7 | Connected step | click | Toggles, `Done`, `Manage connections`. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
@@ -804,7 +804,7 @@ A row above that names a `crates/ui` owner needs that change first. The changes 
 
 1. `crates/ui/src/thread.rs`: click handlers on the reasoning and command cards, `Reapply`, the user message's hover actions, a find bar, and loading and error views.
 2. `crates/ui/src/diff.rs`: the Changes header controls (source selector, file tree, layout, wrap, refresh), empty, loading and error states.
-3. `crates/ui/src/screens/mobile.rs`: the allow-host, pairing and connected steps (`remoteControl/*`).
+3. `crates/ui/src/screens/mobile.rs`: the pairing and connected steps (`remoteControl/*`).
 4. Focus-visible rings on the shared buttons (`icon_button`, `pill`, rail items), and tooltips on the composer and sidebar row buttons.
 
 ## S016: Thread header
