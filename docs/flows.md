@@ -680,6 +680,19 @@ Enabled switches use the existing GPUI native click path for Enter and Space, wi
 The replay checks pointer focus without a ring, the blue keyboard ring, saved values, reload, and Back navigation.
 S034b still checks the recorded sign-in path; no account or authentication changes are part of this repair.
 
+Configuration implements the accepted global-scope ST-080, ST-083, and ST-084 controls.
+It reads global config and installation requirements before it enables changes.
+Managed origins and allowed-value lists limit the choices.
+The original bundle offers `On request` and `Never ask for approval`; `Untrusted` and `On failure` remain display labels for saved legacy values.
+Permission changes use `config/batchWrite` with `filePath: null` and reload the user config.
+The page keeps the saved value until the server accepts a change.
+An error keeps that value and shows a failure notice.
+The `settings_configuration` native fixture target covers save, reopen, managed restrictions, and failed writes.
+Native execution and original/native appearance approval remain unverified for this checkpoint.
+An owned original app-server smoke confirms both permission values in `config.toml` and after a server restart.
+The scope picker, project config, and additional Configuration products are not part of this delivery.
+
+
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Open settings | entry | `⌘,`, rail Settings or profile menu; `/settings/general-settings`. | `⌘,`, Codex ▸ Settings… and profile menu ▸ `Settings` open the General page; parity: see `parity_settings`. | PASS (`cmd_comma_opens_settings`, `menu_bar_actions`, `profile_menu_settings`, `parity_settings`) |

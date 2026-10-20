@@ -4147,6 +4147,10 @@ impl Root {
 
     /// Window preferences keep their state storage; other host settings use the desktop service.
     fn write_setting(&mut self, e: &SettingChanged, cx: &mut Context<Self>) {
+        if e.path.starts_with("config.") {
+            self.write_configuration(e, cx);
+            return;
+        }
         if e.path == settings::THEME {
             return;
         }
@@ -4239,6 +4243,41 @@ impl Root {
             "expectedVersion": null,
         });
         self.write_config("config/value/write", params, cx, apply);
+    }
+
+    fn write_configuration(&mut self, e: &SettingChanged, cx: &mut Context<Self>) {
+        self.qa_work_started = true;
+        let bridge = self.bridge.clone();
+        let path = e.path;
+        let key = path.strip_prefix("config.").expect("configuration key");
+        let value = e.value.clone();
+        let page = self.settings_page.clone();
+        let task = cx.spawn(async move |this, cx| -> Result<()> {
+            let result = bridge.request::<_, Value>("config/batchWrite", json!({
+                "edits": [{"keyPath": key, "value": value, "mergeStrategy": "upsert"}],
+                "filePath": null,
+                "expectedVersion": null,
+                "reloadUserConfig": true,
+            })).await;
+            this.update(cx, |this, cx| {
+                let error = result.err().map(|error| format!(
+                    "Couldn't update this setting. Check config.toml for errors and try again\n{error}"
+                ));
+                if error.is_none() {
+                    let mut target = &mut this.config;
+                    for part in key.split('.') {
+                        target = &mut target[part];
+                    }
+                    *target = value.clone();
+                } else {
+                    this.toast(Toast::danger("Couldn't update this setting. Check config.toml for errors and try again"), cx);
+                }
+                if let Some(page) = this.settings_page.clone().or(page) {
+                    page.update(cx, |page, cx| page.finish_config(path, value, error, cx));
+                }
+            })
+        });
+        log_err(task, cx);
     }
 
     /// Sends a config write and, once the server took it, applies it to the kept config.
