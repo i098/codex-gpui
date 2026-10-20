@@ -1041,6 +1041,7 @@ impl Render for AutomationsPage {
                     .child(
                         div()
                             .min_h_full()
+                            .cc_tiles()
                             .flex()
                             .flex_col()
                             .items_center()
