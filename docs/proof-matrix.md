@@ -47,11 +47,18 @@ It preserves the existing route1 and Root capture clocks and fixtures.
 | `home` | `rest` | Existing route1 Home capture | `common::Fx` startup |
 | `terminal` | `rest` | Existing route1 recorded command replay | The same recorded events and input sequence as `flows::open_terminal` |
 | `settings` | `configuration` | Profile menu, Settings, Configuration | Settings shortcut, Configuration navigation item |
+| `automations` | `history-menu` | S037 managed task, Previous run actions | The same stored task and run rows, real Root menu |
+| `automations` | `history-confirm` | History menu, Archive all | The same Root menu and two-run confirmation |
 
 These are the initial executable adapters, not all 175 census surfaces.
 An unknown surface or state fails before a capture starts.
 Add matching original and Root state adapters before running another census cell.
 Do not substitute a static screen or a prior native screenshot for a Root frame.
+
+The automation adapters share `tools/parity/fixtures/automation-history.json`.
+They use the S037 task definition and its three recorded local threads.
+Opening the management view marks the latest run read on both sides.
+The fixture replays the recorded empty task-query reply; no real run is archived.
 
 Both themes support the normal census sizes, `1280x832` and `1440x900`.
 Home rest also accepts `767x832` and `600x832`.

@@ -4,9 +4,9 @@ mod common;
 
 use anyhow::Result;
 use app::host::LocalHost;
+use common::automation::run_store;
 use common::*;
 use gpui::Focusable as _;
-use rusqlite::Connection;
 use serde_json::json;
 use std::{fs, sync::Arc};
 use ui::screens::automations::OpenAutomation;
@@ -29,21 +29,6 @@ fn native_panic_exit() {
         eprintln!("{info}");
         std::process::exit(101);
     }));
-}
-
-fn run_store(home: &std::path::Path) -> Result<Connection> {
-    fs::create_dir_all(home.join("sqlite"))?;
-    let db = Connection::open(home.join("sqlite/codex.db"))?;
-    db.execute_batch(
-        "CREATE TABLE automations (id TEXT PRIMARY KEY, name TEXT, prompt TEXT,
-        next_run_at INTEGER, next_run_nominal_at INTEGER, last_run_at INTEGER, rrule TEXT,
-        status TEXT, account_id TEXT, user_id TEXT, installation_id TEXT);
-        CREATE TABLE automation_runs (thread_id TEXT PRIMARY KEY, automation_id TEXT,
-        status TEXT, read_at INTEGER, thread_title TEXT, source_cwd TEXT, inbox_title TEXT,
-        inbox_summary TEXT, archived_assistant_message TEXT, archived_user_message TEXT,
-        archived_reason TEXT, created_at INTEGER, updated_at INTEGER);",
-    )?;
-    Ok(db)
 }
 
 #[test]
@@ -219,78 +204,8 @@ fn previous_runs_confirm_cancel_and_persist_partial_results() -> Result<()> {
 #[test]
 fn management_keeps_latest_run_separate_from_history() -> Result<()> {
     native_panic_exit();
-    let home = tempfile::tempdir()?;
-    let db = run_store(home.path())?;
-    let fixture: serde_json::Value =
-        serde_json::from_str(include_str!("../../../refs/interactions/s037.json"))?;
-    let task = &fixture["fixture"]["items"][0];
-    let id = task["id"].as_str().unwrap();
-    db.execute(
-        "INSERT INTO automations (id,name,prompt,status,rrule,next_run_at,next_run_nominal_at)
-         VALUES (?,?,?,'ACTIVE',?,?,?)",
-        rusqlite::params![
-            id,
-            task["name"].as_str(),
-            task["prompt"].as_str(),
-            task["rrule"].as_str(),
-            task["nextRunAt"].as_i64(),
-            task["nextRunNominalAt"].as_i64()
-        ],
-    )?;
-    for (thread, status, read_at, created_at, summary) in [
-        (
-            GREETING,
-            "PENDING_REVIEW",
-            None::<i64>,
-            1792040092000_i64,
-            GREETING_PROMPT,
-        ),
-        (
-            SUBTRACT,
-            "ACCEPTED",
-            None,
-            1792040071000,
-            "Add a subtract(a, b) function to src/math.py next to add, then run python3 -c 'from src.math import subtract; print(subtract(5, 3))' to check it.",
-        ),
-        (
-            EXPLAIN,
-            "ARCHIVED",
-            None,
-            1792040056000,
-            "In two sentences, what does this repository contain?",
-        ),
-    ] {
-        db.execute(
-            "INSERT INTO automation_runs (thread_id,automation_id,status,read_at,thread_title,source_cwd,inbox_summary,archived_reason,created_at,updated_at)
-             VALUES (?,?,?,?,'Weekly status update','/private/tmp/cgx-mac/proj',?,?,?,?)",
-            rusqlite::params![thread, id, status, read_at, summary, (status == "ARCHIVED").then_some("user"), created_at, created_at],
-        )?;
-    }
-    let host = Arc::new(LocalHost::new(home.path()));
-    host.write_automation(id, &format!(
-        "version = 1\nid = {id:?}\nname = \"Weekly status update\"\nprompt = \"Review what I worked on this week and draft a short status update.\"\nstatus = \"ACTIVE\"\nkind = \"cron\"\nrrule = {:?}\ncwds = [\"/Users/user/dev/app\"]\ncreated_at = 1760000000000\nupdated_at = 1760000000000\n",
-        task["rrule"].as_str().unwrap(),
-    ))?;
-    let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
-    fx.root
-        .update(&mut fx.cx, |root, cx| root.set_host(host, cx));
-    fx.action(Box::new(ui::OpenScheduled))?;
-    fx.wait("recorded task definition", |fx| {
-        fx.read(|root, _| root.automations().is_some_and(|list| list.is_ok()))
-    })?;
-    fx.action(Box::new(
-        ui::screens::automations::OpenAutomationManagement {
-            id: Some(id.into()),
-        },
-    ))?;
-    fx.wait("only the latest run marked read", |fx| {
-        fx.read(|root, cx| {
-            root.run_history(cx).is_some_and(|history| {
-                let history = history.read(cx);
-                history.items().len() == 3 && !history.items()[0]["readAt"].is_null()
-            })
-        })
-    })?;
+    let (mut fx, db) = common::automation::management("dark", (1280., 832.))?;
+    let id = "s037-weekly-status";
     assert_eq!(
         db.query_row(
             "SELECT COUNT(*) FROM automation_runs WHERE read_at IS NOT NULL",
