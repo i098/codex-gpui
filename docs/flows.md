@@ -377,10 +377,14 @@ The existing replay checks the original colors, row actions, tooltips, canceled 
 TH-123/124/125 add permission, user-input, standard MCP elicitation, and supported dynamic-tool forms to the existing request queue.
 The request editor retains drafts by thread and request while switching chats or recovering from a failed cancellation.
 MCP elicitations and nonblocking questions remain pending until explicit resolution.
+Unsupported question and permission requests receive empty-denial responses.
+Skipping an optional final choice submits the answers from earlier fields.
+Enter retains draft submission for command and file-change approvals.
 The original reference frames use the extracted Codex renderer at 1280x832 and scale 2.
 The revised native replay and appearance approval remain pending.
 
 Native Computer Use app approvals use this queue and retain the original request, thread, and turn IDs.
+Only the registered `lcu` server can use the native card.
 The card shows the app name, elevated risk, and first-use disclosure.
 The card uses the shared rounded clip for content and paints the risk shield outside that clip.
 The icon rasterizes during paint in the active compositor layer; the footer records in window space.

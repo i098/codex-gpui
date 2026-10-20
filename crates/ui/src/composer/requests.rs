@@ -15,24 +15,13 @@ impl Approval {
         params.as_object()?;
         let (title, fields, unsupported) = match method {
             "item/tool/requestUserInput" => {
-                let request: bridge::types::ToolRequestUserInput =
-                    serde_json::from_value(params.clone()).ok()?;
-                if request.questions.is_empty() {
+                params["turnId"].as_str()?;
+                params["itemId"].as_str()?;
+                let fields = params["questions"].as_array()?;
+                if fields.is_empty() {
                     return None;
                 }
-                let mut ids = std::collections::HashSet::new();
-                if request
-                    .questions
-                    .iter()
-                    .any(|question| !ids.insert(&question.id))
-                {
-                    return None;
-                }
-                (
-                    "Answer the questions".to_owned(),
-                    params["questions"].as_array()?.clone(),
-                    false,
-                )
+                ("Answer the questions".to_owned(), fields.clone(), false)
             }
             "item/tool/call" => match params["tool"].as_str()? {
                 "request_onboarding_input" => {
@@ -142,7 +131,7 @@ impl Approval {
         {
             return None;
         }
-        if method == "item/tool/call" && fields.len() > 1 {
+        if method != "mcpServer/elicitation/request" && fields.len() > 1 {
             let mut ids = std::collections::HashSet::new();
             if fields
                 .iter()
@@ -984,7 +973,7 @@ impl Composer {
                 !user_input
                     && (!mcp
                         || next
-                        || single_choice
+                        || (single_choice && field.is_some_and(|field| field["required"] != true))
                         || form.unsupported
                         || form.params["mode"] == "url"),
                 |d| {
@@ -999,7 +988,11 @@ impl Composer {
                                 .to_owned()
                                 .into()
                         },
-                        ApprovalDecision::Decline,
+                        if single_choice && !next {
+                            ApprovalDecision::Accept
+                        } else {
+                            ApprovalDecision::Decline
+                        },
                         false,
                         t,
                         cx,
@@ -1615,9 +1608,9 @@ mod tests {
     fn user_answers_keep_question_ids_and_dynamic_picker_actions() {
         let mut context = gpui::HeadlessAppContext::new(textsys::text_system());
         context.update(|cx| {
-            let params = json!({ "threadId": "thread-a", "turnId": "turn-a", "itemId": "input-a", "isBlocking": true,
+            let params = json!({ "threadId": "thread-a", "turnId": "turn-a", "itemId": "input-a",
                 "questions": [{ "id": "language", "header": "Language", "question": "Choose a language",
-                    "isOther": true, "isSecret": false, "options": [{ "label": "Rust", "description": "Native" }] }]
+                    "isOther": true, "isSecret": false, "options": [{ "label": "Rust" }] }]
             });
             let composer = cx.new(|cx| Composer::new("", false, cx));
             composer.update(cx, |composer, cx| {

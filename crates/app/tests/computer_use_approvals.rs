@@ -88,13 +88,21 @@ fn keeps_schema_fields_out_of_native_empty_form_approval() {
     assert!(approval(&params).is_none());
 }
 
+#[test]
+fn rejects_other_servers_claiming_native_metadata() {
+    for server in [json!("untrusted"), Value::Null] {
+        let mut params = request();
+        params["serverName"] = server;
+        assert!(approval(&params).is_none());
+    }
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn native_cards_answer_the_bound_request_and_remember_disclosure() -> anyhow::Result<()> {
     use anyhow::ensure;
     use bridge::Event;
     use common::{EXPLAIN, Fx, SUBTRACT, script};
-    use gpui::Focusable as _;
 
     let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
     fx.click(fx.at("home", "Add a subtract")?)?;
@@ -125,21 +133,11 @@ fn native_cards_answer_the_bound_request_and_remember_disclosure() -> anyhow::Re
         });
         fx.cx.run_until_parked();
     };
-    let capture = |fx: &mut Fx, name: &str| -> anyhow::Result<()> {
-        if let Some(dir) = std::env::var_os("CGX_COMPUTER_USE_EVIDENCE") {
-            std::fs::create_dir_all(&dir)?;
-            fx.reference_shot()?
-                .save(std::path::Path::new(&dir).join(name))?;
-        }
-        Ok(())
-    };
     show(&mut fx, "other-thread", EXPLAIN, false);
     show(&mut fx, "native-app-approval", SUBTRACT, false);
-    capture(&mut fx, "native-dark-low.png")?;
+    fx.capture_evidence("CGX_COMPUTER_USE_EVIDENCE", "native-dark-low")?;
     let composer = fx.composer();
-    fx.cx.update_window(fx.window, |_, window, cx| {
-        composer.focus_handle(cx).focus(window, cx)
-    })?;
+    fx.focus_composer()?;
     fx.keys("enter")?;
     fx.wait("native session answer", |fx| fx.sent().unwrap().contains(&json!({
         "reply": "native-app-approval", "result": {"action": "accept", "content": {}, "_meta": {"persist": "session"}}
@@ -153,10 +151,8 @@ fn native_cards_answer_the_bound_request_and_remember_disclosure() -> anyhow::Re
         "acceptance did not retain the disclosure choice"
     );
     show(&mut fx, "native-high", SUBTRACT, true);
-    capture(&mut fx, "native-dark-high.png")?;
-    fx.cx.update_window(fx.window, |_, window, cx| {
-        composer.focus_handle(cx).focus(window, cx)
-    })?;
+    fx.capture_evidence("CGX_COMPUTER_USE_EVIDENCE", "native-dark-high")?;
+    fx.focus_composer()?;
     fx.keys("tab enter")?;
     fx.wait("native always answer", |fx| fx.sent().unwrap().contains(&json!({
         "reply": "native-high", "result": {"action": "accept", "content": {}, "_meta": {"persist": "always"}}
@@ -178,9 +174,7 @@ fn native_cards_answer_the_bound_request_and_remember_disclosure() -> anyhow::Re
         })
     });
     fx.cx.run_until_parked();
-    fx.cx.update_window(fx.window, |_, window, cx| {
-        composer.focus_handle(cx).focus(window, cx)
-    })?;
+    fx.focus_composer()?;
     fx.keys("enter")?;
     fx.wait("native one-use answer", |fx| {
         fx.sent().unwrap().contains(&json!({
@@ -188,9 +182,7 @@ fn native_cards_answer_the_bound_request_and_remember_disclosure() -> anyhow::Re
         }))
     })?;
     show(&mut fx, "native-deny", SUBTRACT, false);
-    fx.cx.update_window(fx.window, |_, window, cx| {
-        composer.focus_handle(cx).focus(window, cx)
-    })?;
+    fx.focus_composer()?;
     fx.keys("escape")?;
     fx.wait("native denial", |fx| {
         fx.sent().unwrap().contains(&json!({

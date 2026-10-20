@@ -40,23 +40,6 @@ fn permission(id: u64, thread: &str, turn: &str) -> Event {
     }
 }
 
-fn focus_composer(fx: &mut Fx) -> Result<()> {
-    let composer = fx.composer();
-    fx.cx.update_window(fx.window, |_, window, cx| {
-        composer.focus_handle(cx).focus(window, cx)
-    })?;
-    Ok(())
-}
-
-fn capture(fx: &mut Fx, name: &str) -> Result<()> {
-    if let Some(dir) = std::env::var_os("CGX_REQUEST_EVIDENCE") {
-        std::fs::create_dir_all(&dir)?;
-        fx.reference_shot()?
-            .save(std::path::Path::new(&dir).join(format!("{name}.png")))?;
-    }
-    Ok(())
-}
-
 #[test]
 fn withdrawn_answer_cannot_settle_the_next_request_or_another_thread() -> Result<()> {
     let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
@@ -68,8 +51,8 @@ fn withdrawn_answer_cannot_settle_the_next_request_or_another_thread() -> Result
     emit(&mut fx, permission(102, SUBTRACT, &subtract_turn));
     emit(&mut fx, permission(104, SUBTRACT, &subtract_turn));
     emit(&mut fx, permission(103, EXPLAIN, &explain_turn));
-    capture(&mut fx, "permissions")?;
-    focus_composer(&mut fx)?;
+    fx.capture_evidence("CGX_REQUEST_EVIDENCE", "permissions")?;
+    fx.focus_composer()?;
     let root = fx.root.clone();
     let composer = fx.composer();
     fx.cx.update_window(fx.window, |_, window, cx| {
@@ -194,8 +177,8 @@ fn native_forms_send_typed_answers_and_cancel_without_accepting() -> Result<()> 
             }),
         },
     );
-    capture(&mut fx, "user-input")?;
-    focus_composer(&mut fx)?;
+    fx.capture_evidence("CGX_REQUEST_EVIDENCE", "user-input")?;
+    fx.focus_composer()?;
     fx.keys("tab tab")?;
     fx.type_text("Review folder")?;
     fx.click(fx.at("home", "In two sentences")?)?;
@@ -210,13 +193,13 @@ fn native_forms_send_typed_answers_and_cancel_without_accepting() -> Result<()> 
                 "isOther": false, "isSecret": false, "options": null }] }),
         },
     );
-    focus_composer(&mut fx)?;
+    fx.focus_composer()?;
     fx.keys("tab tab")?;
     fx.type_text("Other answer")?;
     fx.click(fx.at("home", "Add a subtract")?)?;
     fx.wait_thread(SUBTRACT)?;
     fx.advance(std::time::Duration::ZERO)?;
-    focus_composer(&mut fx)?;
+    fx.focus_composer()?;
     fx.keys("enter")?;
     fx.wait("user input answer", |fx| {
         fx.sent()
@@ -240,14 +223,14 @@ fn native_forms_send_typed_answers_and_cancel_without_accepting() -> Result<()> 
             }),
         },
     );
-    capture(&mut fx, "elicitation")?;
-    focus_composer(&mut fx)?;
+    fx.capture_evidence("CGX_REQUEST_EVIDENCE", "elicitation")?;
+    fx.focus_composer()?;
     fx.keys("cmd-enter")?;
     ensure!(
         fx.sent()?.iter().all(|message| message["reply"] != 202),
         "Next answered before the final field"
     );
-    capture(&mut fx, "elicitation-final")?;
+    fx.capture_evidence("CGX_REQUEST_EVIDENCE", "elicitation-final")?;
     fx.keys("cmd-enter")?;
     fx.wait("typed elicitation answer", |fx| {
         fx.sent()
@@ -260,6 +243,31 @@ fn native_forms_send_typed_answers_and_cancel_without_accepting() -> Result<()> 
     emit(
         &mut fx,
         Event::Request {
+            id: json!(207),
+            method: "mcpServer/elicitation/request".into(),
+            params: json!({
+                "threadId": SUBTRACT, "turnId": null, "serverName": "release-fixture", "mode": "form",
+                "message": "Choose report options", "requestedSchema": {
+                    "type": "object", "required": ["name"], "properties": {
+                        "name": { "type": "string", "default": "Report" },
+                        "zColour": { "type": "string", "enum": ["Red", "Blue"] }
+                    }
+                }
+            }),
+        },
+    );
+    fx.focus_composer()?;
+    fx.keys("cmd-enter")?;
+    fx.keys("tab tab tab tab tab enter")?;
+    fx.wait("optional final choice skipped", |fx| {
+        fx.sent().unwrap().contains(&json!({
+            "reply": 207, "result": { "action": "accept", "content": { "name": "Report" }, "_meta": null }
+        }))
+    })?;
+
+    emit(
+        &mut fx,
+        Event::Request {
             id: json!(203),
             method: "item/tool/call".into(),
             params: json!({
@@ -268,8 +276,8 @@ fn native_forms_send_typed_answers_and_cancel_without_accepting() -> Result<()> 
             }),
         },
     );
-    capture(&mut fx, "tool-picker")?;
-    focus_composer(&mut fx)?;
+    fx.capture_evidence("CGX_REQUEST_EVIDENCE", "tool-picker")?;
+    fx.focus_composer()?;
     fx.keys("escape")?;
     fx.wait("dynamic tool dismissal", |fx| {
         fx.sent()
@@ -301,7 +309,7 @@ fn native_forms_send_typed_answers_and_cancel_without_accepting() -> Result<()> 
                 "isOther": false, "isSecret": true, "options": null }] }),
         },
     );
-    focus_composer(&mut fx)?;
+    fx.focus_composer()?;
     fx.keys("tab tab")?;
     fx.type_text("fixture-secret")?;
     fx.cx.update(|cx| {
@@ -314,7 +322,7 @@ fn native_forms_send_typed_answers_and_cancel_without_accepting() -> Result<()> 
             == Some("clipboard-marker".into()),
         "secret copy changed the clipboard"
     );
-    capture(&mut fx, "secret-input")?;
+    fx.capture_evidence("CGX_REQUEST_EVIDENCE", "secret-input")?;
     fx.keys("cmd-x")?;
     ensure!(
         fx.cx
@@ -341,7 +349,7 @@ fn native_forms_send_typed_answers_and_cancel_without_accepting() -> Result<()> 
                 "isOther": false, "isSecret": false, "options": null }] }),
         },
     );
-    focus_composer(&mut fx)?;
+    fx.focus_composer()?;
     fx.keys("enter")?;
     fx.wait("skipped question answer", |fx| {
         fx.sent()
@@ -357,7 +365,7 @@ fn native_forms_send_typed_answers_and_cancel_without_accepting() -> Result<()> 
     fx.click(fx.at("home", "In two sentences")?)?;
     fx.wait_thread(EXPLAIN)?;
     fx.advance(std::time::Duration::ZERO)?;
-    focus_composer(&mut fx)?;
+    fx.focus_composer()?;
     fx.keys("enter")?;
     fx.wait("other thread draft answer", |fx| {
         fx.sent().unwrap().contains(&json!({
@@ -401,14 +409,14 @@ fn cancelling_input_retains_the_request_when_interrupt_fails() -> Result<()> {
             },
         );
     }
-    focus_composer(&mut fx)?;
+    fx.focus_composer()?;
     fx.keys("escape")?;
     fx.wait("successful interruption reveals the next request", |fx| {
         let composer = fx.composer();
         fx.read(|_, cx| composer.read(cx).approval().is_some())
     })?;
     fx.advance(std::time::Duration::ZERO)?;
-    focus_composer(&mut fx)?;
+    fx.focus_composer()?;
     fx.keys("tab tab")?;
     fx.type_text("Retain this answer")?;
     fx.keys("escape")?;
@@ -489,7 +497,7 @@ fn standalone_requests_outlive_the_correlated_turn() -> Result<()> {
         },
     );
     fx.advance(std::time::Duration::ZERO)?;
-    focus_composer(&mut fx)?;
+    fx.focus_composer()?;
     fx.keys("escape")?;
     fx.wait("standalone elicitation cancellation", |fx| {
         fx.sent().unwrap().contains(&json!({
@@ -497,7 +505,7 @@ fn standalone_requests_outlive_the_correlated_turn() -> Result<()> {
         }))
     })?;
     fx.advance(std::time::Duration::ZERO)?;
-    focus_composer(&mut fx)?;
+    fx.focus_composer()?;
     fx.keys("escape")?;
     fx.wait("nonblocking question cancellation", |fx| {
         fx.sent().unwrap().contains(&json!({
@@ -509,6 +517,54 @@ fn standalone_requests_outlive_the_correlated_turn() -> Result<()> {
         sent.iter()
             .all(|message| message["reply"] != 401 && message["method"] != "turn/interrupt"),
         "an expired permission was answered or a nonblocking request interrupted the turn"
+    );
+    Ok(())
+}
+
+#[test]
+fn malformed_question_and_permission_requests_receive_denials() -> Result<()> {
+    let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
+    for (id, method, params) in [
+        (
+            json!("malformed-question"),
+            "item/tool/requestUserInput",
+            json!({ "threadId": SUBTRACT, "questions": [] }),
+        ),
+        (
+            json!(702),
+            "item/permissions/requestApproval",
+            json!({ "threadId": SUBTRACT, "permissions": null }),
+        ),
+    ] {
+        emit(
+            &mut fx,
+            Event::Request {
+                id,
+                method: method.into(),
+                params,
+            },
+        );
+    }
+    fx.wait("malformed request denials", |fx| {
+        fx.sent()
+            .unwrap()
+            .iter()
+            .filter(|message| message.get("reply").is_some())
+            .count()
+            == 2
+    })?;
+    let replies: Vec<_> = fx
+        .sent()?
+        .into_iter()
+        .filter(|message| message.get("reply").is_some())
+        .collect();
+    ensure!(
+        replies
+            == vec![
+                json!({ "reply": "malformed-question", "result": { "answers": {} } }),
+                json!({ "reply": 702, "result": { "permissions": {}, "scope": "turn" } }),
+            ],
+        "malformed request replies changed identity or granted permission: {replies:?}"
     );
     Ok(())
 }

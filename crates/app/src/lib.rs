@@ -4270,22 +4270,23 @@ impl Root {
                 if self.approval_card(&pending, cx).is_some() {
                     self.approvals.push(pending);
                     self.show_approval(cx);
-                } else if pending.method == "item/tool/call" {
-                    let response = json!({
-                        "success": false,
-                        "contentItems": [{ "type": "inputText", "text": format!("Unsupported dynamic tool: {}", pending.params["tool"].as_str().unwrap_or_default()) }]
-                    });
-                    if let Err(error) = self.bridge.respond(pending.id, response) {
-                        eprintln!("codex-gpui: dynamic tool: {error:#}");
-                    }
-                } else if pending.method == "mcpServer/elicitation/request" {
-                    if let Err(error) = self.bridge.respond(
-                        pending.id,
-                        json!({
+                } else {
+                    let response = match pending.method.as_str() {
+                        "item/tool/call" => json!({
+                            "success": false,
+                            "contentItems": [{ "type": "inputText", "text": format!("Unsupported dynamic tool: {}", pending.params["tool"].as_str().unwrap_or_default()) }]
+                        }),
+                        "mcpServer/elicitation/request" => json!({
                             "action": "decline", "content": null, "_meta": null
                         }),
-                    ) {
-                        eprintln!("codex-gpui: unsupported elicitation: {error:#}");
+                        "item/tool/requestUserInput" => json!({ "answers": {} }),
+                        "item/permissions/requestApproval" => json!({
+                            "permissions": {}, "scope": "turn"
+                        }),
+                        _ => return,
+                    };
+                    if let Err(error) = self.bridge.respond(pending.id, response) {
+                        eprintln!("codex-gpui: unsupported {}: {error:#}", pending.method);
                     }
                 }
             }

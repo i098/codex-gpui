@@ -299,6 +299,13 @@ impl Fx {
         self.read(|r, cx| r.composer(cx))
     }
 
+    pub fn focus_composer(&mut self) -> Result<()> {
+        let composer = self.composer();
+        self.cx.update_window(self.window, |_, window, cx| {
+            composer.focus_handle(cx).focus(window, cx)
+        })
+    }
+
     pub fn composer_text(&mut self) -> Result<String> {
         let composer = self.composer();
         self.cx.update_window(self.window, |_, window, cx| {
@@ -532,6 +539,15 @@ impl Fx {
             window.refresh();
         })?;
         image
+    }
+
+    pub fn capture_evidence(&mut self, variable: &str, name: &str) -> Result<()> {
+        if let Some(dir) = env::var_os(variable) {
+            fs::create_dir_all(&dir)?;
+            self.reference_shot()?
+                .save(Path::new(&dir).join(name).with_extension("png"))?;
+        }
+        Ok(())
     }
 
     /// Center of the original's element: a node with this `aria-label`, else the first text

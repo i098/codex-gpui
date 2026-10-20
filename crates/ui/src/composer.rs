@@ -1198,7 +1198,7 @@ impl Composer {
         }
     }
 
-    /// Enter answers the pending request without sending the chat draft.
+    /// Enter sends the draft only when the approval leaves the composer visible.
     fn enter(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
         if self.answer_request_parent(ApprovalDecision::Accept, window, cx) {
             return;
@@ -1212,8 +1212,15 @@ impl Composer {
             return;
         }
         if self.approval.is_some() && !self.slash.open {
+            let replaces_composer = self.approval.as_ref().is_some_and(|approval| {
+                approval.form.is_some()
+                    || approval.permissions.is_some()
+                    || approval.computer_use.is_some()
+            });
             self.request_action(ApprovalDecision::Accept, window, cx);
-            return;
+            if replaces_composer {
+                return;
+            }
         }
         self.submit(&Submit, window, cx);
     }
@@ -2065,11 +2072,7 @@ impl Render for Composer {
             .flex_col()
             .gap(px(8.))
             .when_some(self.approval.clone(), |d, a| {
-                d.child(if a.form.is_some() {
-                    self.request_card(&a, &t, cx)
-                } else {
-                    self.approval_card(&a, &t, cx)
-                })
+                d.child(self.approval_card(&a, &t, cx))
             })
             .child(div().children(tray).child(card))
             .when_some(self.context_menu.as_ref(), |d, menu| {

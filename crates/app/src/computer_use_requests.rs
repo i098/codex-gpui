@@ -6,6 +6,7 @@ fn native_app(params: &Value) -> Option<&str> {
     let meta = &params["_meta"];
     let schema = &params["requestedSchema"];
     if params["mode"] != "form"
+        || params["serverName"] != "lcu"
         || params["message"].as_str()?.trim().is_empty()
         || schema["type"] != "object"
         || !schema["properties"].as_object()?.is_empty()
