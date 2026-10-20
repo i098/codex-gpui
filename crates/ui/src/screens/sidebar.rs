@@ -1636,6 +1636,7 @@ fn marked(
 /// query. The selected row carries the `primary-ghost-hover` fill, the others `opacity: .75`.
 pub struct CommandMenu {
     groups: Vec<(&'static str, Vec<Item>)>,
+    retry_item: Item,
     query: String,
     query_anchor: usize,
     query_cursor: usize,
@@ -1647,7 +1648,6 @@ pub struct CommandMenu {
     show_caret: bool,
     selected: usize,
     focus: FocusHandle,
-    retry_focus: FocusHandle,
     /// A thread is open: its commands show (`Search files`, `Mark as unread`, ...).
     thread_open: bool,
     git_available: bool,
@@ -2262,6 +2262,10 @@ impl CommandMenu {
         groups.extend(GROUPS.into_iter().map(group));
         Self {
             groups,
+            retry_item: Item {
+                description: Some("Retry"),
+                ..Item::command(None, "Couldn't search ChatGPT chats", "")
+            },
             query: query.to_owned(),
             query_anchor: query.len(),
             query_cursor: query.len(),
@@ -2273,7 +2277,6 @@ impl CommandMenu {
             show_caret: true,
             selected: 0,
             focus: cx.focus_handle(),
-            retry_focus: cx.focus_handle(),
             thread_open,
             git_available: false,
             search_gen: 0,
@@ -2337,6 +2340,7 @@ impl CommandMenu {
             return;
         }
         self.cloud_error = false;
+        self.selected = 0;
         self.cloud_searching = true;
         cx.emit(CommandMenuEvent::RetryCloudSearch(SearchRequest {
             term: self.query.trim().to_owned().into(),
@@ -2394,7 +2398,8 @@ impl CommandMenu {
         let query = self.query.trim();
         let pattern = MatchPattern::new(query);
         let quick = &self.groups[1].1;
-        self.groups
+        let mut groups: Vec<_> = self
+            .groups
             .iter()
             .filter(|(heading, _)| query.is_empty() || *heading != "Quick actions")
             .map(|(heading, items)| {
@@ -2436,7 +2441,11 @@ impl CommandMenu {
                 )
             })
             .filter(|(_, items)| !items.is_empty())
-            .collect()
+            .collect();
+        if self.cloud_error {
+            groups.push(("", vec![&self.retry_item]));
+        }
+        groups
     }
 
     /// The visible rows as the recorder writes them (`title | desc:… | project | keys`, a
@@ -2767,20 +2776,9 @@ impl CommandMenu {
             .child(input.relative().left(-self.query_scroll))
     }
 
-    fn on_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_key(&mut self, e: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
         let k = &e.keystroke;
         match k.key.as_str() {
-            "tab" if self.cloud_error => {
-                if self.retry_focus.is_focused(window) {
-                    self.focus.focus(window, cx);
-                } else {
-                    self.retry_focus.focus(window, cx);
-                }
-            }
-            "enter" | "space" if self.retry_focus.is_focused(window) => {
-                self.retry_cloud_search(cx);
-                self.focus.focus(window, cx);
-            }
             "down" | "up" => {
                 self.selected = if k.key == "down" {
                     self.selected + 1
@@ -2833,21 +2831,25 @@ impl CommandMenu {
 
     /// Runs the selected row.
     fn confirm(&mut self, cx: &mut Context<Self>) {
-        let event = self
+        let item = self
             .visible()
             .into_iter()
             .flat_map(|(_, items)| items)
-            .nth(self.selected)
-            .map(|item| match (&item.thread, &item.url) {
-                (Some(id), _) => CommandMenuEvent::OpenThread(id.clone()),
-                (_, Some(url)) => CommandMenuEvent::OpenUrl(url.clone()),
-                // Work preferences opens the Configuration route in the original.
-                _ => CommandMenuEvent::Command(if item.label == "Work preferences" {
-                    "Configuration".into()
-                } else {
-                    item.label.clone()
-                }),
-            });
+            .nth(self.selected);
+        if item.is_some_and(|item| std::ptr::eq(item, &self.retry_item)) {
+            self.retry_cloud_search(cx);
+            return;
+        }
+        let event = item.map(|item| match (&item.thread, &item.url) {
+            (Some(id), _) => CommandMenuEvent::OpenThread(id.clone()),
+            (_, Some(url)) => CommandMenuEvent::OpenUrl(url.clone()),
+            // Work preferences opens the Configuration route in the original.
+            _ => CommandMenuEvent::Command(if item.label == "Work preferences" {
+                "Configuration".into()
+            } else {
+                item.label.clone()
+            }),
+        });
         if let Some(event) = event {
             cx.emit(event);
         }
@@ -3004,38 +3006,55 @@ impl Render for CommandMenu {
                 .gap(px(4.))
                 // `pt-2` over a 13 px / 18.57 line; 26.5 keeps the rows on the original's
                 // device-pixel-snapped edges.
-                .child(
-                    div()
-                        .h(px(26.5))
-                        .pt(px(8.))
-                        .px(px(8.))
-                        .flex()
-                        .items_center()
-                        .gap(px(8.))
-                        .child(text(heading, 13., 18.5, 430., t.text_tertiary))
-                        .when(searching, |d| {
-                            d.child(icon("sidebar-cmd-spinner", 12., t.text_tertiary))
-                        }),
-                )
+                .when(!heading.is_empty(), |group| {
+                    group.child(
+                        div()
+                            .h(px(26.5))
+                            .pt(px(8.))
+                            .px(px(8.))
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(text(heading, 13., 18.5, 430., t.text_tertiary))
+                            .when(searching, |d| {
+                                d.child(icon("sidebar-cmd-spinner", 12., t.text_tertiary))
+                            }),
+                    )
+                })
                 .child(
                     div()
                         .flex()
                         .flex_col()
                         .children(items.into_iter().map(|item| {
+                            let retry = std::ptr::eq(item, &self.retry_item);
                             let selected = index == self.selected;
                             index += 1;
                             // `Chats` is the first group, so a chat's ordinal is `index`.
-                            menu_row(item, query, index, selected, text_width, t, window)
-                                .on_mouse_move(cx.listener(move |this, _, _, cx| {
-                                    if this.selected != index - 1 {
-                                        this.selected = index - 1;
-                                        cx.notify();
-                                    }
-                                }))
-                                .on_click(cx.listener(move |this, _, _, cx| {
+                            menu_row(
+                                item,
+                                if retry { "" } else { query },
+                                index,
+                                selected,
+                                text_width,
+                                t,
+                                window,
+                            )
+                            .when(retry, |row| {
+                                row.role(gpui::Role::Button)
+                                    .aria_label("Retry ChatGPT search")
+                            })
+                            .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                                if this.selected != index - 1 {
+                                    this.selected = index - 1;
+                                    cx.notify();
+                                }
+                            }))
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
                                     this.selected = index - 1;
                                     this.confirm(cx);
-                                }))
+                                },
+                            ))
                         })),
                 )
         });
@@ -3113,49 +3132,7 @@ impl Render for CommandMenu {
                                             .top_layer()
                                             .flex()
                                             .flex_col()
-                                            .children(groups)
-                                            .when(self.cloud_error, |list| {
-                                                list.child(
-                                                    div()
-                                                        .p(px(8.))
-                                                        .flex()
-                                                        .items_center()
-                                                        .justify_between()
-                                                        .child(text(
-                                                            "Couldn't search ChatGPT chats",
-                                                            13.,
-                                                            18.5,
-                                                            430.,
-                                                            t.text_tertiary,
-                                                        ))
-                                                        .child(
-                                                            div()
-                                                                .id("retry-cloud-search")
-                                                                .role(gpui::Role::Button)
-                                                                .aria_label("Retry ChatGPT search")
-                                                                .track_focus(&self.retry_focus)
-                                                                .when(
-                                                                    self.retry_focus
-                                                                        .is_focused(window),
-                                                                    |button| {
-                                                                        button.bg(t.ghost_hover)
-                                                                    },
-                                                                )
-                                                                .cursor_pointer()
-                                                                .child(text(
-                                                                    "Retry", 13., 18.5, 430.,
-                                                                    t.text,
-                                                                ))
-                                                                .on_click(cx.listener(
-                                                                    |this, _, window, cx| {
-                                                                        this.retry_cloud_search(cx);
-                                                                        this.focus
-                                                                            .focus(window, cx);
-                                                                    },
-                                                                )),
-                                                        ),
-                                                )
-                                            }),
+                                            .children(groups),
                                     ),
                             ),
                     ),

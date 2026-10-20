@@ -23,7 +23,7 @@ fn cloud_success() -> Value {
 }
 
 #[test]
-fn local_results_survive_cloud_failure_and_the_retry_button_works() -> Result<()> {
+fn local_results_survive_cloud_failure_and_retry_stays_in_the_menu() -> Result<()> {
     let mut fx = Fx::with(
         "dark",
         (1280., 832.),
@@ -34,15 +34,22 @@ fn local_results_survive_cloud_failure_and_the_retry_button_works() -> Result<()
     let menu = fx
         .read(|root, _| root.command_menu().cloned())
         .context("menu")?;
-    let local = fx.read(|_, cx| menu.read(cx).describe());
+    let chats = |fx: &Fx| {
+        fx.read(|_, cx| {
+            menu.read(cx)
+                .describe()
+                .into_iter()
+                .find(|(heading, _)| *heading == "Chats")
+                .map(|(_, rows)| rows)
+                .unwrap_or_default()
+        })
+    };
+    let local = chats(&fx);
     for seconds in [1, 2, 4] {
         fx.advance(Duration::from_secs(seconds))?;
     }
     ensure!(fx.read(|_, cx| menu.read(cx).search_pending()) == (false, false));
-    ensure!(
-        fx.read(|_, cx| menu.read(cx).describe()) == local,
-        "cloud failure removed a local hit"
-    );
+    ensure!(chats(&fx) == local, "cloud failure removed a local hit");
     ensure!(
         host.requests.lock().unwrap().len() == 4,
         "original retry sequence changed"
@@ -50,7 +57,21 @@ fn local_results_survive_cloud_failure_and_the_retry_button_works() -> Result<()
     fx.shot()?
         .save(std::env::temp_dir().join("sidebar-cloud-error.png"))?;
 
-    fx.keys("tab enter")?;
+    let rows = fx.read(|_, cx| {
+        menu.read(cx)
+            .describe()
+            .iter()
+            .map(|(_, rows)| rows.len())
+            .sum::<usize>()
+    });
+    for _ in 0..rows {
+        fx.keys("down")?;
+    }
+    fx.keys("enter")?;
+    ensure!(
+        fx.read(|root, _| root.command_menu().is_some()),
+        "retry closed the menu"
+    );
     ensure!(fx.read(|_, cx| menu.read(cx).search_pending()) == (false, true));
     ensure!(
         host.requests.lock().unwrap().len() == 5,

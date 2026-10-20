@@ -43,7 +43,16 @@ struct Item {
     snippet: Option<String>,
     match_kind: String,
     update_time: Option<f64>,
-    payload: Value,
+    payload: Payload,
+}
+
+#[derive(Deserialize)]
+struct Payload {
+    kind: Option<String>,
+    conversation_id: Option<String>,
+    thread_id: Option<String>,
+    room_id: Option<String>,
+    message_id: Option<String>,
 }
 
 pub(crate) fn results(body: Value) -> Result<Vec<CloudSearchHit>> {
@@ -54,24 +63,33 @@ pub(crate) fn results(body: Value) -> Result<Vec<CloudSearchHit>> {
     let base = Url::parse("https://chatgpt.com/").expect("static ChatGPT URL");
     for item in response.items.into_iter().take(SEARCH_LIMIT as usize) {
         let mut url = base.clone();
-        let content_match = item.match_kind == "content" || item.payload["kind"] == "dot_message";
-        let source = if item.payload["kind"] == "dot_message" {
-            let id = item.payload["thread_id"]
-                .as_str()
+        let content_match =
+            item.match_kind == "content" || item.payload.kind.as_deref() == Some("dot_message");
+        let source = if item.payload.kind.as_deref() == Some("dot_message") {
+            let id = item
+                .payload
+                .thread_id
+                .as_deref()
                 .context("dot result has no thread id")?;
-            let room = item.payload["room_id"]
-                .as_str()
+            let room = item
+                .payload
+                .room_id
+                .as_deref()
                 .context("dot result has no room id")?;
-            let message = item.payload["message_id"]
-                .as_str()
+            let message = item
+                .payload
+                .message_id
+                .as_deref()
                 .context("dot result has no message id")?;
             url.path_segments_mut().unwrap().extend(["dots", id]);
             url.query_pairs_mut()
                 .append_pair("roomId", room)
                 .append_pair("messageId", message);
             "Your dot"
-        } else if let Some(id) = item.payload["conversation_id"]
-            .as_str()
+        } else if let Some(id) = item
+            .payload
+            .conversation_id
+            .as_deref()
             .filter(|id| !id.is_empty())
         {
             url.path_segments_mut().unwrap().extend(["c", id]);
