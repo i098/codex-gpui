@@ -63,7 +63,7 @@ fn chip(
     cx: &App,
 ) -> Div {
     div().child(
-        focus::ring(pill(id, t), focus, Theme::RADIUS_FULL, px(2.), cx)
+        focus::shadow_ring(pill(id, t), focus, Theme::RADIUS_FULL, px(2.), cx)
             .when(id == "choose-project", |chip| {
                 chip.role(gpui::Role::Button)
                     .aria_label("Choose project")
