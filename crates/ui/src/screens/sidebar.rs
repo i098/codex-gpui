@@ -1428,14 +1428,14 @@ impl Item {
 }
 
 /// The original `_4o`/`k2` score uses the first matching fragments, not the highest-scoring path.
-struct MatchPattern {
+pub(crate) struct MatchPattern {
     main: WordPattern,
     fallback: Option<WordPattern>,
     paths: bool,
 }
 
 impl MatchPattern {
-    fn new(query: &str) -> Self {
+    pub(crate) fn new(query: &str) -> Self {
         let mut lower = String::with_capacity(query.len());
         for c in query.trim().chars() {
             let folded = c.to_lowercase();
@@ -1466,7 +1466,7 @@ impl MatchPattern {
         }
     }
 
-    fn score(&self, value: &str) -> i32 {
+    pub(crate) fn score(&self, value: &str) -> i32 {
         let text: Vec<_> = value
             .encode_utf16()
             .map(|unit| {

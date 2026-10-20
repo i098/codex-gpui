@@ -380,11 +380,23 @@ fn open_in_editor_native_input_reaches_the_host_opener() -> Result<()> {
     })?;
     fx.shot()?.save(scratch.join("header-icon.png"))?;
 
-    // The header icon launches the configured editor on the repository file.
     let expected = format!("-a Zed {}", root.join("a.txt").display());
     fx.click(OPEN_ICON)?;
-    fx.wait("icon launch", |_| launches(&log).len() == 1)?;
-    ensure!(launches(&log) == [expected.clone()], "{:?}", launches(&log));
+    fx.wait("file tab", |fx| {
+        fx.read(|root, cx| {
+            root.file_view().is_some_and(|file| {
+                file.read(cx)
+                    .contents
+                    .as_ref()
+                    .is_some_and(|contents| contents.as_deref() == Ok("one\nchanged\n"))
+            })
+        })
+    })?;
+    ensure!(
+        launches(&log).is_empty(),
+        "the file tab launched an external editor"
+    );
+    fx.action(Box::new(ui::screens::diff::panel::CloseSideTab(1)))?;
 
     // The file menu reaches the same opener, and its other actions stay enabled.
     fx.click(FILE_ACTIONS)?;
@@ -395,27 +407,29 @@ fn open_in_editor_native_input_reaches_the_host_opener() -> Result<()> {
     );
     fx.shot()?.save(scratch.join("file-menu.png"))?;
     choose(&mut fx, "Open in editor")?;
-    fx.wait("menu launch", |_| launches(&log).len() == 2)?;
-    ensure!(launches(&log)[1] == expected);
+    fx.wait("menu launch", |_| launches(&log).len() == 1)?;
+    ensure!(launches(&log)[0] == expected);
     ensure!(!fx.read(|root, cx| root.diff_panel().unwrap().read(cx).pending()));
     ensure!(fx.read(|root, cx| root.diff_panel().unwrap().read(cx).files[0].open));
 
     // An opener failure is reported, and the changes list stays as it was.
     fs::write(&fail, "")?;
-    fx.click(OPEN_ICON)?;
+    fx.click(FILE_ACTIONS)?;
+    choose(&mut fx, "Open in editor")?;
     fx.wait("failure toast", |fx| toast(fx, FAILED))?;
     fx.shot()?.save(scratch.join("failure-toast.png"))?;
-    ensure!(launches(&log).len() == 2, "a refused launch was recorded");
+    ensure!(launches(&log).len() == 1, "a refused launch was recorded");
     ensure!(!fx.read(|root, cx| root.diff_panel().unwrap().read(cx).pending()));
     fs::remove_file(&fail)?;
     clear_toasts(&mut fx)?;
 
     // A changed file that no longer exists is not opened.
     fs::remove_file(root.join("a.txt"))?;
-    fx.click(OPEN_ICON)?;
+    fx.click(FILE_ACTIONS)?;
+    choose(&mut fx, "Open in editor")?;
     fx.wait("missing file toast", |fx| toast(fx, FAILED))?;
     ensure!(
-        launches(&log).len() == 2,
+        launches(&log).len() == 1,
         "a missing file reached the opener"
     );
     Ok(())

@@ -272,7 +272,11 @@ impl DiffPanel {
     /// The directory a displayed file path is relative to.
     fn file_root(&self) -> &str {
         if self.source == DiffSource::LastTurn {
-            &self.workspace
+            if self.aggregated_turn.is_some() {
+                &self.cwd
+            } else {
+                &self.workspace
+            }
         } else {
             self.repository
                 .as_ref()
@@ -280,15 +284,24 @@ impl DiffPanel {
         }
     }
 
-    pub(super) fn request_open(&self, file: usize, cx: &mut Context<Self>) {
-        let Some(file) = self.files.get(file) else {
-            return;
-        };
-        let relative = format!("{}{}", file.dir, file.name);
-        cx.emit(DiffRequest::Open(absolute_path(
+    fn file_path(&self, index: usize) -> Option<String> {
+        let file = self.files.get(index)?;
+        Some(absolute_path(
             self.file_root(),
-            &relative,
-        )));
+            &format!("{}{}", file.dir, file.name),
+        ))
+    }
+
+    pub(super) fn request_open(&self, file: usize, cx: &mut Context<Self>) {
+        if let Some(path) = self.file_path(file) {
+            cx.emit(DiffRequest::Open(path));
+        }
+    }
+
+    pub(super) fn request_open_tab(&self, file: usize, cx: &mut Context<Self>) {
+        if let Some(path) = self.file_path(file) {
+            cx.emit(DiffRequest::OpenTab(path));
+        }
     }
 
     fn close_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {

@@ -1115,7 +1115,7 @@ impl Root {
                     None => change.path.clone(),
                 }),
             ),
-            DiffRequest::Open(_) => return,
+            DiffRequest::Open(_) | DiffRequest::OpenTab(_) => return,
         };
         if let Some(review) = panel.read(cx).review_params().as_object() {
             params.as_object_mut().unwrap().extend(review.clone());
@@ -2760,6 +2760,14 @@ impl Root {
                     action: "revert", ..
                 } => this.confirm_revert(panel.clone(), &cwd, request, window, cx),
                 DiffRequest::Open(path) => this.open_in_editor(&cwd, path, cx),
+                DiffRequest::OpenTab(path) => this.open_file(
+                    &OpenFile {
+                        path: path.clone(),
+                        line: None,
+                    },
+                    window,
+                    cx,
+                ),
                 _ => this.repository_request(panel.clone(), &cwd, request, cx),
             },
         )
