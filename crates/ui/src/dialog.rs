@@ -3011,6 +3011,7 @@ impl Render for Dialog {
         let schedule = self.kind == Kind::ScheduleTask;
         let announcement = self.kind == Kind::ModelAnnouncement;
         let commit = self.kind == Kind::Commit;
+        let delete = self.kind == Kind::DeleteThread;
         let (width, height): (f32, f32) = match self.kind {
             Kind::Shortcuts => (600., shortcuts_height),
             Kind::CloseWindow => (420., 171.),
@@ -3066,6 +3067,7 @@ impl Render for Dialog {
         div()
             .absolute()
             .inset_0()
+            .when(delete, |d| d.top_layer())
             .occlude()
             .bg(if self.kind == Kind::Branches {
                 gpui::transparent_black()
@@ -3081,6 +3083,7 @@ impl Render for Dialog {
             .child(
                 div()
                     .id("modal-dialog")
+                    .when(delete, |d| d.snap_origin())
                     .role(gpui::Role::Dialog)
                     .aria_label(match self.kind {
                         Kind::Shortcuts => "Keyboard shortcuts".into(),
@@ -3181,7 +3184,8 @@ impl Render for Dialog {
                     } else {
                         24.
                     }))
-                    .when(!commit && self.kind != Kind::LogOut, |d| {
+                    // Keep the Delete shadow outside its border box.
+                    .when(!commit && self.kind != Kind::LogOut && !delete, |d| {
                         d.overflow_hidden()
                     })
                     .map(|d| {
