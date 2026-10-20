@@ -847,7 +847,7 @@ The three resize widths are 1280 px (reference), 767 px (below the 768 px sideba
 | 19 | Empty lists | empty | `No projects`, `No chats`, activity: `Nothing needs attention`. | `sidebarElectron.*empty*` | [ ] |
 | 20 | Lists loading | loading | Activity: `Checking unread chats…`. | `sidebarElectron.activity.loading` | [ ] |
 | 21 | Load error | error | `Projects couldn't be loaded` + `Retry`; `Could not load chats`. | `sidebarElectron.projectsError`, `tasksSection.error` | [ ] |
-| 22 | Sidebar drag-resize | resize | Width clamps to 240…min(520, window−240); default 340; stored as `sidebar-width`. | app-initial `dC()`, `qRt` | [ ] |
+| 22 | Sidebar drag-resize | resize | Width clamps to 240…min(520, window−240); default 340; stored as `sidebar-width`. Title clips follow the available row width. | app-initial `dC()`, `qRt` | [ ] |
 | 23 | Resize | resize | Check at 1280, 767 and 600 px. The thread shell auto-collapses the panel at 720 px or less. | app-initial-6350d04672d0.js (`iLi = 720`) | [ ] |
 
 ### 14.3 Home
