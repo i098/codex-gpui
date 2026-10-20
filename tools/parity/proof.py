@@ -3,6 +3,7 @@
 
 import argparse
 import concurrent.futures
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -42,7 +43,6 @@ def arguments():
     parser.add_argument("--mac", default="mac")
     parser.add_argument("--warm-target", required=True, help="explicitly handed-off Mac Cargo target")
     parser.add_argument("--webview", type=Path, default=Path("/tmp/cgx/asar-x/webview"))
-    parser.add_argument("--cdp", default="http://127.0.0.1:9467")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if (args.surface, args.state) not in CELLS:
@@ -84,16 +84,47 @@ def capture_original(args, env, output):
             cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT, timeout=240)
 
 
+@contextmanager
+def background(command, env, log):
+    with log.open("w") as stream:
+        process = subprocess.Popen(command, cwd=ROOT, env=env, stdout=stream,
+                                   stderr=subprocess.STDOUT, start_new_session=True)
+        try:
+            yield process
+        finally:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGTERM)
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+
+
+def free_port():
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def ready(process, url):
+    for _ in range(300):
+        if process.poll() is not None:
+            raise RuntimeError(f"process exited before {url} was ready")
+        try:
+            with urllib.request.urlopen(url, timeout=1) as response:
+                return response.read()
+        except OSError:
+            time.sleep(0.1)
+    raise RuntimeError(f"process did not serve {url}")
+
+
 def worker(args):
     if sys.platform != "darwin":
         raise RuntimeError("the capture worker requires macOS")
     output = args.out.resolve()
     output.mkdir(parents=True, exist_ok=True)
     pin_assets(args.webview)
-    with urllib.request.urlopen(args.cdp + "/json/version", timeout=10) as response:
-        browser = json.load(response)
-    if browser["Browser"] != "HeadlessChrome/155.0.8059.79" or "a49e2e3d4addfd84e765b52afe230bedb81096db" not in browser["WebKit-Version"]:
-        raise RuntimeError(f"unpinned browser: {browser}")
     scratch = ROOT.parent
     env = dict(os.environ)
     env.pop("R1_SF_FONTS", None)
@@ -101,7 +132,7 @@ def worker(args):
     env.update(PATH=f"{scratch}/bin:{toolchain}:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
                CARGO_HOME="/tmp/cgx-mac/cargo", CARGO_INCREMENTAL="0",
                CARGO_TARGET_DIR=str(scratch / "target"), TMPDIR=str(scratch / "tmp"),
-               R1_OFFLINE="1", R1_WEBVIEW=str(args.webview), R1_CDP=args.cdp,
+               R1_OFFLINE="1", R1_WEBVIEW=str(args.webview),
                MOCK_FIXTURES=str(ROOT / "fixtures"), MOCK_LOG=str(output / "requests.log"))
     (scratch / "tmp").mkdir()
     (scratch / "bin").mkdir()
@@ -112,49 +143,41 @@ def worker(args):
     for source in ROOT.rglob("*"):
         if source.is_file() and (source.suffix == ".rs" or source.name == "Cargo.toml"):
             source.touch()
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
-    env.update(R1_PORT=str(port), R1_SERVER=f"http://127.0.0.1:{port}")
-    (output / "provenance.json").write_text(json.dumps({
-        "surface": args.surface, "state": args.state, "theme": args.theme,
-        "size": args.size, "browser": browser, "asset_sha256": PINS,
-        "fonts": "macOS native; R1_SF_FONTS unset", "warm_target": args.warm_target,
-    }, indent=2) + "\n")
-    with (output / "server.log").open("w") as log:
-        server = subprocess.Popen(["node", "tools/parity/fixture-server.mjs"], cwd=ROOT, env=env,
-                                  stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-        try:
-            for _ in range(100):
-                if server.poll() is not None:
-                    raise RuntimeError("fixture server exited; see server.log")
-                try:
-                    with urllib.request.urlopen(env["R1_SERVER"] + "/index.html", timeout=1):
-                        break
-                except OSError:
-                    time.sleep(0.1)
-            else:
-                raise RuntimeError("fixture server did not start")
-            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-                executable = pool.submit(build, env, output)
-                original = pool.submit(capture_original, args, env, output)
-                original.result()
-                binary = executable.result()
-            env.update(CGX_PROOF_SURFACE=args.surface, CGX_PROOF_STATE=args.state,
-                       CGX_PROOF_THEME=args.theme, CGX_PROOF_WIDTH=str(args.width),
-                       CGX_PROOF_HEIGHT=str(args.height), CGX_PROOF_OUT=str(output))
-            with (output / "native.log").open("w") as native_log:
-                result = subprocess.run([binary, "--ignored", "--exact", "capture_cell", "--nocapture"],
-                                        cwd=ROOT, env=env, stdout=native_log,
-                                        stderr=subprocess.STDOUT, timeout=180)
-            return result.returncode
-        finally:
-            os.killpg(server.pid, signal.SIGTERM)
-            try:
-                server.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                os.killpg(server.pid, signal.SIGKILL)
-                server.wait()
+    port, browser_port = free_port(), free_port()
+    env.update(R1_PORT=str(port), R1_SERVER=f"http://127.0.0.1:{port}",
+               R1_CDP=f"http://127.0.0.1:{browser_port}")
+    chrome = [
+        "/tmp/cgx-mac/chrome-headless-shell-mac-arm64/chrome-headless-shell",
+        "--headless", "--hide-scrollbars", "--force-device-scale-factor=2",
+        "--num-raster-threads=1", "--disable-checker-imaging", "--disable-partial-raster",
+        f"--remote-debugging-port={browser_port}", f"--user-data-dir={scratch}/browser",
+        "about:blank",
+    ]
+    with background(chrome, env, output / "browser.log") as browser_process, \
+            background(["node", "tools/route1/server.mjs"], env, output / "server.log") as server:
+        browser = json.loads(ready(browser_process, env["R1_CDP"] + "/json/version"))
+        if browser["Browser"] != "HeadlessChrome/155.0.8059.79" or "a49e2e3d4addfd84e765b52afe230bedb81096db" not in browser["WebKit-Version"]:
+            raise RuntimeError(f"unpinned browser: {browser}")
+        ready(server, env["R1_SERVER"] + "/index.html")
+        (output / "provenance.json").write_text(json.dumps({
+            "surface": args.surface, "state": args.state, "theme": args.theme,
+            "size": args.size, "browser": browser, "browser_command": chrome,
+            "asset_sha256": PINS, "fonts": "macOS native; R1_SF_FONTS unset",
+            "warm_target": args.warm_target,
+        }, indent=2) + "\n")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            executable = pool.submit(build, env, output)
+            original = pool.submit(capture_original, args, env, output)
+            original.result()
+            binary = executable.result()
+        env.update(CGX_PROOF_SURFACE=args.surface, CGX_PROOF_STATE=args.state,
+                   CGX_PROOF_THEME=args.theme, CGX_PROOF_WIDTH=str(args.width),
+                   CGX_PROOF_HEIGHT=str(args.height), CGX_PROOF_OUT=str(output))
+        with (output / "native.log").open("w") as native_log:
+            result = subprocess.run([binary, "--ignored", "--exact", "capture_cell", "--nocapture"],
+                                    cwd=ROOT, env=env, stdout=native_log,
+                                    stderr=subprocess.STDOUT, timeout=180)
+        return result.returncode
 
 
 def dispatch(args):
@@ -177,7 +200,7 @@ def dispatch(args):
         command = ["/usr/bin/python3", f"{scratch}/repo/tools/parity/proof.py", args.surface,
                    args.state, "--worker", "--theme", args.theme, "--size", args.size,
                    "--out", f"{scratch}/output", "--warm-target", args.warm_target,
-                   "--webview", f"{scratch}/webview", "--cdp", args.cdp]
+                   "--webview", f"{scratch}/webview"]
         with (args.out / "worker.log").open("w") as log:
             result = subprocess.run(ssh + [shlex.join(command)], stdout=log, stderr=subprocess.STDOUT, timeout=1800)
         run(transfer + [f"{args.mac}:{scratch}/output/", str(args.out) + "/"])
