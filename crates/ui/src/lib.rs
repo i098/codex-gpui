@@ -151,7 +151,7 @@ impl gpui::RenderOnce for Avatar {
                 }
                 let raster = shapes::raster_images(
                     &[(&*SOURCE, bounds)], bounds, radius,
-                    shapes::Corner::Round, shapes::ImageComposition::Direct(gpui::rgba(0).into()), window,
+                    shapes::Corner::Round, shapes::ImageComposition::Group(gpui::rgba(0).into()), window,
                 );
                 let rounded = raster.is_none();
                 let image = Arc::new(raster.unwrap_or_else(|| {

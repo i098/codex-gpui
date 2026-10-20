@@ -482,13 +482,11 @@ impl Markdown<'_> {
                                     })
                                 })
                                 .when(!external && dest_url.ends_with(".py"), |d| {
-                                    d.child(
+                                    d.child(div().w(px(19.))).child(
                                         div()
-                                            .w(px(19.))
-                                            .h(px(style.line_height))
-                                            .flex_none()
-                                            .flex()
-                                            .items_center()
+                                            .absolute()
+                                            .left_0()
+                                            .bottom(px((style.line_height - 16.) / 2.))
                                             .child(icon(
                                                 "thread-lang-python",
                                                 16.,

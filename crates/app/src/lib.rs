@@ -2330,7 +2330,8 @@ impl Root {
             .right(px(16.) / zoom)
             .pl(px(20.) / zoom)
             .pt(px(12.) / zoom)
-            .layer()
+            .top_layer()
+            .snap_origin()
             .child(surface)
     }
 
