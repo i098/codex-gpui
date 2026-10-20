@@ -114,34 +114,23 @@ pub(super) fn split_rows(
 impl FileDiff {
     pub(super) fn patch(path: &str, diff: &str) -> Self {
         let split = path.rfind('/').map_or(0, |i| i + 1);
-        let (mut hunks, problem) = match parse(diff, None) {
-            Ok(hunks) => (hunks, None),
+        let (hunks, problem) = match parse(diff, None) {
+            Ok(hunks) => {
+                let problem = hunks
+                    .iter()
+                    .all(|hunk| hunk.lines.is_empty())
+                    .then(|| patch::empty_state(diff));
+                (hunks, problem)
+            }
             Err(problem) => (Vec::new(), Some(problem)),
         };
-        if hunks.is_empty() && problem.is_none() && !diff.is_empty() {
-            hunks.push(Hunk {
-                separator: None,
-                lines: diff
-                    .lines()
-                    .map(|line| Line {
-                        kind: Kind::Context,
-                        number: 0,
-                        old_number: 0,
-                        text: line.to_owned().into(),
-                        matches: Vec::new(),
-                        match_start: 0,
-                        word_change: None,
-                    })
-                    .collect(),
-            });
-        }
         let mut added = 0;
         let mut removed = 0;
         for line in hunks.iter().flat_map(|h| &h.lines) {
             added += usize::from(line.kind == Kind::Added);
             removed += usize::from(line.kind == Kind::Removed);
         }
-        Self {
+        let mut file = Self {
             dir: path[..split].to_owned().into(),
             name: path[split..].to_owned().into(),
             added,
@@ -149,7 +138,9 @@ impl FileDiff {
             hunks,
             open: true,
             problem,
-        }
+        };
+        syntax::apply(&file.name, &mut file.hunks);
+        file
     }
 }
 
@@ -162,12 +153,8 @@ pub(super) fn files(diff: &str) -> Vec<FileDiff> {
         .chain(std::iter::once(diff.len()));
     for end in ends {
         let part = &diff[start..end];
-        if let Some(path) = part
-            .lines()
-            .find_map(|line| line.strip_prefix("+++ b/"))
-            .or_else(|| part.lines().find_map(|line| line.strip_prefix("--- a/")))
-        {
-            files.push(FileDiff::patch(path, part));
+        if let Some(path) = patch::path(part) {
+            files.push(FileDiff::patch(&path, part));
         }
         start = end;
     }
@@ -175,6 +162,40 @@ pub(super) fn files(diff: &str) -> Vec<FileDiff> {
 }
 
 impl DiffPanel {
+    pub(super) fn file_placeholder(
+        &self,
+        index: usize,
+        file: &FileDiff,
+        t: &Theme,
+        cx: &Context<Self>,
+    ) -> Div {
+        let label = file.problem.unwrap_or("No content");
+        let empty = matches!(
+            label,
+            "No content" | "Binary file not shown" | "File renamed without changes"
+        );
+        div()
+            .flex()
+            .items_center()
+            .px(px(if empty { 16. } else { 12. }))
+            .py(px(16.))
+            .when(empty, |d| d.justify_center().bg(t.surface_tertiary))
+            .child(text(label, 13., 18.571_428, 400., t.text_secondary))
+            .when(label == "Diff too large to display", |d| {
+                d.child(
+                    div()
+                        .id(("diff-too-large-open", index))
+                        .role(gpui::Role::Button)
+                        .aria_label("Open in editor")
+                        .focusable()
+                        .cursor_pointer()
+                        .ml(px(8.))
+                        .on_click(cx.listener(move |this, _, _, cx| this.request_open(index, cx)))
+                        .child(text("Open in editor", 13., 18.571_428, 400., t.text)),
+                )
+            })
+    }
+
     pub fn from_patch(workspace: &str, diff: &str) -> Self {
         let mut panel = Self::last_turn(workspace, workspace, &[]);
         panel.files = files(diff);

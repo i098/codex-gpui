@@ -27,6 +27,15 @@ mod menu;
 
 #[path = "diff/controls.rs"]
 mod controls;
+
+#[path = "diff/word.rs"]
+mod word;
+
+#[path = "diff/syntax.rs"]
+mod syntax;
+
+#[path = "diff/patch.rs"]
+mod patch;
 pub use controls::DiffLayout;
 
 /// Panel width the capture had stored (`app-shell:right-panel-width:v3`) before clamping.
@@ -93,7 +102,8 @@ struct Line {
     matches: Vec<Range<usize>>,
     old_number: u32,
     match_start: usize,
-    word_change: Option<Range<usize>>,
+    word_changes: Vec<Range<usize>>,
+    syntax: Vec<syntax::Mark>,
 }
 
 struct Hunk {
@@ -234,6 +244,7 @@ pub struct DiffPanel {
     standalone: bool,
     base_branch: Option<String>,
     commit: Option<String>,
+    word_diffs: bool,
 }
 
 impl DiffPanel {
@@ -302,6 +313,9 @@ impl DiffPanel {
                 }),
             }
         }
+        for file in &mut files {
+            syntax::apply(&file.name, &mut file.hunks);
+        }
         Self {
             files,
             focus: None,
@@ -321,6 +335,7 @@ impl DiffPanel {
             pending: false,
             error: None,
             layout: DiffLayout::Auto,
+            word_diffs: true,
             show_tree: false,
             active_file: 0,
             filter: Default::default(),
@@ -1090,16 +1105,7 @@ impl Render for DiffPanel {
                 )))
                 .map(|d| {
                     if file.open && file.problem.is_some() {
-                        d.child(
-                            text(
-                                file.problem.unwrap_or_default(),
-                                13.,
-                                20.,
-                                400.,
-                                t.text_tertiary,
-                            )
-                            .p(px(12.)),
-                        )
+                        d.child(self.file_placeholder(i, file, &t, cx))
                     } else if file.open {
                         d.children(file.hunks.iter().enumerate().map(|(index, h)| {
                             let controls =
@@ -1908,6 +1914,7 @@ pub struct FileView {
     focus: Option<FocusHandle>,
     go_to_line: Option<controls::TextField>,
     line_count: u32,
+    syntax: Vec<Vec<syntax::Mark>>,
 }
 
 impl FileView {
@@ -1932,6 +1939,7 @@ impl FileView {
             focus: None,
             go_to_line: None,
             line_count: 0,
+            syntax: Vec::new(),
         }
     }
 
@@ -1951,6 +1959,10 @@ impl FileView {
     /// The host's answer; the cited line scrolls to the third row of the viewport.
     /// ponytail: a fixed top offset, not the original's centring, which was not measured.
     pub fn set_contents(&mut self, contents: Result<String, String>, cx: &mut Context<Self>) {
+        self.syntax = contents.as_ref().map_or_else(
+            |_| Vec::new(),
+            |text| syntax::full_file(&self.path, text),
+        );
         self.line_count = contents
             .as_ref()
             .map_or(0, |text| controls::lines(text).count() as u32);
@@ -2045,8 +2057,6 @@ impl Render for FileView {
                 .child(text("Could not open file", 13., 20., 430., t.text_tertiary))
                 .into_any_element(),
             Some(Ok(contents)) => {
-                let syntax = Syntax::of(&t);
-                let python = self.path.ends_with(".py");
                 let lines: Vec<_> = controls::lines(contents).collect();
                 let gutter = px(CH * lines.len().to_string().len().max(4) as f32 + 16.);
                 let cited = over(t.info_solid.opacity(0.12), t.surface);
@@ -2070,11 +2080,10 @@ impl Render for FileView {
                             t.surface
                         };
                         let text: SharedString = line.to_owned().into();
-                        let content = if python {
-                            StyledText::new(text.clone()).with_highlights(highlight(&text, &syntax))
-                        } else {
-                            StyledText::new(text)
-                        };
+                        let content = StyledText::new(text).with_highlights(
+                            self.syntax.get(i).into_iter().flatten()
+                                .map(|(range, token)| (range.clone(), token.style(&t))),
+                        );
                         div()
                             .h(px(CODE_LINE))
                             .flex()
@@ -2328,120 +2337,6 @@ fn file_header(
         )
 }
 
-/// `--color-codex-syntax-*` of the codex themes.
-struct Syntax {
-    keyword: Hsla,
-    name: Hsla,
-    string: Hsla,
-    comment: Hsla,
-    literal: Hsla,
-    parameter: Hsla,
-    punctuation: Hsla,
-    operator: Hsla,
-}
-
-impl Syntax {
-    fn of(t: &Theme) -> Self {
-        let c = |dark: u32, light: u32| -> Hsla {
-            rgb(if t.appearance == Appearance::Dark {
-                dark
-            } else {
-                light
-            })
-            .into()
-        };
-        Self {
-            keyword: c(0xf67576, 0xd53538),
-            name: c(0xb06dff, 0x751ed9),
-            string: c(0x83d197, 0x3a843f),
-            comment: c(0xb9b9b9, 0x4f4f4f),
-            literal: c(0xf1a275, 0xac4f23),
-            parameter: c(0xfa994c, 0xbd5800),
-            punctuation: c(0x999999, 0x666666),
-            operator: c(0x6dcbf4, 0x0071ea),
-        }
-    }
-}
-
-const KEYWORDS: &[&str] = &[
-    "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif",
-    "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda",
-    "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with", "yield",
-];
-
-/// Python token colors for one line: keywords, `def`/`class` names, strings, comments, numbers.
-/// ponytail: a line tokenizer, so strings spanning lines color only their first line.
-fn highlight(line: &str, s: &Syntax) -> Vec<(Range<usize>, HighlightStyle)> {
-    let b = line.as_bytes();
-    let (mut i, mut prev, mut out) = (0, "", Vec::new());
-    let signature =
-        line.trim_start().starts_with("def ") || line.trim_start().starts_with("async def ");
-    while i < b.len() {
-        let start = i;
-        let color = match b[i] {
-            b'#' => {
-                i = b.len();
-                Some(s.comment)
-            }
-            q @ (b'"' | b'\'') => {
-                i += 1;
-                while i < b.len() && b[i] != q {
-                    i += if b[i] == b'\\' { 2 } else { 1 };
-                }
-                i = (i + 1).min(b.len());
-                Some(s.string)
-            }
-            c if c.is_ascii_digit() => {
-                while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'.') {
-                    i += 1;
-                }
-                Some(s.literal)
-            }
-            c if c.is_ascii_alphabetic() || c == b'_' => {
-                while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
-                    i += 1;
-                }
-                let word = &line[start..i];
-                let color = if matches!(word, "def" | "class") {
-                    Some(s.name)
-                } else if KEYWORDS.contains(&word) {
-                    Some(s.keyword)
-                } else if matches!(word, "True" | "False" | "None") {
-                    Some(s.literal)
-                } else if matches!(prev, "def" | "class") {
-                    Some(s.name)
-                } else if signature {
-                    Some(s.parameter)
-                } else {
-                    None
-                };
-                prev = word;
-                color
-            }
-            b'(' | b')' | b'[' | b']' | b'{' | b'}' | b',' | b':' | b'.' => {
-                i += 1;
-                Some(s.punctuation)
-            }
-            b'+' | b'-' | b'*' | b'/' | b'%' | b'=' | b'<' | b'>' | b'&' | b'|' | b'^' | b'~' => {
-                i += 1;
-                Some(s.operator)
-            }
-            _ => {
-                i += 1;
-                None
-            }
-        };
-        if let Some(color) = color {
-            let style = HighlightStyle {
-                color: Some(color),
-                ..Default::default()
-            };
-            out.push((start..i, style));
-        }
-    }
-    out
-}
-
 /// `color-mix(in srgb, a (1 - w), b w)`.
 fn mix(a: Hsla, b: Hsla, w: f32) -> Hsla {
     let (a, b) = (Rgba::from(a), Rgba::from(b));
@@ -2479,8 +2374,12 @@ fn line_colors(kind: Kind, t: &Theme) -> (Hsla, Hsla, Hsla) {
     }
 }
 
-fn word_mark(line: &Line, layout: gpui::TextLayout, t: &Theme) -> Option<gpui::AnyElement> {
-    let range = line.word_change.clone()?;
+fn word_mark(
+    line: &Line,
+    range: Range<usize>,
+    layout: gpui::TextLayout,
+    t: &Theme,
+) -> Option<gpui::AnyElement> {
     let text = line.text.clone();
     let color = if line.kind == Kind::Added {
         t.git_added
@@ -2543,7 +2442,6 @@ fn hunk(
     split: bool,
     cx: &Context<DiffPanel>,
 ) -> Div {
-    let syntax = Syntax::of(t);
     let digits = h
         .lines
         .iter()
@@ -2567,7 +2465,7 @@ fn hunk(
                (number_bg, number_fg): (Hsla, Hsla),
                bg: Hsla,
                content: StyledText,
-               mark: Option<gpui::AnyElement>,
+               mark: Vec<gpui::AnyElement>,
                bar: Option<Hsla>| {
         div()
             .h(px(CODE_LINE))
@@ -2657,22 +2555,39 @@ fn hunk(
                 },
             ))
         });
-        let word = l.word_change.clone().map(|range| {
-            (
-                range,
-                HighlightStyle {
-                    color: Some(t.text),
-                    ..Default::default()
-                },
-            )
-        });
+        let word = l
+            .word_changes
+            .iter()
+            .filter(|_| panel.word_diffs)
+            .map(|range| {
+                (
+                    range.clone(),
+                    HighlightStyle {
+                        color: Some(t.text),
+                        ..Default::default()
+                    },
+                )
+            });
         let content = StyledText::new(l.text.clone()).with_highlights(combine_highlights(
-            combine_highlights(combine_highlights(highlight(&l.text, &syntax), word), found),
+            combine_highlights(
+                combine_highlights(
+                    l.syntax
+                        .iter()
+                        .map(|(range, token)| (range.clone(), token.style(t))),
+                    word,
+                ),
+                found,
+            ),
             selection,
         ));
         let down_layout = content.layout().clone();
         let move_layout = down_layout.clone();
-        let mark = word_mark(l, down_layout.clone(), t);
+        let mark = l
+            .word_changes
+            .iter()
+            .filter(|_| panel.word_diffs)
+            .filter_map(|range| word_mark(l, range.clone(), down_layout.clone(), t))
+            .collect();
         row(
             Some(number),
             (number_bg, number_fg),
@@ -2743,7 +2658,7 @@ fn hunk(
                         ..Default::default()
                     },
                 )]),
-                None,
+                Vec::new(),
                 None,
             ))
         })
@@ -2812,7 +2727,8 @@ fn parse(diff: &str, raw: Option<Kind>) -> Result<Vec<Hunk>, &'static str> {
                     text: text.to_owned().into(),
                     matches: Vec::new(),
                     match_start: 0,
-                    word_change: None,
+                    word_changes: Vec::new(),
+                    syntax: Vec::new(),
                 })
                 .collect(),
         }]);
@@ -2875,7 +2791,8 @@ fn parse(diff: &str, raw: Option<Kind>) -> Result<Vec<Hunk>, &'static str> {
             text: line.get(1..).unwrap_or("").to_owned().into(),
             matches: Vec::new(),
             match_start: 0,
-            word_change: None,
+            word_changes: Vec::new(),
+            syntax: Vec::new(),
         });
     }
     for hunk in &mut hunks {
@@ -2891,9 +2808,9 @@ fn parse(diff: &str, raw: Option<Kind>) -> Result<Vec<Hunk>, &'static str> {
                 }
                 Kind::Added => {
                     if let Some(old) = removed.next() {
-                        let (a, b) = word_changes(&hunk.lines[old].text, &hunk.lines[index].text);
-                        hunk.lines[old].word_change = a;
-                        hunk.lines[index].word_change = b;
+                        let (a, b) = word::changes(&hunk.lines[old].text, &hunk.lines[index].text);
+                        hunk.lines[old].word_changes = a;
+                        hunk.lines[index].word_changes = b;
                     }
                 }
                 Kind::Context => removed = 0..0,
@@ -2901,29 +2818,6 @@ fn parse(diff: &str, raw: Option<Kind>) -> Result<Vec<Hunk>, &'static str> {
         }
     }
     Ok(hunks)
-}
-
-// ponytail: one changed span per paired line; use token diff for separate marks within a line.
-fn word_changes(old: &str, new: &str) -> (Option<Range<usize>>, Option<Range<usize>>) {
-    let prefix: usize = old
-        .chars()
-        .zip(new.chars())
-        .take_while(|(a, b)| a == b)
-        .map(|(c, _)| c.len_utf8())
-        .sum();
-    let suffix: usize = old[prefix..]
-        .chars()
-        .rev()
-        .zip(new[prefix..].chars().rev())
-        .take_while(|(a, b)| a == b)
-        .map(|(c, _)| c.len_utf8())
-        .sum();
-    let end_old = old.len() - suffix;
-    let end_new = new.len() - suffix;
-    (
-        (prefix < end_old).then_some(prefix..end_old),
-        (prefix < end_new).then_some(prefix..end_new),
-    )
 }
 
 /// `path` relative to directory `base`, both absolute (`path.relative` of the original).
@@ -2960,10 +2854,7 @@ mod tests {
     }
 
     #[test]
-    fn word_changes_keep_unicode_boundaries_and_pair_replacements() {
-        assert_eq!(word_changes("é = old", "é = new"), (Some(5..8), Some(5..8)));
-        assert_eq!(word_changes("αβ", "αxβ"), (None, Some(2..3)));
-        assert_eq!(word_changes("same", "same"), (None, None));
+    fn replacement_lines_keep_their_word_spans() {
         let hunks = parse(
             "@@ -1,3 +1,3 @@\n-a = 1\n-b = 2\n+a = 3\n+b = 4\n same",
             None,
@@ -2973,9 +2864,9 @@ mod tests {
         assert_eq!(
             lines
                 .iter()
-                .map(|line| line.word_change.clone())
+                .map(|line| line.word_changes.clone())
                 .collect::<Vec<_>>(),
-            vec![Some(4..5), Some(4..5), Some(4..5), Some(4..5), None]
+            vec![vec![4..5], vec![4..5], vec![4..5], vec![4..5], vec![]]
         );
     }
 }
