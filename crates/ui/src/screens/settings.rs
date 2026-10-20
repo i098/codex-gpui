@@ -675,10 +675,11 @@ impl SettingsPane {
                 div().absolute().top_0().right_0().child(
                     anchored()
                         .anchor(Anchor::TopRight)
-                        .offset(point(px(0.), px(if is_configuration { 30. } else { 32. })))
+                        .offset(point(px(0.), px(if is_configuration { 29. } else { 32. })))
                         .child(
                             div()
                                 .id("select-menu")
+                                .when(is_configuration, |d| d.p(px(1.)).snap_origin())
                                 .on_hover(cx.listener(|this, hovered: &bool, _, _| {
                                     this.menu_hovered = *hovered
                                 }))
@@ -702,7 +703,7 @@ impl SettingsPane {
             },
             t,
             icon("chevron-down", 14., t.text_tertiary)
-                .when(is_configuration, |icon| icon.runtime()),
+                .when(is_configuration && open, |icon| icon.runtime()),
         )
         .id(key)
         .on_click(cx.listener(move |this, _, _, cx| {

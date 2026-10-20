@@ -34,6 +34,7 @@ pub struct MultiSelect {
     menu_width: f32,
     row_padding: f32,
     menu_offset: f32,
+    menu_margin: f32,
 }
 
 impl EventEmitter<SelectionChanged> for MultiSelect {}
@@ -63,6 +64,7 @@ impl MultiSelect {
             menu_width: 280.,
             row_padding: 6.,
             menu_offset: 32.,
+            menu_margin: 0.,
         }
     }
 
@@ -78,6 +80,11 @@ impl MultiSelect {
 
     pub fn menu_offset(mut self, offset: f32) -> Self {
         self.menu_offset = offset;
+        self
+    }
+
+    pub fn menu_margin(mut self, margin: f32) -> Self {
+        self.menu_margin = margin;
         self
     }
 
@@ -252,7 +259,7 @@ impl Render for MultiSelect {
                 t.primary_soft_alpha
             },
             &t,
-            icon("chevron-down", 14., t.text_tertiary).runtime(),
+            icon("chevron-down", 14., t.text_tertiary).when(self.open, |icon| icon.runtime()),
         )
         .id("settings-multiselect-trigger")
         .role(gpui::Role::Button)
@@ -339,6 +346,8 @@ impl Render for MultiSelect {
                         .child(
                             div()
                                 .id("settings-multiselect-menu")
+                                .p(px(self.menu_margin))
+                                .snap_origin()
                                 .role(gpui::Role::Menu)
                                 .aria_label(self.label.clone())
                                 .on_hover(cx.listener(|this, hovered: &bool, _, _| {

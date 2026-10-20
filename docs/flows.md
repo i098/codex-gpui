@@ -702,8 +702,10 @@ Output detail and Reasoning summary use the existing global config write path, i
 Available reasoning efforts keeps the baseline choices and exposes optional levels only when the model catalog supports them.
 It persists the enabled levels in host settings and updates the composer choices.
 The menus keep the original muted header and half-opacity disabled-row styles.
+Configuration popovers retain the original one-pixel outer margin and device-pixel anchor placement.
 Shared settings-kit controls render the selectors, model multi-select, section headers, and config-file action; the existing page and Root still own persistence.
 Navigation text uses the original fade-mask compositing layer.
+Closed Configuration arrows use reference-derived position variants from the existing icon fitter; open controls retain runtime SVG rendering.
 Workspace Dependencies reads installed bundle state and provides diagnostics, reset/install, and cancellation.
 Installation checks the manifest platform, archive paths, and SHA-256 before it replaces the bundle; a failed replacement restores the previous bundle.
 

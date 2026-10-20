@@ -291,7 +291,8 @@ impl SettingsPane {
             MultiSelect::new("Available reasoning efforts", choices, cx)
                 .menu_width(240.)
                 .row_padding(5.)
-                .menu_offset(30.)
+                .menu_offset(29.)
+                .menu_margin(1.)
         });
         if disabled {
             select.update(cx, |select, cx| select.set_disabled(true, cx));
@@ -548,10 +549,12 @@ impl SettingsPane {
                 div().absolute().top_0().left_0().child(
                     anchored()
                         .anchor(Anchor::TopLeft)
-                        .offset(point(px(0.), px(30.)))
+                        .offset(point(px(0.), px(29.)))
                         .child(
                             div()
                                 .id("configuration-scope-menu")
+                                .p(px(1.))
+                                .snap_origin()
                                 .on_hover(cx.listener(|this, hovered: &bool, _, _| {
                                     this.menu_hovered = *hovered
                                 }))
@@ -604,7 +607,7 @@ impl SettingsPane {
                 t.primary_soft_alpha
             },
             t,
-            icon("chevron-down", 14., t.text_tertiary).runtime(),
+            icon("chevron-down", 14., t.text_tertiary).when(open, |icon| icon.runtime()),
         )
         .id(KEY)
         .relative();
@@ -670,7 +673,7 @@ impl SettingsPane {
                 true,
                 t.primary_soft_alpha,
                 t,
-                icon("chevron-down", 14., t.text_tertiary).runtime(),
+                icon("chevron-down", 14., t.text_tertiary),
             )
             .into_any_element();
         }
