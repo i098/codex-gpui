@@ -428,6 +428,7 @@ impl<'a> Iterator for BatchIterator<'a> {
             }
             PrimitiveKind::PolychromeSprite => {
                 let texture_id = self.polychrome_sprites_iter.peek().unwrap().tile.texture_id;
+                let layered = self.polychrome_sprites_iter.peek().unwrap().is_layered();
                 let sprites_start = self.polychrome_sprites_start;
                 let mut sprites_end = sprites_start + 1;
                 self.polychrome_sprites_iter.next();
@@ -436,6 +437,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                     .next_if(|sprite| {
                         (sprite.order, batch_kind) < max_order_and_kind
                             && sprite.tile.texture_id == texture_id
+                            && sprite.is_layered() == layered
                     })
                     .is_some()
                 {
@@ -753,12 +755,28 @@ pub struct PolychromeSprite {
     /// 1: premultiplied texels (a color glyph) that the shader blends like Skia's 8-bit
     /// srcover; 0: straight alpha, blended by the pipeline.
     pub skia: u32,
+    /// The same packed compositor layers as a monochrome sprite.
+    #[cfg(target_vendor = "apple")]
+    pub layers: u32,
     pub grayscale: PaddedBool32,
     pub opacity: f32,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub corner_radii: Corners<ScaledPixels>,
     pub tile: AtlasTile,
+}
+
+impl PolychromeSprite {
+    fn is_layered(&self) -> bool {
+        #[cfg(target_vendor = "apple")]
+        {
+            self.layers != 0
+        }
+        #[cfg(not(target_vendor = "apple"))]
+        {
+            false
+        }
+    }
 }
 
 impl From<PolychromeSprite> for Primitive {

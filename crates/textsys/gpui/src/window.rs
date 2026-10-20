@@ -2918,14 +2918,16 @@ impl Window {
             }
             let size = self.viewport_size.to_device_pixels(self.scale_factor());
             let opaque = checkpoint.is_none()
-                && self.platform_window.background_appearance() == WindowBackgroundAppearance::Opaque;
+                && self.platform_window.background_appearance()
+                    == WindowBackgroundAppearance::Opaque;
             let scene = if let Some((epoch, start)) = checkpoint {
                 anyhow::ensure!(
                     epoch == self.scene_epoch && start <= self.next_frame.scene.len(),
                     "stale scene checkpoint"
                 );
                 self.scene_capture_scratch.clear();
-                self.scene_capture_scratch.replay(start..self.next_frame.scene.len(), &self.next_frame.scene);
+                self.scene_capture_scratch
+                    .replay(start..self.next_frame.scene.len(), &self.next_frame.scene);
                 self.scene_capture_scratch.finish();
                 &self.scene_capture_scratch
             } else {
@@ -4361,11 +4363,11 @@ impl Window {
         result
     }
 
-    /// A monochrome sprite's unchanged paint color and enclosing layer alphas.
+    /// A sprite's enclosing layer alphas.
     /// None under an opacity of 0: Chromium paints nothing there, and a sprite outside the
     /// layers would reset the layer state of the pixels it covers (a hidden hover fill would
     /// detach the text painted over it from its composited layer).
-    fn sprite_color_and_layers(&self, color: Hsla) -> Option<(Hsla, u32)> {
+    fn sprite_layers(&self) -> Option<u32> {
         if self.element_opacity <= 0. {
             return None;
         }
@@ -4379,10 +4381,14 @@ impl Window {
                     });
                     u32::from(id) << 8 | alpha
                 });
-                (color, u32::from(id) << 8 | u32::from(alpha) | inner << 16)
+                u32::from(id) << 8 | u32::from(alpha) | inner << 16
             }
-            _ => (color, 0),
+            _ => 0,
         })
+    }
+
+    fn sprite_color_and_layers(&self, color: Hsla) -> Option<(Hsla, u32)> {
+        self.sprite_layers().map(|layers| (color, layers))
     }
 
     /// Perform prepaint on child elements in a "retryable" manner, so that any side effects
@@ -5092,6 +5098,10 @@ impl Window {
         font_size: Pixels,
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
+        #[cfg(target_vendor = "apple")]
+        let Some(layers) = self.sprite_layers() else {
+            return Ok(());
+        };
 
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
@@ -5124,10 +5134,14 @@ impl Window {
             };
             let content_mask = self.snapped_content_mask();
             let opacity = self.element_opacity();
+            #[cfg(target_vendor = "apple")]
+            let opacity = if layers == 0 { opacity } else { 1. };
 
             self.next_frame.scene.insert_primitive(PolychromeSprite {
                 order: 0,
                 skia: 1,
+                #[cfg(target_vendor = "apple")]
+                layers,
                 grayscale: false.into(),
                 bounds,
                 corner_radii: Default::default(),
@@ -5224,6 +5238,10 @@ impl Window {
         grayscale: bool,
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
+        #[cfg(target_vendor = "apple")]
+        let Some(layers) = self.sprite_layers() else {
+            return Ok(());
+        };
 
         let visible_bounds = bounds.intersect(&image_bounds);
         if visible_bounds.size.width <= Pixels::ZERO || visible_bounds.size.height <= Pixels::ZERO {
@@ -5298,10 +5316,14 @@ impl Window {
             .clamp_radii_for_quad_size(visible_bounds.size)
             .scale(self.scale_factor());
         let opacity = self.element_opacity();
+        #[cfg(target_vendor = "apple")]
+        let opacity = if layers == 0 { opacity } else { 1. };
 
         self.next_frame.scene.insert_primitive(PolychromeSprite {
             order: 0,
             skia: 0,
+            #[cfg(target_vendor = "apple")]
+            layers,
             grayscale: grayscale.into(),
             bounds: visible_bounds_snapped,
             content_mask,

@@ -123,6 +123,7 @@ pub struct MetalRenderer {
     underlines_pipeline_state: metal::RenderPipelineState,
     monochrome_sprites_pipeline_state: metal::RenderPipelineState,
     polychrome_sprites_pipeline_state: metal::RenderPipelineState,
+    polychrome_layer_pipeline_state: metal::RenderPipelineState,
     surfaces_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
     #[allow(clippy::arc_with_non_send_sync)]
@@ -378,6 +379,14 @@ impl MetalRenderer {
             "polychrome_sprite_fragment",
             MTLPixelFormat::BGRA8Unorm,
         );
+        let polychrome_layer_pipeline_state = build_pipeline_state(
+            &device,
+            &library,
+            "polychrome_layers",
+            "polychrome_sprite_vertex",
+            "polychrome_sprite_layer_fragment",
+            MTLPixelFormat::BGRA8Unorm,
+        );
         let surfaces_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -426,6 +435,7 @@ impl MetalRenderer {
             underlines_pipeline_state,
             monochrome_sprites_pipeline_state,
             polychrome_sprites_pipeline_state,
+            polychrome_layer_pipeline_state,
             surfaces_pipeline_state,
             unit_vertices,
             instance_buffer_pool,
@@ -852,14 +862,17 @@ impl MetalRenderer {
                         viewport_size,
                         command_encoder,
                     ),
-                PrimitiveBatch::PolychromeSprites { texture_id, range } => self
-                    .draw_polychrome_sprites(
+                PrimitiveBatch::PolychromeSprites { texture_id, range } => {
+                    let layered = scene.polychrome_sprites[range.start].layers != 0;
+                    self.draw_polychrome_sprites(
                         texture_id,
                         range,
+                        layered,
                         instance_bindings,
                         viewport_size,
                         command_encoder,
-                    ),
+                    )
+                }
                 PrimitiveBatch::Surfaces(range) => self.draw_surfaces(
                     &scene.surfaces[range.clone()],
                     range.start,
@@ -1203,6 +1216,7 @@ impl MetalRenderer {
         &self,
         texture_id: AtlasTextureId,
         sprites: Range<usize>,
+        layered: bool,
         instance_bindings: &InstanceBindings,
         viewport_size: Size<DevicePixels>,
         command_encoder: &metal::RenderCommandEncoderRef,
@@ -1218,7 +1232,11 @@ impl MetalRenderer {
             DevicePixels(texture.width() as i32),
             DevicePixels(texture.height() as i32),
         );
-        command_encoder.set_render_pipeline_state(&self.polychrome_sprites_pipeline_state);
+        command_encoder.set_render_pipeline_state(if layered {
+            &self.polychrome_layer_pipeline_state
+        } else {
+            &self.polychrome_sprites_pipeline_state
+        });
         command_encoder.set_vertex_buffer(
             SpriteInputIndex::Vertices as u64,
             Some(&self.unit_vertices),
@@ -1462,26 +1480,26 @@ fn build_pipeline_state(
     descriptor.set_fragment_function(Some(fragment_fn.as_ref()));
     let color_attachment = descriptor.color_attachments().object_at(0).unwrap();
     color_attachment.set_pixel_format(pixel_format);
-    // The monochrome sprite shader blends itself (framebuffer fetch).
-    color_attachment.set_blending_enabled(fragment_fn_name != "monochrome_sprite_fragment");
+    // Layer-aware sprite shaders blend themselves through framebuffer fetch.
+    let layered = matches!(
+        fragment_fn_name,
+        "monochrome_sprite_fragment" | "polychrome_sprite_layer_fragment"
+    );
+    color_attachment.set_blending_enabled(!layered);
     color_attachment.set_rgb_blend_operation(metal::MTLBlendOperation::Add);
     color_attachment.set_alpha_blend_operation(metal::MTLBlendOperation::Add);
     color_attachment.set_source_rgb_blend_factor(metal::MTLBlendFactor::SourceAlpha);
     color_attachment.set_source_alpha_blend_factor(metal::MTLBlendFactor::One);
     color_attachment.set_destination_rgb_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
     color_attachment.set_destination_alpha_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
-    set_layer_targets(
-        &descriptor,
-        fragment_fn_name == "monochrome_sprite_fragment",
-    );
+    set_layer_targets(&descriptor, layered);
 
     device
         .new_render_pipeline_state(&descriptor)
         .expect("could not create render pipeline state")
 }
 
-/// Color attachments 1 to 4 of the main pass: the monochrome sprite shader's layer state
-/// (written only by that pipeline).
+/// Color attachments 1 to 4 of the main pass hold the layer-aware sprite state.
 const LAYER_TARGETS: u64 = 4;
 const LAYER_FORMAT: MTLPixelFormat = MTLPixelFormat::RGBA8Unorm;
 

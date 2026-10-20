@@ -34,6 +34,10 @@ mod apple_build {
             no_includes: true,
             ..Default::default()
         };
+        config.header = Some("#define GPUI_APPLE 1".into());
+        config
+            .defines
+            .insert("target_vendor = apple".into(), "GPUI_APPLE".into());
         config.export.include.extend([
             "Bounds".into(),
             "Corners".into(),
