@@ -3802,10 +3802,9 @@ impl Root {
                     if let Some(id) = params["threadId"].as_str() {
                         self.sidebar.update(cx, |s, cx| s.set_unread(id, cx));
                         let host = self.host.clone();
-                        let (id, completed) =
-                            (id.to_owned(), params["turn"]["status"] == "completed");
+                        let (id, turn) = (id.to_owned(), params["turn"].clone());
                         cx.background_spawn(async move {
-                            if let Err(error) = host.finish_automation_run(&id, completed) {
+                            if let Err(error) = host.finish_automation_run(&id, &turn) {
                                 eprintln!("codex-gpui: failed to finish automation run: {error:#}");
                             }
                         })
