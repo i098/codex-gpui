@@ -6,11 +6,17 @@ use crate::composer::{Composer, label, pill};
 use crate::{Shell, focus, icon::icon, rounded_clip, text};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyView, App, AppContext as _, Context, Corners, Div, Entity, Hsla, InteractiveElement as _,
-    IntoElement, KeyDownEvent, ParentElement, Render, SharedString,
-    StatefulInteractiveElement as _, Styled, Window, actions, div, px,
+    AnyView, AnyWindowHandle, App, AppContext as _, Context, Corners, Div, Entity, Global, Hsla,
+    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement, Pixels, Render, ScrollHandle,
+    SharedString, Stateful, StatefulInteractiveElement as _, Styled, Window, actions, div, px,
 };
 use theme::{ActiveTheme as _, Theme};
+
+/// Identifies the window whose scroll animation a static capture finishes.
+#[derive(Clone, Copy)]
+pub struct FinishedScrollAnimation(pub AnyWindowHandle);
+
+impl Global for FinishedScrollAnimation {}
 
 actions!(home, [OpenFolder]);
 
@@ -61,27 +67,45 @@ fn chip(
     t: &Theme,
     focus: &Entity<focus::ControlFocus>,
     cx: &App,
-) -> Div {
-    div().child(
-        focus::shadow_ring(pill(id, t), focus, Theme::RADIUS_FULL, px(2.), cx)
-            .when(id == "choose-project", |chip| {
-                chip.role(gpui::Role::Button)
-                    .aria_label("Choose project")
-                    .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenFolder), cx))
-                    .on_key_down(open_folder_key)
-            })
-            .child(rounded_clip(
-                px(13.),
-                shapes::Corner::Round,
-                div()
-                    .h_full()
-                    .flex()
-                    .items_center()
-                    .px(px(8.))
-                    .gap(px(6.))
-                    .child(icon(glyph, 16., fg))
-                    .child(label(s, fg)),
-            )),
+) -> Stateful<Div> {
+    focus::shadow_ring(
+        div().id((id, 0_usize)).relative().flex_none(),
+        focus,
+        Theme::RADIUS_FULL,
+        px(2.),
+        cx,
+    )
+    .when(id == "choose-project", |chip| {
+        chip.role(gpui::Role::Button)
+            .aria_label("Choose project")
+            .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenFolder), cx))
+            .on_key_down(open_folder_key)
+    })
+    .child(
+        pill(id, t).child(rounded_clip(
+            px(13.),
+            shapes::Corner::Round,
+            div()
+                .h_full()
+                .flex()
+                .items_center()
+                .px(px(8.))
+                .gap(px(6.))
+                .child(icon(glyph, 16., fg))
+                .child(label(s, fg)),
+        )),
+    )
+}
+
+fn scroll_fades(offset: Pixels, maximum: Pixels) -> (Pixels, Pixels) {
+    if maximum <= px(0.) {
+        return (px(0.), px(0.));
+    }
+    let progress = -offset / maximum;
+    // `edge-fade-horizontal` reaches full width at 0.1% and 99.9%.
+    (
+        px(16. * (progress * 1000.).clamp(0., 1.)),
+        px(16. * ((1. - progress) * 1000.).clamp(0., 1.)),
     )
 }
 
@@ -90,6 +114,13 @@ fn chip(
 fn utility_bar(project: Option<SharedString>, t: &Theme, window: &mut Window, cx: &mut App) -> Div {
     let project_focus = focus::handle("choose-project", 0, window, cx);
     let work_focus = focus::handle("work-in", 0, window, cx);
+    let scroll = window
+        .use_keyed_state("home-utility-scroll", cx, |_, _| ScrollHandle::new())
+        .read(cx)
+        .clone();
+    let finished = cx
+        .try_global::<FinishedScrollAnimation>()
+        .is_some_and(|state| state.0 == window.window_handle());
     div().mx(px(13.)).pb(px(20.)).mb(px(-24.)).child(
         div()
             .px(px(4.))
@@ -106,37 +137,56 @@ fn utility_bar(project: Option<SharedString>, t: &Theme, window: &mut Window, cx
                 fill: Some(t.composer_action_bar),
                 ..Default::default()
             }))
-            // `horizontal-scroll-fade-mask` scroller (`-m-0.5`, `p-0.5`): its contents fade over
-            // 1rem at both ends (the scroll timeline is inactive) in a `saveLayer` of the page
-            // layer, so they rasterize on the page's tiles.
+            // The mask covers the viewport, not the translated scroll contents.
             .child(
                 div().py(px(3.)).child(
                     div()
                         .mx(px(-2.))
-                        .p(px(2.))
-                        .flex()
-                        .items_center()
-                        .gap(px(8.))
+                        .relative()
                         .saved_layer()
-                        .child(chip(
-                            "choose-project",
-                            "folder",
-                            project.unwrap_or_else(|| "Choose project".into()),
-                            t.text_tertiary,
-                            t,
-                            &project_focus,
-                            cx,
-                        ))
-                        .child(chip(
-                            "work-in",
-                            "laptop",
-                            "This computer".into(),
-                            t.text,
-                            t,
-                            &work_focus,
-                            cx,
-                        ))
-                        .child(shapes::x_fade(px(16.), px(16.))),
+                        .child(
+                            div()
+                                .id("home-utility-scroll")
+                                .p(px(2.))
+                                .flex()
+                                .items_center()
+                                .gap(px(8.))
+                                .overflow_x_scroll()
+                                .track_scroll(&scroll)
+                                .child(
+                                    crate::tooltip::tooltip(
+                                        chip(
+                                            "choose-project",
+                                            "folder",
+                                            project.unwrap_or_else(|| "Choose project".into()),
+                                            t.text_tertiary,
+                                            t,
+                                            &project_focus,
+                                            cx,
+                                        ),
+                                        "Select a project to run your chat in",
+                                        Some("⌥⇧⌘O"),
+                                        crate::tooltip::Side::Top,
+                                    )
+                                    .focus_handle(&project_focus.read(cx).handle),
+                                )
+                                .child(chip(
+                                    "work-in",
+                                    "laptop",
+                                    "This computer".into(),
+                                    t.text,
+                                    t,
+                                    &work_focus,
+                                    cx,
+                                )),
+                        )
+                        .child(shapes::x_fade_with(move || {
+                            if finished {
+                                (px(16.), px(0.))
+                            } else {
+                                scroll_fades(scroll.offset().x, scroll.max_offset().x)
+                            }
+                        })),
                 ),
             ),
     )

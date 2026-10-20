@@ -325,6 +325,11 @@ The existing replay checks the original colors, row actions, tooltips, canceled 
 
 ## 14.3 Home
 
+The retained native Home input capture reaches `Choose project` and `This computer` with Tab and Shift-Tab.
+Pointer movement keeps the keyboard ring; a pointer press clears it.
+This proves focus traversal, not menu activation: both chooser chips still have no menu handler.
+The focus-edge comparison remains deferred; the original recordings and strict gates stay unchanged.
+
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Launch to `/` | entry | Hero, announcement slot and composer. | Route Home, rail Home selected, composer focused, Recents loaded. | PASS (`launch_home`, `parity_home`) |
@@ -343,7 +348,7 @@ The existing replay checks the original colors, row actions, tooltips, canceled 
 | 14 | `Start new voice chat` | click | Starts realtime voice. | With an empty draft the button calls `submit`, which does nothing. | NOT WIRED (`crates/ui/src/composer.rs`, `send`) |
 | 15 | Submit with Enter | shortcut | `thread/start`, `turn/start`, navigates to the thread. | Same; the turn streams in; the draft clears; also by clicking Send. | PASS (`submit_enter_starts_thread`, `submit_click_send`) |
 | 16 | Hover on every button | hover | Ghost background fades in. | Hover fill on composer buttons (checked on `Dictate`). | PASS (`composer_button_hover`) |
-| 17 | Tab through controls | focus ring | 2 px ring. | No tab stops. | NOT WIRED (`crates/ui/src/composer.rs`, `crates/ui/src/screens/home.rs`) |
+| 17 | Tab through controls | focus ring | 2 px ring. | `Choose project` and `This computer` have tab stops; the native capture proves focus traversal, not menu activation. | NOT WIRED (remaining composer controls) |
 | 18 | No projects / no chats | empty | `No projects`, `No chats`, `What should we build?`. | Same with an empty `thread/list`. | PASS (`sidebar_empty_lists`) |
 | 19 | Model list loading | loading | `Loading model…`. | Empty `model/list` shows `Loading model…` (the pill repaints). | PASS (`model_list_loading`) |
 | 20 | Account load failure | error | `We couldn’t load your account`, `Reload`, `Sign out`. | An `account/read` error stops `Root::connect`; the window stays empty. | FAIL (`crates/app/src/lib.rs` `connect`; no error page in `crates/ui`) |

@@ -7,8 +7,8 @@
 
 use anyhow::{Context as _, Result, ensure};
 use gpui::{
-    AnyView, App, AppContext, AssetSource, HeadlessAppContext, IntoElement, Render, Window, px,
-    size,
+    AnyView, AnyWindowHandle, App, AppContext, AssetSource, HeadlessAppContext, IntoElement,
+    Render, Window, px, size,
 };
 use image::{Rgba, RgbaImage};
 use serde::{Deserialize, Serialize};
@@ -90,7 +90,7 @@ fn render_in(cx: &mut HeadlessAppContext, case: &Case, w: u32, h: u32) -> Result
         cx.new(|_| Root(view))
     })?;
     cx.run_until_parked();
-    let image = cx.capture_screenshot(window.into())?;
+    let image = capture_frozen(cx, window.into())?;
     cx.update_window(window.into(), |_, window, _| window.remove_window())?;
     Ok(image)
 }
@@ -98,6 +98,34 @@ fn render_in(cx: &mut HeadlessAppContext, case: &Case, w: u32, h: u32) -> Result
 /// Renders one case at `w` x `h` logical px (the headless window is 2x).
 pub fn render(case: &Case, assets: Arc<dyn AssetSource>, w: u32, h: u32) -> Result<RgbaImage> {
     render_in(&mut headless(assets), case, w, h)
+}
+
+/// Captures the animation-finished reference state, then restores the live window.
+pub fn capture_frozen(cx: &mut HeadlessAppContext, window: AnyWindowHandle) -> Result<RgbaImage> {
+    use ui::screens::home::FinishedScrollAnimation;
+
+    let previous = cx.update(|cx| {
+        let previous = cx.try_global::<FinishedScrollAnimation>().copied();
+        cx.set_global(FinishedScrollAnimation(window));
+        previous
+    });
+    let image = (|| {
+        cx.update_window(window, |_, window, _| window.refresh())?;
+        cx.run_until_parked();
+        cx.capture_screenshot(window)
+    })();
+    cx.update(|cx| {
+        cx.remove_global::<FinishedScrollAnimation>();
+        if let Some(previous) = previous {
+            cx.set_global(previous);
+        }
+    });
+    let restored = cx.update_window(window, |_, window, _| window.refresh());
+    cx.run_until_parked();
+    image.and_then(|image| {
+        restored?;
+        Ok(image)
+    })
 }
 
 /// `"<theme>@<W>x<H>.png"` -> `(W, H)`.
@@ -295,4 +323,42 @@ fn html(report: &[Metrics]) -> String {
         );
     }
     s
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn frozen_home_capture_restores_live_scroll_masks() -> Result<()> {
+    use ui::screens::home::FinishedScrollAnimation;
+
+    let mut cx = headless(Arc::new(theme::Assets));
+    cx.update(|cx| {
+        cx.set_global(theme::Theme::dark());
+        cx.set_reduce_motion(true);
+    });
+    let open = |window: &mut Window, cx: &mut App| {
+        let home = ui::screens::home::build(window, cx);
+        cx.new(|_| Root(home))
+    };
+    let windows: [AnyWindowHandle; 2] = [
+        cx.open_window(size(px(1280.), px(832.)), open)?.into(),
+        cx.open_window(size(px(1280.), px(832.)), open)?.into(),
+    ];
+    cx.run_until_parked();
+    let live = cx.capture_screenshot(windows[0])?;
+    let other_live = cx.capture_screenshot(windows[1])?;
+
+    let frozen = capture_frozen(&mut cx, windows[0])?;
+
+    assert!(
+        frozen.get_pixel(936, 1390)[0] < live.get_pixel(936, 1390)[0],
+        "finishing the original scroll animation must fade the folder edge"
+    );
+    assert_eq!(cx.capture_screenshot(windows[0])?, live);
+    assert_eq!(cx.capture_screenshot(windows[1])?, other_live);
+    cx.update_window(windows[0], |_, window, _| window.remove_window())?;
+    assert!(capture_frozen(&mut cx, windows[0]).is_err());
+    assert_eq!(cx.capture_screenshot(windows[1])?, other_live);
+    assert!(cx.update(|cx| cx.reduce_motion()));
+    assert!(!cx.update(|cx| cx.has_global::<FinishedScrollAnimation>()));
+    Ok(())
 }
