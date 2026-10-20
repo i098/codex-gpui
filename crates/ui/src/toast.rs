@@ -304,7 +304,14 @@ impl Toaster {
         let t = &cx.theme().clone();
         let (bg, border, fg) = match e.toast.kind {
             Kind::Info => (t.surface_elevated_secondary, t.border, t.text),
-            Kind::Danger => (danger_surface(t), t.text_error.opacity(0.4), t.text_error),
+            Kind::Danger => (
+                danger_surface(t),
+                match t.appearance {
+                    Appearance::Dark => rgba(0xfa423e66).into(),
+                    Appearance::Light => t.text_error.opacity(0.15),
+                },
+                t.text_error,
+            ),
             Kind::Success => (
                 success_surface(t),
                 t.text_success.opacity(0.2),
