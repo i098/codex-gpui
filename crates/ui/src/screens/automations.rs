@@ -22,6 +22,26 @@ use serde_json::Value;
 use std::{collections::HashSet, fs, path::Path};
 use theme::{ActiveTheme as _, Theme};
 
+pub mod editor;
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum CreationMode {
+    Codex,
+    ChatGPT,
+    Manual,
+}
+
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = automations, no_json)]
+pub struct CreateAutomation {
+    pub mode: CreationMode,
+}
+
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = automations, no_json)]
+pub struct EditAutomation {
+    pub id: String,
+}
 actions!(
     automations,
     [
@@ -129,31 +149,32 @@ fn day_time(at_ms: i64, utc_offset: i64) -> (String, String) {
 
 impl Task {
     fn rule(&self, key: &str) -> Option<&str> {
-        self.rrule
-            .split(';')
-            .find_map(|part| part.strip_prefix(key)?.strip_prefix('='))
+        self.rrule.split([';', '\n']).find_map(|part| {
+            part.trim_start_matches("RRULE:")
+                .strip_prefix(key)?
+                .strip_prefix('=')
+        })
     }
 
-    /// Sidebar cadence: `scheduled.sidebar.weekly` / `.daily`.
-    /// ponytail: the original's `pr()` labels every rrule shape; the port covers the
-    /// `New task` dialog's weekly and daily rules and reads everything else as daily.
     fn cadence(&self) -> &'static str {
         match self.rule("FREQ") {
+            Some("MINUTELY" | "HOURLY") => "Interval",
+            Some("DAILY") => "Daily",
+            Some("WEEKLY") if self.rule("BYDAY") == Some("MO,TU,WE,TH,FR") => "Weekdays",
             Some("WEEKLY") => "Weekly",
-            _ => "Daily",
+            Some("MONTHLY") => "Monthly",
+            Some("YEARLY") => "Yearly",
+            _ => "Custom",
         }
     }
 
     /// Card schedule: `Fridays at 9:00 AM`, `Daily at 8:00 AM`.
     fn schedule(&self) -> String {
-        let hour: u32 = self
-            .rule("BYHOUR")
-            .and_then(|h| h.parse().ok())
-            .unwrap_or(9);
-        let minute: u32 = self
-            .rule("BYMINUTE")
-            .and_then(|m| m.parse().ok())
-            .unwrap_or(0);
+        let hour = self.rule("BYHOUR").and_then(|h| h.parse::<u32>().ok());
+        let minute = self.rule("BYMINUTE").and_then(|m| m.parse::<u32>().ok());
+        let (Some(hour), Some(minute)) = (hour, minute) else {
+            return self.cadence().to_owned();
+        };
         let time = format!(
             "{}:{minute:02} {}",
             match hour % 12 {
@@ -162,15 +183,15 @@ impl Task {
             },
             if hour < 12 { "AM" } else { "PM" }
         );
-        let day = match self.rule("BYDAY") {
-            Some("MO") => "Mondays",
-            Some("TU") => "Tuesdays",
-            Some("WE") => "Wednesdays",
-            Some("TH") => "Thursdays",
-            Some("FR") => "Fridays",
-            Some("SA") => "Saturdays",
-            Some("SU") => "Sundays",
-            _ => "Daily",
+        let day = match (self.rule("FREQ"), self.rule("BYDAY")) {
+            (Some("WEEKLY"), Some("MO")) => "Mondays",
+            (Some("WEEKLY"), Some("TU")) => "Tuesdays",
+            (Some("WEEKLY"), Some("WE")) => "Wednesdays",
+            (Some("WEEKLY"), Some("TH")) => "Thursdays",
+            (Some("WEEKLY"), Some("FR")) => "Fridays",
+            (Some("WEEKLY"), Some("SA")) => "Saturdays",
+            (Some("WEEKLY"), Some("SU")) => "Sundays",
+            _ => self.cadence(),
         };
         format!("{day} at {time}")
     }
@@ -311,6 +332,7 @@ fn shell_with(
         menu_button_hovered: false,
         menu_focus: cx.focus_handle(),
         return_focus: None,
+        create_menu: cx.new(editor::CreateMenu::new),
     });
     let mut page = None;
     let main: AnyView = match selected {
@@ -356,6 +378,7 @@ pub struct ScheduledSidebar {
     menu_button_hovered: bool,
     menu_focus: FocusHandle,
     return_focus: Option<FocusHandle>,
+    create_menu: Entity<editor::CreateMenu>,
 }
 
 impl ScheduledSidebar {
@@ -437,14 +460,21 @@ impl ScheduledSidebar {
                 if let Some(id) = self.menu.clone() {
                     if self.menu_item == Some(0) {
                         self.run_now(&id, window, cx);
+                    } else if self.menu_item == Some(2) {
+                        self.close_menu(window, cx);
+                        window.dispatch_action(Box::new(EditAutomation { id }), cx);
                     } else {
                         self.toggle(&id, window, cx);
                     }
                 }
             }
             "up" | "down" | "home" | "end" => {
-                let last = matches!(event.keystroke.key.as_str(), "down" | "end");
-                self.menu_item = Some(usize::from(last));
+                self.menu_item = Some(match event.keystroke.key.as_str() {
+                    "home" => 0,
+                    "end" => 2,
+                    "down" => self.menu_item.map_or(1, |i| (i + 1) % 3),
+                    _ => self.menu_item.map_or(0, |i| (i + 2) % 3),
+                });
                 cx.stop_propagation();
                 cx.notify();
             }
@@ -512,6 +542,28 @@ impl ScheduledSidebar {
                     .child(status_icon(paused, t.text)),
             )
             .child(text(label, 13., 18.5714, 430., t.text));
+        let edit_id = task.id.clone();
+        let edit = div()
+            .id("edit-automation")
+            .role(Role::MenuItem)
+            .aria_label("Edit")
+            .h(px(28.5625))
+            .px(px(8.))
+            .rounded(px(15.))
+            .flex()
+            .items_center()
+            .when(self.menu_item == Some(2), |d| d.bg(hover))
+            .hover(move |s| s.bg(hover))
+            .child(text("Edit", 13., 18.5714, 430., t.text))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.close_menu(window, cx);
+                window.dispatch_action(
+                    Box::new(EditAutomation {
+                        id: edit_id.clone(),
+                    }),
+                    cx,
+                );
+            }));
         let menu = div()
             .id("task-actions-menu")
             .occlude()
@@ -525,7 +577,7 @@ impl ScheduledSidebar {
                 }
             }))
             .child(crate::composer::popover(t, 220., |menu| {
-                menu.child(run).child(item)
+                menu.child(run).child(item).child(edit)
             }));
         deferred(
             div().absolute().top(px(30.)).right(px(1.)).child(
@@ -779,7 +831,8 @@ impl Render for ScheduledSidebar {
                             )
                             .on_click(crate::dispatch::<NewTask>)
                             .child(icon("automations-plus", 16., t.text_default_nav))
-                            .child(text("New task", 14., 21., 430., t.text_default_nav)),
+                            .child(text("New task", 14., 21., 430., t.text_default_nav))
+                            .child(div().ml_auto().child(self.create_menu.clone())),
                     ),
             )
             .child(
