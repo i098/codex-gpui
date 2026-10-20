@@ -936,6 +936,7 @@ impl Render for ScheduledSidebar {
         } else {
             t.text_link
         };
+        let search_background = gpui::Hsla::from(gpui::rgb(0x0285ff)).opacity(0.13);
         let hover_bg = t.list_hover;
         let search_focus = focus::handle("search-tasks", 0, window, cx);
         let new_focus = focus::handle("new-task", 0, window, cx);
@@ -986,25 +987,47 @@ impl Render for ScheduledSidebar {
                                 t.text_default_nav,
                             )))
                             .child(focus::ring(
-                                icon_button(
-                                    "search-tasks",
-                                    icon(
-                                        "search",
-                                        16.,
-                                        if self.filters.search {
+                                div()
+                                    .id("search-tasks")
+                                    .role(Role::Button)
+                                    .aria_label("Search scheduled tasks")
+                                    .aria_expanded(self.filters.search)
+                                    .relative()
+                                    .flex_none()
+                                    .size(px(28.))
+                                    .rounded(px(9.375))
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                        cx.stop_propagation()
+                                    })
+                                    .when(self.filters.search, |d| {
+                                        d.child(fill(px(9.375), search_background).layer())
+                                    })
+                                    .child(ButtonVisual {
+                                        glyph: icon(
+                                            "search",
+                                            16.,
+                                            if self.filters.search {
+                                                search_color
+                                            } else {
+                                                t.text_tertiary
+                                            },
+                                        ),
+                                        radius: px(9.375),
+                                        hover: if self.filters.search {
+                                            search_background
+                                        } else {
+                                            t.ghost_hover
+                                        },
+                                        foreground: if self.filters.search {
                                             search_color
                                         } else {
-                                            t.text_tertiary
+                                            t.text.opacity(0.85)
                                         },
+                                        selected: self.filters.search,
+                                    })
+                                    .on_click(
+                                        cx.listener(|this, _, window, cx| this.search(window, cx)),
                                     ),
-                                    &t,
-                                )
-                                .role(Role::Button)
-                                .aria_label("Search scheduled tasks")
-                                .when(self.filters.search, |d| d.bg(gpui::rgba(0x0285ff21)))
-                                .on_click(
-                                    cx.listener(|this, _, window, cx| this.search(window, cx)),
-                                ),
                                 &search_focus,
                                 px(8.),
                                 px(2.),
@@ -1092,10 +1115,9 @@ impl Render for ScheduledSidebar {
                                 } else {
                                     Role::Status
                                 })
-                                .mt(px(1.))
                                 .px(px(8.))
-                                .py(px(4.))
-                                .child(text(message, 13., 18.571_428, 430., t.text_tertiary)),
+                                .py(px(8.))
+                                .child(text(message, 13., 18.571_428, 430., t.text.opacity(0.65))),
                         )
                     })
                     .when(!rows.is_empty(), |d| {

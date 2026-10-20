@@ -276,7 +276,7 @@ impl Render for SearchInput {
             &[TextRun {
                 len: value.len(),
                 font,
-                color: t.text,
+                color: t.text_default_nav,
                 background_color: None,
                 underline: None,
                 strikethrough: None,
@@ -339,7 +339,7 @@ impl Render for SearchInput {
                     this.replace(this.selection(), &value, cx);
                 }
             }))
-            .child(crate::icon::icon("search", 16., t.text_secondary))
+            .child(crate::icon::icon("search", 16., t.text.opacity(0.65)))
             .child(
                 div()
                     .relative()
@@ -360,7 +360,7 @@ impl Render for SearchInput {
                             if self.value.is_empty() {
                                 t.text_tertiary
                             } else {
-                                t.text
+                                t.text_default_nav
                             },
                         )
                         .relative()
@@ -390,13 +390,15 @@ impl Render for SearchInput {
                                                 t.text_selection,
                                             ));
                                         }
-                                        window.paint_quad(fill(
-                                            Bounds::new(
-                                                bounds.origin + point(x(this.cursor), px(2.)),
-                                                gpui::size(px(1.), px(14.)),
-                                            ),
-                                            t.text,
-                                        ));
+                                        if !crate::composer::Composer::caret_transparent(cx) {
+                                            window.paint_quad(fill(
+                                                Bounds::new(
+                                                    bounds.origin + point(x(this.cursor), px(2.)),
+                                                    gpui::size(px(1.), px(14.)),
+                                                ),
+                                                t.text_default_nav,
+                                            ));
+                                        }
                                     }
                                 });
                             },
@@ -412,10 +414,8 @@ impl Render for SearchInput {
                         .role(Role::Button)
                         .aria_label("Clear search")
                         .relative()
-                        .size(px(14.))
+                        .size(px(16.))
                         .flex_none()
-                        .rounded_full()
-                        .bg(t.text_secondary)
                         .flex()
                         .items_center()
                         .justify_center()
@@ -425,9 +425,12 @@ impl Render for SearchInput {
                             this.focus.focus(window, cx);
                             cx.stop_propagation();
                         }))
-                        .child(crate::icon::icon("close", 8., t.surface)),
+                        .child(
+                            crate::icon::icon("scheduled-search-clear", 16., t.text.opacity(0.65))
+                                .runtime(),
+                        ),
                     &clear_focus,
-                    px(7.),
+                    px(8.),
                     px(2.),
                     cx,
                 ))

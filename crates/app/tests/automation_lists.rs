@@ -75,8 +75,7 @@ mod native {
         if let Some(path) = std::env::var_os("CGX_AUTOMATION_LISTS_PROOF") {
             let path = std::path::PathBuf::from(path);
             std::fs::create_dir_all(&path)?;
-            fx.cx
-                .capture_screenshot(fx.window)?
+            fx.reference_shot()?
                 .save(path.join(format!("{name}.png")))?;
         }
         Ok(())
@@ -131,7 +130,13 @@ mod native {
         open(&mut fx, "/scheduled?automationId=weekly")?;
         ensure!(fx.route() == Route::Automation("weekly".into()));
         ensure!(fx.read(|root, _| root.automations().is_none()));
-        shot(&mut fx, "loading")?;
+        if let Some(path) = std::env::var_os("CGX_AUTOMATION_LISTS_PROOF") {
+            let path = std::path::PathBuf::from(path);
+            std::fs::create_dir_all(&path)?;
+            fx.cx
+                .capture_screenshot(fx.window)?
+                .save(path.join("loading.png"))?;
+        }
         fx.wait("real task list", |fx| {
             fx.read(|root, _| matches!(root.automations(), Some(Ok(_))))
         })?;
@@ -172,6 +177,8 @@ mod native {
         fx.action(Box::new(ui::SelectAll))?;
         fx.type_text("not present")?;
         ensure!(visible(&fx).is_empty());
+        fx.hover((768., 6.))?;
+        fx.advance(std::time::Duration::from_millis(300))?;
         shot(&mut fx, "no-match")?;
         key(&mut fx, "escape")?;
         ensure!(visible(&fx).len() == 2);
