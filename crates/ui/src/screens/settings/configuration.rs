@@ -222,10 +222,20 @@ impl SettingsPane {
                         0
                     } else if key_name == "end" {
                         count - 1
-                    } else if key_name == "up" {
-                        (this.config_menu_index.unwrap_or(0) + count - 1) % count
                     } else {
-                        (this.config_menu_index.unwrap_or(0) + 1) % count
+                        let current_index = this.config_menu_index.unwrap_or_else(|| {
+                            options
+                                .iter()
+                                .position(|(value, _)| {
+                                    this.page.read(cx).config_option_allowed(key, value)
+                                })
+                                .unwrap_or(0)
+                        });
+                        if key_name == "up" {
+                            (current_index + count - 1) % count
+                        } else {
+                            (current_index + 1) % count
+                        }
                     };
                     for _ in 0..count {
                         if this
