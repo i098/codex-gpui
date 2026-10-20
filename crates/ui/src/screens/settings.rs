@@ -606,12 +606,6 @@ impl SettingsPane {
         let open = self.open_select == Some(key);
         let is_configuration = key.starts_with("config.");
         let hover = t.menu_item_hover;
-        let configuration_menu = key.starts_with("config.");
-        let (menu_font_size, menu_line_height) = if configuration_menu {
-            (13., 18.5625)
-        } else {
-            (14., 20.)
-        };
         let menu = open.then(|| {
             let rows = options
                 .iter()
