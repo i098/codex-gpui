@@ -741,7 +741,14 @@ impl ScheduledSidebar {
                     .justify_end()
                     .opacity(if show_controls { 1. } else { 0. })
                     .group_hover(group.clone(), |s| s.opacity(1.))
-                    .child(tooltip(status, label, None, Side::Top))
+                    .child(tooltip(
+                        status
+                            .opacity(if status_focused { 1. } else { 0. })
+                            .group_hover(group.clone(), |s| s.opacity(1.)),
+                        label,
+                        None,
+                        Side::Top,
+                    ))
                     .child(menu),
             )
     }
@@ -1005,12 +1012,16 @@ impl Render for AutomationsPage {
             .chunks(2)
             .enumerate()
             .map(|(r, pair)| {
-                div().flex().gap(px(20.)).children(
-                    pair.iter()
-                        .enumerate()
-                        .map(|(c, s)| self.card(r * 2 + c, s, cx))
-                        .collect::<Vec<_>>(),
-                )
+                div()
+                    .flex()
+                    .gap(px(20.))
+                    .children(
+                        pair.iter()
+                            .enumerate()
+                            .map(|(c, s)| self.card(r * 2 + c, s, cx))
+                            .collect::<Vec<_>>(),
+                    )
+                    .when(pair.len() == 1, |row| row.child(div().flex_1()))
             })
             .collect();
         let t = cx.theme();
