@@ -2632,7 +2632,7 @@ fn announcement_artwork(cache: AnnouncementArtworkCache) -> impl IntoElement {
                 bounds,
                 radius,
                 shapes::Corner::Round,
-                rgba(0x00000000).into(),
+                shapes::ImageComposition::Direct(rgba(0x00000000).into()),
                 window,
             );
             let rounded = raster.is_none();

@@ -6,7 +6,7 @@
 //! green channel tells `blitAntiH` from `blitAntiH2`), and painted as GPUI monochrome sprites
 //! whose hue carries the blend mode to the patched shader (crates/textsys/gpui_apple).
 
-use crate::{Corner, Decoration};
+use crate::{Corner, Decoration, ImageComposition};
 use base64::Engine as _;
 use gpui::{
     App, Bounds, Hsla, Pixels, Rgba, SharedString, TransformationMatrix, Window, point, px, size,
@@ -1681,15 +1681,34 @@ pub(crate) fn paint(
     }
 }
 
+// Chromium decodes to the smallest mip that still covers the rounded destination.
+fn image_decode_size(mut source: [i32; 2], target: [f32; 2]) -> Option<[i32; 2]> {
+    let target = target.map(|side| side.abs().round() as i32);
+    if target.contains(&0) {
+        return None;
+    }
+    loop {
+        let next = source.map(|side| (side + 1) / 2);
+        if next == source || next.into_iter().zip(target).any(|(a, b)| a < b) {
+            return Some(source);
+        }
+        source = next;
+    }
+}
+
 /// `crate::raster_images` on macOS.
 pub(crate) fn raster_images(
     images: &[(&image::RgbaImage, Bounds<Pixels>)],
     clip: Bounds<Pixels>,
     radius: gpui::Corners<Pixels>,
     corner: Corner,
-    page: Hsla,
+    composition: ImageComposition,
     window: &Window,
 ) -> gpui::RenderImage {
+    let (page, group_images) = match composition {
+        ImageComposition::Direct(page) => (page, false),
+        ImageComposition::Group(page) => (page, true),
+    };
     let (layer, s) = (Layer::new(window, None), window.scale_factor());
     let d = Decoration {
         radius,
@@ -1699,14 +1718,11 @@ pub(crate) fn raster_images(
     let (contour, _) = ops(&d, layer.local(clip, s), s);
     let [x0, y0, w, h] = contour.rr.r.map(|v| v as i32);
     let dev = |v: Pixels| f32::from(v) * s;
+    let mut group = Rect::new_empty();
     let draws: Vec<_> = images
         .iter()
-        .map(|(img, dst)| {
+        .filter_map(|(img, dst)| {
             let (iw, ih) = (img.width() as i32, img.height() as i32);
-            let info = ImageInfo::new((iw, ih), ColorType::N32, AlphaType::Premul, None);
-            let data = Data::new_copy(img.as_raw());
-            let image = skia_safe::images::raster_from_data(&info, data, iw as usize * 4)
-                .expect("shapes: image");
             let dst = layer.local(*dst, s);
             let rect = Rect::from_ltrb(
                 dev(dst.left()),
@@ -1714,14 +1730,51 @@ pub(crate) fn raster_images(
                 dev(dst.right()),
                 dev(dst.bottom()),
             );
-            (image, rect)
+            let target = image_decode_size([iw, ih], [rect.width(), rect.height()])?;
+            let info = ImageInfo::new((iw, ih), ColorType::N32, AlphaType::Premul, None);
+            let image = skia_safe::images::raster_from_data(
+                &info,
+                Data::new_copy(img.as_raw()),
+                iw as usize * 4,
+            )
+            .expect("shapes: image");
+            let image = if target == [iw, ih] {
+                image
+            } else {
+                let info = ImageInfo::new(
+                    (target[0], target[1]),
+                    ColorType::N32,
+                    AlphaType::Premul,
+                    None,
+                );
+                let mut surface =
+                    surfaces::raster(&info, None, None).expect("shapes: decoded image");
+                {
+                    let source = image.peek_pixels().expect("shapes: image pixels");
+                    let mut target = surface.peek_pixels().expect("shapes: decoded pixels");
+                    assert!(
+                        source.scale_pixels(
+                            &mut target,
+                            SamplingOptions::new(FilterMode::Linear, MipmapMode::Linear),
+                        ),
+                        "shapes: decode image scale"
+                    );
+                }
+                surface.image_snapshot()
+            };
+            group.join(rect);
+            Some((image, rect))
         })
         .collect();
+    let grouped = group_images && draws.len() > 1;
     let sampling = SamplingOptions::new(FilterMode::Linear, MipmapMode::None);
     let mut out = vec![0; (w * h * 4) as usize];
     for (o, ts, [ox0, oy0, ox1, oy1]) in tiles([x0, y0, x0 + w, y0 + h], layer.size(), layer.tile) {
         let (px, row) = tile_pixels(o, ts, color4f(page), |c| {
             contour.clip(c, ClipOp::Intersect);
+            if grouped {
+                c.save_layer(&skia_safe::canvas::SaveLayerRec::default().bounds(&group));
+            }
             for (image, dst) in &draws {
                 c.draw_image_rect_with_sampling_options(
                     image,
@@ -1730,6 +1783,9 @@ pub(crate) fn raster_images(
                     sampling,
                     &Paint::default(),
                 );
+            }
+            if grouped {
+                c.restore();
             }
         });
         for y in oy0..oy1 {
@@ -2156,6 +2212,89 @@ pub(crate) fn paint_icon(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_decode_keeps_the_larger_mip() {
+        assert_eq!(
+            image_decode_size([1024, 1024], [68.9, 68.9]),
+            Some([128, 128])
+        );
+        assert_eq!(
+            image_decode_size([1024, 1024], [35.1, 35.1]),
+            Some([64, 64])
+        );
+        assert_eq!(
+            image_decode_size([1025, 1025], [68.9, 68.9]),
+            Some([129, 129])
+        );
+        assert_eq!(image_decode_size([40, 20], [20., 20.]), Some([40, 20]));
+        assert_eq!(image_decode_size([40, 20], [0.1, 20.]), None);
+    }
+
+    #[test]
+    fn decoded_image_group_preserves_mips_and_alpha() -> anyhow::Result<()> {
+        use gpui::{AppContext, IntoElement, ParentElement, Render, Styled};
+
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        struct Images([Arc<image::RgbaImage>; 2]);
+        impl Render for Images {
+            fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+                let images = self.0.clone();
+                gpui::div().size_full().child(
+                    gpui::canvas(
+                        move |_, _, _| images,
+                        |bounds, images, window, _| {
+                            let raster = raster_images(
+                                &[(&images[0], bounds), (&images[1], bounds)],
+                                bounds,
+                                gpui::Corners::default(),
+                                Corner::Round,
+                                ImageComposition::Group(gpui::rgb(0x232323).into()),
+                                window,
+                            );
+                            window
+                                .paint_image(
+                                    bounds,
+                                    bounds,
+                                    gpui::Corners::default(),
+                                    Arc::new(raster),
+                                    0,
+                                    false,
+                                )
+                                .expect("paint the overlapping image group");
+                        },
+                    )
+                    .size_full(),
+                )
+            }
+        }
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(()),
+            gpui_platform::current_headless_renderer,
+        );
+        let window = cx.open_window(size(px(8.), px(8.)), |_, cx| {
+            cx.new(|_| {
+                Images(
+                    [[104, 104, 104, 104], [31, 70, 132, 136]].map(|pixel: [u8; 4]| {
+                        // A mip averages each block; bilinear-only sampling takes its brighter center.
+                        Arc::new(image::RgbaImage::from_fn(64, 64, |x, y| {
+                            let center = (1..=2).contains(&(x % 4)) && (1..=2).contains(&(y % 4));
+                            let delta = if center { 3 } else { -1 };
+                            image::Rgba(pixel.map(|channel| (i16::from(channel) + delta) as u8))
+                        }))
+                    }),
+                )
+            })
+        })?;
+        cx.run_until_parked();
+        let image = cx.capture_screenshot(window.into())?;
+        assert_eq!(image.get_pixel(8, 8).0, [90, 129, 191, 255]);
+        Ok(())
+    }
 
     #[test]
     fn helpers() {

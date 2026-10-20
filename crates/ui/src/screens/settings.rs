@@ -1496,7 +1496,7 @@ fn app_icon(page: Hsla) -> AnyElement {
             bounds,
             Corners::default(),
             Round,
-            page,
+            shapes::ImageComposition::Direct(page),
             window,
         )?);
         // The box's snapped device px rect, which `raster_images` fills.
