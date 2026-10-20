@@ -29,7 +29,7 @@ The rows were not clicked again on the original through `tools/route1`: its `ser
 |---|---|---|---|---|
 | App shell: shortcuts, menu bar, window | 20 | 13 | 3 | 4 |
 | 14.1 Left rail | 12 | 4 | 1 | 7 |
-| 14.2 Sidebar | 23 | 12 | 4 | 7 |
+| 14.2 Sidebar | 23 | 16 | 3 | 4 |
 | 14.3 Home | 21 | 10 | 3 | 8 |
 | 14.4 Thread view | 20 | 6 | 3 | 11 |
 | 14.5 Composer | 20 | 6 | 5 | 9 |
@@ -38,7 +38,7 @@ The rows were not clicked again on the original through `tools/route1`: its `ser
 | 15.1 Automations | 16 | 2 | 2 | 12 |
 | 15.2 Background terminal | 10 | 10 | 0 | 0 |
 | 15.3 Mobile setup | 10 | 3 | 2 | 5 |
-| **All** | **192** | **75** | **32** | **85** |
+| **All** | **192** | **91** | **35** | **66** |
 
 Before round 5 (F2Flows): 57 PASS, 33 FAIL, 102 NOT WIRED. Before round 4 (F1Flows): 42 PASS, 25 FAIL, 125 NOT WIRED.
 
@@ -258,13 +258,13 @@ Thread-to-Home navigation keeps the Home composer focus set by `Root::new_chat`.
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Sidebar visible | entry | Rail 52 px plus panel 288 px at 1280 px. | Open at launch; parity: see `parity_home`. | PASS (`launch_home`, `parity_home`) |
-| 2 | `Codex ⌄` mode switch | click | Menu: ChatGPT, Codex, Work. | No handler. | NOT WIRED (`crates/ui/src/lib.rs` `home_sidebar_header`, `mode-switch`) |
-| 3 | `⌃1` `⌃2` `⌃3` | shortcut | Switch mode. | — | NOT WIRED (`crates/ui/src/lib.rs`: no modes; then bind in `crates/app/src/lib.rs` `init`) |
-| 4 | Bell `View activity` | click | Toggles the activity view. | No handler. | NOT WIRED (`crates/ui/src/lib.rs` `home_sidebar_header`, `activity`) |
-| 5 | `⌘⌥U` | shortcut | Toggles the activity view. | — | NOT WIRED (`crates/ui/src/screens/sidebar.rs`: no activity view) |
+| 2 | `Codex ⌄` mode switch | click | Menu: ChatGPT, Codex, Work. | The native runtime supports Codex only; no ChatGPT or Work destination exists. | NOT WIRED (outside the accepted native screen set; no unsupported mode is added) |
+| 3 | `⌃1` `⌃2` `⌃3` | shortcut | Switch mode. | No product-mode shortcuts; the native runtime has no alternate product mode. | NOT WIRED (same boundary as row 2) |
+| 4 | Bell `View activity` | click | Toggles the activity view. | `ToggleActivity` shows Priority and recent day groups using existing unread and running states; rows use the existing thread navigation. | PASS (`s003::activity_opens_running_chats_and_shortcut_restores_the_sidebar`) |
+| 5 | `⌘⌥U` | shortcut | Toggles the activity view. | Dispatches the same `ToggleActivity` action; keeps the open chat. | PASS (`s003::activity_opens_running_chats_and_shortcut_restores_the_sidebar`) |
 | 6 | Search | click | Opens the command menu in chat-search mode. | `OpenCommandMenu`: the command menu over live Recents. | PASS (`command_menu_search_click`, `parity_sidebar`) |
 | 7 | `⌘K` | shortcut | Opens the command menu. | Same as shell row 14. | PASS (`command_menu_keys`) |
-| 8 | `Your dot` row | click | Opens the dot (orbit) thread. | No handler. | NOT WIRED (`crates/ui/src/lib.rs` `home_sidebar_header`, `your-dot`) |
+| 8 | `Your dot` row | click | Opens the dot (orbit) thread. | No orbit backend or accepted native destination exists. | NOT WIRED (outside the accepted native screen set; no substitute chat is created) |
 | 9 | `Projects` section toggle | click | Collapses or expands; chevron rotates. | A header click collapses or expands the section; no chevron. | FAIL (no chevron: `crates/ui/src/lib.rs` `sidebar_section`; collapse checked by `sidebar_section_collapse`) |
 | 10 | `Recents` section toggle | click | Collapses or expands. | Same; a collapsed Recents row no longer opens. | PASS (`sidebar_section_collapse`) |
 | 11 | Thread row | click | Opens `/local/:conversationId`. | `OpenThread` → route Thread, `thread/read`, row selected. | PASS (`thread_row_opens_thread`) |
@@ -275,11 +275,18 @@ Thread-to-Home navigation keeps the Home composer focus set by `Root::new_chat`.
 | 16 | `⌘⇧S` / `⌘B` | shortcut | Toggle sidebar. | Toggles. | PASS (`sidebar_toggle_keys`) |
 | 17 | Titlebar `Hide sidebar` | click | Collapses the left panel over a 300 ms spring (main surface slides, sidebar rows fade and shift 16 px); label changes to `Show sidebar`; instant under reduced motion. | The main surface and the sidebar content follow `motion::spring_300` from the toggle's progress; the recorded tooltip stays `Toggle sidebar ⇧⌘S` in both states. | PASS (`sidebar_toggle_titlebar`; `crates/app/tests/s004.rs`; spring frames: `crates/app/tests/ms2.rs` against `refs/interactions/ms2.json`) |
 | 18 | Row focus | focus ring | 2 px ring, offset -2 px. | Tab moves through rows and their Pin and Archive actions; focus reveals the actions. | PASS (`crates/app/tests/f1b.rs`) |
-| 19 | Empty lists | empty | `No projects`, `No chats`; activity `Nothing needs attention`. | Empty `thread/list` gives no Recents (`No chats` branch); `No projects` always. No activity view. | PASS (`sidebar_empty_lists`) |
-| 20 | Lists loading | loading | Activity: `Checking unread chats…`. | — | NOT WIRED (`crates/ui/src/screens/sidebar.rs`: no activity view or loading state) |
-| 21 | Load error | error | `Projects couldn't be loaded` + `Retry`; `Could not load chats`. | A `thread/list` error stops `Root::connect`, so no route shows. | FAIL (`crates/app/src/lib.rs` `connect` treats it as fatal; `crates/ui/src/screens/sidebar.rs` has no error state) |
+| 19 | Empty lists | empty | `No projects`, `No chats`; activity `Nothing needs attention`. | Ready empty lists keep the original labels; an empty Priority section shows `Nothing needs attention`. | PASS (`sidebar_empty_lists`; `s003::activity_opens_running_chats_and_shortcut_restores_the_sidebar`) |
+| 20 | Lists loading | loading | Activity: `Checking unread chats…`. | Pending reads show `Loading projects…`, `Loading chats…`, or activity `Checking unread chats…`; failure and empty are separate states. | PASS (native loading-state capture; `ListState`) |
+| 21 | Load error | error | `Projects couldn't be loaded` + `Retry`; `Could not load chats`. | A failed first chat page leaves Home usable. Retry reads the same list or owned project-state file; no automatic retry loop runs. | PASS (`s003::startup_chat_failure_keeps_home_available_and_retry_restores_chats`, `s003::project_load_failure_retries_the_owned_state_file`) |
 | 22 | Sidebar drag-resize | resize | The recorded edge clamps to 290…520 px; dragging below 145 px collapses it. | The 16 px handle resizes the sidebar and main surface, retains the width on toggle, and saves it on release. | PASS (`crates/app/tests/s004.rs`, `refs/interactions/s004.json`) |
 | 23 | Resize | resize | Below 768 px the panel is hidden; it opens as an overlay. | Hidden at 767 and 600 px, shown at 1280 px; the user's choice is kept. `⌘B` opens it docked, not as an overlay. | FAIL (overlay: `crates/ui/src/lib.rs` `Shell`; hide/show checked by `resize_three_widths`) |
+
+Activity uses the existing Sidebar unread and running states, Root navigation, and paging path.
+Its recent groups cover seven local calendar days, ordered by each thread's update time.
+Loaded chat rows remain available during background refreshes and after a background read fails.
+The native pending-state capture selects the component state explicitly; it does not test delayed server timing.
+The mode switch and Your dot remain outside the accepted native destinations.
+The native app does not create placeholder modes, an orbit service, or a second notification store.
 
 S001 replays `refs/interactions/s001.json` with `cargo test -p app --test s001` on macOS.
 The recording uses the original renderer with isolated host and app-server fixtures.

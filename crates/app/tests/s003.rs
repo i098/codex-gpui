@@ -356,3 +356,222 @@ fn pinning_a_sibling_does_not_restart_a_finished_spinner() -> Result<()> {
     );
     Ok(())
 }
+
+fn sidebar_shot(fx: &mut Fx, name: &str) -> Result<()> {
+    if let Some(path) = std::env::var_os("CGX_SIDEBAR_PROOF_DIR") {
+        fs::create_dir_all(&path)?;
+        let image = fx.shot()?;
+        image.save(std::path::PathBuf::from(path).join(format!("{name}.png")))?;
+    }
+    Ok(())
+}
+
+#[test]
+fn startup_chat_failure_keeps_home_available_and_retry_restores_chats() -> Result<()> {
+    let mut lines = script(None, |_| {})?;
+    let index = lines
+        .iter()
+        .position(|line| line["msg"]["result"]["data"][0]["preview"].is_string())
+        .expect("thread/list")
+        - 1;
+    lines[index]["msg"]["params"] = json!({});
+    let mut added = lines[index + 1]["msg"]["result"]["data"][0].clone();
+    added["id"] = json!("created-after-list-failure");
+    added["name"] = json!("New chat after list failure");
+    let mut older = added.clone();
+    older["id"] = json!("recovered-older-chat");
+    lines[index + 1]["msg"]["result"]["nextCursor"] = json!("recovered-next");
+    let mut next = exchange("thread/list", json!({"data": [older], "nextCursor": null}));
+    next[0]["msg"]["params"] = json!({"cursor": "recovered-next", "limit": 10});
+    lines.extend(next);
+    let mut refused = lines[index..index + 2].to_vec();
+    refused[0]["msg"]["id"] = json!(99_997);
+    refused[1]["msg"]["id"] = json!(99_997);
+    refused[1]["msg"].as_object_mut().unwrap().remove("result");
+    refused[1]["msg"]["error"] = json!({"code": -1, "message": "offline"});
+    lines.splice(index..index, refused);
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    assert_eq!(fx.route(), app::Route::Home);
+    assert!(fx.read(|r, _| r.ready()));
+    assert!(fx.read(|r, cx| r.sidebar().read(cx).load_failed()));
+    sidebar_shot(&mut fx, "chats-error")?;
+    fx.advance(Duration::from_secs(1))?;
+    assert_eq!(
+        fx.sent()?
+            .iter()
+            .filter(|r| r["method"] == "thread/list")
+            .count(),
+        1
+    );
+    fx.root.update(&mut fx.cx, |r, cx| {
+        r.on_event(
+            Event::Notification {
+                method: "thread/started".into(),
+                params: json!({"thread": added}),
+            },
+            cx,
+        )
+    });
+    fx.click((90., 368.))?;
+    fx.wait("older chats after recovery", |fx| {
+        fx.shot().unwrap();
+        fx.read(|r, _| r.recents().iter().any(|id| id == "recovered-older-chat"))
+    })?;
+    assert!(!fx.read(|r, cx| r.sidebar().read(cx).load_failed()));
+    fx.click((150., 336.))?;
+    fx.wait_thread(SUBTRACT)?;
+    Ok(())
+}
+
+#[test]
+fn background_refresh_failure_keeps_the_loaded_chats_usable() -> Result<()> {
+    let mut lines = script(None, |_| {})?;
+    lines
+        .iter_mut()
+        .find(|line| line["msg"]["method"] == "thread/list")
+        .expect("initial list request")["msg"]["params"] = json!({});
+    let mut failed = exchange("thread/list", Value::Null);
+    failed[1]["msg"].as_object_mut().unwrap().remove("result");
+    failed[1]["msg"]["error"] = json!({"code": -1, "message": "refresh offline"});
+    lines.extend(failed);
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    fx.root.update(&mut fx.cx, |r, cx| {
+        r.on_event(Event::Notification {
+            method: "turn/completed".into(),
+            params: json!({"threadId": SUBTRACT, "turn": {"id": "finished", "status": "completed"}}),
+        }, cx);
+    });
+    assert!(
+        fx.read(
+            |r, cx| r.sidebar().read(cx).threads_state == ui::screens::sidebar::ListState::Ready
+        )
+    );
+    fx.wait("background chat refresh", |fx| {
+        fx.sent()
+            .is_ok_and(|sent| sent.iter().filter(|r| r["method"] == "thread/list").count() == 2)
+    })?;
+    fx.advance(Duration::from_millis(200))?;
+    fx.click((150., 336.))?;
+    fx.wait_thread(SUBTRACT)?;
+    assert!(!fx.read(|r, cx| r.sidebar().read(cx).load_failed()));
+    Ok(())
+}
+
+#[test]
+fn activity_does_not_page_past_the_week() -> Result<()> {
+    let mut lines = paged_script()?;
+    for line in &mut lines {
+        if let Some(threads) = line
+            .pointer_mut("/msg/result/data")
+            .and_then(Value::as_array_mut)
+        {
+            for thread in threads {
+                if thread["preview"].is_string() {
+                    thread["updatedAt"] = json!(1_791_000_000);
+                }
+            }
+        }
+    }
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    fx.wait("normal sidebar page", |fx| {
+        fx.shot().unwrap();
+        fx.read(|r, _| r.recents().len()) >= 20
+    })?;
+    fx.click((282., 70.))?;
+    let sent = fx
+        .sent()?
+        .iter()
+        .filter(|r| r["method"] == "thread/list")
+        .count();
+    for _ in 0..3 {
+        fx.advance(Duration::from_millis(200))?;
+    }
+    assert_eq!(
+        fx.sent()?
+            .iter()
+            .filter(|r| r["method"] == "thread/list")
+            .count(),
+        sent
+    );
+    Ok(())
+}
+
+#[test]
+fn project_load_failure_retries_the_owned_state_file() -> Result<()> {
+    let profile = tempfile::tempdir()?;
+    let project = profile.path().join("project");
+    fs::create_dir(&project)?;
+    let file = profile.path().join(".codex-global-state.json");
+    fs::write(&file, "{invalid")?;
+    let mut fx = Fx::new()?;
+    fx.root.update(&mut fx.cx, |r, cx| {
+        r.set_host(
+            std::sync::Arc::new(app::host::LocalHost::new(profile.path())),
+            cx,
+        );
+    });
+    fx.wait("project load error", |fx| {
+        fx.read(|r, cx| {
+            r.sidebar().read(cx).projects_state == ui::screens::sidebar::ListState::Failed
+        })
+    })?;
+    sidebar_shot(&mut fx, "projects-error")?;
+    fs::write(
+        &file,
+        serde_json::to_vec(&json!({
+            "local-projects": {"owned": {
+                "id": "owned", "name": "Recovered project", "rootPaths": [project],
+                "createdAt": 1, "updatedAt": 2
+            }},
+            "project-order": ["owned"]
+        }))?,
+    )?;
+    fx.click((90., 251.))?;
+    fx.wait("project retry", |fx| {
+        fx.read(|r, cx| {
+            r.sidebar()
+                .read(cx)
+                .projects()
+                .iter()
+                .any(|p| p.id == "owned")
+        })
+    })?;
+    assert_eq!(
+        fx.read(|r, cx| r.sidebar().read(cx).projects()[0].label.to_string()),
+        "Recovered project"
+    );
+    assert_eq!(
+        fx.read(|r, cx| r.sidebar().read(cx).projects()[0]
+            .root
+            .as_deref()
+            .map(str::to_owned)),
+        Some(project.to_string_lossy().into_owned())
+    );
+    Ok(())
+}
+
+#[test]
+fn activity_opens_running_chats_and_shortcut_restores_the_sidebar() -> Result<()> {
+    let mut fx = Fx::new()?;
+    fx.hover((1270., 820.))?;
+    fx.click((282., 70.))?;
+    assert!(fx.read(|r, cx| r.sidebar().read(cx).activity_clock.is_some()));
+    sidebar_shot(&mut fx, "activity-empty")?;
+    fx.root.update(&mut fx.cx, |r, cx| {
+        r.on_event(Event::Notification {
+        method: "thread/status/changed".into(),
+        params: json!({"threadId": SUBTRACT, "status": {"type": "active", "activeFlags": []}}),
+    }, cx)
+    });
+    fx.advance(Duration::from_millis(300))?;
+    sidebar_shot(&mut fx, "activity-running")?;
+    fx.click((150., 214.))?;
+    fx.wait_thread(SUBTRACT)?;
+    fx.keys("alt-cmd-u")?;
+    assert!(fx.read(|r, cx| r.sidebar().read(cx).activity_clock.is_none()));
+    fx.keys("alt-cmd-u")?;
+    assert!(fx.read(|r, cx| r.sidebar().read(cx).activity_clock.is_some()));
+    fx.keys("alt-cmd-u")?;
+    assert_eq!(fx.route(), app::Route::Thread(SUBTRACT.into()));
+    Ok(())
+}

@@ -30,6 +30,7 @@ use theme::{ActiveTheme as _, Appearance, Theme};
 #[path = "sidebar/menu.rs"]
 mod menu;
 use menu::ThreadMenu;
+mod activity;
 
 pub mod sections;
 
@@ -201,6 +202,15 @@ impl Render for ArchivedChats {
             .child(content)
     }
 }
+#[derive(Clone, Copy, Default, PartialEq)]
+pub enum ListState {
+    #[default]
+    Ready,
+    Loading,
+    Failed,
+}
+
+gpui::actions!(sidebar, [RetryThreads, RetryProjects]);
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -259,9 +269,12 @@ enum ThreadGroup {
 }
 
 pub struct HomeSidebar {
-    /// `(thread id, row label)` in `thread/list` order.
-    threads: Vec<(String, SharedString)>,
+    /// `(thread id, row label, updated timestamp)` in `thread/list` order.
+    threads: Vec<(String, SharedString, i64)>,
     projects: Vec<Project>,
+    pub threads_state: ListState,
+    pub projects_state: ListState,
+    pub activity_clock: Option<crate::screens::thread::view::Clock>,
     worktree_tip: bool,
     worktree_tip_epoch: u64,
     worktree_tip_bounds: Bounds<Pixels>,
@@ -340,8 +353,14 @@ impl HomeSidebar {
     /// Recents from a live `thread/list`; `selected` is the open thread, highlighted.
     pub fn new(threads: &[Thread], selected: Option<&str>) -> Self {
         Self {
-            threads: threads.iter().map(|t| (t.id.clone(), title(t))).collect(),
+            threads: threads
+                .iter()
+                .map(|t| (t.id.clone(), title(t), t.updated_at))
+                .collect(),
             projects: Vec::new(),
+            threads_state: ListState::Ready,
+            projects_state: ListState::Ready,
+            activity_clock: None,
             worktree_tip: false,
             worktree_tip_epoch: 0,
             worktree_tip_bounds: Bounds::default(),
@@ -366,8 +385,19 @@ impl HomeSidebar {
         }
     }
 
+    pub fn set_threads_state(&mut self, state: ListState, cx: &mut Context<Self>) {
+        self.threads_state = state;
+        cx.notify();
+    }
+
+    pub fn set_projects_state(&mut self, state: ListState, cx: &mut Context<Self>) {
+        self.projects_state = state;
+        cx.notify();
+    }
+
     pub fn set_projects(&mut self, projects: Vec<Project>, cx: &mut Context<Self>) {
         self.projects = projects;
+        self.projects_state = ListState::Ready;
         self.worktree_tip = false;
         self.worktree_tip_epoch += 1;
         cx.notify();
@@ -613,7 +643,11 @@ impl HomeSidebar {
     }
 
     pub fn set_threads(&mut self, threads: &[Thread], cx: &mut Context<Self>) {
-        self.threads = threads.iter().map(|t| (t.id.clone(), title(t))).collect();
+        self.threads = threads
+            .iter()
+            .map(|t| (t.id.clone(), title(t), t.updated_at))
+            .collect();
+        self.threads_state = ListState::Ready;
         self.pinned = pinned_ids(threads);
         for thread in threads {
             if thread.status == ThreadStatus::Active {
@@ -632,13 +666,14 @@ impl HomeSidebar {
         } else {
             self.pinned.remove(&thread.id);
         }
-        let old = self.threads.iter().position(|(id, _)| *id == thread.id);
+        let old = self.threads.iter().position(|(id, _, _)| *id == thread.id);
         let old = old.map(|i| self.threads.remove(i).1);
         let label = match (title(thread), old) {
             (label, Some(old)) if label.is_empty() => old,
             (label, _) => label,
         };
-        self.threads.insert(0, (thread.id.clone(), label));
+        self.threads
+            .insert(0, (thread.id.clone(), label, thread.updated_at));
         self.reindex_sections();
         self.set_running(&thread.id, thread.status == ThreadStatus::Active, cx);
         cx.notify();
@@ -693,7 +728,7 @@ impl HomeSidebar {
     }
 
     pub fn load_failed(&self) -> bool {
-        self.page_error
+        self.page_error || self.threads_state == ListState::Failed
     }
 
     /// Recents rows on screen (the first [`limit`](Self::limit) unpinned threads).
@@ -749,7 +784,7 @@ impl HomeSidebar {
             .threads
             .iter()
             .enumerate()
-            .map(|(index, (id, _))| (id.as_str(), index))
+            .map(|(index, (id, _, _))| (id.as_str(), index))
             .collect();
         for section in &mut self.sections {
             section.rows.clear();
@@ -768,11 +803,11 @@ impl HomeSidebar {
         self.collapsed[0]
     }
 
-    fn recents(&self) -> impl Iterator<Item = &(String, SharedString)> {
+    fn recents(&self) -> impl Iterator<Item = &(String, SharedString, i64)> {
         self.threads
             .iter()
             .enumerate()
-            .filter(|(index, (id, _))| {
+            .filter(|(index, (id, _, _))| {
                 !self.pinned.contains(id) && !self.grouped_rows.contains(index)
             })
             .map(|(_, thread)| thread)
@@ -781,10 +816,13 @@ impl HomeSidebar {
     /// The end sentinel came into view: `PAGE` more rows when they are loaded, else the next
     /// `thread/list` page from the owner.
     fn load_more(&mut self, cx: &mut Context<Self>) {
-        if self.recents().count() > self.limit {
+        let (loaded, has_more) = self
+            .activity_window()
+            .unwrap_or_else(|| (self.recents().count(), self.has_more));
+        if loaded > self.limit {
             self.limit += PAGE;
             cx.notify();
-        } else if self.has_more && !self.loading {
+        } else if has_more && !self.loading {
             self.loading = true;
             self.page_error = false;
             cx.notify();
@@ -798,7 +836,6 @@ impl HomeSidebar {
             ThreadGroup::Custom(index) => Some(&self.sections[index]),
             _ => None,
         };
-        let loaded = if recents { self.recents().count() } else { 0 };
         let count = custom.map_or(self.threads.len(), |s| s.rows.len());
         let limit = match group {
             ThreadGroup::Pinned => usize::MAX,
@@ -817,16 +854,23 @@ impl HomeSidebar {
             })
             .take(limit)
             .map(|index| &self.threads[index]);
-        let now = cx.background_executor().now();
-        if !self.running.is_empty() {
-            window.request_animation_frame();
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(1.))
+            .children(rows.map(|(id, label, _)| self.chat_row(id, label.clone(), window, cx)))
+            .when(recents, |d| d.children(self.page_tail(cx)))
+            .into_any_element()
+    }
+
+    fn page_tail(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let (loaded, has_more) = self
+            .activity_window()
+            .unwrap_or_else(|| (self.recents().count(), self.has_more));
+        if loaded <= self.limit && !has_more && !self.loading && !self.page_error {
+            return None;
         }
-        // The original's end sentinel (`IntersectionObserver` on the list's last item): while
-        // it is inside the scroller's clip, the list pages.
-        let sentinel = (recents
-            && !self.loading
-            && !self.page_error
-            && (loaded > self.limit || self.has_more))
+        let sentinel = (!self.loading && !self.page_error && (loaded > self.limit || has_more))
             .then(|| {
                 let this = cx.weak_entity();
                 canvas(
@@ -843,81 +887,106 @@ impl HomeSidebar {
                 .w_full()
                 .h(px(9.))
             });
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(1.))
-            .children(rows.map(|(id, label)| {
-                let open = id.clone();
-                let menu_for = id.clone();
-                let row_focus = focus::handle(
-                    SharedString::from(format!("thread-row-{id}")),
-                    0,
-                    window,
-                    cx,
-                );
-                let pin_focus =
-                    focus::handle(SharedString::from(format!("pin-chat-{id}")), 0, window, cx);
-                let archive_focus = focus::handle(
-                    SharedString::from(format!("archive-chat-{id}")),
-                    0,
-                    window,
-                    cx,
-                );
-                let focused = row_focus.read(cx).handle.contains_focused(window, cx);
-                // `animate-spin`: one turn per second, linear.
-                let end = self
-                    .running
-                    .get(id)
-                    .map(|started| {
-                        RowEnd::Spinner(
-                            (now.saturating_duration_since(*started).as_secs_f32() % 1.) * 360.,
-                        )
-                    })
-                    .or_else(|| self.unread.contains(id).then_some(RowEnd::Dot));
-                thread_row(
-                    id,
-                    label.clone(),
-                    self.selected.as_ref() == Some(id),
-                    end,
-                    cx,
-                    (focused, self.pinned.contains(id)),
-                    [&row_focus, &pin_focus, &archive_focus],
-                )
-                .on_click(cx.listener(move |_, _, _, cx| cx.emit(OpenThread(open.clone()))))
-                .on_mouse_down(
-                    MouseButton::Right,
-                    cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| {
-                        this.open_menu(menu_for.clone(), e.position, window, cx)
-                    }),
-                )
-            }))
-            .children(sentinel)
-            .when(recents && self.loading, |d| {
-                d.child(div().h(px(24.)).flex().justify_center().child(icon(
-                    "sidebar-cmd-spinner",
-                    16.,
-                    cx.theme().text_tertiary,
-                )))
+        Some(
+            div()
+                .children(sentinel)
+                .when(self.loading, |d| {
+                    d.child(div().h(px(24.)).flex().justify_center().child(icon(
+                        "sidebar-cmd-spinner",
+                        16.,
+                        cx.theme().text_tertiary,
+                    )))
+                })
+                .when(self.page_error, |d| {
+                    d.child(
+                        div()
+                            .id("retry-more-chats")
+                            .role(gpui::Role::Button)
+                            .aria_label("Could not load more chats")
+                            .cursor_pointer()
+                            .child(text(
+                                "Could not load more chats",
+                                12.,
+                                24.,
+                                430.,
+                                cx.theme().text_tertiary,
+                            ))
+                            .on_click(cx.listener(|s, _, _, cx| s.load_more(cx))),
+                    )
+                })
+                .into_any_element(),
+        )
+    }
+
+    fn chat_row(
+        &self,
+        id: &str,
+        label: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let open = id.to_owned();
+        let menu_for = id.to_owned();
+        let row_focus = focus::handle(
+            SharedString::from(format!("thread-row-{id}")),
+            0,
+            window,
+            cx,
+        );
+        let pin_focus = focus::handle(SharedString::from(format!("pin-chat-{id}")), 0, window, cx);
+        let archive_focus = focus::handle(
+            SharedString::from(format!("archive-chat-{id}")),
+            0,
+            window,
+            cx,
+        );
+        let focused = row_focus.read(cx).handle.contains_focused(window, cx);
+        let now = cx.background_executor().now();
+        let end = self
+            .running
+            .get(id)
+            .map(|started| {
+                window.request_animation_frame();
+                RowEnd::Spinner((now.saturating_duration_since(*started).as_secs_f32() % 1.) * 360.)
             })
-            .when(recents && self.page_error, |d| {
-                d.child(
-                    div()
-                        .id("retry-more-chats")
-                        .role(gpui::Role::Button)
-                        .aria_label("Could not load more chats")
-                        .cursor_pointer()
-                        .child(text(
-                            "Could not load more chats",
-                            12.,
-                            24.,
-                            430.,
-                            cx.theme().text_tertiary,
-                        ))
-                        .on_click(cx.listener(|s, _, _, cx| s.load_more(cx))),
-                )
-            })
-            .into_any_element()
+            .or_else(|| {
+                self.unread
+                    .iter()
+                    .any(|unread| unread == id)
+                    .then_some(RowEnd::Dot)
+            });
+        thread_row(
+            id,
+            label,
+            self.selected.as_deref() == Some(id),
+            end,
+            cx,
+            (
+                focused || (self.activity_clock.is_some() && end.is_none()),
+                self.pinned.contains(id),
+            ),
+            [&row_focus, &pin_focus, &archive_focus],
+        )
+        .when(self.activity_clock.is_some(), |d| {
+            d.h(px(54.)).child(
+                div()
+                    .absolute()
+                    .left(px(8.))
+                    .top(px(26.))
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(icon("laptop", 12., cx.theme().text_tertiary))
+                    .child(text("Codex", 12., 18., 430., cx.theme().text_tertiary)),
+            )
+        })
+        .on_click(cx.listener(move |_, _, _, cx| cx.emit(OpenThread(open.clone()))))
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| {
+                this.open_menu(menu_for.clone(), e.position, window, cx)
+            }),
+        )
     }
 
     fn custom_body(&self, index: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -979,28 +1048,48 @@ pub fn home_sidebar(cx: &mut App, selected_thread: Option<&str>) -> AnyView {
 
 impl Render for HomeSidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let recents = if !self.has_more && self.recents().next().is_none() {
-            sidebar_empty("No chats", cx).into_any_element()
+        let contents = if self.activity_clock.is_some() {
+            self.activity_list(window, cx)
         } else {
-            self.rows(ThreadGroup::Recents, window, cx)
-        };
-        let pinned = (!self.pinned.is_empty()).then(|| self.rows(ThreadGroup::Pinned, window, cx));
-        // A header click collapses or expands its section (`group/nav-section`).
-        let section = |i: usize,
-                       title: SharedString,
-                       body: AnyElement,
-                       window: &mut Window,
-                       cx: &mut Context<Self>| {
-            let (collapsed, key) = if i < self.collapsed.len() {
-                (self.collapsed[i], title.clone())
-            } else {
-                let custom = &self.sections[i - self.collapsed.len()];
-                (custom.collapsed, custom.id.clone())
+            let recents = match self.threads_state {
+                ListState::Loading if self.threads.is_empty() => {
+                    sidebar_empty("Loading chats…", cx).into_any_element()
+                }
+                ListState::Failed => div()
+                    .flex()
+                    .flex_col()
+                    .when(self.recents().next().is_some(), |d| {
+                        d.child(self.rows(ThreadGroup::Recents, window, cx))
+                    })
+                    .child(load_error::<RetryThreads>(
+                        "Could not load chats",
+                        "retry-chats",
+                        window,
+                        cx,
+                    ))
+                    .into_any_element(),
+                ListState::Ready if !self.has_more && self.recents().next().is_none() => {
+                    sidebar_empty("No chats", cx).into_any_element()
+                }
+                ListState::Ready | ListState::Loading => {
+                    self.rows(ThreadGroup::Recents, window, cx)
+                }
             };
-            let header_focus = focus::handle(key.clone(), -1, window, cx);
+            let pinned = (!self.pinned.is_empty())
+                .then(|| self.rows(ThreadGroup::Pinned, window, cx));
+            let section = |i: usize,
+                           title: SharedString,
+                           body: AnyElement,
+                           window: &mut Window,
+                           cx: &mut Context<Self>| {
+                let (collapsed, key) = if i < self.collapsed.len() {
+                    (self.collapsed[i], title.clone())
+                } else {
+                    let custom = &self.sections[i - self.collapsed.len()];
+                    (custom.collapsed, custom.id.clone())
+                };
+                let header_focus = focus::handle(key.clone(), -1, window, cx);
             div()
-                .tab_group()
-                .px(px(8.))
                 .flex()
                 .flex_col()
                 .child(
@@ -1070,19 +1159,51 @@ impl Render for HomeSidebar {
                 )
                 .when(!collapsed, |d| d.child(div().pt(px(4.)).child(body)))
         };
-        let project_rows = if self.projects.is_empty() {
-            sidebar_empty("No projects", cx).into_any_element()
-        } else {
-            self.project_rows(cx)
+        let project_rows = match self.projects_state {
+            ListState::Loading => sidebar_empty("Loading projects…", cx).into_any_element(),
+            ListState::Failed => load_error::<RetryProjects>(
+                "Projects couldn't be loaded",
+                "retry-projects",
+                window,
+                cx,
+            ),
+            ListState::Ready if self.projects.is_empty() => {
+                sidebar_empty("No projects", cx).into_any_element()
+            }
+            ListState::Ready => self.project_rows(cx),
         };
         let projects = section(0, "Projects".into(), project_rows, window, cx);
         let recents = section(1, "Recents".into(), recents, window, cx);
         let pinned = pinned.map(|rows| section(2, "Pinned".into(), rows, window, cx));
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(16.))
+                .px(px(8.))
+                .children(pinned)
+                .child(projects)
+                .children((0..self.sections.len()).map(|index| {
+                    let body = self.custom_body(index, window, cx);
+                    section(
+                        self.collapsed.len() + index,
+                        self.sections[index].title.clone(),
+                        body,
+                        window,
+                        cx,
+                    )
+                }))
+                .child(recents)
+                .into_any_element()
+        };
         div()
             .size_full()
             .flex()
             .flex_col()
-            .child(home_sidebar_header(!self.unread.is_empty(), cx))
+            .child(home_sidebar_header(
+                !self.unread.is_empty(),
+                self.activity_clock.is_some(),
+                cx,
+            ))
             .child(
                 // `overflow-y-auto`: the sections scroll under the header and clip at its
                 // bottom edge. The extent ends 16 px past Recents: its wrapper's `pb-4`
@@ -1095,22 +1216,9 @@ impl Render for HomeSidebar {
                     .track_scroll(&self.scroll)
                     .flex()
                     .flex_col()
-                    .gap(px(16.))
                     .pt(px(4.))
                     .pb(px(16.))
-                    .children(pinned)
-                    .child(projects)
-                    .children((0..self.sections.len()).map(|index| {
-                        let body = self.custom_body(index, window, cx);
-                        section(
-                            self.collapsed.len() + index,
-                            self.sections[index].title.clone(),
-                            body,
-                            window,
-                            cx,
-                        )
-                    }))
-                    .child(recents),
+                    .child(contents),
             )
             .children(
                 self.menu
@@ -1120,6 +1228,40 @@ impl Render for HomeSidebar {
             )
             .children(self.worktree_tip.then(|| self.worktree_tooltip_element(cx)))
     }
+}
+
+fn load_error<A: Action + Default>(
+    label: &'static str,
+    id: &'static str,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let retry = focus::handle(id, 0, window, cx);
+    div()
+        .px(px(8.))
+        .py(px(6.))
+        .flex()
+        .flex_col()
+        .items_start()
+        .gap(px(8.))
+        .child(text(label, 14., 21., 430., cx.theme().text_tertiary))
+        .child(focus::ring(
+            div()
+                .id(id)
+                .role(gpui::Role::Button)
+                .aria_label("Retry")
+                .px(px(8.))
+                .py(px(4.))
+                .rounded(px(6.))
+                .bg(cx.theme().ghost_hover)
+                .child(text("Retry", 12., 18., 430., cx.theme().text_default_nav))
+                .on_click(crate::dispatch::<A>),
+            &retry,
+            px(6.),
+            px(2.),
+            cx,
+        ))
+        .into_any_element()
 }
 
 /// What a Recents row ends in: the `Working` spinner at `animate-spin` angle (degrees) while a

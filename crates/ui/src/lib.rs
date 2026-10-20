@@ -35,6 +35,7 @@ actions!(
     [
         /// Show or hide the sidebar panel.
         ToggleSidebar,
+        ToggleActivity,
         /// Go to Home with an empty composer.
         NewChat,
         GoBack,
@@ -514,7 +515,7 @@ impl Render for EmptySidebar {
             .size_full()
             .flex()
             .flex_col()
-            .child(home_sidebar_header(false, cx))
+            .child(home_sidebar_header(false, false, cx))
             .child(
                 div()
                     .flex_1()
@@ -572,8 +573,15 @@ pub fn home_shell(_: &mut Window, cx: &mut App) -> AnyView {
 
 /// Top of the Home sidebar: `Codex ⌄` mode switch, activity bell and search, then the
 /// `New chat` and `Your dot` rows. With `unread` chats the bell carries the blue dot.
-pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
+pub fn home_sidebar_header(unread: bool, activity: bool, cx: &App) -> Div {
     let t = cx.theme();
+    let activity_label = if activity {
+        "Turn off activity view"
+    } else if unread {
+        "View activity, needs attention"
+    } else {
+        "View activity"
+    };
     let keyboard_ring = |inset| {
         move |style: gpui::StyleRefinement| {
             style.shadow(vec![gpui::BoxShadow {
@@ -648,13 +656,21 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
                         icon::icon(
                             if unread { "bell-unread" } else { "bell" },
                             16.,
-                            t.text_tertiary,
+                            if activity {
+                                t.info_solid
+                            } else {
+                                t.text_tertiary
+                            },
                         ),
                         t,
                     )
                     .tab_index(0)
-                    .focus_visible(keyboard_ring(false)),
-                    "View activity",
+                    .role(gpui::Role::Button)
+                    .aria_label(activity_label)
+                    .focus_visible(keyboard_ring(false))
+                    .when(activity, |d| d.bg(t.info_solid.opacity(0.1)))
+                    .on_click(dispatch::<ToggleActivity>),
+                    activity_label,
                     Some("⌥⌘U"),
                     Side::Bottom,
                 ))
