@@ -72,6 +72,7 @@ Repeated native Stop actions share one pending interrupt for each thread and tur
 
 The app-server sends `mcpServer/elicitation/request` as a server-originated request.
 Keep the enclosing `id`, `threadId`, and any supplied `turnId` unchanged.
+Only requests whose `serverName` is `lcu` use the native Computer Use approval card.
 Native app approval has this payload shape; retain all other supplied fields:
 
 ```json
@@ -116,6 +117,8 @@ Never send command-approval `{ "decision": ... }` values for an elicitation requ
 Never approve the agent's host application.
 Keep the upstream relay guard active.
 Other form schemas remain with the existing request-form implementation.
+Turn-bound LCU approvals leave the queue when that turn completes.
+Standalone requests remain until they receive an answer or the server resolves them.
 
 ## Host readiness and settings
 
