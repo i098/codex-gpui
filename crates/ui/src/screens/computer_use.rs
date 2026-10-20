@@ -7,8 +7,8 @@ use crate::{composer::popover, focus, icon::icon, text};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use gpui::{
     AnyElement, App, Context, Div, FocusHandle, Global, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window,
-    div, img, prelude::FluentBuilder as _, px,
+    KeyDownEvent, ParentElement, Render, ScrollHandle, SharedString, StatefulInteractiveElement,
+    Styled, Window, div, img, prelude::FluentBuilder as _, px,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -112,6 +112,8 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
             removal: None,
             layer: Layer::default(),
             modal_focus: cx.focus_handle(),
+            scroll: ScrollHandle::new(),
+            composited: false,
         }
     });
     page.into_any_element()
@@ -122,6 +124,8 @@ struct ComputerUse {
     removal: Option<AppApproval>,
     layer: Layer,
     modal_focus: FocusHandle,
+    scroll: ScrollHandle,
+    composited: bool,
 }
 
 impl ComputerUse {
@@ -191,7 +195,7 @@ impl ComputerUse {
         cx: &mut Context<Self>,
     ) -> Vec<Div> {
         let t = cx.theme().clone();
-        match &state.plugin {
+        let mut rows = match &state.plugin {
             Load::Loading => vec![message("Loading plugins…", &t)],
             Load::Failed(error) => vec![row(
                 error.clone(),
@@ -252,7 +256,10 @@ impl ComputerUse {
                             .child(on_card(
                                 12.5,
                                 shapes::Corner::Squircle,
-                                t.background_panel,
+                                gpui::Hsla {
+                                    a: 0.,
+                                    ..t.background_panel
+                                },
                                 Some(t.border),
                             ))
                             .flex()
@@ -265,8 +272,12 @@ impl ComputerUse {
                     &t,
                 )]
             }
-            Load::Ready(_) => vec![message("Computer Use plugins unavailable", &t)],
+            Load::Ready(_) => Vec::new(),
+        };
+        if matches!(state.plugin, Load::Ready(_)) {
+            rows.push(chrome_row(&t));
         }
+        rows
     }
 
     fn approvals(
@@ -574,6 +585,16 @@ impl Render for ComputerUse {
             .then_some(state.sound)
             .flatten()
             .map(|mode| self.sound(mode, state.pending, window, cx));
+        let view = cx.entity().downgrade();
+        window.on_next_frame(move |_, cx| {
+            let _ = view.update(cx, |this, cx| {
+                let composited = this.scroll.max_offset().y > px(0.);
+                if this.composited != composited {
+                    this.composited = composited;
+                    cx.notify();
+                }
+            });
+        });
         div().size_full().relative().flex().flex_col()
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 if event.keystroke.key == "escape" {
@@ -583,7 +604,9 @@ impl Render for ComputerUse {
                 }
             }))
             .child(div().h(px(46.)).flex_none())
-            .child(div().id("computer-use-page").flex_1().overflow_y_scroll().layer()
+            .child(div().id("computer-use-page").flex_1().overflow_y_scroll()
+                .track_scroll(&self.scroll)
+                .when(self.composited, |d| d.layer())
                 .child(probe(&self.layer))
                 .child(div().pt(px(16.)).pb(px(1.))
                     .child(div().w_full().max_w(px(768.)).mx_auto().px(px(20.))
@@ -592,11 +615,11 @@ impl Render for ComputerUse {
                             .child(text("Manage how ChatGPT uses other applications on your computer", 14., 24., 430., t.text_secondary)))))
                 .child(div().w_full().max_w(px(768.)).mx_auto().p(px(20.))
                     .flex().flex_col().gap(px(40.))
-                    .child(group("Control", control, &self.layer, &t))
+                    .child(group("Control", control, self.composited.then_some(&self.layer), &t))
                     .children(state.permission_guidance.as_ref().map(|guidance| row(guidance.clone(), None, None,
                         self.action("computer-use-permissions", "Open System Settings", ComputerUseAction::OpenPermissions, state.pending, window, cx), &t)))
                     .children(state.error.as_ref().map(|error| message(error.clone(), &t)))
-                    .children(approvals.map(|rows| group("Always-allowed apps", rows, &self.layer, &t)))
+                    .children(approvals.map(|rows| group("Always-allowed apps", rows, self.composited.then_some(&self.layer), &t)))
                     .children(sound.map(|menu| div().flex().child(menu)))))
             .children(self.removal.as_ref().map(|app| self.confirmation(app, &state, window, cx)))
     }
@@ -630,14 +653,98 @@ fn row(
         .child(control)
 }
 
+fn chrome_row(t: &Theme) -> Div {
+    // ponytail: no browser host service yet; retain the original not-installed state.
+    let chrome = icon("computer-use-chrome", 38., t.text);
+    div()
+        .min_h(px(60.))
+        .px(px(16.))
+        .py(px(12.))
+        .flex()
+        .items_center()
+        .gap(px(24.))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .child(
+                    div()
+                        .size(px(40.))
+                        .relative()
+                        .p(px(1.))
+                        .child(on_card(
+                            12.5,
+                            shapes::Corner::Squircle,
+                            gpui::Hsla {
+                                a: 0.,
+                                ..t.background_panel
+                            },
+                            Some(t.border),
+                        ))
+                        .child(chrome),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.))
+                        .child(text("Google Chrome", 13., 18.571_428, 500., t.text))
+                        .child(
+                            div().h(px(16.5)).relative().child(
+                                div()
+                                    .absolute()
+                                    .top(px(0.5))
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(8.))
+                                    .child(div().size(px(8.)).relative().child(on_card(
+                                        9999.,
+                                        shapes::Corner::Round,
+                                        t.text_error,
+                                        None,
+                                    )))
+                                    .child(text(
+                                        "Browser extension not installed",
+                                        12.,
+                                        16.,
+                                        430.,
+                                        t.text_secondary,
+                                    )),
+                            ),
+                        ),
+                ),
+        )
+        .child(div())
+}
+
 fn message(message: impl Into<SharedString>, t: &Theme) -> Div {
     div()
         .p(px(16.))
         .child(text(message, 13., 18.571_428, 430., t.text_secondary))
 }
 
-fn group(title: &'static str, rows: Vec<Div>, layer: &Layer, t: &Theme) -> Div {
+fn group(title: &'static str, rows: Vec<Div>, layer: Option<&Layer>, t: &Theme) -> Div {
     let last = rows.len().saturating_sub(1);
+    let surface = match layer {
+        Some(layer) => deco(
+            layer,
+            20.,
+            shapes::Corner::Squircle,
+            t.background_panel,
+            Some(t.border),
+        ),
+        None => on_card(
+            20.,
+            shapes::Corner::Squircle,
+            t.background_panel,
+            Some(t.border),
+        ),
+    };
     div()
         .flex()
         .flex_col()
@@ -653,13 +760,7 @@ fn group(title: &'static str, rows: Vec<Div>, layer: &Layer, t: &Theme) -> Div {
             div()
                 .relative()
                 .p(px(1.))
-                .child(deco(
-                    layer,
-                    20.,
-                    shapes::Corner::Squircle,
-                    t.background_panel,
-                    Some(t.border),
-                ))
+                .child(surface)
                 .child(crate::rounded_clip(
                     px(19.),
                     shapes::Corner::Squircle,
@@ -742,6 +843,8 @@ mod tests {
                 removal: None,
                 layer: Layer::default(),
                 modal_focus: cx.focus_handle(),
+                scroll: ScrollHandle::new(),
+                composited: false,
             })
         });
         let window = cx
