@@ -85,8 +85,32 @@ impl Composer {
                     .when(open, |d| d.invisible()),
             )
             .when(model.is_some(), |d| {
+                let effort = effort_label(&self.effort);
+                let run = TextRun {
+                    len: effort.len(),
+                    font: gpui::Font {
+                        weight: gpui::FontWeight(400.),
+                        ..gpui::font(crate::SANS)
+                    },
+                    color: t.text_tertiary,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                };
+                let line = window
+                    .text_system()
+                    .shape_line(effort.into(), px(13.), &[run], None);
+                let (width, offset) = effort_viewport(line.width, window.scale_factor());
                 d.child(
-                    label(effort_label(&self.effort).to_string(), t.text_tertiary)
+                    div()
+                        .w(width)
+                        .flex()
+                        .child(
+                            label(effort, t.text_tertiary)
+                                .flex_none()
+                                .relative()
+                                .left(offset),
+                        )
                         .when(open, |d| d.invisible()),
                 )
             })
@@ -396,5 +420,34 @@ impl Composer {
             .pb(px(8.))
             .child(left)
             .child(right)
+    }
+}
+
+fn effort_viewport(glyph_width: Pixels, scale: f32) -> (Pixels, Pixels) {
+    let units = f64::from(scale) * 64.;
+    let measured = (f64::from(f32::from(glyph_width)) * units).ceil() / units;
+    // CSS serializes six significant digits before assigning the viewport width.
+    let precision = 10_f64.powi(5 - measured.max(1.).log10().floor() as i32);
+    let serialized = (measured * precision).round() / precision;
+    let width = (serialized * units).floor() / units;
+    let offset = (((width - measured) / 2.) * units).floor() / units;
+    (px(width as f32), px(offset as f32))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn effort_viewport_keeps_css_width_round_trip() {
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        assert_eq!(
+            effort_viewport(px(30.506_836), 2.),
+            (px(30.5), px(-1. / 128.))
+        );
+        assert_eq!(effort_viewport(px(74.610_35), 2.), (px(74.617_19), px(0.)));
     }
 }

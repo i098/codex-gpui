@@ -365,6 +365,7 @@ Utility labels collapse at a 475 px content width; the permission label collapse
 The macOS overlay-scrollbar layout reserves no horizontal gutter.
 At 600 px the utility, permission and model labels remain visible; at 767 px the utility and permission labels collapse.
 The collapsed sidebar uses the original short-divider icon rather than the open-sidebar icon.
+The effort label uses the original measured viewport width and fixed-point centering.
 The native checks cover the 600, 767 and 1280 px layouts, the folder action, and the saved closed-sidebar state.
 
 The native-folder substitute in rows 4 and 7 stays unchanged.
