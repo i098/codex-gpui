@@ -887,10 +887,10 @@ The three resize widths are 1280 px (reference), 767 px (below the 768 px sideba
 | 5 | Streaming agent message | loading | Text grows by `item/agentMessage/delta`; `Working` / `Thinking` shimmer. | sites-end-resource-78b98c374310.js | [ ] |
 | 6 | Reasoning item | click | Toggles `Thought for {elapsed}` details. | `reasoningItem.*` | [ ] |
 | 7 | Command card | click | Expands command output; copy command/output buttons. | `toolSummaryForCmd.*`, `codex.shell.*` | [ ] |
-| 8 | File change card | click | `View changes` opens Changes panel; `Undo` / `Reapply`. | `codex.unifiedDiff.*` | [ ] |
+| 8 | File change card | click | `View changes` opens Changes panel; `Undo` / `Reapply`. Undo and View changes share the primary-ghost hover fill. | `codex.unifiedDiff.*` | [ ] |
 | 9 | Collapsed turn `Worked for {time}` | click | Expands hidden work items. | collapsed-turn-disclosure-5e77ff7d3908.js | [ ] |
 | 10 | User message hover | hover | Copy and Edit buttons appear. | `codex.userMessage.copyAriaLabel`, `editAriaLabel` | [ ] |
-| 11 | Assistant message hover | hover | Copy response, Fork chat from here. | `assistantMessageContent.*` | [ ] |
+| 11 | Assistant message hover | hover | Copy response, Fork chat from here. Action buttons use 4 px padding, a transparent 1 px border, and primary-ghost hover. | `assistantMessageContent.*` | [ ] |
 | 12 | `Scroll to bottom` | click | Jumps to the newest turn; hidden when at bottom. | `localConversation.scrollToBottomButton` | [ ] |
 | 13 | `⌘F` | shortcut | Opens find bar `Search chat…`; `⌘G` / `⌘⇧G` next/previous. | `codex.threadFindBar.*` | [ ] |
 | 14 | `⌘⇧A` | shortcut | Archives the chat. | command `archiveThread` | [ ] |

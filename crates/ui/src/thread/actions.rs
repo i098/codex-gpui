@@ -415,6 +415,7 @@ pub(super) fn action_row(
     let button_size = action_button_size(window);
     let action = |name: &'static str| {
         let color = t.text_tertiary;
+        let hover = t.ghost_hover;
         // `Icon` folds its own opacity into the color, so the hover sets the color.
         let icon = if last {
             icon(name, 16., color)
@@ -423,11 +424,14 @@ pub(super) fn action_row(
                 .group_hover(group.clone(), move |s| s.text_color(color))
         };
         div()
-            .size(button_size)
+            .p(px(4.))
+            .border(px(1.))
+            .border_color(rgba(0))
             .flex()
             .items_center()
             .justify_center()
             .rounded(Theme::RADIUS_MD)
+            .hover(move |style| style.bg(hover))
             .child(icon)
     };
     let (answer, turn_id) = (answer.to_owned(), turn_id.to_owned());

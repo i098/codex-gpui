@@ -744,6 +744,8 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
 impl Shell {
     fn rail(&self, t: &Theme, width: Pixels, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let (hover_bg, hover_fg) = (t.ghost_hover, t.text);
+        let scale = window.scale_factor();
+        let divider_height = px(scale.floor().max(1.) / scale);
         let selected = self.selected_rail;
         let home = self.main.entity_type() == std::any::TypeId::of::<screens::home::HomeMain>();
         // The list (`[6, 50, 40, 732]`) is a composited scroller: its items paint into the
@@ -863,7 +865,7 @@ impl Shell {
                     .child(rail_tip(item("plugins"), "Plugins"))
                     // Explore with its unread dot; it shows no tooltip.
                     .child(item("explore").child(dot(4.)))
-                    .child(div().w(px(24.)).h(px(1.)).bg(t.border))
+                    .child(div().w(px(24.)).h(divider_height).bg(t.border))
                     .child(rail_tip(item("rail-code-review"), "Code Review"))
                     .child(rail_tip(item("sites"), "Sites"))
                     .child(shapes::top_fade(px(16.))),

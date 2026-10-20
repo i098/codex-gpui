@@ -169,16 +169,35 @@ pub(super) fn diff_card(
     let card_bg = tones.card;
     // Include the painted border's device-pixel width in the label padding.
     let scale = window.scale_factor();
-    let border = px(scale.floor().max(1.) / scale);
-    let button = |label: &'static str, decoration: Option<gpui::AnyElement>| {
+    let border_width = px(scale.floor().max(1.) / scale);
+    let button = |label: &'static str, fill: Hsla, border: Option<Hsla>| {
+        let hover = t.ghost_hover;
         div()
             .relative()
             .h(px(28.))
             .flex()
             .items_center()
             .gap(px(4.))
-            .px(px(8.) + border)
-            .children(decoration)
+            .px(px(8.) + border_width)
+            .text_color(fill)
+            .hover(move |style| style.text_color(hover))
+            .child(
+                canvas(
+                    |_, _, _| (),
+                    move |bounds, (), window, cx| {
+                        shapes::paint(
+                            &shapes::Decoration {
+                                radius: Corners::all(Theme::RADIUS_LG),
+                                corner: shapes::Corner::Squircle,
+                                fill: Some(window.text_style().color),
+                                border: border.map(|color| (px(1.), color)),
+                                ..Default::default()
+                            },
+                            None, bounds, window, cx,
+                        );
+                    },
+                ).absolute().inset_0(),
+            )
             .child(measured(window, label, 13., 18., 430., t.text, None))
     };
     Some(
@@ -243,7 +262,7 @@ pub(super) fn diff_card(
                             .gap(px(8.))
                             .child({
                                 let turn_id = turn_id.to_owned();
-                                button("Undo", None)
+                                button("Undo", rgba(0).into(), None)
                                     .child(icon("thread-undo", 14., t.text))
                                     .id("undo-turn")
                                     .on_click(move |_, window, cx| {
@@ -257,22 +276,7 @@ pub(super) fn diff_card(
                             // translucent border into one transparency layer (shapes' clip
                             // layer op), rasterized in the scroller's layer like the card.
                             .child(
-                                button(
-                                    "View changes",
-                                    Some(
-                                        div()
-                                            .absolute()
-                                            .inset_0()
-                                            .child(shapes::decoration(shapes::Decoration {
-                                                radius: Corners::all(Theme::RADIUS_LG),
-                                                corner: shapes::Corner::Squircle,
-                                                fill: Some(tones.secondary_button),
-                                                border: Some((px(1.), t.border)),
-                                                ..Default::default()
-                                            }))
-                                            .into_any_element(),
-                                    ),
-                                )
+                                button("View changes", tones.secondary_button, Some(t.border))
                                 .id("view-changes")
                                 .on_click(crate::dispatch::<crate::OpenChangesPanel>),
                             ),

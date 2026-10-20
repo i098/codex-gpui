@@ -84,6 +84,21 @@ fn zoom_preserves_draft_focus_and_scaled_pointer_targets() -> Result<()> {
             "zoomed text row: {first_bright_row:?}, expected {expected}"
         );
     }
+    let undo_before = image.get_pixel(2050, 770).0;
+    fx.hover((1025., 385.))?;
+    let undo_image = fx.shot()?;
+    let undo_hover = undo_image.get_pixel(2050, 770).0;
+    ensure!(undo_hover != undo_before, "Undo did not show its hover background");
+    fx.hover((1109., 385.))?;
+    let changes_image = fx.shot()?;
+    let changes_hover = changes_image.get_pixel(2218, 770).0;
+    ensure!(changes_hover == undo_hover, "card hover fills differ: {undo_hover:?} vs {changes_hover:?}");
+    if let Some(directory) = std::env::var_os("CGX_SHELL_PROOF") {
+        for (name, image) in [("native-undo-hover.png", &undo_image), ("native-changes-hover.png", &changes_image)] {
+            image.save(std::path::Path::new(&directory).join(name))?;
+        }
+    }
+    fx.hover((768., 6.))?;
     fx.action(Box::new(ui::OpenScheduled))?;
     fx.click((90.5, 24.2))?;
     ensure!(
