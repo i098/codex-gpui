@@ -43,6 +43,7 @@ mod automation_schedule;
 pub mod computer_use;
 pub mod computer_use_native;
 mod git;
+pub mod git_pr;
 mod projectless;
 pub(crate) mod run_now;
 
@@ -1113,7 +1114,7 @@ impl Host for LocalHost {
             | "git-commit-status" | "git-commit-diff" | "git-commit" | "git-push"
             | "git-checkout" => git::fetch(endpoint, &params)?,
             "create-worktree" => self.create_worktree(&params)?,
-            "set-worktree-owner-thread" => {
+            "set-worktree-owner-thread" | "worktree-set-owner-thread" => {
                 let worktree = params["worktree"].as_str().context("missing worktree")?;
                 let thread = params["conversationId"]
                     .as_str()

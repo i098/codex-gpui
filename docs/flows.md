@@ -666,6 +666,20 @@ The scenario checks real branch refs, retained file contents, commit recovery, a
 It also checks an exact tag checkout followed by native reattachment, a real `heads/main` branch, and committing dirty detached work.
 Its thread data uses replay fixtures, not a live installed-account session.
 
+### Native worktree ownership and GitHub process transport
+
+`LocalHost` accepts the native `worktree-set-owner-thread` request and the Git worker's `set-worktree-owner-thread` request.
+Both persist the original `codex-thread.json` format in a linked worktree's Git directory.
+The main checkout is not a valid ownership target.
+`worktree_handoff::native_owner_request_persists_only_in_a_linked_worktree` checks the stored owner and the rejected main checkout.
+
+`host::git_pr::execute` runs an argv vector through the connected app-server's `process/spawn` method.
+It subscribes before spawning, matches `process/exited` by handle, and returns the exit code, stdout, stderr, and capture-limit flags.
+The caller supplies an absolute working directory and a timeout in milliseconds.
+The transport disables Git and GitHub prompts and does not run a local shell.
+Connection failures and process-spawn failures remain errors.
+The original bundled app-server smoke checked concurrent handles, separate stdout and stderr, and a nonzero exit code.
+
 ## 14.7 Settings, login and onboarding
 
 A settings row reports its change to `Root`.
