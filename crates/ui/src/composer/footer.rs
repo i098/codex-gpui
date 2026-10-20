@@ -10,7 +10,11 @@ impl Composer {
             .flex()
             .items_center()
             .gap(px(4.))
-            .child(tabular(text(model_label, 13., 18., 400., t.text)).when(open, |d| d.invisible()))
+            .child(
+                tabular(text(model_label, 13., 18., 400., t.text))
+                    .when(self.docked, |d| d.top_layer())
+                    .when(open, |d| d.invisible()),
+            )
             .when(model.is_some(), |d| {
                 d.child(
                     label(effort_label(&self.effort).to_string(), t.text_tertiary)
@@ -136,13 +140,16 @@ impl Composer {
                             .gap(px(4.))
                             .child(footer_icon("permissions", t.text_tertiary))
                             .when(self.footer_width > SM_WIDTH, |d| {
-                                d.child(text(
-                                    self.permission.short_label(),
-                                    13.,
-                                    18.,
-                                    400.,
-                                    t.text_tertiary,
-                                ))
+                                d.child(
+                                    text(
+                                        self.permission.short_label(),
+                                        13.,
+                                        18.,
+                                        400.,
+                                        t.text_tertiary,
+                                    )
+                                    .when(self.docked, |d| d.top_layer()),
+                                )
                             })
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.toggle_menu(Menu::Permissions, window, cx)
