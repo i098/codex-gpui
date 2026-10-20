@@ -380,8 +380,10 @@ MCP elicitations and nonblocking questions remain pending until explicit resolut
 Unsupported question and permission requests receive empty-denial responses.
 Skipping an optional final choice submits the answers from earlier fields.
 Enter retains draft submission for command and file-change approvals.
-The original reference frames use the extracted Codex renderer at 1280x832 and scale 2.
-The revised native replay and appearance approval remain pending.
+The reference frames use the pinned original renderer on macOS, with native fonts, at 1280x832 and scale 2.
+The native request replay covers numeric bounds, pointer steps, and keyboard stepping after a pointer step.
+Plain input fields keep a stable keyboard context across request and focus changes.
+The appearance packet remains held until the remaining visible differences are resolved.
 
 Native Computer Use app approvals use this queue and retain the original request, thread, and turn IDs.
 Only the registered `lcu` server can use the native card.

@@ -26,10 +26,10 @@ use bridge::types::{
     TurnNotification, TurnStatus, UserInput,
 };
 use gpui::{
-    Action, AnyView, App, Bounds, ClipboardItem, Context, Corners, Div, FontWeight, Hsla, Image,
-    ImageFormat, IntoElement, ParentElement, Pixels, Render, Rgba, ScrollHandle, SharedString,
-    Size, Styled, Task, TextRun, TransformationMatrix, Window, canvas, div, font, prelude::*, px,
-    radians, relative, rgb, rgba, white,
+    Action, AnyView, App, Bounds, ClipboardItem, Context, Corners, Div, FontWeight, Hsla,
+    IntoElement, ParentElement, Pixels, Render, Rgba, ScrollHandle, SharedString, Size, Styled,
+    Task, TextRun, TransformationMatrix, Window, canvas, div, font, prelude::*, px, radians,
+    relative, rgb, rgba, white,
 };
 use theme::{ActiveTheme as _, Appearance, Theme};
 
@@ -1910,7 +1910,7 @@ impl Render for ThreadView {
         };
         // The thread fills the main panel: window minus titlebar (44) and bottom inset (4).
         let viewport = window.viewport_size();
-        let (width, height) = (f32::from(viewport.width), f32::from(viewport.height) - 48.);
+        let width = f32::from(viewport.width);
         let scale = window.scale_factor();
         let fade = |a: f32| Hsla { a, ..t.surface };
         let clear = gpui::transparent_black();
@@ -1969,14 +1969,27 @@ impl Render for ThreadView {
         .left_0()
         .size_full();
         // Fade above the composer's surface band (`-top-8`, `to top`).
-        let bottom_fade = skia_gradient(
-            &[(t.surface, 0.), (clear, 1.)],
-            t.surface,
-            (width, 32.),
-            (0., height - 146.),
-            true,
-            scale,
-        );
+        let surface_color = t.surface;
+        let bottom_fade = canvas(
+            move |bounds, window, _| {
+                gradient_image(
+                    &[(surface_color, 0.), (clear, 1.)],
+                    surface_color,
+                    (f32::from(bounds.size.width), f32::from(bounds.size.height)),
+                    (0., f32::from(bounds.top()) - 44.),
+                    true,
+                    window.scale_factor(),
+                )
+            },
+            |bounds, image, window, _| {
+                window
+                    .paint_image(bounds, bounds, Corners::default(), image, 0, false)
+                    .ok();
+            },
+        )
+        .w(px(width))
+        .h(px(32.))
+        .top_layer();
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
         let drag_focus = focus.clone();
         let this = cx.entity().downgrade();
@@ -2250,7 +2263,23 @@ pub fn skia_gradient(
     to_top: bool,
     scale: f32,
 ) -> gpui::Img {
-    static CACHE: LazyLock<Mutex<HashMap<u64, Arc<Image>>>> = LazyLock::new(Default::default);
+    gpui::img(gradient_image(stops, under, size, origin, to_top, scale))
+        .w(px(size.0))
+        .h(px(size.1))
+        .top_layer()
+        .object_fit(gpui::ObjectFit::Fill)
+}
+
+fn gradient_image(
+    stops: &[(Hsla, f32)],
+    under: Hsla,
+    size: (f32, f32),
+    origin: (f32, f32),
+    to_top: bool,
+    scale: f32,
+) -> Arc<gpui::RenderImage> {
+    static CACHE: LazyLock<Mutex<HashMap<u64, Arc<gpui::RenderImage>>>> =
+        LazyLock::new(Default::default);
     let dev = |v: f32| (v * scale).round().max(0.) as u32;
     let (w, h, ox, oy) = (dev(size.0), dev(size.1), dev(origin.0), dev(origin.1));
     let mut key = DefaultHasher::new();
@@ -2265,47 +2294,23 @@ pub fn skia_gradient(
         v.to_bits().hash(&mut key);
     }
     (w, h, ox, oy, to_top).hash(&mut key);
-    let image = CACHE
+    CACHE
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .entry(key.finish())
         .or_insert_with(|| {
-            Arc::new(Image::from_bytes(
-                ImageFormat::Pnm,
-                gradient_ppm(stops, under, (w, h), (ox, oy), to_top),
-            ))
+            let stops = premul_stops(stops);
+            let under = [u.r, u.g, u.b].map(|v| (v * 255.).round() as u32);
+            let image = image::RgbaImage::from_fn(w, h, |i, j| {
+                let [r, g, b, a] = gradient_px(&stops, h, (ox, oy), to_top, i, j);
+                let [r, g, b] = [(r, under[0]), (g, under[1]), (b, under[2])].map(|(c, under)| {
+                    (u32::from(c) + (under * (255 - u32::from(a)) + 127) / 255).min(255) as u8
+                });
+                image::Rgba([b, g, r, 255])
+            });
+            Arc::new(gpui::RenderImage::new([image::Frame::new(image)]))
         })
-        .clone();
-    gpui::img(image)
-        .w(px(size.0))
-        .h(px(size.1))
-        .top_layer()
-        .object_fit(gpui::ObjectFit::Fill)
-}
-
-/// Pixels of [`skia_gradient`] as a binary PPM.
-fn gradient_ppm(
-    stops: &[(Hsla, f32)],
-    under: Hsla,
-    (w, h): (u32, u32),
-    (ox, oy): (u32, u32),
-    to_top: bool,
-) -> Vec<u8> {
-    let stops = premul_stops(stops);
-    let u = Rgba::from(under);
-    let under = [u.r, u.g, u.b].map(|v| (v * 255.).round() as u32);
-    let mut out = format!("P6\n{w} {h}\n255\n").into_bytes();
-    out.reserve((w * h * 3) as usize);
-    for j in 0..h {
-        for i in 0..w {
-            let [r, g, b, a] = gradient_px(&stops, h, (ox, oy), to_top, i, j);
-            for (c, under) in [r, g, b].into_iter().zip(under) {
-                let c = u32::from(c) + (under * (255 - u32::from(a)) + 127) / 255;
-                out.push(c.min(255) as u8);
-            }
-        }
-    }
-    out
+        .clone()
 }
 
 /// `stops` of [`skia_gradient`] as `(premultiplied color, alpha, position)`.
@@ -2489,8 +2494,9 @@ mod tests {
             (fade(0.12), 0.6),
             (gpui::transparent_black(), 1.),
         ];
-        let ppm = gradient_ppm(&stops, s, (1871, 80), (0, 0), false);
-        let px = |x: usize, y: usize| ppm[ppm.len() - 1871 * 80 * 3 + (y * 1871 + x) * 3];
+        let image = gradient_image(&stops, s, (1871., 80.), (0., 0.), false, 1.);
+        let pixels = image.as_bytes(0).unwrap();
+        let px = |x: usize, y: usize| pixels[(y * 1871 + x) * 4 + 2];
         let rows: Vec<String> = [96, 116, 131]
             .iter()
             .map(|&y| {
@@ -2508,6 +2514,20 @@ mod tests {
                 "23,24,23,24,23,24,23,24"
             ]
         );
+    }
+
+    #[test]
+    fn transparent_gradient_preserves_background_color_channels() {
+        let clear = gpui::transparent_black();
+        let image = gradient_image(
+            &[(clear, 0.), (clear, 1.)],
+            rgb(0x123456).into(),
+            (1., 1.),
+            (0., 0.),
+            false,
+            1.,
+        );
+        assert_eq!(image.as_bytes(0).unwrap(), &[0x56, 0x34, 0x12, 0xff]);
     }
 
     #[test]
