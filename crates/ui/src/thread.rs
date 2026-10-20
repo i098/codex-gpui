@@ -2271,7 +2271,6 @@ pub fn skia_gradient(
 }
 
 const MAX_GRADIENT_IMAGES: usize = 16;
-
 fn gradient_image(
     stops: &[(Hsla, f32)],
     under: Hsla,
