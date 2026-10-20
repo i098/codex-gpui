@@ -56,6 +56,12 @@ static FORM_BODY_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
     std::sync::LazyLock::new(|| textsys::letter_spacing(-0.15));
 static FORM_TITLE_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
     std::sync::LazyLock::new(|| textsys::letter_spacing(-0.32));
+static FORM_MODEL_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
+    std::sync::LazyLock::new(|| {
+        let mut features = FORM_BODY_FEATURES.0.as_ref().clone();
+        features.push(("tnum".into(), 1));
+        gpui::FontFeatures(std::sync::Arc::new(features))
+    });
 
 #[derive(Clone, Debug)]
 pub struct Draft {
@@ -659,9 +665,13 @@ impl Editor {
                 handles.extend([
                     self.controls[AUTO_ARCHIVE].clone(),
                     self.controls[PROJECT].clone(),
-                    self.controls[MODEL].clone(),
-                    self.controls[EFFORT].clone(),
                 ]);
+                if self.execution.model_count() > 0 {
+                    handles.push(self.controls[MODEL].clone());
+                }
+                if self.execution.effort_count() > 0 {
+                    handles.push(self.controls[EFFORT].clone());
+                }
             } else {
                 handles.push(self.controls[THREAD].clone());
             }
@@ -957,6 +967,7 @@ impl Editor {
         t: &Theme,
         cx: &Context<Self>,
     ) -> Stateful<Div> {
+        let disabled = self.option_count(picker) == 0;
         let selected = (0..self.option_count(picker))
             .position(|index| self.option_label(picker, index).as_ref() == value)
             .unwrap_or(0);
@@ -986,6 +997,8 @@ impl Editor {
             .role(Role::Button)
             .aria_label(label)
             .aria_expanded(self.menu.is_some_and(|(open, _)| open == picker))
+            .aria_disabled(disabled)
+            .opacity(if disabled { 0.5 } else { 1. })
             .track_focus(&self.controls[control])
             .h(px(if setting { 28. } else { 40. }))
             .when(picker == Picker::Time, |d| d.w(px(20.)).flex_none())
@@ -998,20 +1011,25 @@ impl Editor {
             .gap(px(gap))
             .hover(|s| s.bg(t.ghost_hover))
             .when(!value.is_empty(), |d| {
-                d.child(text(
-                    value.to_owned(),
-                    14.,
-                    if setting { 18. } else { 20. },
-                    400.,
-                    color,
-                ))
+                d.child(
+                    text(
+                        value.to_owned(),
+                        14.,
+                        if setting { 18. } else { 20. },
+                        400.,
+                        color,
+                    )
+                    .when(picker == Picker::Model, |d| {
+                        d.font_features(FORM_MODEL_FEATURES.clone())
+                    }),
+                )
             })
             .when(picker == Picker::Trigger, |d| {
                 d.child(icon("automation-scheduled", 16., color))
             })
             .child(icon(icon_name, icon_size, icon_color))
             .on_click(cx.listener(move |this, _, window, cx| {
-                if !this.saving {
+                if !this.saving && !disabled {
                     this.controls[control].focus(window, cx);
                     this.menu = Some((picker, selected));
                     cx.notify();
@@ -1020,6 +1038,7 @@ impl Editor {
             }))
             .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
                 if !this.saving
+                    && !disabled
                     && this.menu.is_none()
                     && matches!(event.keystroke.key.as_str(), "enter" | "space" | "down")
                 {

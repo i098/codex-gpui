@@ -140,6 +140,7 @@ The local Trigger menu keeps Schedule active and explains why cloud-only Date an
 Advanced controls update notifications, new-chat or existing-chat execution, automatic archive, project, model, and effort.
 Switching an existing-chat task back to new-chat execution supplies its current local workspace.
 Model and effort choices come from app-server `model/list` and `config/read`; existing chats come from `thread/list`.
+Inherited model and effort values follow the original automation catalog precedence, not ordinary chat defaults.
 The editor saves those choices atomically through `automation-create` or `automation-update` and retains unrelated definition fields.
 Run `cargo test -p app --test task_create editor:: -- --test-threads=1` on macOS for the native editor, schedule, and Create menu checks.
 Run `cargo test -p app --test automation_run_now` for the `Run now` requests over a stdio app-server stub.

@@ -4,15 +4,23 @@ use serde_json::{Value, json};
 
 use crate::screens::sidebar::{Project, title};
 
+const LEGACY_MODEL: &str = "gpt-5.3-codex";
+const AUTOMATION_MODEL: &str = "gpt-6.1-sol";
+const DEFAULT_EFFORT: &str = "medium";
+
 struct ModelChoice {
     id: String,
+    source_label: String,
     label: SharedString,
     efforts: Vec<SharedString>,
+    default_effort: String,
 }
 
 pub(super) struct Execution {
     pub values: Value,
     changed: Vec<&'static str>,
+    inherited_model: bool,
+    inherited_effort: bool,
     models: Vec<ModelChoice>,
     default_model: Option<String>,
     projects: Vec<Project>,
@@ -38,6 +46,8 @@ impl Execution {
                 "localEnvironmentConfigPath": item["localEnvironmentConfigPath"],
             }),
             changed: Vec::new(),
+            inherited_model: item["model"].is_null(),
+            inherited_effort: item["reasoningEffort"].is_null(),
             models: Vec::new(),
             default_model: None,
             projects: Vec::new(),
@@ -54,23 +64,43 @@ impl Execution {
         config: &Value,
         cwd: &str,
     ) -> (bool, bool, bool) {
-        let mut visible = models.iter().filter(|model| !model.hidden);
+        let selected = self.values["model"].as_str();
+        let visible_model =
+            |model: &&Model| !model.hidden || Some(model.model.as_str()) == selected;
+        let mut visible = models.iter().filter(visible_model);
         let models_changed = self.models.iter().any(|saved| {
             visible.next().is_none_or(|model| {
-                saved.id != model.id
-                    || saved.label.as_ref() != model.display_name
+                saved.id != model.model
+                    || saved.source_label != model.display_name
+                    || saved.default_effort != model.default_reasoning_effort
                     || saved.efforts.iter().map(|effort| effort.as_ref()).ne(model
                         .supported_reasoning_efforts
                         .iter()
-                        .filter_map(|effort| effort["reasoningEffort"].as_str()))
+                        .filter_map(|effort| effort["reasoningEffort"].as_str())
+                        .filter(|effort| *effort != "persistent"))
             })
         }) || visible.next().is_some();
-        let default_model = config["model"].as_str().or_else(|| {
-            models
-                .iter()
-                .find(|model| model.is_default)
-                .map(|model| model.id.as_str())
-        });
+        let preferred = config["codex_automation_model_slug"]
+            .as_str()
+            .unwrap_or(AUTOMATION_MODEL);
+        let default_model = models
+            .iter()
+            .filter(visible_model)
+            .find(|model| model.model == preferred)
+            .or_else(|| {
+                models
+                    .iter()
+                    .filter(visible_model)
+                    .find(|model| model.is_default)
+            })
+            .or_else(|| {
+                models
+                    .iter()
+                    .filter(visible_model)
+                    .find(|model| model.model == AUTOMATION_MODEL)
+            })
+            .or_else(|| models.iter().find(visible_model))
+            .map(|model| model.model.as_str());
         let default_changed = self.default_model.as_deref() != default_model;
         let projects_changed = projects.is_some_and(|projects| {
             self.projects.iter().ne(projects
@@ -86,16 +116,19 @@ impl Execution {
         if models_changed {
             self.models = models
                 .iter()
-                .filter(|model| !model.hidden)
+                .filter(visible_model)
                 .map(|model| ModelChoice {
-                    id: model.id.clone(),
-                    label: model.display_name.clone().into(),
+                    id: model.model.clone(),
+                    source_label: model.display_name.clone(),
+                    label: crate::composer::model_label(&model.display_name).into(),
+                    default_effort: model.default_reasoning_effort.clone(),
                     efforts: model
                         .supported_reasoning_efforts
                         .iter()
                         .filter_map(|effort| {
                             effort["reasoningEffort"]
                                 .as_str()
+                                .filter(|value| *value != "persistent")
                                 .map(|value| value.to_owned().into())
                         })
                         .collect(),
@@ -125,6 +158,7 @@ impl Execution {
         if self.values["cwds"].as_array().is_none_or(Vec::is_empty) {
             self.values["cwds"] = json!([cwd]);
         }
+        self.resolve_model_settings();
         (
             models_changed || default_changed,
             projects_changed,
@@ -159,6 +193,7 @@ impl Execution {
         if kind == "cron" && !self.changed.contains(&"cwds") {
             self.changed.push("cwds");
         }
+        self.resolve_model_settings();
     }
 
     pub fn toggle_archive(&mut self) {
@@ -182,78 +217,121 @@ impl Execution {
         values
     }
 
-    fn selected_model(&self) -> Option<&ModelChoice> {
-        if let Some(id) = self.values["model"].as_str() {
-            return self.models.iter().find(|model| model.id == id);
+    fn resolve_model_settings(&mut self) {
+        if !self.new_chat() {
+            return;
         }
-        self.models
-            .iter()
-            .find(|model| Some(model.id.as_str()) == self.default_model.as_deref())
-            .or_else(|| self.models.first())
+        if self.models.is_empty() {
+            if self.inherited_model && self.values["model"] != LEGACY_MODEL {
+                self.set("model", json!(LEGACY_MODEL));
+            }
+            if self.inherited_effort && self.values["reasoningEffort"] != DEFAULT_EFFORT {
+                self.set("reasoningEffort", json!(DEFAULT_EFFORT));
+            }
+            return;
+        }
+        let requested = if self.inherited_model {
+            None
+        } else {
+            self.values["model"].as_str()
+        };
+        let explicit = requested.and_then(|id| self.models.iter().find(|model| model.id == id));
+        let legacy = requested
+            .is_none()
+            .then(|| self.models.iter().find(|model| model.id == LEGACY_MODEL))
+            .flatten();
+        let model = explicit
+            .or(legacy)
+            .or_else(|| {
+                self.models
+                    .iter()
+                    .find(|model| Some(model.id.as_str()) == self.default_model.as_deref())
+            })
+            .unwrap_or(&self.models[0]);
+        let requested_effort = if self.inherited_effort {
+            None
+        } else {
+            self.values["reasoningEffort"].as_str()
+        };
+        let wanted = if explicit.is_some() {
+            requested_effort
+        } else if legacy.is_some() {
+            requested_effort.or(Some(DEFAULT_EFFORT))
+        } else {
+            None
+        };
+        let effort = wanted
+            .filter(|value| model.efforts.iter().any(|effort| effort.as_ref() == *value))
+            .or_else(|| {
+                model
+                    .efforts
+                    .iter()
+                    .find(|effort| effort.as_ref() == model.default_effort)
+                    .map(|effort| effort.as_ref())
+            })
+            .or_else(|| model.efforts.first().map(|effort| effort.as_ref()));
+        let model_change =
+            (self.values["model"].as_str() != Some(model.id.as_str())).then(|| json!(model.id));
+        let effort_change = (self.values["reasoningEffort"].as_str() != effort)
+            .then(|| effort.map_or(Value::Null, |effort| json!(effort)));
+        if let Some(value) = model_change {
+            self.set("model", value);
+        }
+        if let Some(value) = effort_change {
+            self.set("reasoningEffort", value);
+        }
+    }
+
+    fn selected_model(&self) -> Option<&ModelChoice> {
+        self.values["model"]
+            .as_str()
+            .and_then(|id| self.models.iter().find(|model| model.id == id))
     }
 
     pub fn model_count(&self) -> usize {
-        self.models.len() + 1
+        self.models.len()
     }
     pub fn model_label(&self, index: usize) -> SharedString {
-        if index == 0 {
-            "Default".into()
-        } else {
-            self.models[index - 1].label.clone()
-        }
+        self.models[index].label.clone()
     }
     pub fn model_value(&self) -> SharedString {
         self.values["model"].as_str().map_or_else(
-            || "Default".into(),
+            || "Select model".into(),
             |id| {
-                self.models
-                    .iter()
-                    .find(|model| model.id == id)
-                    .map_or_else(|| id.to_owned().into(), |model| model.label.clone())
+                self.models.iter().find(|model| model.id == id).map_or_else(
+                    || crate::composer::model_label(id).into(),
+                    |model| model.label.clone(),
+                )
             },
         )
     }
     pub fn select_model(&mut self, index: usize) {
-        self.set(
-            "model",
-            if index == 0 {
-                Value::Null
-            } else {
-                json!(self.models[index - 1].id)
-            },
-        );
-        self.set("reasoningEffort", Value::Null);
+        self.inherited_model = false;
+        self.inherited_effort = false;
+        self.set("model", json!(self.models[index].id));
+        self.resolve_model_settings();
     }
 
     pub fn effort_count(&self) -> usize {
-        self.selected_model()
-            .map_or(1, |model| model.efforts.len() + 1)
+        self.selected_model().map_or(0, |model| model.efforts.len())
     }
     pub fn effort_label(&self, index: usize) -> SharedString {
-        if index == 0 {
-            "Default".into()
-        } else {
-            crate::composer::effort_label(
-                self.selected_model().unwrap().efforts[index - 1].as_ref(),
-            )
+        crate::composer::effort_label(self.selected_model().unwrap().efforts[index].as_ref())
             .to_owned()
             .into()
-        }
     }
     pub fn effort_value(&self) -> SharedString {
         self.values["reasoningEffort"].as_str().map_or_else(
-            || "Default".into(),
+            || "Unavailable".into(),
             |value| crate::composer::effort_label(value).to_owned().into(),
         )
     }
     pub fn select_effort(&mut self, index: usize) {
+        self.inherited_model = false;
+        self.inherited_effort = false;
         self.set(
             "reasoningEffort",
-            if index == 0 {
-                Value::Null
-            } else {
-                json!(self.selected_model().unwrap().efforts[index - 1].as_ref())
-            },
+            json!(self.selected_model().unwrap().efforts[index].as_ref()),
         );
     }
 
@@ -366,7 +444,7 @@ mod tests {
     #[test]
     fn unchanged_model_options_keep_the_picker_open() {
         let mut models = vec![Model {
-            id: "gpt-6-astra".into(),
+            id: "catalog-entry".into(),
             model: "gpt-6-astra".into(),
             display_name: "Astra".into(),
             description: String::new(),
@@ -380,7 +458,8 @@ mod tests {
             execution.set_options(&models, &[], None, &Value::Null, "/tmp/project"),
             (true, false, false)
         );
-        execution.select_model(1);
+        execution.select_model(0);
+        assert_eq!(execution.values["model"], "gpt-6-astra");
         assert_eq!(
             execution.set_options(&models, &[], None, &Value::Null, "/tmp/project"),
             (false, false, false)
@@ -391,7 +470,68 @@ mod tests {
             (true, false, false)
         );
         assert_eq!(execution.model_value().as_ref(), "Updated Astra");
-        execution.select_effort(1);
+        execution.select_effort(0);
         assert_eq!(execution.changes()["reasoningEffort"], "high");
+    }
+
+    #[test]
+    fn inherited_values_follow_the_original_catalog_precedence() {
+        let model = |id: &str, default: bool, effort: &str| Model {
+            id: id.into(),
+            model: id.into(),
+            display_name: id.into(),
+            description: String::new(),
+            hidden: false,
+            default_reasoning_effort: effort.into(),
+            supported_reasoning_efforts: ["low", "medium", "high"]
+                .into_iter()
+                .map(|value| json!({"reasoningEffort":value}))
+                .collect(),
+            is_default: default,
+        };
+        let models = [
+            model("gpt-6.1-sol", true, "low"),
+            model("gpt-5.6-terra", false, "medium"),
+            model("gpt-5.3-codex", false, "low"),
+        ];
+        let config =
+            json!({"codex_automation_model_slug":"gpt-5.6-terra","model":"unrelated-chat-model"});
+        for (requested, effort, count, expected_model, expected_effort) in [
+            (None, None, 3, "gpt-5.3-codex", "medium"),
+            (None, None, 2, "gpt-5.6-terra", "medium"),
+            (None, None, 1, "gpt-6.1-sol", "low"),
+            (None, None, 0, "gpt-5.3-codex", "medium"),
+            (
+                Some("gpt-5.6-terra"),
+                Some("high"),
+                3,
+                "gpt-5.6-terra",
+                "high",
+            ),
+            (
+                Some("gpt-5.6-terra"),
+                Some("ultra"),
+                3,
+                "gpt-5.6-terra",
+                "medium",
+            ),
+            (Some("retired"), Some("high"), 2, "gpt-5.6-terra", "medium"),
+            (Some("gpt-5.3-codex"), None, 3, "gpt-5.3-codex", "low"),
+        ] {
+            let mut execution =
+                Execution::new(Some(&json!({"model":requested,"reasoningEffort":effort})));
+            execution.set_options(&models[..count], &[], None, &config, "/tmp/project");
+            assert_eq!(execution.values["model"], expected_model);
+            assert_eq!(execution.values["reasoningEffort"], expected_effort);
+        }
+        let mut arriving = Execution::new(None);
+        arriving.set_options(&models[..2], &[], None, &Value::Null, "/tmp/project");
+        assert_eq!(arriving.values["model"], "gpt-6.1-sol");
+        arriving.set_options(&models[..2], &[], None, &config, "/tmp/project");
+        assert_eq!(arriving.values["model"], "gpt-5.6-terra");
+        assert_eq!(arriving.values["reasoningEffort"], "medium");
+        arriving.select_model(0);
+        arriving.set_options(&models[..2], &[], None, &config, "/tmp/project");
+        assert_eq!(arriving.values["model"], "gpt-6.1-sol");
     }
 }
