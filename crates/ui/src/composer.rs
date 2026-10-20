@@ -223,9 +223,27 @@ pub fn bind_keys(cx: &mut App) {
     ]);
 }
 
-/// Efforts the model picker slider offers: the `enabled-reasoning-efforts` setting default
-/// (`low medium high xhigh ultra`) intersected with the model's supported efforts.
-const ENABLED_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "ultra"];
+/// Default `enabled-reasoning-efforts`; the first four levels are always available.
+pub const DEFAULT_REASONING_EFFORTS: [&str; 6] =
+    ["low", "medium", "high", "xhigh", "ultra", "persistent"];
+
+pub fn reasoning_effort_enabled(effort: &str, preferences: &Value) -> bool {
+    if DEFAULT_REASONING_EFFORTS[..4].contains(&effort) || effort == "persistent" {
+        return true;
+    }
+    preferences.as_array().map_or_else(
+        || DEFAULT_REASONING_EFFORTS.contains(&effort),
+        |values| values.iter().any(|value| value == effort),
+    )
+}
+
+fn model_efforts<'a>(model: &'a Model, preferences: &'a Value) -> impl Iterator<Item = &'a str> {
+    model
+        .supported_reasoning_efforts
+        .iter()
+        .filter_map(|value| value["reasoningEffort"].as_str())
+        .filter(move |effort| reasoning_effort_enabled(effort, preferences))
+}
 
 /// `composer.mode.local.reasoning.*.label`.
 pub fn effort_label(effort: &str) -> &str {
@@ -291,14 +309,8 @@ struct ModelOption {
 }
 
 impl ModelOption {
-    fn new(m: &Model) -> Self {
-        let efforts = m
-            .supported_reasoning_efforts
-            .iter()
-            .filter_map(|e| e["reasoningEffort"].as_str())
-            .filter(|e| ENABLED_EFFORTS.contains(e))
-            .map(String::from)
-            .collect();
+    fn new(m: &Model, preferences: &Value) -> Self {
+        let efforts = model_efforts(m, preferences).map(String::from).collect();
         Self {
             id: m.id.clone(),
             label: model_label(&m.display_name).into(),
@@ -778,7 +790,7 @@ impl Composer {
         self.models = models
             .iter()
             .filter(|m| !m.hidden)
-            .map(ModelOption::new)
+            .map(|model| ModelOption::new(model, &config["host"]["enabled-reasoning-efforts"]))
             .collect();
         let configured = config["model"].as_str();
         self.model = self
@@ -806,6 +818,25 @@ impl Composer {
         self.queue_mode = config["desktop"]["followUpQueueMode"] == "queue";
         if self.menu == Some(Menu::Models) {
             self.menu_focus.prepare(self.models.len(), cx);
+        }
+        cx.notify();
+    }
+
+    pub fn refresh_reasoning_efforts(
+        &mut self,
+        models: &[Model],
+        preferences: &Value,
+        cx: &mut Context<Self>,
+    ) {
+        for (option, model) in self
+            .models
+            .iter_mut()
+            .zip(models.iter().filter(|model| !model.hidden))
+        {
+            option.efforts.clear();
+            option
+                .efforts
+                .extend(model_efforts(model, preferences).map(String::from));
         }
         cx.notify();
     }
@@ -2145,6 +2176,51 @@ mod tests {
                 assert!(composer.queue_mode);
                 assert_eq!(composer.default_selection, (0, "medium".into()));
                 assert_eq!(composer.content, "Keep this draft");
+            });
+        });
+    }
+
+    #[test]
+    fn reasoning_preferences_update_existing_picker_without_resetting_selection() {
+        use gpui::{AppContext as _, HeadlessAppContext};
+        let models = vec![Model {
+            id: "model".into(),
+            model: "model".into(),
+            display_name: "Model".into(),
+            description: String::new(),
+            hidden: false,
+            default_reasoning_effort: "low".into(),
+            supported_reasoning_efforts: ["low", "medium", "high", "xhigh", "max", "ultra"]
+                .into_iter()
+                .map(|effort| serde_json::json!({"reasoningEffort": effort}))
+                .collect(),
+            is_default: true,
+        }];
+        let mut app = HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            std::sync::Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        app.update(|cx| {
+            let composer = cx.new(|cx| Composer::new("Do anything", false, cx));
+            composer.update(cx, |composer, cx| {
+                composer.set_models(
+                    &models,
+                    &serde_json::json!({"model": "model", "model_reasoning_effort": "medium"}),
+                    cx,
+                );
+                composer.refresh_reasoning_efforts(&models, &serde_json::json!(["max"]), cx);
+                assert_eq!(
+                    composer.current_model().unwrap().efforts,
+                    ["low", "medium", "high", "xhigh", "max"]
+                );
+                assert_eq!(composer.effort, "medium");
+                composer.refresh_reasoning_efforts(&models, &Value::Null, cx);
+                assert_eq!(
+                    composer.current_model().unwrap().efforts,
+                    ["low", "medium", "high", "xhigh", "ultra"]
+                );
+                assert_eq!(composer.default_selection, (0, "medium".into()));
             });
         });
     }

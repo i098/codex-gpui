@@ -42,6 +42,7 @@ use url::Url;
 mod automation_schedule;
 pub mod computer_use;
 pub mod computer_use_native;
+mod dependencies;
 mod git;
 mod projectless;
 pub(crate) mod run_now;
@@ -467,6 +468,7 @@ pub struct LocalHost {
     host_settings_path: PathBuf,
     computer_use_settings: Option<computer_use::ComputerUseSettings>,
     native_computer_use: Arc<computer_use_native::NativeComputerUse>,
+    dependencies: dependencies::Dependencies,
 }
 
 impl LocalHost {
@@ -475,6 +477,7 @@ impl LocalHost {
         Self {
             computer_use_settings: None,
             native_computer_use: Arc::new(computer_use_native::NativeComputerUse::new(&home)),
+            dependencies: dependencies::Dependencies::new(home.join("runtimes")),
             home,
             bridge: None,
             opener: "/usr/bin/open".into(),
@@ -507,6 +510,11 @@ impl LocalHost {
         self
     }
 
+    pub fn with_dependencies_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.dependencies = dependencies::Dependencies::new(root.into());
+        self
+    }
+
     pub fn from_env() -> Self {
         let mut host = Self::new(
             std::env::var_os("CODEX_HOME")
@@ -515,6 +523,10 @@ impl LocalHost {
                 .unwrap_or_else(|| {
                     PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".codex")
                 }),
+        ).with_dependencies_root(
+            PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
+                .join(".cache")
+                .join("codex-runtimes"),
         );
         host.computer_use_settings = std::env::var_os("HOME")
             .map(PathBuf::from)
@@ -1123,6 +1135,12 @@ impl Host for LocalHost {
                 json!({"success": true})
             }
             "open-file" => open_file(&self.opener, &params)?,
+            "open-config-toml" => open_config_toml(&self.opener, &params)?,
+            "primary-runtime-diagnose" => self
+                .dependencies
+                .state(params["probeExecutables"].as_bool().unwrap_or(false))?,
+            "primary-runtime-reinstall" => self.dependencies.reinstall()?,
+            "primary-runtime-cancel" => self.dependencies.cancel()?,
             "paths-exist" => {
                 let paths: Vec<String> =
                     serde_json::from_value(params.get("paths").cloned().unwrap_or(json!([])))?;
@@ -1186,8 +1204,28 @@ fn open_file(opener: &Path, params: &Value) -> Result<Value> {
         .with_context(|| format!("{} no longer exists", path.display()))?;
     ensure!(file.starts_with(&root), "file is outside the project");
     ensure!(file.is_file(), "{} is not a file", file.display());
+    launch_editor(opener, &file, params["target"].as_str())
+}
+
+fn open_config_toml(opener: &Path, params: &Value) -> Result<Value> {
+    let home = Path::new(params["codexHome"].as_str().context("missing Codex home")?);
+    ensure!(home.is_absolute(), "Codex home must be absolute");
+    let path = home.join("config.toml");
+    if !path.try_exists()? {
+        fs::create_dir_all(home)?;
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)?;
+    }
+    let file = path.canonicalize().context("resolve config.toml")?;
+    ensure!(file.is_file(), "config.toml is not a file");
+    launch_editor(opener, &file, params["target"].as_str())
+}
+
+fn launch_editor(opener: &Path, file: &Path, target: Option<&str>) -> Result<Value> {
     let mut command = std::process::Command::new(opener);
-    match params["target"].as_str() {
+    match target {
         None | Some("systemDefault") => {}
         Some(id) => {
             let app = EDITORS
@@ -1199,7 +1237,7 @@ fn open_file(opener: &Path, params: &Value) -> Result<Value> {
         }
     }
     let output = command
-        .arg(&file)
+        .arg(file)
         .stdin(std::process::Stdio::null())
         .output()
         .with_context(|| format!("run {}", opener.display()))?;
