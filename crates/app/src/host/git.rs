@@ -1232,7 +1232,7 @@ pub(super) fn create_worktree(
         if let Some((_, patch)) = &snapshot
             && !patch.is_empty()
         {
-            apply(&worktree.git_root, patch, false, false)?;
+            apply(&worktree.git_root, patch.as_bytes(), false, false)?;
         }
         prepare(
             &source,

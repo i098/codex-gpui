@@ -408,6 +408,7 @@ The Delete confirmation isolates its clipped content without clipping the outer 
 Cancel uses the primary-soft-alpha token, and the close icon preserves the original color-mix channels at 80% alpha.
 Confirmation buttons paint the focus outline before their fill and border.
 Pending-question file cards use the same Undo/Reapply state as other turn cards.
+Copied Markdown includes MCP activity labels, and failed MCP disclosures retain their foreground color.
 
 
 MO-36 uses `refs/interactions/ms4.json`, recorded with the original CSS classes in an isolated route1 Chrome context.

@@ -52,6 +52,7 @@ pub fn conversation_markdown(thread: &Thread) -> String {
                         .collect::<Vec<_>>()
                         .join("\n")
                 )),
+                Activity::Mcp(item) => Some(mcp_label(item)),
                 Activity::Reasoning { .. } | Activity::Running(_) => None,
             })
             .collect();
@@ -625,44 +626,45 @@ pub(super) fn activity(
     };
     // A row that opens `key`: its label whitens on hover, its 14 px chevron shows on hover and
     // points down while open.
-    let disclosure = |key: String, icon_name: &'static str, caption: String, is_open| {
-        let (label, w) = label(caption.clone(), text60);
-        let group = SharedString::from(format!("activity-group-{key}"));
-        // Group hover recolours text only on a stateful element: the run colour is fixed at
-        // layout, before this frame's group hitbox exists.
-        let label = label
-            .id(SharedString::from(format!("activity-summary-{key}")))
-            .group_hover(group.clone(), |s| s.text_color(t.text));
-        let chevron = if is_open {
-            "chevron-down"
-        } else {
-            "thread-chevron-right"
+    let disclosure =
+        |key: String, icon_name: &'static str, caption: String, color: Hsla, is_open| {
+            let (label, w) = label(caption.clone(), color);
+            let group = SharedString::from(format!("activity-group-{key}"));
+            // Group hover recolours text only on a stateful element: the run colour is fixed at
+            // layout, before this frame's group hitbox exists.
+            let label = label
+                .id(SharedString::from(format!("activity-summary-{key}")))
+                .group_hover(group.clone(), |s| s.text_color(t.text));
+            let chevron = if is_open {
+                "chevron-down"
+            } else {
+                "thread-chevron-right"
+            };
+            div()
+                .id(group.clone())
+                .group(group.clone())
+                .role(gpui::Role::Button)
+                .aria_label(caption)
+                .aria_expanded(is_open)
+                .focusable()
+                .tab_index(0)
+                .focus_visible(|s| s.shadow(focus_ring()))
+                .flex()
+                .items_center()
+                .gap(px(4.))
+                .child(row(icon_name, boxed(label.into_any_element(), w)))
+                .child(
+                    // `Icon` folds its opacity into the color, so the hover sets the color.
+                    icon(chevron, 14., text60.opacity(if is_open { 1. } else { 0. }))
+                        .group_hover(group, move |s| s.text_color(text60)),
+                )
+                .on_click(cx.listener(move |view, _, _, cx| {
+                    if !view.expanded.remove(&key) {
+                        view.expanded.insert(key.clone());
+                    }
+                    cx.notify();
+                }))
         };
-        div()
-            .id(group.clone())
-            .group(group.clone())
-            .role(gpui::Role::Button)
-            .aria_label(caption)
-            .aria_expanded(is_open)
-            .focusable()
-            .tab_index(0)
-            .focus_visible(|s| s.shadow(focus_ring()))
-            .flex()
-            .items_center()
-            .gap(px(4.))
-            .child(row(icon_name, boxed(label.into_any_element(), w)))
-            .child(
-                // `Icon` folds its opacity into the color, so the hover sets the color.
-                icon(chevron, 14., text60.opacity(if is_open { 1. } else { 0. }))
-                    .group_hover(group, move |s| s.text_color(text60)),
-            )
-            .on_click(cx.listener(move |view, _, _, cx| {
-                if !view.expanded.remove(&key) {
-                    view.expanded.insert(key.clone());
-                }
-                cx.notify();
-            }))
-    };
     let mut col = div().flex().flex_col().gap(px(16.));
     for entry in activities(items, running) {
         col = col.child(match entry {
@@ -681,6 +683,7 @@ pub(super) fn activity(
                         key.to_owned(),
                         "thread-chevron-right",
                         if running { "Thinking" } else { "Thought" }.into(),
+                        text60,
                         is_open,
                     ))
                     .when(is_open, |d| {
@@ -723,7 +726,8 @@ pub(super) fn activity(
                     .child(disclosure(
                         key,
                         "thread-mcp",
-                        label(mcp_label(item), color),
+                        mcp_label(item),
+                        color,
                         is_open,
                     ));
                 if is_open {
@@ -810,7 +814,7 @@ pub(super) fn activity(
                 rows,
             } => {
                 let is_open = open.contains(key);
-                let header = disclosure(key.to_owned(), icon_name, summary, is_open);
+                let header = disclosure(key.to_owned(), icon_name, summary, text60, is_open);
                 let mut col = div().flex().flex_col().items_start().child(header);
                 if is_open {
                     col = col.child(
@@ -836,7 +840,9 @@ pub(super) fn activity(
                                                 .flex()
                                                 .flex_col()
                                                 .items_start()
-                                                .child(disclosure(key, r.icon, r.verb, is_open))
+                                                .child(disclosure(
+                                                    key, r.icon, r.verb, text60, is_open,
+                                                ))
                                                 .when(is_open, |d| {
                                                     d.child(shell_card(&shell, window, t))
                                                 });
