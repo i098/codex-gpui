@@ -665,7 +665,7 @@ impl LocalHost {
         if params.get("projectId").is_some() {
             raw["target"] = json!({"type": "projectless"});
         }
-        let mut raw: toml::Table = toml::from_str(&toml::to_string(&raw)?)?;
+        let mut raw = toml::Table::try_from(raw)?;
         patch_automation(&mut raw, params, None)?;
         let contents = toml::to_string(&raw)?;
         self.write_automation(&id, &contents)?;
@@ -836,24 +836,12 @@ impl LocalHost {
                 "name=excluded.name".to_owned(),
                 "prompt=excluded.prompt".to_owned(),
             ];
-            for (field, column) in [
-                ("cwds", "cwds"),
+            for (field, column) in AUTOMATION_EDIT_FIELDS.iter().copied().chain([
                 ("target", "target_type"),
                 ("target", "project_id"),
-                ("model", "model"),
-                ("reasoningEffort", "reasoning_effort"),
-                ("kind", "kind"),
-                ("targetThreadId", "target_thread_id"),
-                ("executionEnvironment", "execution_environment"),
-                (
-                    "localEnvironmentConfigPath",
-                    "local_environment_config_path",
-                ),
                 ("pluginTemplateId", "plugin_template_id"),
-                ("notificationPolicy", "notification_policy"),
-                ("autoArchive", "auto_archive"),
-            ] {
-                if previous[field] != item[field] {
+            ]) {
+                if !matches!(field, "name" | "prompt" | "rrule") && previous[field] != item[field] {
                     updates.push(format!("{column}=excluded.{column}"));
                 }
             }
@@ -1801,6 +1789,10 @@ fn patch_automation(raw: &mut toml::Table, params: &Value, previous: Option<&Val
         .get("kind")
         .and_then(toml::Value::as_str)
         .unwrap_or("cron");
+    ensure!(
+        kind == "heartbeat" || raw.contains_key("cwds"),
+        "task requires an absolute local project path"
+    );
     if previous.is_none_or(|item| item["kind"].as_str() != Some(kind)) {
         if kind == "heartbeat" {
             for field in [

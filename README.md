@@ -138,6 +138,7 @@ Prefilled drafts stay in Create mode until their data includes an existing task 
 Escape closes an open schedule picker first; otherwise, it discards the editor without saving.
 The local Trigger menu keeps Schedule active and explains why cloud-only Date and time is unavailable.
 Advanced controls update notifications, new-chat or existing-chat execution, automatic archive, project, model, and effort.
+Switching an existing-chat task back to new-chat execution supplies its current local workspace.
 Model and effort choices come from app-server `model/list` and `config/read`; existing chats come from `thread/list`.
 The editor saves those choices atomically through `automation-create` or `automation-update` and retains unrelated definition fields.
 Run `cargo test -p app --test task_create editor:: -- --test-threads=1` on macOS for the native editor, schedule, and Create menu checks.

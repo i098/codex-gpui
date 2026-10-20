@@ -53,45 +53,83 @@ impl Execution {
         projects: Option<&[Project]>,
         config: &Value,
         cwd: &str,
-    ) {
-        self.models = models
-            .iter()
-            .filter(|model| !model.hidden)
-            .map(|model| ModelChoice {
-                id: model.id.clone(),
-                label: model.display_name.clone().into(),
-                efforts: model
-                    .supported_reasoning_efforts
-                    .iter()
-                    .filter_map(|effort| {
-                        effort["reasoningEffort"]
-                            .as_str()
-                            .map(|value| value.to_owned().into())
-                    })
-                    .collect(),
+    ) -> (bool, bool, bool) {
+        let mut visible = models.iter().filter(|model| !model.hidden);
+        let models_changed = self.models.iter().any(|saved| {
+            visible.next().is_none_or(|model| {
+                saved.id != model.id
+                    || saved.label.as_ref() != model.display_name
+                    || saved.efforts.iter().map(|effort| effort.as_ref()).ne(model
+                        .supported_reasoning_efforts
+                        .iter()
+                        .filter_map(|effort| effort["reasoningEffort"].as_str()))
             })
-            .collect();
-        self.default_model = config["model"].as_str().map(str::to_owned).or_else(|| {
+        }) || visible.next().is_some();
+        let default_model = config["model"].as_str().or_else(|| {
             models
                 .iter()
                 .find(|model| model.is_default)
-                .map(|model| model.id.clone())
+                .map(|model| model.id.as_str())
         });
-        if let Some(projects) = projects {
+        let default_changed = self.default_model.as_deref() != default_model;
+        let projects_changed = projects.is_some_and(|projects| {
+            self.projects.iter().ne(projects
+                .iter()
+                .filter(|project| !project.missing && project.root.is_some()))
+        });
+        let threads_changed = self.threads.len() != threads.len()
+            || self
+                .threads
+                .iter()
+                .zip(threads)
+                .any(|((id, label), thread)| id != &thread.id || label != &title(thread));
+        if models_changed {
+            self.models = models
+                .iter()
+                .filter(|model| !model.hidden)
+                .map(|model| ModelChoice {
+                    id: model.id.clone(),
+                    label: model.display_name.clone().into(),
+                    efforts: model
+                        .supported_reasoning_efforts
+                        .iter()
+                        .filter_map(|effort| {
+                            effort["reasoningEffort"]
+                                .as_str()
+                                .map(|value| value.to_owned().into())
+                        })
+                        .collect(),
+                })
+                .collect();
+        }
+        if default_changed {
+            self.default_model = default_model.map(str::to_owned);
+        }
+        if projects_changed {
             self.projects = projects
+                .unwrap()
                 .iter()
                 .filter(|project| !project.missing && project.root.is_some())
                 .cloned()
                 .collect();
         }
-        self.threads = threads
-            .iter()
-            .map(|thread| (thread.id.clone(), title(thread)))
-            .collect();
-        self.cwd = cwd.to_owned();
+        if threads_changed {
+            self.threads = threads
+                .iter()
+                .map(|thread| (thread.id.clone(), title(thread)))
+                .collect();
+        }
+        if self.cwd != cwd {
+            self.cwd = cwd.to_owned();
+        }
         if self.values["cwds"].as_array().is_none_or(Vec::is_empty) {
             self.values["cwds"] = json!([cwd]);
         }
+        (
+            models_changed || default_changed,
+            projects_changed,
+            threads_changed,
+        )
     }
 
     pub fn new_chat(&self) -> bool {
@@ -118,6 +156,9 @@ impl Execution {
         let kind = if self.new_chat() { "heartbeat" } else { "cron" };
         self.set("kind", json!(kind));
         self.set("targetThreadId", Value::Null);
+        if kind == "cron" && !self.changed.contains(&"cwds") {
+            self.changed.push("cwds");
+        }
     }
 
     pub fn toggle_archive(&mut self) {
@@ -297,5 +338,53 @@ impl Execution {
                 json!("failed_runs_only")
             },
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn switching_back_to_new_chat_supplies_a_workspace() {
+        let mut execution = Execution::new(Some(&json!({
+            "kind": "heartbeat", "targetThreadId": "existing-thread"
+        })));
+        execution.set_options(&[], &[], None, &Value::Null, "/tmp/project");
+        execution.toggle_new_chat();
+        let changes = execution.changes();
+        assert_eq!(changes["kind"], "cron");
+        assert_eq!(changes["cwds"], json!(["/tmp/project"]));
+        assert!(changes["targetThreadId"].is_null());
+    }
+
+    #[test]
+    fn unchanged_model_options_keep_the_picker_open() {
+        let mut models = vec![Model {
+            id: "gpt-6-astra".into(),
+            model: "gpt-6-astra".into(),
+            display_name: "Astra".into(),
+            description: String::new(),
+            hidden: false,
+            default_reasoning_effort: "high".into(),
+            supported_reasoning_efforts: vec![json!({"reasoningEffort":"high"})],
+            is_default: true,
+        }];
+        let mut execution = Execution::new(None);
+        assert_eq!(
+            execution.set_options(&models, &[], None, &Value::Null, "/tmp/project"),
+            (true, false, false)
+        );
+        execution.select_model(1);
+        assert_eq!(
+            execution.set_options(&models, &[], None, &Value::Null, "/tmp/project"),
+            (false, false, false)
+        );
+        models[0].display_name = "Updated Astra".into();
+        assert_eq!(
+            execution.set_options(&models, &[], None, &Value::Null, "/tmp/project"),
+            (true, false, false)
+        );
+        assert_eq!(execution.model_value().as_ref(), "Updated Astra");
     }
 }

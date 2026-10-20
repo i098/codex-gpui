@@ -331,6 +331,32 @@ mod editor {
         ensure!(changed["items"][0]["kind"] == "heartbeat");
         ensure!(changed["items"][0]["targetThreadId"] == thread_id);
         ensure!(changed["items"][0]["model"].is_null());
+        fx.cx.update_window(fx.window, |_, window, cx| {
+            window.dispatch_action(Box::new(EditAutomation { id: id.clone() }), cx);
+        })?;
+        fx.advance(Duration::from_millis(20))?;
+        fx.keys("tab tab tab tab tab tab enter")?;
+        fx.keys("tab tab space")?;
+        let workspace = fx.read(|root, cx| {
+            root.automation_editor()
+                .unwrap()
+                .read(cx)
+                .draft(cx)
+                .unwrap()
+                .execution["cwds"]
+                .clone()
+        });
+        ensure!(workspace.as_array().is_some_and(|paths| !paths.is_empty()));
+        fx.keys("cmd-enter")?;
+        fx.wait("new-chat update", |fx| {
+            fx.read(|root, _| root.automation_editor().is_none())
+        })?;
+        let changed = json_body(
+            &LocalHost::new(home.path()).fetch(&Request::post("list-automations", None))?,
+        )?;
+        ensure!(changed["items"][0]["kind"] == "cron");
+        ensure!(changed["items"][0]["cwds"] == workspace);
+        ensure!(changed["items"][0]["targetThreadId"].is_null());
         Ok(())
     }
 

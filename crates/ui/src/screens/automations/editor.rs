@@ -40,15 +40,18 @@ const INTERVAL: usize = 3;
 const MONTH_DAYS: usize = 4;
 const MONTH: usize = 5;
 const MINUTE: usize = 6;
-const TRIGGER: usize = 15;
-const ADVANCED: usize = 11;
-const NOTIFICATIONS: usize = 16;
-const NEW_CHAT: usize = 17;
-const AUTO_ARCHIVE: usize = 18;
-const PROJECT: usize = 19;
-const MODEL: usize = 20;
-const EFFORT: usize = 21;
-const THREAD: usize = 22;
+const ADVANCED: usize = 5;
+const CLOSE: usize = 6;
+const CANCEL: usize = 7;
+const SAVE: usize = 8;
+const TRIGGER: usize = 9;
+const NOTIFICATIONS: usize = 10;
+const NEW_CHAT: usize = 11;
+const AUTO_ARCHIVE: usize = 12;
+const PROJECT: usize = 13;
+const MODEL: usize = 14;
+const EFFORT: usize = 15;
+const THREAD: usize = 16;
 static FORM_BODY_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
     std::sync::LazyLock::new(|| textsys::letter_spacing(-0.15));
 static FORM_TITLE_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
@@ -84,10 +87,10 @@ enum Picker {
 
 pub struct Editor {
     fields: [Entity<Composer>; 7],
-    controls: [FocusHandle; 23],
+    controls: [FocusHandle; 17],
     scroll: ScrollHandle,
     field_anchors: [ScrollAnchor; 7],
-    control_anchors: [ScrollAnchor; 23],
+    control_anchors: [ScrollAnchor; 17],
     mode: Option<usize>,
     frequency: usize,
     minutes: bool,
@@ -186,13 +189,14 @@ impl Editor {
         cwd: &str,
         cx: &mut Context<Self>,
     ) {
-        self.execution
+        let (models_changed, projects_changed, threads_changed) = self
+            .execution
             .set_options(models, threads, projects, config, cwd);
-        if self.menu.is_some_and(|(picker, _)| {
-            matches!(
-                picker,
-                Picker::Model | Picker::Effort | Picker::Project | Picker::Thread
-            )
+        if self.menu.is_some_and(|(picker, _)| match picker {
+            Picker::Model | Picker::Effort => models_changed,
+            Picker::Project => projects_changed,
+            Picker::Thread => threads_changed,
+            _ => false,
         }) {
             self.menu = None;
         }
@@ -304,15 +308,26 @@ impl Editor {
             .filter(|n| (min..=max).contains(n))
     }
 
+    fn fields_error(&self, cx: &App) -> Option<&'static str> {
+        for (index, limit, missing, too_long) in [
+            (NAME, 250, "Enter a name", "Name is too long"),
+            (PROMPT, 100_000, "Enter a prompt", "Prompt is too long"),
+        ] {
+            let value = self.value(index, cx);
+            if value.is_empty() {
+                return Some(missing);
+            }
+            if value.chars().nth(limit).is_some() {
+                return Some(too_long);
+            }
+        }
+        None
+    }
+
     pub fn draft(&self, cx: &App) -> Option<Draft> {
         let name = self.value(NAME, cx);
         let prompt = self.value(PROMPT, cx);
-        if name.is_empty()
-            || name.chars().count() > 250
-            || prompt.is_empty()
-            || prompt.chars().count() > 100_000
-            || !self.execution.valid()
-        {
+        if self.fields_error(cx).is_some() || !self.execution.valid() {
             return None;
         }
         Some(Draft {
@@ -419,7 +434,7 @@ impl Editor {
         if let Some(draft) = self.draft(cx) {
             self.saving = true;
             self.menu = None;
-            self.controls[14].focus(window, cx);
+            self.controls[SAVE].focus(window, cx);
             cx.emit(Outcome::Save(draft));
             cx.notify();
         }
@@ -617,22 +632,24 @@ impl Editor {
             self.controls[TRIGGER].clone(),
             self.controls[0].clone(),
         ];
-        if self.mode == Some(5) && !self.raw_rule {
-            handles.push(self.controls[1].clone());
-        }
-        let days =
-            self.mode == Some(3) || self.mode == Some(5) && self.frequency == 2 && !self.raw_rule;
-        for index in self.visible_fields() {
-            if index == TIME && days {
-                handles.push(self.controls[4].clone());
+        if !self.raw_rule {
+            if self.mode == Some(5) {
+                handles.push(self.controls[1].clone());
             }
-            handles.push(self.fields[index].focus_handle(cx));
-        }
-        if self.mode == Some(0) {
-            handles.push(self.controls[2].clone());
-        }
-        if self.visible_fields().contains(&TIME) {
-            handles.push(self.controls[3].clone());
+            let fields = self.visible_fields();
+            let days = self.mode == Some(3) || self.mode == Some(5) && self.frequency == 2;
+            for &index in &fields {
+                if index == TIME && days {
+                    handles.push(self.controls[4].clone());
+                }
+                handles.push(self.fields[index].focus_handle(cx));
+            }
+            if self.mode == Some(0) {
+                handles.push(self.controls[2].clone());
+            }
+            if fields.contains(&TIME) {
+                handles.push(self.controls[3].clone());
+            }
         }
         handles.push(self.controls[ADVANCED].clone());
         if self.advanced {
@@ -650,9 +667,9 @@ impl Editor {
             }
         }
         if !self.editing {
-            handles.push(self.controls[13].clone());
+            handles.push(self.controls[CANCEL].clone());
         }
-        handles.extend([self.controls[14].clone(), self.controls[12].clone()]);
+        handles.extend([self.controls[SAVE].clone(), self.controls[CLOSE].clone()]);
         handles
     }
 
@@ -1186,25 +1203,25 @@ impl Editor {
             .track_focus(&self.controls[control])
             .h(px(if control == ADVANCED {
                 28.
-            } else if control == 12 {
+            } else if control == CLOSE {
                 32.
             } else {
                 36.
             }))
             .px(px(if control == ADVANCED {
                 8.
-            } else if control == 12 {
+            } else if control == CLOSE {
                 0.
             } else {
                 16.
             }))
-            .rounded(px(if control == 12 || control == ADVANCED {
+            .rounded(px(if control == CLOSE || control == ADVANCED {
                 10.
             } else {
                 9999.
             }))
-            .when(control == 12, |d| d.w(px(32.)))
-            .when(control == 14, |d| {
+            .when(control == CLOSE, |d| d.w(px(32.)))
+            .when(control == SAVE, |d| {
                 d.px(px(17.)).child(shapes::decoration(shapes::Decoration {
                     radius: gpui::Corners::all(px(9999.)),
                     fill: Some(t.text),
@@ -1217,14 +1234,14 @@ impl Editor {
             .items_center()
             .justify_center()
             .gap(px(if control == ADVANCED { 8. } else { 6. }))
-            .when(control != 12, |d| {
+            .when(control != CLOSE, |d| {
                 d.child(
                     text(
                         label,
                         14.,
                         20.,
-                        if control == 14 { 500. } else { 400. },
-                        if control == 14 {
+                        if control == SAVE { 500. } else { 400. },
+                        if control == SAVE {
                             t.surface_elevated_secondary
                         } else {
                             t.text_secondary
@@ -1233,7 +1250,7 @@ impl Editor {
                     .when(control == ADVANCED, |d| d.w(px(58.87)).flex_none()),
                 )
             })
-            .when(control == 12, |d| {
+            .when(control == CLOSE, |d| {
                 d.child(icon("close", 20., t.text_tertiary))
             })
             .when(control == ADVANCED, |d| {
@@ -1246,7 +1263,7 @@ impl Editor {
             .on_click(cx.listener(move |this, _, window, cx| {
                 if control == ADVANCED {
                     this.toggle_control(control, cx);
-                } else if control == 14 {
+                } else if control == SAVE {
                     this.submit(window, cx);
                 } else if !this.saving {
                     cx.emit(Outcome::Dismiss);
@@ -1256,7 +1273,7 @@ impl Editor {
                 if matches!(event.keystroke.key.as_str(), "enter" | "space") {
                     if control == ADVANCED {
                         this.toggle_control(control, cx);
-                    } else if control == 14 {
+                    } else if control == SAVE {
                         this.submit(window, cx);
                     } else if !this.saving {
                         cx.emit(Outcome::Dismiss);
@@ -1312,17 +1329,13 @@ fn clock_parts(value: &str, zone: &str) -> Option<(u8, u8)> {
 impl Render for Editor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
+        let field_error = self.fields_error(cx);
         let valid = !self.saving
-            && !self.value(NAME, cx).is_empty()
-            && self.value(NAME, cx).chars().count() <= 250
-            && !self.value(PROMPT, cx).is_empty()
-            && self.value(PROMPT, cx).chars().count() <= 100_000
+            && field_error.is_none()
             && self.execution.valid()
             && self.rule(cx).is_some();
-        let reason = if self.value(NAME, cx).is_empty() {
-            "Enter a name"
-        } else if self.value(PROMPT, cx).is_empty() {
-            "Enter a prompt"
+        let reason = if let Some(error) = field_error {
+            error
         } else if !self.execution.valid() {
             "Select a chat"
         } else {
@@ -1396,7 +1409,7 @@ impl Render for Editor {
                             .absolute()
                             .right(px(-6.))
                             .top(px(-4.))
-                            .child(self.button(12, "Close dialog", t, cx)),
+                            .child(self.button(CLOSE, "Close dialog", t, cx)),
                     ),
             )
             .child(
@@ -1430,10 +1443,12 @@ impl Render for Editor {
                     .justify_end()
                     .gap(px(12.))
                     .pt(px(20.))
-                    .when(!self.editing, |d| d.child(self.button(13, "Cancel", t, cx)))
+                    .when(!self.editing, |d| {
+                        d.child(self.button(CANCEL, "Cancel", t, cx))
+                    })
                     .child(tooltip(
                         self.button(
-                            14,
+                            SAVE,
                             if self.saving {
                                 "Saving…"
                             } else if self.editing {
