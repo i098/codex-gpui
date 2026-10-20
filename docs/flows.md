@@ -902,6 +902,20 @@ Both paging-label image checks pass with zero differing pixels in every recorded
 The references, text rectangles, and limits remain unchanged.
 Section creation and new storage remain outside RS-066.
 
+### Custom section header actions
+
+`crates/app/tests/section_actions.rs` drives the native header menu and section-targeted chat creation.
+The header shows Options and New chat when the pointer or keyboard focus enters it.
+Options contains Edit, Mark all as read, Archive chats, New section, and Remove section.
+Mark all as read requires unread members; Archive chats requires at least one member.
+Remove section preserves its chats.
+The app loads sections through `threadSection/list` and their ordered members through `thread/list`.
+Edit, Create, and Remove use `threadSection/update`, `threadSection/create`, and `threadSection/delete`.
+New chat selects an available section project, opens an empty composer, and assigns the resulting chat through `thread/section/move` before `turn/start`.
+Ordinary New chat clears the section target.
+The native check covers section edits, default naming, removal, read state, archive cancellation, bulk archive, and chat assignment order.
+
+
 ## S025: Command-query caret and selection
 
 `crates/app/tests/s025.rs` checks 45 native editing states from `refs/interactions/s025.json`.

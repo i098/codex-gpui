@@ -22,6 +22,7 @@ const WIDTH: f32 = 220.;
 
 pub(super) struct ThreadMenu {
     thread: String,
+    section: Option<String>,
     position: Point<Pixels>,
     /// The active top-level item; `sub` is its open submenu's active item.
     active: Option<usize>,
@@ -200,7 +201,98 @@ pub(super) const ITEMS: [Item; 14] = [
     },
 ];
 
+const SECTION_ITEMS: [Item; 7] = [
+    Item {
+        id: "edit-section",
+        label: "Edit",
+        accelerator: None,
+        icon: Some(RENAME_THREAD),
+        submenu: &[],
+    },
+    Item {
+        id: "section-chat-actions-separator",
+        label: "",
+        accelerator: None,
+        icon: None,
+        submenu: &[],
+    },
+    Item {
+        id: "mark-section-chats-read",
+        label: "Mark all as read",
+        accelerator: None,
+        icon: Some(MARK_THREAD_UNREAD),
+        submenu: &[],
+    },
+    Item {
+        id: "archive-section-chats",
+        label: "Archive chats",
+        accelerator: None,
+        icon: Some(ARCHIVE_THREAD),
+        submenu: &[],
+    },
+    Item {
+        id: "remove-section-separator",
+        label: "",
+        accelerator: None,
+        icon: None,
+        submenu: &[],
+    },
+    Item {
+        id: "new-section",
+        label: "New section",
+        accelerator: None,
+        icon: Some(NEW_CUSTOM_SECTION),
+        submenu: &[],
+    },
+    Item {
+        id: "remove-section",
+        label: "Remove section",
+        accelerator: None,
+        icon: Some(DELETE_THREAD),
+        submenu: &[],
+    },
+];
+
 impl HomeSidebar {
+    pub(super) fn section_menu_open(&self, id: &str) -> bool {
+        self.menu
+            .as_ref()
+            .is_some_and(|m| m.section.as_deref() == Some(id))
+    }
+
+    fn menu_items(&self) -> &'static [Item] {
+        if self.menu.as_ref().is_some_and(|m| m.section.is_some()) {
+            &SECTION_ITEMS
+        } else {
+            &ITEMS
+        }
+    }
+
+    fn item_enabled(&self, id: &str) -> bool {
+        let Some(section) = self.menu.as_ref().and_then(|m| m.section.as_deref()) else {
+            return true;
+        };
+        match id {
+            "mark-section-chats-read" => self.section(section).is_some_and(|s| {
+                s.rows
+                    .iter()
+                    .any(|&row| self.unread.contains(&self.threads[row].0))
+            }),
+            "archive-section-chats" => self.section(section).is_some_and(|s| !s.rows.is_empty()),
+            _ => true,
+        }
+    }
+
+    pub(super) fn open_section_menu(
+        &mut self,
+        section: String,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_menu(String::new(), position, window, cx);
+        self.menu.as_mut().unwrap().section = Some(section);
+    }
     fn label(&self, item: &Item) -> &'static str {
         let thread = self.menu.as_ref().map(|m| m.thread.as_str());
         match item.id {
@@ -216,12 +308,16 @@ impl HomeSidebar {
     /// `None` when no menu is open.
     pub fn context_menu(&self) -> Option<serde_json::Value> {
         self.menu.as_ref()?;
-        Some(ITEMS.iter().map(|item| self.entry(item)).collect())
+        Some(
+            self.menu_items()
+                .iter()
+                .map(|item| self.entry(item))
+                .collect(),
+        )
     }
 
     fn entry(&self, item: &Item) -> serde_json::Value {
-        let mut v =
-            serde_json::json!({ "id": item.id, "label": self.label(item), "enabled": true });
+        let mut v = serde_json::json!({ "id": item.id, "label": self.label(item), "enabled": self.item_enabled(item.id) });
         if item.is_separator() {
             v["type"] = "separator".into();
         }
@@ -249,6 +345,7 @@ impl HomeSidebar {
         let focus = cx.focus_handle();
         self.menu = Some(ThreadMenu {
             thread,
+            section: None,
             position,
             active: None,
             sub: None,
@@ -271,9 +368,12 @@ impl HomeSidebar {
     }
 
     fn menu_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let items = self.menu_items();
+        let enabled: [bool; ITEMS.len()] =
+            std::array::from_fn(|i| items.get(i).is_some_and(|item| self.item_enabled(item.id)));
         let Some(menu) = &mut self.menu else { return };
         let key = event.keystroke.key.as_str();
-        let submenu = menu.active.map(|i| ITEMS[i].submenu).unwrap_or(&[]);
+        let submenu = menu.active.map(|i| items[i].submenu).unwrap_or(&[]);
         match (key, menu.sub) {
             ("escape" | "left", Some(_)) => menu.sub = None,
             ("escape", None) => {
@@ -283,15 +383,15 @@ impl HomeSidebar {
             ("enter" | "space", Some(Some(i))) => self.activate(submenu[i].id, window, cx),
             ("enter" | "space", None) => {
                 if let Some(i) = menu.active {
-                    self.activate(ITEMS[i].id, window, cx);
+                    self.activate(items[i].id, window, cx);
                 }
             }
             ("down" | "up" | "home" | "end", Some(sub)) if !submenu.is_empty() => {
                 menu.sub = Some(Some(step(key, sub, submenu.len(), |_| true)));
             }
             ("down" | "up" | "home" | "end", None) => {
-                menu.active = Some(step(key, menu.active, ITEMS.len(), |i| {
-                    !ITEMS[i].is_separator()
+                menu.active = Some(step(key, menu.active, items.len(), |i| {
+                    !items[i].is_separator() && enabled[i]
                 }));
             }
             ("tab", _) => {}
@@ -306,9 +406,25 @@ impl HomeSidebar {
     /// ponytail: Section, Fork, Share, Copy, Open in new window and Permanently delete only
     /// close the menu (their requests are not recorded); wire them with their slices.
     fn activate(&mut self, id: &'static str, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.item_enabled(id) {
+            return;
+        }
         let Some(menu) = self.close_menu(window, cx) else {
             return;
         };
+        if let Some(section) = menu.section {
+            use super::sections::{SectionAction, SectionCommand};
+            let command = match id {
+                "edit-section" => SectionCommand::Edit,
+                "mark-section-chats-read" => SectionCommand::MarkRead,
+                "archive-section-chats" => SectionCommand::Archive,
+                "new-section" => SectionCommand::New,
+                "remove-section" => SectionCommand::Remove,
+                _ => return,
+            };
+            window.dispatch_action(Box::new(SectionAction { section, command }), cx);
+            return;
+        }
         let thread = menu.thread;
         match id {
             "rename-thread" => window.dispatch_action(Box::new(RenameThread(thread)), cx),
@@ -347,6 +463,8 @@ impl HomeSidebar {
             }
             div()
                 .id((item.id, index))
+                .aria_disabled(!self.item_enabled(item.id))
+                .opacity(if self.item_enabled(item.id) { 1. } else { 0.4 })
                 .role(Role::MenuItem)
                 .aria_label(self.label(item))
                 .when(active == Some(index), |d| {
@@ -360,7 +478,7 @@ impl HomeSidebar {
                 .gap(px(6.))
                 .cursor_pointer()
                 .on_hover(cx.listener(move |this, hovered, _, cx| {
-                    if *hovered {
+                    if *hovered && this.item_enabled(item.id) {
                         on_hover(this, index, cx);
                     }
                 }))
@@ -413,12 +531,13 @@ impl HomeSidebar {
         let menu = self.menu.as_ref().expect("open thread menu");
         let popup = self
             .menu_rows(
-                &ITEMS,
+                self.menu_items(),
                 menu.active,
                 |this, index, cx| {
                     if let Some(menu) = &mut this.menu {
                         menu.active = Some(index);
-                        menu.sub = (!ITEMS[index].submenu.is_empty()).then_some(None);
+                        menu.sub = (menu.section.is_none() && !ITEMS[index].submenu.is_empty())
+                            .then_some(None);
                         cx.notify();
                     }
                 },
@@ -426,7 +545,11 @@ impl HomeSidebar {
             )
             .id("thread-row-menu")
             .role(Role::Menu)
-            .aria_label("Chat actions")
+            .aria_label(if menu.section.is_some() {
+                "Section options"
+            } else {
+                "Chat actions"
+            })
             .track_focus(&menu.focus)
             .on_key_down(cx.listener(Self::menu_key))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())

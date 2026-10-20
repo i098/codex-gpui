@@ -120,18 +120,6 @@ pub fn recorded_host_settings() -> Result<app::host_settings::Settings> {
     Ok(settings)
 }
 
-#[cfg(target_os = "macos")]
-pub fn install_panic_hook() {
-    static INSTALLED: std::sync::Once = std::sync::Once::new();
-    INSTALLED.call_once(|| {
-        std::panic::set_hook(Box::new(|info| {
-            use std::io::Write as _;
-            let _ = writeln!(std::io::stderr(), "{info}");
-            std::process::exit(101);
-        }));
-    });
-}
-
 /// The app on a replayed app-server in a headless window.
 pub struct Fx {
     pub cx: HeadlessAppContext,

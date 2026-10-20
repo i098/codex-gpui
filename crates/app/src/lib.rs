@@ -9,6 +9,7 @@ pub mod host_settings;
 pub mod qa;
 mod search;
 pub mod windows;
+mod section_actions;
 
 use anyhow::{Context as _, Result, ensure};
 use async_channel::Receiver;
@@ -382,6 +383,7 @@ pub struct Root {
     sidebar: Entity<HomeSidebar>,
     /// Recents in sidebar order, for `⌘1`…`⌘9`, Previous/Next Chat and the command menu.
     threads: Vec<Thread>,
+    new_chat_section: Option<String>,
     /// `thread/list` cursor of the page after `threads`, while the sidebar's end asks for it.
     next_cursor: Option<String>,
     loading_more: bool,
@@ -650,6 +652,7 @@ impl Root {
             shell,
             sidebar,
             threads: Vec::new(),
+            new_chat_section: None,
             next_cursor: None,
             loading_more: false,
             wide,
@@ -806,6 +809,9 @@ impl Root {
                 }
                 this.set_threads(&threads.data, cx);
                 this.set_next_cursor(threads.next_cursor, cx);
+                if !acp && this.login.is_none() {
+                    this.load_sections(cx);
+                }
                 let announcements_allowed = this.login.is_none()
                     && matches!(this.state.route, Route::Home | Route::Thread(_));
                 let current_model = config.config["model"].as_str().or_else(|| {
@@ -1089,6 +1095,7 @@ impl Root {
     /// Open chats keep the cwd they were started in.
     fn select_project(&mut self, root: String, window: &mut Window, cx: &mut Context<Self>) {
         self.qa_work_started = true;
+        self.new_chat_section = None;
         self.home.update(cx, |home, cx| {
             home.project = Some(project_name(&root));
             home.composer.update(cx, |composer, cx| {
@@ -1944,6 +1951,7 @@ impl Root {
 
     /// `⌘N`, the `New chat` row and rail Home: Home with an empty, focused composer.
     fn new_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.new_chat_section = None;
         self.navigate(Route::Home, window, cx);
         let composer = self.home.read(cx).composer.clone();
         composer.update(cx, |c, cx| c.set_text("", cx));
@@ -2551,6 +2559,14 @@ impl Root {
                     window.focus(&focus, cx);
                     this.rename(thread.clone(), name.clone(), window, cx);
                 }
+                DialogOutcome::SectionName { section, name } => {
+                    window.focus(&focus, cx);
+                    this.save_section(section.clone(), name.clone(), cx);
+                }
+                DialogOutcome::ArchiveSection(id) => {
+                    window.focus(&focus, cx);
+                    this.archive_section(id.clone(), window, cx);
+                }
                 DialogOutcome::Commit {
                     step,
                     message,
@@ -2614,6 +2630,8 @@ impl Root {
                         this.side = None;
                         this.loaded.clear();
                         this.approvals.clear();
+                        this.new_chat_section = None;
+                        this.sidebar.update(cx, |s, cx| s.clear_sections(cx));
                         this.set_threads(&[], cx);
                         this.set_next_cursor(None, cx);
                         this.automation_load = None;
@@ -2939,6 +2957,7 @@ impl Root {
             .as_ref()
             .unwrap_or(&self.cwd)
             .clone();
+        let section = self.new_chat_section.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let mut params = json!({ "cwd": cwd, "model": model(&s) });
             apply_permissions(&mut params, s.permission);
@@ -2962,9 +2981,40 @@ impl Root {
                 thread.preview = s.text.clone();
             }
             let id = thread.id.clone();
+            let section = if let Some(section) = section {
+                match bridge
+                    .request::<_, Value>(
+                        "thread/section/move",
+                        json!({
+                            "threadId": id, "sectionId": section, "beforeThreadId": null
+                        }),
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        thread.section = Some(ThreadSection {
+                            id: section.clone(),
+                        });
+                        Some(section)
+                    }
+                    Err(_) => {
+                        this.update(cx, |this, cx| {
+                            this.toast(Toast::danger("Couldn't move chat to section"), cx)
+                        })?;
+                        None
+                    }
+                }
+            } else {
+                None
+            };
             this.update_in(cx, |this, window, cx| {
+                this.new_chat_section = None;
                 this.loaded.insert(id.clone());
                 this.add_thread(&thread, cx);
+                if let Some(section) = &section {
+                    this.sidebar
+                        .update(cx, |s, cx| s.assign_section(&id, section, cx));
+                }
                 this.show_thread(thread, window, cx);
             })?;
             turn_start(&bridge, &id, &s, user_input(&s)).await
@@ -3975,6 +4025,7 @@ impl Root {
                 self.read_account_email(cx);
                 self.refresh_threads(cx);
                 self.load_projects(cx);
+                self.load_sections(cx);
                 cx.notify();
             }
             return;
@@ -5069,7 +5120,7 @@ impl Render for Root {
             .children(self.command_menu.clone())
             .child(self.toaster.clone())
             .children(self.dialog.clone());
-        features::actions(root, cx).into_any_element()
+        section_actions::actions(features::actions(root, cx), cx).into_any_element()
     }
 }
 

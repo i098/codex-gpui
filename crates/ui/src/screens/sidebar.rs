@@ -31,6 +31,8 @@ use theme::{ActiveTheme as _, Appearance, Theme};
 mod menu;
 use menu::ThreadMenu;
 
+pub mod sections;
+
 /// `.sidebar-item`: `--radius-lg` (12.5 px) with `corner-shape: superellipse(1.5)`.
 const RADIUS_ROW: Pixels = px(12.5);
 
@@ -69,6 +71,7 @@ pub fn title(thread: &Thread) -> SharedString {
         format!("{}…", preview.chars().take(79).collect::<String>()).into()
     }
 }
+
 
 pub fn archive_shell(cx: &mut App) -> (gpui::Entity<Shell>, gpui::Entity<ArchivedChats>) {
     let sidebar = cx.new(|_| crate::EmptySidebar).into();
@@ -226,6 +229,18 @@ struct CustomSection {
 }
 
 impl CustomSection {
+    fn new(id: String, title: String, thread_ids: Vec<String>, collapsed: bool) -> Self {
+        Self {
+            id: format!("custom:{id}").into(),
+            title: title.into(),
+            paging_id: format!("custom-paging:{id}").into(),
+            thread_ids,
+            rows: Vec::new(),
+            expanded: false,
+            collapsed,
+        }
+    }
+
     fn shown(&self) -> usize {
         if self.collapsed {
             0
@@ -697,26 +712,19 @@ impl HomeSidebar {
             .into_iter()
             .map(|section| {
                 let collapsed = saved.collapsed_section_ids.contains(&section.id);
-                CustomSection {
-                    id: format!("custom:{}", section.id).into(),
-                    title: section.name.into(),
-                    paging_id: format!("custom-paging:{}", section.id).into(),
-                    thread_ids: section
-                        .item_keys
-                        .into_iter()
-                        .filter_map(|mut key| {
-                            const PREFIX: &str = "codex:thread:local:";
-                            if !key.starts_with(PREFIX) {
-                                return None;
-                            }
-                            drop(key.drain(..PREFIX.len()));
-                            Some(key)
-                        })
-                        .collect(),
-                    rows: Vec::new(),
-                    expanded: false,
-                    collapsed,
-                }
+                let thread_ids = section
+                    .item_keys
+                    .into_iter()
+                    .filter_map(|mut key| {
+                        const PREFIX: &str = "codex:thread:local:";
+                        if !key.starts_with(PREFIX) {
+                            return None;
+                        }
+                        drop(key.drain(..PREFIX.len()));
+                        Some(key)
+                    })
+                    .collect();
+                CustomSection::new(section.id, section.name, thread_ids, collapsed)
             })
             .collect();
         self.reindex_sections();
@@ -1044,7 +1052,8 @@ impl Render for HomeSidebar {
                                 cx,
                             )
                             .on_click(cx.listener(
-                                move |this, _, _, cx| {
+                                move |this, _, window, cx| {
+                                    header_focus.read(cx).handle.clone().focus(window, cx);
                                     if i < this.collapsed.len() {
                                         this.collapsed[i] ^= true;
                                     } else {
@@ -1053,7 +1062,10 @@ impl Render for HomeSidebar {
                                     cx.notify();
                                 },
                             )),
-                        ),
+                        )
+                        .when(i >= self.collapsed.len(), |d| {
+                            d.child(self.section_actions(i - self.collapsed.len(), window, cx))
+                        }),
                 )
                 .when(!collapsed, |d| d.child(div().pt(px(4.)).child(body)))
         };
