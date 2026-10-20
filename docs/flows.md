@@ -608,7 +608,17 @@ Before each thread the host reads the user's saved config (`config/read` for the
 The sandbox and approvals follow the original's agent-mode rules (`Al`): the saved `sandbox_mode` and `approval_policy`, or `auto`; an unattended run sets `never` when the requirements allow it, and the turn's sandbox adds the folder, `$CODEX_HOME/automations/<id>` and the git roots.
 The mode the user last picked is read from `agent-mode-by-host-id` in the global state [INFERENCE: the persisted-atom table is assumed].
 When the original database exists, a `pending:` row in `automation_runs` opens before the thread, takes the thread id, and is archived (`auto`) if the thread or turn fails to start.
-`turn/completed` for the thread then sets the run to `PENDING_REVIEW` (`finish_automation_run`); a `failed_runs_only` task is read when the turn completed and unread otherwise.
+`turn/completed` finishes the matching initial turn through `finish_automation_run(threadId, turn)`.
+The bridge keeps the run's initial `notificationPolicy` and `autoArchive` values until completion.
+A `failed_runs_only` success keeps its existing read time or becomes read; failure and interruption clear the read time.
+A successful cron run with `autoArchive` sends `thread/archive` unless a heartbeat targets the thread.
+Only an accepted archive request changes the row to `ARCHIVED` with reason `auto`.
+An archive refusal keeps `PENDING_REVIEW` and the completed run's read state.
+User start, steer, add-message and queue requests cancel automatic archive before they reach the server.
+If archive is in flight or already complete, the bridge restores the thread first and sets the run to `ACCEPTED`.
+The per-thread archive lock also prevents a user request from racing with that restore.
+No completion path removes a worktree or starts a cleanup service.
+A missing store or run row releases only the matching completed tracker, without creating an archive row.
 A refusal or `success: false` shows the danger toast `Could not start scheduled task`, with the reason on one line.
 Event-triggered tasks (`## When this happens` prompts) have the item disabled with the tooltip `Automations triggered by events can’t be run manually`; the host refuses them too.
 The project folders or project target (its first root from `.codex-global-state.json`) run, in a new worktree for the original default environment (`create_worktree` and `set_owner_thread`, removed again when no thread starts) or in the folder for `local`; outside a Git repository the run happens in the folder.
@@ -624,11 +634,14 @@ The host rejects relative roots and symlinks at the root or local-date folder.
 It saves `projectless-thread-ids`, `thread-workspace-root-hints`, and `thread-projectless-output-directories` through the shared atomic global-state writer.
 The thread receives the original projectless output instructions and permissions; projectless runs do not create Git worktrees.
 A failed start retains the owned folder and archives the pending run; a failed turn retains the thread metadata and archives its run.
+Successful projectless runs use the same automatic archive completion path and retain their saved folders and metadata.
 The host reads config requirements before it creates a projectless workspace, as in the original `Ll`.
 A failed metadata write retains the started thread and its folder without starting a turn.
 Heartbeat tasks still require renderer thread state.
-Not yet carried over: `autoArchive`, the desktop notification, and the unread dot on the rail.
-`automation_run_now` checks the requests the app-server receives and the refusals; the live `Root` flow needs macOS.
+Not yet carried over: the desktop notification and the unread dot on the rail.
+`automation_run_now` checks projectless metadata, project assignment, saved policy, early completion, user cancellation, and archive failures against a stdio peer.
+It also checks account isolation, recoverable restore writes, and retained worktrees.
+The native row-menu replay needs macOS.
 
 `LocalHost` implements the original `automation-update` status change for local tasks (issue https://github.com/i098/codex-gpui/issues/226).
 It accepts `{id, status}` or the original full cron or heartbeat body; any other changed field fails.

@@ -78,9 +78,8 @@ pub trait Host: Send + Sync {
         bail!("adding a local project is unsupported by this host")
     }
 
-    /// The original's turn-completed update of an automation run: an open run of `thread_id`
-    /// becomes `PENDING_REVIEW`. `false` when the thread is no open run or the host has none.
-    fn finish_automation_run(&self, _thread_id: &str, _completed: bool) -> Result<bool> {
+    /// Finish the initial automation turn and settle its automatic archive before reading the inbox.
+    fn finish_automation_run(&self, _thread_id: &str, _turn: &Value) -> Result<bool> {
         Ok(false)
     }
 
@@ -947,8 +946,8 @@ impl Host for LocalHost {
         })
     }
 
-    fn finish_automation_run(&self, thread_id: &str, completed: bool) -> Result<bool> {
-        self.finish_run(thread_id, completed)
+    fn finish_automation_run(&self, thread_id: &str, turn: &Value) -> Result<bool> {
+        self.finish_run(thread_id, turn)
     }
 
     fn add_project(&self, root: &Path) -> Result<String> {
@@ -1446,8 +1445,8 @@ impl Host for CloudHost {
         self.local.add_project(root)
     }
 
-    fn finish_automation_run(&self, thread_id: &str, completed: bool) -> Result<bool> {
-        self.local.finish_run(thread_id, completed)
+    fn finish_automation_run(&self, thread_id: &str, turn: &Value) -> Result<bool> {
+        self.local.finish_run(thread_id, turn)
     }
 
     fn fetch(&self, request: &Request) -> Result<Value> {
