@@ -288,3 +288,8 @@ fn regions_keep_diagonal_text_and_geometry_counts() {
         ]
     );
 }
+
+#[test]
+fn proxy() {
+    common::proxy_child();
+}
