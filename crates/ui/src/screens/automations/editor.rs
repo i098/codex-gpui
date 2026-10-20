@@ -121,7 +121,7 @@ impl Editor {
             original_rule: item.and_then(|v| v["rrule"].as_str()).map(str::to_owned),
             schedule_dirty: false,
             raw_rule: false,
-            editing: item.is_some(),
+            editing: item.is_some_and(|item| item["id"].is_string()),
             saving: false,
             error: None,
         };
