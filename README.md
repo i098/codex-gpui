@@ -70,8 +70,12 @@ This page does not implement Git operations or active pull request watchers, and
 Scheduled > New task accepts instructions, a daily or weekly repeat, and a local time in `HH:MM` format.
 Create saves the definition through `create-automation` to `CODEX_HOME/automations/<id>/automation.toml`.
 The app reloads the task list after a successful write and retains the draft if the write fails.
-The existing host schedules and executes these definitions; this app does not start another scheduler.
+The existing host schedules these definitions; this app does not start another scheduler.
+The row menu's `Run now` sends `automation-run-now`; the host starts one `codex app-server` thread and turn per task folder.
+It runs tasks with project folders or a project target (the project's first root from `.codex-global-state.json`), in a new Git worktree for the original default environment or in the folder for the local one.
+Projectless tasks and heartbeat tasks fail with the reason in the `Could not start scheduled task` toast.
 Run `cargo test -p app --test task_create -- --test-threads=1` on macOS for the native creation and reload proof.
+Run `cargo test -p app --test automation_run_now` for the `Run now` requests over a stdio app-server stub.
 
 ## Release bundle
 

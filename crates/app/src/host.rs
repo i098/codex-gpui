@@ -6,13 +6,14 @@
 //! run metadata from `sqlite/codex.db` under `CODEX_HOME` (default: `~/.codex`).
 //! It never migrates the original database or reads another account's automation rows.
 //! Definition writes are atomic; status updates persist local recurrence metadata without running tasks.
+//! `automation-run-now` starts a run on the app-server that `with_bridge` supplies.
 //! `CloudHost` adds the original's `httpFetch` service for ChatGPT backend requests (usage,
 //! beacons, hosted automations, suggested-task conversations): it consumes the renderer's
 //! `X-OpenAI-Attach-*` headers, attaches the token that `codex app-server` holds
 //! (`getAuthStatus` with `includeToken`) plus the account route from `account/read`, retries once
 //! after a 401 with a refreshed token, and answers the original wire shapes, including errors.
 //! The token never reaches logs, errors, or `Debug` output.
-//! Local fetches support `list-automations`, `create-automation`, `automation-update`, `inbox-items`, the `git-*` endpoints, `create-worktree`, `set-worktree-owner-thread`, and `paths-exist`; other endpoints return errors.
+//! Local fetches support `list-automations`, `create-automation`, `automation-update`, `automation-run-now`, `inbox-items`, the `git-*` endpoints, `create-worktree`, `set-worktree-owner-thread`, and `paths-exist`; other endpoints return errors.
 //! `Root` loads the automation list off the UI thread when the Scheduled route opens.
 //! Consumers read the result through `Root::automations`; this service slice does not change the static screens.
 //!
@@ -40,6 +41,7 @@ use url::Url;
 
 mod automation_schedule;
 mod git;
+mod run_now;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "transport", content = "request", rename_all = "kebab-case")]
@@ -73,6 +75,12 @@ pub trait Host: Send + Sync {
 
     fn add_project(&self, _root: &Path) -> Result<String> {
         bail!("adding a local project is unsupported by this host")
+    }
+
+    /// The original's turn-completed update of an automation run: an open run of `thread_id`
+    /// becomes `PENDING_REVIEW`. `false` when the thread is no open run or the host has none.
+    fn finish_automation_run(&self, _thread_id: &str, _completed: bool) -> Result<bool> {
+        Ok(false)
     }
 
     /// The signed-in ChatGPT identity the renderer puts on its backend requests; `None`
@@ -396,6 +404,9 @@ pub fn json_body(response: &Value) -> Result<Value> {
 
 pub struct LocalHost {
     home: PathBuf,
+    /// The `codex app-server` that `automation-run-now` starts runs on; the original's main
+    /// process holds the same connection.
+    bridge: Option<Arc<Bridge>>,
     opener: PathBuf,
 }
 
@@ -403,8 +414,14 @@ impl LocalHost {
     pub fn new(home: impl Into<PathBuf>) -> Self {
         Self {
             home: home.into(),
+            bridge: None,
             opener: "/usr/bin/open".into(),
         }
+    }
+
+    pub fn with_bridge(mut self, bridge: Arc<Bridge>) -> Self {
+        self.bridge = Some(bridge);
+        self
     }
 
     /// Launches editors through `opener`, which takes macOS `open`'s `[-a App] file` arguments.
@@ -882,6 +899,10 @@ impl Host for LocalHost {
         })
     }
 
+    fn finish_automation_run(&self, thread_id: &str, completed: bool) -> Result<bool> {
+        self.finish_run(thread_id, completed)
+    }
+
     fn add_project(&self, root: &Path) -> Result<String> {
         let root = root
             .canonicalize()
@@ -963,6 +984,7 @@ impl Host for LocalHost {
             "list-automations" => self.automations()?,
             "create-automation" => self.create_automation(&params)?,
             "automation-update" => self.update_automation(&params)?,
+            "automation-run-now" => self.automation_run_now(&params)?,
             "inbox-items" => self.inbox(&params)?,
             "git-changes" | "git-stage" | "git-unstage" | "git-revert" | "git-commit-status"
             | "git-commit-diff" | "git-commit" | "git-push" | "git-checkout" => {
@@ -1162,6 +1184,12 @@ impl CloudHost {
             .filter(|u| !u.trim().is_empty())
             .unwrap_or_else(|| "https://chatgpt.com/backend-api".into());
         Self::new(LocalHost::from_env(), credentials, base)
+    }
+
+    /// Lets the local endpoints that start app-server work (`automation-run-now`) run.
+    pub fn with_bridge(mut self, bridge: Arc<Bridge>) -> Self {
+        self.local = self.local.with_bridge(bridge);
+        self
     }
 
     /// Cached sign-in, reloaded on `refresh`. Failures carry the original's messages only.
@@ -1376,6 +1404,10 @@ impl Host for CloudHost {
 
     fn add_project(&self, root: &Path) -> Result<String> {
         self.local.add_project(root)
+    }
+
+    fn finish_automation_run(&self, thread_id: &str, completed: bool) -> Result<bool> {
+        self.local.finish_run(thread_id, completed)
     }
 
     fn fetch(&self, request: &Request) -> Result<Value> {

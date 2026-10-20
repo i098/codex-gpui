@@ -55,6 +55,13 @@ pub struct ToggleAutomation {
     pub id: String,
 }
 
+/// `Run now` in a task row's menu: the app starts a run through the host's `automation-run-now`.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = automations, no_json)]
+pub struct RunAutomationNow {
+    pub id: String,
+}
+
 /// One `list-automations` item, as the sidebar `Upcoming` list and the task thread show it.
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -81,6 +88,20 @@ pub fn tasks(list: &Value) -> Vec<Task> {
         .filter_map(|item| serde_json::from_value(item.clone()).ok())
         .collect()
 }
+
+/// An event-triggered task: its prompt is the original's `## When this happens` / `## Perform
+/// action` quote blocks (`zhi`). Only an event runs it, so `Run now` is off for it.
+pub fn event_triggered(prompt: &str) -> bool {
+    let quoted = |line: &str| line == ">" || line.starts_with("> ");
+    prompt
+        .strip_prefix("## When this happens\n")
+        .and_then(|rest| rest.split_once("\n\n## Perform action\n"))
+        .is_some_and(|(when, action)| {
+            when.lines().all(quoted) && action.lines().next().is_some_and(quoted)
+        })
+}
+
+const TRIGGER_TOOLTIP: &str = "Automations triggered by events can’t be run manually";
 
 /// A squircle `background-color` over the parent's box, blended like Blink (`shapes`), not a
 /// GPUI quad: the fill px match the original to the unit.
@@ -284,6 +305,8 @@ fn shell_with(
         selected: selected.as_ref().map(|(task, _)| task.id.clone()),
         utc_offset,
         pending: HashSet::new(),
+        starting: HashSet::new(),
+        menu_item: None,
         menu: None,
         menu_button_hovered: false,
         menu_focus: cx.focus_handle(),
@@ -323,6 +346,10 @@ pub struct ScheduledSidebar {
     selected: Option<String>,
     utc_offset: i64,
     pending: HashSet<String>,
+    /// Tasks whose run is starting: their row reads `Starting run…` and `Run now` is off.
+    starting: HashSet<String>,
+    /// The keyboard-active menu item (`0` Run now, `1` Pause or Resume) once an arrow key moved it.
+    menu_item: Option<usize>,
     /// The row whose `Scheduled task actions` menu is open.
     menu: Option<String>,
     /// The menu button is under the pointer: a press on it toggles the menu, not closes it.
@@ -346,8 +373,32 @@ impl ScheduledSidebar {
         cx.notify();
     }
 
+    pub fn set_starting(&mut self, starting: HashSet<String>, cx: &mut Context<Self>) {
+        self.starting = starting;
+        cx.notify();
+    }
+
+    /// The task's run is starting.
+    pub fn is_starting(&self, id: &str) -> bool {
+        self.starting.contains(id)
+    }
+
+    /// The task whose actions menu is open.
+    pub fn open_menu(&self) -> Option<&str> {
+        self.menu.as_deref()
+    }
+
+    fn run_now(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.starting.contains(id) {
+            return;
+        }
+        window.dispatch_action(Box::new(RunAutomationNow { id: id.to_owned() }), cx);
+        self.close_menu(window, cx);
+    }
+
     fn close_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.menu = None;
+        self.menu_item = None;
         if let Some(focus) = self.return_focus.take() {
             window.focus(&focus, cx);
         }
@@ -367,6 +418,7 @@ impl ScheduledSidebar {
             return;
         }
         self.menu = Some(id.to_owned());
+        self.menu_item = None;
         self.return_focus = Some(button);
         window.focus(&self.menu_focus, cx);
         cx.stop_propagation();
@@ -383,10 +435,20 @@ impl ScheduledSidebar {
             "escape" => self.close_menu(window, cx),
             "enter" | "space" => {
                 if let Some(id) = self.menu.clone() {
-                    self.toggle(&id, window, cx);
+                    if self.menu_item == Some(0) {
+                        self.run_now(&id, window, cx);
+                    } else {
+                        self.toggle(&id, window, cx);
+                    }
                 }
             }
-            "up" | "down" | "home" | "end" | "tab" => cx.stop_propagation(),
+            "up" | "down" | "home" | "end" => {
+                let last = matches!(event.keystroke.key.as_str(), "down" | "end");
+                self.menu_item = Some(usize::from(last));
+                cx.stop_propagation();
+                cx.notify();
+            }
+            "tab" => cx.stop_propagation(),
             _ => {}
         }
     }
@@ -396,6 +458,32 @@ impl ScheduledSidebar {
         let paused = task.status == "PAUSED";
         let label = if paused { "Resume" } else { "Pause" };
         let (id, hover) = (task.id.clone(), t.menu_item_hover);
+        let triggered = event_triggered(&task.prompt);
+        let off = triggered || self.starting.contains(&task.id);
+        let run_id = task.id.clone();
+        let run = div()
+            .id("run-now")
+            .role(Role::MenuItem)
+            .aria_label("Run now")
+            .aria_disabled(off)
+            .h(px(28.5625))
+            .px(px(8.))
+            .rounded(px(15.))
+            .flex()
+            .items_center()
+            .when(self.menu_item == Some(0) && !off, |d| d.bg(hover))
+            .when(off, |d| d.opacity(0.4))
+            .when(!off, |d| {
+                d.hover(move |s| s.bg(hover)).on_click(
+                    cx.listener(move |this, _, window, cx| this.run_now(&run_id, window, cx)),
+                )
+            })
+            .child(text("Run now", 13., 18.5714, 430., t.text));
+        let run = if triggered {
+            tooltip(run, TRIGGER_TOOLTIP, None, Side::Right).into_any_element()
+        } else {
+            run.into_any_element()
+        };
         let item = div()
             .id("toggle-status")
             .group("toggle-status-item")
@@ -409,6 +497,7 @@ impl ScheduledSidebar {
             .flex()
             .items_center()
             .gap(px(6.))
+            .when(self.menu_item == Some(1), |d| d.bg(hover))
             .hover(move |s| s.bg(hover))
             .on_click(cx.listener(move |this, _, window, cx| this.toggle(&id, window, cx)))
             .child(
@@ -435,7 +524,9 @@ impl ScheduledSidebar {
                     this.close_menu(window, cx);
                 }
             }))
-            .child(crate::composer::popover(t, 220., |menu| menu.child(item)));
+            .child(crate::composer::popover(t, 220., |menu| {
+                menu.child(run).child(item)
+            }));
         deferred(
             div().absolute().top(px(30.)).right(px(1.)).child(
                 anchored()
@@ -555,8 +646,12 @@ impl ScheduledSidebar {
             px(2.),
             cx,
         );
+        let starting = self.starting.contains(&task.id);
         let mut secondary = div().h(px(16.)).pr(px(5.)).flex().items_center();
-        if !paused && let Some(next) = task.next_run_at {
+        if !paused
+            && !starting
+            && let Some(next) = task.next_run_at
+        {
             secondary = secondary
                 .child(text(
                     day_time(next, self.utc_offset).0,
@@ -592,13 +687,20 @@ impl ScheduledSidebar {
                     .overflow_hidden()
                     .text_ellipsis(),
             )
-            .child(secondary.child(text(
-                if paused { "Paused" } else { task.cadence() },
-                12.,
-                16.,
-                430.,
-                t.text_tertiary,
-            )))
+            .child(
+                secondary
+                    .child(text(
+                        if paused { "Paused" } else { task.cadence() },
+                        12.,
+                        16.,
+                        430.,
+                        t.text_tertiary,
+                    ))
+                    .when(starting, |d| {
+                        d.child(text("·", 12., 16., 430., t.text_tertiary).mx(px(4.)))
+                            .child(text("Starting run…", 12., 16., 430., t.text_tertiary))
+                    }),
+            )
             .child(
                 div()
                     .absolute()
@@ -1137,4 +1239,20 @@ fn status_icon(paused: bool, color: gpui::Hsla) -> crate::icon::Icon {
         16.,
         color,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn only_the_original_event_prompt_is_event_triggered() {
+        let event = "## When this happens\n> a PR opens\n>\n> in main\n\n## Perform action\n> review it\n\nTrailing";
+        assert!(super::event_triggered(event));
+        assert!(!super::event_triggered("Review the PR every day"));
+        assert!(!super::event_triggered(
+            "## When this happens\nunquoted\n\n## Perform action\n> review it"
+        ));
+        assert!(!super::event_triggered(
+            "## When this happens\n> a PR opens\n\n## Perform action\nunquoted"
+        ));
+    }
 }

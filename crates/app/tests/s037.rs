@@ -264,7 +264,9 @@ fn task_status_controls_persist_through_the_real_local_host() -> Result<()> {
         home.path()
             .join("automations/status-heartbeat/automation.toml"),
     )?;
-    let db_row = |id: &str| -> Result<(String, Option<i64>, Option<i64>, Option<i64>)> {
+    /// `(status, next_run_at, next_run_nominal_at, last_run_at)`.
+    type Row = (String, Option<i64>, Option<i64>, Option<i64>);
+    let db_row = |id: &str| -> Result<Row> {
         Ok(db.query_row(
             "SELECT status, next_run_at, next_run_nominal_at, last_run_at FROM automations WHERE id = ?",
             [id],

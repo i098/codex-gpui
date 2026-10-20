@@ -600,6 +600,22 @@ The click puts the card in `Starting…` (rays spinner, status text) and disable
 The oracle answers that read with the host's 499, so the recorded outcome is the toast `Couldn’t start this suggested task` and the cards enabled again.
 The conversation prepare, its stream, and the navigation into the started conversation are not recorded and not wired.
 
+`Run now` (AM-021) is the first item of the row `Scheduled task actions` menu, as in `run-now-11e55df28c95.js`.
+Choosing it sends `automation-run-now` with `{id, collaborationMode, permissions}`; the row reads `Starting run…` and an info toast shows until the host answers.
+`LocalHost` starts one app-server thread per task folder, titles it with the task name, and sends the original's run preamble and the prompt as the first turn.
+The new thread then appears in Recents through `thread/started`.
+Before each thread the host reads the user's saved config (`config/read` for the folder) and the config requirements, and picks the model from `model/list` like the original (`Pr`): the task's model, else `gpt-5.3-codex`, else the default.
+The sandbox and approvals follow the original's agent-mode rules (`Al`): the saved `sandbox_mode` and `approval_policy`, or `auto`; an unattended run sets `never` when the requirements allow it, and the turn's sandbox adds the folder, `$CODEX_HOME/automations/<id>` and the git roots.
+The mode the user last picked is read from `agent-mode-by-host-id` in the global state [INFERENCE: the persisted-atom table is assumed].
+When the original database exists, a `pending:` row in `automation_runs` opens before the thread, takes the thread id, and is archived (`auto`) if the thread or turn fails to start.
+`turn/completed` for the thread then sets the run to `PENDING_REVIEW` (`finish_automation_run`); a `failed_runs_only` task is read when the turn completed and unread otherwise.
+A refusal or `success: false` shows the danger toast `Could not start scheduled task`, with the reason on one line.
+Event-triggered tasks (`## When this happens` prompts) have the item disabled with the tooltip `Automations triggered by events can’t be run manually`; the host refuses them too.
+The project folders or project target (its first root from `.codex-global-state.json`) run, in a new worktree for the original default environment (`create_worktree` and `set_owner_thread`, removed again when no thread starts) or in the folder for `local`; outside a Git repository the run happens in the folder.
+Projectless and heartbeat tasks are refused: the host has no workspace-directory creation or renderer thread state.
+Not yet carried over: the project assignment of the new thread, `autoArchive`, the desktop notification, the unread dot on the rail, `lastRunAt` and next-run updates.
+`automation_run_now` checks the requests the app-server receives and the refusals; the live `Root` flow needs macOS.
+
 `LocalHost` implements the original `automation-update` status change for local tasks (issue https://github.com/i098/codex-gpui/issues/226).
 It accepts `{id, status}` or the original full cron or heartbeat body; any other changed field fails.
 Like the original `ugi`, a task without a target sends its first cwd as `projectId`; the host compares that value with the stored cwd.
@@ -633,7 +649,7 @@ Like the original, Git's `extensions.worktreeConfig` is enabled in the repositor
 A failure removes only the worktree that the call made, after its cleanup script, without `--force`; a worktree with changes is kept and the error says so.
 `set-worktree-owner-thread` writes `codex-thread.json` for a linked worktree only.
 `crates/app/tests/automation_worktree.rs` proves these effects against disposable repositories and a local bare remote, and the `host::git` unit tests prove the cleanup refusals and the name collision.
-Run now does not call it yet; run records, model and config selection, and the UI stay with Run now.
+Run now calls `create_worktree` and `set_owner_thread` directly for worktree tasks.
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
@@ -644,7 +660,7 @@ Run now does not call it yet; run records, model and config selection, and the U
 | 5 | Search | focus | Filters; `No matching tasks`. | Dispatches `SearchTasks`; no handler. | NOT WIRED (no host: `list-automations`) |
 | 6 | Status filter | click | All / Active / Paused. | — | NOT WIRED (no host: `list-automations`) |
 | 7 | Task row | click | Detail panel. | Selects the task and opens its thread. | PASS (`s037::task_row_hover_and_click_match_original`) |
-| 8 | Row actions | click | Edit, Run now, Pause, Delete. | `Pause` / `Resume` in the row menu and the row status control persist through `automation-update`. Other actions remain outside this slice. | PARTIAL (`s037::task_status_controls_persist_through_the_real_local_host`) |
+| 8 | Row actions | click | Edit, Run now, Pause, Delete. | `Run now` (through `automation-run-now`) and `Pause` / `Resume` in the row menu; the status control persists through `automation-update`. Edit and Delete remain outside this slice. | PARTIAL (`automation_run_now`; `s037::task_status_controls_persist_through_the_real_local_host`) |
 | 9 | Editor fields | focus | Name, Prompt, schedule. | — | NOT WIRED (no host: `automation-create`) |
 | 10 | Previous runs | click | Run chat, mark read, archive. | — | NOT WIRED (no host: `inbox-items`, `automation-run-archive`) |
 | 11 | Row hover | hover | Row highlight. | The recorded row fill and actions match; the status icon changes to Pause on hover or keyboard focus. | PASS (`s037::task_row_hover_and_click_match_original`; suggestion hover: `s035::suggestion_hover_matches_original`) |
