@@ -257,6 +257,20 @@ mod editor {
             draft.execution["reasoningEffort"].is_string(),
             "selected model did not supply an effort"
         );
+        fx.keys("enter enter")?;
+        let reopened_effort = fx.read(|root, cx| {
+            root.automation_editor()
+                .unwrap()
+                .read(cx)
+                .draft(cx)
+                .unwrap()
+                .execution["reasoningEffort"]
+                .clone()
+        });
+        ensure!(
+            reopened_effort == draft.execution["reasoningEffort"],
+            "reopening the effort picker changed its selected value"
+        );
         if let Ok(dir) = std::env::var("CGX_AUTOMATION_EDITOR_SHOTS") {
             fs::create_dir_all(&dir)?;
             fx.advance(Duration::from_millis(200))?;

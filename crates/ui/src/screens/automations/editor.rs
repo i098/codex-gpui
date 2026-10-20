@@ -964,7 +964,6 @@ impl Editor {
             picker,
             Picker::Notifications | Picker::Project | Picker::Thread
         );
-        let compact = matches!(picker, Picker::Trigger | Picker::Model | Picker::Effort);
         let color = if setting {
             t.text
         } else if matches!(picker, Picker::Trigger | Picker::Effort) {
@@ -972,10 +971,13 @@ impl Editor {
         } else {
             t.text_secondary
         };
-        let icon_color = if setting || compact {
-            t.text_tertiary
-        } else {
-            color
+        let (icon_name, icon_size, gap, icon_color) = match picker {
+            Picker::Notifications | Picker::Project | Picker::Thread => {
+                ("chevron-down", 14., 4., t.text_tertiary)
+            }
+            Picker::Trigger => ("chevron-down-medium", 16., 6., t.text_tertiary),
+            Picker::Model | Picker::Effort => ("chevron-down-medium", 16., 8., t.text_tertiary),
+            _ => ("automation-chevron-down", 20., 8., color),
         };
         div()
             .id(("automation-picker", control))
@@ -993,13 +995,7 @@ impl Editor {
             .flex()
             .items_center()
             .justify_end()
-            .gap(px(if setting {
-                4.
-            } else if picker == Picker::Trigger {
-                6.
-            } else {
-                8.
-            }))
+            .gap(px(gap))
             .hover(|s| s.bg(t.ghost_hover))
             .when(!value.is_empty(), |d| {
                 d.child(text(
@@ -1013,23 +1009,7 @@ impl Editor {
             .when(picker == Picker::Trigger, |d| {
                 d.child(icon("automation-scheduled", 16., color))
             })
-            .child(icon(
-                if setting {
-                    "chevron-down"
-                } else if compact {
-                    "chevron-down-medium"
-                } else {
-                    "automation-chevron-down"
-                },
-                if setting {
-                    14.
-                } else if compact {
-                    16.
-                } else {
-                    20.
-                },
-                icon_color,
-            ))
+            .child(icon(icon_name, icon_size, icon_color))
             .on_click(cx.listener(move |this, _, window, cx| {
                 if !this.saving {
                     this.controls[control].focus(window, cx);
