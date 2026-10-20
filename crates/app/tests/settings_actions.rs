@@ -188,6 +188,8 @@ fn a_failed_setting_write_keeps_the_saved_value_and_shows_an_error() -> Result<(
     Ok(())
 }
 
+// These coordinates require macOS text layout; Linux uses the no-op text system.
+#[cfg(target_os = "macos")]
 fn prepare_instructions(fx: &mut Fx) -> Result<()> {
     fx.keys("cmd-,")?;
     fx.click((200., 118.))?;
@@ -198,11 +200,13 @@ fn prepare_instructions(fx: &mut Fx) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
 fn show_instructions(fx: &mut Fx) -> Result<()> {
     prepare_instructions(fx)?;
     press(fx, "enter")
 }
 
+#[cfg(target_os = "macos")]
 fn open_instructions(fx: &mut Fx) -> Result<()> {
     show_instructions(fx)?;
     fx.wait("instructions editor focus", |fx| {
@@ -218,6 +222,7 @@ fn open_instructions(fx: &mut Fx) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn instructions_save_cancel_and_navigation_guard_preserve_the_document() -> Result<()> {
     let home = tempfile::tempdir()?;
@@ -286,6 +291,7 @@ fn instructions_save_cancel_and_navigation_guard_preserve_the_document() -> Resu
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_failed_instruction_save_keeps_the_draft_for_retry() -> Result<()> {
     let home = tempfile::tempdir()?;
@@ -380,6 +386,7 @@ fn workspace_picker_cancel_stays_then_selection_enters_home() -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn instruction_load_failure_can_retry_without_losing_the_page() -> Result<()> {
     let home = tempfile::tempdir()?;

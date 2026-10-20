@@ -719,6 +719,8 @@ Success shows `Instructions updated`; failure shows `Unable to save instructions
 Cancel discards the draft.
 Navigation, Back, window close, and Quit ask `Discard changes?` while edits remain.
 The instructions tests use owned files and cover save, cancel, discard, load failure, and save retry.
+The coordinate-based instructions cases run on macOS because Linux uses the no-op text system.
+The remaining action and host tests also run on Linux.
 
 Existing profiles keep their saved route.
 A missing or unreadable window state starts at `SelectWorkspace`.
