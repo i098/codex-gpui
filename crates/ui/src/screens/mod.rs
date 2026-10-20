@@ -2,6 +2,7 @@
 
 pub mod automations;
 pub mod composer;
+pub use settings::computer_use;
 pub mod diff;
 pub mod home;
 pub mod mobile;

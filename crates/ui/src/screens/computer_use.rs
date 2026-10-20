@@ -1,0 +1,728 @@
+//! Host-confirmed Computer use settings.
+//! The `available` field is a platform and feature gate, not a permission grant.
+//! The app replaces confirmed state after each successful host operation.
+
+use super::{Layer, button, deco, probe, select, switch};
+use crate::{composer::popover, focus, icon::icon, text};
+use gpui::{
+    AnyElement, App, Context, Div, FocusHandle, Global, InteractiveElement, IntoElement,
+    KeyDownEvent, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window,
+    div, img, prelude::FluentBuilder as _, px,
+};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use theme::{ActiveTheme as _, Theme};
+
+#[derive(Clone, Debug, Default)]
+pub enum Load<T> {
+    #[default]
+    Loading,
+    Ready(T),
+    Failed(String),
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppApproval {
+    pub bundle_identifier: String,
+    pub display_name: String,
+    #[serde(rename = "iconDataURL")]
+    pub icon_data_url: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SoundMode {
+    ForegroundClicks,
+    ForegroundAndBackgroundClicks,
+    Off,
+}
+
+impl SoundMode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::ForegroundClicks => "Play sounds for foreground clicks",
+            Self::ForegroundAndBackgroundClicks => {
+                "Play sounds for foreground and background clicks"
+            }
+            Self::Off => "Don’t play sounds",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Plugin {
+    pub installed: bool,
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug)]
+pub enum ComputerUseAction {
+    Refresh,
+    Install,
+    SetEnabled(bool),
+    SetSoundMode(SoundMode),
+    RemoveApproval(String),
+    OpenPermissions,
+}
+
+pub type Dispatch = Arc<dyn Fn(ComputerUseAction, &mut App) + Send + Sync>;
+
+#[derive(Clone, Default)]
+pub struct ComputerUseState {
+    pub available: bool,
+    pub plugin: Load<Option<Plugin>>,
+    pub approvals: Load<Vec<AppApproval>>,
+    pub sound: Option<SoundMode>,
+    pub pending: bool,
+    pub error: Option<String>,
+    pub permission_guidance: Option<String>,
+    pub dispatch: Option<Dispatch>,
+}
+
+impl Global for ComputerUseState {}
+
+pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
+    let page = window.use_keyed_state("computer-use-settings", cx, |_, cx| {
+        cx.observe_global::<ComputerUseState>(|_, cx| cx.notify())
+            .detach();
+        ComputerUse {
+            sound_open: false,
+            removal: None,
+            layer: Layer::default(),
+            modal_focus: cx.focus_handle(),
+        }
+    });
+    page.into_any_element()
+}
+
+struct ComputerUse {
+    sound_open: bool,
+    removal: Option<AppApproval>,
+    layer: Layer,
+    modal_focus: FocusHandle,
+}
+
+impl ComputerUse {
+    fn dispatch(&mut self, action: ComputerUseAction, cx: &mut Context<Self>) {
+        if cx
+            .try_global::<ComputerUseState>()
+            .is_some_and(|state| state.pending)
+        {
+            return;
+        }
+        let dispatch = cx
+            .try_global::<ComputerUseState>()
+            .and_then(|s| s.dispatch.clone());
+        if let Some(dispatch) = dispatch {
+            dispatch(action, cx);
+        } else {
+            let mut state = cx
+                .try_global::<ComputerUseState>()
+                .cloned()
+                .unwrap_or_default();
+            state.error = Some("Computer use settings are unavailable.".into());
+            cx.set_global(state);
+        }
+        cx.notify();
+    }
+
+    fn action(
+        &self,
+        id: impl Into<SharedString>,
+        label: &'static str,
+        action: ComputerUseAction,
+        disabled: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let t = cx.theme().clone();
+        let id: SharedString = id.into();
+        let handle = focus::handle(id.clone(), 0, window, cx);
+        let key_action = action.clone();
+        focus::ring(
+            button(label, t.text_alpha_5, None, &t)
+                .id(id)
+                .when(disabled, |d| d.opacity(0.6)),
+            &handle,
+            px(12.5),
+            px(2.),
+            cx,
+        )
+        .on_click(cx.listener(move |this, _, _, cx| {
+            if !disabled {
+                this.dispatch(action.clone(), cx);
+            }
+        }))
+        .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+            if !disabled && matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                this.dispatch(key_action.clone(), cx);
+                cx.stop_propagation();
+            }
+        }))
+        .into_any_element()
+    }
+
+    fn control(
+        &self,
+        state: &ComputerUseState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<Div> {
+        let t = cx.theme().clone();
+        match &state.plugin {
+            Load::Loading => vec![message("Loading plugins…", &t)],
+            Load::Failed(error) => vec![row(
+                error.clone(),
+                None,
+                None,
+                self.action(
+                    "retry-computer-use",
+                    "Retry",
+                    ComputerUseAction::Refresh,
+                    state.pending,
+                    window,
+                    cx,
+                ),
+                &t,
+            )],
+            Load::Ready(Some(plugin)) if state.available => {
+                let control = if plugin.installed {
+                    let enabled = plugin.enabled;
+                    let disabled = state.pending;
+                    let handle = focus::handle("computer-use-enabled", 0, window, cx);
+                    focus::ring(
+                        switch("computer-use-enabled", enabled, disabled, &t),
+                        &handle,
+                        px(10.),
+                        px(2.),
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if !disabled {
+                            this.dispatch(ComputerUseAction::SetEnabled(!enabled), cx);
+                        }
+                    }))
+                    .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+                        if !disabled && matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                            this.dispatch(ComputerUseAction::SetEnabled(!enabled), cx);
+                            cx.stop_propagation();
+                        }
+                    }))
+                    .into_any_element()
+                } else {
+                    self.action(
+                        "install-computer-use",
+                        "Install",
+                        ComputerUseAction::Install,
+                        state.pending,
+                        window,
+                        cx,
+                    )
+                };
+                vec![row(
+                    "Any App",
+                    Some("Let ChatGPT control apps on your computer".into()),
+                    Some(
+                        div()
+                            .size(px(40.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(icon("settings-computer-use", 24., t.text_secondary))
+                            .into_any_element(),
+                    ),
+                    control,
+                    &t,
+                )]
+            }
+            Load::Ready(_) => vec![message("Computer Use plugins unavailable", &t)],
+        }
+    }
+
+    fn approvals(
+        &self,
+        state: &ComputerUseState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<Div> {
+        let t = cx.theme().clone();
+        match &state.approvals {
+            Load::Loading => vec![message("Loading allowed apps…", &t)],
+            Load::Failed(_) => vec![message("Unable to load allowed apps.", &t)],
+            Load::Ready(apps) if apps.is_empty() => vec![message("None yet", &t)],
+            Load::Ready(apps) => apps
+                .iter()
+                .map(|app| {
+                    let image = match &app.icon_data_url {
+                        Some(url) => img(SharedString::from(url.clone()))
+                            .size(px(36.))
+                            .rounded(px(6.))
+                            .into_any_element(),
+                        None => div()
+                            .size(px(36.))
+                            .rounded(px(6.))
+                            .bg(gpui::Hsla { a: 0.1, ..t.text })
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(text(
+                                app.display_name
+                                    .chars()
+                                    .next()
+                                    .unwrap_or(' ')
+                                    .to_uppercase()
+                                    .to_string(),
+                                14.,
+                                20.,
+                                600.,
+                                t.text_secondary,
+                            ))
+                            .into_any_element(),
+                    };
+                    let app = app.clone();
+                    let id = SharedString::from(format!("remove-{}", app.bundle_identifier));
+                    let handle = focus::handle(id.clone(), 0, window, cx);
+                    let pending = state.pending;
+                    let remove = focus::ring(
+                        div()
+                            .id(id)
+                            .size(px(28.))
+                            .rounded(px(12.5))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .when(pending, |d| d.opacity(0.6))
+                            .child(icon("close", 16., t.text_secondary)),
+                        &handle,
+                        px(12.5),
+                        px(2.),
+                        cx,
+                    )
+                    .on_click(cx.listener({
+                        let app = app.clone();
+                        move |this, _, window, cx| {
+                            if !pending {
+                                this.removal = Some(app.clone());
+                                this.modal_focus.focus(window, cx);
+                                cx.notify();
+                            }
+                        }
+                    }))
+                    .on_key_down(cx.listener({
+                        let app = app.clone();
+                        move |this, event: &KeyDownEvent, window, cx| {
+                            if !pending && matches!(event.keystroke.key.as_str(), "enter" | "space")
+                            {
+                                this.removal = Some(app.clone());
+                                this.modal_focus.focus(window, cx);
+                                cx.notify();
+                                cx.stop_propagation();
+                            }
+                        }
+                    }))
+                    .into_any_element();
+                    row(app.display_name, None, Some(image), remove, &t)
+                })
+                .collect(),
+        }
+    }
+
+    fn sound(
+        &self,
+        mode: SoundMode,
+        pending: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let t = cx.theme().clone();
+        let open = self.sound_open;
+        let handle = focus::handle("computer-use-sound", 0, window, cx);
+        let trigger = focus::ring(
+            select(mode.label(), None, pending, &t).id("computer-use-sound"),
+            &handle,
+            px(12.5),
+            px(2.),
+            cx,
+        )
+        .on_click(cx.listener(move |this, _, _, cx| {
+            if !pending {
+                this.sound_open = !open;
+                cx.notify();
+            }
+        }))
+        .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+            if !pending && matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                this.sound_open = !open;
+                cx.notify();
+                cx.stop_propagation();
+            }
+        }));
+        div()
+            .relative()
+            .child(trigger)
+            .when(open, |d| {
+                d.child(gpui::deferred(
+                    div()
+                        .absolute()
+                        .top(px(32.))
+                        .left_0()
+                        .child(popover(&t, 420., |d| {
+                            d.children(
+                                [
+                                    SoundMode::ForegroundClicks,
+                                    SoundMode::ForegroundAndBackgroundClicks,
+                                    SoundMode::Off,
+                                ]
+                                .into_iter()
+                                .map(|choice| {
+                                    let handle = focus::handle(choice.label(), 0, window, cx);
+                                    focus::ring(
+                                        div()
+                                            .id(choice.label())
+                                            .px(px(8.))
+                                            .py(px(6.))
+                                            .rounded(px(12.))
+                                            .flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap(px(12.))
+                                            .hover(|s| s.bg(t.menu_item_hover))
+                                            .child(text(choice.label(), 14., 20., 430., t.text))
+                                            .when(choice == mode, |d| {
+                                                d.child(icon("check", 16., t.text))
+                                            }),
+                                        &handle,
+                                        px(12.),
+                                        px(2.),
+                                        cx,
+                                    )
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.sound_open = false;
+                                        this.dispatch(ComputerUseAction::SetSoundMode(choice), cx);
+                                    }))
+                                    .on_key_down(cx.listener(
+                                        move |this, event: &KeyDownEvent, _, cx| {
+                                            if matches!(
+                                                event.keystroke.key.as_str(),
+                                                "enter" | "space"
+                                            ) {
+                                                this.sound_open = false;
+                                                this.dispatch(
+                                                    ComputerUseAction::SetSoundMode(choice),
+                                                    cx,
+                                                );
+                                                cx.stop_propagation();
+                                            }
+                                        },
+                                    ))
+                                }),
+                            )
+                        })),
+                ))
+            })
+            .into_any_element()
+    }
+
+    fn confirmation(
+        &self,
+        app: &AppApproval,
+        state: &ComputerUseState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let t = cx.theme().clone();
+        let pending = state.pending;
+        let cancel_handle = focus::handle("cancel-remove-app", 0, window, cx)
+            .read(cx)
+            .handle
+            .clone();
+        let confirm_handle = focus::handle("confirm-remove-app", 0, window, cx)
+            .read(cx)
+            .handle
+            .clone();
+        let cancel = button("Cancel", t.text_alpha_5, None, &t)
+            .id("cancel-remove-app")
+            .track_focus(&cancel_handle)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if !pending {
+                    this.removal = None;
+                    cx.notify();
+                }
+            }))
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+                if !pending && matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    this.removal = None;
+                    cx.notify();
+                    cx.stop_propagation();
+                }
+            }));
+        let remove = self.action(
+            "confirm-remove-app",
+            "Remove",
+            ComputerUseAction::RemoveApproval(app.bundle_identifier.clone()),
+            pending,
+            window,
+            cx,
+        );
+        gpui::deferred(
+            div()
+                .absolute()
+                .inset_0()
+                .bg(gpui::black().opacity(0.4))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .w(px(448.))
+                        .p(px(24.))
+                        .rounded(px(20.))
+                        .bg(t.background_panel)
+                        .track_focus(&self.modal_focus)
+                        .on_key_down(move |event, window, cx| {
+                            if event.keystroke.key == "tab" {
+                                if cancel_handle.is_focused(window) {
+                                    confirm_handle.focus(window, cx);
+                                } else {
+                                    cancel_handle.focus(window, cx);
+                                }
+                                cx.stop_propagation();
+                            }
+                        })
+                        .flex()
+                        .flex_col()
+                        .gap(px(16.))
+                        .child(text(
+                            format!("Remove “{}” from always allowed apps?", app.display_name),
+                            18.,
+                            24.,
+                            600.,
+                            t.text,
+                        ).whitespace_normal())
+                        .child(text(
+                            format!(
+                                "ChatGPT will ask to use “{}” in the next computer use session.",
+                                app.display_name
+                            ),
+                            14.,
+                            20.,
+                            430.,
+                            t.text_secondary,
+                        ).whitespace_normal())
+                        .children(
+                            state
+                                .error
+                                .as_ref()
+                                .map(|error| text(error.clone(), 13., 18., 430., t.text_secondary).whitespace_normal()),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .justify_end()
+                                .gap(px(8.))
+                                .child(cancel)
+                                .child(remove),
+                        ),
+                ),
+        )
+        .into_any_element()
+    }
+}
+
+impl Render for ComputerUse {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.theme().clone();
+        let state = cx
+            .try_global::<ComputerUseState>()
+            .cloned()
+            .unwrap_or_default();
+        if self.removal.as_ref().is_some_and(|removed| matches!(&state.approvals, Load::Ready(apps) if !apps.iter().any(|app| app.bundle_identifier == removed.bundle_identifier))) {
+            self.removal = None;
+        }
+        let control = self.control(&state, window, cx);
+        let approvals = state.available.then(|| self.approvals(&state, window, cx));
+        let sound = state
+            .available
+            .then_some(state.sound)
+            .flatten()
+            .map(|mode| self.sound(mode, state.pending, window, cx));
+        div().size_full().relative().flex().flex_col()
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                if event.keystroke.key == "escape" {
+                    this.sound_open = false;
+                    if !cx.try_global::<ComputerUseState>().is_some_and(|s| s.pending) { this.removal = None; }
+                    cx.notify();
+                }
+            }))
+            .child(div().h(px(46.)).flex_none())
+            .child(div().id("computer-use-page").flex_1().overflow_y_scroll().layer()
+                .child(probe(&self.layer))
+                .child(div().w_full().max_w(px(768.)).mx_auto().px(px(20.)).pt(px(28.)).pb(px(20.))
+                    .flex().flex_col().gap(px(24.))
+                    .child(div().flex().flex_col().gap(px(8.))
+                        .child(text("Computer use", 28., 33.6, 500., t.text))
+                        .child(text("Manage how ChatGPT uses other applications on your computer", 14., 20., 430., t.text_secondary))))
+                .child(div().w_full().max_w(px(768.)).mx_auto().p(px(20.))
+                    .flex().flex_col().gap(px(24.))
+                    .child(group("Control", control, &self.layer, &t))
+                    .children(state.permission_guidance.as_ref().map(|guidance| row(guidance.clone(), None, None,
+                        self.action("computer-use-permissions", "Open System Settings", ComputerUseAction::OpenPermissions, state.pending, window, cx), &t)))
+                    .children(state.error.as_ref().map(|error| message(error.clone(), &t)))
+                    .children(approvals.map(|rows| group("Always-allowed apps", rows, &self.layer, &t)))
+                    .children(sound.map(|menu| div().flex().child(menu)))))
+            .children(self.removal.as_ref().map(|app| self.confirmation(app, &state, window, cx)))
+    }
+}
+
+fn row(
+    title: impl Into<SharedString>,
+    detail: Option<String>,
+    leading: Option<AnyElement>,
+    control: AnyElement,
+    t: &Theme,
+) -> Div {
+    div()
+        .min_h(px(60.))
+        .px(px(16.))
+        .py(px(12.))
+        .flex()
+        .items_center()
+        .gap(px(12.))
+        .children(leading)
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(px(2.))
+                .child(text(title, 14., 20., 500., t.text))
+                .children(detail.map(|detail| text(detail, 12., 16., 430., t.text_secondary))),
+        )
+        .child(control)
+}
+
+fn message(message: impl Into<SharedString>, t: &Theme) -> Div {
+    div()
+        .p(px(16.))
+        .child(text(message, 14., 20., 430., t.text_secondary))
+}
+
+fn group(title: &'static str, rows: Vec<Div>, layer: &Layer, t: &Theme) -> Div {
+    let last = rows.len().saturating_sub(1);
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(8.))
+        .child(text(title, 14., 20., 500., t.text))
+        .child(
+            div()
+                .relative()
+                .p(px(1.))
+                .child(deco(
+                    layer,
+                    20.,
+                    shapes::Corner::Squircle,
+                    t.background_panel,
+                    Some(t.border),
+                ))
+                .child(crate::rounded_clip(
+                    px(19.),
+                    shapes::Corner::Squircle,
+                    div()
+                        .flex()
+                        .flex_col()
+                        .children(rows.into_iter().enumerate().map(|(index, row)| {
+                            row.relative().when(index < last, |row| {
+                                row.child(
+                                    div()
+                                        .absolute()
+                                        .left(px(16.))
+                                        .right(px(16.))
+                                        .bottom_0()
+                                        .h(px(1.))
+                                        .bg(t.border),
+                                )
+                            })
+                        })),
+                )),
+        )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{AppContext as _, BorrowAppContext as _, HeadlessAppContext, size};
+
+    #[test]
+    fn failed_writes_keep_confirmed_settings_and_removal_dialog() {
+        let mut cx = HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        let app = AppApproval {
+            bundle_identifier: "com.example.Fixture".into(),
+            display_name: "Fixture".into(),
+            icon_data_url: None,
+        };
+        cx.update(|cx| {
+            theme::load_fonts(cx);
+            cx.set_global(Theme::dark());
+            cx.set_global(ComputerUseState {
+                available: true,
+                plugin: Load::Ready(Some(Plugin {
+                    installed: true,
+                    enabled: true,
+                })),
+                approvals: Load::Ready(vec![app.clone()]),
+                sound: Some(SoundMode::ForegroundClicks),
+                dispatch: Some(Arc::new(|_, cx| {
+                    cx.update_global::<ComputerUseState, _>(|state, _| {
+                        state.error = Some("The host rejected this change.".into());
+                    });
+                })),
+                ..Default::default()
+            });
+        });
+        let page = cx.update(|cx| {
+            cx.new(|cx| ComputerUse {
+                sound_open: false,
+                removal: None,
+                layer: Layer::default(),
+                modal_focus: cx.focus_handle(),
+            })
+        });
+        let window = cx
+            .open_window(size(px(840.), px(650.)), |_, _| page.clone())
+            .unwrap();
+        cx.run_until_parked();
+        let capture = |cx: &mut HeadlessAppContext, name: &str| {
+            if let Some(path) = std::env::var_os("CGX_COMPUTER_USE_SHOTS") {
+                let path = std::path::PathBuf::from(path);
+                std::fs::create_dir_all(&path).unwrap();
+                cx.capture_screenshot(window.into())
+                    .unwrap()
+                    .save(path.join(name))
+                    .unwrap();
+            }
+        };
+        capture(&mut cx, "native-dark.png");
+        cx.update(|cx| page.update(cx, |view, cx| {
+            view.dispatch(ComputerUseAction::SetEnabled(false), cx);
+            view.dispatch(ComputerUseAction::SetSoundMode(SoundMode::Off), cx);
+            view.removal = Some(app.clone());
+            view.dispatch(ComputerUseAction::RemoveApproval(app.bundle_identifier.clone()), cx);
+            let state = cx.global::<ComputerUseState>();
+            assert!(matches!(state.plugin, Load::Ready(Some(Plugin { enabled: true, .. }))));
+            assert_eq!(state.sound, Some(SoundMode::ForegroundClicks));
+            assert!(matches!(&state.approvals, Load::Ready(apps) if apps[0].bundle_identifier == app.bundle_identifier));
+            assert_eq!(view.removal.as_ref().unwrap().bundle_identifier, app.bundle_identifier);
+            assert_eq!(state.error.as_deref(), Some("The host rejected this change."));
+            cx.notify();
+        }));
+        cx.run_until_parked();
+        capture(&mut cx, "native-error-dark.png");
+    }
+}
