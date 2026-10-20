@@ -89,6 +89,11 @@ fn permission_choices_save_and_reopen() -> Result<()> {
     fx.keys("cmd-[")?;
     open_configuration(&mut fx, 2)?;
     evidence(&mut fx, "reopened")?;
+    fx.read(|root, cx| {
+        let page = root.settings_page().unwrap().read(cx);
+        assert_eq!(page.choice("config.approval_policy", ""), "on-request");
+        assert_eq!(page.choice("config.sandbox_mode", ""), "workspace-write");
+    });
     let writes: Vec<_> = fx
         .sent()?
         .into_iter()
@@ -158,15 +163,21 @@ fn failed_permission_write_keeps_the_saved_value() -> Result<()> {
     fx.keys("enter")?;
     fx.wait("configuration save failure", |fx| {
         fx.read(|root, cx| {
-            root.toasts(cx)
-                .iter()
-                .any(|title| title.contains("Couldn't update this setting"))
+            root.settings_page()
+                .unwrap()
+                .read(cx)
+                .configuration_error()
+                .is_some_and(|error| error.contains("Couldn't update this setting"))
         })
     })?;
     assert_eq!(
         fx.read(|root, _| root.config()["approval_policy"].clone()),
         "never"
     );
+    fx.read(|root, cx| {
+        let page = root.settings_page().unwrap().read(cx);
+        assert_eq!(page.choice("config.approval_policy", ""), "never");
+    });
     evidence(&mut fx, "failed-write")?;
     Ok(())
 }

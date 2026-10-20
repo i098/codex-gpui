@@ -1024,6 +1024,10 @@ impl Root {
         &self.config
     }
 
+    pub fn settings_page(&self) -> Option<&Entity<settings::SettingsPage>> {
+        self.settings_page.as_ref()
+    }
+
     /// Replaces the desktop host and cancels pending UI callbacks for its reads and updates.
     pub fn set_host(&mut self, host: Arc<dyn host::Host>, cx: &mut Context<Self>) {
         self.automation_load = None;
@@ -4264,13 +4268,7 @@ impl Root {
                     "Couldn't update this setting. Check config.toml for errors and try again\n{error}"
                 ));
                 if error.is_none() {
-                    let mut target = &mut this.config;
-                    for part in key.split('.') {
-                        target = &mut target[part];
-                    }
-                    *target = value.clone();
-                } else {
-                    this.toast(Toast::danger("Couldn't update this setting. Check config.toml for errors and try again"), cx);
+                    settings::set_config_value(&mut this.config, key, value.clone());
                 }
                 if let Some(page) = this.settings_page.clone().or(page) {
                     page.update(cx, |page, cx| page.finish_config(path, value, error, cx));

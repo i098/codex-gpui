@@ -71,11 +71,7 @@ impl SettingsPage {
         if let Some(error) = error {
             self.configuration_error = Some(error);
         } else {
-            let mut target = &mut self.values;
-            for key in path.trim_start_matches("config.").split('.') {
-                target = &mut target[key];
-            }
-            *target = value;
+            set_config_value(&mut self.values, path.trim_start_matches("config."), value);
         }
         cx.notify();
     }
@@ -246,16 +242,16 @@ pub(super) fn config_label(
     key: &str,
     value: &str,
     options: &[(&'static str, &'static str)],
-) -> &'static str {
-    options
-        .iter()
-        .find(|(option, _)| *option == value)
-        .map(|(_, label)| *label)
-        .unwrap_or(match (key, value) {
-            ("config.approval_policy", "untrusted") => "Untrusted",
-            ("config.approval_policy", "on-failure") => "On failure",
-            _ => options[0].1,
-        })
+) -> SharedString {
+    if let Some((_, label)) = options.iter().find(|(option, _)| *option == value) {
+        return (*label).into();
+    }
+    match (key, value) {
+        ("config.approval_policy", "untrusted") => "Untrusted".into(),
+        ("config.approval_policy", "on-failure") => "On failure".into(),
+        _ if key.starts_with("config.") => value.to_owned().into(),
+        _ => options[0].1.into(),
+    }
 }
 
 pub(super) fn option_description(key: &str, value: &str) -> Option<&'static str> {
