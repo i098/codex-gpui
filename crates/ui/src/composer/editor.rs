@@ -549,13 +549,15 @@ impl Composer {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
-            // `--opacity-composer-placeholder: .5` on the placeholder. The text blends like
-            // Chromium's: blitted into a transparent layer (`_ComposerLayoutInput`'s
-            // `overflow-y: auto` contents), then composited onto the card.
+            // Rich text uses Chromium's transparent scroll layer; its placeholder has opacity .5.
+            // Preserve legacy Settings rendering; single-line form inputs paint directly.
             .child(
                 div()
                     .when(self.content.is_empty(), |d| d.opacity(0.5))
-                    .layer()
+                    .when(
+                        self.plain_field != Some(false) || self.field_style == FieldStyle::Settings,
+                        |d| d.layer(),
+                    )
                     .child(Editor(cx.entity())),
             )
     }

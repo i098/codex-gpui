@@ -56,7 +56,7 @@ static FORM_BODY_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
     std::sync::LazyLock::new(|| textsys::letter_spacing(-0.15));
 static FORM_TITLE_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
     std::sync::LazyLock::new(|| textsys::letter_spacing(-0.32));
-static FORM_MODEL_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
+static FORM_TABULAR_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
     std::sync::LazyLock::new(|| {
         let mut features = FORM_BODY_FEATURES.0.as_ref().clone();
         features.push(("tnum".into(), 1));
@@ -1020,7 +1020,7 @@ impl Editor {
                         color,
                     )
                     .when(picker == Picker::Model, |d| {
-                        d.font_features(FORM_MODEL_FEATURES.clone())
+                        d.font_features(FORM_TABULAR_FEATURES.clone())
                     }),
                 )
             })
@@ -1138,7 +1138,7 @@ impl Editor {
             if index == TIME {
                 let value = self.value(TIME, cx);
                 let mut font = gpui::font(crate::SANS);
-                font.features = FORM_BODY_FEATURES.clone();
+                font.features = FORM_TABULAR_FEATURES.clone();
                 let time_width = window
                     .text_system()
                     .shape_line(
@@ -1185,6 +1185,7 @@ impl Editor {
                             div()
                                 .w(time_width)
                                 .flex_none()
+                                .font_features(FORM_TABULAR_FEATURES.clone())
                                 .child(self.input(TIME, "Time", cx)),
                         )
                         .child(self.picker(Picker::Time, "Time presets", "", 3, t, cx)),
