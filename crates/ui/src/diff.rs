@@ -360,7 +360,11 @@ impl DiffPanel {
         file: Option<(usize, usize)>,
         cx: &mut Context<Self>,
     ) {
-        if self.pending || self.error.is_some() || !self.source.mutable() {
+        if self.pending
+            || self.error.is_some()
+            || !self.source.mutable()
+            || (action == "revert" && self.source != DiffSource::Unstaged)
+        {
             return;
         }
         let files = self
@@ -1371,7 +1375,7 @@ impl Render for DiffPanel {
                             .flex()
                             .justify_center()
                             .gap(px(8.))
-                            .when(self.source != DiffSource::Staged, |d| {
+                            .when(self.source == DiffSource::Unstaged, |d| {
                                 d.child(self.operation_button("Revert all", None, cx))
                             })
                             .child(self.operation_button(

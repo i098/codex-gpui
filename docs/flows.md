@@ -472,8 +472,8 @@ The original S023b recording, pixel probes, and references remain unchanged.
 Captured images are headless native application frames, not installed-window desktop captures.
 Run `tools/mac.sh -l queue-actions 'cargo test -p app --test s023b -- --test-threads=1'`.
 
-When the model catalog is unavailable, the composer shows Loading model… and disables the idle send control.
-`git_revert_ui::missing_model_does_not_start_a_turn` checks that clicking Send does not start a turn.
+When the model catalog is unavailable, the composer blocks idle submission from both Send and Enter.
+`git_revert_ui::missing_model_blocks_new_submission_but_preserves_running_actions` checks the retained draft and running-turn actions.
 Inline code wraps within a narrow thread while its background stays continuous on each line.
 `git_revert_ui::inline_code_wraps_across_lines` checks both visible line backgrounds.
 
@@ -524,8 +524,9 @@ It also checks literal and newline filenames, multi-file patches, and rejects pa
 Hunk Stage and Unstage apply only the reviewed hunk to the index and preserve the working tree.
 Stage all, Unstage all, and Revert all send the reviewed section through the existing Git endpoints.
 The host checks every file snapshot before it applies one combined patch.
+Patch writes use the captured bytes; only the displayed diff replaces invalid UTF-8.
 Revert all uses the same confirmation and saved preference as file and hunk reverts.
-In Uncommitted, section actions use the unstaged changes and preserve staged-only changes.
+Uncommitted permits Stage all but hides and rejects Revert all; that action is available only in Unstaged.
 Source and revision menus remain open while repository refresh replaces the displayed files.
 For a folder outside Git, Changes shows Create a Git repository and the Create git repository button.
 The button calls `git-init-repo` in the thread's folder; initialization preserves existing files and rejects an existing repository.
@@ -548,7 +549,7 @@ Failure shows `Failed to revert` with the target and keeps the displayed changes
 A partial result shows `Partially reverted` with the target and refreshes both sources from the host response.
 The `git_revert_ui` native proof drives pointer and keyboard input on disposable local Git repositories.
 It checks cancellation, preference reload, file and hunk effects on disk and index, stale and locked failures, and index-only partial results.
-Remote Git, hunk staging, and section-wide `Revert all` remain separate work.
+Remote Git remains separate work.
 Commit and push are in DT-139 below.
 
 Diff controls reuse `DiffPanel` for the thread panel and the standalone `/diff <patch-file>` entry.
@@ -575,12 +576,12 @@ Whole-window pixel parity is not claimed by those component comparisons.
 |---|---|---|---|---|---|
 | 1 | Open Changes panel | entry | `⌥⌘B` or `View changes`. | Both open the last turn's diff (`Last Turn` source). A file link opens the File viewer, as S009 records. | PASS (`changes_panel_keys`, `view_changes_opens_panel`, `s009`); strict pixels FAIL (`parity_diff`) |
 | 2 | `/diff` window | entry | Single file diff. | `/diff <patch-file>` opens the shared renderer in its own window without a chat backend. | PASS (`diff_controls`; standalone executable accepts the route and reports unreadable input) |
-| 3 | Source selector | click | Uncommitted / Staged / … | Last Turn, Unstaged, Staged, and Refresh read the open thread's local repository. | PARTIAL (`git_stage`; other sources remain separate) |
+| 3 | Source selector | click | Uncommitted / Staged / … | Last Turn, Uncommitted, Unstaged, Staged, Committed, and Branch select the corresponding local comparison. | PASS (`git_review`, `git_revert_ui`) |
 | 4 | Show / Hide files | click | Toggles the file tree. | The header toggles the file tree without losing its filter. | PASS (`diff_controls` native frames) |
 | 5 | File tree filter | focus | `Filter files…`. | Filters paths and shows `No matching files`; typing and paste retain keyboard ownership. | PASS (`diff_controls` native frames) |
 | 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Copy path and Collapse/Expand work. Open in editor works from the header icon and the menu. Local sources add Stage file, Unstage file, and confirmed Revert file. | PARTIAL (`s027::diff_selection_and_hover_replay`, `s027::open_in_editor_native_input_reaches_the_host_opener`, `git_stage`, `git_revert_ui`) |
-| 7 | Hunk revert / stage | click | Revert, Stage / Unstage hunk. | Local staged and unstaged hunks have confirmed Revert controls. Hunk staging and unstaging remain separate. | PARTIAL (`git_revert_ui`) |
-| 8 | Revert all | click | `Revert changes?` dialog. | File and hunk actions use the original confirmation and saved skip preference. Section-wide Revert all remains separate. | PARTIAL (`git_revert_ui`) |
+| 7 | Hunk revert / stage | click | Revert, Stage / Unstage hunk. | Local staged and unstaged hunks have confirmed Revert and Stage/Unstage controls. | PASS (`git_review`, `git_revert_ui`) |
+| 8 | Revert all | click | `Revert changes?` dialog. | Unstaged provides section-wide Revert all with confirmation and the saved skip preference. Uncommitted does not expose this action. | PASS (`git_revert_ui`) |
 | 9 | Split / unified toggle | click | Switch diff layout. | Unified, Split, and Auto share the existing line renderer. The narrow header exposes layout through Changes options. | PASS (`diff_controls`; split pairing regression check) |
 | 10 | Word wrap | click | Toggles wrap. | The header, Changes options, and body menu toggle the same wrap state. | PASS (`diff_controls`; `s027::diff_selection_and_hover_replay`) |
 | 11 | Mark as viewed | click | Branch diffs collapse and retain the reviewed revision. | Deferred until the Branch source and stable revision contract are available. | Follow-up: [issue 300](https://github.com/i098/codex-gpui/issues/300), dependent on the operations source-menu work |
@@ -588,7 +589,7 @@ Whole-window pixel parity is not claimed by those component comparisons.
 | 13 | `⌘L` | shortcut | Go to line in the file viewer. | Available files expose the line input; Enter navigates, Escape closes, and negative numbers count from the end. Unavailable files keep the input closed. | PASS (`diff_controls`; whole-line validation regression check) |
 | 14 | Line hover | hover | No background change in the recorded Last Turn state; no `data-hovered` attribute. | No background change. | PASS (`s027::diff_selection_and_hover_replay`; corrects DT-014) |
 | 15 | No changes | empty | `No file changes yet`. | Last Turn shows `No file changes yet`; local sources show `No staged changes` or `No unstaged changes`. | PASS (`diff_controls` native frames) |
-| 16 | Not a git repo | empty | `Create a Git repository`. | Local sources show the Git error; repository creation remains separate. | PARTIAL (`crates/ui/src/diff.rs`) |
+| 16 | Not a git repo | empty | `Create a Git repository`. | The action initializes the thread's folder and preserves existing files. | PASS (`git_review`, `git_revert_ui`) |
 | 17 | Loading | loading | `Loading diff`. | Initial local reads show `Loading diff`. Refresh retains the file list and disables mutations until completion. | PASS (`diff_controls` native frame) |
 | 18 | Load failure | error | `Couldn't load changes`. | Shows the host error and Retry without hiding existing changes. Invalid hunk data shows `Diff failed to render`. | PASS (`diff_controls` real read failure and recovery; parser regression checks) |
 | 19 | Too large | error | `Diff too large to display`. | Oversized input shows the boundary and retains the file header. | PASS (`diff_controls` native frame; parser limit checks) |

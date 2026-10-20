@@ -311,7 +311,7 @@ fn source_selection_and_section_actions_reach_the_real_repository() -> Result<()
     choose(&mut fx, "Uncommitted")?;
     loaded(&mut fx)?;
     fx.shot()?.save(scratch.join("native-section.png"))?;
-    fx.click((1009., 798.))?;
+    fx.click((968., 798.))?;
     loaded(&mut fx)?;
     ensure!(git(root, &["show", ":a.txt"])? == "first edited\n");
     ensure!(git(root, &["show", ":b.txt"])? == "second edited\n");
@@ -331,6 +331,18 @@ fn source_selection_and_section_actions_reach_the_real_repository() -> Result<()
     loaded(&mut fx)?;
     ensure!(fs::read_to_string(root.join("a.txt"))? == "first file\n");
     ensure!(fs::read_to_string(root.join("b.txt"))? == "second file\n");
+    fs::write(root.join("a.txt"), "staged but absent from the review\n")?;
+    git(root, &["add", "a.txt"])?;
+    fs::write(root.join("a.txt"), "first file\n")?;
+    source(&mut fx, "Uncommitted")?;
+    ensure!(fx.read(|root, cx| root.diff_panel().unwrap().read(cx).files.is_empty()));
+    fx.click((919., 798.))?;
+    ensure!(
+        fx.read(|root, _| root.dialog().is_none()),
+        "Uncommitted offered a revert for a file absent from the review"
+    );
+    ensure!(fs::read_to_string(root.join("a.txt"))? == "first file\n");
+    ensure!(git(root, &["show", ":a.txt"])? == "staged but absent from the review\n");
     source(&mut fx, "Branch")?;
     choose(&mut fx, "main")?;
     loaded(&mut fx)?;
@@ -396,25 +408,34 @@ fn inline_code_wraps_across_lines() -> Result<()> {
 }
 
 #[test]
-fn missing_model_does_not_start_a_turn() -> Result<()> {
+fn missing_model_blocks_new_submission_but_preserves_running_actions() -> Result<()> {
     let mut fx = source_fixture()?;
     fx.click((500., 740.))?;
     fx.type_text("Do not send without a model.")?;
     let composer = fx.composer();
+    let submissions = std::rc::Rc::new(std::cell::Cell::new(0));
+    let observed = submissions.clone();
     composer.update(&mut fx.cx, |composer, cx| {
-        composer.set_models(&[], &json!({}), cx)
+        composer.set_models(&[], &json!({}), cx);
+        composer.on_submit(move |_, _, _| observed.set(observed.get() + 1));
     });
-    let starts = |requests: Vec<serde_json::Value>| {
-        requests
-            .iter()
-            .filter(|request| request["method"] == "turn/start")
-            .count()
-    };
-    let before = starts(fx.sent()?);
+    fx.keys("enter")?;
+    ensure!(submissions.get() == 0, "Enter submitted without a model");
+    ensure!(
+        fx.read(|_, cx| composer.read(cx).field_text() == "Do not send without a model."),
+        "disabled submission discarded the draft"
+    );
     fx.click((622., 790.))?;
     ensure!(
-        starts(fx.sent()?) == before,
-        "loading model accepted a turn"
+        submissions.get() == 0,
+        "disabled Send accepted a submission"
+    );
+    composer.update(&mut fx.cx, |composer, cx| composer.set_running(true, cx));
+    fx.click((500., 740.))?;
+    fx.keys("enter")?;
+    ensure!(
+        submissions.get() == 1,
+        "running-turn submission was blocked"
     );
     Ok(())
 }

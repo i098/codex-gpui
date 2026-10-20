@@ -1231,6 +1231,7 @@ impl Composer {
             return;
         }
         if self.edit_pending
+            || (!self.running && self.current_model().is_none())
             || self.pending_attachments > 0
             || (self.content.trim().is_empty() && self.attachments.is_empty())
         {

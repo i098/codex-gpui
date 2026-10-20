@@ -3,14 +3,18 @@ use app::host::{Host as _, LocalHost, Request, json_body};
 use serde_json::{Value, json};
 use std::{fs, path::Path, process::Command};
 
-fn git(root: &Path, args: &[&str]) -> Result<String> {
+fn git_bytes(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
     let output = Command::new("git").current_dir(root).args(args).output()?;
     ensure!(
         output.status.success(),
         "Git: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    Ok(String::from_utf8(output.stdout)?)
+    Ok(output.stdout)
+}
+
+fn git(root: &Path, args: &[&str]) -> Result<String> {
+    Ok(String::from_utf8(git_bytes(root, args)?)?)
 }
 
 #[test]
@@ -144,5 +148,77 @@ fn reviewed_sources_and_patches_change_only_the_selected_repository_content() ->
     println!(
         "Proved creation, root commit and branch sources, file and hunk actions, section stage/unstage/revert, stale snapshots, index locks, and preservation of newer user work."
     );
+    Ok(())
+}
+
+#[test]
+fn reviewed_patches_preserve_non_utf8_file_bytes() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let root = dir.path();
+    let home = tempfile::tempdir()?;
+    let host = LocalHost::new(home.path());
+    let call = |endpoint: &str, mut params: Value| -> Result<Value> {
+        params["cwd"] = root.to_string_lossy().into();
+        json_body(&host.fetch(&Request::post(endpoint, Some(params)))?)
+    };
+    call("git-init-repo", json!({}))?;
+    git(root, &["config", "user.name", "Byte preservation proof"])?;
+    git(root, &["config", "user.email", "proof@example.invalid"])?;
+    let body = (1..=24).map(|n| format!("line {n}\n")).collect::<String>();
+    let base = [b"header\n".as_slice(), body.as_bytes()].concat();
+    let first = [b"caf\xe9\n".as_slice(), body.as_bytes()].concat();
+    let edited = [
+        b"caf\xe9\n".as_slice(),
+        body.replace("line 23\n", "last edit\n").as_bytes(),
+    ]
+    .concat();
+    fs::write(root.join("a.txt"), &base)?;
+    git(root, &["add", "a.txt"])?;
+    git(root, &["commit", "-qm", "base"])?;
+    fs::write(root.join("a.txt"), &edited)?;
+    let changes = call("git-changes", json!({}))?;
+    let mut hunk = changes["unstaged"][0].clone();
+    hunk["hunk"] = 0.into();
+    let changes = call("git-stage", json!({"source": "unstaged", "files": [hunk]}))?;
+    ensure!(git_bytes(root, &["show", ":a.txt"])? == first);
+    ensure!(fs::read(root.join("a.txt"))? == edited);
+    let mut hunk = changes["staged"][0].clone();
+    hunk["hunk"] = 0.into();
+    call("git-unstage", json!({"source": "staged", "files": [hunk]}))?;
+    ensure!(git_bytes(root, &["show", ":a.txt"])? == base);
+    fs::write(root.join("extra.txt"), b"another caf\xe9\n")?;
+    let changes = call("git-changes", json!({}))?;
+    let changes = call(
+        "git-stage",
+        json!({"source": "unstaged", "files": changes["unstaged"]}),
+    )?;
+    ensure!(git_bytes(root, &["show", ":a.txt"])? == edited);
+    ensure!(git_bytes(root, &["show", ":extra.txt"])? == b"another caf\xe9\n");
+    let changes = call(
+        "git-unstage",
+        json!({"source": "staged", "files": changes["staged"]}),
+    )?;
+    ensure!(git_bytes(root, &["show", ":a.txt"])? == base);
+    ensure!(fs::read(root.join("a.txt"))? == edited);
+    call(
+        "git-revert",
+        json!({"source": "unstaged", "files": changes["unstaged"]}),
+    )?;
+    ensure!(fs::read(root.join("a.txt"))? == base);
+    ensure!(!root.join("extra.txt").exists());
+    fs::write(root.join("a.txt"), &edited)?;
+    let changes = call("git-changes", json!({}))?;
+    let mut newer = edited.clone();
+    *newer.iter_mut().find(|byte| **byte == 0xe9).unwrap() = 0xe8;
+    fs::write(root.join("a.txt"), &newer)?;
+    ensure!(
+        call(
+            "git-stage",
+            json!({"source": "unstaged", "files": changes["unstaged"]})
+        )
+        .is_err()
+    );
+    ensure!(git_bytes(root, &["show", ":a.txt"])? == base);
+    ensure!(fs::read(root.join("a.txt"))? == newer);
     Ok(())
 }

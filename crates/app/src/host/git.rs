@@ -71,10 +71,24 @@ fn paths(root: &Path, staged: bool) -> Result<Vec<String>> {
     Ok(paths)
 }
 
+#[derive(Serialize)]
+struct CapturedDiff {
+    path: String,
+    #[serde(serialize_with = "serialize_diff")]
+    diff: Vec<u8>,
+}
+
+fn serialize_diff<S: serde::Serializer>(
+    diff: &[u8],
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    serializer.serialize_str(&String::from_utf8_lossy(diff))
+}
+
 /// `binary` adds the data a reverse patch needs to restore a binary file. Both forms carry
 /// the full `index` line (`--binary` fills it for binary files only), so `head` compares one
 /// binary capture with the text Changes shows.
-fn diffs(root: &Path, staged: bool, binary: bool) -> Result<Vec<Value>> {
+fn diffs(root: &Path, staged: bool, binary: bool) -> Result<Vec<CapturedDiff>> {
     review_diffs(
         root,
         if staged { &["--cached"] } else { &[] },
@@ -88,7 +102,7 @@ fn review_diffs(
     revisions: &[&str],
     binary: bool,
     untracked: bool,
-) -> Result<Vec<Value>> {
+) -> Result<Vec<CapturedDiff>> {
     let mut args = vec![
         "diff",
         "--raw",
@@ -116,19 +130,32 @@ fn review_diffs(
         let mut records = std::str::from_utf8(&output[..separator])
             .context("Git paths must be UTF-8")?
             .split('\0');
-        let patch = String::from_utf8_lossy(&output[separator + 2..]);
-        let patches = patch
-            .strip_prefix("diff --git ")
-            .context("unsupported Git diff format")?
-            .split("\ndiff --git ");
-        for patch in patches {
+        let patch = &output[separator + 2..];
+        ensure!(
+            patch.starts_with(b"diff --git "),
+            "unsupported Git diff format"
+        );
+        let delimiter = b"\ndiff --git ";
+        let starts = std::iter::once(0)
+            .chain(
+                patch
+                    .windows(delimiter.len())
+                    .enumerate()
+                    .filter_map(|(i, bytes)| (bytes == delimiter).then_some(i + 1)),
+            )
+            .chain(std::iter::once(patch.len()))
+            .collect::<Vec<_>>();
+        for range in starts.windows(2) {
             records.next().context("missing Git diff metadata")?;
             let path = records.next().context("missing Git diff path")?;
-            let mut diff = format!("diff --git {patch}");
-            if !diff.ends_with('\n') {
-                diff.push('\n');
+            let mut diff = patch[range[0]..range[1]].to_vec();
+            if !diff.ends_with(b"\n") {
+                diff.push(b'\n');
             }
-            files.push(json!({"path": path, "diff": diff}));
+            files.push(CapturedDiff {
+                path: path.to_owned(),
+                diff,
+            });
         }
         ensure!(
             records.next().is_none(),
@@ -163,7 +190,10 @@ fn review_diffs(
                 "Git: {}",
                 String::from_utf8_lossy(&output.stderr).trim()
             );
-            files.push(json!({"path": path, "diff": String::from_utf8_lossy(&output.stdout)}));
+            files.push(CapturedDiff {
+                path: path.to_owned(),
+                diff: output.stdout,
+            });
         }
     }
     Ok(files)
@@ -180,7 +210,7 @@ fn head(diff: &str) -> &str {
 
 /// Applies the reviewed patch to the index (`cached`) or the working tree.
 /// Git applies a patch atomically, and refuses it when the target no longer matches.
-fn apply(root: &Path, patch: &str, cached: bool, reverse: bool) -> Result<()> {
+fn apply(root: &Path, patch: &[u8], cached: bool, reverse: bool) -> Result<()> {
     let mut args = vec!["apply"];
     if reverse {
         args.push("--reverse");
@@ -194,21 +224,19 @@ fn apply(root: &Path, patch: &str, cached: bool, reverse: bool) -> Result<()> {
         .stderr(Stdio::piped())
         .spawn()
         .context("run local Git")?;
-    let sent = child
-        .stdin
-        .take()
-        .context("Git stdin")?
-        .write_all(patch.as_bytes());
+    let sent = child.stdin.take().context("Git stdin")?.write_all(patch);
     checked(child.wait_with_output().context("run local Git")?)?;
     sent.context("send patch to Git")
 }
 
 /// The header of `diff`, without mode changes, with only its `index`th hunk: a hunk revert
 /// must not change the file's permissions.
-fn hunk(diff: &str, index: usize) -> Result<String> {
-    let lines = diff.split_inclusive('\n').collect::<Vec<_>>();
+fn hunk(diff: &[u8], index: usize) -> Result<Vec<u8>> {
+    let lines = diff
+        .split_inclusive(|byte| *byte == b'\n')
+        .collect::<Vec<_>>();
     let starts = (0..lines.len())
-        .filter(|&i| lines[i].starts_with("@@ "))
+        .filter(|&i| lines[i].starts_with(b"@@ "))
         .collect::<Vec<_>>();
     let start = *starts
         .get(index)
@@ -216,8 +244,11 @@ fn hunk(diff: &str, index: usize) -> Result<String> {
     let end = starts.get(index + 1).copied().unwrap_or(lines.len());
     let header = lines[..starts[0]]
         .iter()
-        .filter(|line| !line.starts_with("old mode ") && !line.starts_with("new mode "));
-    Ok(header.chain(&lines[start..end]).copied().collect())
+        .filter(|line| !line.starts_with(b"old mode ") && !line.starts_with(b"new mode "));
+    Ok(header
+        .chain(&lines[start..end])
+        .flat_map(|line| line.iter().copied())
+        .collect())
 }
 
 /// Reverts one file, or one hunk of it, in the `source` the caller displayed. One capture
@@ -235,11 +266,11 @@ fn revert(root: &Path, path: &str, params: &Value) -> Result<&'static str> {
     let displayed = params["diff"].as_str().context("missing Git diff")?;
     let current = diffs(root, staged, true)?
         .into_iter()
-        .find(|file| file["path"] == path)
-        .and_then(|file| file["diff"].as_str().map(str::to_owned))
+        .find(|file| file.path == path)
+        .map(|file| file.diff)
         .context("file is no longer in the selected changes")?;
     ensure!(
-        head(&current) == head(displayed),
+        head(&String::from_utf8_lossy(&current)) == head(displayed),
         "file changed since its diff was shown; refresh and try again"
     );
     let patch = match params.get("hunk") {
@@ -268,7 +299,7 @@ fn revert(root: &Path, path: &str, params: &Value) -> Result<&'static str> {
     }
 }
 
-fn selected_patch(root: &Path, params: &Value) -> Result<(String, bool, Vec<String>)> {
+fn selected_patch(root: &Path, params: &Value) -> Result<(Vec<u8>, bool, Vec<String>)> {
     let staged = match params["source"].as_str() {
         Some("staged") => true,
         Some("unstaged") => false,
@@ -279,7 +310,7 @@ fn selected_patch(root: &Path, params: &Value) -> Result<(String, bool, Vec<Stri
         .as_array()
         .context("missing reviewed Git files")?;
     ensure!(!files.is_empty(), "no reviewed files");
-    let mut patch = String::new();
+    let mut patch = Vec::new();
     let mut paths = Vec::new();
     for file in files {
         let path = file["path"].as_str().context("missing Git path")?;
@@ -294,20 +325,20 @@ fn selected_patch(root: &Path, params: &Value) -> Result<(String, bool, Vec<Stri
         let displayed = file["diff"].as_str().context("missing Git diff")?;
         let captured = current
             .iter()
-            .find(|f| f["path"] == path)
-            .and_then(|f| f["diff"].as_str())
+            .find(|f| f.path == path)
+            .map(|f| f.diff.as_slice())
             .context("file is no longer in the selected changes")?;
         ensure!(
-            head(captured) == head(displayed),
+            head(&String::from_utf8_lossy(captured)) == head(displayed),
             "file changed since its diff was shown; refresh and try again"
         );
         if let Some(index) = file.get("hunk").filter(|v| !v.is_null()) {
-            patch.push_str(&hunk(
+            patch.extend_from_slice(&hunk(
                 captured,
                 index.as_u64().context("Git hunk must be an index")? as usize,
             )?);
         } else {
-            patch.push_str(captured);
+            patch.extend_from_slice(captured);
         }
         paths.push(path.to_owned());
     }
