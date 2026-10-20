@@ -523,7 +523,7 @@ impl Render for SettingsNav {
                     // A composited scroller: a cc layer of its own over the sidebar's (cc
                     // layers are flat), so its text blends onto the final sidebar pixel.
                     .top_layer()
-                    .when(page.section == "Configuration", |d| d.cc_tiles())
+                    .when(section == "Configuration", |d| d.cc_tiles())
                     .flex()
                     .flex_col()
                     .gap(px(16.))
