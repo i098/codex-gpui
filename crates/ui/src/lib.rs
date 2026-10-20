@@ -919,7 +919,7 @@ impl Shell {
 
     /// `.sidebar-navigation`: its left corners come from `clip-path: inset(... round 12px)`.
     /// It is a composited cc layer: its tile holds the translucent background and the content
-    /// is blitted onto it before the layer is composited (`.cc_tiles()`).
+    /// is blitted onto it before the layer is composited (`.layer()`).
     /// While the toggle springs, the content fades with `progress` and slides from -16 px.
     fn sidebar_panel(&self, t: &Theme, progress: f32) -> Div {
         let r = Theme::RADIUS_XL_BASE;
@@ -935,7 +935,7 @@ impl Shell {
             .flex()
             .flex_col()
             .overflow_hidden()
-            .cc_tiles()
+            .layer()
             .child(shapes::decoration(shapes::Decoration {
                 radius: Corners {
                     top_left: r,
