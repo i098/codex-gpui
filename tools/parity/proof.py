@@ -327,6 +327,7 @@ def dispatch(args):
             print(f"{'PASS' if result.returncode == 0 else 'FAIL'} {report}")
         else:
             print(f"CAPTURE FAILED {args.out}; no comparison report was generated")
+            return result.returncode or 1
         return result.returncode
     finally:
         if retrieved:
