@@ -254,6 +254,10 @@ Nested filters use the parent layer's content, not its already-filtered backdrop
 `shapes::raster_images` decodes to the smallest mip that covers the rounded target before bilinear sampling.
 Callers choose direct composition or one restored image group to match the original layer.
 
+Wrap a sparse viewport layer's decorated subtree in `ui::recorded_bounds`.
+It collects painted bounds, including shadows, without adding an opacity layer.
+The Toaster uses this scope to match Chromium's shifted tile grid and local corner geometry.
+
 ## Parity method
 
 The references come from the original renderer itself.

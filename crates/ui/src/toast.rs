@@ -491,11 +491,11 @@ impl Render for Toaster {
             .size_0()
         });
         gpui::deferred(
-            div()
-                .absolute()
-                .inset_0()
-                .top_layer()
-                .child(region.child(stack).children(tracker)),
+            div().absolute().inset_0().top_layer().child(
+                region
+                    .child(crate::recorded_bounds(stack))
+                    .children(tracker),
+            ),
         )
         .with_priority(5)
     }
