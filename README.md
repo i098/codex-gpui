@@ -147,10 +147,12 @@ Run `cargo test -p app --test task_create -- --test-threads=1` on macOS for the 
 Run `cargo test -p app --test automation_run_now` for the `Run now` requests over a stdio app-server stub.
 
 Previous runs offers `Mark all as read` and `Archive all` for the selected task.
+Previous runs uses the original 200-item inbox window.
 Archive requires confirmation and skips running or already archived chats.
 The app keeps failed rows and reloads the run store after each action.
+New reloads replace older reloads.
 Local read and archive writes exclude account-owned tasks and never remove worktrees.
-Run `cargo test -p app --test automation_history -- --test-threads=1` on macOS for confirmation, cancellation, read failure, and partial archive proof.
+Run `cargo test -p app --test automation_history -- --test-threads=1` on macOS for confirmation, cancellation, read failure, and archive rollback proof.
 
 ## Release bundle
 

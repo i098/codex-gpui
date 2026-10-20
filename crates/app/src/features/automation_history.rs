@@ -34,10 +34,14 @@ pub(crate) fn actions(root: gpui::Div, cx: &mut Context<Root>) -> gpui::Div {
 
 impl Root {
     pub fn run_history(&self, cx: &App) -> Option<Entity<automations::RunHistory>> {
+        if !matches!(&self.state.route, Route::Automation(_)) {
+            return None;
+        }
         self.scheduled.as_ref()?.read(cx).history.clone()
     }
 
     pub(crate) fn load_run_history(&mut self, cx: &mut Context<Self>) {
+        self.run_history_load = None;
         let Some(history) = self.run_history(cx) else {
             return;
         };
@@ -59,11 +63,10 @@ impl Root {
                     .collect(),
             )
         });
-        cx.spawn(async move |_, cx| {
+        self.run_history_load = Some(cx.spawn(async move |_, cx| {
             let result = read.await.map_err(|error| error.to_string());
             history.update(cx, |history, cx| history.set_items(result, cx));
-        })
-        .detach();
+        }));
     }
 
     fn mark_runs_read(&mut self, id: &str, cx: &mut Context<Self>) {
