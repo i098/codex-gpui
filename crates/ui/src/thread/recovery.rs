@@ -1,8 +1,18 @@
-use gpui::{Context, Div, IntoElement, ParentElement, Render, Styled, Window, div, prelude::*, px};
+use gpui::{
+    AnimationExt as _, Context, Div, IntoElement, ParentElement, Render, Styled, Window, div,
+    prelude::*, px,
+};
 use theme::{ActiveTheme as _, Theme};
 
 use super::ThreadView;
 use crate::text;
+
+static RETRY_NUMERALS: std::sync::LazyLock<gpui::FontFeatures> = std::sync::LazyLock::new(|| {
+    gpui::FontFeatures(std::sync::Arc::new(vec![
+        ("tnum".into(), 1),
+        ("kern".into(), 0),
+    ]))
+});
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum UsageLimitNotice {
@@ -78,15 +88,16 @@ pub(super) fn retry_button(
             .aria_label(label)
             .relative()
             .flex_none()
-            .px(px(12.))
-            .py(px(6.))
-            .rounded(Theme::RADIUS_SM)
-            .bg(t.surface_secondary)
+            .px(px(8.))
+            .py(px(2.))
+            .rounded(Theme::RADIUS_FULL)
+            .border_1()
+            .border_color(gpui::rgba(0x00000000))
             .cursor_pointer()
             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(text(label, 14., 20., 500., t.text)),
+            .child(text(label, 13., 18., 430., t.text)),
         &focus,
-        Theme::RADIUS_SM,
+        Theme::RADIUS_FULL,
         px(2.),
         cx,
     )
@@ -97,33 +108,51 @@ impl Render for History {
         let t = cx.theme().clone();
         let mut notices = div().flex().flex_col().gap(px(8.));
         if let Some(error) = &self.error {
+            let retry = retry_button("history-retry", "Retry", window, cx)
+                .debug_selector(|| "history-retry".into())
+                .aria_label(format!("Retry loading messages: {error}"))
+                .hover(|style| style.bg(t.ghost_hover))
+                .on_click(cx.listener(|_, _, _, cx| cx.emit(RetryHistory)))
+                .on_key_down(cx.listener(|_, e: &gpui::KeyDownEvent, _, cx| {
+                    if matches!(e.keystroke.key.as_str(), "enter" | "space") {
+                        cx.emit(RetryHistory);
+                        cx.stop_propagation();
+                    }
+                }));
             notices = notices.child(
                 div()
+                    .debug_selector(|| "history-failure".into())
+                    .relative()
                     .flex()
                     .items_center()
                     .gap(px(12.))
-                    .rounded(Theme::RADIUS_LG)
-                    .border_1()
-                    .border_color(t.border)
-                    .px(px(12.))
+                    .pl(px(12.))
+                    .pr(px(8.))
                     .py(px(8.))
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: gpui::Corners::all(Theme::RADIUS_3XL),
+                        fill: Some(t.surface),
+                        shadows: vec![
+                            crate::composer::shadow(t.border_strong, 0., 0., 0.5, false),
+                            crate::composer::shadow(gpui::black().opacity(0.05), 0., 2., 0., false),
+                            crate::composer::shadow(gpui::black().opacity(0.02), 4., 6., 0., false),
+                        ],
+                        ..Default::default()
+                    }))
+                    .child(text("Couldn't load messages", 13., 21.125, 430., t.text).flex_1())
                     .child(
                         div()
-                            .flex_1()
                             .flex()
-                            .flex_col()
-                            .child(text("Couldn't load messages", 14., 20., 500., t.text))
-                            .child(text(error.clone(), 13., 20., 400., t.text_secondary)),
-                    )
-                    .child(
-                        retry_button("history-retry", "Retry", window, cx)
-                            .on_click(cx.listener(|_, _, _, cx| cx.emit(RetryHistory)))
-                            .on_key_down(cx.listener(|_, e: &gpui::KeyDownEvent, _, cx| {
-                                if matches!(e.keystroke.key.as_str(), "enter" | "space") {
-                                    cx.emit(RetryHistory);
-                                    cx.stop_propagation();
-                                }
-                            })),
+                            .flex_none()
+                            .border_l_1()
+                            .border_color(t.border)
+                            .pl(px(12.))
+                            .child(crate::tooltip::tooltip(
+                                retry,
+                                error.clone(),
+                                None,
+                                crate::tooltip::Side::Top,
+                            )),
                     ),
             );
         }
@@ -134,16 +163,41 @@ impl Render for History {
             .flex()
             .items_center()
             .justify_center()
+            .pt(px(32.))
+            .pb(px(114.))
             .bg(t.surface)
             .when(self.error.is_none(), |d| {
-                d.child(text("Loading task…", 14., 20., 400., t.text_secondary))
+                d.child(
+                    div()
+                        .id("history-loading")
+                        .debug_selector(|| "history-loading".into())
+                        .role(gpui::Role::Status)
+                        .aria_label("Loading task")
+                        .size(px(28.))
+                        .child(
+                            gpui::svg()
+                                .path("icons/sidebar-cmd-spinner.svg")
+                                .size(px(28.))
+                                .text_color(t.text_secondary)
+                                .with_animation(
+                                    "history-loading",
+                                    gpui::Animation::new(std::time::Duration::from_secs(1))
+                                        .repeat_synced(),
+                                    |icon, progress| {
+                                        icon.with_transformation(gpui::Transformation::rotate(
+                                            gpui::radians(progress * std::f32::consts::TAU),
+                                        ))
+                                    },
+                                ),
+                        ),
+                )
             })
             .child(
                 div()
                     .absolute()
                     .left_0()
                     .right_0()
-                    .bottom(px(16.))
+                    .bottom(px(126.))
                     .mx_auto()
                     .w_full()
                     .max_w(super::CONTENT_MAX_WIDTH)
@@ -169,32 +223,50 @@ impl ThreadView {
         let t = cx.theme().clone();
         let id = turn.to_owned();
         let keyboard_id = id.clone();
+        let retry = retry_button(format!("retry-turn-{turn}"), "Try again", window, cx)
+            .debug_selector(|| format!("retry-turn-{turn}"))
+            .aria_label(format!("Try again: {error}"))
+            .bg(t.text_alpha_5)
+            .hover(|style| style.bg(t.text_alpha_10))
+            .on_click(cx.listener(move |view, _, _, cx| {
+                view.render_errors.borrow_mut().remove(&id);
+                cx.notify();
+            }))
+            .on_key_down(cx.listener(move |view, e: &gpui::KeyDownEvent, _, cx| {
+                if matches!(e.keystroke.key.as_str(), "enter" | "space") {
+                    view.render_errors.borrow_mut().remove(&keyboard_id);
+                    cx.notify();
+                    cx.stop_propagation();
+                }
+            }));
         div()
+            .debug_selector(|| format!("render-failure-{turn}"))
+            .relative()
             .flex()
             .flex_col()
             .items_start()
             .gap(px(8.))
-            .rounded(Theme::RADIUS_LG)
-            .border_1()
-            .border_color(t.border)
-            .px(px(16.))
-            .py(px(12.))
-            .child(text("This turn couldn't render", 14., 20., 500., t.text))
-            .child(text(error.to_owned(), 13., 20., 400., t.text_secondary))
-            .child(
-                retry_button(format!("retry-turn-{turn}"), "Try again", window, cx)
-                    .on_click(cx.listener(move |view, _, _, cx| {
-                        view.render_errors.borrow_mut().remove(&id);
-                        cx.notify();
-                    }))
-                    .on_key_down(cx.listener(move |view, e: &gpui::KeyDownEvent, _, cx| {
-                        if matches!(e.keystroke.key.as_str(), "enter" | "space") {
-                            view.render_errors.borrow_mut().remove(&keyboard_id);
-                            cx.notify();
-                            cx.stop_propagation();
-                        }
-                    })),
-            )
+            .px(px(17.))
+            .py(px(13.))
+            .child(shapes::decoration(shapes::Decoration {
+                radius: gpui::Corners::all(Theme::RADIUS_LG),
+                fill: Some(t.surface),
+                border: Some((px(1.), t.border)),
+                ..Default::default()
+            }))
+            .child(text(
+                "This turn couldn't render",
+                13.,
+                f32::from(Theme::TEXT_SM.line_height),
+                500.,
+                t.text,
+            ))
+            .child(crate::tooltip::tooltip(
+                retry,
+                error.to_owned(),
+                None,
+                crate::tooltip::Side::Top,
+            ))
     }
     pub fn turn_error_messages(&self, turn: &str) -> Vec<String> {
         self.turns
@@ -268,23 +340,43 @@ impl ThreadView {
                 .is_some_and(|info| info == "usageLimitExceeded");
         let mut summary = div().flex().items_center().gap(px(6.));
         if usage {
-            summary = summary
-                .gap(px(8.))
-                .child(div().flex_1().min_w(px(12.)).h(px(1.)).bg(t.border))
-                .child(crate::icon::icon("toast-error", 16., t.text_secondary));
+            summary =
+                summary.child(crate::icon::icon("toast-error", 16., t.text_alpha_60).runtime());
         } else if retrying {
-            summary = summary.child(crate::icon::icon("thread-reconnect", 16., t.text_secondary));
+            summary = summary.child(crate::icon::icon("thread-reconnect", 16., t.text_alpha_60));
         }
-        summary = summary.child(
-            text(title.clone(), 14., 20., 400., t.text_secondary)
-                .flex_shrink_1()
-                .min_w(px(0.)),
-        );
+        let color = if usage {
+            t.text_secondary
+        } else {
+            t.text_alpha_60
+        };
+        let label = if let Some((prefix, count)) = title
+            .rsplit_once(' ')
+            .filter(|(_, count)| retrying && count.contains('/'))
+        {
+            div()
+                .flex()
+                .child(text(format!("{prefix} "), 14., 21., 430., color))
+                .child(
+                    text(count.to_owned(), 14., 21., 430., color)
+                        .font_features(RETRY_NUMERALS.clone()),
+                )
+        } else {
+            div().child(text(title.clone(), 14., 21., 430., color))
+        };
+        summary = summary.child(label.flex_shrink_1().min_w(px(0.)));
         if usage {
-            summary = summary.child(div().flex_1().min_w(px(12.)).h(px(1.)).bg(t.border));
+            summary = div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .child(div().flex_1().h(px(1.)).bg(t.border))
+                .child(summary)
+                .child(div().flex_1().h(px(1.)).bg(t.border));
         }
         let mut notice = div()
             .id(format!("turn-error-{turn}-{index}"))
+            .debug_selector(|| format!("turn-error-{turn}-{index}"))
             .mt(px(16.))
             .flex()
             .flex_col()

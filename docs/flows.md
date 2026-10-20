@@ -38,7 +38,7 @@ The rows were not clicked again on the original through `tools/route1`: its `ser
 | 15.1 Automations | 16 | 2 | 2 | 12 |
 | 15.2 Background terminal | 10 | 10 | 0 | 0 |
 | 15.3 Mobile setup | 10 | 3 | 2 | 5 |
-| **All** | **192** | **75** | **32** | **85** |
+| **All** | **192** | **92** | **35** | **65** |
 
 Before round 5 (F2Flows): 57 PASS, 33 FAIL, 102 NOT WIRED. Before round 4 (F1Flows): 42 PASS, 25 FAIL, 125 NOT WIRED.
 
@@ -365,9 +365,9 @@ The original recordings, masks and strict gates stay unchanged; remaining toolti
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Open `/local/:conversationId` | entry | `thread/resume`, turns render, scroll to bottom. | `thread/read` with turns (resume on the first send); parity: see `parity_thread`. | PASS (`thread_row_opens_thread`, `parity_thread`) |
-| 2 | History loading | loading | `Loading task…`. | A loading view remains visible during `thread/read`. The composer stays unmounted until the selected history loads, so hidden bindings cannot send or approve in another chat. | PASS (`thread_recovery`: native loading capture and hidden-composer action regression) |
-| 3 | History failure | error | `Couldn't load messages` + `Retry`. | The warning retains the source error. `Retry` reads the same thread again. A late response cannot replace another route. | PASS (`thread_recovery`: pointer retry and route change) |
-| 4 | Turn render failure | error | `This turn couldn't render`. | A failed turn build leaves other turns visible. `Try again` builds that turn from the latest data and retains its source error on another failure. | PASS (`thread_recovery`: render failure and pointer retry) |
+| 2 | History loading | loading | Spinner; `Loading task…` for assistive technology. | The loading view remains visible during `thread/read`. The composer stays unmounted, so hidden bindings cannot send or approve in another chat. | PASS (`thread_recovery`: native loading capture and hidden-composer action regression) |
+| 3 | History failure | error | `Couldn't load messages` + `Retry`. | The warning retains the source error in the Retry tooltip and accessibility label. Retry reads the same thread again. Late responses cannot replace another route. | PASS (`thread_recovery`: button-bound retry and route change) |
+| 4 | Turn render failure | error | `This turn couldn't render`. | A failed turn leaves other turns visible. Try again rebuilds that turn from current data. Its tooltip and accessibility label retain the source error. | PASS (`thread_recovery`: Linux render failure and button-bound retry) |
 | 5 | Streaming agent message | loading | Text grows by deltas; new segments fade over 700 ms; `Working` shimmer. | New glyphs use the recorded adaptive fade. Later deltas do not restart older glyphs. Reduced motion shows the end state immediately. Shimmer belongs to S5. | PASS (`submit_enter_starts_thread`, `stream_fade`) |
 | 6 | Reasoning item | click | Toggles `Thought for {elapsed}`. | No handler. | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 7 | Command card | click | Expands output; copy buttons. | No handler. | NOT WIRED (`crates/ui/src/thread.rs`) |
@@ -409,6 +409,7 @@ Run `cargo test -p app --test computer_use_approvals`; the native replay and cap
 
 The native recovery replay runs with `cargo test -p app --test thread_recovery -- --test-threads=1`.
 It exercises Root, ThreadView, the replayed JSON-RPC bridge and the Metal renderer on macOS.
+The deliberate render-panic case runs only on Linux. The Mac suite exits on unexpected panics to prevent system crash dialogs.
 Set `CGX_THREAD_RECOVERY_PROOF` to an output directory to retain native captures.
 
 MO-36 uses `refs/interactions/ms4.json`, recorded with the original CSS classes in an isolated route1 Chrome context.

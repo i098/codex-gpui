@@ -1,6 +1,6 @@
 mod common;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use app::Route;
 use bridge::Event;
 use common::{CWD, Fx, GREETING, SUBTRACT, exchange, proxy_child, recorded_thread, script};
@@ -17,6 +17,30 @@ fn shot(fx: &mut Fx, name: &str) -> Result<()> {
         let image = fx.cx.capture_screenshot(fx.window)?;
         std::fs::create_dir_all(&dir)?;
         image.save(std::path::Path::new(&dir).join(format!("{name}.png")))?;
+        let mut bounds = serde_json::Map::new();
+        for selector in [
+            "history-loading",
+            "history-failure",
+            "turn-error-recovery-turn-0",
+            "turn-error-recovery-turn-1",
+            "render-failure-bad-render",
+        ] {
+            if let Some(rect) = fx.cx.debug_bounds(fx.window, selector)? {
+                bounds.insert(
+                    selector.into(),
+                    json!([
+                        f32::from(rect.origin.x),
+                        f32::from(rect.origin.y),
+                        f32::from(rect.size.width),
+                        f32::from(rect.size.height),
+                    ]),
+                );
+            }
+        }
+        std::fs::write(
+            std::path::Path::new(&dir).join(format!("{name}.bounds.json")),
+            serde_json::to_vec(&bounds)?,
+        )?;
     }
     Ok(())
 }
@@ -112,7 +136,12 @@ fn history_failure_retries_and_navigation_ignores_the_old_request() -> Result<()
         )));
     assert_eq!(fx.composer_text()?, "");
     shot(&mut fx, "history-failure")?;
-    fx.click((1135., 786.))?;
+    let retry = fx
+        .cx
+        .debug_bounds(fx.window, "history-retry")?
+        .context("history retry button")?
+        .center();
+    fx.click((retry.x.into(), retry.y.into()))?;
     fx.wait_thread(SUBTRACT)?;
     assert!(fx.read(|root, _| root.history().is_none()));
     let reads: Vec<_> = fx
@@ -241,11 +270,10 @@ fn stream_errors_stay_with_their_thread_and_turn_after_progress() -> Result<()> 
     Ok(())
 }
 
+// Keep the deliberate render panic on Linux to avoid macOS crash dialogs.
+#[cfg(target_os = "linux")]
 #[test]
 fn a_failed_turn_render_keeps_other_turns_and_retries_with_the_latest_data() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        return Ok(());
-    }
     let mut fx = Fx::new()?;
     fx.keys("cmd-2")?;
     fx.wait_thread(SUBTRACT)?;
@@ -286,7 +314,12 @@ fn a_failed_turn_render_keeps_other_turns_and_retries_with_the_latest_data() -> 
         "turn/completed",
         json!({"threadId":SUBTRACT,"turn":broken}),
     );
-    fx.click((500., 520.))?;
+    let retry = fx
+        .cx
+        .debug_bounds(fx.window, "retry-turn-bad-render")?
+        .context("render retry button")?
+        .center();
+    fx.click((retry.x.into(), retry.y.into()))?;
     shot(&mut fx, "render-retried")?;
     assert!(fx.read(|root, cx| {
         root.thread()
