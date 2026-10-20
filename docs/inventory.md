@@ -175,6 +175,9 @@ Chunks: local-conversation-page-a83a1af2c24b.js, local-conversation-thread-c8c5e
 
 - `LocalConversationPage` → thread layout with chat column and optional side panel tabs (`Changes`, `Files`, `Browser`, `Terminal`, `Side chat`; `thread.sidePanel.*`) and bottom panel (`⌘J`).
 - Chat titlebar (`Chat toolbar`): chat title (fallback `Chat`), tab strip `Task tabs`, `New tab`, open-tab count.
+- Header row TH-026 copies the working directory, not the conversation rollout file.
+  The pinned original's `Gda` handler uses `cwd` and prefers a hosted thread's loaded `latestWorktree.workspaceRoot`.
+  `copyConversationPath` is a separate menu command and shortcut.
 - Virtualized turn list; each turn has: user message (copy, edit with `Send` / `Cancel`, show more/less), collapsed work disclosure `Worked for {time}`, item list, assistant message (copy response, fork `Fork chat from here`, `Branch in new chat`).
 - Item renderers by `ThreadItem.type`: `userMessage`, `agentMessage`, `reasoning` (`Thinking`, `Thought for {elapsed}`), `commandExecution` (`Running {command}`, `Ran {command} in {elapsed}`, `Stopped …`; copy command/output), `fileChange` (`Edited {filename}`, `Edited # files`, `View changes`, `Undo`, `Reapply`), `mcpToolCall`, `dynamicToolCall`, `collabAgentToolCall`, `webSearch` (`Searched the web`), `imageView`, `imageGeneration`, `contextCompaction`, `plan`, `hookPrompt`.
 - Live activity label above the composer: `Running command`, `Reading {target}`, `Searching for {query}`.

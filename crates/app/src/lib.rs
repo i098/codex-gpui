@@ -248,7 +248,7 @@ impl ThemeSetting {
 }
 
 /// Window layout, route, theme and close preference, persisted to `path` when set.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct State {
     pub width: f32,
@@ -479,7 +479,17 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let bridge = Arc::new(bridge);
+        Self::with_connection(state, Arc::new(bridge), events, cwd, window, cx)
+    }
+
+    fn with_connection(
+        state: State,
+        bridge: Arc<Bridge>,
+        events: Receiver<Event>,
+        cwd: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.set_global(AppServer(bridge.clone()));
         if !cx.has_global::<host_settings::Settings>() {
             let settings = match state.path.as_ref() {
@@ -2323,7 +2333,11 @@ impl Root {
     /// A file link in an answer: the file viewer tab, filled with the local file.
     fn open_file(&mut self, action: &OpenFile, window: &mut Window, cx: &mut Context<Self>) {
         let Some(view) = &self.thread else { return };
-        let cwd = view.read(cx).cwd().trim_end_matches('/').to_owned();
+        let cwd = std::path::Path::new(view.read(cx).cwd())
+            .components()
+            .as_path()
+            .to_string_lossy()
+            .into_owned();
         let path = if action.path.starts_with('/') {
             action.path.clone()
         } else {
@@ -2332,12 +2346,14 @@ impl Root {
         let file = cx.new(|_| FileView::new(&cwd, path.clone(), action.line));
         // The original asks its Electron main for `vscode://codex/read-file`; the port's local
         // host is this process, so it reads the file itself.
+        // ponytail: FileView loads the whole file; add paging there instead of a command-only size limit.
         let read = cx.background_spawn(async move {
-            std::fs::read_to_string(&path).map_err(|error| error.to_string())
+            let contents = std::fs::read_to_string(&path).map_err(|error| error.to_string());
+            (path, contents)
         });
         let target = file.clone();
         cx.spawn(async move |this, cx| {
-            let contents = read.await;
+            let (path, contents) = read.await;
             let failed = contents.is_err();
             target.update(cx, |file, cx| file.set_contents(contents, cx));
             if failed {
@@ -2345,6 +2361,9 @@ impl Root {
                     this.toast(Toast::danger("Could not open file"), cx)
                 })
                 .ok();
+            } else {
+                this.update(cx, |this, cx| this.remember_file(&cwd, &path, cx))
+                    .ok();
             }
         })
         .detach();
@@ -2701,19 +2720,36 @@ impl Root {
             }
             _ => {}
         }
+        if let CommandMenuEvent::SearchFiles(query) = event {
+            return self.search_command_files(query.clone(), cx);
+        }
         self.command_menu = None;
         window.focus(&self.route_focus(cx), cx);
         match event {
             CommandMenuEvent::Dismiss
             | CommandMenuEvent::Search(_)
-            | CommandMenuEvent::RetryCloudSearch(_) => {}
-            // Cloud conversations belong to ChatGPT, not the local Codex app-server.
+            | CommandMenuEvent::RetryCloudSearch(_)
+            | CommandMenuEvent::SearchFiles(_) => {}
             CommandMenuEvent::OpenUrl(url) => cx.open_url(url),
+            CommandMenuEvent::OpenFile(path) => {
+                self.open_file(
+                    &OpenFile {
+                        path: path.clone(),
+                        line: None,
+                    },
+                    window,
+                    cx,
+                );
+            }
             CommandMenuEvent::OpenThread(id) => {
                 self.navigate(Route::Thread(id.clone()), window, cx)
             }
             CommandMenuEvent::Command(label) => match label.as_ref() {
                 "New chat" | "New standalone chat" => window.dispatch_action(Box::new(NewChat), cx),
+                "Search files" => self.open_file_search(window, cx),
+                "Open in new window" => {
+                    window.dispatch_action(Box::new(features::OpenThreadInNewWindow), cx)
+                }
                 "Open folder" => window.dispatch_action(Box::new(OpenFolder), cx),
                 "Archive chat" => window.dispatch_action(Box::new(ArchiveChat), cx),
                 "Find" => window.dispatch_action(Box::new(FindInThread), cx),
@@ -2731,9 +2767,6 @@ impl Root {
                 "Open Changes tab" => window.dispatch_action(Box::new(OpenChangesPanel), cx),
                 "New tab" => window.dispatch_action(Box::new(ToggleChangesPanel), cx),
                 "Open terminal" => window.dispatch_action(Box::new(OpenBackgroundTerminal), cx),
-                "Open in new window" => {
-                    window.dispatch_action(Box::new(windows::OpenThreadWindow), cx)
-                }
                 "Commit or push" => self.open_git_form(DialogKind::Commit, window, cx),
                 "Manage scheduled tasks" => window.dispatch_action(Box::new(OpenScheduled), cx),
                 "Log out" => window.dispatch_action(Box::new(LogOut), cx),
@@ -4143,6 +4176,9 @@ impl Root {
                 }
                 "fuzzyFileSearch/sessionUpdated" | "fuzzyFileSearch/sessionCompleted" => {
                     let completed = method == "fuzzyFileSearch/sessionCompleted";
+                    if !completed && let Some(menu) = &self.command_menu {
+                        menu.update(cx, |menu, cx| menu.apply_file_results(&params, cx));
+                    }
                     let home = self.home.read(cx).composer.clone();
                     for composer in [home, self.thread_composer.clone()] {
                         composer.update(cx, |c, cx| c.apply_file_search(completed, &params, cx));
@@ -4431,6 +4467,7 @@ struct Generation {
 }
 
 /// A command or file-change approval request that waits for the user's decision.
+#[derive(Clone)]
 struct PendingApproval {
     /// The server request's id: the answer and `serverRequest/resolved` carry it.
     id: Value,

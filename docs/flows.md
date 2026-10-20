@@ -972,6 +972,23 @@ The test also checks the unread dot in the port's pixels.
 The unread state is injected in the port because the original fixture contains no unread chat.
 Command activation belongs to the later command-menu slices.
 The test also checks selection after a delayed search reply and spinner removal after a failed search.
+The replay owns its Git repository and waits for its recorded commit availability.
+It does not depend on the shared Mac temporary project.
+
+## Native file search and detached chats
+
+`crates/app/tests/command_destinations.rs` drives the current Root through keyboard and command-menu input.
+File search ignores responses for another session or an old query.
+The file index starts when a fuzzy query needs it.
+A refused index start can be retried without losing the query.
+Closing the menu releases its index, including when a dialog replaces it.
+Selecting a match opens the existing file viewer.
+Absolute path lookup rejects directories.
+Only successfully loaded files enter the shared recent-file history.
+The history stays available across windows and trailing directory separators.
+The detached chat test closes the first window, then receives another backend turn in the remaining window.
+The bridge regression also checks both event receivers and connection closure.
+These checks do not complete the other command products.
 
 ## F0b: Recording contract dispatch
 
