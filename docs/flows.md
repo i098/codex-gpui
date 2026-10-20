@@ -676,6 +676,8 @@ A failed metadata write retains the started thread and its folder without starti
 Heartbeat tasks use the original `Wl` path: read the target thread, check its active flags and recent turns, then resume it.
 The renderer supplies the target thread's selected collaboration mode and permissions, not another thread's composer settings.
 The heartbeat retains saved approvals when no renderer permission override exists.
+Permission resolution fails if the managed requirements cannot be read.
+The heartbeat uses the thread's saved effort when no renderer snapshot exists.
 The host starts one turn with `automation_heartbeat_run_now` and the original heartbeat XML prompt, without creating or renaming a thread.
 Success waits for a matching `turn/started` or `turn/completed` notification.
 It opens the existing thread with the Scheduled sidebar only if the original navigation location still matches.

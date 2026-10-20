@@ -219,6 +219,16 @@ fn allowed_modes(requirements: &Value, config: &Value) -> Vec<&'static str> {
     modes
 }
 
+fn own_mode(config: &Value) -> &'static str {
+    if config["sandbox_mode"].is_string() || !config["approval_policy"].is_null() {
+        "custom"
+    } else if guardian(saved_reviewer(config)) {
+        "guardian-approvals"
+    } else {
+        "auto"
+    }
+}
+
 /// `Al`: the unattended run's approvals and sandbox. `agent_mode` is the mode the user last
 /// picked on this host, which wins when the requirements allow it.
 pub(super) fn permissions(
@@ -228,13 +238,7 @@ pub(super) fn permissions(
     agent_mode: Option<&str>,
     projectless: bool,
 ) -> Result<Permissions> {
-    let own = if config["sandbox_mode"].is_string() || !config["approval_policy"].is_null() {
-        "custom"
-    } else if guardian(saved_reviewer(config)) {
-        "guardian-approvals"
-    } else {
-        "auto"
-    };
+    let own = own_mode(config);
     let wanted = agent_mode.unwrap_or(own);
     let modes = allowed_modes(requirements, config);
     let has = |name: &str| modes.contains(&name);
@@ -288,13 +292,7 @@ pub(super) fn thread_permissions(
     requirements: &Value,
     selected: Option<&str>,
 ) -> Result<Permissions> {
-    let own = if config["sandbox_mode"].is_string() || !config["approval_policy"].is_null() {
-        "custom"
-    } else if guardian(saved_reviewer(config)) {
-        "guardian-approvals"
-    } else {
-        "auto"
-    };
+    let own = own_mode(config);
     let wanted = selected.unwrap_or(own);
     let modes = allowed_modes(requirements, config);
     let counterpart = match wanted {
@@ -967,7 +965,8 @@ pub(crate) mod heartbeat {
         let collaboration_mode = state.map(|s| s.collaboration_mode).unwrap_or_else(|| json!({
         "mode": "default", "settings": {
             "model": read["thread"]["model"].as_str().or_else(|| config["model"].as_str()).unwrap_or_default(),
-            "reasoning_effort": config["model_reasoning_effort"],
+            "reasoning_effort": read["thread"]["reasoningEffort"].as_str()
+                .or_else(|| config["model_reasoning_effort"].as_str()),
             "developer_instructions": null,
         }
     }));
@@ -982,10 +981,7 @@ pub(crate) mod heartbeat {
         let mut saved: Value = bridge
             .request("config/read", json!({"cwd": cwd, "includeLayers": false}))
             .await?;
-        let requirements: Value = bridge
-            .request("configRequirements/read", json!({}))
-            .await
-            .unwrap_or(Value::Null);
+        let requirements: Value = bridge.request("configRequirements/read", json!({})).await?;
         let config = saved["config"].take();
         let permissions = thread_permissions(
             &[cwd.to_owned()],
@@ -1287,6 +1283,23 @@ mod tests {
         assert_eq!(p.sandbox_policy["type"], "readOnly");
         let none = json!({"allowedSandboxModes": []});
         assert!(permissions(&roots(), &json!({}), &none, None, false).is_err());
+    }
+
+    #[test]
+    fn heartbeat_permissions_enforce_managed_limits() {
+        let read_only = json!({"allowedSandboxModes": ["read-only"]});
+        let permission =
+            thread_permissions(&roots(), &json!({}), &read_only, Some("full-access")).unwrap();
+        assert_eq!(permission.sandbox_policy["type"], "readOnly");
+        assert!(
+            thread_permissions(
+                &roots(),
+                &json!({}),
+                &json!({"allowedSandboxModes": []}),
+                Some("full-access")
+            )
+            .is_err()
+        );
     }
 
     fn models() -> Vec<Value> {

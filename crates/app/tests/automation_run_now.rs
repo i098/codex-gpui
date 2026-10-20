@@ -1208,6 +1208,12 @@ fn heartbeat_refuses_missing_busy_loading_and_failed_threads_without_a_replaceme
             "resume refused",
             vec![("FAIL_RESUME", "1")],
         ),
+        (
+            "requirements",
+            idle.clone(),
+            "requirements unavailable",
+            vec![("FAIL_REQUIREMENTS", "1")],
+        ),
         ("turn", idle, "model unavailable", Vec::new()),
     ];
     for (case, thread, error, mut env) in cases {
@@ -1222,6 +1228,9 @@ fn heartbeat_refuses_missing_busy_loading_and_failed_threads_without_a_replaceme
         if case == "loading" {
             params["collaborationMode"] = Value::Null;
         }
+        if case == "requirements" {
+            params["permissions"] = Value::Null;
+        }
         let actual = heartbeat_run(&host, params).unwrap_err().to_string();
         ensure!(actual.contains(error), "{case}: {actual}");
         let sent = all_requests(&log)?;
@@ -1235,6 +1244,8 @@ fn heartbeat_refuses_missing_busy_loading_and_failed_threads_without_a_replaceme
                     .iter()
                     .any(|r| r["method"] == "thread/resume" || r["method"] == "turn/start")
             );
+        } else if case == "requirements" {
+            ensure!(!sent.iter().any(|r| r["method"] == "turn/start"));
         }
     }
     Ok(())
@@ -1880,6 +1891,7 @@ fn heartbeat_row_run_navigates_only_on_success_at_the_original_location() -> Res
         thread["id"] = json!("heartbeat-thread");
         thread["cwd"] = json!(project);
         thread["model"] = json!("gpt-6.1-sol");
+        thread["reasoningEffort"] = json!("low");
         thread["status"] = json!({"type": "idle"});
         let mut lines = script(None, |line| {
             if line["msg"]["result"]["data"].as_array().is_some_and(|d| {
@@ -1889,7 +1901,7 @@ fn heartbeat_row_run_navigates_only_on_success_at_the_original_location() -> Res
             }) {
                 line["msg"]["result"]["data"] = json!([{
                     "id": "gpt-6.1-sol", "model": "gpt-6.1-sol", "displayName": "GPT-6.1 Sol", "description": "",
-                    "hidden": false, "defaultReasoningEffort": "low", "supportedReasoningEfforts": [{"reasoningEffort": "low"}], "isDefault": true
+                    "hidden": false, "defaultReasoningEffort": "low", "supportedReasoningEfforts": [{"reasoningEffort": "low"}, {"reasoningEffort": "high"}], "isDefault": true
                 }]);
             }
             if let Some(data) = line["msg"]["result"]["data"].as_array_mut() {
@@ -1920,7 +1932,7 @@ fn heartbeat_row_run_navigates_only_on_success_at_the_original_location() -> Res
         add(
             "config/read",
             json!({"cwd": project, "includeLayers": false}),
-            json!({"config": {"sandbox_mode": "read-only", "approval_policy": "untrusted", "model": "gpt-6.1-sol", "model_reasoning_effort": "low"}}),
+            json!({"config": {"sandbox_mode": "read-only", "approval_policy": "untrusted", "model": "gpt-6.1-sol", "model_reasoning_effort": "high"}}),
         );
         add(
             "configRequirements/read",
@@ -1951,6 +1963,9 @@ fn heartbeat_row_run_navigates_only_on_success_at_the_original_location() -> Res
         let mut loaded = exchange("thread/read", json!({"thread": thread}));
         loaded[0]["msg"]["params"] = json!({"threadId": "heartbeat-thread", "includeTurns": true});
         lines.extend(loaded);
+        let mut reverted = thread.clone();
+        reverted["turns"] = json!([]);
+        lines.extend(exchange("thread/revert", json!({"thread": reverted})));
         let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
         let bridge = fx.cx.update(|cx| cx.global::<AppServer>().0.clone());
         let host = LocalHost::new(home.path()).with_bridge(bridge);
@@ -1962,6 +1977,9 @@ fn heartbeat_row_run_navigates_only_on_success_at_the_original_location() -> Res
         fx.action(Box::new(GoToRecentChat(0)))?;
         fx.wait_thread("heartbeat-thread")?;
         let composer = fx.composer();
+        ensure!(fx.read(|_, cx| {
+            composer.read(cx).run_settings().0["settings"]["reasoning_effort"] == "low"
+        }));
         fx.cx
             .update(|cx| composer.update(cx, |c, cx| c.confirm_full_access(cx)));
         fx.click(RAIL_SCHEDULED)?;
@@ -2064,6 +2082,29 @@ fn heartbeat_row_run_navigates_only_on_success_at_the_original_location() -> Res
                     })
                 })?;
                 ensure!(fx.composer_focused()?);
+                fx.cx.update(|cx| {
+                    composer.update(cx, |c, cx| {
+                        c.restore_run_settings(
+                            &json!({"settings": {"model": "gpt-6.1-sol", "reasoning_effort": "high"}}),
+                            ui::composer::Permission::Ask,
+                            cx,
+                        )
+                    })
+                });
+                fx.action(Box::new(ui::screens::thread::view::RevertTurn(
+                    "heartbeat-turn".into(),
+                )))?;
+                fx.wait("undo reload", |fx| {
+                    fx.read(|r, cx| {
+                        r.thread()
+                            .is_some_and(|view| view.read(cx).turns().is_empty())
+                    })
+                })?;
+                ensure!(fx.read(|_, cx| {
+                    let composer = composer.read(cx);
+                    composer.permission() == ui::composer::Permission::Ask
+                        && composer.run_settings().0["settings"]["reasoning_effort"] == "high"
+                }));
                 fx.action(Box::new(GoBack))?;
                 ensure!(fx.route() == Route::Scheduled);
                 fx.action(Box::new(GoForward))?;

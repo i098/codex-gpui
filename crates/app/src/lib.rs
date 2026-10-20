@@ -2772,16 +2772,24 @@ impl Root {
             c.set_queue_pending(self.queue_pending, cx);
             c.set_search_roots(vec![thread.cwd.clone()], cx);
         });
-        if let Some(state) = self.thread_run_settings.get(&thread.id) {
-            self.thread_composer.update(cx, |c, cx| {
-                c.restore_run_settings(&state.collaboration_mode, state.permission, cx)
-            });
-        } else if let Some(model) = thread.model.as_deref() {
-            let effort = self.config["model_reasoning_effort"]
-                .as_str()
-                .unwrap_or("medium");
-            self.thread_composer
-                .update(cx, |c, cx| c.set_model_and_effort(model, effort, cx));
+        if self
+            .thread
+            .as_ref()
+            .is_none_or(|view| view.read(cx).id() != thread.id.as_str())
+        {
+            if let Some(state) = self.thread_run_settings.get(&thread.id) {
+                self.thread_composer.update(cx, |c, cx| {
+                    c.restore_run_settings(&state.collaboration_mode, state.permission, cx)
+                });
+            } else if let Some(model) = thread.model.as_deref() {
+                let effort = thread
+                    .reasoning_effort
+                    .as_deref()
+                    .or_else(|| self.config["model_reasoning_effort"].as_str())
+                    .unwrap_or("medium");
+                self.thread_composer
+                    .update(cx, |c, cx| c.set_model_and_effort(model, effort, cx));
+            }
         }
         let route = Route::Thread(thread.id.clone());
         let clock = self.clock.unwrap_or_else(|| Clock {
