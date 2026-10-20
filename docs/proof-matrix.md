@@ -60,6 +60,8 @@ They use the S037 task definition and its three recorded local threads.
 Opening the management view marks the latest run read on both sides.
 The fixture replays the recorded empty task-query reply; no real run is archived.
 The native adapters preserve the original 20-pixel unread-marker slots, control margins, and search border geometry.
+Popup callers opt into top-level layers and device-pixel origin snapping.
+Scrolling task cards use compositor tiles and Skia decoration fills rather than GPUI background quads.
 
 Both themes support the normal census sizes, `1280x832` and `1440x900`.
 Home rest also accepts `767x832` and `600x832`.

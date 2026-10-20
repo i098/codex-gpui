@@ -138,16 +138,30 @@ impl Management {
         div()
             .id(SharedString::from(format!("managed-task-{}", task.id)))
             .role(Role::Button)
+            .relative()
+            .snap_origin()
             .py(px(4.))
             .border_b_1()
-            .border_color(if t.appearance == theme::Appearance::Dark {
-                gpui::Hsla {
-                    a: 0.043,
-                    ..t.border_subtle
-                }
-            } else {
-                t.border_subtle
-            })
+            .border_color(gpui::transparent_black())
+            .child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .bottom(px(-1.))
+                    .w_full()
+                    .h(px(1.))
+                    .child(shapes::decoration(shapes::Decoration {
+                        fill: Some(if t.appearance == theme::Appearance::Dark {
+                            gpui::Hsla {
+                                a: 0.043,
+                                ..t.border_subtle
+                            }
+                        } else {
+                            t.border_subtle
+                        }),
+                        ..Default::default()
+                    })),
+            )
             .child(
                 div()
                     .relative()
@@ -288,13 +302,19 @@ impl Render for Management {
         let filter_focus = crate::focus::handle("management-filter", 0, window, cx);
         let add_focus = crate::focus::handle("management-add", 0, window, cx);
         let mut list = div()
+            .relative()
+            .layer()
+            .cc_tiles()
             .h_full()
             .min_w_0()
             .flex()
             .flex_col()
             .px(px(30.))
             .pt(px(30.))
-            .bg(t.surface);
+            .child(shapes::decoration(shapes::Decoration {
+                fill: Some(t.surface),
+                ..Default::default()
+            }));
         list = if task.is_some() {
             list.w(px(352.)).flex_none()
         } else {
@@ -564,11 +584,14 @@ impl Render for Management {
                     )
                     .child(
                         div()
+                            .id("management-history-scroll")
                             .flex_1()
                             .min_h_0()
                             .px(px(16.))
                             .py(px(24.))
-                            .overflow_hidden()
+                            .overflow_y_scroll()
+                            .layer()
+                            .cc_tiles()
                             .child(history),
                     ),
             );

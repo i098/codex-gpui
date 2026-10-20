@@ -2803,6 +2803,7 @@ impl Render for Dialog {
         let schedule = self.kind == Kind::ScheduleTask;
         let announcement = self.kind == Kind::ModelAnnouncement;
         let commit = self.kind == Kind::Commit;
+        let archive = matches!(self.kind, Kind::ArchiveRuns { .. });
         let (width, height): (f32, f32) = match self.kind {
             Kind::Shortcuts => (600., shortcuts_height),
             Kind::CloseWindow => (420., 171.),
@@ -2955,7 +2956,7 @@ impl Render for Dialog {
                     } else {
                         24.
                     }))
-                    .when(!commit && self.kind != Kind::LogOut, |d| {
+                    .when(!commit && self.kind != Kind::LogOut && !archive, |d| {
                         d.overflow_hidden()
                     })
                     .map(|d| {
@@ -3039,7 +3040,30 @@ impl Render for Dialog {
                             d.bg(t.surface_elevated_secondary)
                         }
                     })
-                    .child(content),
+                    .child(if archive {
+                        crate::rounded_clip(px(25.), shapes::Corner::Squircle, content)
+                            .into_any_element()
+                    } else {
+                        content.into_any_element()
+                    })
+                    .map(|panel| {
+                        if archive {
+                            // Keep the CSS shadow ink inside the layer, outside the content clip.
+                            div()
+                                .absolute()
+                                .left(px((f32::from(viewport.width) - width) / 2. - 10.))
+                                .top(px(top - 6.))
+                                .w(px(width + 20.))
+                                .h(px(height + 20.))
+                                .layer()
+                                .top_layer()
+                                .snap_origin()
+                                .child(panel.relative().left(px(10.)).top(px(6.)))
+                                .into_any_element()
+                        } else {
+                            panel.into_any_element()
+                        }
+                    }),
             )
     }
 }
