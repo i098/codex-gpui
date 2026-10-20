@@ -288,6 +288,9 @@ Wrap a tightly bounded compositor layer in `ui::composited_bounds`.
 It keeps the exact shadow bounds and uses Chromium's dense tile sizes.
 The tooltip uses this scope around its own `top_layer`.
 `focus::shadow_ring` paints outer spread shadows. `focus::ring` retains the outline path.
+Use `focus::inset_outline` for CSS outlines with negative offsets.
+Pass the CSS offset directly; `px(-2.)` keeps a 2px outline inside the control.
+The helper keeps a bounded local recording while keyboard focus is visible.
 
 For a composited layer recorded in window coordinates, add `.window_space_recording()` to its container.
 Keep `.cc_tiles()` when the original layer rectangle sets the tile size.
