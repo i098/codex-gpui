@@ -618,6 +618,7 @@ User start, steer, add-message and queue requests cancel automatic archive befor
 If archive is in flight or already complete, the bridge restores the thread first and sets the run to `ACCEPTED`.
 The per-thread archive lock also prevents a user request from racing with that restore.
 No completion path removes a worktree or starts a cleanup service.
+A missing store or run row releases only the matching completed tracker, without creating an archive row.
 A refusal or `success: false` shows the danger toast `Could not start scheduled task`, with the reason on one line.
 Event-triggered tasks (`## When this happens` prompts) have the item disabled with the tooltip `Automations triggered by events can’t be run manually`; the host refuses them too.
 The project folders or project target (its first root from `.codex-global-state.json`) run, in a new worktree for the original default environment (`create_worktree` and `set_owner_thread`, removed again when no thread starts) or in the folder for `local`; outside a Git repository the run happens in the folder.

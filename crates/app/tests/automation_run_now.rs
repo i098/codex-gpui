@@ -1136,3 +1136,43 @@ fn autoarchive_retries_the_restore_write_without_repeating_the_server_unarchive(
     ensure!(run.cwd.join("a.txt").is_file());
     Ok(())
 }
+
+#[test]
+fn unrecorded_completion_releases_only_its_matching_tracker_without_archiving() -> Result<()> {
+    for database in [false, true] {
+        let directory = tempfile::tempdir()?;
+        let home = directory.path().join("home");
+        if database {
+            fs::create_dir_all(home.join("sqlite"))?;
+            rusqlite::Connection::open(home.join("sqlite/codex.db"))?
+                .execute_batch(&format!("{AUTOMATIONS};{RUNS};"))?;
+        }
+        let log = directory.path().join("requests.jsonl");
+        let mut server = Command::new("sh");
+        server.arg("-c").arg(SERVER).env("LOG", &log);
+        let (bridge, _events) = Bridge::spawn(server)?;
+        let bridge = Arc::new(bridge);
+        let host = LocalHost::new(&home).with_bridge(bridge.clone());
+        let id = create(&host, &home, "Review")?;
+        run(&host, &id)?;
+        let sent = requests(&log)?;
+        let thread = sent[2]["params"]["threadId"].as_str().unwrap();
+        if database {
+            rusqlite::Connection::open(home.join("sqlite/codex.db"))?
+                .execute("DELETE FROM automation_runs", [])?;
+        }
+        ensure!(!host.finish_run(
+            thread,
+            &json!({"id": "another-turn", "status": "completed"})
+        )?);
+        ensure!(bridge.automation_turn(thread).is_some());
+        ensure!(!host.finish_run(thread, &completion(&log, thread, "completed")?)?);
+        ensure!(bridge.automation_turn(thread).is_none());
+        ensure!(
+            !all_requests(&log)?
+                .iter()
+                .any(|request| request["method"] == "thread/archive")
+        );
+    }
+    Ok(())
+}

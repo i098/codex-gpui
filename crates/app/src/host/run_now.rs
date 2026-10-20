@@ -544,8 +544,21 @@ impl LocalHost {
 
     /// Finish the initial automation turn before the notification policy reads the run.
     pub fn finish_run(&self, thread_id: &str, turn: &Value) -> Result<bool> {
+        let tracked = self
+            .bridge
+            .as_ref()
+            .and_then(|bridge| bridge.automation_turn(thread_id));
+        let finish_unrecorded = || {
+            if let (Some(bridge), Some(tracked)) = (&self.bridge, &tracked)
+                && pollster::block_on(tracked.matches_turn(turn["id"].as_str().unwrap_or_default()))
+            {
+                tracked.mark_completed();
+                bridge.release_automation_turn(thread_id, tracked);
+            }
+            Ok(false)
+        };
         let Some(db) = self.database(OpenFlags::SQLITE_OPEN_READ_WRITE)? else {
-            return Ok(false);
+            return finish_unrecorded();
         };
         let run: Option<(String, String)> = db
             .query_row(
@@ -557,12 +570,8 @@ impl LocalHost {
             )
             .optional()?;
         let Some((automation, status)) = run else {
-            return Ok(false);
+            return finish_unrecorded();
         };
-        let tracked = self
-            .bridge
-            .as_ref()
-            .and_then(|bridge| bridge.automation_turn(thread_id));
         if let Some(tracked) = &tracked
             && !pollster::block_on(tracked.matches_turn(turn["id"].as_str().unwrap_or_default()))
         {
