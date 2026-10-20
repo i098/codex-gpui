@@ -48,7 +48,6 @@ fn permission(id: u64, thread: &str, turn: &str) -> Event {
     }
 }
 
-
 #[test]
 fn withdrawn_answer_cannot_settle_the_next_request_or_another_thread() -> Result<()> {
     exit_on_panic();
@@ -332,7 +331,7 @@ fn native_forms_send_typed_answers_and_cancel_without_accepting() -> Result<()> 
     );
     fx.focus_composer()?;
     fx.keys("tab tab")?;
-    capture(&mut fx, "secret-input-empty")?;
+    fx.capture_evidence("CGX_REQUEST_EVIDENCE", "secret-input-empty")?;
     fx.type_text("fixture-secret")?;
     fx.cx.update(|cx| {
         cx.write_to_clipboard(gpui::ClipboardItem::new_string("clipboard-marker".into()))

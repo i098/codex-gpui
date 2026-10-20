@@ -263,6 +263,8 @@ Use it when placing multiline field glyphs to retain Blink's baseline positions.
 
 Monochrome glyphs and SVGs keep their paint alpha.
 Element opacity is applied once when the enclosing layer is restored.
+Permission and MCP form bodies use `top_layer().cc_tiles()` to match the original scrolling layers.
+The tool-picker body does not add a scrolling layer.
 
 Home composer permission and model labels paint directly into their parent.
 Docked composers retain the composited label path. The animated effort label keeps its filter layer.

@@ -925,6 +925,7 @@ impl Composer {
             .id("request-fields")
             .max_h(px(320.))
             .overflow_y_scroll()
+            .when(mcp, |d| d.top_layer().cc_tiles())
             .px(px(
                 if form.picker() || field.is_some_and(|field| field["type"] == "boolean") {
                     12.
@@ -1496,6 +1497,47 @@ impl Composer {
             .on_click(self.request_listener(cx, |this, _, window, cx| {
                 this.toggle_request_scope(window, cx)
             }));
+        let body = div()
+            .id("permission-request-body")
+            .px(px(16.))
+            .pt(px(16.))
+            .pb(px(12.))
+            .min_h_0()
+            .overflow_y_scroll()
+            .top_layer()
+            .cc_tiles()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(icon("hand", 18., t.text.opacity(0.65)))
+                    .child(text(
+                        if internet {
+                            "Internet access"
+                        } else {
+                            "Permissions"
+                        },
+                        13.,
+                        20.,
+                        400.,
+                        t.text.opacity(0.65),
+                    )),
+            )
+            .child(
+                div()
+                    .mt(px(8.))
+                    .child(text(approval.title.clone(), 14., 20., 500., t.text)),
+            )
+            .when_some(approval.reason.clone(), |d, reason| {
+                d.child(
+                    div()
+                        .mt(px(2.))
+                        .child(text(reason, 13., 19.5, 430., t.text_tertiary)),
+                )
+            });
         div()
             .relative()
             .p(px(1.))
@@ -1511,117 +1553,80 @@ impl Composer {
             .child(crate::rounded_clip(
                 px(24.),
                 shapes::Corner::Squircle,
-                div()
-                    .p(px(16.))
-                    .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.))
-                            .child(icon("hand", 18., t.text.opacity(0.65)))
-                            .child(text(
-                                if internet {
-                                    "Internet access"
-                                } else {
-                                    "Permissions"
-                                },
-                                13.,
-                                20.,
-                                400.,
-                                t.text.opacity(0.65),
-                            )),
-                    )
-                    .child(div().mt(px(8.)).child(text(
-                        approval.title.clone(),
-                        14.,
-                        20.,
-                        500.,
-                        t.text,
-                    )))
-                    .when_some(approval.reason.clone(), |d, reason| {
-                        d.child(div().mt(px(2.)).child(text(
-                            reason,
-                            13.,
-                            19.5,
-                            430.,
-                            t.text_tertiary,
-                        )))
-                    })
-                    .child(
-                        div()
-                            .mt(px(20.))
-                            .flex()
-                            .justify_end()
-                            .gap(px(8.))
-                            .child(self.request_button(
-                                "request-deny",
-                                "Deny".into(),
-                                ApprovalDecision::Decline,
-                                false,
-                                t,
-                                cx,
-                            ))
-                            .child(
-                                div()
-                                    .relative()
-                                    .flex()
-                                    .child(shapes::decoration(shapes::Decoration {
-                                        radius: Corners::all(px(9999.)),
-                                        fill: Some(t.button_primary_solid),
-                                        ..Default::default()
-                                    }))
-                                    .child(
-                                        self.request_button(
-                                            "request-allow",
-                                            "Allow once".into(),
-                                            ApprovalDecision::Accept,
-                                            true,
-                                            t,
-                                            cx,
-                                        )
-                                        .when_some(
-                                            self.request_draft.accept_focus.as_ref(),
-                                            |d, focus| {
-                                                d.track_focus(focus).when(
-                                                    focus.is_focused(window),
-                                                    |d| {
-                                                        d.child(
-                                                            div()
-                                                                .absolute()
-                                                                .left(px(1.))
-                                                                .right_0()
-                                                                .top(px(1.))
-                                                                .bottom(px(1.))
-                                                                .child(shapes::decoration(
-                                                                    shapes::Decoration {
-                                                                        radius: Corners {
-                                                                            top_left: px(13.),
-                                                                            bottom_left: px(13.),
-                                                                            top_right: px(0.),
-                                                                            bottom_right: px(0.),
-                                                                        },
-                                                                        shadows: vec![shadow(
-                                                                            gpui::rgb(0x3a83f7)
-                                                                                .into(),
-                                                                            0.,
-                                                                            0.,
-                                                                            2.,
-                                                                            true,
-                                                                        )],
-                                                                        ..Default::default()
-                                                                    },
-                                                                )),
-                                                        )
-                                                    },
-                                                )
-                                            },
-                                        ),
+                div().flex().flex_col().child(body).child(
+                    div()
+                        .px(px(16.))
+                        .pt(px(8.))
+                        .pb(px(16.))
+                        .flex()
+                        .justify_end()
+                        .gap(px(8.))
+                        .child(self.request_button(
+                            "request-deny",
+                            "Deny".into(),
+                            ApprovalDecision::Decline,
+                            false,
+                            t,
+                            cx,
+                        ))
+                        .child(
+                            div()
+                                .relative()
+                                .flex()
+                                .child(shapes::decoration(shapes::Decoration {
+                                    radius: Corners::all(px(9999.)),
+                                    fill: Some(t.button_primary_solid),
+                                    ..Default::default()
+                                }))
+                                .child(
+                                    self.request_button(
+                                        "request-allow",
+                                        "Allow once".into(),
+                                        ApprovalDecision::Accept,
+                                        true,
+                                        t,
+                                        cx,
                                     )
-                                    .child(arrow),
-                            ),
-                    ),
+                                    .when_some(
+                                        self.request_draft.accept_focus.as_ref(),
+                                        |d, focus| {
+                                            d.track_focus(focus).when(
+                                                focus.is_focused(window),
+                                                |d| {
+                                                    d.child(
+                                                        div()
+                                                            .absolute()
+                                                            .left(px(1.))
+                                                            .right_0()
+                                                            .top(px(1.))
+                                                            .bottom(px(1.))
+                                                            .child(shapes::decoration(
+                                                                shapes::Decoration {
+                                                                    radius: Corners {
+                                                                        top_left: px(13.),
+                                                                        bottom_left: px(13.),
+                                                                        top_right: px(0.),
+                                                                        bottom_right: px(0.),
+                                                                    },
+                                                                    shadows: vec![shadow(
+                                                                        gpui::rgb(0x3a83f7).into(),
+                                                                        0.,
+                                                                        0.,
+                                                                        2.,
+                                                                        true,
+                                                                    )],
+                                                                    ..Default::default()
+                                                                },
+                                                            )),
+                                                    )
+                                                },
+                                            )
+                                        },
+                                    ),
+                                )
+                                .child(arrow),
+                        ),
+                ),
             ))
             .when(self.menu == Some(Menu::Permissions), |d| {
                 d.child(
