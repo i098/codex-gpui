@@ -171,11 +171,12 @@ pub enum Fill {
 }
 
 /// [`decoration`] for a box with CSS `backdrop-filter: blur(blur)`: Chromium's compositor
-/// blurs what was painted below the box (here: what `shapes` painted this frame), clips it
+/// blurs the same-frame scene painted below the box, including text and images, clips it
 /// to the box's shape, and composites the box's own layer (`d`, its fill painted as `fill`)
-/// over it. A box inside another `backdrop_blur` box (a nested `backdrop-filter`) blurs that
-/// box's layer instead. Paint it where the box's decoration goes (first child); its text and
-/// children paint on top as usual. `gap_row`: Chromium's blur input has one transparent row
+/// over it. A nested box captures the already-painted parent and its content.
+/// Paint it where the box's decoration goes (first child); its text and children paint on top.
+/// If capture fails, the decoration remains visible without blur; the window logs the first failure.
+/// `gap_row`: Chromium's blur input has one transparent row
 /// below the box (measured on the diff capsules where the main surface's rounded clip owns a
 /// render surface, `screens::diff::panel::panel_clamped`; its source is not found).
 pub fn backdrop_blur(blur: Pixels, fill: Fill, gap_row: bool, d: Decoration) -> impl IntoElement {
@@ -337,7 +338,6 @@ pub fn paint_icon(
 }
 
 /// GPUI's own primitives, with Blink's radius constraint.
-#[cfg(not(target_os = "macos"))]
 fn quads(d: &Decoration, bounds: Bounds<Pixels>, window: &mut Window) {
     use gpui::{BorderStyle, BoxShadow, Edges, quad, transparent_black};
     let r = &d.radius;

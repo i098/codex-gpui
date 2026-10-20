@@ -1743,6 +1743,11 @@ impl From<RenderImageParams> for AtlasKey {
     }
 }
 
+/// Captures a device-pixel region of a scene using its existing sprite atlas.
+/// The result contains row-major, premultiplied RGBA pixels.
+pub type SceneCapture =
+    Box<dyn FnMut(&Scene, Size<DevicePixels>, Bounds<DevicePixels>, bool) -> Result<Vec<[u8; 4]>>>;
+
 #[expect(missing_docs)]
 pub trait PlatformAtlas {
     /// The builder runs with the atlas locked and must not re-enter the same atlas.
@@ -1752,6 +1757,11 @@ pub trait PlatformAtlas {
         build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
     ) -> Result<Option<AtlasTile>>;
     fn remove(&self, key: &AtlasKey);
+
+    /// Creates an offscreen capture renderer that shares this atlas.
+    fn create_scene_capture(self: Arc<Self>) -> Result<SceneCapture> {
+        anyhow::bail!("scene capture is not implemented for this atlas")
+    }
 
     #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
     fn contains(&self, _key: &AtlasKey) -> bool {

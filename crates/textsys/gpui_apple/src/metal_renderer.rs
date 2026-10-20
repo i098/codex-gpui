@@ -1,5 +1,5 @@
 use crate::metal_atlas::MetalAtlas;
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, ensure};
 use block2::RcBlock;
 use core_graphics::geometry::CGSize;
 use gpui::{
@@ -138,6 +138,7 @@ pub struct MetalRenderer {
     /// rendering headlessly without reading pixels back.
     #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
     headless_render_target: Option<metal::Texture>,
+    capture_texture: Option<metal::Texture>,
 }
 
 #[repr(C)]
@@ -154,7 +155,13 @@ impl MetalRenderer {
         let device = Self::create_device();
         let layer = metal::MetalLayer::new();
         Self::configure_layer(&layer, &device, transparent);
-        Self::new_internal(device, Some(layer), !transparent, instance_buffer_pool)
+        Self::new_internal(
+            device,
+            Some(layer),
+            !transparent,
+            instance_buffer_pool,
+            None,
+        )
     }
 
     /// Creates a renderer for a CAMetalLayer owned by a platform view, such as
@@ -173,7 +180,13 @@ impl MetalRenderer {
         }
         .to_owned();
         Self::configure_layer(&layer, &device, transparent);
-        Self::new_internal(device, Some(layer), !transparent, instance_buffer_pool)
+        Self::new_internal(
+            device,
+            Some(layer),
+            !transparent,
+            instance_buffer_pool,
+            None,
+        )
     }
 
     fn configure_layer(layer: &metal::MetalLayerRef, device: &metal::DeviceRef, transparent: bool) {
@@ -209,7 +222,18 @@ impl MetalRenderer {
     #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
     pub fn new_headless(instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>) -> Self {
         let device = Self::create_device();
-        Self::new_internal(device, None, true, instance_buffer_pool)
+        Self::new_internal(device, None, true, instance_buffer_pool, None)
+    }
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    pub(crate) fn for_atlas(device: metal::Device, atlas: Arc<MetalAtlas>) -> Self {
+        Self::new_internal(
+            device,
+            None,
+            true,
+            Arc::new(Mutex::new(InstanceBufferPool::default())),
+            Some(atlas),
+        )
     }
 
     #[cfg(target_os = "macos")]
@@ -249,6 +273,7 @@ impl MetalRenderer {
         layer: Option<metal::MetalLayer>,
         opaque: bool,
         instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
+        atlas: Option<Arc<MetalAtlas>>,
     ) -> Self {
         #[cfg(feature = "runtime_shaders")]
         let library = device
@@ -364,7 +389,8 @@ impl MetalRenderer {
 
         let command_queue = device.new_command_queue();
         let supports_shared_storage = cfg!(target_os = "ios") || is_apple_gpu;
-        let sprite_atlas = Arc::new(MetalAtlas::new(device.clone(), supports_shared_storage));
+        let sprite_atlas = atlas
+            .unwrap_or_else(|| Arc::new(MetalAtlas::new(device.clone(), supports_shared_storage)));
         // metal and objc2-metal expose the same Objective-C device; the borrowed
         // protocol object remains valid while `device` owns it.
         let core_video_texture_cache = unsafe {
@@ -411,6 +437,7 @@ impl MetalRenderer {
             layer_textures: Vec::new(),
             #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
             headless_render_target: None,
+            capture_texture: None,
         }
     }
 
@@ -528,7 +555,8 @@ impl MetalRenderer {
             return;
         };
 
-        let command_buffer = match self.render_frame(scene, drawable.texture(), viewport_size) {
+        let command_buffer = match self.render_frame(scene, drawable.texture(), viewport_size, None)
+        {
             Ok(command_buffer) => command_buffer,
             Err(error) => {
                 log::error!("failed to render: {error:#}");
@@ -551,6 +579,7 @@ impl MetalRenderer {
         scene: &Scene,
         texture: &metal::TextureRef,
         viewport_size: Size<DevicePixels>,
+        scissor: Option<Bounds<DevicePixels>>,
     ) -> Result<metal::CommandBuffer> {
         let mut writer = InstanceBufferWriter::new(
             &self.device,
@@ -575,6 +604,7 @@ impl MetalRenderer {
             &mut writer,
             texture,
             viewport_size,
+            scissor,
         )?;
 
         let instance_buffer_pool = self.instance_buffer_pool.clone();
@@ -613,7 +643,7 @@ impl MetalRenderer {
             .next_drawable()
             .ok_or_else(|| anyhow::anyhow!("Failed to get drawable for render_to_image"))?;
 
-        let command_buffer = self.render_frame(scene, drawable.texture(), viewport_size)?;
+        let command_buffer = self.render_frame(scene, drawable.texture(), viewport_size, None)?;
 
         // Commit and wait for completion without presenting
         command_buffer.commit();
@@ -632,50 +662,76 @@ impl MetalRenderer {
         scene: &Scene,
         size: Size<DevicePixels>,
     ) -> Result<RgbaImage> {
-        if size.width.0 <= 0 || size.height.0 <= 0 {
-            anyhow::bail!("Invalid size for render_scene_to_image: {:?}", size);
-        }
+        let bounds = Bounds::new(point(DevicePixels(0), DevicePixels(0)), size);
+        let pixels = self.capture_scene_region(scene, size, bounds, self.opaque)?;
+        RgbaImage::from_raw(
+            size.width.0 as u32,
+            size.height.0 as u32,
+            pixels.into_flattened(),
+        )
+        .context("failed to create a scene image")
+    }
 
-        // Headless callers do not have a Cocoa event-loop pool to release
-        // autoreleased command buffers and render-pass descriptors.
+    pub(crate) fn capture_scene_region(
+        &mut self,
+        scene: &Scene,
+        size: Size<DevicePixels>,
+        bounds: Bounds<DevicePixels>,
+        opaque: bool,
+    ) -> Result<Vec<[u8; 4]>> {
+        ensure!(
+            size.width.0 > 0
+                && size.height.0 > 0
+                && bounds.size.width.0 > 0
+                && bounds.size.height.0 > 0
+                && bounds.origin.x.0 >= 0
+                && bounds.origin.y.0 >= 0
+                && bounds.size.width.0 <= size.width.0
+                && bounds.size.height.0 <= size.height.0
+                && bounds.origin.x.0 <= size.width.0 - bounds.size.width.0
+                && bounds.origin.y.0 <= size.height.0 - bounds.size.height.0,
+            "invalid scene capture bounds"
+        );
         objc2::rc::autoreleasepool(|_| {
-            // Update path intermediate textures for this size
-            self.update_path_intermediate_textures(size);
-
-            // Create an offscreen texture as render target
-            let texture_descriptor = metal::TextureDescriptor::new();
-            texture_descriptor.set_width(size.width.0 as u64);
-            texture_descriptor.set_height(size.height.0 as u64);
-            texture_descriptor.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
-            texture_descriptor.set_usage(
-                metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead,
-            );
-            // Like the atlas, only Apple GPUs can create shared textures on macOS;
-            // Intel Macs cannot, even with unified memory. iOS has no managed storage.
-            let uses_shared_storage = cfg!(target_os = "ios") || self.is_apple_gpu;
-            texture_descriptor.set_storage_mode(if uses_shared_storage {
-                metal::MTLStorageMode::Shared
-            } else {
-                metal::MTLStorageMode::Managed
-            });
-            let target_texture = self.device.new_texture(&texture_descriptor);
-
-            let command_buffer = self.render_frame(scene, &target_texture, size)?;
-
-            // Managed textures require an explicit blit synchronize before the CPU
-            // can read back the rendered data. Without this, get_bytes returns
-            // stale zeros.
-            if !uses_shared_storage {
+            if self
+                .path_intermediate_texture
+                .as_ref()
+                .is_none_or(|texture| {
+                    texture.width() != size.width.0 as u64
+                        || texture.height() != size.height.0 as u64
+                })
+            {
+                self.update_path_intermediate_textures(size);
+            }
+            let shared = cfg!(target_os = "ios") || self.is_apple_gpu;
+            if self.capture_texture.as_ref().is_none_or(|texture| {
+                texture.width() != size.width.0 as u64 || texture.height() != size.height.0 as u64
+            }) {
+                let descriptor = metal::TextureDescriptor::new();
+                descriptor.set_width(size.width.0 as u64);
+                descriptor.set_height(size.height.0 as u64);
+                descriptor.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+                descriptor.set_usage(
+                    metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead,
+                );
+                descriptor.set_storage_mode(if shared {
+                    metal::MTLStorageMode::Shared
+                } else {
+                    metal::MTLStorageMode::Managed
+                });
+                self.capture_texture = Some(self.device.new_texture(&descriptor));
+            }
+            self.opaque = opaque;
+            let target = self.capture_texture.as_ref().unwrap().clone();
+            let command_buffer = self.render_frame(scene, &target, size, Some(bounds))?;
+            if !shared {
                 let blit = command_buffer.new_blit_command_encoder();
-                blit.synchronize_resource(&target_texture);
+                blit.synchronize_resource(&target);
                 blit.end_encoding();
             }
-
-            // Commit and wait for completion
             command_buffer.commit();
             command_buffer.wait_until_completed();
-
-            read_texture_to_image(&target_texture)
+            Ok(read_texture_region(&target, bounds))
         })
     }
 
@@ -714,7 +770,7 @@ impl MetalRenderer {
                 .clone()
                 .expect("just ensured the render target exists");
 
-            let command_buffer = self.render_frame(scene, &target_texture, size)?;
+            let command_buffer = self.render_frame(scene, &target_texture, size, None)?;
 
             // Commit without waiting, mirroring presentation to a real window where
             // the CPU doesn't block on the GPU.
@@ -730,6 +786,7 @@ impl MetalRenderer {
         writer: &mut InstanceBufferWriter,
         texture: &metal::TextureRef,
         viewport_size: Size<DevicePixels>,
+        scissor: Option<Bounds<DevicePixels>>,
     ) -> Result<metal::CommandBuffer> {
         let command_queue = self.command_queue.clone();
         let command_buffer = command_queue.new_command_buffer();
@@ -741,6 +798,7 @@ impl MetalRenderer {
             &self.layer_textures,
             viewport_size,
             Some(metal::MTLClearColor::new(0., 0., 0., alpha)),
+            scissor,
         );
 
         for batch in scene.batches() {
@@ -768,6 +826,7 @@ impl MetalRenderer {
                         &self.layer_textures,
                         viewport_size,
                         None,
+                        scissor,
                     );
 
                     if did_draw {
@@ -1298,6 +1357,7 @@ fn new_command_encoder_for_texture<'a>(
     layer_textures: &[metal::Texture],
     viewport_size: Size<DevicePixels>,
     clear_color: Option<metal::MTLClearColor>,
+    scissor: Option<Bounds<DevicePixels>>,
 ) -> &'a metal::RenderCommandEncoderRef {
     let render_pass_descriptor = metal::RenderPassDescriptor::new();
     let layer_clear = clear_color.map(|_| metal::MTLClearColor::new(0., 0., 0., 0.));
@@ -1328,37 +1388,57 @@ fn new_command_encoder_for_texture<'a>(
         znear: 0.0,
         zfar: 1.0,
     });
+    // Preserve global fragment coordinates while limiting capture work to the requested region.
+    if let Some(bounds) = scissor {
+        command_encoder.set_scissor_rect(metal::MTLScissorRect {
+            x: bounds.origin.x.0 as u64,
+            y: bounds.origin.y.0 as u64,
+            width: bounds.size.width.0 as u64,
+            height: bounds.size.height.0 as u64,
+        });
+    }
     command_encoder
 }
 
 #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
 fn read_texture_to_image(texture: &metal::TextureRef) -> Result<RgbaImage> {
-    let width = texture.width() as u32;
-    let height = texture.height() as u32;
-    let bytes_per_row = width as usize * 4;
-    let mut pixels = vec![0u8; height as usize * bytes_per_row];
+    let bounds = Bounds::new(
+        point(DevicePixels(0), DevicePixels(0)),
+        size(
+            DevicePixels(texture.width() as i32),
+            DevicePixels(texture.height() as i32),
+        ),
+    );
+    let pixels = read_texture_region(texture, bounds);
+    RgbaImage::from_raw(
+        bounds.size.width.0 as u32,
+        bounds.size.height.0 as u32,
+        pixels.into_flattened(),
+    )
+    .context("failed to create RgbaImage from pixel data")
+}
 
+fn read_texture_region(texture: &metal::TextureRef, bounds: Bounds<DevicePixels>) -> Vec<[u8; 4]> {
+    let width = bounds.size.width.0 as usize;
+    let height = bounds.size.height.0 as usize;
+    let mut pixels = vec![[0u8; 4]; width * height];
     let region = metal::MTLRegion {
-        origin: metal::MTLOrigin { x: 0, y: 0, z: 0 },
+        origin: metal::MTLOrigin {
+            x: bounds.origin.x.0 as u64,
+            y: bounds.origin.y.0 as u64,
+            z: 0,
+        },
         size: metal::MTLSize {
             width: width as u64,
             height: height as u64,
             depth: 1,
         },
     };
-    texture.get_bytes(
-        pixels.as_mut_ptr() as *mut std::ffi::c_void,
-        bytes_per_row as u64,
-        region,
-        0,
-    );
-
-    // Convert BGRA to RGBA (swap B and R channels)
-    for chunk in pixels.chunks_exact_mut(4) {
-        chunk.swap(0, 2);
+    texture.get_bytes(pixels.as_mut_ptr().cast(), (width * 4) as u64, region, 0);
+    for pixel in &mut pixels {
+        pixel.swap(0, 2);
     }
-
-    RgbaImage::from_raw(width, height, pixels).context("failed to create RgbaImage from pixel data")
+    pixels
 }
 
 fn build_pipeline_state(

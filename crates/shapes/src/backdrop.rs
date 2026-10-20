@@ -2,22 +2,26 @@
 //! (the target's pixels in the box's snapped rect) blurred by Skia with sigma = blur in device
 //! px and mirrored edges at that rect, masked by the box's anti-aliased contour clip
 //! (`(px * (coverage + 1)) >> 8`), blended onto the target (lowp srcover), and the box's
-//! layer blended over that. A nested box does the same inside its outer box's layer.
+//! layer blended over that. Nested boxes filter parent content, not its filtered backdrop.
 //!
-//! The backdrop is rebuilt from the decorations `shapes` painted this frame (recorded by
-//! [`record`], rasterized again per cc tile), so the box's final pixels are computed here and
-//! painted as one image.
+//! The backdrop comes from the current frame's scene prefix, including text, images and
+//! every primitive painted before this box. The same sprite atlas supplies the capture.
 
 use crate::{
     Decoration, Fill,
     skia::{self, Contour, Layer, Op, color4f},
 };
-use gpui::{Bounds, Corners, Hsla, Pixels, RenderImage, Window, WindowId, point, px};
+use gpui::{Bounds, Corners, DevicePixels, Pixels, RenderImage, Window, WindowId, point, px};
 use image::{Frame, RgbaImage};
 use skia_safe::{
     Canvas, ClipOp, Color, Color4f, ColorSpace, Paint, Rect, TileMode, gradient, image_filters,
 };
-use std::{cell::RefCell, collections::HashMap, sync::Arc};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    hash::{DefaultHasher, Hash, Hasher},
+    sync::Arc,
+};
 
 /// A box with a backdrop filter, device px: its contour, blur sigma and layer ops; `gradient`:
 /// its fill is a one-color `linear-gradient()` image of this color (8-bit, as Blink passes it:
@@ -32,55 +36,25 @@ struct Filtered {
     gap_row: bool,
 }
 
-/// A backdrop-filtered box painted at the root: its backdrop is the first `below` painted
-/// ops; `nested` boxes blur its layer, in paint order.
-#[derive(Clone, Debug)]
 struct Surface {
     filtered: Filtered,
-    below: usize,
-    nested: Vec<Filtered>,
+    backdrop: Pixmap,
+    // Initialized on the first nested box; `backdrop` then holds the blurred parent backdrop.
+    layer: Option<Pixmap>,
+    checkpoint: (u64, usize),
 }
 
 #[derive(Default)]
 struct FrameState {
-    /// `Window::draw_count` of the draw this state belongs to.
-    draw: u64,
-    /// Decoration ops painted at the root, device px.
-    painted: Vec<(Op, Color4f)>,
+    key: Option<(WindowId, u64)>,
     surfaces: Vec<Surface>,
 }
 
 thread_local! {
-    /// What each window painted in its current draw.
-    static FRAMES: RefCell<HashMap<WindowId, FrameState>> = Default::default();
+    static FRAME: RefCell<FrameState> = RefCell::new(FrameState::default());
     /// Composed images by their inputs.
     /// ponytail: cleared wholesale when full; an LRU only if animation ever thrashes it.
     static IMAGES: RefCell<HashMap<String, Arc<RenderImage>>> = Default::default();
-}
-
-fn with_frame<R>(window: &Window, f: impl FnOnce(&mut FrameState) -> R) -> R {
-    let draw = window.draw_count();
-    FRAMES.with_borrow_mut(|frames| {
-        let state = frames
-            .entry(window.window_handle().window_id())
-            .or_default();
-        if state.draw != draw {
-            *state = FrameState {
-                draw,
-                ..Default::default()
-            };
-        }
-        f(state)
-    })
-}
-
-/// Records root decoration ops for the backdrops painted later this frame.
-/// ponytail: ops of composited layers (scroll contents) are drawn as if at the root.
-pub(crate) fn record(ops: &[(Op, Hsla)], window: &Window) {
-    with_frame(window, |f| {
-        f.painted
-            .extend(ops.iter().map(|&(op, c)| (op, color4f(c))))
-    });
 }
 
 /// `crate::backdrop_blur` on macOS.
@@ -112,63 +86,113 @@ pub(crate) fn paint(
         gap_row,
     };
     let size = Layer::new(window, None).window;
-    // A nested box paints only its own rect: its outer box's children painted since must stay.
-    let own = snapped(&filtered.contour);
-    let (surface, painted, nested) = with_frame(window, |f| {
-        let r = contour.rr.r;
-        let inside = |o: &Surface| {
-            let q = o.filtered.contour.rr.r;
-            r[0] >= q[0] && r[1] >= q[1] && r[0] + r[2] <= q[0] + q[2] && r[1] + r[3] <= q[1] + q[3]
-        };
-        let i = f.surfaces.iter().rposition(inside);
-        match i {
-            Some(i) => f.surfaces[i].nested.push(filtered),
-            None => f.surfaces.push(Surface {
-                filtered,
-                below: f.painted.len(),
-                nested: Vec::new(),
-            }),
-        }
-        let s = &f.surfaces[i.unwrap_or(f.surfaces.len() - 1)];
-        (s.clone(), f.painted[..s.below].to_vec(), i.is_some())
-    });
-    let region = region(&surface, size);
-    let out = if nested {
-        intersect(own, region)
-    } else {
-        region
-    };
+    let out = region(&filtered, size);
     if out[0] >= out[2] || out[1] >= out[3] {
         return;
     }
-    let painted: Vec<(Op, Color4f)> = painted
-        .into_iter()
-        .filter(|(op, _)| overlaps(op.bbox(), region))
-        .collect();
-    let key = format!("{surface:?}{painted:?}{region:?}{out:?}");
-    let image = IMAGES.with_borrow_mut(|images| {
+    let checkpoint = window.scene_checkpoint();
+    let frame_key = (window.window_handle().window_id(), checkpoint.0);
+    FRAME.with_borrow_mut(|frame| {
+        if frame.key != Some(frame_key) {
+            frame.key = Some(frame_key);
+            frame.surfaces.clear();
+        }
+        let parent = frame.surfaces.iter().rposition(|surface| {
+            let [x, y, w, h] = filtered.contour.rr.r;
+            let [px, py, pw, ph] = surface.filtered.contour.rr.r;
+            x >= px && y >= py && x + w <= px + pw && y + h <= py + ph
+        });
+        let capture_region = parent.map_or(out, |index| frame.surfaces[index].backdrop.r);
+        let since = parent.map(|index| frame.surfaces[index].checkpoint);
+        let capture_bounds = Bounds::new(
+            point(
+                DevicePixels(capture_region[0]),
+                DevicePixels(capture_region[1]),
+            ),
+            gpui::size(
+                DevicePixels(capture_region[2] - capture_region[0]),
+                DevicePixels(capture_region[3] - capture_region[1]),
+            ),
+        );
+        let pixels = match window.capture_scene_prefix(capture_bounds, since) {
+            Ok(pixels) => pixels,
+            Err(_) => {
+                crate::quads(d, bounds, window);
+                return;
+            }
+        };
+        let (image, out) = if let Some(index) = parent {
+            let surface = &mut frame.surfaces[index];
+            if surface.layer.is_none() {
+                blur_backdrop(&mut surface.backdrop, &surface.filtered);
+                let mut layer = Pixmap::new(surface.backdrop.r);
+                draw_layer(&mut layer, &surface.filtered);
+                surface.layer = Some(layer);
+            }
+            let layer = surface.layer.as_mut().unwrap();
+            for (target, source) in layer.px.iter_mut().zip(pixels) {
+                *target = over(source, *target);
+            }
+            filter(layer, &filtered);
+            let out = intersect(out, surface.backdrop.r);
+            let mut hasher = DefaultHasher::new();
+            surface.backdrop.px.hash(&mut hasher);
+            layer.px.hash(&mut hasher);
+            let key = format!("nested{out:?}{}", hasher.finish());
+            let image = cached_image(key, window, || compose_layer(&surface.backdrop, layer, out));
+            (image, out)
+        } else {
+            let backdrop = Pixmap { r: out, px: pixels };
+            let mut hasher = DefaultHasher::new();
+            backdrop.px.hash(&mut hasher);
+            let key = format!("{filtered:?}{out:?}{}", hasher.finish());
+            let image = cached_image(key, window, || compose(&filtered, &backdrop));
+            frame.surfaces.push(Surface {
+                filtered,
+                backdrop,
+                layer: None,
+                checkpoint,
+            });
+            (image, out)
+        };
+        let at = Bounds::new(
+            point(px(out[0] as f32 / s), px(out[1] as f32 / s)),
+            gpui::size(
+                px((out[2] - out[0]) as f32 / s),
+                px((out[3] - out[1]) as f32 / s),
+            ),
+        );
+        window
+            .paint_image(at, at, Corners::default(), image, 0, false)
+            .ok();
+        let index = parent.unwrap_or(frame.surfaces.len() - 1);
+        frame.surfaces[index].checkpoint = window.scene_checkpoint();
+    });
+}
+
+fn cached_image(
+    key: String,
+    window: &mut Window,
+    make: impl FnOnce() -> RenderImage,
+) -> Arc<RenderImage> {
+    IMAGES.with_borrow_mut(|images| {
         if let Some(image) = images.get(&key) {
             return image.clone();
         }
         if images.len() >= 64 {
-            for (_, image) in images.drain() {
-                window.drop_image(image).ok();
-            }
+            images.retain(|_, image| {
+                if window.is_image_in_use(image) {
+                    true
+                } else {
+                    window.drop_image(image.clone()).ok();
+                    false
+                }
+            });
         }
-        let image = Arc::new(compose(&surface, &painted, region, out, size));
+        let image = Arc::new(make());
         images.insert(key, image.clone());
         image
-    });
-    let at = Bounds::new(
-        point(px(out[0] as f32 / s), px(out[1] as f32 / s)),
-        gpui::size(
-            px((out[2] - out[0]) as f32 / s),
-            px((out[3] - out[1]) as f32 / s),
-        ),
-    );
-    window
-        .paint_image(at, at, Corners::default(), image, 0, false)
-        .ok();
+    })
 }
 
 /// The rect `[x0, y0, x1, y1]` both `a` and `b` cover (empty if none).
@@ -181,10 +205,6 @@ fn intersect(a: [i32; 4], b: [i32; 4]) -> [i32; 4] {
     ]
 }
 
-fn overlaps(a: [i32; 4], b: [i32; 4]) -> bool {
-    a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
-}
-
 /// The box's integer rect `[x0, y0, x1, y1]` (Blink snaps it).
 fn snapped(c: &Contour) -> [i32; 4] {
     let r = c.rr.r;
@@ -192,14 +212,9 @@ fn snapped(c: &Contour) -> [i32; 4] {
 }
 
 /// Device px the surface can change: its rect and its layer ops, within the window.
-fn region(s: &Surface, window: [i32; 2]) -> [i32; 4] {
-    let mut r = snapped(&s.filtered.contour);
-    for (op, _) in s
-        .filtered
-        .ops
-        .iter()
-        .chain(s.nested.iter().flat_map(|n| &n.ops))
-    {
+fn region(filtered: &Filtered, window: [i32; 2]) -> [i32; 4] {
+    let mut r = snapped(&filtered.contour);
+    for (op, _) in &filtered.ops {
         let b = op.bbox();
         r = [
             r[0].min(b[0]),
@@ -406,55 +421,213 @@ fn layer_rect(f: &Filtered) -> [i32; 4] {
     r
 }
 
-/// The surface's final pixels over `out` (inside `region`) as a BGRA image: transparent where
-/// the target is unchanged.
-fn compose(
-    s: &Surface,
-    painted: &[(Op, Color4f)],
-    region: [i32; 4],
-    out: [i32; 4],
-    window: [i32; 2],
-) -> RenderImage {
-    // The backdrop: the painted ops, rasterized per root cc tile like Chromium. The whole tile:
-    // Skia's mask blur reads the path's mask only within 128 px of the clip, so a large
-    // shadow blur (the light composer card's) depends on the tile's extent.
-    let mut root = Pixmap::new(region);
-    for (o, size, area) in skia::tiles(region, window, [skia::TILE; 2]) {
-        if area[0] >= area[2] || area[1] >= area[3] {
-            continue;
-        }
-        root.blit(
-            area,
-            Color::BLACK,
-            o,
-            Some(size),
-            ColorSpace::new_srgb(),
-            |c| {
-                for &(op, color) in painted {
-                    c.save();
-                    op.draw(c, color);
-                    c.restore();
-                }
-            },
-        );
-    }
-    let before = root.clone();
-    // The surface's layer, with its nested backdrop-filtered boxes.
-    let mut layer = Pixmap::new(region);
-    draw_layer(&mut layer, &s.filtered);
-    for n in &s.nested {
-        filter(&mut layer, n);
-    }
-    blur_backdrop(&mut root, &s.filtered);
-    let mut image = RgbaImage::new((out[2] - out[0]) as u32, (out[3] - out[1]) as u32);
-    for (x, y, p) in image.enumerate_pixels_mut() {
-        let i = root.index(out[0] + x as i32, out[1] + y as i32);
-        let (l, r) = (layer.px[i], root.px[i]);
-        if l[3] > 0 || r != before.px[i] {
-            let f = over(l, r);
-            // BGRA for GPUI; opaque.
-            *p = image::Rgba([f[2], f[1], f[0], 255]);
+/// Composes the filtered box over its same-frame backdrop as a BGRA image.
+fn compose(filtered: &Filtered, before: &Pixmap) -> RenderImage {
+    let mut target = before.clone();
+    filter(&mut target, filtered);
+    let [x0, y0, x1, y1] = target.r;
+    let mut image = RgbaImage::new((x1 - x0) as u32, (y1 - y0) as u32);
+    for (pixel, (&after, &before)) in image.pixels_mut().zip(target.px.iter().zip(&before.px)) {
+        if after != before {
+            *pixel = image::Rgba([after[2], after[1], after[0], 255]);
         }
     }
     RenderImage::new(vec![Frame::new(image)])
+}
+
+fn compose_layer(backdrop: &Pixmap, layer: &Pixmap, out: [i32; 4]) -> RenderImage {
+    let mut image = RgbaImage::new((out[2] - out[0]) as u32, (out[3] - out[1]) as u32);
+    for (x, y, pixel) in image.enumerate_pixels_mut() {
+        let index = backdrop.index(out[0] + x as i32, out[1] + y as i32);
+        let value = over(layer.px[index], backdrop.px[index]);
+        *pixel = image::Rgba([value[2], value[1], value[0], 255]);
+    }
+    RenderImage::new(vec![Frame::new(image)])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{AppContext, IntoElement, ParentElement, Render, Styled, div, size};
+
+    struct BackdropScene {
+        changed: bool,
+        popup: bool,
+        image: Arc<RenderImage>,
+    }
+
+    fn picture(revision: u8) -> Arc<RenderImage> {
+        let image = RgbaImage::from_fn(12, 12, |x, y| {
+            let bright = (x < 6) != (revision % 2 == 1);
+            image::Rgba(if bright {
+                [230 - revision, 40 + y as u8 * 10, 70, 255]
+            } else {
+                [30, 160, 220 - y as u8 * 10 - revision, 255]
+            })
+        });
+        Arc::new(RenderImage::new(vec![Frame::new(image)]))
+    }
+
+    fn popup(bounds: Bounds<Pixels>, blur: f32) -> impl IntoElement {
+        div()
+            .absolute()
+            .left(bounds.origin.x)
+            .top(bounds.origin.y)
+            .w(bounds.size.width)
+            .h(bounds.size.height)
+            .child(crate::backdrop_blur(
+                px(blur),
+                Fill::Color,
+                false,
+                Decoration::default(),
+            ))
+    }
+
+    fn boxes() -> [(Bounds<Pixels>, f32); 2] {
+        [
+            (
+                Bounds::new(point(px(8.), px(8.)), size(px(48.), px(20.))),
+                2.,
+            ),
+            (
+                Bounds::new(point(px(8.), px(32.)), size(px(48.), px(24.))),
+                1.,
+            ),
+        ]
+    }
+
+    impl Render for BackdropScene {
+        fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+            let image = self.image.clone();
+            div()
+                .size_full()
+                .relative()
+                .child(crate::decoration(Decoration {
+                    fill: Some(gpui::rgb(0x242424).into()),
+                    ..Default::default()
+                }))
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(12.))
+                        .top(px(12.))
+                        .font_family(".SystemUIFont")
+                        .text_size(px(14.))
+                        .line_height(px(18.))
+                        .text_color(gpui::white())
+                        .child(if self.changed { "New" } else { "Old" }),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(12.))
+                        .top(px(36.))
+                        .w(px(40.))
+                        .h(px(16.))
+                        .overflow_hidden()
+                        .opacity(0.65)
+                        .child(
+                            gpui::canvas(
+                                move |_, _, _| image,
+                                |bounds, image, window, _| {
+                                    window
+                                        .paint_image(
+                                            bounds,
+                                            bounds,
+                                            Corners::default(),
+                                            image,
+                                            0,
+                                            false,
+                                        )
+                                        .expect("paint the source image");
+                                },
+                            )
+                            .size_full(),
+                        ),
+                )
+                .children(
+                    self.popup
+                        .then(boxes)
+                        .into_iter()
+                        .flatten()
+                        .map(|(bounds, blur)| popup(bounds, blur)),
+                )
+        }
+    }
+
+    #[test]
+    fn backdrop_uses_same_frame_text_and_images() -> anyhow::Result<()> {
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(()),
+            gpui_platform::current_headless_renderer,
+        );
+        let window = cx.open_window(size(px(64.), px(64.)), |_, cx| {
+            cx.new(|_| BackdropScene {
+                changed: false,
+                popup: false,
+                image: picture(0),
+            })
+        })?;
+        let view = cx.read_window(&window, |view, _| view)?;
+        cx.run_until_parked();
+        view.update(&mut cx, |view, cx| {
+            view.changed = true;
+            view.popup = true;
+            view.image = picture(1);
+            cx.notify();
+        });
+        cx.run_until_parked();
+        for revision in 2..70 {
+            view.update(&mut cx, |view, cx| {
+                view.image = picture(revision);
+                cx.notify();
+            });
+            cx.run_until_parked();
+        }
+        let actual = cx.capture_screenshot(window.into())?;
+        view.update(&mut cx, |view, cx| {
+            view.popup = false;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let baseline = cx.capture_screenshot(window.into())?;
+        let mut expected = Pixmap {
+            r: [0, 0, 128, 128],
+            px: baseline.pixels().map(|pixel| pixel.0).collect(),
+        };
+        for (bounds, blur) in boxes() {
+            let (contour, ops) = skia::ops(&Decoration::default(), bounds, 2.);
+            filter(
+                &mut expected,
+                &Filtered {
+                    contour,
+                    sigma: blur * 2.,
+                    ops: ops
+                        .into_iter()
+                        .map(|(op, color)| (op, color4f(color)))
+                        .collect(),
+                    gradient: None,
+                    gap_row: false,
+                },
+            );
+        }
+        if let Some(out) = std::env::var_os("CGX_BACKDROP_PROOF") {
+            std::fs::create_dir_all(&out)?;
+            actual.save(std::path::Path::new(&out).join("actual.png"))?;
+            baseline.save(std::path::Path::new(&out).join("baseline.png"))?;
+            RgbaImage::from_raw(128, 128, expected.px.clone().into_flattened())
+                .unwrap()
+                .save(std::path::Path::new(&out).join("expected.png"))?;
+        }
+        assert!(
+            actual.as_raw().as_slice() == expected.px.as_flattened(),
+            "the backdrop must include same-frame text and clipped translucent images"
+        );
+        Ok(())
+    }
 }

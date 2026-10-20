@@ -3,11 +3,11 @@ use derive_more::{Deref, DerefMut};
 use etagere::BucketedAtlasAllocator;
 use gpui::{
     AtlasBackend, AtlasKey, AtlasState, AtlasTextureId, AtlasTextureKind, AtlasTextureList,
-    AtlasTile, Bounds, DevicePixels, PlatformAtlas, Point, Size,
+    AtlasTile, Bounds, DevicePixels, PlatformAtlas, Point, SceneCapture, Size,
 };
 use metal::Device;
 use parking_lot::Mutex;
-use std::borrow::Cow;
+use std::{borrow::Cow, sync::Arc};
 
 pub struct MetalAtlas(Mutex<AtlasState<MetalAtlasTextures>>);
 
@@ -48,6 +48,14 @@ impl PlatformAtlas for MetalAtlas {
 
     fn remove(&self, key: &AtlasKey) {
         self.0.lock().remove(key);
+    }
+
+    fn create_scene_capture(self: Arc<Self>) -> Result<SceneCapture> {
+        let device = self.0.lock().backend.device.0.clone();
+        let mut renderer = crate::metal_renderer::MetalRenderer::for_atlas(device, self);
+        Ok(Box::new(move |scene, size, bounds, opaque| {
+            renderer.capture_scene_region(scene, size, bounds, opaque)
+        }))
     }
 }
 
