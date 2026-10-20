@@ -695,11 +695,11 @@ const PROXY_SCRIPT: &str = "CGX_PROXY_SCRIPT";
 const PROXY_LOG: &str = "CGX_PROXY_LOG";
 const PROXY_BARRIER: &str = "proxy/barrier";
 
-/// `lines` as a replay script file under the target tmp dir.
+/// Writes the replay script under the process's temporary directory.
 fn write_script(lines: &[Value]) -> Result<PathBuf> {
     static SCRIPTS: AtomicUsize = AtomicUsize::new(0);
     let script: String = lines.iter().map(|v| format!("{v}\n")).collect();
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("flows");
+    let dir = env::temp_dir().join("cgx-flows");
     fs::create_dir_all(&dir)?;
     let path = dir.join(format!(
         "script-{}-{}.jsonl",

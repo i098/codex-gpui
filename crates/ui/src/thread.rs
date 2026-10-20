@@ -600,6 +600,12 @@ impl ThreadView {
         &self.turns
     }
 
+    pub fn transcript_focused(&self, window: &Window) -> bool {
+        self.focus
+            .as_ref()
+            .is_some_and(|focus| focus.is_focused(window))
+    }
+
     /// The selected answer text (TH-127), as Chrome's `Selection.toString` joins it.
     pub fn selected_text(&self, window: &Window, cx: &App) -> Option<String> {
         self.carets.range()?;

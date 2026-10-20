@@ -40,7 +40,7 @@ impl DiffPanel {
             Some(menu) if menu.kind == Kind::Header => (
                 [
                     ("Copy path", true),
-                    ("Open in editor", false),
+                    ("Open in editor", true),
                     (
                         if self.files[menu.file].open {
                             "Collapse file"
@@ -163,6 +163,28 @@ impl DiffPanel {
         cx.notify();
     }
 
+    /// The directory a displayed file path is relative to.
+    fn file_root(&self) -> &str {
+        if self.source == DiffSource::LastTurn {
+            &self.workspace
+        } else {
+            self.repository
+                .as_ref()
+                .map_or(self.workspace.as_str(), |r| r.root.as_str())
+        }
+    }
+
+    pub(super) fn request_open(&self, file: usize, cx: &mut Context<Self>) {
+        let Some(file) = self.files.get(file) else {
+            return;
+        };
+        let relative = format!("{}{}", file.dir, file.name);
+        cx.emit(DiffRequest::Open(absolute_path(
+            self.file_root(),
+            &relative,
+        )));
+    }
+
     fn close_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(menu) = self.menu.take()
             && let Some(focus) = menu.return_focus
@@ -193,25 +215,20 @@ impl DiffPanel {
             cx.notify();
             return;
         }
+        let root = self.file_root().to_owned();
         let file = &mut self.files[menu.file];
         match label {
             "Stage file" => cx.emit(DiffRequest::Stage(format!("{}{}", file.dir, file.name))),
             "Unstage file" => cx.emit(DiffRequest::Unstage(format!("{}{}", file.dir, file.name))),
             "Revert file" => self.request_revert(menu.file, None, cx),
+            "Open in editor" => self.request_open(menu.file, cx),
             "Copy selection" => cx.write_to_clipboard(ClipboardItem::new_string(menu.selected)),
             "Copy path" | "Copy relative path" => {
                 let relative = format!("{}{}", file.dir, file.name);
                 let path = if menu.kind == Kind::Header || label == "Copy relative path" {
                     relative
                 } else {
-                    let workspace = if self.source == DiffSource::LastTurn {
-                        &self.workspace
-                    } else {
-                        self.repository
-                            .as_ref()
-                            .map_or(self.workspace.as_str(), |r| r.root.as_str())
-                    };
-                    absolute_path(workspace, &relative)
+                    absolute_path(&root, &relative)
                 };
                 cx.write_to_clipboard(ClipboardItem::new_string(path));
             }

@@ -150,11 +150,6 @@ fn edit_moves_the_exact_draft_back_and_queues_it_in_place() -> Result<()> {
     lines.extend(list(&[&first, &again, &third]));
     let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
     open_running(&mut fx)?;
-    notify(
-        &mut fx,
-        "thread/queue/changed",
-        json!({"threadId": SUBTRACT}),
-    );
     fx.wait("three rows", |fx| {
         queued(fx) == ["first", draft.trim_end(), "third"]
     })?;
@@ -218,11 +213,6 @@ fn edit_keeps_the_current_draft_and_a_submission_the_server_already_took() -> Re
     lines.extend(list(&[]));
     let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
     open_running(&mut fx)?;
-    notify(
-        &mut fx,
-        "thread/queue/changed",
-        json!({"threadId": SUBTRACT}),
-    );
     fx.wait("one row", |fx| queued(fx) == ["queued"])?;
     fx.type_text("typed")?;
 
@@ -248,11 +238,6 @@ fn queueing_switch_decides_what_the_next_submit_does() -> Result<()> {
     lines.extend(exchange("turn/steer", json!({})));
     let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
     open_running(&mut fx)?;
-    notify(
-        &mut fx,
-        "thread/queue/changed",
-        json!({"threadId": SUBTRACT}),
-    );
     fx.wait("one row", |fx| queued(fx) == ["queued"])?;
 
     fx.click(actions_button(1, 0))?;
@@ -293,11 +278,6 @@ fn a_refused_queueing_switch_leaves_the_behavior_that_applies() -> Result<()> {
     lines.extend(write);
     let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
     open_running(&mut fx)?;
-    notify(
-        &mut fx,
-        "thread/queue/changed",
-        json!({"threadId": SUBTRACT}),
-    );
     fx.wait("one row", |fx| queued(fx) == ["queued"])?;
 
     fx.click(actions_button(1, 0))?;
@@ -359,7 +339,6 @@ fn turn(id: &str, status: &str, items: Value) -> Value {
 /// picks `Open in side chat` on row `index`.
 fn open_side_chat(fx: &mut Fx, rows: &[&str], index: usize, draft: &str) -> Result<()> {
     open_running(fx)?;
-    notify(fx, "thread/queue/changed", json!({"threadId": SUBTRACT}));
     fx.wait("queued rows", |fx| queued(fx) == rows)?;
     fx.click((809., 750.))?;
     fx.type_text(draft)?;

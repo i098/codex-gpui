@@ -1,5 +1,5 @@
-//! `codex-gpui`: starts `codex app-server`, opens the main window on [`app::Root`] and sets
-//! up the menu bar.
+//! `codex-gpui`: starts `codex app-server` (or the ACP agent in `$CODEX_GPUI_ACP`), opens
+//! the main window on [`app::Root`] and sets up the menu bar.
 
 use app::{Root, State};
 use bridge::Bridge;
@@ -20,11 +20,20 @@ fn main() {
         .map(PathBuf::from)
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_default();
-    let mut cmd = bridge::default_command();
-    app::qa::configure_command(&mut cmd).expect("configure isolated QA app-server");
-    cmd.current_dir(&cwd);
-    let (bridge, events) = Bridge::spawn(cmd).unwrap_or_else(|err| {
-        eprintln!("codex-gpui: cannot start codex app-server: {err:#}");
+    let spawned = match bridge::acp_command() {
+        Some(mut acp) => {
+            acp.current_dir(&cwd);
+            Bridge::spawn_acp(acp)
+        }
+        None => {
+            let mut cmd = bridge::default_command();
+            app::qa::configure_command(&mut cmd).expect("configure isolated QA app-server");
+            cmd.current_dir(&cwd);
+            Bridge::spawn(cmd)
+        }
+    };
+    let (bridge, events) = spawned.unwrap_or_else(|err| {
+        eprintln!("codex-gpui: cannot start the backend: {err:#}");
         std::process::exit(1)
     });
     let cwd = cwd.to_string_lossy().into_owned();

@@ -5,14 +5,15 @@
 //! `LocalHost` reads legacy definitions from `automations/<id>/automation.toml` and local
 //! run metadata from `sqlite/codex.db` under `CODEX_HOME` (default: `~/.codex`).
 //! It never migrates the original database or reads another account's automation rows.
-//! Definition writes are atomic; scheduling and execution remain the original host's job.
+//! Definition writes are atomic; status updates persist local recurrence metadata without running tasks.
+//! `automation-run-now` starts a run on the app-server that `with_bridge` supplies.
 //! `CloudHost` adds the original's `httpFetch` service for ChatGPT backend requests (usage,
 //! beacons, hosted automations, suggested-task conversations): it consumes the renderer's
 //! `X-OpenAI-Attach-*` headers, attaches the token that `codex app-server` holds
 //! (`getAuthStatus` with `includeToken`) plus the account route from `account/read`, retries once
 //! after a 401 with a refreshed token, and answers the original wire shapes, including errors.
 //! The token never reaches logs, errors, or `Debug` output.
-//! Local fetches support `list-automations`, `inbox-items`, and `paths-exist`; other endpoints return errors.
+//! Local fetches support `list-automations`, `create-automation`, `automation-update`, `automation-run-now`, `inbox-items`, the `git-*` endpoints, `create-worktree`, `set-worktree-owner-thread`, and `paths-exist`; other endpoints return errors.
 //! `Root` loads the automation list off the UI thread when the Scheduled route opens.
 //! Consumers read the result through `Root::automations`; this service slice does not change the static screens.
 //!
@@ -38,7 +39,9 @@ use std::time::Duration;
 use ui::screens::sidebar::Project;
 use url::Url;
 
+mod automation_schedule;
 mod git;
+mod run_now;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "transport", content = "request", rename_all = "kebab-case")]
@@ -72,6 +75,12 @@ pub trait Host: Send + Sync {
 
     fn add_project(&self, _root: &Path) -> Result<String> {
         bail!("adding a local project is unsupported by this host")
+    }
+
+    /// The original's turn-completed update of an automation run: an open run of `thread_id`
+    /// becomes `PENDING_REVIEW`. `false` when the thread is no open run or the host has none.
+    fn finish_automation_run(&self, _thread_id: &str, _completed: bool) -> Result<bool> {
+        Ok(false)
     }
 
     /// The signed-in ChatGPT identity the renderer puts on its backend requests; `None`
@@ -290,6 +299,7 @@ fn project_rows(
             } else {
                 format!("Start new chat in {label}").into()
             },
+            root: root.map(|root| root.to_owned().into()),
             worktree,
             missing,
             expanded: state["electron-persisted-atom-state"][&expanded_key] != false,
@@ -394,11 +404,30 @@ pub fn json_body(response: &Value) -> Result<Value> {
 
 pub struct LocalHost {
     home: PathBuf,
+    /// The `codex app-server` that `automation-run-now` starts runs on; the original's main
+    /// process holds the same connection.
+    bridge: Option<Arc<Bridge>>,
+    opener: PathBuf,
 }
 
 impl LocalHost {
     pub fn new(home: impl Into<PathBuf>) -> Self {
-        Self { home: home.into() }
+        Self {
+            home: home.into(),
+            bridge: None,
+            opener: "/usr/bin/open".into(),
+        }
+    }
+
+    pub fn with_bridge(mut self, bridge: Arc<Bridge>) -> Self {
+        self.bridge = Some(bridge);
+        self
+    }
+
+    /// Launches editors through `opener`, which takes macOS `open`'s `[-a App] file` arguments.
+    pub fn with_opener(mut self, opener: impl Into<PathBuf>) -> Self {
+        self.opener = opener.into();
+        self
     }
 
     pub fn from_env() -> Self {
@@ -489,6 +518,32 @@ impl LocalHost {
         }
         items.sort_by_key(|v| std::cmp::Reverse(v["updatedAt"].as_i64().unwrap_or_default()));
         Ok(json!({"items": items}))
+    }
+
+    /// The original git worker's `create-worktree`, default local root
+    /// `$CODEX_HOME/worktrees`. Without `startingState` it starts where an automation run
+    /// does: the remote default branch, else `HEAD`.
+    fn create_worktree(&self, params: &Value) -> Result<Value> {
+        let cwd = Path::new(params["cwd"].as_str().context("missing worktree cwd")?);
+        let root = params["worktreesRoot"]
+            .as_str()
+            .map(str::trim)
+            .filter(|root| !root.is_empty())
+            .map_or_else(|| self.home.join("worktrees"), PathBuf::from);
+        ensure!(
+            cwd.is_absolute() && root.is_absolute(),
+            "worktree paths must be absolute"
+        );
+        let start = &params["startingState"];
+        ensure!(
+            start.is_null() || (start["type"] == "branch" && start["remoteRef"].is_null()),
+            "unsupported worktree starting state"
+        );
+        let environment = params["localEnvironmentConfigPath"].as_str().map(Path::new);
+        let worktree = git::create_worktree(&root, cwd, start["branchName"].as_str(), environment)?
+            .context("Not a git repository")?;
+        Ok(json!({"worktreeGitRoot": worktree.git_root,
+            "worktreeWorkspaceRoot": worktree.workspace_root, "setupError": null}))
     }
 
     fn create_automation(&self, params: &Value) -> Result<Value> {
@@ -589,6 +644,174 @@ impl LocalHost {
         Ok(())
     }
 
+    fn update_automation(&self, params: &Value) -> Result<Value> {
+        let id = params["id"].as_str().context("missing automation id")?;
+        ensure!(
+            !id.is_empty() && id != "." && id != ".." && !id.contains(['/', '\\', '\0']),
+            "invalid automation id"
+        );
+        let status = params["status"]
+            .as_str()
+            .context("missing automation status")?;
+        ensure!(
+            matches!(status, "ACTIVE" | "PAUSED"),
+            "invalid automation status"
+        );
+        let missing = "Automation does not exist in the app and could not be updated. It may have been deleted manually by the user.";
+        let read_error = |error: std::io::Error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                anyhow::Error::msg(missing)
+            } else {
+                error.into()
+            }
+        };
+        let root = self
+            .home
+            .join("automations")
+            .canonicalize()
+            .map_err(read_error)?;
+        let path = root
+            .join(id)
+            .join("automation.toml")
+            .canonicalize()
+            .map_err(read_error)?;
+        ensure!(
+            root.starts_with(self.home.canonicalize()?) && path.starts_with(&root),
+            "automation directory escapes CODEX_HOME"
+        );
+        let mut db = self
+            .database(OpenFlags::SQLITE_OPEN_READ_WRITE)?
+            .context("automation database is unavailable")?;
+        let transaction = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let owned: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM automations WHERE id = ? AND
+             (account_id IS NOT NULL OR user_id IS NOT NULL OR installation_id IS NOT NULL))",
+            [id],
+            |row| row.get(0),
+        )?;
+        ensure!(
+            !owned,
+            "cannot write an account-owned automation through LocalHost"
+        );
+        let original = fs::read_to_string(&path).map_err(read_error)?;
+        let mut item = definition(id, &original)?;
+        ensure!(item["status"] != "DELETED", "{missing}");
+        for (key, value) in params
+            .as_object()
+            .context("host parameters must be an object")?
+        {
+            if matches!(key.as_str(), "id" | "status" | "hostId") {
+                continue;
+            }
+            let stored = if key == "projectId" {
+                &item["target"]["projectId"]
+            } else {
+                &item[key]
+            };
+            // Original `ugi` sends a legacy task's first cwd as `projectId`.
+            let legacy_cwd = key == "projectId"
+                && item["target"].is_null()
+                && item["cwds"].get(0) == Some(value)
+                && value != "~";
+            ensure!(
+                stored == value || legacy_cwd,
+                "status-only automation update cannot change {key}"
+            );
+        }
+        let last: Option<i64> = transaction
+            .query_row(
+                "SELECT last_run_at FROM automations WHERE id = ?",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        let rule = item["rrule"]
+            .as_str()
+            .context("missing automation recurrence")?;
+        let now = chrono::Utc::now().timestamp_millis();
+        // Resume always recalculates; a cached database time is never reused.
+        let (next, nominal) = if status == "PAUSED" {
+            (None, None)
+        } else {
+            // Original ZF: an unreadable salt is replaced, and a failed save still schedules this run.
+            let salt_path = root.join(".run-jitter-salt");
+            let salt = fs::read_to_string(&salt_path)
+                .map(|salt| salt.trim().to_owned())
+                .unwrap_or_default();
+            let salt = if salt.is_empty() {
+                let salt = device_id();
+                let _ = fs::write(&salt_path, format!("{salt}\n"));
+                salt
+            } else {
+                salt
+            };
+            let (next, nominal) = automation_schedule::next_run(
+                rule,
+                item["kind"].as_str().context("missing automation kind")?,
+                id,
+                now,
+                rrule::Tz::LOCAL,
+                &salt,
+            )
+            .context(automation_schedule::NO_FUTURE_RUN)?;
+            (Some(next), Some(nominal))
+        };
+        transaction.execute(
+            "INSERT INTO automations
+             (id, name, prompt, status, next_run_at, next_run_nominal_at, last_run_at, cwds,
+              target_type, project_id, rrule, model, reasoning_effort, created_at, updated_at,
+              kind, target_thread_id, execution_environment, local_environment_config_path,
+              plugin_template_id, notification_policy, auto_archive)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+                     ?16, ?17, ?18, ?19, ?20, ?21, ?22)
+             ON CONFLICT(id) DO UPDATE SET status=excluded.status, next_run_at=excluded.next_run_at,
+              next_run_nominal_at=excluded.next_run_nominal_at, updated_at=excluded.updated_at,
+              rrule=excluded.rrule",
+            params![
+                id,
+                item["name"].as_str(),
+                item["prompt"].as_str(),
+                status,
+                next,
+                nominal,
+                last,
+                item.get("cwds")
+                    .map_or_else(|| "[]".to_owned(), Value::to_string),
+                item["target"]["type"].as_str(),
+                item["target"]["projectId"].as_str(),
+                rule,
+                item["model"].as_str(),
+                item["reasoningEffort"].as_str(),
+                item["createdAt"].as_i64(),
+                now,
+                item["kind"].as_str(),
+                item["targetThreadId"].as_str(),
+                item["executionEnvironment"].as_str(),
+                item["localEnvironmentConfigPath"].as_str(),
+                item["pluginTemplateId"].as_str(),
+                item["notificationPolicy"].as_str(),
+                item["autoArchive"].as_bool().unwrap_or(false)
+            ],
+        )?;
+        let mut raw: toml::Table = toml::from_str(&original)?;
+        raw.insert("status".into(), status.into());
+        raw.insert("updated_at".into(), now.into());
+        self.write_automation(id, &toml::to_string(&raw)?)?;
+        if let Err(error) = transaction.commit() {
+            self.write_automation(id, &original).context(format!(
+                "restore automation after database commit failed: {error}"
+            ))?;
+            return Err(error).context("persist automation status");
+        }
+        item["status"] = json!(status);
+        item["updatedAt"] = json!(now);
+        item["nextRunAt"] = json!(next);
+        item["nextRunNominalAt"] = json!(nominal);
+        item["lastRunAt"] = json!(last);
+        Ok(json!({"item": item}))
+    }
+
     /// Applies the original inbox read-state update, restricted to local, unowned automations.
     pub fn mark_inbox_read(&self, thread_id: &str, read_at: Option<i64>) -> Result<bool> {
         let Some(db) = self.database(OpenFlags::SQLITE_OPEN_READ_WRITE)? else {
@@ -676,6 +899,10 @@ impl Host for LocalHost {
         })
     }
 
+    fn finish_automation_run(&self, thread_id: &str, completed: bool) -> Result<bool> {
+        self.finish_run(thread_id, completed)
+    }
+
     fn add_project(&self, root: &Path) -> Result<String> {
         let root = root
             .canonicalize()
@@ -756,11 +983,24 @@ impl Host for LocalHost {
         let body = match endpoint {
             "list-automations" => self.automations()?,
             "create-automation" => self.create_automation(&params)?,
+            "automation-update" => self.update_automation(&params)?,
+            "automation-run-now" => self.automation_run_now(&params)?,
             "inbox-items" => self.inbox(&params)?,
             "git-changes" | "git-stage" | "git-unstage" | "git-revert" | "git-commit-status"
             | "git-commit-diff" | "git-commit" | "git-push" | "git-checkout" => {
                 git::fetch(endpoint, &params)?
             }
+            "create-worktree" => self.create_worktree(&params)?,
+            "set-worktree-owner-thread" => {
+                let worktree = params["worktree"].as_str().context("missing worktree")?;
+                let thread = params["conversationId"]
+                    .as_str()
+                    .context("missing conversationId")?;
+                git::set_owner_thread(Path::new(worktree), thread)
+                    .context("Failed to set thread worktree owner")?;
+                json!({"success": true})
+            }
+            "open-file" => open_file(&self.opener, &params)?,
             "paths-exist" => {
                 let paths: Vec<String> =
                     serde_json::from_value(params.get("paths").cloned().unwrap_or(json!([])))?;
@@ -779,6 +1019,74 @@ impl Host for LocalHost {
             "headers": {"content-type": "application/json"}, "bodyJsonString": body.to_string()}),
         )
     }
+}
+
+/// The original's editor targets (`openIn.getTargets` ids) and their macOS application names.
+const EDITORS: [(&str, &str); 11] = [
+    ("vscode", "Visual Studio Code"),
+    ("vscodeInsiders", "Visual Studio Code - Insiders"),
+    ("cursor", "Cursor"),
+    ("devin", "Devin Desktop"),
+    ("bbedit", "BBEdit"),
+    ("emacs", "Emacs"),
+    ("sublimeText", "Sublime Text"),
+    ("zed", "Zed"),
+    ("windsurf", "Windsurf"),
+    ("antigravity", "Antigravity"),
+    ("xcode", "Xcode"),
+];
+
+/// `open-file`: opens `path`, a file inside the project of `cwd`, in the editor `target` (the
+/// default app without one). The path must resolve, symlinks included, to a regular file under
+/// the Git root of `cwd` (`cwd` itself outside a repository). `opener` reports its own failure.
+fn open_file(opener: &Path, params: &Value) -> Result<Value> {
+    let cwd = Path::new(params["cwd"].as_str().context("missing cwd")?);
+    let path = Path::new(params["path"].as_str().context("missing path")?);
+    ensure!(
+        cwd.is_absolute() && path.is_absolute(),
+        "cwd and path must be absolute"
+    );
+    let root = std::process::Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map_or_else(
+            || cwd.to_path_buf(),
+            |root| PathBuf::from(root.trim_end_matches('\n')),
+        );
+    let root = root.canonicalize().context("resolve the project folder")?;
+    let file = path
+        .canonicalize()
+        .with_context(|| format!("{} no longer exists", path.display()))?;
+    ensure!(file.starts_with(&root), "file is outside the project");
+    ensure!(file.is_file(), "{} is not a file", file.display());
+    let mut command = std::process::Command::new(opener);
+    match params["target"].as_str() {
+        None | Some("systemDefault") => {}
+        Some(id) => {
+            let app = EDITORS
+                .iter()
+                .find(|(known, _)| *known == id)
+                .map(|(_, app)| *app)
+                .with_context(|| format!("unsupported editor target: {id}"))?;
+            command.args(["-a", app]);
+        }
+    }
+    let output = command
+        .arg(&file)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .with_context(|| format!("run {}", opener.display()))?;
+    ensure!(
+        output.status.success(),
+        "editor failed: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    Ok(json!({"path": file}))
 }
 
 /// The sign-in the cloud transport attaches: the ChatGPT token and the workspace route.
@@ -876,6 +1184,12 @@ impl CloudHost {
             .filter(|u| !u.trim().is_empty())
             .unwrap_or_else(|| "https://chatgpt.com/backend-api".into());
         Self::new(LocalHost::from_env(), credentials, base)
+    }
+
+    /// Lets the local endpoints that start app-server work (`automation-run-now`) run.
+    pub fn with_bridge(mut self, bridge: Arc<Bridge>) -> Self {
+        self.local = self.local.with_bridge(bridge);
+        self
     }
 
     /// Cached sign-in, reloaded on `refresh`. Failures carry the original's messages only.
@@ -1090,6 +1404,10 @@ impl Host for CloudHost {
 
     fn add_project(&self, root: &Path) -> Result<String> {
         self.local.add_project(root)
+    }
+
+    fn finish_automation_run(&self, thread_id: &str, completed: bool) -> Result<bool> {
+        self.local.finish_run(thread_id, completed)
     }
 
     fn fetch(&self, request: &Request) -> Result<Value> {
