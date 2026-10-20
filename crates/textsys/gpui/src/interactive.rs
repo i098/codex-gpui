@@ -800,6 +800,44 @@ pub enum PlatformInput {
 }
 
 impl PlatformInput {
+    pub(crate) fn scale_coordinates(&mut self, scale: f32) {
+        match self {
+            Self::MouseDown(event) => event.position *= scale,
+            Self::MouseUp(event) => event.position *= scale,
+            Self::MouseMove(event) => event.position *= scale,
+            Self::MouseExited(event) => event.position *= scale,
+            Self::MousePressure(event) => event.position *= scale,
+            Self::Pinch(event) => event.position *= scale,
+            Self::ScrollWheel(event) => {
+                event.position *= scale;
+                if let ScrollDelta::Pixels(delta) = &mut event.delta {
+                    *delta *= scale;
+                }
+            }
+            Self::Touch(event) => {
+                event.position *= scale;
+                event.predicted_position = event.predicted_position.map(|point| point * scale);
+            }
+            Self::LongPress(event) => {
+                event.position *= scale;
+                event.start_position *= scale;
+            }
+            Self::TouchDrag(event) => {
+                event.position *= scale;
+                event.start_position *= scale;
+            }
+            Self::FileDrop(
+                FileDropEvent::Entered { position, .. }
+                | FileDropEvent::Pending { position }
+                | FileDropEvent::Submit { position },
+            ) => *position *= scale,
+            Self::FileDrop(FileDropEvent::Exited | FileDropEvent::Ended)
+            | Self::KeyDown(_)
+            | Self::KeyUp(_)
+            | Self::ModifiersChanged(_) => {}
+        }
+    }
+
     pub(crate) fn mouse_event(&self) -> Option<&dyn Any> {
         match self {
             PlatformInput::KeyDown { .. } => None,

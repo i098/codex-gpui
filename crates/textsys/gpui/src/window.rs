@@ -1286,6 +1286,7 @@ pub struct Window {
     modifiers: Modifiers,
     capslock: Capslock,
     scale_factor: f32,
+    content_zoom: f32,
     pub(crate) bounds_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
     pub(crate) appearance_observers: SubscriberSet<(), AnyObserver>,
@@ -2196,6 +2197,7 @@ impl Window {
             modifiers,
             capslock,
             scale_factor,
+            content_zoom: 1.,
             bounds_observers: SubscriberSet::new(),
             appearance,
             appearance_observers: SubscriberSet::new(),
@@ -2823,8 +2825,8 @@ impl Window {
     /// by the platform's resize callback, but exposed publicly for test infrastructure.
     pub fn bounds_changed(&mut self, cx: &mut App) {
         self.scale_factor = self.platform_window.scale_factor();
-        self.viewport_size = self.platform_window.content_size();
-        self.mouse_position = self.platform_window.mouse_position();
+        self.viewport_size = self.platform_window.content_size() / self.content_zoom;
+        self.mouse_position = self.platform_window.mouse_position() / self.content_zoom;
 
         self.refresh();
 
@@ -3018,7 +3020,7 @@ impl Window {
     /// During drawing this is a consistent frame snapshot. Outside drawing it
     /// reflects the latest platform sample, not a synchronous geometry query.
     pub fn visual_viewport_bounds(&self) -> Bounds<Pixels> {
-        self.platform_window.visual_viewport_bounds()
+        self.platform_window.visual_viewport_bounds() / self.content_zoom
     }
 
     /// Returns a conservative rectangle avoiding platform-known obscured content.
@@ -3026,7 +3028,11 @@ impl Window {
     /// Intersects the visual viewport with the full layout area inset by system
     /// safe areas and keyboard occlusion. Unknown overlays cannot be excluded.
     pub fn fully_visible_bounds(&self) -> Bounds<Pixels> {
-        let insets = self.platform_window.insets().effective();
+        let insets = self
+            .platform_window
+            .insets()
+            .effective()
+            .map(|inset| *inset / self.content_zoom);
         let viewport = self.viewport_size();
         let left = insets.left.max(Pixels::ZERO).min(viewport.width);
         let top = insets.top.max(Pixels::ZERO).min(viewport.height);
@@ -3079,7 +3085,8 @@ impl Window {
 
     /// Opens the native title bar context menu, useful when implementing client side decorations (Wayland and X11)
     pub fn show_window_menu(&self, position: Point<Pixels>) {
-        self.platform_window.show_window_menu(position)
+        self.platform_window
+            .show_window_menu(position * self.content_zoom)
     }
 
     /// Handle window movement for Linux and macOS.
@@ -3168,11 +3175,28 @@ impl Window {
         self.platform_window.show_character_palette();
     }
 
-    /// The scale factor of the display associated with the window. For example, it could
-    /// return 2.0 for a "retina" display, indicating that each logical pixel should actually
-    /// be rendered as two pixels on screen.
+    /// Converts content pixels to device pixels, including the window's content zoom.
     pub fn scale_factor(&self) -> f32 {
-        self.scale_factor
+        self.scale_factor * self.content_zoom
+    }
+
+    /// Returns the content zoom, independent of the display's scale factor.
+    pub fn content_zoom(&self) -> f32 {
+        self.content_zoom
+    }
+
+    /// Scales layout, painting, and input without resizing the native window.
+    /// Panics if `zoom` is not finite and positive. Use `1.0` for actual size.
+    pub fn set_content_zoom(&mut self, zoom: f32, cx: &mut App) {
+        assert!(zoom.is_finite() && zoom > 0.);
+        if self.content_zoom != zoom {
+            self.content_zoom = zoom;
+            self.viewport_size = self.platform_window.content_size() / zoom;
+            self.mouse_position = self.platform_window.mouse_position() / zoom;
+            self.refresh();
+            self.defer(cx, |window, cx| window.bounds_changed(cx));
+            self.invalidate_character_coordinates();
+        }
     }
 
     /// Overrides the display scale factor for tests.
@@ -5877,10 +5901,17 @@ impl Window {
 
     /// Dispatch a mouse, keyboard, or touch event on the window.
     #[profiling::function]
-    pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
+    pub fn dispatch_event(
+        &mut self,
+        mut event: PlatformInput,
+        cx: &mut App,
+    ) -> DispatchEventResult {
         #[cfg(feature = "profiler")]
         self.window_profiler.begin_input(event.kind_name());
         let update_count_before = self.invalidator.update_count();
+        if self.content_zoom != 1. {
+            event.scale_coordinates(1. / self.content_zoom);
+        }
         // Track input modality for focus-visible styling and hover suppression.
         // Hover is suppressed during keyboard modality so that keyboard navigation
         // doesn't show hover highlights on the item under the mouse cursor.
@@ -7342,7 +7373,7 @@ impl Window {
         match request.action {
             accesskit::Action::Click => {
                 if let Some(bounds) = self.a11y.node_bounds.get(&request.target_node).copied() {
-                    let center = bounds.center();
+                    let center = bounds.center() * self.content_zoom;
                     let mouse_down = PlatformInput::MouseDown(crate::MouseDownEvent {
                         button: MouseButton::Left,
                         position: center,

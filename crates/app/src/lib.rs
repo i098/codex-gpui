@@ -25,8 +25,8 @@ use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, BorrowAppContext as _,
     Context, Entity, EntityInputHandler as _, FocusHandle, Focusable as _, InteractiveElement as _,
     IntoElement, KeyBinding, KeyDownEvent, Menu, MenuItem, OsAction, ParentElement as _,
-    PathPromptOptions, Pixels, Render, SharedString, Styled as _, SystemMenuType, Task, WeakEntity,
-    Window, WindowAppearance, actions, div, px,
+    PathPromptOptions, Pixels, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
+    SystemMenuType, Task, WeakEntity, Window, WindowAppearance, actions, div, px,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -70,6 +70,10 @@ actions!(
         CloseWindow,
         Minimize,
         Zoom,
+        ZoomIn,
+        ZoomOut,
+        ActualSize,
+        NewStandaloneChat,
         Quit,
         Hide,
         HideOthers,
@@ -134,6 +138,12 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-shift-p", OpenCommandMenu, None),
         KeyBinding::new("alt-cmd-b", ToggleChangesPanel, None),
         KeyBinding::new("cmd-shift-a", ArchiveChat, None),
+        KeyBinding::new("cmd-alt-o", NewStandaloneChat, None),
+        KeyBinding::new("cmd-+", ZoomIn, None),
+        KeyBinding::new("cmd-=", ZoomIn, None),
+        KeyBinding::new("cmd-shift-=", ZoomIn, None),
+        KeyBinding::new("cmd--", ZoomOut, None),
+        KeyBinding::new("cmd-0", ActualSize, None),
     ]);
     cx.bind_keys((1..=9).map(|n| KeyBinding::new(&format!("cmd-{n}"), GoToChat(n - 1), None)));
     cx.bind_keys(
@@ -167,6 +177,7 @@ pub fn menus() -> Vec<Menu> {
         ]),
         Menu::new("File").items([
             MenuItem::action("New Chat", NewChat),
+            MenuItem::action("New standalone chat", NewStandaloneChat),
             MenuItem::action("Open Folder…", OpenFolder),
             MenuItem::separator(),
             MenuItem::action("Close", CloseWindow),
@@ -192,6 +203,10 @@ pub fn menus() -> Vec<Menu> {
             MenuItem::action("Next Chat", NextChat),
             MenuItem::action("Back", GoBack),
             MenuItem::action("Forward", GoForward),
+            MenuItem::separator(),
+            MenuItem::action("Zoom In", ZoomIn),
+            MenuItem::action("Zoom Out", ZoomOut),
+            MenuItem::action("Actual Size", ActualSize),
         ]),
         Menu::new("Window").items([
             MenuItem::action("Minimize", Minimize),
@@ -260,6 +275,7 @@ pub struct State {
     pub height: f32,
     pub sidebar_open: bool,
     pub sidebar_width: f32,
+    pub zoom: f32,
     pub route: Route,
     pub theme: ThemeSetting,
     pub confirm_before_close: ConfirmBeforeClose,
@@ -275,6 +291,7 @@ impl Default for State {
             height: 832.,
             sidebar_open: true,
             sidebar_width: 340.,
+            zoom: 1.,
             route: Route::Home,
             theme: ThemeSetting::System,
             confirm_before_close: ConfirmBeforeClose::default(),
@@ -422,6 +439,7 @@ pub struct Root {
     settings_page: Option<Entity<settings::SettingsPage>>,
     /// `⌘K` command menu over the window.
     command_menu: Option<Entity<CommandMenu>>,
+    zoom_banner: Option<Task<()>>,
     dialog: Option<Entity<Dialog>>,
     /// The open dialog came from the composer: its close returns focus there.
     dialog_to_composer: bool,
@@ -498,6 +516,9 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let mut state = state;
+        state.zoom = state.zoom.clamp(0.5, 3.);
+        window.set_content_zoom(state.zoom, cx);
         cx.set_global(AppServer(bridge.clone()));
         if !cx.has_global::<host_settings::Settings>() {
             let settings = match state.path.as_ref() {
@@ -707,6 +728,7 @@ impl Root {
             settings_section: None,
             settings_page: None,
             command_menu: None,
+            zoom_banner: None,
             dialog: None,
             dialog_to_composer: false,
             login: None,
@@ -2049,6 +2071,106 @@ impl Root {
         window.focus(&composer.focus_handle(cx), cx);
     }
 
+    fn new_standalone_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.state.project_root = None;
+        self.home.update(cx, |home, cx| {
+            home.project = None;
+            home.composer
+                .update(cx, |composer, cx| composer.set_search_roots(Vec::new(), cx));
+            cx.notify();
+        });
+        self.new_chat(window, cx);
+        self.save(window, cx);
+    }
+
+    fn set_zoom(&mut self, zoom: f32, window: &mut Window, cx: &mut Context<Self>) {
+        self.state.zoom = ((zoom * 10.).round() / 10.).clamp(0.5, 3.);
+        window.set_content_zoom(self.state.zoom, cx);
+        self.save(window, cx);
+        self.zoom_banner = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_secs(2)).await;
+            this.update(cx, |this, cx| {
+                this.zoom_banner = None;
+                cx.notify();
+            })
+            .ok();
+        }));
+        cx.notify();
+    }
+
+    fn zoom_feedback(&self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
+        use theme::ActiveTheme as _;
+        let t = cx.theme().clone();
+        let zoom = self.state.zoom;
+        let button = |id: &'static str,
+                      label: &'static str,
+                      content: AnyElement,
+                      action: fn(&mut Window, &mut App),
+                      window: &mut Window,
+                      cx: &mut Context<Self>| {
+            let focus = ui::focus::handle(id, 0, window, cx);
+            ui::focus::ring(div().id(id), &focus, px(12.5) / zoom, px(0.), cx)
+                .role(gpui::Role::Button)
+                .aria_label(label)
+                .h(px(28.) / zoom)
+                .px(px(8.) / zoom)
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(12.5) / zoom)
+                .hover(move |style| style.bg(t.ghost_hover))
+                .on_click(move |_, window, cx| action(window, cx))
+                .child(content)
+        };
+        div()
+            .absolute()
+            .top(px(8.) / zoom)
+            .right(px(16.) / zoom)
+            .h(px(44.) / zoom)
+            .px(px(8.) / zoom)
+            .flex()
+            .items_center()
+            .rounded(px(20.) / zoom)
+            .bg(t.surface_secondary)
+            .on_key_down(ui::focus::tab)
+            .child(div().px(px(8.) / zoom).child(ui::text(
+                format!("{:.0}%", zoom * 100.),
+                13. / zoom,
+                18. / zoom,
+                600.,
+                t.text,
+            )))
+            .child(button(
+                "zoom-out",
+                "Zoom out",
+                div()
+                    .w(px(12.) / zoom)
+                    .h(px(1.33) / zoom)
+                    .bg(t.text_tertiary)
+                    .into_any_element(),
+                |window, cx| window.dispatch_action(Box::new(ZoomOut), cx),
+                window,
+                cx,
+            ))
+            .child(button(
+                "zoom-in",
+                "Zoom in",
+                ui::icon::icon("plus", 16. / zoom, t.text_tertiary).into_any_element(),
+                |window, cx| window.dispatch_action(Box::new(ZoomIn), cx),
+                window,
+                cx,
+            ))
+            .child(div().h(px(16.) / zoom).w(px(0.5) / zoom).bg(t.border))
+            .child(button(
+                "zoom-reset",
+                "Reset",
+                ui::text("Reset", 13. / zoom, 18. / zoom, 430., t.text_tertiary).into_any_element(),
+                |window, cx| window.dispatch_action(Box::new(ActualSize), cx),
+                window,
+                cx,
+            ))
+    }
+
     /// Opens the Recents row `delta` rows from the open thread; from any other route,
     /// the first row.
     fn step_chat(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
@@ -2833,7 +2955,8 @@ impl Root {
                 self.navigate(Route::Thread(id.clone()), window, cx)
             }
             CommandMenuEvent::Command(label) => match label.as_ref() {
-                "New chat" | "New standalone chat" => window.dispatch_action(Box::new(NewChat), cx),
+                "New chat" => window.dispatch_action(Box::new(NewChat), cx),
+                "New standalone chat" => window.dispatch_action(Box::new(NewStandaloneChat), cx),
                 "Search files" => self.open_file_search(window, cx),
                 "Open in new window" => {
                     window.dispatch_action(Box::new(features::OpenThreadInNewWindow), cx)
@@ -5369,19 +5492,34 @@ fn generation_instructions(context: &str) -> String {
 }
 
 impl Render for Root {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let root = div()
+            .size_full()
+            .relative()
+            .font_family(ui::SANS)
+            .track_focus(&self.focus)
+            .on_action(cx.listener(|this, _: &ZoomIn, window, cx| {
+                this.set_zoom(this.state.zoom + 0.1, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ZoomOut, window, cx| {
+                this.set_zoom(this.state.zoom - 0.1, window, cx)
+            }))
+            .on_action(
+                cx.listener(|this, _: &ActualSize, window, cx| this.set_zoom(1., window, cx)),
+            );
         if let Some(login) = &self.login {
-            return div()
-                .size_full()
-                .relative()
-                .font_family(ui::SANS)
-                .track_focus(&self.focus)
+            return root
                 .on_action(cx.listener(|this, _: &CloseWindow, window, cx| {
                     this.close_window(window, cx);
                 }))
                 .on_action(|_: &Minimize, window, _| window.minimize_window())
                 .on_action(|_: &Zoom, window, _| window.zoom_window())
                 .child(login.clone())
+                .children(
+                    self.zoom_banner
+                        .as_ref()
+                        .map(|_| self.zoom_feedback(window, cx)),
+                )
                 .children(self.dialog.clone())
                 .into_any_element();
         }
@@ -5393,11 +5531,7 @@ impl Render for Root {
             (None, Some(split)) => split.clone().into_any_element(),
             (None, None) => self.shell.clone().into_any_element(),
         };
-        let root = div()
-            .size_full()
-            .relative()
-            .font_family(ui::SANS)
-            .track_focus(&self.focus)
+        let root = root
             .on_key_down(cx.listener(Self::type_anywhere))
             .capture_action(cx.listener(|this, _: &Undo, window, cx| {
                 this.undo_queued(window, cx);
@@ -5426,6 +5560,9 @@ impl Render for Root {
                 }
             }))
             .on_action(cx.listener(|this, _: &NewChat, window, cx| this.new_chat(window, cx)))
+            .on_action(cx.listener(|this, _: &NewStandaloneChat, window, cx| {
+                this.new_standalone_chat(window, cx)
+            }))
             .on_action(cx.listener(|this, _: &OpenFolder, window, cx| this.open_folder(window, cx)))
             .on_action(cx.listener(|this, _: &ui::composer::Stop, _, cx| this.stop(cx)))
             .on_action(
@@ -5583,6 +5720,11 @@ impl Render for Root {
             .child(content)
             .children(self.command_menu.clone())
             .child(self.toaster.clone())
+            .children(
+                self.zoom_banner
+                    .as_ref()
+                    .map(|_| self.zoom_feedback(window, cx)),
+            )
             .children(self.dialog.clone());
         section_actions::actions(features::actions(root, cx), cx).into_any_element()
     }

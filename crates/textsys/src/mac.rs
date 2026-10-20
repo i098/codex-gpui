@@ -78,7 +78,11 @@ pub fn show_definition(
     );
     view.showDefinitionForAttributedString_atPoint(
         Some(&text),
-        definition_baseline(view.bounds(), view.isFlipped(), baseline),
+        definition_baseline(
+            view.bounds(),
+            view.isFlipped(),
+            baseline * window.content_zoom(),
+        ),
     );
     Ok(())
 }
