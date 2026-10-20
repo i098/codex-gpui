@@ -203,6 +203,18 @@ impl DiffPanel {
         panel
     }
 
+    pub fn cloud(workspace: &str, diff: &str) -> Self {
+        let mut panel = Self::last_turn(workspace, workspace, &[]);
+        panel.source = DiffSource::Cloud;
+        panel.files = files(diff);
+        panel
+    }
+
+    pub fn set_cloud_patch(&mut self, diff: &str, cx: &mut Context<Self>) {
+        self.replace_files(files(diff));
+        cx.notify();
+    }
+
     pub fn layout(&self) -> DiffLayout {
         self.layout
     }

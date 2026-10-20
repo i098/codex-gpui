@@ -501,13 +501,15 @@ The test compares the port's pixels before and after the same hover.
 The header menu copies the displayed path and collapses or expands the file.
 The body menu copies selected text, absolute paths, or displayed relative paths.
 The body menu also wraps long code lines without changing the copied text.
-The header icon and the `Open in editor` menu item send the file's absolute path to the desktop host's `open-file` endpoint with the thread `cwd`.
+The `Open in editor` menu item sends the file's absolute path to the desktop host's `open-file` endpoint with the thread `cwd`.
+The header's `Open in` button opens the existing native file tab.
+Streamed diff paths resolve against the thread's working directory, not the selected workspace.
 The app adds `target` from the host setting `open-in-target-preferences`: `perPath[cwd]`, else `global`.
 Without a target the host opens the file with the system default app.
 The host runs macOS `open [-a App] file` after it resolves the path, symlinks included, to a regular file under the Git root of `cwd`.
 A missing file, a path outside the project, an unknown target, or an opener failure shows the `Unable to open in editor` toast and changes nothing else.
 `s027::open_in_editor_native_input_reaches_the_host_opener` runs the real host with a controlled opener executable on an owned repository.
-Comment actions (S075/S082), file tabs (S186), and external targets remain outside this slice, as firstmate approved.
+Comment actions (S075/S082) and additional external targets remain separate slices.
 
 Local Changes uses the existing desktop host for `git-changes`, `git-stage`, and `git-unstage`.
 Each request uses the open thread's absolute `cwd`; file actions also send one repository-relative `path`.
@@ -566,6 +568,11 @@ The old and new sides keep separate multiline parser state.
 Binary, empty, and unchanged rename entries stay in the file list with their original placeholder labels.
 Git-quoted paths retain spaces, newlines, and UTF-8 bytes.
 The header and context menu share the same word-wrap state.
+Jump to file filters with the existing path matcher and keeps files with the same name as separate results.
+Selecting a result opens that file and scrolls its header into view.
+File headers stay at the top of the viewport while their diff scrolls.
+`DiffPanel::cloud` accepts the original cloud patch without adding a second transport.
+Its Cloud changes source has no local source selector or repository mutation controls.
 The file viewer handles `⌘L`, clamps line numbers, and counts negative numbers from the end.
 The line input stays closed until file contents are available.
 The parser stops above 2,000,000 input bytes, 20,000 input lines, or 10,000 bytes per input line.
