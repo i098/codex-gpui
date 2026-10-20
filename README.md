@@ -244,6 +244,9 @@ On macOS, popup backdrops capture the current frame's scene before the popup.
 The capture includes text, images, clipping, and opacity.
 Nested filters use the parent layer's content, not its already-filtered backdrop.
 
+`shapes::raster_images` decodes to the smallest mip that covers the rounded target before bilinear sampling.
+Callers choose direct composition or one restored image group to match the original layer.
+
 ## Parity method
 
 The references come from the original renderer itself.

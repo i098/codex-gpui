@@ -135,7 +135,7 @@ fn artwork(cache: ArtworkCache, page: Hsla) -> impl IntoElement {
                 bounds,
                 radius,
                 Squircle,
-                page,
+                shapes::ImageComposition::Direct(page),
                 window,
             );
             let rounded = skia.is_none();

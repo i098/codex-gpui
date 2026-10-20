@@ -125,8 +125,17 @@ pub fn paint(
     }
 }
 
+/// How image pixels compose over their background.
+#[derive(Clone, Copy, Debug)]
+pub enum ImageComposition {
+    /// Draw each image directly over the background.
+    Direct(Hsla),
+    /// Restore the images as one layer over the background.
+    Group(Hsla),
+}
+
 /// `images` (premultiplied RGBA, see [`premultiply`], each drawn into its `dst` rect in
-/// window px) over `page`, inside the anti-aliased clip of the border box `clip` with `radius`
+/// window px) using `composition`, inside the anti-aliased border-box clip with `radius`
 /// and `corner`: an `<img>` or `background-image` in an `overflow: hidden` rounded box,
 /// rasterized by Skia (bilinear, Chromium's span and tile restarts included) once per cc
 /// tile. Over the box's snapped device px rect; `None` off macOS.
@@ -135,16 +144,21 @@ pub fn raster_images(
     clip: Bounds<Pixels>,
     radius: Corners<Pixels>,
     corner: Corner,
-    page: Hsla,
+    composition: ImageComposition,
     window: &Window,
 ) -> Option<gpui::RenderImage> {
     #[cfg(target_os = "macos")]
     return Some(skia::raster_images(
-        images, clip, radius, corner, page, window,
+        images,
+        clip,
+        radius,
+        corner,
+        composition,
+        window,
     ));
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (images, clip, radius, corner, page, window);
+        let _ = (images, clip, radius, corner, composition, window);
         None
     }
 }
