@@ -405,6 +405,7 @@ The dedicated reasoning flow verifies disclosure, its focus ring, and scrolling 
 The expanded activity list scrolls within the original 224 px limit.
 The Delete confirmation isolates its clipped content without clipping the outer shadow.
 Cancel uses the primary-soft-alpha token, and the close icon preserves the original color-mix channels at 80% alpha.
+Confirmation buttons paint the focus outline before their fill and border.
 
 
 MO-36 uses `refs/interactions/ms4.json`, recorded with the original CSS classes in an isolated route1 Chrome context.

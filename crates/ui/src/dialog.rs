@@ -1171,10 +1171,9 @@ impl Dialog {
             "escape" => self.dismiss(cx),
             "tab" => {
                 let order: Vec<usize> = match self.kind {
-                    Kind::Shortcuts
-                    | Kind::FullAccess
-                    | Kind::LogOut
-                    | Kind::ArchiveSection => vec![0, 1],
+                    Kind::Shortcuts | Kind::FullAccess | Kind::LogOut | Kind::ArchiveSection => {
+                        vec![0, 1]
+                    }
                     Kind::DeleteThread => vec![0, 1, 2],
                     Kind::ClearAllUnreads => vec![2, 0, 1, 3],
                     Kind::ScheduleTask => vec![0, 3, 4, 5, 1, 2],
@@ -1586,6 +1585,16 @@ impl Dialog {
             .items_center()
             .justify_center()
             .relative()
+            .when(focused, |d| {
+                d.child(div().absolute().inset(px(-2.)).child(shapes::decoration(
+                    shapes::Decoration {
+                        radius: Corners::all(px(14.5)),
+                        corner: shapes::Corner::Squircle,
+                        border: Some((px(2.), rgba(0x3a83f7ff).into())),
+                        ..Default::default()
+                    },
+                )))
+            })
             .when(danger, |d| {
                 d.child(shapes::decoration(shapes::Decoration {
                     radius: Corners::all(px(12.5)),
@@ -1602,16 +1611,6 @@ impl Dialog {
                     border: Some((px(1.), t.border)),
                     ..Default::default()
                 }))
-            })
-            .when(focused, |d| {
-                d.child(div().absolute().inset(px(-2.)).child(shapes::decoration(
-                    shapes::Decoration {
-                        radius: Corners::all(px(14.5)),
-                        corner: shapes::Corner::Squircle,
-                        border: Some((px(2.), rgba(0x3a83f7ff).into())),
-                        ..Default::default()
-                    },
-                )))
             })
             .hover(|s| s.opacity(0.85))
             .child(text(
