@@ -33,14 +33,14 @@ The capture server does not open the normal Mac profile.
 | 14.1 Left rail | 12 | 4 | 1 | 7 |
 | 14.2 Sidebar | 23 | 12 | 4 | 7 |
 | 14.3 Home | 21 | 10 | 3 | 8 |
-| 14.4 Thread view | 20 | 6 | 10 | 4 |
+| 14.4 Thread view | 20 | 14 | 2 | 4 |
 | 14.5 Composer | 20 | 6 | 5 | 9 |
 | 14.6 Diff view | 20 | 14 | 5 | 1 |
 | 14.7 Settings, login and onboarding | 20 | 7 | 8 | 5 |
 | 15.1 Automations | 16 | 2 | 2 | 12 |
 | 15.2 Background terminal | 10 | 10 | 0 | 0 |
 | 15.3 Mobile setup | 10 | 3 | 2 | 5 |
-| **All** | **192** | **75** | **32** | **85** |
+| **All** | **192** | **95** | **35** | **62** |
 
 Before round 5 (F2Flows): 57 PASS, 33 FAIL, 102 NOT WIRED. Before round 4 (F1Flows): 42 PASS, 25 FAIL, 125 NOT WIRED.
 
@@ -271,7 +271,7 @@ Thread-to-Home navigation keeps the Home composer focus set by `Root::new_chat`.
 | 10 | `Recents` section toggle | click | Collapses or expands. | Same; a collapsed Recents row no longer opens. | PASS (`sidebar_section_collapse`) |
 | 11 | Thread row | click | Opens `/local/:conversationId`. | `OpenThread` → route Thread, `thread/read`, row selected. | PASS (`thread_row_opens_thread`) |
 | 12 | Thread row hover | hover | Row background; Archive / Pin actions appear. | The row reveals its actions. Buttons use the shared 150 ms hover transition. | PASS (`thread_row_hover`, `crates/app/tests/s001.rs`) |
-| 13 | Thread row context menu | click | Pin, Rename, Archive, Mark as unread, Copy, Fork, Open in new window, Delete. | The row dispatches Copy, local/worktree Fork, and confirmed Delete for its own thread, not the open thread. Copy reuses the command owner's cwd/deeplink helpers. Markdown loads that row's history. Delete starts on Cancel and retains the dialog on failure. | FAIL (W-04 native replay pending; Open in new window remains outside this change) |
+| 13 | Thread row context menu | click | Pin, Rename, Archive, Mark as unread, Copy, Fork, Open in new window, Delete. | The row dispatches Copy, local/worktree Fork, and confirmed Delete for its own thread, not the open thread. Copy reuses the command owner's cwd/deeplink helpers. Markdown loads that row's history. Delete starts on Cancel and retains the dialog on failure. | FAIL (owned paths pass `thread_controls_row_actions` and `thread_controls_row_worktree`; Open in new window remains outside this change) |
 | 14 | `⌘1`…`⌘9` | shortcut | Go to chat N. | Opens Recents row N; `⌘9` past the end does nothing. | PASS (`cmd_digit_goes_to_chat`) |
 | 15 | `⌘⇧[` / `⌘⇧]` | shortcut | Previous / next chat. | Previous / next Recents row. | PASS (`previous_next_chat`, `menu_bar_actions`) |
 | 16 | `⌘⇧S` / `⌘B` | shortcut | Toggle sidebar. | Toggles. | PASS (`sidebar_toggle_keys`) |
@@ -360,20 +360,20 @@ The existing replay checks the original colors, row actions, tooltips, canceled 
 | 3 | History failure | error | `Couldn't load messages` + `Retry`. | The error is logged; the panel stays empty. | FAIL (`crates/app/src/lib.rs` `load_thread` only logs; no error view in `crates/ui/src/thread.rs`) |
 | 4 | Turn render failure | error | `This turn couldn't render`. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 5 | Streaming agent message | loading | Text grows by deltas; new segments fade over 700 ms; `Working` shimmer. | New glyphs use the recorded adaptive fade. Later deltas do not restart older glyphs. Reduced motion shows the end state immediately. Shimmer belongs to S5. | PASS (`submit_enter_starts_thread`, `stream_fade`) |
-| 6 | Reasoning item | click | Toggles `Thought for {elapsed}`. | Available reasoning content has a keyboard-accessible disclosure. Reasoning text and summary deltas update the item. | FAIL (final-source native replay pending: `thread_controls_reasoning_and_scroll`) |
-| 7 | Command card | click | Expands output; copy buttons. | The existing command disclosure opens the shell output. Hover or focus reveals separate command/output copy buttons. Output copy preserves its trailing newline. | FAIL (final-source native replay pending: `s015`) |
-| 8 | File change card | click | `View changes` opens Changes; `Undo` / `Reapply`. | Undo and Reapply use the host's Git patch operation. They preserve conversation history. Git refuses conflicting edits. View changes keeps its existing panel action. | FAIL (Linux Git round-trip and conflict checks pass; native `undo_reverts_turn` remains pending) |
+| 6 | Reasoning item | click | Toggles `Thought for {elapsed}`. | Available reasoning content has a keyboard-accessible disclosure. Reasoning text and summary deltas update the item. | PASS (`thread_controls_reasoning_and_scroll`) |
+| 7 | Command card | click | Expands output; copy buttons. | The existing command disclosure opens the shell output. Hover or focus reveals separate command/output copy buttons. Output copy preserves its trailing newline. | PASS (`s015`) |
+| 8 | File change card | click | `View changes` opens Changes; `Undo` / `Reapply`. | Undo and Reapply use the host's Git patch operation. They preserve conversation history. Git refuses conflicting edits. View changes keeps its existing panel action. | PASS (Linux Git round-trip and conflict checks; native `undo_reverts_turn`) |
 | 9 | Collapsed turn `Worked for {time}` | click | Expands hidden items. | A click shows the turn's work above the answer (agent messages, `Ran commands`) and turns the chevron down; a second click folds it. | PASS (`worked_for_expands`) |
-| 10 | User message hover | hover | Copy and Edit appear. | The shipped hover controls remain in use. Copy and Edit now both participate in keyboard navigation. | FAIL (final-source native replay pending: `s005`, `s006`) |
+| 10 | User message hover | hover | Copy and Edit appear. | The shipped hover controls remain in use. Copy and Edit now both participate in keyboard navigation. | PASS (`s005`, `s006`) |
 | 11 | Assistant message hover | hover | Copy, Fork chat from here. | Shown under the last turn, on hover under earlier turns. `Copy` puts the answer on the clipboard; `Fork chat from here` sends `thread/fork` (then `thread/rollback` of the later turns) and opens the fork at the top of Recents. `Read aloud` and `Rate response` have no handler. | PASS (`copy_response`, `fork_chat`, `earlier_turn_actions_hover`) |
-| 12 | `Scroll to bottom` | click | Jumps to the newest turn. | The button appears above the composer when newer content is below the viewport. It returns to the newest turn. | FAIL (final-source native replay pending: `thread_controls_reasoning_and_scroll`) |
-| 13 | `⌘F` | shortcut | Find bar. | The existing Find bar and next/previous result bindings remain in use. | FAIL (final-source native replay pending: `s013`) |
+| 12 | `Scroll to bottom` | click | Jumps to the newest turn. | The button appears above the composer when newer content is below the viewport. It returns to the newest turn. | PASS (`thread_controls_reasoning_and_scroll`) |
+| 13 | `⌘F` | shortcut | Find bar. | The existing Find bar and next/previous result bindings remain in use. | PASS (`s013`) |
 | 14 | `⌘⇧A` | shortcut | Archives the chat. | `ArchiveChat`: `thread/archive`, the row leaves Recents, the route goes to Home. | PASS (`archive_chat`) |
-| 15 | `⌘⌥R` | shortcut | Rename dialog. | The command owner's `RenameChat` binding reuses the existing rename dialog. | FAIL (final-source native replay pending: `chat_commands`) |
+| 15 | `⌘⌥R` | shortcut | Rename dialog. | The command owner's `RenameChat` binding reuses the existing rename dialog. | PASS (`chat_commands`) |
 | 16 | Approval card | click | Approve, Allow similar, Allow all edits, Deny. | `Root::on_event` keeps each pending request by its request id and thread. The open thread shows its oldest request. Command, file-change, permission, user-input, standard MCP elicitation, and supported dynamic-tool forms use this queue. Responses retain the displayed card's identity. Explicit resolution removes requests without answering them. Turn completion removes only turn-bound requests. | PASS (`approval_queue.rs`: command/file-change queue order, withdrawal, thread isolation and turn end; non-command release gates remain open below) |
 | 17 | Stream error | error | `Reconnecting {progress}`. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 18 | Usage limit | error | Usage limit banner. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
-| 19 | Focus ring on cards | focus ring | 2 px ring. | Work, reasoning, command, copy, and file-change controls accept keyboard focus. Cards use a 2 px ring without changing layout. | FAIL (final-source native replay pending) |
+| 19 | Focus ring on cards | focus ring | 2 px ring. | Work, reasoning, command, copy, and file-change controls accept keyboard focus. Cards use a 2 px inset ring without changing layout. | PASS (`thread_controls_reasoning_and_scroll`, `s014`, `s015`; native capture) |
 | 20 | Resize | resize | The side panel yields width before the chat column. | `panel_width` keeps 320 px for the chat; no flow checks the 3 widths with the panel open. | FAIL (no flow; `crates/ui/src/diff.rs` `panel_width` assumes the sidebar open) |
 
 TH-123/124/125 add permission, user-input, standard MCP elicitation, and supported dynamic-tool forms to the existing request queue.
@@ -400,8 +400,8 @@ Run `cargo test -p app --test computer_use_approvals`; the native replay and cap
 W-04 reuses the command owner's commit `89ab67b0f0591625c9eb9a20a83a4a5997875ccd`.
 The Linux host tests cover patch add, delete, rename, conflicts, and source-preserving worktree forks.
 Worktree forks copy staged and unstaged content, binary files, untracked files, and symbolic links into a new owned worktree.
-Native verification remains blocked because the Mac temporary cleaner removed registry manifests while leaving `.cargo-ok`.
-The matching crate archives survive, but this worker does not restore shared Cargo sources without an owner handoff.
+Native row tests verify Copy target identity, both Fork routes, Delete failure/retry/focus, and real worktree creation.
+The dedicated reasoning flow verifies disclosure, its focus ring, and scrolling back to the newest turn.
 
 
 MO-36 uses `refs/interactions/ms4.json`, recorded with the original CSS classes in an isolated route1 Chrome context.
@@ -907,7 +907,7 @@ They do not replace original-versus-native appearance approval or the strict pix
 
 A row above that names a `crates/ui` owner needs that change first. The changes that unblock the most rows:
 
-1. `crates/ui/src/thread.rs`: the separate loading and error views remain. W-04 implements the Thread controls above; their native proof is pending.
+1. `crates/ui/src/thread.rs`: the separate loading and error views remain. W-04 implements and verifies the Thread controls above.
 2. `crates/ui/src/diff.rs`: the Changes header controls (source selector, file tree, layout, wrap, refresh), empty, loading and error states.
 3. `crates/ui/src/screens/mobile.rs`: the pairing and connected steps (`remoteControl/*`).
 4. Focus-visible rings on the shared buttons (`icon_button`, `pill`, rail items), and tooltips on the composer and sidebar row buttons.
@@ -1095,9 +1095,9 @@ The legacy `worked_for_expands` check uses the same recorded wait after each dis
 Both checks keep their original pixel assertions.
 
 The replay checks the summary box, hover text, chevron, expanded row icons, row text, collapse, and request count.
-The original hides the completed reasoning fixture and draws no `Thought` header.
-The port retains that state.
-No product code, probe coordinates, fixture responses, or pixel gates change.
+The original hides the injected completed reasoning fixture and draws no `Thought` header.
+S014 now replays only the recorded grouped activity without that injected item.
+The separate native `thread_controls_reasoning_and_scroll` flow verifies the new reasoning disclosure.
 
 The fresh original input replay matches the recorded disclosure and activity row boxes exactly.
 It also checks the original hover color, expanded rows, collapse, and hidden completed reasoning.

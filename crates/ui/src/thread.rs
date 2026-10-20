@@ -79,7 +79,7 @@ fn focus_ring() -> Vec<gpui::BoxShadow> {
         offset: gpui::point(px(0.), px(0.)),
         blur_radius: px(0.),
         spread_radius: px(2.),
-        inset: false,
+        inset: true,
     }]
 }
 
@@ -1746,8 +1746,6 @@ impl ThreadView {
                     .focusable()
                     .tab_index(0)
                     .focus_visible(|s| s.shadow(focus_ring()))
-                    // `select-none` in the original: a press here leaves the text selection.
-                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |view, _, _, cx| {
                         let open = !view.expanded.remove(&id);
                         if open {
@@ -2187,35 +2185,42 @@ impl Render for ThreadView {
                 |d| {
                     let scroll = self.scroll.clone();
                     d.child(
-                        div()
-                            .absolute()
-                            .bottom(px(140.))
-                            .left_0()
-                            .right_0()
-                            .flex()
-                            .justify_center()
-                            .child(tooltip(
-                                icon_button(
-                                    "scroll-to-bottom",
-                                    icon("chevron-down", 16., t.text),
-                                    &t,
-                                )
-                                .role(gpui::Role::Button)
-                                .aria_label("Scroll to bottom")
-                                .focusable()
-                                .tab_index(0)
-                                .bg(t.surface_secondary)
-                                .focus_visible(|s| s.shadow(focus_ring()))
-                                .on_click(cx.listener(
-                                    move |_, _, _, cx| {
-                                        scroll.scroll_to_bottom();
-                                        cx.notify();
-                                    },
+                        gpui::deferred(
+                            div()
+                                .absolute()
+                                .bottom(px(138.))
+                                .left_0()
+                                .right_0()
+                                .flex()
+                                .justify_center()
+                                .child(tooltip(
+                                    icon_button(
+                                        "scroll-to-bottom",
+                                        icon("thread-scroll-bottom", 20., t.text),
+                                        &t,
+                                    )
+                                    .role(gpui::Role::Button)
+                                    .aria_label("Scroll to bottom")
+                                    .focusable()
+                                    .tab_index(0)
+                                    .size(px(32.))
+                                    .rounded(Theme::RADIUS_FULL)
+                                    .border_1()
+                                    .border_color(t.border)
+                                    .bg(t.surface)
+                                    .focus_visible(|s| s.shadow(focus_ring()))
+                                    .on_click(cx.listener(
+                                        move |_, _, _, cx| {
+                                            scroll.scroll_to_bottom();
+                                            cx.notify();
+                                        },
+                                    )),
+                                    "Scroll to bottom",
+                                    None,
+                                    Side::Top,
                                 )),
-                                "Scroll to bottom",
-                                None,
-                                Side::Top,
-                            )),
+                        )
+                        .with_priority(1),
                     )
                 },
             )

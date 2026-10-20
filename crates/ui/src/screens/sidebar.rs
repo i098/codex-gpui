@@ -864,6 +864,7 @@ impl HomeSidebar {
                     window,
                     cx,
                 );
+                let menu_focus = row_focus.read(cx).handle.clone();
                 let focused = row_focus.read(cx).handle.contains_focused(window, cx);
                 // `animate-spin`: one turn per second, linear.
                 let end = self
@@ -888,6 +889,7 @@ impl HomeSidebar {
                 .on_mouse_down(
                     MouseButton::Right,
                     cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| {
+                        window.focus(&menu_focus, cx);
                         this.open_menu(menu_for.clone(), e.position, window, cx)
                     }),
                 )

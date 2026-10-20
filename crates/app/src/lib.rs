@@ -2579,7 +2579,7 @@ impl Root {
         let return_focus = window.focused(cx);
         cx.subscribe_in(&dialog, window, move |this, dialog, outcome, window, cx| {
             if let DialogOutcome::DeleteThread(id) = outcome {
-                this.delete_thread(dialog.clone(), id.clone(), return_focus.clone(), window, cx);
+                this.delete_thread(dialog.clone(), id.clone(), window, cx);
                 return;
             }
             if let DialogOutcome::ScheduleTask { prompt, rrule } = outcome {
@@ -3892,7 +3892,6 @@ impl Root {
         &mut self,
         dialog: Entity<Dialog>,
         id: String,
-        return_focus: Option<FocusHandle>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -3912,9 +3911,7 @@ impl Root {
                         if this.state.route == Route::Thread(id) {
                             this.new_chat(window, cx);
                         }
-                        if let Some(focus) = return_focus {
-                            window.focus(&focus, cx);
-                        }
+                        window.focus(&this.composer(cx).focus_handle(cx), cx);
                         this.toast(Toast::info("Task deleted"), cx);
                     }
                     Err(error) => {

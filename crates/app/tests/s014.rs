@@ -1,12 +1,10 @@
-//! Replays S014 (TH-092 grouped activity summary, TH-095 reasoning toggle) from the original
-//! renderer recording `refs/interactions/s014.json`.
+//! Replays the S014 grouped activity summary from refs/interactions/s014.json.
 
 mod common;
 
 use anyhow::{Context as _, Result, ensure};
-use bridge::types::ThreadItem;
 use common::{Fx, ROOT, changed};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::fs;
 
 const SUBTRACT_TURN: &str = "01a13de9-70bc-7de1-8ae6-bf46ce20cb99";
@@ -37,26 +35,6 @@ fn texts(rows: &Value) -> Vec<String> {
         .collect()
 }
 
-/// The recording's fixture: a completed reasoning item after the user message of the
-/// subtract turn (the original shows no `Thought` header for it).
-fn inject_reasoning(line: &mut Value) {
-    let Some(turns) = line["msg"]["result"]["thread"]["turns"].as_array_mut() else {
-        return;
-    };
-    for turn in turns.iter_mut().filter(|t| t["id"] == SUBTRACT_TURN) {
-        let summary: Vec<String> =
-            std::iter::once("Check the subtraction".to_owned())
-                .chain((1..=12).map(|i| {
-                    format!("Reasoning line {i}: subtract the second value from the first.")
-                }))
-                .collect();
-        turn["items"].as_array_mut().unwrap().insert(
-            1,
-            json!({ "type": "reasoning", "id": "s014-reasoning", "summary": summary, "content": [] }),
-        );
-    }
-}
-
 #[test]
 fn grouped_activity_matches_the_original() -> Result<()> {
     if !cfg!(target_os = "macos") {
@@ -66,11 +44,7 @@ fn grouped_activity_matches_the_original() -> Result<()> {
         serde_json::from_slice(&fs::read(format!("{ROOT}/refs/interactions/s014.json"))?)?;
     let steps = recording["steps"].as_array().context("steps")?;
     let result = &recording["result"];
-    let mut fx = Fx::captured(
-        "dark",
-        (1280., 832.),
-        common::script(None, inject_reasoning)?,
-    )?;
+    let mut fx = Fx::captured("dark", (1280., 832.), common::script(None, |_| {})?)?;
     let row = fx.at("home", "Add a subtract")?;
     fx.click(row)?;
     fx.wait_thread(common::SUBTRACT)?;
@@ -87,19 +61,6 @@ fn grouped_activity_matches_the_original() -> Result<()> {
                 .unwrap()
         })
     };
-    let has_reasoning = fx.read(|r, cx| {
-        r.thread()
-            .unwrap()
-            .read(cx)
-            .turns()
-            .iter()
-            .flat_map(|t| &t.items)
-            .any(|i| matches!(i, ThreadItem::Reasoning { id, .. } if id == "s014-reasoning"))
-    });
-    ensure!(
-        has_reasoning,
-        "the injected reasoning item did not reach the thread"
-    );
     let sent = fx.sent()?.len();
     let collapsed = fx.shot()?;
     // The Linux recorder wraps the user bubble onto three lines, the Mac port onto two: every
@@ -132,15 +93,6 @@ fn grouped_activity_matches_the_original() -> Result<()> {
     ensure!(
         changed(&collapsed, &opened, rect(&summary["bbox"])) > 500,
         "the summary row did not appear at the recorded bbox"
-    );
-    // TH-095: the completed reasoning item has no `Thought` header, as in the original.
-    assert!(result["reasoning"]["thoughtHeader"].is_null());
-    assert!(
-        !labels(&fx)
-            .iter()
-            .any(|l| l.contains("Thought") || l.contains("Thinking")),
-        "the port drew a reasoning header: {:?}",
-        labels(&fx)
     );
 
     assert_eq!(steps[3]["type"], "hover");

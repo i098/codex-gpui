@@ -656,7 +656,6 @@ pub(super) fn activity(
                 icon(chevron, 14., text60.opacity(if is_open { 1. } else { 0. }))
                     .group_hover(group, move |s| s.text_color(text60)),
             )
-            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(move |view, _, _, cx| {
                 if !view.expanded.remove(&key) {
                     view.expanded.insert(key.clone());

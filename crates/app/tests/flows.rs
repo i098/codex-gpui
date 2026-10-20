@@ -125,6 +125,7 @@ const FLOWS: &[(&str, Flow)] = &[
         "thread_controls_reasoning_and_scroll",
         thread_controls_reasoning_and_scroll,
     ),
+    ("thread_controls_row_worktree", thread_controls_row_worktree),
     ("approval_round_trip", approval_round_trip),
     ("archive_chat", archive_chat),
     ("recent_chat_keys", recent_chat_keys),
@@ -140,6 +141,7 @@ const FLOWS: &[(&str, Flow)] = &[
 ];
 
 fn main() {
+    proxy_child();
     // The flows render through the Metal headless renderer and the CoreText text system;
     // other platforms (Linux CI) have neither.
     if !cfg!(target_os = "macos") {
@@ -1221,7 +1223,7 @@ fn undo_reverts_turn() -> Result<String> {
             }
         }
     }
-    let mut fx = Fx::scripted(lines)?;
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
     let host = Arc::new(LocalHost::new(root.join(".proof-profile")));
     fx.root
         .update(&mut fx.cx, |root, cx| root.set_host(host, cx));
@@ -1619,8 +1621,43 @@ fn thread_control_shot(fx: &mut Fx, name: &str) -> Result<()> {
     Ok(())
 }
 
-fn pick_thread_menu(fx: &mut Fx, label: &str, parent: &str, sub: Option<&str>) -> Result<()> {
-    fx.right_click(fx.at("home", label)?)?;
+fn activate_thread_window(fx: &mut Fx) -> Result<()> {
+    let before = fx
+        .cx
+        .update_window(fx.window, |_, window, _| window.is_window_active())?;
+    fx.cx
+        .update_window(fx.window, |_, window, _| window.activate_window())?;
+    fx.cx.run_until_parked();
+    fx.advance(std::time::Duration::ZERO)?;
+    let after = fx
+        .cx
+        .update_window(fx.window, |_, window, _| window.is_window_active())?;
+    ensure!(after, "the native Thread window is inactive");
+    println!("Thread window active: before={before}, after={after}");
+    Ok(())
+}
+
+fn thread_control_keys(fx: &mut Fx, keys: &str) -> Result<()> {
+    for key in keys.split(' ') {
+        fx.advance(std::time::Duration::ZERO)?;
+        let keystroke = gpui::Keystroke::parse(key)?;
+        fx.input(gpui::PlatformInput::KeyDown(gpui::KeyDownEvent {
+            keystroke: keystroke.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        }))?;
+        fx.input(gpui::PlatformInput::KeyUp(gpui::KeyUpEvent { keystroke }))?;
+    }
+    Ok(())
+}
+
+fn pick_thread_menu(fx: &mut Fx, thread_id: &str, parent: &str, sub: Option<&str>) -> Result<()> {
+    const ROW_STRIDE: f32 = 31.;
+    let row_index = fx
+        .read(|root, _| root.recents().iter().position(|id| id == thread_id))
+        .with_context(|| format!("current Recents row {thread_id}"))?;
+    let first_row = fx.at("home", "Change the greeting")?;
+    fx.right_click((first_row.0, first_row.1 + row_index as f32 * ROW_STRIDE))?;
     let items = fx
         .read(|root, cx| root.sidebar().read(cx).context_menu())
         .context("row menu")?;
@@ -1633,12 +1670,12 @@ fn pick_thread_menu(fx: &mut Fx, label: &str, parent: &str, sub: Option<&str>) -
         .iter()
         .position(|row| row["id"] == parent)
         .context("menu target")?;
-    fx.keys("home")?;
+    thread_control_keys(fx, "home")?;
     for _ in 0..index {
-        fx.keys("down")?;
+        thread_control_keys(fx, "down")?;
     }
     if let Some(sub) = sub {
-        fx.keys("right")?;
+        thread_control_keys(fx, "right")?;
         let index = selectable[index]["submenu"]
             .as_array()
             .context("submenu")?
@@ -1646,11 +1683,11 @@ fn pick_thread_menu(fx: &mut Fx, label: &str, parent: &str, sub: Option<&str>) -
             .position(|row| row["id"] == sub)
             .context("submenu target")?;
         for _ in 0..index {
-            fx.keys("down")?;
+            thread_control_keys(fx, "down")?;
         }
     }
     thread_control_shot(fx, parent)?;
-    fx.keys("enter")
+    thread_control_keys(fx, "enter")
 }
 
 fn thread_controls_row_actions() -> Result<String> {
@@ -1677,6 +1714,9 @@ fn thread_controls_row_actions() -> Result<String> {
     let mut header_fork = recorded_thread(SUBTRACT)?;
     header_fork["id"] = "thread-controls-header-fork".into();
     lines.extend(exchange("thread/fork", json!({"thread": header_fork})));
+    let mut reopen = exchange("thread/read", json!({"thread": recorded_thread(GREETING)?}));
+    reopen[0]["msg"]["params"] = json!({"threadId": GREETING, "includeTurns": true});
+    lines.extend(reopen);
     let mut failed_delete = exchange("thread/delete", json!({}));
     failed_delete[1]["msg"]
         .as_object_mut()
@@ -1685,15 +1725,11 @@ fn thread_controls_row_actions() -> Result<String> {
     failed_delete[1]["msg"]["error"] = json!({"code": -32000, "message": "fixture refusal"});
     lines.extend(failed_delete);
     lines.extend(exchange("thread/delete", json!({})));
-    let mut fx = Fx::scripted(lines)?;
-    fx.keys("cmd-1")?;
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    activate_thread_window(&mut fx)?;
+    thread_control_keys(&mut fx, "cmd-1")?;
     fx.wait_thread(GREETING)?;
-    pick_thread_menu(
-        &mut fx,
-        "Add a subtract",
-        "copy-actions",
-        Some("copy-deeplink"),
-    )?;
+    pick_thread_menu(&mut fx, SUBTRACT, "copy-actions", Some("copy-deeplink"))?;
     ensure!(
         fx.cx
             .update(|cx| cx.read_from_clipboard().and_then(|item| item.text()))
@@ -1702,7 +1738,7 @@ fn thread_controls_row_actions() -> Result<String> {
     );
     pick_thread_menu(
         &mut fx,
-        "Add a subtract",
+        SUBTRACT,
         "copy-actions",
         Some("copy-working-directory"),
     )?;
@@ -1715,7 +1751,7 @@ fn thread_controls_row_actions() -> Result<String> {
     );
     pick_thread_menu(
         &mut fx,
-        "Add a subtract",
+        SUBTRACT,
         "copy-actions",
         Some("copy-conversation-markdown"),
     )?;
@@ -1741,7 +1777,7 @@ fn thread_controls_row_actions() -> Result<String> {
         fx.route() == Route::Thread(GREETING.into()),
         "Copy changed the open chat"
     );
-    pick_thread_menu(&mut fx, "Add a subtract", "fork", Some("fork-into-local"))?;
+    pick_thread_menu(&mut fx, SUBTRACT, "fork", Some("fork-into-local"))?;
     fx.wait_thread(FORK)?;
     ensure!(
         fx.read(|root, _| root.recents().first().map(String::as_str) == Some(FORK)),
@@ -1762,11 +1798,11 @@ fn thread_controls_row_actions() -> Result<String> {
         bbox["x"].as_f64().unwrap() as f32 + 14.,
         bbox["y"].as_f64().unwrap() as f32 + 14.,
     ))?;
-    fx.keys("home down down down right")?;
+    thread_control_keys(&mut fx, "home down down down right")?;
     thread_control_shot(&mut fx, "header-fork")?;
-    fx.keys("enter")?;
+    thread_control_keys(&mut fx, "enter")?;
     fx.wait_thread("thread-controls-header-fork")?;
-    pick_thread_menu(&mut fx, "Change the greeting", "delete-thread", None)?;
+    pick_thread_menu(&mut fx, GREETING, "delete-thread", None)?;
     ensure!(
         fx.read(|root, cx| root
             .dialog()
@@ -1774,15 +1810,17 @@ fn thread_controls_row_actions() -> Result<String> {
         "Delete must start on Cancel"
     );
     thread_control_shot(&mut fx, "delete-confirmation")?;
-    fx.keys("enter")?;
+    thread_control_keys(&mut fx, "enter")?;
     ensure!(
         !fx.sent()?
             .iter()
             .any(|request| request["method"] == "thread/delete"),
         "Cancel deleted the chat"
     );
-    pick_thread_menu(&mut fx, "Change the greeting", "delete-thread", None)?;
-    fx.keys("tab enter")?;
+    thread_control_keys(&mut fx, "enter")?;
+    fx.wait_thread(GREETING)?;
+    pick_thread_menu(&mut fx, GREETING, "delete-thread", None)?;
+    thread_control_keys(&mut fx, "tab enter")?;
     fx.wait("delete refusal", |fx| {
         fx.read(|root, cx| {
             root.dialog()
@@ -1794,7 +1832,7 @@ fn thread_controls_row_actions() -> Result<String> {
         "failed deletion removed the chat"
     );
     thread_control_shot(&mut fx, "delete-error")?;
-    fx.keys("enter")?;
+    thread_control_keys(&mut fx, "enter")?;
     fx.wait("delete success", |fx| {
         fx.read(|root, _| !root.recents().contains(&GREETING.to_owned()))
     })?;
@@ -1802,6 +1840,12 @@ fn thread_controls_row_actions() -> Result<String> {
         fx.read(|root, _| root.dialog().is_none()),
         "successful deletion left its dialog open"
     );
+    fx.advance(std::time::Duration::ZERO)?;
+    ensure!(
+        fx.route() == Route::Home && fx.composer_focused()?,
+        "successful deletion did not restore the composer focus"
+    );
+    thread_control_shot(&mut fx, "delete-success")?;
     Ok("row Copy uses its target; row/header Fork; Cancel, refusal, retry and deletion".into())
 }
 
@@ -1822,25 +1866,28 @@ fn thread_controls_reasoning_and_scroll() -> Result<String> {
             );
         }
     })?;
+    activate_thread_window(&mut fx)?;
     open_subtract(&mut fx)?;
     let worked = fx.at("thread", "Worked for")?;
     fx.click(worked)?;
     fx.advance(std::time::Duration::from_millis(400))?;
     let thought = (worked.0, worked.1 + 42.);
-    fx.hover(thought)?;
+    fx.hover((640., 22.))?;
     let folded = fx.shot()?;
     fx.click(thought)?;
+    fx.hover((640., 22.))?;
+    let opened = fx.shot()?;
     thread_control_shot(&mut fx, "reasoning-open")?;
     ensure!(
-        changed(&folded, &fx.shot()?, [441., worked.1 + 30., 736., 180.]) > 500,
+        changed(&folded, &opened, [441., worked.1 + 30., 736., 180.]) > 500,
         "reasoning did not disclose its content"
     );
-    fx.keys("space")?;
+    thread_control_keys(&mut fx, "space")?;
+    thread_control_shot(&mut fx, "reasoning-keyboard-folded")?;
     fx.hover((640., 22.))?;
     let closed = fx.shot()?;
-    fx.click(thought)?;
     ensure!(
-        changed(&closed, &fx.shot()?, [441., worked.1 + 30., 736., 180.]) > 500,
+        changed(&folded, &closed, [441., worked.1 + 60., 736., 120.]) == 0,
         "keyboard did not close the reasoning card"
     );
     fx.resize(1280., 400.)?;
@@ -1858,6 +1905,114 @@ fn thread_controls_reasoning_and_scroll() -> Result<String> {
     );
     Ok(
         "reasoning mouse and keyboard disclosure; scroll-to-bottom returns to the newest turn"
+            .into(),
+    )
+}
+
+fn thread_controls_row_worktree() -> Result<String> {
+    use app::host::LocalHost;
+    use std::{fs, path::Path, process::Command, sync::Arc};
+    const FORK: &str = "row-worktree-fork";
+    let directory = tempfile::tempdir()?;
+    let base = directory.path().canonicalize()?;
+    let project = base.join("project");
+    let profile = base.join("profile");
+    fs::create_dir(&project)?;
+    fs::create_dir(&profile)?;
+    let git = |cwd: &Path, args: &[&str]| -> Result<String> {
+        let output = Command::new("git")
+            .args([
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "commit.gpgSign=false",
+            ])
+            .args(args)
+            .current_dir(cwd)
+            .output()?;
+        ensure!(
+            output.status.success(),
+            "Git: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(String::from_utf8(output.stdout)?.trim().to_owned())
+    };
+    git(&project, &["init", "-q"])?;
+    fs::write(project.join("note.txt"), "base\n")?;
+    git(&project, &["add", "."])?;
+    git(
+        &project,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-qm",
+            "base",
+        ],
+    )?;
+    fs::write(project.join("note.txt"), "working copy\n")?;
+    fs::write(project.join("untracked.txt"), "new file\n")?;
+    let source_status = git(&project, &["status", "--porcelain"])?;
+    let mut lines = script(None, |_| {})?;
+    for line in &mut lines {
+        if let Some(threads) = line
+            .pointer_mut("/msg/result/data")
+            .and_then(Value::as_array_mut)
+        {
+            for thread in threads {
+                if thread["id"] == GREETING {
+                    thread["cwd"] = project.to_string_lossy().into_owned().into();
+                }
+            }
+        }
+    }
+    let mut fork = recorded_thread(GREETING)?;
+    fork["id"] = FORK.into();
+    fork["cwd"] = project.to_string_lossy().into_owned().into();
+    lines.extend(exchange("thread/fork", json!({"thread":fork})));
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    let host = Arc::new(LocalHost::new(profile.clone()));
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(host, cx));
+    activate_thread_window(&mut fx)?;
+    pick_thread_menu(&mut fx, GREETING, "fork", Some("fork-into-worktree"))?;
+    fx.wait_thread(FORK)?;
+    let request = fx
+        .sent()?
+        .into_iter()
+        .find(|request| request["method"] == "thread/fork")
+        .context("worktree fork request")?;
+    let worktree = std::path::PathBuf::from(request["params"]["cwd"].as_str().context("fork cwd")?);
+    ensure!(
+        worktree.starts_with(profile.join("worktrees")) && worktree != project,
+        "the row fork did not target its new owned worktree"
+    );
+    ensure!(
+        fs::read_to_string(worktree.join("note.txt"))? == "working copy\n",
+        "the row fork lost unstaged changes"
+    );
+    ensure!(
+        fs::read_to_string(worktree.join("untracked.txt"))? == "new file\n",
+        "the row fork lost an untracked file"
+    );
+    let owner_path = worktree.join(git(
+        &worktree,
+        &["rev-parse", "--git-path", "codex-thread.json"],
+    )?);
+    let owner: Value = serde_json::from_slice(&fs::read(owner_path)?)?;
+    ensure!(
+        owner["ownerThreadId"] == FORK,
+        "the row fork did not own its worktree"
+    );
+    ensure!(
+        git(&project, &["status", "--porcelain"])? == source_status,
+        "the row fork changed the source checkout"
+    );
+    thread_control_shot(&mut fx, "row-worktree-fork")?;
+    Ok(
+        "native row menu created a real worktree, copied working files, and saved the fork owner"
             .into(),
     )
 }
