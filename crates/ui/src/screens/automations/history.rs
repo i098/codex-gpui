@@ -267,9 +267,11 @@ impl RunHistory {
                                             this.menu = false;
                                             cx.notify();
                                         }))
-                                        .child(crate::composer::popover(t, 160., |d| {
-                                            let labels =
-                                                match run.and_then(|index| self.items.get(index)) {
+                                        .child(
+                                            crate::composer::popover(t, 160., |d| {
+                                                let labels = match run
+                                                    .and_then(|index| self.items.get(index))
+                                                {
                                                     Some(item) => [
                                                         if item["readAt"].is_null() {
                                                             "Mark as read"
@@ -280,48 +282,52 @@ impl RunHistory {
                                                     ],
                                                     None => ["Mark all as read", "Archive all"],
                                                 };
-                                            d.children(labels.into_iter().enumerate().map(
-                                                |(index, label)| {
-                                                    let enabled = self.enabled(index);
-                                                    div()
-                                                        .id(("previous-run-menu-item", index))
-                                                        .role(Role::MenuItem)
-                                                        .aria_label(label)
-                                                        .aria_disabled(!enabled)
-                                                        .h(px(28.570_313))
-                                                        .px(px(8.))
-                                                        .rounded(px(15.))
-                                                        .flex()
-                                                        .items_center()
-                                                        .gap(px(6.))
-                                                        .opacity(if enabled { 1. } else { 0.4 })
-                                                        .when(
-                                                            self.selected == Some(index) && enabled,
-                                                            |d| d.bg(t.menu_item_hover),
-                                                        )
-                                                        .when(enabled, |d| {
-                                                            d.hover(|s| s.bg(t.menu_item_hover))
-                                                        })
-                                                        .child(icon(
-                                                            if index == 0 {
-                                                                "thread-check"
-                                                            } else {
-                                                                "sidebar-archive"
-                                                            },
-                                                            16.,
-                                                            t.text,
-                                                        ))
-                                                        .child(text(
-                                                            label, 13., 18.5714, 430., t.text,
-                                                        ))
-                                                        .on_click(cx.listener(
-                                                            move |this, _, window, cx| {
-                                                                this.activate(index, window, cx)
-                                                            },
-                                                        ))
-                                                },
-                                            ))
-                                        })),
+                                                d.children(labels.into_iter().enumerate().map(
+                                                    |(index, label)| {
+                                                        let enabled = self.enabled(index);
+                                                        div()
+                                                            .id(("previous-run-menu-item", index))
+                                                            .role(Role::MenuItem)
+                                                            .aria_label(label)
+                                                            .aria_disabled(!enabled)
+                                                            .h(px(28.570_313))
+                                                            .px(px(8.))
+                                                            .rounded(px(15.))
+                                                            .flex()
+                                                            .items_center()
+                                                            .gap(px(6.))
+                                                            .opacity(if enabled { 1. } else { 0.4 })
+                                                            .when(
+                                                                self.selected == Some(index)
+                                                                    && enabled,
+                                                                |d| d.bg(t.menu_item_hover),
+                                                            )
+                                                            .when(enabled, |d| {
+                                                                d.hover(|s| s.bg(t.menu_item_hover))
+                                                            })
+                                                            .child(icon(
+                                                                if index == 0 {
+                                                                    "thread-check"
+                                                                } else {
+                                                                    "sidebar-archive"
+                                                                },
+                                                                16.,
+                                                                t.text,
+                                                            ))
+                                                            .child(text(
+                                                                label, 13., 18.5714, 430., t.text,
+                                                            ))
+                                                            .on_click(cx.listener(
+                                                                move |this, _, window, cx| {
+                                                                    this.activate(index, window, cx)
+                                                                },
+                                                            ))
+                                                    },
+                                                ))
+                                            })
+                                            .top_layer()
+                                            .snap_origin(),
+                                        ),
                                 ),
                         ),
                     )
