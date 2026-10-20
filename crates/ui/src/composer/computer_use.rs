@@ -68,36 +68,37 @@ static ICON_PIXELS: LazyLock<image::RgbaImage> = LazyLock::new(|| {
 #[cfg(target_os = "macos")]
 fn app_icon(cache: IconCache, page: Hsla) -> AnyElement {
     gpui::canvas(
-        move |bounds, window, _| {
+        |_, _, _| (),
+        move |bounds, (), window, _| {
             let mut cache = cache.borrow_mut();
             let scale = window.scale_factor();
-            if let Some((rect, color, cached_scale, image)) = &*cache
+            let image = if let Some((rect, color, cached_scale, image)) = &*cache
                 && *rect == bounds
                 && *color == page
                 && *cached_scale == scale
             {
-                return image.clone();
-            }
-            let snap = |v: Pixels| px((f32::from(v) * scale).round() / scale);
-            let destination = Bounds::new(
-                point(snap(bounds.left()), snap(bounds.top())),
-                size(snap(bounds.size.width), snap(bounds.size.height)),
-            );
-            let image = Arc::new(
-                shapes::raster_images(
-                    &[(&ICON_PIXELS, destination)],
-                    bounds,
-                    Corners::all(px(3.)),
-                    shapes::Corner::Round,
-                    shapes::ImageComposition::Direct(page),
-                    window,
-                )
-                .expect("macOS image rasterizer"),
-            );
-            *cache = Some((bounds, page, scale, image.clone()));
-            image
-        },
-        move |bounds, image, window, _| {
+                image.clone()
+            } else {
+                let snap = |v: Pixels| px((f32::from(v) * scale).round() / scale);
+                let destination = Bounds::new(
+                    point(snap(bounds.left()), snap(bounds.top())),
+                    size(snap(bounds.size.width), snap(bounds.size.height)),
+                );
+                let image = Arc::new(
+                    shapes::raster_images(
+                        &[(&ICON_PIXELS, destination)],
+                        bounds,
+                        Corners::all(px(3.)),
+                        shapes::Corner::Round,
+                        shapes::ImageComposition::Composited(page),
+                        window,
+                    )
+                    .expect("macOS image rasterizer"),
+                );
+                *cache = Some((bounds, page, scale, image.clone()));
+                image
+            };
+            drop(cache);
             window
                 .paint_image(bounds, bounds, Corners::default(), image, 0, false)
                 .ok();

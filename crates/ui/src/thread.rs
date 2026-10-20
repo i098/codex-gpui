@@ -2081,7 +2081,7 @@ impl Render for ThreadView {
                     // transcript press.
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .layer()
-                    .when(native_approval, |d| d.cc_tiles())
+                    .when(native_approval, |d| d.cc_tiles().window_space_recording())
                     .child(
                         div()
                             .relative()
