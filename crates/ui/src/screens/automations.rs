@@ -3,13 +3,19 @@
 //! Host data (`list-automations`, `/suggested_automations`) comes from the recorded answers
 //! in `tools/route1/oracle.json`.
 
-use crate::tooltip::{Side, tooltip};
-use crate::{Shell, composer::popover, icon::icon, icon_button, motion::ButtonVisual, text};
+use crate::{
+    Shell, focus,
+    icon::icon,
+    icon_button,
+    motion::ButtonVisual,
+    text,
+    tooltip::{Side, tooltip},
+};
 use gpui::{
-    Action, Anchor, AnyElement, AnyView, App, AppContext as _, Context, Corners, Div, Edges,
-    Entity, FocusHandle, InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
-    SharedString, Stateful, StatefulInteractiveElement, Styled, Window, actions, anchored, canvas,
-    deferred, div, img, prelude::FluentBuilder as _, px,
+    Action, Anchor, AnyView, App, AppContext as _, ClickEvent, Context, Corners, Div, Entity,
+    FocusHandle, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Render,
+    Role, SharedString, Stateful, StatefulInteractiveElement, Styled, Window, actions, anchored,
+    canvas, deferred, div, img, prelude::FluentBuilder as _, px,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -43,6 +49,12 @@ pub struct OpenAutomation {
     pub id: String,
 }
 
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = automations, no_json)]
+pub struct ToggleAutomation {
+    pub id: String,
+}
+
 /// `Run now` in a task row's menu: the app starts a run through the host's `automation-run-now`.
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = automations, no_json)]
@@ -57,6 +69,7 @@ pub struct Task {
     pub id: String,
     pub name: SharedString,
     pub prompt: SharedString,
+    pub status: String,
     #[serde(default)]
     pub rrule: String,
     /// Unix ms.
@@ -87,6 +100,8 @@ pub fn event_triggered(prompt: &str) -> bool {
             when.lines().all(quoted) && action.lines().next().is_some_and(quoted)
         })
 }
+
+const TRIGGER_TOOLTIP: &str = "Automations triggered by events can’t be run manually";
 
 /// A squircle `background-color` over the parent's box, blended like Blink (`shapes`), not a
 /// GPUI quad: the fill px match the original to the unit.
@@ -285,13 +300,17 @@ fn shell_with(
     Entity<ScheduledSidebar>,
     Option<Entity<AutomationsPage>>,
 ) {
-    let sidebar = cx.new(|_| ScheduledSidebar {
+    let sidebar = cx.new(|cx| ScheduledSidebar {
         tasks,
         selected: selected.as_ref().map(|(task, _)| task.id.clone()),
         utc_offset,
+        pending: HashSet::new(),
+        starting: HashSet::new(),
+        menu_item: None,
         menu: None,
         menu_button_hovered: false,
-        starting: HashSet::new(),
+        menu_focus: cx.focus_handle(),
+        return_focus: None,
     });
     let mut page = None;
     let main: AnyView = match selected {
@@ -326,24 +345,31 @@ pub struct ScheduledSidebar {
     tasks: Vec<Task>,
     selected: Option<String>,
     utc_offset: i64,
-    /// The row whose `Scheduled task actions` menu is open.
-    menu: Option<TaskMenu>,
-    /// The menu button is under the pointer: a press on it toggles the menu, not closes it.
-    menu_button_hovered: bool,
+    pending: HashSet<String>,
     /// Tasks whose run is starting: their row reads `Starting run…` and `Run now` is off.
     starting: HashSet<String>,
+    /// The keyboard-active menu item (`0` Run now, `1` Pause or Resume) once an arrow key moved it.
+    menu_item: Option<usize>,
+    /// The row whose `Scheduled task actions` menu is open.
+    menu: Option<String>,
+    /// The menu button is under the pointer: a press on it toggles the menu, not closes it.
+    menu_button_hovered: bool,
+    menu_focus: FocusHandle,
+    return_focus: Option<FocusHandle>,
 }
-
-struct TaskMenu {
-    id: String,
-    focus: FocusHandle,
-}
-
-const TRIGGER_TOOLTIP: &str = "Automations triggered by events can’t be run manually";
 
 impl ScheduledSidebar {
     pub fn set_tasks(&mut self, tasks: Vec<Task>, cx: &mut Context<Self>) {
         self.tasks = tasks;
+        cx.notify();
+    }
+
+    pub fn set_pending(&mut self, id: &str, pending: bool, cx: &mut Context<Self>) {
+        if pending {
+            self.pending.insert(id.to_owned());
+        } else {
+            self.pending.remove(id);
+        }
         cx.notify();
     }
 
@@ -359,88 +385,272 @@ impl ScheduledSidebar {
 
     /// The task whose actions menu is open.
     pub fn open_menu(&self) -> Option<&str> {
-        self.menu.as_ref().map(|menu| menu.id.as_str())
+        self.menu.as_deref()
     }
 
-    fn toggle_menu(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
-        if self.open_menu() == Some(id) {
-            self.menu = None;
-        } else {
-            let focus = cx.focus_handle();
-            focus.focus(window, cx);
-            self.menu = Some(TaskMenu {
-                id: id.to_owned(),
-                focus,
-            });
+    fn run_now(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.starting.contains(id) {
+            return;
         }
+        window.dispatch_action(Box::new(RunAutomationNow { id: id.to_owned() }), cx);
+        self.close_menu(window, cx);
+    }
+
+    fn close_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.menu = None;
+        self.menu_item = None;
+        if let Some(focus) = self.return_focus.take() {
+            window.focus(&focus, cx);
+        }
+        cx.stop_propagation();
         cx.notify();
     }
 
-    fn menu_popup(&self, task: &Task, t: &Theme, cx: &Context<Self>) -> impl IntoElement {
-        let triggered = event_triggered(&task.prompt);
-        let disabled = triggered || self.starting.contains(&task.id);
+    fn toggle_menu(
+        &mut self,
+        id: &str,
+        button: FocusHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.menu.as_deref() == Some(id) {
+            self.close_menu(window, cx);
+            return;
+        }
+        self.menu = Some(id.to_owned());
+        self.menu_item = None;
+        self.return_focus = Some(button);
+        window.focus(&self.menu_focus, cx);
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    fn toggle(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_menu(window, cx);
+        window.dispatch_action(Box::new(ToggleAutomation { id: id.to_owned() }), cx);
+    }
+
+    fn menu_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        match event.keystroke.key.as_str() {
+            "escape" => self.close_menu(window, cx),
+            "enter" | "space" => {
+                if let Some(id) = self.menu.clone() {
+                    if self.menu_item == Some(0) {
+                        self.run_now(&id, window, cx);
+                    } else {
+                        self.toggle(&id, window, cx);
+                    }
+                }
+            }
+            "up" | "down" | "home" | "end" => {
+                let last = matches!(event.keystroke.key.as_str(), "down" | "end");
+                self.menu_item = Some(usize::from(last));
+                cx.stop_propagation();
+                cx.notify();
+            }
+            "tab" => cx.stop_propagation(),
+            _ => {}
+        }
+    }
+
+    /// The original menu: opens under the button, right edge 1 px inside it, 220 px wide.
+    fn menu_popup(&self, task: &Task, t: &Theme, cx: &Context<Self>) -> impl IntoElement + use<> {
+        let paused = task.status == "PAUSED";
+        let label = if paused { "Resume" } else { "Pause" };
         let (id, hover) = (task.id.clone(), t.menu_item_hover);
-        let item = div()
+        let triggered = event_triggered(&task.prompt);
+        let off = triggered || self.starting.contains(&task.id);
+        let run_id = task.id.clone();
+        let run = div()
             .id("run-now")
-            .role(gpui::Role::MenuItem)
+            .role(Role::MenuItem)
+            .aria_label("Run now")
+            .aria_disabled(off)
             .h(px(28.5625))
             .px(px(8.))
-            .rounded(px(12.))
+            .rounded(px(15.))
             .flex()
             .items_center()
-            .when(disabled, |d| d.opacity(0.4).aria_disabled(true))
-            .when(!disabled, |d| {
-                d.hover(move |s| s.bg(hover))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        window.dispatch_action(Box::new(RunAutomationNow { id: id.clone() }), cx);
-                        this.menu = None;
-                        cx.notify();
-                    }))
+            .when(self.menu_item == Some(0) && !off, |d| d.bg(hover))
+            .when(off, |d| d.opacity(0.4))
+            .when(!off, |d| {
+                d.hover(move |s| s.bg(hover)).on_click(
+                    cx.listener(move |this, _, window, cx| this.run_now(&run_id, window, cx)),
+                )
             })
             .child(text("Run now", 13., 18.5714, 430., t.text));
-        let item: AnyElement = if triggered {
-            tooltip(item, TRIGGER_TOOLTIP, None, Side::Right).into_any_element()
+        let run = if triggered {
+            tooltip(run, TRIGGER_TOOLTIP, None, Side::Right).into_any_element()
         } else {
-            item.into_any_element()
+            run.into_any_element()
         };
+        let item = div()
+            .id("toggle-status")
+            .group("toggle-status-item")
+            .role(Role::MenuItem)
+            .aria_label(label)
+            .aria_active_descendant()
+            .aria_disabled(self.pending.contains(&task.id))
+            .h(px(28.5625))
+            .px(px(8.))
+            .rounded(px(15.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .when(self.menu_item == Some(1), |d| d.bg(hover))
+            .hover(move |s| s.bg(hover))
+            .on_click(cx.listener(move |this, _, window, cx| this.toggle(&id, window, cx)))
+            .child(
+                div()
+                    .size(px(16.))
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .opacity(0.75)
+                    .group_hover("toggle-status-item", |s| s.opacity(1.))
+                    .child(status_icon(paused, t.text)),
+            )
+            .child(text(label, 13., 18.5714, 430., t.text));
         let menu = div()
             .id("task-actions-menu")
             .occlude()
-            .when_some(self.menu.as_ref(), |d, menu| d.track_focus(&menu.focus))
-            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
-                if event.keystroke.key == "escape" {
-                    this.menu = None;
-                    cx.notify();
-                    cx.stop_propagation();
-                }
-            }))
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+            .role(Role::Menu)
+            .aria_label("Scheduled task actions")
+            .track_focus(&self.menu_focus)
+            .on_key_down(cx.listener(Self::menu_key))
+            .on_mouse_down_out(cx.listener(|this, _, window, cx| {
                 if !this.menu_button_hovered {
-                    this.menu = None;
-                    cx.notify();
+                    this.close_menu(window, cx);
                 }
             }))
-            .child(popover(t, 220., |menu| menu.child(item)));
+            .child(crate::composer::popover(t, 220., |menu| {
+                menu.child(run).child(item)
+            }));
         deferred(
-            div().absolute().top(px(30.)).right_0().child(
+            div().absolute().top(px(30.)).right(px(1.)).child(
                 anchored()
                     .anchor(Anchor::TopRight)
-                    .snap_to_window_with_margin(Edges::all(px(7.)))
+                    .snap_to_window_with_margin(px(7.))
                     .child(menu),
             ),
         )
         .with_priority(1)
     }
 
-    fn row(&self, task: &Task, t: &Theme, cx: &Context<Self>) -> impl IntoElement {
+    fn row(
+        &self,
+        task: &Task,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let fill = fill(px(12.5), t.ghost_hover);
         let group = SharedString::from(format!("task-row-{}", task.id));
         let id = task.id.clone();
-        let open = self.open_menu() == Some(task.id.as_str());
+        let pending = self.pending.contains(&task.id);
+        let paused = task.status == "PAUSED";
+        let label = if paused { "Resume" } else { "Pause" };
+        let status_id = SharedString::from(format!("{group}-status"));
+        let status_focus = focus::handle(status_id.clone(), 0, window, cx);
+        let menu_id = SharedString::from(format!("{group}-actions"));
+        let menu_focus = focus::handle(menu_id.clone(), 0, window, cx);
+        let status_focused = status_focus.read(cx).handle.is_focused(window);
+        let open = self.menu.as_deref() == Some(task.id.as_str());
+        let show_controls = status_focused || menu_focus.read(cx).handle.is_focused(window) || open;
+        let status_task = task.id.clone();
+        let (press_task, key_task) = (task.id.clone(), task.id.clone());
+        let (press_return, key_return) = (menu_focus.clone(), menu_focus.clone());
+        let status = focus::ring(
+            div()
+                .id(status_id.clone())
+                .group(status_id.clone())
+                .role(Role::Button)
+                .aria_label(format!("{label} {}", task.name))
+                .aria_disabled(pending)
+                .relative()
+                .size(px(28.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(9.375))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(
+                    cx.listener(move |this, _, window, cx| this.toggle(&status_task, window, cx)),
+                )
+                .child(if pending {
+                    icon("sidebar-cmd-spinner", 16., t.text_tertiary).into_any_element()
+                } else if paused {
+                    status_icon(true, t.text_tertiary).into_any_element()
+                } else {
+                    div()
+                        .relative()
+                        .size(px(16.))
+                        .child(
+                            icon("scheduled", 16., t.text_tertiary)
+                                .opacity(if status_focused { 0. } else { 1. })
+                                .group_hover(status_id.clone(), |s| s.opacity(0.)),
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .inset_0()
+                                .opacity(if status_focused { 1. } else { 0. })
+                                .group_hover(status_id.clone(), |s| s.opacity(1.))
+                                .child(status_icon(false, t.text_tertiary)),
+                        )
+                        .into_any_element()
+                }),
+            &status_focus,
+            px(9.375),
+            px(2.),
+            cx,
+        );
+        let menu = focus::ring(
+            div()
+                .id(menu_id)
+                .relative()
+                .role(Role::Button)
+                .aria_label("Scheduled task actions")
+                .size(px(28.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(9.375))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _, window, cx| {
+                        let button = press_return.read(cx).handle.clone();
+                        this.toggle_menu(&press_task, button, window, cx);
+                    }),
+                )
+                .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                    if event.is_keyboard() {
+                        let button = key_return.read(cx).handle.clone();
+                        this.toggle_menu(&key_task, button, window, cx);
+                    }
+                }))
+                .on_hover(cx.listener(|this, hovered: &bool, _, _| {
+                    this.menu_button_hovered = *hovered;
+                }))
+                .child(ButtonVisual {
+                    glyph: icon("thread-chat-actions", 16., t.text_tertiary),
+                    radius: px(9.375),
+                    hover: t.ghost_hover,
+                    foreground: t.text.opacity(0.85),
+                    selected: open,
+                })
+                .when(open, |d| d.child(self.menu_popup(task, t, cx))),
+            &menu_focus,
+            px(9.375),
+            px(2.),
+            cx,
+        );
         let starting = self.starting.contains(&task.id);
         let mut secondary = div().h(px(16.)).pr(px(5.)).flex().items_center();
-        if let Some(next) = task.next_run_at
+        if !paused
             && !starting
+            && let Some(next) = task.next_run_at
         {
             secondary = secondary
                 .child(text(
@@ -479,7 +689,13 @@ impl ScheduledSidebar {
             )
             .child(
                 secondary
-                    .child(text(task.cadence(), 12., 16., 430., t.text_tertiary))
+                    .child(text(
+                        if paused { "Paused" } else { task.cadence() },
+                        12.,
+                        16.,
+                        430.,
+                        t.text_tertiary,
+                    ))
                     .when(starting, |d| {
                         d.child(text("·", 12., 16., 430., t.text_tertiary).mx(px(4.)))
                             .child(text("Starting run…", 12., 16., 430., t.text_tertiary))
@@ -491,53 +707,27 @@ impl ScheduledSidebar {
                     .top_0()
                     .right(px(2.))
                     .h_full()
-                    .w(px(52.))
+                    .w(px(80.))
                     .pr(px(6.))
                     .flex()
                     .items_center()
                     .justify_end()
-                    .opacity(if open { 1. } else { 0. })
+                    .opacity(if show_controls { 1. } else { 0. })
                     .group_hover(group.clone(), |s| s.opacity(1.))
-                    .child(
-                        div()
-                            .id(SharedString::from(format!("{group}-actions")))
-                            .relative()
-                            .size(px(28.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded(px(9.375))
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .on_hover(cx.listener(|this, hovered: &bool, _, _| {
-                                this.menu_button_hovered = *hovered;
-                            }))
-                            .on_click({
-                                let id = task.id.clone();
-                                cx.listener(move |this, _, window, cx| {
-                                    this.toggle_menu(&id, window, cx)
-                                })
-                            })
-                            .child(ButtonVisual {
-                                glyph: icon("thread-chat-actions", 16., t.text_tertiary),
-                                radius: px(9.375),
-                                hover: t.ghost_hover,
-                                foreground: t.text.opacity(0.85),
-                                selected: open,
-                            })
-                            .when(open, |d| d.child(self.menu_popup(task, t, cx))),
-                    ),
+                    .child(tooltip(status, label, None, Side::Top))
+                    .child(menu),
             )
     }
 }
 
 impl Render for ScheduledSidebar {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = cx.theme();
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.theme().clone();
         let hover_bg = t.list_hover;
         let rows: Vec<_> = self
             .tasks
             .iter()
-            .map(|task| self.row(task, t, cx))
+            .map(|task| self.row(task, &t, window, cx))
             .collect();
         div()
             .size_full()
@@ -565,7 +755,7 @@ impl Render for ScheduledSidebar {
                                 icon_button(
                                     "search-tasks",
                                     icon("search", 16., t.text_tertiary),
-                                    t,
+                                    &t,
                                 )
                                 .on_click(crate::dispatch::<SearchTasks>),
                             ),
@@ -612,7 +802,7 @@ impl Render for ScheduledSidebar {
                                 icon_button(
                                     "filter-tasks",
                                     icon("automations-filter", 16., t.text_tertiary),
-                                    t,
+                                    &t,
                                 )
                                 .on_click(crate::dispatch::<FilterTasks>),
                             ),
@@ -1039,18 +1229,20 @@ impl Render for AutomationThread {
     }
 }
 
+fn status_icon(paused: bool, color: gpui::Hsla) -> crate::icon::Icon {
+    icon(
+        if paused {
+            "automation-resume"
+        } else {
+            "automation-pause"
+        },
+        16.,
+        color,
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn cards_fill_six_from_oracle() {
-        let server = serde_json::from_value(super::oracle("\"url\":\"/suggested_automations\""))
-            .expect("shape");
-        let titles: Vec<_> = super::cards(server).into_iter().map(|s| s.title).collect();
-        assert_eq!(titles.len(), 6);
-        assert_eq!(titles[0], "AP Lang practice");
-        assert_eq!(titles[3], "Weekly meal plan");
-    }
-
     #[test]
     fn only_the_original_event_prompt_is_event_triggered() {
         let event = "## When this happens\n> a PR opens\n>\n> in main\n\n## Perform action\n> review it\n\nTrailing";

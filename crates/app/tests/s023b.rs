@@ -458,10 +458,11 @@ fn click_queue(fx: &mut Fx, action: &'static str) -> Result<(f32, f32)> {
     fx.shot()?;
     let [x, y, width, height] =
         bbox(&recording()?["queue"]["result"]["submit"]["tray"]["row"]["bbox"])?;
+    // Steer, Delete, then the 24 px `…`, 8 px apart.
     let right_offset = if action.starts_with("queued-steer") {
-        60.
+        92.
     } else {
-        22.
+        54.
     };
     let at = (
         x + width - right_offset,

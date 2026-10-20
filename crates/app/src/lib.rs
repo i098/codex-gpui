@@ -11,10 +11,10 @@ pub mod qa;
 use anyhow::{Context as _, Result, ensure};
 use async_channel::Receiver;
 use bridge::types::{
-    ApprovalDecision, CommandApprovalRequest, ConfigReadResponse, FileChangeApprovalRequest, Model,
-    QueuedSubmission, Thread, ThreadItem, ThreadListResponse, ThreadQueueListResponse,
-    ThreadReadResponse, ThreadSection, ThreadStartResponse, ThreadStartedNotification,
-    ThreadStatus, TurnStatus,
+    Account, AccountReadResponse, ApprovalDecision, CommandApprovalRequest, ConfigReadResponse,
+    FileChangeApprovalRequest, Model, QueuedSubmission, Thread, ThreadItem, ThreadListResponse,
+    ThreadQueueListResponse, ThreadReadResponse, ThreadSection, ThreadStartResponse,
+    ThreadStartedNotification, ThreadStatus, TurnStatus,
 };
 use bridge::{Bridge, Event};
 use gpui::{
@@ -26,7 +26,7 @@ use gpui::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::{fs, path::PathBuf, sync::Arc, time::Duration};
 use theme::Theme;
 use ui::composer::{Approval, Composer, Permission, QueueAction, Submission};
@@ -51,7 +51,7 @@ use ui::screens::thread::view::{
 use ui::screens::{automations, mobile};
 use ui::toast::{Toast, Toaster};
 use ui::{
-    Copy, Cut, GoBack, GoForward, NewChat, OpenBackgroundTerminal, OpenChangesPanel,
+    Copy, Cut, GoBack, GoForward, LogOut, NewChat, OpenBackgroundTerminal, OpenChangesPanel,
     OpenCommandMenu, OpenMobileSetup, OpenScheduled, OpenSettings, Paste, Redo, SelectAll,
     SetTheme, Shell, ShowKeyboardShortcuts, ToggleChangesPanel, ToggleSidebar, Undo,
 };
@@ -147,6 +147,7 @@ pub fn menus() -> Vec<Menu> {
     vec![
         Menu::new("Codex").items([
             MenuItem::action("Settings…", OpenSettings),
+            MenuItem::action("Log Out", LogOut),
             MenuItem::separator(),
             MenuItem::os_submenu("Services", SystemMenuType::Services),
             MenuItem::separator(),
@@ -322,6 +323,14 @@ fn utc_offset() -> i64 {
 }
 
 /// Runs `task` to the end and prints its error.
+/// The original shows `Signed in as <email>` for ChatGPT sign-ins only.
+fn chatgpt_email(account: &AccountReadResponse) -> Option<String> {
+    match &account.account {
+        Some(Account::Chatgpt { email, .. }) => email.clone(),
+        _ => None,
+    }
+}
+
 fn log_err(task: Task<Result<()>>, cx: &App) {
     cx.foreground_executor()
         .spawn(async move {
@@ -379,6 +388,8 @@ pub struct Root {
     home: Entity<HomeMain>,
     /// Docked under every open thread.
     thread_composer: Entity<Composer>,
+    /// The queued submission `Edit message` took back into the composer, until it is sent.
+    queue_edit: Option<QueueEdit>,
     thread: Option<Entity<ThreadView>>,
     diff: Option<Entity<DiffPanel>>,
     /// The file viewer of [`SidePanel::File`]; cleared with the thread.
@@ -402,6 +413,9 @@ pub struct Root {
     dialog_to_composer: bool,
     /// Signed out: replaces the whole window.
     login: Option<Entity<Login>>,
+    logout_pending: bool,
+    /// The signed-in ChatGPT account's email (`account/read`), shown in the logout dialog.
+    account_email: Option<String>,
     bridge: Arc<Bridge>,
     host: Arc<dyn host::Host>,
     project_load: Option<Task<()>>,
@@ -410,6 +424,7 @@ pub struct Root {
     automation_load: Option<Task<()>>,
     /// Tasks whose `automation-run-now` has not answered; their rows read `Starting run…`.
     running_automations: HashSet<String>,
+    automation_updates: HashMap<String, Task<()>>,
     suggestion_load: Option<Task<()>>,
     /// The Scheduled routes' sidebar, fed the host's list when the read completes.
     scheduled: Option<Entity<automations::ScheduledSidebar>>,
@@ -429,8 +444,9 @@ pub struct Root {
     deleted_queued: Vec<DeletedQueuedMessage>,
     /// A successful steer must never be sent again when its queue deletion fails.
     steered_queued: HashSet<(String, String)>,
-    /// Id of the server request the composer's approval card answers.
-    approval: Option<Value>,
+    /// Server approval requests waiting for a decision, oldest first. The thread composer
+    /// shows the open thread's oldest one.
+    approvals: Vec<PendingApproval>,
     /// A commit, push or branch workflow is running (the original's single workflow state).
     git_busy: Option<&'static str>,
     git_status_load: Option<Task<()>>,
@@ -499,7 +515,11 @@ impl Root {
                     .ok();
             });
             composer.on_approval(move |decision, _, cx| {
-                this.update(cx, |this, _| this.answer(decision)).ok();
+                // Deferred: answering refreshes this composer's card.
+                let this = this.clone();
+                cx.defer(move |cx| {
+                    this.update(cx, |this, cx| this.answer(decision, cx)).ok();
+                });
             });
             composer
         });
@@ -630,6 +650,7 @@ impl Root {
                 project: state.project_root.as_deref().map(project_name),
             }),
             thread_composer,
+            queue_edit: None,
             thread: None,
             diff: None,
             file: None,
@@ -644,6 +665,8 @@ impl Root {
             dialog: None,
             dialog_to_composer: false,
             login: None,
+            logout_pending: false,
+            account_email: None,
             host: Arc::new(
                 host::CloudHost::from_env(host::app_server_credentials(bridge.clone()))
                     .with_bridge(bridge.clone()),
@@ -654,6 +677,7 @@ impl Root {
             running_automations: HashSet::new(),
             project_load: None,
             picking_project: false,
+            automation_updates: HashMap::new(),
             suggestion_load: None,
             scheduled: None,
             suggestions: None,
@@ -669,7 +693,7 @@ impl Root {
             queue_pending: false,
             deleted_queued: Vec::new(),
             steered_queued: HashSet::new(),
-            approval: None,
+            approvals: Vec::new(),
             git_busy: None,
             git_status_load: None,
             commit_cwd: None,
@@ -762,6 +786,7 @@ impl Root {
                 (catalog, config, skills)
             };
             this.update_in(cx, |this, window, cx| {
+                this.account_email = account.as_ref().and_then(chatgpt_email);
                 if account.is_some_and(|a| a.account.is_none() && a.requires_openai_auth) {
                     this.login = Some(cx.new(Login::new));
                 }
@@ -860,7 +885,7 @@ impl Root {
                 .all(|thread| thread.status != ThreadStatus::Active)
             && self.dialog.is_none()
             && self.command_menu.is_none()
-            && self.approval.is_none()
+            && self.approvals.is_empty()
             && self.automation_load.is_none()
             && self.state.confirm_before_close != ConfirmBeforeClose::Always
             && self.home.read(cx).composer.read(cx).restart_ready()
@@ -941,12 +966,18 @@ impl Root {
         &self.config
     }
 
-    /// Replaces the desktop host and cancels any pending host read.
+    /// Replaces the desktop host and cancels pending UI callbacks for its reads and updates.
     pub fn set_host(&mut self, host: Arc<dyn host::Host>, cx: &mut Context<Self>) {
         self.automation_load = None;
         self.project_load = None;
         self.suggestion_load = None;
         self.git_status_load = None;
+        self.automation_updates.clear();
+        if let Some(sidebar) = &self.scheduled {
+            for task in self.tasks() {
+                sidebar.update(cx, |sidebar, cx| sidebar.set_pending(&task.id, false, cx));
+            }
+        }
         if let Some(thread) = &self.thread {
             thread.update(cx, |view, cx| view.set_git_repository(None, cx));
         }
@@ -1555,7 +1586,6 @@ impl Root {
     }
 
     fn load_automations(&mut self, cx: &mut Context<Self>) {
-        self.automations = None;
         let host = self.host.clone();
         let read = cx.background_spawn(async move {
             host.fetch(&host::Request::post("list-automations", None))
@@ -1579,6 +1609,86 @@ impl Root {
             })
             .ok();
         }));
+    }
+
+    fn toggle_automation(&mut self, id: &str, cx: &mut Context<Self>) {
+        if self.automation_updates.contains_key(id) {
+            return;
+        }
+        let item = self
+            .automations
+            .as_ref()
+            .and_then(|list| list.as_ref().ok())
+            .and_then(|list| list["items"].as_array())
+            .and_then(|items| items.iter().find(|item| item["id"] == id));
+        let Some(item) = item else { return };
+        let status = match item["status"].as_str() {
+            Some("ACTIVE") => "PAUSED",
+            Some("PAUSED") => "ACTIVE",
+            _ => return,
+        };
+        let body = automation_update_body(item, status);
+        let id = id.to_owned();
+        self.automation_load = None;
+        if let Some(sidebar) = &self.scheduled {
+            sidebar.update(cx, |sidebar, cx| sidebar.set_pending(&id, true, cx));
+        }
+        let host = self.host.clone();
+        let expected_id = id.clone();
+        let read = cx.background_spawn(async move {
+            let response = host.fetch(&host::Request::post("automation-update", Some(body)))?;
+            let response = host::json_body(&response)?;
+            let item = response
+                .get("item")
+                .context("host response has no updated automation")?;
+            anyhow::ensure!(
+                item["id"] == expected_id && item["status"] == status,
+                "host returned a different automation or status"
+            );
+            serde_json::from_value::<automations::Task>(item.clone())?;
+            Ok::<_, anyhow::Error>(item.clone())
+        });
+        let update_key = id.clone();
+        let update = cx.spawn(async move |this, cx| {
+            let result = read.await;
+            this.update(cx, |this, cx| {
+                this.automation_updates.remove(&id);
+                if let Some(sidebar) = &this.scheduled {
+                    sidebar.update(cx, |sidebar, cx| sidebar.set_pending(&id, false, cx));
+                }
+                match result {
+                    Ok(item) => {
+                        if let Some(Ok(list)) = &mut this.automations
+                            && let Some(items) = list["items"].as_array_mut()
+                            && let Some(stored) = items.iter_mut().find(|item| item["id"] == id)
+                        {
+                            *stored = item;
+                        }
+                        let tasks = this.tasks();
+                        if let Some(sidebar) = &this.scheduled {
+                            sidebar.update(cx, |sidebar, cx| sidebar.set_tasks(tasks, cx));
+                        }
+                        this.toast(
+                            Toast::success(if status == "PAUSED" {
+                                "Successfully paused automation"
+                            } else {
+                                "Successfully resumed automation"
+                            }),
+                            cx,
+                        );
+                    }
+                    Err(error) => this.toast(
+                        Toast::danger("Could not update scheduled task")
+                            .description(error.to_string()),
+                        cx,
+                    ),
+                }
+                this.load_automations(cx);
+                cx.notify();
+            })
+            .ok();
+        });
+        self.automation_updates.insert(update_key, update);
     }
 
     fn load_suggestions(&mut self, cx: &mut Context<Self>) {
@@ -1726,6 +1836,9 @@ impl Root {
                 )
                 .await;
             this.update(cx, |this, cx| {
+                if this.signed_out() {
+                    return;
+                }
                 this.loading_more = false;
                 match page {
                     Ok(mut page) => {
@@ -1745,6 +1858,9 @@ impl Root {
 
     /// Puts `thread` at the top of Recents.
     fn add_thread(&mut self, thread: &Thread, cx: &mut Context<Self>) {
+        if self.signed_out() {
+            return;
+        }
         self.threads.retain(|t| t.id != thread.id);
         self.threads.insert(0, thread.clone());
         self.sidebar.update(cx, |s, cx| s.add_thread(thread, cx));
@@ -1893,6 +2009,11 @@ impl Root {
             Route::Mobile => Some(mobile::shell(cx)),
             Route::Home | Route::Thread(_) => None,
         };
+        if let Some(sidebar) = &self.scheduled {
+            for id in self.automation_updates.keys() {
+                sidebar.update(cx, |sidebar, cx| sidebar.set_pending(id, true, cx));
+            }
+        }
         if self.scheduled_route() {
             self.load_suggestions(cx);
         }
@@ -2279,6 +2400,7 @@ impl Root {
                         window.focus(&focus, cx);
                     }
                 }
+                DialogOutcome::LogOut => this.logout(window, cx),
                 DialogOutcome::RevertChanges { .. } => window.focus(&this.focus, cx),
                 DialogOutcome::DismissAnnouncement(model)
                 | DialogOutcome::UseAnnouncedModel { model, .. } => {
@@ -2340,6 +2462,66 @@ impl Root {
         cx.notify();
     }
 
+    fn logout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.logout_pending || self.signed_out() {
+            return;
+        }
+        self.logout_pending = true;
+        self.qa_work_started = true;
+        window.focus(&self.route_focus(cx), cx);
+        let bridge = self.bridge.clone();
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let result = bridge
+                .request::<_, Value>("account/logout", json!({}))
+                .await;
+            this.update_in(cx, |this, window, cx| {
+                this.logout_pending = false;
+                match result {
+                    Ok(_) => {
+                        this.login = Some(cx.new(Login::new));
+                        this.account_email = None;
+                        this.command_menu = None;
+                        this.dialog = None;
+                        this.thread = None;
+                        this.diff = None;
+                        this.file = None;
+                        this.split = None;
+                        this.tabs.clear();
+                        this.side = None;
+                        this.loaded.clear();
+                        this.approval = None;
+                        this.set_threads(&[], cx);
+                        this.set_next_cursor(None, cx);
+                        this.automation_load = None;
+                        this.project_load = None;
+                        this.suggestion_load = None;
+                        this.automations = None;
+                        this.scheduled = None;
+                        this.suggestions = None;
+                        this.back.clear();
+                        this.forward.clear();
+                        this.state.route = Route::Home;
+                        this.toaster = cx.new(|_| Toaster::new());
+                        for composer in [
+                            this.home.read(cx).composer.clone(),
+                            this.thread_composer.clone(),
+                        ] {
+                            composer.update(cx, |composer, cx| composer.clear_session(cx));
+                        }
+                        this.sync(window, cx);
+                    }
+                    Err(error) => {
+                        eprintln!("codex-gpui: logout: {error:#}");
+                        this.toast(Toast::danger("Could not log out. Try again."), cx);
+                        window.focus(&this.route_focus(cx), cx);
+                    }
+                }
+                cx.notify();
+            })
+        });
+        log_err(task, cx);
+    }
+
     /// `⌘W`: Electron main runs `closeTab` (`close-active-app-shell-tab`) while the thread
     /// route's panel shows a tab, else the window closes.
     fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2396,6 +2578,7 @@ impl Root {
                 "Open terminal" => window.dispatch_action(Box::new(OpenBackgroundTerminal), cx),
                 "Commit or push" => self.open_git_form(DialogKind::Commit, window, cx),
                 "Manage scheduled tasks" => window.dispatch_action(Box::new(OpenScheduled), cx),
+                "Log out" => window.dispatch_action(Box::new(LogOut), cx),
                 label => {
                     if let Some(section) = settings::section(label) {
                         self.open_settings_section(section, window, cx);
@@ -2460,6 +2643,9 @@ impl Root {
     }
 
     fn show_thread(&mut self, thread: Thread, window: &mut Window, cx: &mut Context<Self>) {
+        if self.signed_out() {
+            return;
+        }
         let running = thread
             .turns
             .iter()
@@ -2508,6 +2694,7 @@ impl Root {
         )
         .detach();
         self.thread = Some(view);
+        self.show_approval(cx);
         self.refresh_git_actions(cx);
         if self.state.route == route {
             self.sync(window, cx);
@@ -2555,7 +2742,7 @@ impl Root {
                 this.add_thread(&thread, cx);
                 this.show_thread(thread, window, cx);
             })?;
-            turn_start(&bridge, &id, &s).await
+            turn_start(&bridge, &id, &s, user_input(&s)).await
         });
         log_err(task, cx);
     }
@@ -2563,8 +2750,9 @@ impl Root {
     /// Thread composer: `turn/start` on the open thread, resuming it first if needed. While a
     /// turn runs (CP-108), `Follow-up behavior` decides: `Queue` adds the message to the
     /// app-server's queue (`thread/queue/add`, drained by the server when the turn ends),
-    /// `Steer` sends it into the turn (`turn/steer`). A refusal shows `Error submitting
-    /// message` and puts the text back.
+    /// `Steer` sends it into the turn (`turn/steer`). A queued draft taken back by `Edit
+    /// message` returns to its place in the queue. A refusal shows `Error submitting
+    /// message` and puts the draft back.
     fn send(&mut self, s: Submission, window: &mut Window, cx: &mut Context<Self>) {
         self.qa_work_started = true;
         let Some(view) = &self.thread else { return };
@@ -2579,12 +2767,14 @@ impl Root {
             .find(|turn| turn.status == TurnStatus::InProgress)
             .map(|turn| turn.id.clone());
         let queue = self.config["desktop"]["followUpQueueMode"] == "queue";
+        let edit = self.queue_edit.take().filter(|edit| edit.thread_id == id);
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             resume_if(resume, &bridge, &this, &id, cx).await?;
+            let mut input = user_input(&s);
+            input.extend(edit.iter().flat_map(|edit| edit.extra.clone()));
             let Some(turn_id) = running else {
-                return turn_start(&bridge, &id, &s).await;
+                return turn_start(&bridge, &id, &s, input).await;
             };
-            let input = json!([{ "type": "text", "text": s.text, "text_elements": [] }]);
             let (method, params) = if queue {
                 let params = json!({
                     "threadId": id, "input": input, "clientUserMessageId": uuid_v4(),
@@ -2594,17 +2784,27 @@ impl Root {
                 let params = json!({ "threadId": id, "input": input, "expectedTurnId": turn_id });
                 ("turn/steer", params)
             };
-            let result = bridge.request::<_, Value>(method, params).await.map(drop);
+            let result = bridge.request::<_, Value>(method, params).await;
+            if queue
+                && let (Ok(added), Some(edit)) = (&result, &edit)
+                && let Some(added) = added["queuedSubmission"]["id"].as_str()
+                && let Err(error) = restore_place(&bridge, &id, added, edit).await
+            {
+                eprintln!("codex-gpui: thread/queue/reorder: {error:#}");
+            }
             this.update(cx, |this, cx| match &result {
-                Ok(()) if queue => this.list_queue(id, cx),
-                Ok(()) => {}
+                Ok(_) if queue => this.list_queue(id, cx),
+                Ok(_) => {}
                 Err(_) => {
-                    this.thread_composer
-                        .update(cx, |c, cx| c.restore_text(&s.text, cx));
+                    this.queue_edit = edit;
+                    this.thread_composer.update(cx, |c, cx| {
+                        c.restore_text(&s.text, cx);
+                        c.drop_files(&s.attachments, cx);
+                    });
                     this.toast(Toast::danger("Error submitting message"), cx);
                 }
             })?;
-            result
+            result.map(drop)
         });
         log_err(task, cx);
     }
@@ -2632,13 +2832,20 @@ impl Root {
     }
 
     fn queue_action(&mut self, action: &QueueAction, window: &mut Window, cx: &mut Context<Self>) {
+        match action {
+            QueueAction::Edit(id) => return self.edit_queued(id.clone(), window, cx),
+            QueueAction::Queueing(queue) => return self.set_queueing(*queue, cx),
+            _ => {}
+        }
         if self.queue_pending {
             return;
         }
         let Route::Thread(thread_id) = self.state.route.clone() else {
             return;
         };
-        let (QueueAction::Steer(id) | QueueAction::Delete(id)) = action;
+        let (QueueAction::Steer(id) | QueueAction::Delete(id)) = action else {
+            return;
+        };
         let rows = self.thread_composer.read(cx).queued();
         let Some(at) = rows.iter().position(|row| row.submission.id == *id) else {
             return;
@@ -2780,6 +2987,73 @@ impl Root {
             result
         });
         log_err(task, cx);
+    }
+
+    /// `Edit message` on a queued row: `thread/queue/delete` takes the submission out of the
+    /// queue, then its text and images go back to the composer. Sending the draft queues it
+    /// again where it was ([`restore_place`]). A submission already gone only refreshes the
+    /// tray; one the composer cannot show stays queued.
+    fn edit_queued(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.queue_pending {
+            return;
+        }
+        let Some(view) = &self.thread else { return };
+        let thread_id = view.read(cx).id().to_owned();
+        let composer = self.thread_composer.read(cx);
+        let rows = composer.queued();
+        let Some(index) = rows.iter().position(|row| row.submission.id == id) else {
+            return;
+        };
+        let neighbour = |at: Option<usize>| {
+            at.and_then(|i| rows.get(i))
+                .map(|r| r.submission.id.clone())
+        };
+        let (previous, next) = (neighbour(index.checked_sub(1)), neighbour(Some(index + 1)));
+        let (text, images, extra) = split_input(&rows[index].submission.input);
+        if text.is_empty() && images.is_empty() {
+            self.toast(Toast::danger("Couldn’t edit this queued message"), cx);
+            return;
+        }
+        self.begin_queue_action(cx);
+        let bridge = self.bridge.clone();
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let params = json!({ "threadId": thread_id, "queuedSubmissionId": id });
+            let result = bridge
+                .request::<_, Value>("thread/queue/delete", params)
+                .await;
+            this.update_in(cx, |this, window, cx| {
+                match &result {
+                    Ok(taken) if taken["deleted"] == true => {
+                        this.queue_edit = Some(QueueEdit {
+                            thread_id: thread_id.clone(),
+                            previous,
+                            next,
+                            extra,
+                        });
+                        this.thread_composer
+                            .update(cx, |c, cx| c.load_queued(&text, &images, window, cx));
+                    }
+                    Ok(_) => {}
+                    Err(_) => this.toast(Toast::danger("Couldn’t edit this queued message"), cx),
+                }
+                this.finish_queue_action(cx);
+            })?;
+            result.map(drop)
+        });
+        log_err(task, cx);
+    }
+
+    /// `Turn off queueing` / `Turn on queueing`: `Follow-up behavior` as the Settings row
+    /// writes it.
+    fn set_queueing(&mut self, queue: bool, cx: &mut Context<Self>) {
+        let value = if queue { "queue" } else { "steer" };
+        self.write_setting(
+            &SettingChanged {
+                path: "desktop.followUpQueueMode",
+                value: value.into(),
+            },
+            cx,
+        );
     }
 
     fn edit_message(&mut self, edit: EditMessage, window: &mut Window, cx: &mut Context<Self>) {
@@ -3336,6 +3610,7 @@ impl Root {
         self.qa_work_started = true;
         let bridge = self.bridge.clone();
         let review_delivery = params["keyPath"] == "desktop.reviewDelivery";
+        let queue_mode = params["keyPath"] == "desktop.followUpQueueMode";
         let task = cx.spawn(async move |this, cx| -> Result<()> {
             if let Err(error) = bridge.request::<_, Value>(method, params).await {
                 if review_delivery {
@@ -3346,6 +3621,15 @@ impl Root {
                         );
                     })?;
                 }
+                if queue_mode {
+                    // The composer shows the behavior that still applies.
+                    this.update(cx, |this, cx| {
+                        let queue = this.config["desktop"]["followUpQueueMode"] == "queue";
+                        this.thread_composer
+                            .update(cx, |c, cx| c.set_queue_mode(queue, cx));
+                        this.toast(Toast::danger("Couldn’t save your changes. Try again"), cx);
+                    })?;
+                }
                 return Err(error);
             }
             this.update(cx, |this, _| apply(&mut this.config))
@@ -3353,17 +3637,88 @@ impl Root {
         log_err(task, cx);
     }
 
-    fn answer(&mut self, decision: ApprovalDecision) {
-        if let Some(id) = self.approval.take()
-            && let Err(err) = self.bridge.respond(id, json!({ "decision": decision }))
+    /// Settles the open thread's oldest approval request (the one its card shows) with the
+    /// user's decision, then shows the next one.
+    fn answer(&mut self, decision: ApprovalDecision, cx: &mut Context<Self>) {
+        let open = self.thread.as_ref().map(|v| v.read(cx).id().to_owned());
+        let Some(i) = self
+            .approvals
+            .iter()
+            .position(|p| Some(p.thread()) == open.as_deref())
+        else {
+            return;
+        };
+        let pending = self.approvals.remove(i);
+        if let Err(err) = self
+            .bridge
+            .respond(pending.id, json!({ "decision": decision }))
         {
             eprintln!("codex-gpui: approval: {err:#}");
         }
+        self.show_approval(cx);
+    }
+
+    /// The card of `pending`; `None` for another request kind or params that do not parse.
+    fn approval_card(&self, pending: &PendingApproval, cx: &App) -> Option<Approval> {
+        let params = pending.params.clone();
+        match pending.method.as_str() {
+            "item/commandExecution/requestApproval" => {
+                let request = serde_json::from_value::<CommandApprovalRequest>(params).ok()?;
+                return Some(Approval::command(&request));
+            }
+            "item/fileChange/requestApproval" => {}
+            _ => return None,
+        }
+        let request = serde_json::from_value::<FileChangeApprovalRequest>(params).ok()?;
+        // The edited paths come from the request's thread, when it is the open one.
+        let paths: Vec<String> = self
+            .thread
+            .as_ref()
+            .map(|v| v.read(cx))
+            .filter(|view| view.id() == request.thread_id)
+            .and_then(|view| {
+                view.turns()
+                    .iter()
+                    .flat_map(|t| &t.items)
+                    .find_map(|i| match i {
+                        ThreadItem::FileChange { id, changes, .. } if *id == request.item_id => {
+                            Some(changes.iter().map(|c| c.path.clone()).collect())
+                        }
+                        _ => None,
+                    })
+            })
+            .unwrap_or_default();
+        Some(Approval::file_change(&request, &paths))
+    }
+
+    /// Puts the open thread's oldest approval request on the thread composer, or no card.
+    fn show_approval(&self, cx: &mut Context<Self>) {
+        let open = self.thread.as_ref().map(|v| v.read(cx).id().to_owned());
+        let card = self
+            .approvals
+            .iter()
+            .find(|p| Some(p.thread()) == open.as_deref())
+            .and_then(|p| self.approval_card(p, cx));
+        self.thread_composer
+            .update(cx, |c, cx| c.set_approval(card, cx));
     }
 
     /// Every server message: streamed into the open thread and the sign-in view, plus
     /// Recents updates and approval prompts.
     pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        if let Some(login) = &self.login {
+            login.update(cx, |login, cx| login.apply(&event, cx));
+            if matches!(&event, Event::Notification { method, params }
+                if method == "account/login/completed" && params["success"] == true)
+            {
+                self.login = None;
+                self.read_account_email(cx);
+                self.refresh_threads(cx);
+                self.load_projects(cx);
+                cx.notify();
+            }
+            return;
+        }
         if let Event::Notification { method, params } = &event
             && let Some(generation) = &mut self.generation
             && params["threadId"].as_str() == Some(&generation.thread)
@@ -3421,9 +3776,6 @@ impl Root {
                     .update(cx, |c, cx| c.set_running(running, cx));
             }
         }
-        if let Some(login) = &self.login {
-            login.update(cx, |login, cx| login.apply(&event, cx));
-        }
         match event {
             Event::Notification { method, params } => match method.as_str() {
                 "thread/started" if params["thread"]["ephemeral"] != true => {
@@ -3459,7 +3811,18 @@ impl Root {
                         })
                         .detach();
                     }
+                    // The ended turn's requests can no longer be answered.
+                    let turn = &params["turn"]["id"];
+                    self.approvals.retain(|p| {
+                        p.params["threadId"] != params["threadId"] || p.params["turnId"] != *turn
+                    });
+                    self.show_approval(cx);
                     self.refresh_threads(cx)
+                }
+                // Answered or withdrawn elsewhere: the request leaves without an answer.
+                "serverRequest/resolved" => {
+                    self.approvals.retain(|p| p.id != params["requestId"]);
+                    self.show_approval(cx);
                 }
                 "thread/queue/changed" => {
                     if let Some(id) = params["threadId"].as_str()
@@ -3475,63 +3838,42 @@ impl Root {
                         composer.update(cx, |c, cx| c.apply_file_search(completed, &params, cx));
                     }
                 }
-                "account/login/completed" if params["success"] == true => {
-                    self.login = None;
-                    cx.notify();
-                }
                 _ => {}
             },
             // ponytail: other server requests (user input, permissions) stay unanswered;
             // answer them when their UI lands.
             Event::Request { id, method, params } => {
-                let approval = match method.as_str() {
-                    "item/commandExecution/requestApproval" => {
-                        serde_json::from_value::<CommandApprovalRequest>(params)
-                            .ok()
-                            .map(|r| Approval::command(&r))
-                    }
-                    "item/fileChange/requestApproval" => serde_json::from_value::<
-                        FileChangeApprovalRequest,
-                    >(params)
-                    .ok()
-                    .map(|r| {
-                        let paths: Vec<String> = self
-                            .thread
-                            .as_ref()
-                            .and_then(|v| {
-                                v.read(cx)
-                                    .turns()
-                                    .iter()
-                                    .flat_map(|t| &t.items)
-                                    .find_map(|i| match i {
-                                        ThreadItem::FileChange { id, changes, .. }
-                                            if *id == r.item_id =>
-                                        {
-                                            Some(changes.iter().map(|c| c.path.clone()).collect())
-                                        }
-                                        _ => None,
-                                    })
-                            })
-                            .unwrap_or_default();
-                        Approval::file_change(&r, &paths)
-                    }),
-                    _ => None,
-                };
-                if let Some(approval) = approval {
-                    self.approval = Some(id);
-                    self.thread_composer
-                        .update(cx, |c, cx| c.set_approval(Some(approval), cx));
+                let pending = PendingApproval { id, method, params };
+                if self.approval_card(&pending, cx).is_some() {
+                    self.approvals.push(pending);
+                    self.show_approval(cx);
                 }
             }
         }
     }
 
     /// Reads the first `thread/list` page again; threads of later loaded pages stay after it.
+    /// Reads the email of the account that just signed in; a failure leaves the dialog without it.
+    fn read_account_email(&self, cx: &mut Context<Self>) {
+        let bridge = self.bridge.clone();
+        let task = cx.spawn(async move |this, cx| -> Result<()> {
+            let account = bridge.account_read().await?;
+            this.update(cx, |this, _| this.account_email = chatgpt_email(&account))
+        });
+        log_err(task, cx);
+    }
+
     fn refresh_threads(&self, cx: &mut Context<Self>) {
         let bridge = self.bridge.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {
             let mut list = bridge.thread_list().await?;
             this.update(cx, |this, cx| {
+                if this.signed_out() {
+                    return;
+                }
+                if this.threads.is_empty() {
+                    this.set_next_cursor(list.next_cursor, cx);
+                }
                 let fresh: HashSet<&str> = list.data.iter().map(|t| t.id.as_str()).collect();
                 let rest: Vec<Thread> = this
                     .threads
@@ -3633,15 +3975,81 @@ fn apply_permissions(params: &mut Value, permission: Permission) {
     params["approvalsReviewer"] = reviewer.into();
 }
 
-/// `turn/start` with the prompt, attachments, model, effort and Fast mode.
-async fn turn_start(bridge: &Bridge, thread_id: &str, s: &Submission) -> Result<()> {
+/// What `Edit message` returns to the composer from a queued submission's input: its text, its
+/// local images, and the rest (remote images, audio, skills, mentions), which the composer
+/// cannot show and the next send passes through unchanged.
+fn split_input(input: &[Value]) -> (String, Vec<PathBuf>, Vec<Value>) {
+    let (mut text, mut images, mut extra) = (String::new(), Vec::new(), Vec::new());
+    for part in input {
+        match (part["type"].as_str(), part["path"].as_str()) {
+            (Some("text"), _) => text.push_str(part["text"].as_str().unwrap_or_default()),
+            (Some("localImage"), Some(path)) if part["detail"].is_null() => {
+                images.push(PathBuf::from(path));
+            }
+            _ => extra.push(part.clone()),
+        }
+    }
+    (text, images, extra)
+}
+
+/// A queued draft taken back by `Edit message`: where it stood in the queue, and the input
+/// the composer cannot show.
+struct QueueEdit {
+    thread_id: String,
+    previous: Option<String>,
+    next: Option<String>,
+    extra: Vec<Value>,
+}
+
+/// After an edited draft is queued again (`thread/queue/add` appends it), moves it before the
+/// submission that followed it, else after the one that preceded it, as the original restores
+/// an edit (`thread/queue/reorder`). Other positions need no reorder.
+async fn restore_place(
+    bridge: &Bridge,
+    thread_id: &str,
+    added: &str,
+    edit: &QueueEdit,
+) -> Result<()> {
+    let list: ThreadQueueListResponse = bridge
+        .request(
+            "thread/queue/list",
+            json!({ "threadId": thread_id, "cursor": null }),
+        )
+        .await?;
+    // ponytail: a reorder of a partial page would drop the rest; queues of one page only.
+    if list.next_cursor.is_some() {
+        return Ok(());
+    }
+    let mut ids: Vec<_> = list
+        .data
+        .into_iter()
+        .map(|row| row.id)
+        .filter(|id| id != added)
+        .collect();
+    let find = |id: &Option<String>| ids.iter().position(|row| Some(row) == id.as_ref());
+    let at = match (find(&edit.next), find(&edit.previous)) {
+        (Some(next), _) => next,
+        (None, Some(previous)) => previous + 1,
+        (None, None) => return Ok(()),
+    };
+    ids.insert(at, added.to_owned());
+    bridge
+        .request::<_, Value>(
+            "thread/queue/reorder",
+            json!({ "threadId": thread_id, "queuedSubmissionIds": ids }),
+        )
+        .await?;
+    Ok(())
+}
+
+/// The prompt as `turn/start` input; non-image files go in as paths the agent can open.
+fn user_input(s: &Submission) -> Vec<Value> {
     const IMAGES: [&str; 5] = ["png", "jpg", "jpeg", "gif", "webp"];
     let (images, files): (Vec<_>, Vec<_>) = s.attachments.iter().partition(|p| {
         p.extension()
             .and_then(|e| e.to_str())
             .is_some_and(|e| IMAGES.contains(&e.to_lowercase().as_str()))
     });
-    // Non-image files go in as paths the agent can open.
     let text = files
         .iter()
         .fold(s.text.clone(), |text, p| format!("{text}\n{}", p.display()));
@@ -3651,6 +4059,16 @@ async fn turn_start(bridge: &Bridge, thread_id: &str, s: &Submission) -> Result<
             .iter()
             .map(|p| json!({ "type": "localImage", "path": p })),
     );
+    input
+}
+
+/// `turn/start` with the prompt, attachments, model, effort and Fast mode.
+async fn turn_start(
+    bridge: &Bridge,
+    thread_id: &str,
+    s: &Submission,
+    input: Vec<Value>,
+) -> Result<()> {
     let mut params = json!({
         "threadId": thread_id,
         "input": input,
@@ -3688,6 +4106,20 @@ struct Generation {
     thread: String,
     text: Option<String>,
     done: async_channel::Sender<Result<Option<String>, String>>,
+}
+
+/// A command or file-change approval request that waits for the user's decision.
+struct PendingApproval {
+    /// The server request's id: the answer and `serverRequest/resolved` carry it.
+    id: Value,
+    method: String,
+    params: Value,
+}
+
+impl PendingApproval {
+    fn thread(&self) -> &str {
+        self.params["threadId"].as_str().unwrap_or_default()
+    }
 }
 
 /// What a submitted commit form, or the push-only command, asks of one repository.
@@ -4155,11 +4587,25 @@ fn generation_instructions(context: &str) -> String {
 
 impl Render for Root {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let content: AnyElement = match (&self.login, &self.page, &self.split) {
-            (Some(login), ..) => login.clone().into_any_element(),
-            (None, Some(page), _) => page.clone().into_any_element(),
-            (None, None, Some(split)) => split.clone().into_any_element(),
-            (None, None, None) => self.shell.clone().into_any_element(),
+        if let Some(login) = &self.login {
+            return div()
+                .size_full()
+                .relative()
+                .font_family(ui::SANS)
+                .track_focus(&self.focus)
+                .on_action(cx.listener(|this, _: &CloseWindow, window, cx| {
+                    this.close_window(window, cx);
+                }))
+                .on_action(|_: &Minimize, window, _| window.minimize_window())
+                .on_action(|_: &Zoom, window, _| window.zoom_window())
+                .child(login.clone())
+                .children(self.dialog.clone())
+                .into_any_element();
+        }
+        let content: AnyElement = match (&self.page, &self.split) {
+            (Some(page), _) => page.clone().into_any_element(),
+            (None, Some(split)) => split.clone().into_any_element(),
+            (None, None) => self.shell.clone().into_any_element(),
         };
         let root = div()
             .size_full()
@@ -4204,6 +4650,13 @@ impl Render for Root {
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
                 this.navigate(Route::Settings, window, cx)
             }))
+            .on_action(cx.listener(|this, _: &LogOut, window, cx| {
+                if !this.logout_pending {
+                    let email = this.account_email.clone();
+                    let dialog = cx.new(|cx| Dialog::logout(email, cx));
+                    this.show_dialog(dialog, window, cx);
+                }
+            }))
             .on_action(cx.listener(|this, _: &OpenScheduled, window, cx| {
                 this.navigate(Route::Scheduled, window, cx)
             }))
@@ -4215,6 +4668,11 @@ impl Render for Root {
             .on_action(
                 cx.listener(|this, a: &automations::RunAutomationNow, _, cx| {
                     this.run_automation_now(a.id.clone(), cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|this, action: &automations::ToggleAutomation, _, cx| {
+                    this.toggle_automation(&action.id, cx);
                 }),
             )
             .on_action(cx.listener(|this, _: &automations::NewTask, window, cx| {
@@ -4324,6 +4782,34 @@ impl Render for Root {
             .children(self.command_menu.clone())
             .child(self.toaster.clone())
             .children(self.dialog.clone());
-        features::actions(root, cx)
+        features::actions(root, cx).into_any_element()
     }
+}
+
+fn automation_update_body(item: &Value, status: &str) -> Value {
+    let heartbeat = item["kind"] == "heartbeat";
+    let mut body = json!({
+        "id": item["id"], "kind": item["kind"], "name": item["name"],
+        "prompt": item["prompt"], "status": status, "rrule": item["rrule"],
+        "notificationPolicy": item["notificationPolicy"],
+        "model": if heartbeat { Value::Null } else { item["model"].clone() },
+        "reasoningEffort": if heartbeat { Value::Null } else { item["reasoningEffort"].clone() },
+    });
+    if heartbeat {
+        body["targetThreadId"] = item["targetThreadId"].clone();
+    } else {
+        body["autoArchive"] = json!(item["autoArchive"].as_bool().unwrap_or(false));
+        body["projectId"] = match item["target"]["type"].as_str() {
+            Some("project") => item["target"]["projectId"].clone(),
+            Some("projectless") => Value::Null,
+            _ => item["cwds"]
+                .get(0)
+                .filter(|cwd| **cwd != "~")
+                .cloned()
+                .unwrap_or(Value::Null),
+        };
+        body["executionEnvironment"] = item["executionEnvironment"].clone();
+        body["localEnvironmentConfigPath"] = item["localEnvironmentConfigPath"].clone();
+    }
+    body
 }
