@@ -120,6 +120,17 @@ pub fn recorded_host_settings() -> Result<app::host_settings::Settings> {
     Ok(settings)
 }
 
+#[cfg(target_os = "macos")]
+fn install_panic_hook() {
+    static INSTALLED: std::sync::Once = std::sync::Once::new();
+    INSTALLED.call_once(|| {
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+    });
+}
+
 /// The app on a replayed app-server in a headless window.
 pub struct Fx {
     pub cx: HeadlessAppContext,
@@ -200,6 +211,8 @@ impl Fx {
         events: async_channel::Receiver<Event>,
         settings: app::host_settings::Settings,
     ) -> Result<Self> {
+        #[cfg(target_os = "macos")]
+        install_panic_hook();
         let clock = ui::screens::thread::view::Clock {
             elapsed_since: Some(Instant::now()),
             ..CAPTURE_CLOCK
@@ -737,6 +750,8 @@ fn block_on<T>(f: impl Future<Output = T>) -> T {
 // ponytail: stands in for a request log in `Bridge` itself (another crate); replace with
 // `Bridge::sent()` when one exists and delete this proxy.
 pub fn proxy_child() {
+    #[cfg(target_os = "macos")]
+    install_panic_hook();
     let (Some(script), Some(log)) = (env::var_os(PROXY_SCRIPT), env::var_os(PROXY_LOG)) else {
         return;
     };

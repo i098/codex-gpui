@@ -9,6 +9,11 @@ The fixtures do not record some methods (`thread/archive`, `thread/fork`, `threa
 Run it on the Mac: `tools/mac.sh -l flows 'cargo test -p app'`.
 To run some flows only, add a name filter: `cargo test -p app --test flows -- settings`.
 
+The shared macOS test setup installs an exit-on-panic hook before GPUI starts.
+A panic prints its message and exits with code 101 instead of opening a system crash dialog.
+Check `~/Library/Logs/DiagnosticReports` before and after each Mac run.
+Stop and fix the cause if a new report appears.
+
 ## Status values
 
 - **PASS (flow)**: the named flow or slice test in `crates/app/tests/` passes.
