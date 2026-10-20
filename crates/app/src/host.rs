@@ -75,6 +75,10 @@ pub trait Host: Send + Sync {
         None
     }
 
+    fn supports_cloud_search(&self) -> bool {
+        false
+    }
+
     /// Reads the original sidebar project state off the UI thread.
     fn projects(&self) -> Result<Vec<Project>> {
         bail!("sidebar project state is unsupported by this host")
@@ -208,6 +212,12 @@ impl Host for ReplayHost {
             .find(|e| e.request == *request)
             .map(|e| e.response.clone())
             .context("no recorded host response for this exact request")
+    }
+
+    fn supports_cloud_search(&self) -> bool {
+        self.exchanges.iter().any(|exchange| {
+            matches!(&exchange.request, Request::Http(request) if request["url"] == "/global/search")
+        })
     }
 
     fn projects(&self) -> Result<Vec<Project>> {
@@ -1503,6 +1513,10 @@ impl Host for CloudHost {
         }
     }
 
+    fn supports_cloud_search(&self) -> bool {
+        true
+    }
+
     fn identity(&self) -> Option<Identity> {
         let claims = claims(&self.credentials(false).ok()?.token);
         Some(Identity {
@@ -1514,7 +1528,7 @@ impl Host for CloudHost {
 }
 
 /// A random v4 UUID from the standard library's hasher keys.
-fn device_id() -> String {
+pub(crate) fn device_id() -> String {
     use std::hash::{BuildHasher as _, RandomState};
     let a = (RandomState::new().hash_one(0u8) & !0xf000) | 0x4000;
     let b = (RandomState::new().hash_one(1u8) & !(0xc << 60)) | (0x8 << 60);

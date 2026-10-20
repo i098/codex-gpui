@@ -111,8 +111,8 @@ const FLOWS: &[(&str, Flow)] = &[
     ("settings_select_menu", settings_select_menu),
     ("parity_sidebar", || {
         parity_flow("sidebar", |fx| {
-            fx.click(SEARCH)?;
-            fx.keys("m a t h")
+            open_recorded_sidebar_search(fx)?;
+            Ok(())
         })
     }),
     ("worked_for_expands", worked_for_expands),

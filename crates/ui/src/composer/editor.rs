@@ -32,6 +32,11 @@ impl Composer {
         cx.default_global::<TransparentCaret>().0 = transparent;
     }
 
+    pub fn caret_transparent(cx: &App) -> bool {
+        cx.try_global::<TransparentCaret>()
+            .is_some_and(|state| state.0)
+    }
+
     pub(super) fn cursor(&self) -> usize {
         if self.selection_reversed {
             self.selected_range.start

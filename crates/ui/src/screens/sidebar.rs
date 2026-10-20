@@ -1088,6 +1088,7 @@ struct Item {
     keys: Option<SharedString>,
     /// Chat rows: the thread id.
     thread: Option<String>,
+    url: Option<String>,
     /// Chat rows: the `thread/search` content match, shown under the title.
     snippet: Option<SharedString>,
     /// Chat rows: added by `thread/search` (not in `thread/list`); dropped with the query.
@@ -1646,13 +1647,17 @@ pub struct CommandMenu {
     show_caret: bool,
     selected: usize,
     focus: FocusHandle,
+    retry_focus: FocusHandle,
     /// A thread is open: its commands show (`Search files`, `Mark as unread`, ...).
     thread_open: bool,
     git_available: bool,
     /// Bumped on every query change; a debounced search only fires for the latest.
     search_gen: usize,
-    /// `thread/search` in flight: the spinner next to `Chats`.
+    /// The local and ChatGPT searches complete independently.
     searching: bool,
+    cloud_enabled: bool,
+    cloud_searching: bool,
+    cloud_error: bool,
 }
 
 /// What the command menu asks its owner to do.
@@ -1663,9 +1668,24 @@ pub enum CommandMenuEvent {
     OpenThread(String),
     /// A command row, by its label (`New chat`, `General`, `Manage scheduled tasks`, ...).
     Command(SharedString),
-    /// The query has 3+ chars and rested [`SEARCH_DEBOUNCE`]: send `thread/search` for it and
-    /// answer with [`CommandMenu::set_search_results`].
-    Search(String),
+    /// Starts the local and enabled cloud searches after the input debounce.
+    Search(SearchRequest),
+    RetryCloudSearch(SearchRequest),
+    OpenUrl(String),
+}
+
+#[derive(Clone)]
+pub struct SearchRequest {
+    pub term: SharedString,
+    pub generation: usize,
+}
+
+pub struct CloudSearchHit {
+    pub url: String,
+    pub title: String,
+    pub snippet: Option<String>,
+    pub updated_at: i64,
+    pub source: &'static str,
 }
 
 /// One `thread/search` result.
@@ -2253,11 +2273,99 @@ impl CommandMenu {
             show_caret: true,
             selected: 0,
             focus: cx.focus_handle(),
+            retry_focus: cx.focus_handle(),
             thread_open,
             git_available: false,
             search_gen: 0,
             searching: false,
+            cloud_enabled: false,
+            cloud_searching: false,
+            cloud_error: false,
         }
+    }
+
+    pub fn with_cloud_search(mut self, enabled: bool) -> Self {
+        self.cloud_enabled = enabled;
+        self
+    }
+
+    pub fn cloud_search_enabled(&self) -> bool {
+        self.cloud_enabled
+    }
+
+    pub fn search_pending(&self) -> (bool, bool) {
+        (self.searching, self.cloud_searching)
+    }
+
+    pub fn current_search(&self, request: &SearchRequest) -> bool {
+        self.search_gen == request.generation && self.query.trim() == request.term.as_ref()
+    }
+
+    fn selected_key(&self) -> Option<(Option<String>, Option<String>, SharedString)> {
+        self.visible()
+            .into_iter()
+            .flat_map(|(_, rows)| rows)
+            .nth(self.selected)
+            .map(|item| (item.thread.clone(), item.url.clone(), item.label.clone()))
+    }
+
+    fn restore_selection(&mut self, key: Option<(Option<String>, Option<String>, SharedString)>) {
+        let visible = self.visible();
+        let count = visible.iter().map(|(_, rows)| rows.len()).sum::<usize>();
+        self.selected = key
+            .and_then(|key| {
+                visible.iter().flat_map(|(_, rows)| rows).position(|item| {
+                    item.thread == key.0 && item.url == key.1 && item.label == key.2
+                })
+            })
+            .unwrap_or(self.selected)
+            .min(count.saturating_sub(1));
+    }
+
+    fn retry_cloud_search(&mut self, cx: &mut Context<Self>) {
+        if !self.cloud_enabled || self.cloud_searching {
+            return;
+        }
+        self.cloud_error = false;
+        self.cloud_searching = true;
+        cx.emit(CommandMenuEvent::RetryCloudSearch(SearchRequest {
+            term: self.query.trim().to_owned().into(),
+            generation: self.search_gen,
+        }));
+        cx.notify();
+    }
+
+    pub fn set_cloud_search_results(
+        &mut self,
+        request: &SearchRequest,
+        result: Result<Vec<CloudSearchHit>, ()>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.current_search(request) {
+            return;
+        }
+        let selected = self.selected_key();
+        self.cloud_searching = false;
+        self.cloud_error = result.is_err();
+        let chats = &mut self.groups[0].1;
+        chats.retain(|item| item.url.is_none());
+        if let Ok(hits) = result {
+            chats.extend(hits.into_iter().map(|hit| {
+                let label: SharedString = hit.title.into();
+                Item {
+                    search_value: label.clone(),
+                    label,
+                    updated_at: hit.updated_at,
+                    project: Some(hit.source.into()),
+                    url: Some(hit.url),
+                    snippet: hit.snippet.map(Into::into),
+                    from_search: true,
+                    ..Default::default()
+                }
+            }));
+        }
+        self.restore_selection(selected);
+        cx.notify();
     }
 
     pub fn set_git_available(&mut self, available: bool, cx: &mut Context<Self>) {
@@ -2308,6 +2416,9 @@ impl CommandMenu {
                             .then_with(|| b.1.cmp(&a.1))
                             .then_with(|| right.updated_at.cmp(&left.updated_at))
                     });
+                }
+                if *heading == "Chats" && !query.is_empty() {
+                    ranked.truncate(SEARCH_LIMIT as usize);
                 }
                 (
                     *heading,
@@ -2376,17 +2487,17 @@ impl CommandMenu {
 
     /// `thread/search` answered for `term`: the matching chats get their snippet, the
     /// results outside `thread/list` join `Chats`. A stale term is ignored.
-    pub fn set_search_results(&mut self, term: &str, hits: Vec<SearchHit>, cx: &mut Context<Self>) {
-        if term != self.query.trim() {
+    pub fn set_search_results(
+        &mut self,
+        request: &SearchRequest,
+        hits: Vec<SearchHit>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.current_search(request) {
             return;
         }
         self.searching = false;
-        let selected = self
-            .visible()
-            .into_iter()
-            .flat_map(|(_, rows)| rows)
-            .nth(self.selected)
-            .map(|item| (item.thread.clone(), item.label.clone()));
+        let selected = self.selected_key();
         let chats = &mut self.groups[0].1;
         for hit in hits {
             match chats
@@ -2400,15 +2511,7 @@ impl CommandMenu {
                 }),
             }
         }
-        if let Some(selected) = selected
-            && let Some(index) = self
-                .visible()
-                .into_iter()
-                .flat_map(|(_, rows)| rows)
-                .position(|item| item.thread == selected.0 && item.label == selected.1)
-        {
-            self.selected = index;
-        }
+        self.restore_selection(selected);
         cx.notify();
     }
 
@@ -2420,17 +2523,20 @@ impl CommandMenu {
         chats.iter_mut().for_each(|c| c.snippet = None);
         self.search_gen += 1;
         self.searching = false;
-        let term = self.query.trim().to_owned();
+        self.cloud_searching = false;
+        self.cloud_error = false;
+        let term: SharedString = self.query.trim().to_owned().into();
         if term.chars().count() < SEARCH_MIN_CHARS {
             return;
         }
+        self.cloud_searching = self.cloud_enabled;
         let generation = self.search_gen;
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SEARCH_DEBOUNCE).await;
             this.update(cx, |this, cx| {
                 if this.search_gen == generation {
                     this.searching = true;
-                    cx.emit(CommandMenuEvent::Search(term));
+                    cx.emit(CommandMenuEvent::Search(SearchRequest { term, generation }));
                     cx.notify();
                 }
             })
@@ -2631,7 +2737,10 @@ impl CommandMenu {
                                 ),
                                 cx.theme().text_selection,
                             ));
-                        } else if show_caret && focus.is_focused(window) {
+                        } else if show_caret
+                            && focus.is_focused(window)
+                            && !crate::composer::Composer::caret_transparent(cx)
+                        {
                             window.paint_quad(fill(
                                 Bounds::new(
                                     bounds.origin + point(caret, px(2.)),
@@ -2648,9 +2757,20 @@ impl CommandMenu {
             .child(input.relative().left(-self.query_scroll))
     }
 
-    fn on_key(&mut self, e: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn on_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let k = &e.keystroke;
         match k.key.as_str() {
+            "tab" if self.cloud_error => {
+                if self.retry_focus.is_focused(window) {
+                    self.focus.focus(window, cx);
+                } else {
+                    self.retry_focus.focus(window, cx);
+                }
+            }
+            "enter" | "space" if self.retry_focus.is_focused(window) => {
+                self.retry_cloud_search(cx);
+                self.focus.focus(window, cx);
+            }
             "down" | "up" => {
                 self.selected = if k.key == "down" {
                     self.selected + 1
@@ -2708,10 +2828,11 @@ impl CommandMenu {
             .into_iter()
             .flat_map(|(_, items)| items)
             .nth(self.selected)
-            .map(|item| match &item.thread {
-                Some(id) => CommandMenuEvent::OpenThread(id.clone()),
+            .map(|item| match (&item.thread, &item.url) {
+                (Some(id), _) => CommandMenuEvent::OpenThread(id.clone()),
+                (_, Some(url)) => CommandMenuEvent::OpenUrl(url.clone()),
                 // Work preferences opens the Configuration route in the original.
-                None => CommandMenuEvent::Command(if item.label == "Work preferences" {
+                _ => CommandMenuEvent::Command(if item.label == "Work preferences" {
                     "Configuration".into()
                 } else {
                     item.label.clone()
@@ -2866,7 +2987,7 @@ impl Render for CommandMenu {
         let mut index = 0;
         let groups = self.visible().into_iter().map(|(heading, items)| {
             // The pending content search shows its spinner next to `Chats`.
-            let searching = heading == "Chats" && self.searching;
+            let searching = heading == "Chats" && (self.searching || self.cloud_searching);
             div()
                 .flex()
                 .flex_col()
@@ -2982,7 +3103,49 @@ impl Render for CommandMenu {
                                             .top_layer()
                                             .flex()
                                             .flex_col()
-                                            .children(groups),
+                                            .children(groups)
+                                            .when(self.cloud_error, |list| {
+                                                list.child(
+                                                    div()
+                                                        .p(px(8.))
+                                                        .flex()
+                                                        .items_center()
+                                                        .justify_between()
+                                                        .child(text(
+                                                            "Couldn't search ChatGPT chats",
+                                                            13.,
+                                                            18.5,
+                                                            430.,
+                                                            t.text_tertiary,
+                                                        ))
+                                                        .child(
+                                                            div()
+                                                                .id("retry-cloud-search")
+                                                                .role(gpui::Role::Button)
+                                                                .aria_label("Retry ChatGPT search")
+                                                                .track_focus(&self.retry_focus)
+                                                                .when(
+                                                                    self.retry_focus
+                                                                        .is_focused(window),
+                                                                    |button| {
+                                                                        button.bg(t.ghost_hover)
+                                                                    },
+                                                                )
+                                                                .cursor_pointer()
+                                                                .child(text(
+                                                                    "Retry", 13., 18.5, 430.,
+                                                                    t.text,
+                                                                ))
+                                                                .on_click(cx.listener(
+                                                                    |this, _, window, cx| {
+                                                                        this.retry_cloud_search(cx);
+                                                                        this.focus
+                                                                            .focus(window, cx);
+                                                                    },
+                                                                )),
+                                                        ),
+                                                )
+                                            }),
                                     ),
                             ),
                     ),
