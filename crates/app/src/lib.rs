@@ -38,8 +38,8 @@ use ui::dialog::{
     CommitRepository, CommitStep, Dialog, Kind as DialogKind, Outcome as DialogOutcome, Selection,
 };
 use ui::screens::diff::panel::{
-    ActivateSideTab, CloseSideTab, DiffPanel, DiffRequest, FileView, OpenFile, RevertChanges,
-    SplitScreen, Tab, with_side_tabs,
+    ActivateSideTab, CloseSideTab, DiffPanel, DiffRequest, FileView, OpenFile, SplitScreen, Tab,
+    with_side_tabs,
 };
 use ui::screens::home::{HomeMain, OpenFolder};
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
@@ -1137,10 +1137,20 @@ impl Root {
         if panel.read(cx).pending() {
             return;
         }
-        let (endpoint, params, reverted) = match request {
+        let (endpoint, mut params, reverted) = match request {
             DiffRequest::Refresh => ("git-changes", json!({"cwd": cwd}), None),
             DiffRequest::Stage(path) => ("git-stage", json!({"cwd": cwd, "path": path}), None),
             DiffRequest::Unstage(path) => ("git-unstage", json!({"cwd": cwd, "path": path}), None),
+            DiffRequest::CreateRepository => ("git-init-repo", json!({"cwd": cwd}), None),
+            DiffRequest::Changes { action, files } => (
+                match *action {
+                    "stage" => "git-stage",
+                    "unstage" => "git-unstage",
+                    _ => "git-revert",
+                },
+                json!({"cwd": cwd, "source": files.first().map(|f| f.source), "files": files}),
+                (*action == "revert").then(|| "section".to_owned()),
+            ),
             DiffRequest::Revert(change) => (
                 "git-revert",
                 json!({"cwd": cwd, "path": change.path, "source": change.source,
@@ -1152,6 +1162,9 @@ impl Root {
             ),
             DiffRequest::Open(_) => return,
         };
+        if let Some(review) = panel.read(cx).review_params().as_object() {
+            params.as_object_mut().unwrap().extend(review.clone());
+        }
         let request = host::Request::post(endpoint, Some(params));
         let host = self.host.clone();
         panel.update(cx, |panel, cx| panel.begin_repository_request(cx));
@@ -1578,14 +1591,14 @@ impl Root {
         &mut self,
         panel: Entity<DiffPanel>,
         cwd: &str,
-        change: &RevertChanges,
+        request: &DiffRequest,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if panel.read(cx).pending() || self.dialog.is_some() {
             return;
         }
-        let request = DiffRequest::Revert(change.clone());
+        let request = request.clone();
         if cx
             .try_global::<host_settings::Settings>()
             .and_then(|settings| settings.read_all().get("skip-revert-confirmation"))
@@ -3001,9 +3014,12 @@ impl Root {
             &diff,
             window,
             move |this, panel, request: &DiffRequest, window, cx| match request {
-                DiffRequest::Revert(change) => {
-                    this.confirm_revert(panel.clone(), &cwd, change, window, cx)
+                DiffRequest::Revert(_) => {
+                    this.confirm_revert(panel.clone(), &cwd, request, window, cx)
                 }
+                DiffRequest::Changes {
+                    action: "revert", ..
+                } => this.confirm_revert(panel.clone(), &cwd, request, window, cx),
                 DiffRequest::Open(path) => this.open_in_editor(&cwd, path, cx),
                 _ => this.repository_request(panel.clone(), &cwd, request, cx),
             },

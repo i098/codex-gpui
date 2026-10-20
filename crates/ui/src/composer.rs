@@ -2015,7 +2015,7 @@ impl Render for Composer {
                             )
                             .into_any_element()
                     } else {
-                        self.footer(&t, cx).into_any_element()
+                        self.footer(window, &t, cx).into_any_element()
                     }),
             );
         let card = card.when(self.slash.open, |d| d.child(self.slash_menu(&t, cx)));

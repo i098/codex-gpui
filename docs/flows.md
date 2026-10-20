@@ -472,6 +472,11 @@ The original S023b recording, pixel probes, and references remain unchanged.
 Captured images are headless native application frames, not installed-window desktop captures.
 Run `tools/mac.sh -l queue-actions 'cargo test -p app --test s023b -- --test-threads=1'`.
 
+When the model catalog is unavailable, the composer shows Loading model… and disables the idle send control.
+`git_revert_ui::missing_model_does_not_start_a_turn` checks that clicking Send does not start a turn.
+Inline code wraps within a narrow thread while its background stays continuous on each line.
+`git_revert_ui::inline_code_wraps_across_lines` checks both visible line backgrounds.
+
 ## 14.6 Diff view
 
 `Root` opens the Changes panel beside the open thread (`⌥⌘B`, `View changes`, the summary's `Changes` row) through `ui::screens::diff::panel::with_side_panel`, which the `diff` screen builder also uses.
@@ -505,12 +510,26 @@ Comment actions (S075/S082), file tabs (S186), and external targets remain outsi
 Local Changes uses the existing desktop host for `git-changes`, `git-stage`, and `git-unstage`.
 Each request uses the open thread's absolute `cwd`; file actions also send one repository-relative `path`.
 The response body contains `root`, `unstaged`, and `staged`; each file contains `path` and its unified `diff`.
-The selector keeps Last Turn and adds Unstaged, Staged, and Refresh.
+The selector offers Last Turn, Uncommitted, Unstaged, Staged, Committed, and Branch.
+Committed opens the commit submenu; the selected source has a checkmark.
+The toolbar retains Refresh. Re-selecting a repository source also refreshes a narrow panel.
+Uncommitted compares the working tree with HEAD and includes untracked files.
+Branch compares HEAD with the selected branch's merge base; Committed compares a selected commit with its first parent.
+An initial commit compares with the empty tree.
 Each local file menu stages or unstages the whole file; unstage preserves the working tree.
 Reads and mutations run off the UI thread, with loading and error states in the panel.
 Tracked files use one bulk Git diff per source; untracked files use separate comparisons.
 The `git_stage` native proof checks the real index, visible diff text, partial staging, deletion, lock recovery, and unborn repositories.
 It also checks literal and newline filenames, multi-file patches, and rejects paths outside the repository.
+Hunk Stage and Unstage apply only the reviewed hunk to the index and preserve the working tree.
+Stage all, Unstage all, and Revert all send the reviewed section through the existing Git endpoints.
+The host checks every file snapshot before it applies one combined patch.
+Revert all uses the same confirmation and saved preference as file and hunk reverts.
+In Uncommitted, section actions use the unstaged changes and preserve staged-only changes.
+Source and revision menus remain open while repository refresh replaces the displayed files.
+For a folder outside Git, Changes shows Create a Git repository and the Create git repository button.
+The button calls `git-init-repo` in the thread's folder; initialization preserves existing files and rejects an existing repository.
+The portable `git_review` proof checks real source selection, repository creation, file/hunk/section effects, stale snapshots, locks, and newer-work preservation.
 The file menu, file revert button, and per-hunk `Revert` controls call the existing `git-revert` host endpoint.
 It takes `cwd`, a repository-relative `path`, `source` (`unstaged` or `staged`), the `diff` text that Changes shows for that file, and an optional 0-based `hunk`.
 The host captures that file's `--binary` diff once, compares it with the request up to the binary data (the text form says `Binary files … differ` there; the full `index` line pins that data), and refuses a stale request (`file changed since its diff was shown`); the same capture is the patch it applies, so an edit made while the request runs can only fail the check, never enter the patch.

@@ -75,6 +75,20 @@ fn paths(root: &Path, staged: bool) -> Result<Vec<String>> {
 /// the full `index` line (`--binary` fills it for binary files only), so `head` compares one
 /// binary capture with the text Changes shows.
 fn diffs(root: &Path, staged: bool, binary: bool) -> Result<Vec<Value>> {
+    review_diffs(
+        root,
+        if staged { &["--cached"] } else { &[] },
+        binary,
+        !staged,
+    )
+}
+
+fn review_diffs(
+    root: &Path,
+    revisions: &[&str],
+    binary: bool,
+    untracked: bool,
+) -> Result<Vec<Value>> {
     let mut args = vec![
         "diff",
         "--raw",
@@ -87,9 +101,7 @@ fn diffs(root: &Path, staged: bool, binary: bool) -> Result<Vec<Value>> {
         "--submodule=short",
         "--full-index",
     ];
-    if staged {
-        args.push("--cached");
-    }
+    args.extend_from_slice(revisions);
     if binary {
         args.push("--binary");
     }
@@ -123,7 +135,7 @@ fn diffs(root: &Path, staged: bool, binary: bool) -> Result<Vec<Value>> {
             "Git diff paths and patches differ"
         );
     }
-    if !staged {
+    if untracked {
         let untracked = checked(run(
             root,
             &["ls-files", "--others", "--exclude-standard", "-z"],
@@ -166,10 +178,13 @@ fn head(diff: &str) -> &str {
         .map_or(diff, |(head, _)| head)
 }
 
-/// Reverse-applies the diff the caller displayed, to the index (`cached`) or the working tree.
+/// Applies the reviewed patch to the index (`cached`) or the working tree.
 /// Git applies a patch atomically, and refuses it when the target no longer matches.
-fn apply(root: &Path, patch: &str, cached: bool) -> Result<()> {
-    let mut args = vec!["apply", "--reverse"];
+fn apply(root: &Path, patch: &str, cached: bool, reverse: bool) -> Result<()> {
+    let mut args = vec!["apply"];
+    if reverse {
+        args.push("--reverse");
+    }
     if cached {
         args.push("--cached");
     }
@@ -241,29 +256,217 @@ fn revert(root: &Path, path: &str, params: &Value) -> Result<&'static str> {
             "Git: {}",
             String::from_utf8_lossy(&differs.stderr).trim()
         );
-        apply(root, &patch, true)?;
+        apply(root, &patch, true, true)?;
         if !differs.status.success() {
             return Ok("partial-success");
         }
     }
-    match apply(root, &patch, false) {
+    match apply(root, &patch, false, true) {
         Ok(()) => Ok("success"),
         Err(_) if staged => Ok("partial-success"),
         Err(error) => Err(error),
     }
 }
 
+fn selected_patch(root: &Path, params: &Value) -> Result<(String, bool, Vec<String>)> {
+    let staged = match params["source"].as_str() {
+        Some("staged") => true,
+        Some("unstaged") => false,
+        _ => bail!("Git patch source must be staged or unstaged"),
+    };
+    let current = diffs(root, staged, true)?;
+    let files = params["files"]
+        .as_array()
+        .context("missing reviewed Git files")?;
+    ensure!(!files.is_empty(), "no reviewed files");
+    let mut patch = String::new();
+    let mut paths = Vec::new();
+    for file in files {
+        let path = file["path"].as_str().context("missing Git path")?;
+        ensure!(
+            !path.is_empty()
+                && Path::new(path)
+                    .components()
+                    .all(|c| matches!(c, Component::Normal(_)))
+                && !paths.iter().any(|p| p == path),
+            "Git paths must be unique and repository-relative"
+        );
+        let displayed = file["diff"].as_str().context("missing Git diff")?;
+        let captured = current
+            .iter()
+            .find(|f| f["path"] == path)
+            .and_then(|f| f["diff"].as_str())
+            .context("file is no longer in the selected changes")?;
+        ensure!(
+            head(captured) == head(displayed),
+            "file changed since its diff was shown; refresh and try again"
+        );
+        if let Some(index) = file.get("hunk").filter(|v| !v.is_null()) {
+            patch.push_str(&hunk(
+                captured,
+                index.as_u64().context("Git hunk must be an index")? as usize,
+            )?);
+        } else {
+            patch.push_str(captured);
+        }
+        paths.push(path.to_owned());
+    }
+    Ok((patch, staged, paths))
+}
+
+fn patch_changes(root: &Path, endpoint: &str, params: &Value) -> Result<&'static str> {
+    let (patch, staged, paths) = selected_patch(root, params)?;
+    match endpoint {
+        "git-stage" => {
+            ensure!(!staged, "stage requires unstaged changes");
+            apply(root, &patch, true, false)?;
+        }
+        "git-unstage" => {
+            ensure!(staged, "unstage requires staged changes");
+            apply(root, &patch, true, true)?;
+        }
+        "git-revert" => {
+            if staged {
+                let mut args = vec!["diff", "--quiet", "--no-ext-diff", "--"];
+                args.extend(paths.iter().map(String::as_str));
+                let differs = run(root, &args)?;
+                ensure!(
+                    differs.status.success() || differs.status.code() == Some(1),
+                    "Git diff failed"
+                );
+                apply(root, &patch, true, true)?;
+                if !differs.status.success() {
+                    return Ok("partial-success");
+                }
+            }
+            match apply(root, &patch, false, true) {
+                Ok(()) => {}
+                Err(_) if staged => return Ok("partial-success"),
+                Err(error) => return Err(error),
+            }
+        }
+        _ => bail!("unsupported Git patch operation"),
+    }
+    Ok("success")
+}
+
+fn changes(root: &Path, params: &Value) -> Result<Value> {
+    let mut body = json!({"root": root, "unstaged": diffs(root, false, false)?, "staged": diffs(root, true, false)?});
+    let head = commit_id(root, "HEAD")?;
+    let branches = checked(run(
+        root,
+        &[
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "refs/heads",
+            "refs/remotes",
+        ],
+    )?)?;
+    let branches = String::from_utf8(branches)?;
+    body["branches"] = branches
+        .lines()
+        .map(|s| Value::from(s.to_owned()))
+        .collect();
+    let commits = if head.is_some() {
+        String::from_utf8(checked(run(
+            root,
+            &["log", "-100", "--format=%H %s", "HEAD", "--"],
+        )?)?)?
+    } else {
+        String::new()
+    };
+    body["commits"] = commits
+        .lines()
+        .filter_map(|line| {
+            let (id, subject) = line.split_once(' ')?;
+            Some(json!({"id": id, "label": format!("{} {subject}", &id[..8])}))
+        })
+        .collect();
+    let empty = String::from_utf8(checked(run(
+        root,
+        &["hash-object", "-t", "tree", "/dev/null"],
+    )?)?)?;
+    let base = head.as_deref().unwrap_or(empty.trim());
+    let source = params["reviewSource"].as_str().unwrap_or("unstaged");
+    body["review"] = match source {
+        "uncommitted" => json!(review_diffs(root, &[base], false, true)?),
+        "branch" | "commits" if head.is_none() => json!([]),
+        "branch" => {
+            let branch = params["baseBranch"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .or_else(|| branches.lines().find(|s| *s == "main" || *s == "master"))
+                .or_else(|| branches.lines().next())
+                .context("select a base branch")?;
+            ensure!(
+                branches.lines().any(|s| s == branch),
+                "base branch no longer exists"
+            );
+            let target = commit_id(root, branch)?.context("base branch has no commit")?;
+            let merge = answer(root, &["merge-base", &target, "HEAD"])?
+                .context("branches have no common ancestor")?;
+            body["base_branch"] = branch.into();
+            json!(review_diffs(root, &[&merge, "HEAD"], false, false)?)
+        }
+        "commits" => {
+            let id = params["commit"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .unwrap_or(base);
+            ensure!(id.bytes().all(|b| b.is_ascii_hexdigit()), "invalid commit");
+            let id = commit_id(root, id)?.context("commit no longer exists")?;
+            let parent = commit_id(root, &format!("{id}^"))?;
+            body["commit"] = id.clone().into();
+            json!(review_diffs(
+                root,
+                &[parent.as_deref().unwrap_or(empty.trim()), &id],
+                false,
+                false
+            )?)
+        }
+        _ => json!([]),
+    };
+    Ok(body)
+}
+
 pub(super) fn fetch(endpoint: &str, params: &Value) -> Result<Value> {
     let cwd = params["cwd"].as_str().context("missing Git cwd")?;
     ensure!(Path::new(cwd).is_absolute(), "Git cwd must be absolute");
-    let root = checked(run(Path::new(cwd), &["rev-parse", "--show-toplevel"])?)?;
+    let cwd = Path::new(cwd);
+    let found = run(cwd, &["rev-parse", "--show-toplevel"])?;
+    if !found.status.success() {
+        let error = String::from_utf8_lossy(&found.stderr);
+        if endpoint == "git-init-repo" {
+            ensure!(
+                error.contains("not a git repository"),
+                "Git: {}",
+                error.trim()
+            );
+            ensure!(cwd.is_dir(), "Git cwd must be a directory");
+            checked(run(cwd, &["init"])?)?;
+        } else if endpoint == "git-changes" {
+            ensure!(
+                error.contains("not a git repository"),
+                "Git: {}",
+                error.trim()
+            );
+            return Ok(json!({"root": cwd, "unstaged": [], "staged": [], "not_repository": true}));
+        } else {
+            checked(found)?;
+        }
+    } else if endpoint == "git-init-repo" {
+        bail!("folder is already in a Git repository");
+    }
+    let root = checked(run(cwd, &["rev-parse", "--show-toplevel"])?)?;
     let root = String::from_utf8(root).context("Git root must be UTF-8")?;
     let root = Path::new(root.strip_suffix('\n').unwrap_or(&root));
     if let Some(result) = commit_flow(endpoint, root, params) {
         return result;
     }
     let mut status = None;
-    if endpoint != "git-changes" {
+    if params.get("files").is_some() {
+        status = Some(patch_changes(root, endpoint, params)?);
+    } else if !matches!(endpoint, "git-changes" | "git-init-repo") {
         let path = params["path"].as_str().context("missing Git path")?;
         ensure!(
             !path.is_empty()
@@ -288,7 +491,7 @@ pub(super) fn fetch(endpoint: &str, params: &Value) -> Result<Value> {
             checked(run(root, &args)?)?;
         }
     }
-    let mut body = json!({"root": root, "unstaged": diffs(root, false, false)?, "staged": diffs(root, true, false)?});
+    let mut body = changes(root, params)?;
     if let Some(status) = status {
         body["status"] = status.into();
     }

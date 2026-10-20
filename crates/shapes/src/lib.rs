@@ -45,7 +45,7 @@
 //!
 //! Colors outside [0, 1] (out-of-gamut oklab/color-mix results) are drawn as Skia draws them,
 //! with its float raster pipeline. Limits: inset shadows paint apart from Blink's clip layer.
-//! A fill under a CSS `opacity` rounds 1 level darker on its anti-aliased edge.
+//! Use [`with_composited_opacity`] for CSS opacity; [`with_layer`] retains Skia's save-layer rounding.
 
 use gpui::{App, Bounds, Corners, Hsla, IntoElement, Pixels, Point, Styled as _, Window, canvas};
 
@@ -372,8 +372,34 @@ pub fn with_recorded_bounds<R>(bounds: Option<[i32; 4]>, paint: impl FnOnce() ->
     }
 }
 
+/// Paints a group and applies byte opacity with the compositor's integer alpha scaling.
+/// Returns the closure's result without changing it.
+/// The bounds must include all of the group's drawn pixels.
+pub fn with_composited_opacity<R>(
+    alpha: u8,
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    cx: &App,
+    paint: impl FnOnce(&mut Window) -> R,
+) -> R {
+    #[cfg(target_os = "macos")]
+    {
+        with_layer(255, bounds, window, |window| {
+            let result = paint(window);
+            mask::paint_opacity(alpha, bounds, window, cx);
+            result
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = cx;
+        with_layer(alpha, bounds, window, paint)
+    }
+}
+
 /// Paints the svg icon `src` (asset bytes; `key` names it for the cache) into `bounds`,
 /// mirrored horizontally if `flip_x`, in `color`; `layer` as in [`paint`].
+/// An explicit layer origin composites the complete SVG, including overlapping paths.
 /// False if this platform or svg is not supported: paint it another way then.
 #[allow(clippy::too_many_arguments)]
 pub fn paint_icon(

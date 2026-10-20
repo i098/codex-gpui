@@ -24,8 +24,15 @@ fn center(value: &Value) -> Result<(f32, f32)> {
     ))
 }
 
-fn menu(fx: &Fx) -> Vec<(&'static str, bool)> {
-    fx.read(|root, cx| root.diff_panel().unwrap().read(cx).menu_items().collect())
+fn menu(fx: &Fx) -> Vec<(String, bool)> {
+    fx.read(|root, cx| {
+        root.diff_panel()
+            .unwrap()
+            .read(cx)
+            .menu_items()
+            .map(|(label, enabled)| (label.to_owned(), enabled))
+            .collect()
+    })
 }
 
 fn clipboard(fx: &mut Fx) -> Option<String> {
@@ -53,6 +60,7 @@ fn diff_selection_and_hover_replay() -> Result<()> {
         eprintln!("S027 requires the macOS headless renderer");
         return Ok(());
     }
+    let screenshots = tempfile::tempdir()?;
     let recording: Value =
         serde_json::from_str(include_str!("../../../refs/interactions/s027.json"))?;
     let mut fx = Fx::captured("dark", (1280., 832.), common::script(None, |_| {})?)?;
@@ -73,14 +81,14 @@ fn diff_selection_and_hover_replay() -> Result<()> {
         .iter()
         .map(|item| {
             (
-                item["text"].as_str().unwrap(),
+                item["text"].as_str().unwrap().to_owned(),
                 item["disabled"].as_bool() != Some(true),
             )
         })
         .collect();
     ensure!(menu(&fx) == expected, "header menu: {:?}", menu(&fx));
     fx.shot()?
-        .save(std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("s027-header-menu.png"))?;
+        .save(screenshots.path().join("s027-header-menu.png"))?;
     let copy = steps
         .iter()
         .find(|s| s["target"]["text"] == "Copy path")
@@ -105,7 +113,7 @@ fn diff_selection_and_hover_replay() -> Result<()> {
     );
     fx.right_click((800., 229.))?;
     ensure!(
-        menu(&fx)[0] == ("Copy selection", false),
+        menu(&fx)[0] == ("Copy selection".into(), false),
         "copy needs a selection"
     );
     fx.keys("escape")?;
@@ -141,7 +149,7 @@ fn diff_selection_and_hover_replay() -> Result<()> {
         "clipboard: {copied:?}"
     );
     fx.shot()?
-        .save(std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("s027-selection.png"))?;
+        .save(screenshots.path().join("s027-selection.png"))?;
     fx.drag(point(&drag["portTo"])?, point(&drag["portFrom"])?, 10)?;
     fx.keys("cmd-c")?;
     let reverse = clipboard(&mut fx);
@@ -166,14 +174,14 @@ fn diff_selection_and_hover_replay() -> Result<()> {
         })
         .map(|item| {
             (
-                item["label"].as_str().unwrap(),
+                item["label"].as_str().unwrap().to_owned(),
                 item["enabled"].as_bool().unwrap(),
             )
         })
         .collect();
     ensure!(menu(&fx) == expected, "context menu: {:?}", menu(&fx));
     fx.shot()?
-        .save(std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("s027-context-menu.png"))?;
+        .save(screenshots.path().join("s027-context-menu.png"))?;
     choose(&mut fx, "Copy selection")?;
     ensure!(
         clipboard(&mut fx).as_deref()
@@ -253,9 +261,8 @@ fn diff_selection_and_hover_replay() -> Result<()> {
     fx.cx.run_until_parked();
     fx.drag((714., 143.), (1270., 174.), 10)?;
     fx.keys("cmd-c")?;
-    fx.shot()?.save(
-        std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("s027-wrapped-selection.png"),
-    )?;
+    fx.shot()?
+        .save(screenshots.path().join("s027-wrapped-selection.png"))?;
     let wrapped = clipboard(&mut fx);
     ensure!(
         wrapped.as_deref() == Some(long_line.as_str()),
@@ -384,7 +391,7 @@ fn open_in_editor_native_input_reaches_the_host_opener() -> Result<()> {
     ensure!(
         ["Open in editor", "Stage file", "Revert file"]
             .iter()
-            .all(|label| menu(&fx).contains(&(*label, true)))
+            .all(|label| menu(&fx).contains(&(label.to_string(), true)))
     );
     fx.shot()?.save(scratch.join("file-menu.png"))?;
     choose(&mut fx, "Open in editor")?;

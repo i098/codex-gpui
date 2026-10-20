@@ -21,7 +21,7 @@ use skia_safe::{
 };
 use std::{
     cell::{Cell, RefCell},
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     hash::{DefaultHasher, Hash as _, Hasher as _},
     sync::{Arc, LazyLock},
 };
@@ -42,6 +42,8 @@ pub(crate) const DST_IN: u8 = 5;
 /// What is under the enclosing GPUI layer drawn onto the layer's pixel through a clip whose
 /// coverage is 255 minus the sprite's (viz drawing a clipped layer's content over that layer).
 pub(crate) const CLIP: u8 = 7;
+/// A compositor opacity mask; coverage stores the inverse byte opacity.
+pub(crate) const OPACITY: u8 = 8;
 
 /// gfx::SizeF's clamp: dimensions at or below 8 epsilon are 0.
 fn clamp(v: f32) -> f32 {
@@ -1250,6 +1252,71 @@ fn raster(
     ([x0, y0, w, h], out)
 }
 
+// Select a straight color that round-trips through the shader's div255.
+fn sprite_color(pixel: [u8; 4]) -> [u8; 4] {
+    let a = u32::from(pixel[3]);
+    let c = [0, 1, 2].map(|k| ((u32::from(pixel[k]) * 255 + a / 2) / a).min(255) as u8);
+    [c[0], c[1], c[2], pixel[3]]
+}
+
+// Blending SVG paths directly into the parent changes their overlap rounding.
+fn composited_sprites(
+    [x0, y0, x1, y1]: [i32; 4],
+    layer: Layer,
+    draw: &dyn Fn(&Canvas),
+) -> Vec<Sprite> {
+    let size = layer.clamp();
+    let (x0, y0) = (x0.max(0), y0.max(0));
+    let (x1, y1) = (x1.min(size[0]), y1.min(size[1]));
+    if x0 >= x1 || y0 >= y1 {
+        return Vec::new();
+    }
+    let (w, h) = (x1 - x0, y1 - y0);
+    let mut pixels = vec![0u8; (w * h * 4) as usize];
+    for (o, ts, [ox0, oy0, ox1, oy1]) in tiles([x0, y0, x1, y1], size, layer.tile) {
+        let lo = layer.device.map_or(o, |d| [o[0].max(d[0]), o[1].max(d[1])]);
+        let ls = (o[0] + ts.0 - lo[0], o[1] + ts.1 - lo[1]);
+        let rect = [ox0.max(lo[0]), oy0.max(lo[1]), ox1, oy1];
+        if ls.0 <= 0 || ls.1 <= 0 || rect[0] >= rect[2] || rect[1] >= rect[3] {
+            continue;
+        }
+        let (data, row) = rect_pixels(lo, ls, Color4f::new(0., 0., 0., 0.), rect, draw);
+        for y in rect[1]..rect[3] {
+            let src = (y - rect[1]) as usize * row;
+            let dst = ((y - y0) * w + rect[0] - x0) as usize * 4;
+            pixels[dst..dst + row].copy_from_slice(&data[src..src + row]);
+        }
+    }
+    let mut colors = HashSet::new();
+    for pixel in pixels.as_chunks_mut::<4>().0 {
+        if pixel[3] == 0 {
+            continue;
+        }
+        let color = sprite_color(*pixel);
+        pixel[..3].copy_from_slice(&color[..3]);
+        colors.insert([color[0], color[1], color[2]]);
+    }
+    let mut out = Vec::new();
+    for color in colors {
+        let value = |i: usize| {
+            if pixels[i * 4..i * 4 + 3] == color {
+                pixels[i * 4 + 3]
+            } else {
+                0
+            }
+        };
+        chunks(
+            &mut out,
+            [x0, y0, w, h],
+            &value,
+            PIPELINE,
+            Some([color[0], color[1], color[2], 255]),
+            false,
+        );
+    }
+    out
+}
+
 /// The RGBA bytes (macOS N32, premultiplied) and row bytes of the cc tile of `size` at layer
 /// px `o` (window px), cleared to `clear`, after `draw`.
 pub(crate) fn tile_pixels(
@@ -1426,14 +1493,7 @@ fn restore_sprites(op: &Op, col: Color4f, layer: Layer) -> Vec<Sprite> {
     }
     let mut out = Vec::new();
     for (g, &(l, edge)) in groups.iter().enumerate() {
-        // The 8-bit color whose premultiplied value (as the shader computes it) is `l`.
-        let a = u32::from(l[3]);
-        let c = [0, 1, 2].map(|k| {
-            (0..=255u32)
-                .find(|&c| div255(c * a) == u32::from(l[k]))
-                .unwrap_or(255) as u8
-        });
-        let color = [c[0], c[1], c[2], l[3]];
+        let color = sprite_color(l);
         let value = |i: usize| if px[i].0 == g { px[i].1 } else { 0 };
         // A composited layer's tile is transparent: the restore leaves the layer px scaled by
         // the clip coverage (both blitters), which the compositor blends onto the page.
@@ -1559,7 +1619,7 @@ pub(crate) fn sprites(
         let mut out = Vec::new();
         for (blit, mode) in [0, 2]
             .into_iter()
-            .flat_map(|b| [MASK, ARGB32, PIPELINE, LAYER, DST_IN].map(|m| (b, m)))
+            .flat_map(|b| [MASK, ARGB32, PIPELINE, LAYER, DST_IN, OPACITY].map(|m| (b, m)))
         {
             if !blits.iter().any(|b| b[blit + 1] == mode && b[blit] != 0) {
                 continue;
@@ -2403,39 +2463,71 @@ pub(crate) fn paint_icon(
         snap(b.origin.y + bounds.size.height),
     );
     let clips = clips(window, layer);
+    let bbox = [
+        origin[0] as i32 - 2,
+        origin[1] as i32 - 2,
+        (origin[0] as f64 + w).ceil() as i32 + 2,
+        (origin[1] as f64 + h).ceil() as i32 + 2,
+    ];
+    if !shown(bbox, layer, window) {
+        return true;
+    }
+    let prepare = |c: &Canvas| {
+        c.clip_rect(clip, ClipOp::Intersect, true);
+        c.translate((origin[0], origin[1]));
+        if flip_x {
+            c.translate(((w / 2.) as f32, 0.));
+            c.scale((-1., 1.));
+            c.translate((-(w / 2.) as f32, 0.));
+        }
+        c.concat(&view);
+    };
+    let draw_path = |c: &Canvas, p: &IconPath, col: Color4f| {
+        c.concat(&p.transform);
+        let mut paint = fill_paint(col);
+        if let Some((width, cap, join)) = p.stroke {
+            paint
+                .set_style(PaintStyle::Stroke)
+                .set_stroke_width(width)
+                .set_stroke_cap(cap)
+                .set_stroke_join(join);
+        }
+        c.draw_path(&p.path, &paint);
+    };
+    if layer.composited && !wide(color) {
+        let rgba = Rgba::from(color);
+        let sprites = cached(
+            format!(
+                "{key}#composited{flip_x}{clip:?}{w}x{h}{rgba:?}{:?}{clips:?}",
+                layer.key()
+            ),
+            || {
+                composited_sprites(bbox, layer, &|c| {
+                    for clip in &clips {
+                        clip.clip(c, ClipOp::Intersect);
+                    }
+                    prepare(c);
+                    for p in &icon.paths {
+                        c.save();
+                        let color = p.color.unwrap_or(rgba);
+                        let a = if p.color.is_some() { 1. } else { rgba.a } * p.opacity * p.layer;
+                        draw_path(c, p, Color4f::new(color.r, color.g, color.b, a));
+                        c.restore();
+                    }
+                })
+            },
+        );
+        paint_sprites(&sprites, color, layer.origin, window, cx);
+        return true;
+    }
     for (n, p) in icon.paths.iter().enumerate() {
         let draw = |c: &Canvas, col: Color4f| {
-            c.clip_rect(clip, ClipOp::Intersect, true);
-            c.translate((origin[0], origin[1]));
-            if flip_x {
-                c.translate(((w / 2.) as f32, 0.));
-                c.scale((-1., 1.));
-                c.translate((-(w / 2.) as f32, 0.));
-            }
-            c.concat(&view);
-            c.concat(&p.transform);
-            let mut paint = fill_paint(col);
-            if let Some((width, cap, join)) = p.stroke {
-                paint
-                    .set_style(PaintStyle::Stroke)
-                    .set_stroke_width(width)
-                    .set_stroke_cap(cap)
-                    .set_stroke_join(join);
-            }
-            c.draw_path(&p.path, &paint);
+            prepare(c);
+            draw_path(c, p, col);
         };
-        let bbox = [
-            origin[0] as i32 - 2,
-            origin[1] as i32 - 2,
-            (origin[0] as f64 + w).ceil() as i32 + 2,
-            (origin[1] as f64 + h).ceil() as i32 + 2,
-        ];
-        if !shown(bbox, layer, window) {
-            continue;
-        }
         // Keep the CSS color outside the sRGB gamut; conversion to Rgba clamps its channels.
         let c = p.color.map(Hsla::from).unwrap_or(color);
-        // ponytail: the svg's `opacity` (a layer in Chromium) is folded into the paint alpha.
+        // Noncomposited paths fold the SVG opacity into their paint.
         let a = if p.color.is_some() { 1. } else { color.a } * p.opacity * p.layer;
         let color = c.alpha(a);
         let a = alpha_byte(a);
