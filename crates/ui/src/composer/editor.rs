@@ -942,10 +942,14 @@ impl gpui::Element for Editor {
             .iter()
             .filter_map(|m| Some((c.point_for_index(m.range.start)?, m.icon)))
             .collect();
+        let mut y = if c.plain_field == Some(true) {
+            window.layout_origin_residual_y(*id)
+        } else {
+            px(0.)
+        };
         let lines = self.0.update(cx, |c, _| std::mem::take(&mut c.lines));
         // Glyphs land on the unsnapped LayoutUnit x, as Blink paints text.
         let x = window.layout_origin_residual_x(*id);
-        let mut y = px(0.);
         for line in &lines {
             let origin = bounds.origin + point(x, y);
             line.paint(origin, line_height, TextAlign::Left, None, window, cx)
