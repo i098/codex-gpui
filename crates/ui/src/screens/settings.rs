@@ -1419,7 +1419,8 @@ impl Render for SettingsPane {
         if section == "Personalization" {
             return div()
                 .size_full()
-                .child(self.page.read(cx).personalization.clone());
+                .child(self.page.read(cx).personalization.clone())
+                .into_any_element();
         }
         // Unimplemented sections retain their title-only surface.
         let groups = match section {
