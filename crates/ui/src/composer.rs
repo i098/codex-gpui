@@ -645,6 +645,7 @@ pub struct Composer {
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
+    field_min_height: Pixels,
 }
 
 impl Composer {
@@ -721,6 +722,7 @@ impl Composer {
             on_approval: None,
             on_model: None,
             plain_field: None,
+            field_min_height: px(48.),
         }
     }
 
@@ -734,6 +736,11 @@ impl Composer {
         editor.plain_field = Some(multiline);
         editor.set_text(value, cx);
         editor
+    }
+
+    pub fn with_field_min_height(mut self, height: Pixels) -> Self {
+        self.field_min_height = height;
+        self
     }
 
     pub fn field_text(&self) -> &str {
@@ -1899,6 +1906,7 @@ impl Render for Composer {
                     .when(self.request_parent.is_none(), |d| {
                         d.border_1()
                             .border_color(t.border)
+                            .focus_visible(|style| style.border_color(gpui::rgb(0x3a83f7)))
                             .rounded(px(8.))
                             .bg(t.background_panel)
                             .py(px(8.))
@@ -1938,7 +1946,13 @@ impl Render for Composer {
                         .aria_placeholder(self.placeholder.clone())
                         .when(!self.secret, |d| d.aria_value(self.content.clone()))
                     })
-                    .child(self.editor(cx).when(self.request_number, |d| d.pr(px(30.))))
+                    .child(
+                        self.editor(cx)
+                            .when(self.request_parent.is_none(), |editor| {
+                                editor.min_h(self.field_min_height)
+                            })
+                            .when(self.request_number, |editor| editor.pr(px(30.))),
+                    )
                     .when(self.request_number, |d| {
                         d.child(self.request_number_stepper(&t, cx))
                     }),

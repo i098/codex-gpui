@@ -19,11 +19,15 @@ Stop and fix the cause if a new report appears.
 - **PASS (flow)**: the named flow or slice test in `crates/app/tests/` passes.
 - **FAIL (why)**: the port behaves differently, or no flow can reach the row yet (the reason tells which).
 - **NOT WIRED (owner)**: the port has no handler for the row; the owner file must add it.
+- **BOUNDARY (original)**: the accepted original fixture does not expose the action or screen.
 
 The "Original" column gives the behavior from the inventory.
-The rows were not clicked again on the original through `tools/route1`: its `server.mjs` starts a live `codex app-server` with `CODEX_HOME=/tmp/cgx-mac/home`, and this lane must not touch that directory.
+Section 14.7 also uses owned, offline captures of the original renderer.
+These captures do not use a live account or change a normal profile.
 
-## Totals
+## Historical totals before the Settings action work
+
+This table preserves the earlier audit totals; section 14.7 records the later Settings work.
 
 | Screen | Rows | PASS | FAIL | NOT WIRED |
 |---|---|---|---|---|
@@ -678,7 +682,9 @@ S034 covers ST-003 and ST-026 with the unchanged off/on samples in `refs/interac
 The replay advances the virtual clock by the original 150 ms transition before checking settled pixels.
 Enabled switches use the existing GPUI native click path for Enter and Space, without duplicate key handlers.
 The replay checks pointer focus without a ring, the blue keyboard ring, saved values, reload, and Back navigation.
-S034b still checks the recorded sign-in path; no account or authentication changes are part of this repair.
+S034b checks the recorded sign-in request, browser URL, pending view, and Home after completion.
+Managed sign-in requirements finish before the app reports startup readiness.
+The unmanaged-policy fallback uses the already loaded configuration instead of reading it again.
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
@@ -687,21 +693,40 @@ S034b still checks the recorded sign-in path; no account or authentication chang
 | 3 | Nav item | click | Navigates to `/settings/:section`. | The page changes (1488938 px repainted). | PASS (`settings_nav_click`) |
 | 4 | Search settings | focus | Filters; `No results found`. | Typing filters the nav to `No results found`; Escape clears. | PASS (`settings_search`) |
 | 5 | Theme Light/Dark/System | click | Applies the theme at once. | Appearance ▸ Theme (`Light`, `Dark`, `System`) dispatches `SetTheme`; `Root::set_theme` applies and persists it. | PASS (`appearance_theme_control`) |
-| 6 | Collapse nav | click | `Collapse settings navigation`. | — | NOT WIRED (`crates/ui/src/screens/settings.rs` `SettingsNav`) |
+| 6 | Collapse nav | click | The captured Settings route passes `canCollapse:false`. | No collapse control is added. | BOUNDARY (`settings-page-50e3fab957b6.js`) |
 | 7 | Row hover | hover | Row highlight. | Highlight shows. | PASS (`settings_nav_hover`) |
-| 8 | Keyboard nav | focus ring | Ring on rows and controls. | S034 proves pointer focus, Enter/Space activation, and the keyboard ring on switches. Other rows remain unwired. | NOT WIRED (remaining rows and controls) |
-| 9 | Section loading | loading | Skeleton row. | — | NOT WIRED (`crates/ui/src/screens/settings.rs`) |
-| 10 | Save failure | error | Toast. | The error is logged. | FAIL (`crates/ui/src/screens/settings.rs` `send` only logs; no toast) |
+| 8 | Keyboard nav | focus ring | Ring on rows and controls. | Search, nav rows, selects, segments, and switches use native focus and complete key presses. | PASS (`settings_search_and_theme_work_from_the_keyboard`, S034) |
+| 9 | Section loading | loading | Status row with a spinner and text. | Personal instructions show loading, load failure, and Retry states. | PASS (`instruction_load_failure_can_retry_without_losing_the_page`) |
+| 10 | Save failure | error | Toast. | Failed config writes show an error toast and keep the saved config unchanged. | PASS (`a_failed_setting_write_keeps_the_saved_value_and_shows_an_error`) |
 | 11 | Login `/login` | entry | Sign-in screen. | A signed-out `account/read` shows the sign-in view. | PASS (`signed_out_shows_login`) |
-| 12 | `Continue with ChatGPT` | click | `account/login/start`, waits for `account/login/completed`. | Handler in `Login`. | FAIL (no flow: the fixtures hold no `account/login/*` exchange) |
-| 13 | `Cancel sign-in` | click | `account/login/cancel`. | Handler in `Login`. | FAIL (no flow: no recorded exchange) |
-| 14 | `Copy sign-in link` | click | Copies the URL; toast. | Handler in `Login`. | FAIL (no flow: needs a recorded login URL) |
-| 15 | API key form | focus | `sk-…`; `Continue` when non-empty. | Handler in `Login`. | FAIL (no flow: no recorded `account/login/start` with an API key) |
-| 16 | Login error | error | `Sign-in failed: {rawMessage}`. | `Login::apply` shows it. | FAIL (no flow: no recorded failure) |
-| 17 | Sign-in requirements loading | loading | `Loading sign-in requirements…`. | — | NOT WIRED (`crates/ui/src/screens/settings.rs` `Login`) |
-| 18 | Welcome `/welcome` | entry | Onboarding then Home. | — | NOT WIRED (`crates/app/src/lib.rs`: no onboarding route; no onboarding view in `crates/ui`) |
-| 19 | Select workspace | click | Pick a folder or skip. | — | FAIL (the port takes its project from `$CODEX_GPUI_CWD` or the launch directory, `crates/app/src/main.rs`) |
+| 12 | `Continue with ChatGPT` | click | `account/login/start`, waits for `account/login/completed`. | The recorded request and pending view work; only the active login can complete. | PASS (S034b, `foreign_and_cancelled_browser_logins_cannot_authenticate`) |
+| 13 | `Cancel sign-in` | click | `account/login/cancel`. | Cancel sends the active login ID and ignores its later completion. | PASS (`foreign_and_cancelled_browser_logins_cannot_authenticate`) |
+| 14 | `Copy sign-in link` | click | The original gates this control with `2502927686`; it is absent in the accepted fixture. | The control remains absent. | BOUNDARY (`login-route-27ff39de87da.js`, owned pending-login capture) |
+| 15 | API key form | focus | `sk-…`; `Continue` when non-empty. | A permitted, non-empty key submits; a successful API reply enters Home without opening a browser. | PASS (`a_successful_api_key_reply_enters_the_app_without_a_browser`) |
+| 16 | Login error | error | `Sign-in failed: {rawMessage}`. | The active login failure keeps the raw message and allows a new attempt. | PASS (`a_failed_browser_login_preserves_the_error_and_allows_retry`) |
+| 17 | Sign-in requirements loading | loading | `Loading sign-in requirements…`. | The app gates methods on managed requirements; failed or empty policies cannot start authentication. | PASS (`a_policy_with_no_login_methods_never_starts_authentication`, S034b) |
+| 18 | Welcome `/welcome` | entry | The owned original override renders an empty body. | No welcome screen is invented for this state. | BOUNDARY (owned original capture; instruction004) |
+| 19 | Select workspace | click | Pick a folder or Skip. | A new profile opens workspace selection. Picker cancel stays there; selection or a successful Skip enters Home. | PASS (`workspace_picker_cancel_stays_then_selection_enters_home`, `workspace_skip_creates_a_distinct_project_before_entering_home`) |
 | 20 | Resize | resize | [INFERENCE] The nav collapses on narrow widths. | The settings nav stays at all widths. | FAIL (`crates/app/src/lib.rs` `fit` covers the main shell only; the original behavior is an inference) |
+
+### Personal instructions and workspace storage
+
+ST-093 opens the personal instructions editor from Personalization.
+The host reads `AGENTS.md` under `CODEX_HOME`, or `~/.codex` by default, through `codex-agents-md`.
+The editor shows `Loading instructions…`, or `Unable to load instructions` with Retry.
+ST-094 saves through `codex-agents-md-save`; the host replaces the file atomically and preserves its permissions.
+Success shows `Instructions updated`; failure shows `Unable to save instructions` and retains the draft.
+Cancel discards the draft.
+Navigation, Back, window close, and Quit ask `Discard changes?` while edits remain.
+The instructions tests use owned files and cover save, cancel, discard, load failure, and save retry.
+
+Existing profiles keep their saved route.
+A missing or unreadable window state starts at `SelectWorkspace`.
+Skip creates an unused `New project` folder under `~/Documents/ChatGPT`, registers it, then enters Home.
+Existing names get a numeric suffix; the host does not overwrite an existing project.
+The workspace tests use an owned host root and the native path-prompt test hook.
+They do not create folders in the normal profile.
+
 
 ## 15.1 Automations ("Scheduled")
 
