@@ -83,7 +83,7 @@ impl Personalization {
                 self.saved = value["contents"].as_str().unwrap().to_owned();
                 let editor = cx.new(|cx| {
                     Composer::settings_field("Add your custom instructions…", &self.saved, true, cx)
-                        .with_field_min_height(px(242.))
+                        .with_field_min_height(px(241.40625))
                 });
                 cx.observe(&editor, |_, _, cx| cx.notify()).detach();
                 window.focus(&editor.focus_handle(cx), cx);
@@ -154,20 +154,45 @@ fn control(
         .gap(px(4.))
         .items_center()
         .justify_center()
-        .rounded(px(10.))
-        .bg(fill)
-        .when(label == "Back", |d| d.child(icon("arrow-left", 16., color)))
+        .relative()
+        .child(super::on_card(
+            12.5,
+            shapes::Corner::Squircle,
+            fill,
+            (label == "Save").then_some(cx.theme().border),
+        ))
+        .when(label == "Back", |d| {
+            d.child(icon("instructions-back", 16., color))
+        })
         .child(text(label, 13., 18., 430., color));
     if !enabled {
-        return button.opacity(0.5);
+        return button.opacity(0.4);
     }
-    focus::ring(button.relative(), &focus, px(12.), px(2.), cx)
+    focus::ring(button.relative(), &focus, px(12.5), px(2.), cx)
         .on_mouse_down(gpui::MouseButton::Left, super::focus_on_pointer(focus))
 }
 
 impl Render for Personalization {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
+        let button_text = match t.appearance {
+            theme::Appearance::Dark => gpui::rgb(0x2d2d2d).into(),
+            theme::Appearance::Light => t.text_inverse,
+        };
+        let (description_size, description_line_height) =
+            if self.opened { (13., 24.) } else { (12., 16.) };
+        let description = div().flex().items_center()
+            .child(text("Edit the AGENTS.md file on the selected machine. Repository instructions may also apply. ", description_size, description_line_height, 430., t.text_secondary))
+            .child(text("Learn more", description_size, description_line_height, 430., t.text_accent)
+                .id("instructions-help")
+                .tab_index(0)
+                .role(gpui::Role::Link)
+                .hover(|style| style.underline())
+                .focus_visible(|style| style.border_2().border_color(gpui::rgb(0x3a83f7)))
+                .on_click(|_, _, cx| {
+                    cx.stop_propagation();
+                    cx.open_url("https://developers.openai.com/codex/guides/agents-md/#create-global-guidance");
+                }));
         let toolbar = if self.opened {
             let save = self.editor.is_some() && !self.loading && !self.saving && self.dirty(cx);
             div()
@@ -178,17 +203,24 @@ impl Render for Personalization {
                 .items_center()
                 .justify_between()
                 .child(
-                    control("Back", t.ghost_hover, t.text, !self.saving, window, cx)
-                        .when(!self.saving, |d| {
-                            d.on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Leave)))
-                        }),
+                    control(
+                        "Back",
+                        gpui::transparent_black(),
+                        t.text,
+                        !self.saving,
+                        window,
+                        cx,
+                    )
+                    .when(!self.saving, |d| {
+                        d.on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Leave)))
+                    }),
                 )
                 .child(
                     div()
                         .flex()
                         .gap(px(8.))
                         .child(
-                            control("Cancel", t.list_hover, t.text, !self.saving, window, cx)
+                            control("Cancel", t.text_alpha_5, t.text, !self.saving, window, cx)
                                 .when(!self.saving, |d| {
                                     d.on_click(cx.listener(|this, _, _, cx| this.discard(cx)))
                                 }),
@@ -197,7 +229,7 @@ impl Render for Personalization {
                             control(
                                 "Save",
                                 t.button_primary_solid,
-                                t.text_inverse,
+                                button_text,
                                 save,
                                 window,
                                 cx,
@@ -211,20 +243,64 @@ impl Render for Personalization {
             div().h(px(46.)).flex_none()
         };
         let content = if !self.opened {
-            div().flex().flex_col().gap(px(24.))
+            let focus = focus::handle("Edit Codex custom instructions", 0, window, cx);
+            let row = focus::ring(
+                div()
+                    .id("instructions-entry")
+                    .role(gpui::Role::Button)
+                    .aria_label("Edit Codex custom instructions")
+                    .relative()
+                    .flex()
+                    .items_center()
+                    .gap(px(24.))
+                    .px(px(17.))
+                    .py(px(13.))
+                    .child(super::on_card(
+                        16.,
+                        shapes::Corner::Squircle,
+                        t.background_panel,
+                        Some(t.border),
+                    ))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.))
+                            .child(text("Codex instructions", 13., 130. / 7., 500., t.text))
+                            .child(description),
+                    )
+                    .child(icon("chevron-right", 16., t.text)),
+                &focus,
+                px(16.),
+                px(0.),
+                cx,
+            )
+            .on_mouse_down(gpui::MouseButton::Left, super::focus_on_pointer(focus))
+            .on_click(cx.listener(|this, _, _, cx| this.load(cx)));
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(48.))
                 .child(text("Personalization", 28., 33.6, 500., t.text))
-                .child(div().p(px(16.)).rounded(px(20.)).border_1().border_color(t.border)
-                    .flex().items_center().justify_between().gap(px(12.))
-                    .child(div().flex().flex_col().gap(px(4.))
-                        .child(text("Codex", 14., 20., 500., t.text))
-                        .child(text("Edit the AGENTS.md file on the selected machine. Repository instructions may also apply.", 14., 20., 430., t.text_secondary).whitespace_normal()))
-                    .child(control("Edit Codex custom instructions", t.list_hover, t.text, true, window, cx)
-                        .on_click(cx.listener(|this, _, _, cx| this.load(cx)))))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(16.))
+                        .child(text("Custom instructions", 14., 21., 500., t.text))
+                        .child(row),
+                )
         } else {
-            let mut body = div().flex().flex_col().gap(px(32.))
-                .child(div().flex().flex_col().gap(px(8.))
+            let mut body = div().flex().flex_col().gap(px(33.)).child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
                     .child(text("Codex instructions", 28., 33.6, 500., t.text))
-                    .child(text("Edit the AGENTS.md file on the selected machine. Repository instructions may also apply.", 14., 20., 430., t.text_secondary).whitespace_normal()));
+                    .child(description),
+            );
             if self.loading {
                 body = body.child(
                     div()

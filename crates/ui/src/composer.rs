@@ -743,6 +743,22 @@ impl Composer {
         self
     }
 
+    fn editor_font_size(&self) -> Pixels {
+        if self.plain_field == Some(true) || (self.request_compact && !self.secret) {
+            px(13.)
+        } else {
+            FONT_SIZE
+        }
+    }
+
+    fn editor_line_height(&self) -> Pixels {
+        if self.plain_field == Some(true) {
+            px(130. / 7.)
+        } else {
+            LINE_HEIGHT
+        }
+    }
+
     pub fn field_text(&self) -> &str {
         &self.content
     }
@@ -1901,7 +1917,22 @@ impl Render for Composer {
             .on_action(cx.listener(Self::previous_command))
             .relative();
         if self.plain_field.is_some() {
-            return div().w_full().child(
+            let card = if self.plain_field == Some(true) {
+                let border = if self.focus_handle.is_focused(window) {
+                    gpui::rgb(0x3a83f7).into()
+                } else {
+                    t.border
+                };
+                card.py(px(9.))
+                    .px(px(1.))
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: Corners::all(px(10.)),
+                        corner: shapes::Corner::Squircle,
+                        fill: Some(t.control_background.opacity(0.96)),
+                        border: Some((px(1.), border)),
+                        ..Default::default()
+                    }))
+            } else {
                 card.key_context(KEY_CONTEXT)
                     .when(self.request_parent.is_none(), |d| {
                         d.border_1()
@@ -1946,16 +1977,18 @@ impl Render for Composer {
                         .aria_placeholder(self.placeholder.clone())
                         .when(!self.secret, |d| d.aria_value(self.content.clone()))
                     })
-                    .child(
-                        self.editor(cx)
-                            .when(self.request_parent.is_none(), |editor| {
-                                editor.min_h(self.field_min_height)
-                            })
-                            .when(self.request_number, |editor| editor.pr(px(30.))),
-                    )
-                    .when(self.request_number, |d| {
-                        d.child(self.request_number_stepper(&t, cx))
-                    }),
+            };
+            return div().w_full().child(
+                card.child(
+                    self.editor(cx)
+                        .when(self.request_parent.is_none(), |editor| {
+                            editor.min_h(self.field_min_height)
+                        })
+                        .when(self.request_number, |editor| editor.pr(px(30.))),
+                )
+                .when(self.request_number, |d| {
+                    d.child(self.request_number_stepper(&t, cx))
+                }),
             );
         }
         let card = card

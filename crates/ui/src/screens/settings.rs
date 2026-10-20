@@ -44,7 +44,7 @@ fn focus_on_pointer(
 
 pub mod personalization;
 pub mod workspace {
-    use crate::{composer::popover, focus, icon::icon, text};
+    use crate::{SANS, composer::popover, focus, icon::icon, text};
     use gpui::{
         Anchor, Context, EventEmitter, InteractiveElement as _, IntoElement, ParentElement as _,
         Render, StatefulInteractiveElement as _, Styled as _, Window, anchored, deferred, div,
@@ -107,6 +107,10 @@ pub mod workspace {
             let busy = self.busy();
             let add_focus = focus::handle("workspace-add", 0, window, cx);
             let skip_focus = focus::handle("workspace-skip", 0, window, cx);
+            let button_text = match t.appearance {
+                theme::Appearance::Dark => gpui::rgb(0x2d2d2d).into(),
+                theme::Appearance::Light => t.text_inverse,
+            };
             let mut add = focus::ring(
                 div()
                     .id("workspace-add")
@@ -120,7 +124,9 @@ pub mod workspace {
                     .items_center()
                     .justify_center()
                     .bg(t.button_primary_solid)
-                    .child(text("Add project", 14., 20., 500., t.text_inverse)),
+                    .border_1()
+                    .border_color(t.border)
+                    .child(text("Add project", 13., 18., 430., button_text)),
                 &add_focus,
                 theme::Theme::RADIUS_FULL,
                 px(2.),
@@ -208,7 +214,7 @@ pub mod workspace {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(text(skip_label, 16., 24., 500., t.text_secondary)),
+                    .child(text(skip_label, 14., 18., 500., t.text_tertiary)),
                 &skip_focus,
                 theme::Theme::RADIUS_FULL,
                 px(2.),
@@ -221,17 +227,17 @@ pub mod workspace {
                     .on_mouse_down(gpui::MouseButton::Left, super::focus_on_pointer(skip_focus))
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::CreateProject)));
             }
-            div().size_full().bg(t.background_surface_under).font_family("OpenAI Sans")
+            div().size_full().bg(t.background_surface_under).font_family(SANS)
             .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
                 if event.keystroke.key == "escape" { this.menu = false; cx.notify(); }
             }))
-            .flex().items_center().justify_center().pt(px(8.)).px(px(20.))
-            .child(div().w_full().max_w(px(330.)).flex().flex_col().items_center().gap(px(32.))
+            .flex().items_center().justify_center().pt(px(12.)).px(px(20.))
+            .child(div().w_full().max_w(px(330.)).flex().flex_col().items_center().gap(px(24.))
                 .child(icon("folder-add", 40., t.text))
                 .child(div().w_full().flex().flex_col().gap(px(24.))
                     .child(div().flex().flex_col().gap(px(24.)).items_center()
-                        .child(text("Select a project", 24., 32., 600., t.text))
-                        .child(text("ChatGPT will be able to edit files and run commands in selected folders", 16., 24., 430., t.text_secondary)
+                        .child(text("Select a project", 24., 36., 600., t.text))
+                        .child(text("ChatGPT will be able to edit files and run commands in selected folders", 16., 24., 430., t.text_tertiary)
                             .w_full().whitespace_normal().text_center()))
                     .child(div().w_full().flex().flex_col().gap(px(12.))
                         .child(div().relative().child(add).children(menu))
@@ -2054,7 +2060,7 @@ impl Login {
 }
 
 /// 46 px outlined pill button of the sign-in screen.
-fn login_button(id: &'static str, label: &'static str, t: &Theme) -> Stateful<Div> {
+fn login_button(id: &'static str, label: &'static str, color: Hsla, t: &Theme) -> Stateful<Div> {
     let hover = over(t.ghost_hover, t.surface);
     div()
         .id(id)
@@ -2069,7 +2075,7 @@ fn login_button(id: &'static str, label: &'static str, t: &Theme) -> Stateful<Di
         .border_color(over(t.border, t.surface))
         .bg(t.surface)
         .hover(move |s| s.bg(hover))
-        .child(text(label, 14., 20., 500., t.text))
+        .child(text(label, 14., 20., 500., color))
 }
 
 impl Render for Login {
@@ -2110,7 +2116,7 @@ impl Render for Login {
                     .w(px(340.))
                     .whitespace_normal()
                     .text_center(),
-                login_button("retry-requirements", "Retry", &t)
+                login_button("retry-requirements", "Retry", t.text, &t)
                     .on_click(cx.listener(|this, _, _, cx| this.load_requirements(cx)))
                     .into_any_element(),
             ),
@@ -2139,9 +2145,10 @@ impl Render for Login {
                     )
                     .when(self.allow_api_key, |d| {
                         d.child(
-                            login_button("another-way", "Sign in another way", &t).on_click(
-                                cx.listener(|this, _, _, cx| this.go(Stage::OtherMethods, cx)),
-                            ),
+                            login_button("another-way", "Sign in another way", t.text, &t)
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.go(Stage::OtherMethods, cx)),
+                                ),
                         )
                     })
                     .child(
@@ -2164,9 +2171,9 @@ impl Render for Login {
                         14.,
                         20.,
                         400.,
-                        t.text_description,
+                        t.text_tertiary,
                     ),
-                    login_button("cancel", "Cancel sign-in", &t)
+                    login_button("cancel", "Cancel sign-in", t.text_tertiary, &t)
                         .h(px(42.))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             send("account/login/cancel", json!({ "loginId": id }), cx);
@@ -2184,7 +2191,7 @@ impl Render for Login {
                     .items_center()
                     .gap(px(12.))
                     .child(
-                        login_button("api-key", "OpenAI API Key", &t)
+                        login_button("api-key", "OpenAI API Key", t.text, &t)
                             .on_click(cx.listener(|this, _, _, cx| this.go(Stage::ApiKey, cx))),
                     )
                     .child(
@@ -2240,14 +2247,16 @@ impl Render for Login {
                             div()
                                 .flex()
                                 .gap(px(12.))
-                                .child(login_button("api-cancel", "Cancel", &t).flex_1().on_click(
-                                    cx.listener(|this, _, _, cx| {
-                                        this.api_key.clear();
-                                        this.go(Stage::OtherMethods, cx)
-                                    }),
-                                ))
                                 .child(
-                                    login_button("api-continue", "Continue", &t)
+                                    login_button("api-cancel", "Cancel", t.text, &t)
+                                        .flex_1()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.api_key.clear();
+                                            this.go(Stage::OtherMethods, cx)
+                                        })),
+                                )
+                                .child(
+                                    login_button("api-continue", "Continue", t.text, &t)
                                         .flex_1()
                                         .when(self.api_key.is_empty(), |d| d.opacity(0.5))
                                         .on_click(
@@ -2275,7 +2284,16 @@ impl Render for Login {
                     .flex_col()
                     .items_center()
                     .gap(px(if requirements { 12. } else { 32. }))
-                    .when(!requirements, |d| d.child(icon("codex-logo", 40., t.text)))
+                    .when(!requirements, |d| {
+                        d.child(icon(
+                            "login-logo",
+                            40.,
+                            match t.appearance {
+                                theme::Appearance::Dark => gpui::rgb(0xdfdfdf).into(),
+                                theme::Appearance::Light => t.text,
+                            },
+                        ))
+                    })
                     .child(heading)
                     .when(!matches!(self.stage, Stage::LoadingRequirements), |d| {
                         d.child(body)
