@@ -237,3 +237,65 @@ fn stop_sends_one_interrupt_per_running_turn() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn ended_turn_withdraws_its_native_card_but_keeps_a_standalone_card() -> anyhow::Result<()> {
+    use common::{Fx, SUBTRACT, script};
+    let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
+    fx.click(fx.at("home", "Add a subtract")?)?;
+    fx.wait_thread(SUBTRACT)?;
+    let show = |fx: &mut Fx, id: &str, turn: serde_json::Value, app: &str| {
+        fx.cx.update(|cx| {
+            fx.root.update(cx, |root, cx| {
+                root.on_event(bridge::Event::Request {
+                id: json!(id),
+                method: "mcpServer/elicitation/request".into(),
+                params: json!({
+                    "threadId": SUBTRACT, "turnId": turn, "serverName": "lcu",
+                    "mode": "form", "message": "Allow the owned test app?",
+                    "requestedSchema": {"type": "object", "properties": {}},
+                    "_meta": {
+                        "connector_id": "computer-use", "codex_approval_kind": "mcp_tool_call",
+                        "tool_params": {"app": app}, "persist": ["session"]
+                    }
+                }),
+            }, cx);
+            })
+        });
+    };
+    let shown = |fx: &Fx| {
+        let composer = fx.composer();
+        fx.read(|_, cx| format!("{:?}", composer.read(cx).approval()))
+    };
+    show(&mut fx, "ended-card", json!("ended-turn"), "example.ended");
+    show(
+        &mut fx,
+        "standalone-card",
+        serde_json::Value::Null,
+        "example.standalone",
+    );
+    assert!(shown(&fx).contains("example.ended"));
+    fx.cx.update(|cx| {
+        fx.root.update(cx, |root, cx| {
+            root.on_event(
+                bridge::Event::Notification {
+                    method: "turn/completed".into(),
+                    params: json!({
+                        "threadId": SUBTRACT,
+                        "turn": {"id": "ended-turn", "status": "interrupted", "items": []}
+                    }),
+                },
+                cx,
+            );
+        })
+    });
+    assert!(!shown(&fx).contains("example.ended"));
+    assert!(shown(&fx).contains("example.standalone"));
+    assert!(
+        !fx.sent()?
+            .iter()
+            .any(|message| message.get("reply").is_some())
+    );
+    Ok(())
+}

@@ -2270,6 +2270,8 @@ pub fn skia_gradient(
         .object_fit(gpui::ObjectFit::Fill)
 }
 
+const MAX_GRADIENT_IMAGES: usize = 16;
+
 fn gradient_image(
     stops: &[(Hsla, f32)],
     under: Hsla,
@@ -2294,23 +2296,27 @@ fn gradient_image(
         v.to_bits().hash(&mut key);
     }
     (w, h, ox, oy, to_top).hash(&mut key);
-    CACHE
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .entry(key.finish())
-        .or_insert_with(|| {
-            let stops = premul_stops(stops);
-            let under = [u.r, u.g, u.b].map(|v| (v * 255.).round() as u32);
-            let image = image::RgbaImage::from_fn(w, h, |i, j| {
-                let [r, g, b, a] = gradient_px(&stops, h, (ox, oy), to_top, i, j);
-                let [r, g, b] = [(r, under[0]), (g, under[1]), (b, under[2])].map(|(c, under)| {
-                    (u32::from(c) + (under * (255 - u32::from(a)) + 127) / 255).min(255) as u8
-                });
-                image::Rgba([b, g, r, 255])
-            });
-            Arc::new(gpui::RenderImage::new([image::Frame::new(image)]))
-        })
-        .clone()
+    let key = key.finish();
+    let mut cache = CACHE.lock().unwrap_or_else(|error| error.into_inner());
+    if let Some(image) = cache.get(&key) {
+        return image.clone();
+    }
+    // ponytail: clear 16 layouts together; use an LRU if multi-window resizing causes cache churn.
+    if cache.len() >= MAX_GRADIENT_IMAGES {
+        cache.clear();
+    }
+    let stops = premul_stops(stops);
+    let under = [u.r, u.g, u.b].map(|v| (v * 255.).round() as u32);
+    let image = image::RgbaImage::from_fn(w, h, |i, j| {
+        let [r, g, b, a] = gradient_px(&stops, h, (ox, oy), to_top, i, j);
+        let [r, g, b] = [(r, under[0]), (g, under[1]), (b, under[2])].map(|(c, under)| {
+            (u32::from(c) + (under * (255 - u32::from(a)) + 127) / 255).min(255) as u8
+        });
+        image::Rgba([b, g, r, 255])
+    });
+    let image = Arc::new(gpui::RenderImage::new([image::Frame::new(image)]));
+    cache.insert(key, image.clone());
+    image
 }
 
 /// `stops` of [`skia_gradient`] as `(premultiplied color, alpha, position)`.
@@ -2528,6 +2534,26 @@ mod tests {
             1.,
         );
         assert_eq!(image.as_bytes(0).unwrap(), &[0x56, 0x34, 0x12, 0xff]);
+    }
+
+    #[test]
+    fn changing_fade_origins_releases_old_images() {
+        let color = gpui::rgb(0x102030).into();
+        let stops = [(color, 0.), (gpui::transparent_black(), 1.)];
+        let first = gradient_image(&stops, color, (2., 2.), (0., 0.), false, 1.);
+        let weak = Arc::downgrade(&first);
+        drop(first);
+        for offset in 1..=MAX_GRADIENT_IMAGES {
+            drop(gradient_image(
+                &stops,
+                color,
+                (2., 2.),
+                (0., offset as f32),
+                false,
+                1.,
+            ));
+        }
+        assert!(weak.upgrade().is_none());
     }
 
     #[test]

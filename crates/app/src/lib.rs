@@ -4508,7 +4508,8 @@ impl Root {
                             || turn.as_str() != Some(pending_turn.as_str())
                     });
                     self.approvals.retain(|p| {
-                        p.method == "mcpServer/elicitation/request"
+                        (p.method == "mcpServer/elicitation/request"
+                            && p.params["serverName"] != "lcu")
                             || (p.method == "item/tool/requestUserInput"
                                 && p.params["isBlocking"] == false)
                             || p.params["threadId"] != params["threadId"]
