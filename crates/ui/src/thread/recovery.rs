@@ -131,6 +131,7 @@ impl Render for History {
                     .py(px(8.))
                     .child(shapes::decoration(shapes::Decoration {
                         radius: gpui::Corners::all(Theme::RADIUS_3XL),
+                        corner: shapes::Corner::Squircle,
                         fill: Some(t.surface),
                         shadows: vec![
                             crate::composer::shadow(t.border_strong, 0., 0., 0.5, false),
