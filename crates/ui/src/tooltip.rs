@@ -66,11 +66,14 @@ struct Spec {
     id: ElementId,
     label: SharedString,
     shortcut: Option<SharedString>,
+    required_width: Option<Pixels>,
+    delay: Duration,
 }
 
 #[derive(Default)]
 struct TipState {
     open: bool,
+    trigger_width: Pixels,
     /// Bumped by every enter and leave: a delay timer only opens the tooltip it started for.
     epoch: u64,
     focus_spec: Option<Spec>,
@@ -80,7 +83,11 @@ struct TipState {
 impl TipState {
     fn hover(&mut self, hovered: bool, spec: Spec, cx: &mut Context<Self>) {
         self.epoch += 1;
-        if !hovered {
+        if !hovered
+            || spec
+                .required_width
+                .is_some_and(|width| width.round() <= self.trigger_width.round())
+        {
             return self.close(cx);
         }
         if self.open {
@@ -91,7 +98,7 @@ impl TipState {
         }
         let epoch = self.epoch;
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(OPEN_DELAY).await;
+            cx.background_executor().timer(spec.delay).await;
             this.update(cx, |this, cx| {
                 if this.epoch == epoch {
                     this.open(spec, cx);
@@ -103,7 +110,11 @@ impl TipState {
     }
 
     fn open(&mut self, spec: Spec, cx: &mut Context<Self>) {
-        if self.open {
+        if self.open
+            || spec
+                .required_width
+                .is_some_and(|width| width.round() <= self.trigger_width.round())
+        {
             return;
         }
         let this = cx.entity().downgrade();
@@ -175,6 +186,8 @@ pub fn tooltip(
         label: label.into(),
         shortcut: shortcut.map(SharedString::new_static),
         side,
+        required_width: None,
+        delay: OPEN_DELAY,
         side_offset: OFFSET,
     }
 }
@@ -186,6 +199,8 @@ pub struct Tooltip {
     label: SharedString,
     shortcut: Option<SharedString>,
     side: Side,
+    required_width: Option<Pixels>,
+    delay: Duration,
     side_offset: Pixels,
 }
 
@@ -197,6 +212,16 @@ impl Tooltip {
         self
     }
 
+    /// Opens only when the trigger cannot fit text of `width`, measured in CSS pixels.
+    pub fn when_overflows(mut self, width: Pixels) -> Self {
+        self.required_width = Some(width);
+        self
+    }
+
+    pub fn delay(mut self, delay: Duration) -> Self {
+        self.delay = delay;
+        self
+    }
     /// Sets the gap from the trigger's absolute-positioning edge, inside its border.
     pub fn side_offset(mut self, side_offset: Pixels) -> Self {
         self.side_offset = side_offset;
@@ -238,6 +263,8 @@ impl RenderOnce for Tooltip {
             id,
             label: self.label,
             shortcut: self.shortcut,
+            required_width: self.required_width,
+            delay: self.delay,
         };
         if let Some(handle) = self.focus_handle {
             state.update(cx, |state, _| state.focus_spec = Some(spec.clone()));
@@ -256,6 +283,24 @@ impl RenderOnce for Tooltip {
         }
         let open = state.read(cx).open;
         let bubble = open.then(|| bubble(&spec, self.side, self.side_offset, &state, cx));
+        if let Some(required_width) = spec.required_width {
+            let state = state.clone();
+            self.trigger = self.trigger.child(
+                canvas(
+                    move |bounds, _, cx| {
+                        state.update(cx, |state, cx| {
+                            state.trigger_width = bounds.size.width;
+                            if required_width.round() <= bounds.size.width.round() {
+                                state.close(cx);
+                            }
+                        });
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .inset_0(),
+            );
+        }
         self.trigger
             .on_hover({
                 let (state, spec) = (state.clone(), spec.clone());
@@ -289,24 +334,34 @@ fn bubble(
     let owner = spec.id.clone();
     let state = state.clone();
     let pill = div()
+        .relative()
         .flex_none()
         .flex()
+        .max_w(px(320.))
         .items_center()
         .gap(px(8.))
-        .px(px(12.))
-        .py(px(5.))
-        .border_1()
-        .border_color(fg.opacity(0.05))
-        .rounded(px(20.))
-        .bg(bg)
-        .shadow(vec![gpui::BoxShadow {
-            color: rgba(0x0f172a33).into(),
-            offset: point(px(0.), px(8.)),
-            blur_radius: px(18.),
-            spread_radius: px(0.),
-            inset: false,
-        }])
-        .child(crate::text(spec.label.clone(), 13., 18., 430., fg))
+        .px(px(13.))
+        .py(px(6.))
+        .child(shapes::decoration(shapes::Decoration {
+            radius: gpui::Corners::all(px(20.)),
+            corner: shapes::Corner::Squircle,
+            fill: Some(bg),
+            border: Some((px(1.), fg.opacity(0.05))),
+            shadows: vec![shapes::Shadow {
+                color: rgba(0x0f172a33).into(),
+                offset: point(px(0.), px(8.)),
+                blur: px(18.),
+                spread: px(0.),
+                inset: false,
+            }],
+            ..Default::default()
+        }))
+        .child(
+            crate::text(spec.label.clone(), 13., 18., 430., fg)
+                .min_w_0()
+                .whitespace_normal()
+                .text_center(),
+        )
         .when_some(spec.shortcut.clone(), |d, keys| {
             // `kbd`: 18 px chip, `-me-1.75` pulls its right edge 7 px into the padding.
             d.child(
@@ -342,7 +397,7 @@ fn bubble(
                 },
             )
             .absolute()
-            .inset(px(-1.)),
+            .inset_0(),
         );
     // A zero-size point on the trigger's edge, centred along it; the pill hangs off it.
     let (point_on_edge, anchor, offset) = match side {

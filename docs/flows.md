@@ -150,6 +150,34 @@ Cells give `outside count / text percent`; the owned empty `CODEX_HOME` excludes
 | 19 | `⌘⌥1`…`⌘⌥6` | shortcut | Go to recent chat N (`recentThread1..6`: the chats by last update, newest first). | `GoToRecentChat`: the Nth Recents thread by `updatedAt`; past the end does nothing. | PASS (`recent_chat_keys`) |
 | 20 | `⌘+`, `⌘-`, `⌘0` | shortcut | Zoom in, zoom out, actual size. | — | NOT WIRED (`crates/ui/src/lib.rs`: no UI scale) |
 
+F1d covers SH-020 and SH-135 with `refs/interactions/f1d.json` and `cargo test -p app --test f1d`.
+The original Mac recording proves a native 1280×832 viewport at scale 2.
+Shift-Tab from the Home rail button reveals `Skip to content`.
+Enter or a click moves focus to the main content.
+The next Tab reaches `Choose project`.
+The shared focus handles retain the main container outside the normal Tab stops.
+Command titles open their full-label tooltip after 2000 ms only when the measured title exceeds its viewport.
+The tooltip wraps within 320 px and closes when the pointer leaves.
+Fitting command titles and the profile avatar have no tooltip.
+The original sidebar hover card also opens for fitting titles, so F1d does not replace that card.
+Functional acceptance runs `skip_link_keyboard_and_pointer_paths_reach_same_content` and `full_label_tooltip_requires_overflow` in `f1d`.
+The shared `keyboard_tooltip_ownership_and_dismissal_follow_focus` check remains in `f1a`, with its stronger native paint and blur coverage.
+These checks pass on the real headless Root and native tooltip surface.
+Keyboard and pointer activation reach the same main region and the same next content control without changing the route or sending app-server requests.
+Every original visual assertion remains in the separate recorded replay.
+The initial 15-input shared replay, F1a/F1b/F1c checks, and all 36 strict parity cases passed with unchanged metrics.
+The extended record also checks the already-recorded project tooltip, its shortcut, and its bounds after both skip-link activation methods.
+`Tooltip::focus_handle` reuses the control's native focus handle and the shared provider.
+Keyboard focus opens immediately; blur and Escape close the tooltip without moving focus.
+The lifecycle check rejects pointer-focus opening, delayed reopening after Escape, and multiple visible tooltip owners.
+F1d retains the original `(455.5, 695)` probes at steps 3 and 7.
+Functional readiness is reported independently from the remaining Home visual parity.
+The original Home-mask, border-box, and keyboard-tooltip caller differences remain recorded; their checks are not removed or relaxed.
+The combined native check on `96995c3` passes S033 and both functional F1d paths with all 880 source hashes verified.
+The shared guard allows main-content ancestors and the exact Thread transcript focus while keeping popup input separate.
+This includes blank-Home typing, Thread insertion and caret edits, and popup isolation.
+This result does not clear the separate appearance gate or the retained Home visual failures.
+
 ### Account logout (RS-036, SH-088)
 
 The command menu, profile menu, and Codex ▸ Log Out open the same confirmation dialog.
@@ -608,13 +636,40 @@ Before each thread the host reads the user's saved config (`config/read` for the
 The sandbox and approvals follow the original's agent-mode rules (`Al`): the saved `sandbox_mode` and `approval_policy`, or `auto`; an unattended run sets `never` when the requirements allow it, and the turn's sandbox adds the folder, `$CODEX_HOME/automations/<id>` and the git roots.
 The mode the user last picked is read from `agent-mode-by-host-id` in the global state [INFERENCE: the persisted-atom table is assumed].
 When the original database exists, a `pending:` row in `automation_runs` opens before the thread, takes the thread id, and is archived (`auto`) if the thread or turn fails to start.
-`turn/completed` for the thread then sets the run to `PENDING_REVIEW` (`finish_automation_run`); a `failed_runs_only` task is read when the turn completed and unread otherwise.
+`turn/completed` finishes the matching initial turn through `finish_automation_run(threadId, turn)`.
+The bridge keeps the run's initial `notificationPolicy` and `autoArchive` values until completion.
+A `failed_runs_only` success keeps its existing read time or becomes read; failure and interruption clear the read time.
+A successful cron run with `autoArchive` sends `thread/archive` unless a heartbeat targets the thread.
+Only an accepted archive request changes the row to `ARCHIVED` with reason `auto`.
+An archive refusal keeps `PENDING_REVIEW` and the completed run's read state.
+User start, steer, add-message and queue requests cancel automatic archive before they reach the server.
+If archive is in flight or already complete, the bridge restores the thread first and sets the run to `ACCEPTED`.
+The per-thread archive lock also prevents a user request from racing with that restore.
+No completion path removes a worktree or starts a cleanup service.
+A missing store or run row releases only the matching completed tracker, without creating an archive row.
 A refusal or `success: false` shows the danger toast `Could not start scheduled task`, with the reason on one line.
 Event-triggered tasks (`## When this happens` prompts) have the item disabled with the tooltip `Automations triggered by events can’t be run manually`; the host refuses them too.
 The project folders or project target (its first root from `.codex-global-state.json`) run, in a new worktree for the original default environment (`create_worktree` and `set_owner_thread`, removed again when no thread starts) or in the folder for `local`; outside a Git repository the run happens in the folder.
-Projectless and heartbeat tasks are refused: the host has no workspace-directory creation or renderer thread state.
-Not yet carried over: the project assignment of the new thread, `autoArchive`, the desktop notification, the unread dot on the rail, `lastRunAt` and next-run updates.
-`automation_run_now` checks the requests the app-server receives and the refusals; the live `Root` flow needs macOS.
+For a project target, the host saves `{projectKind: "local", projectId}` after `thread/start` and worktree ownership.
+It saves the assignment before it moves the pending run row or starts the turn.
+This follows the original `Vl` and `U0.setAssignment`; it preserves existing projectless membership and unrelated global state.
+All native project-state writers use the same locked, atomic `.codex-global-state.json` update.
+An assignment failure archives the pending row and sends no turn; the started thread keeps its worktree.
+Legacy folder targets do not receive a project assignment, even when a saved project contains the folder.
+Projectless tasks use the original `nl`/`Ct` allocation under `projectlessWorkspaceRoot`, or `~/Documents/Codex` when that setting is absent.
+Each run gets a local-date folder and a unique prompt-derived folder with `work` and `outputs` subfolders.
+The host rejects relative roots and symlinks at the root or local-date folder.
+It saves `projectless-thread-ids`, `thread-workspace-root-hints`, and `thread-projectless-output-directories` through the shared atomic global-state writer.
+The thread receives the original projectless output instructions and permissions; projectless runs do not create Git worktrees.
+A failed start retains the owned folder and archives the pending run; a failed turn retains the thread metadata and archives its run.
+Successful projectless runs use the same automatic archive completion path and retain their saved folders and metadata.
+The host reads config requirements before it creates a projectless workspace, as in the original `Ll`.
+A failed metadata write retains the started thread and its folder without starting a turn.
+Heartbeat tasks still require renderer thread state.
+Not yet carried over: the desktop notification and the unread dot on the rail.
+`automation_run_now` checks projectless metadata, project assignment, saved policy, early completion, user cancellation, and archive failures against a stdio peer.
+It also checks account isolation, recoverable restore writes, and retained worktrees.
+The native row-menu replay needs macOS.
 
 `LocalHost` implements the original `automation-update` status change for local tasks (issue https://github.com/i098/codex-gpui/issues/226).
 It accepts `{id, status}` or the original full cron or heartbeat body; any other changed field fails.

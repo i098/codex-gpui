@@ -41,6 +41,7 @@ use url::Url;
 
 mod automation_schedule;
 mod git;
+mod projectless;
 mod run_now;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -77,9 +78,8 @@ pub trait Host: Send + Sync {
         bail!("adding a local project is unsupported by this host")
     }
 
-    /// The original's turn-completed update of an automation run: an open run of `thread_id`
-    /// becomes `PENDING_REVIEW`. `false` when the thread is no open run or the host has none.
-    fn finish_automation_run(&self, _thread_id: &str, _completed: bool) -> Result<bool> {
+    /// Finish the initial automation turn and settle its automatic archive before reading the inbox.
+    fn finish_automation_run(&self, _thread_id: &str, _turn: &Value) -> Result<bool> {
         Ok(false)
     }
 
@@ -408,6 +408,7 @@ pub struct LocalHost {
     /// process holds the same connection.
     bridge: Option<Arc<Bridge>>,
     opener: PathBuf,
+    host_settings_path: PathBuf,
 }
 
 impl LocalHost {
@@ -416,11 +417,18 @@ impl LocalHost {
             home: home.into(),
             bridge: None,
             opener: "/usr/bin/open".into(),
+            host_settings_path: PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
+                .join("Library/Application Support/codex-gpui/host-settings.json"),
         }
     }
 
     pub fn with_bridge(mut self, bridge: Arc<Bridge>) -> Self {
         self.bridge = Some(bridge);
+        self
+    }
+
+    pub fn with_host_settings_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.host_settings_path = path.into();
         self
     }
 
@@ -439,6 +447,45 @@ impl LocalHost {
                     PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".codex")
                 }),
         )
+    }
+
+    fn update_global_state(&self, update: impl FnOnce(&mut Value) -> Result<bool>) -> Result<()> {
+        fs::create_dir_all(&self.home)?;
+        // ponytail: native-writer lock only; coordinate with the original app for cross-app isolation.
+        let lock = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(self.home.join(".codex-global-state.lock"))?;
+        lock.lock()?;
+        let path = self.home.join(".codex-global-state.json");
+        let mut state: Value = match fs::read(&path) {
+            Ok(contents) => serde_json::from_slice(&contents)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => json!({}),
+            Err(error) => return Err(error).context("read global state before updating it"),
+        };
+        ensure!(state.is_object(), "global state must be an object");
+        if update(&mut state)? {
+            let mut file = tempfile::NamedTempFile::new_in(&self.home)?;
+            serde_json::to_writer_pretty(&mut file, &state)?;
+            file.as_file().sync_all()?;
+            file.persist(path)?;
+        }
+        Ok(())
+    }
+
+    fn set_thread_project_assignment(&self, thread_id: &str, project_id: &str) -> Result<()> {
+        self.update_global_state(|state| {
+            if state["thread-project-assignments"].is_null() {
+                state["thread-project-assignments"] = json!({});
+            }
+            let assignments = state["thread-project-assignments"]
+                .as_object_mut()
+                .context("thread-project-assignments must be an object")?;
+            let assignment = json!({"projectKind": "local", "projectId": project_id});
+            assignments.insert(thread_id.to_owned(), assignment);
+            Ok(true)
+        })
     }
 
     fn database(&self, flags: OpenFlags) -> Result<Option<Connection>> {
@@ -899,8 +946,8 @@ impl Host for LocalHost {
         })
     }
 
-    fn finish_automation_run(&self, thread_id: &str, completed: bool) -> Result<bool> {
-        self.finish_run(thread_id, completed)
+    fn finish_automation_run(&self, thread_id: &str, turn: &Value) -> Result<bool> {
+        self.finish_run(thread_id, turn)
     }
 
     fn add_project(&self, root: &Path) -> Result<String> {
@@ -909,30 +956,26 @@ impl Host for LocalHost {
             .context("resolve selected project folder")?;
         ensure!(root.is_dir(), "selected project must be a folder");
         let root = root.to_str().context("project path must be UTF-8")?;
-        let path = self.home.join(".codex-global-state.json");
-        let mut state: Value = match fs::read(&path) {
-            Ok(contents) => serde_json::from_slice(&contents)?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => json!({}),
-            Err(error) => return Err(error).context("read project state before adding a folder"),
-        };
-        ensure!(state.is_object(), "project state must be an object");
-        if state["local-projects"].is_null() {
-            state["local-projects"] = json!({});
-        }
-        let projects = state["local-projects"]
-            .as_object_mut()
-            .context("local-projects must be an object")?;
-        if !projects.values().any(|project| {
-            project["rootPaths"].as_array().is_some_and(|roots| {
-                roots.iter().any(|path| {
-                    path.as_str().is_some_and(|path| {
-                        path == root
-                            || Path::new(path).canonicalize().ok().as_deref()
-                                == Some(Path::new(root))
+        self.update_global_state(|state| {
+            if state["local-projects"].is_null() {
+                state["local-projects"] = json!({});
+            }
+            let projects = state["local-projects"]
+                .as_object_mut()
+                .context("local-projects must be an object")?;
+            if projects.values().any(|project| {
+                project["rootPaths"].as_array().is_some_and(|roots| {
+                    roots.iter().any(|path| {
+                        path.as_str().is_some_and(|path| {
+                            path == root
+                                || Path::new(path).canonicalize().ok().as_deref()
+                                    == Some(Path::new(root))
+                        })
                     })
                 })
-            })
-        }) {
+            }) {
+                return Ok(false);
+            }
             let id = crate::uuid_v4();
             let now = chrono::Utc::now().timestamp_millis();
             let name = Path::new(root)
@@ -953,12 +996,8 @@ impl Host for LocalHost {
                 .as_array_mut()
                 .context("project-order must be an array")?
                 .push(id.into());
-            fs::create_dir_all(&self.home)?;
-            let mut file = tempfile::NamedTempFile::new_in(&self.home)?;
-            serde_json::to_writer_pretty(&mut file, &state)?;
-            file.as_file().sync_all()?;
-            file.persist(path)?;
-        }
+            Ok(true)
+        })?;
         Ok(root.to_owned())
     }
 
@@ -1406,8 +1445,8 @@ impl Host for CloudHost {
         self.local.add_project(root)
     }
 
-    fn finish_automation_run(&self, thread_id: &str, completed: bool) -> Result<bool> {
-        self.local.finish_run(thread_id, completed)
+    fn finish_automation_run(&self, thread_id: &str, turn: &Value) -> Result<bool> {
+        self.local.finish_run(thread_id, turn)
     }
 
     fn fetch(&self, request: &Request) -> Result<Value> {

@@ -1,0 +1,785 @@
+{
+  "name": "f1d",
+  "rows": [
+    "SH-020",
+    "SH-135"
+  ],
+  "source": {
+    "renderer": "Original extracted webview on the owned Mac chrome-headless-shell lane",
+    "entry": "http://127.0.0.1:4646/index.html?theme=dark",
+    "transport": "Persistent default page, direct page WebSocket; browser and attached-session controls returned the same viewport",
+    "viewportProof": "Native window-size=1280,832 and force-device-scale-factor=2; measured innerWidth=1280, innerHeight=832, devicePixelRatio=2 before and after navigation",
+    "startup": "Committed fixture replay and oracle; no startup responses changed. The original announcement was dismissed with its Continue with current model button.",
+    "overflow": "The command-result title opens after 2000 ms only when its label overflows. Sidebar hover cards also open for fitting labels; those cards are not this tooltip."
+  },
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 2,
+    "theme": "dark"
+  },
+  "steps": [
+    {
+      "type": "click",
+      "target": {
+        "text": "Home",
+        "bbox": {
+          "x": 8,
+          "y": 52,
+          "w": 36,
+          "h": 36
+        }
+      }
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "shift": true,
+      "portKey": "shift-tab"
+    },
+    {
+      "type": "key",
+      "key": "Enter"
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "Home",
+        "bbox": {
+          "x": 8,
+          "y": 52,
+          "w": 36,
+          "h": 36
+        }
+      }
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "shift": true,
+      "portKey": "shift-tab"
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "Skip to content",
+        "bbox": {
+          "x": 88,
+          "y": 8,
+          "w": 132.5859375,
+          "h": 32
+        }
+      }
+    },
+    {
+      "type": "key",
+      "key": "Tab"
+    },
+    {
+      "type": "click",
+      "target": {
+        "text": "Search",
+        "bbox": {
+          "x": 300,
+          "y": 56,
+          "w": 28,
+          "h": 28
+        }
+      },
+      "waitMs": 600
+    },
+    {
+      "type": "hover",
+      "target": {
+        "text": "fitting command label",
+        "bbox": {
+          "x": 417,
+          "y": 241.5703125,
+          "w": 329.8203125,
+          "h": 21
+        }
+      },
+      "waitMs": 2300
+    },
+    {
+      "type": "hover",
+      "target": {
+        "text": "overflowing command label",
+        "bbox": {
+          "x": 417,
+          "y": 272.5703125,
+          "w": 328.15625,
+          "h": 21
+        }
+      },
+      "waitMs": 1500
+    },
+    {
+      "type": "hover",
+      "target": {
+        "text": "overflowing command label",
+        "bbox": {
+          "x": 417,
+          "y": 272.5703125,
+          "w": 328.15625,
+          "h": 21
+        }
+      },
+      "waitMs": 800
+    },
+    {
+      "type": "hover",
+      "target": {
+        "text": "fitting command label",
+        "bbox": {
+          "x": 417,
+          "y": 241.5703125,
+          "w": 329.8203125,
+          "h": 21
+        }
+      },
+      "waitMs": 500
+    },
+    {
+      "type": "key",
+      "key": "Escape"
+    },
+    {
+      "type": "hover",
+      "target": {
+        "text": "profile avatar",
+        "bbox": {
+          "x": 8,
+          "y": 788,
+          "w": 36,
+          "h": 36
+        }
+      },
+      "waitMs": 2300
+    }
+  ],
+  "result": {
+    "dom": [
+      {
+        "afterStep": 0,
+        "focus": {
+          "tag": "BUTTON",
+          "id": "",
+          "text": "Home",
+          "role": null,
+          "aria": null,
+          "tabIndex": 0,
+          "bbox": {
+            "x": 8,
+            "y": 52,
+            "w": 36,
+            "h": 36
+          },
+          "focusVisible": false
+        },
+        "skipVisible": false,
+        "mainFocused": false,
+        "pixels": []
+      },
+      {
+        "afterStep": 1,
+        "focus": {
+          "tag": "A",
+          "id": "",
+          "text": "Skip to content",
+          "role": null,
+          "aria": null,
+          "tabIndex": 0,
+          "bbox": {
+            "x": 88,
+            "y": 8,
+            "w": 132.5859375,
+            "h": 32
+          },
+          "focusVisible": true
+        },
+        "skipVisible": true,
+        "mainFocused": false,
+        "pixels": [
+          {
+            "x": 87,
+            "y": 24,
+            "rgb": [
+              58,
+              131,
+              247
+            ]
+          },
+          {
+            "x": 90,
+            "y": 24,
+            "rgb": [
+              255,
+              255,
+              255
+            ]
+          }
+        ],
+        "selector": "Skip to content",
+        "bbox": {
+          "x": 88,
+          "y": 8,
+          "w": 132.5859375,
+          "h": 32
+        },
+        "computed": {
+          "backgroundColor": "rgb(255, 255, 255)"
+        }
+      },
+      {
+        "afterStep": 2,
+        "focus": {
+          "tag": "MAIN",
+          "id": "_r_2a_",
+          "text": "What should we build?Choose projectThis computerCustomSelect effortGPT-6 AstraLightNoneMinimalLightMediumHighExtra HighM",
+          "role": null,
+          "aria": null,
+          "tabIndex": -1,
+          "bbox": {
+            "x": 340,
+            "y": 44,
+            "w": 936,
+            "h": 784
+          },
+          "focusVisible": true
+        },
+        "skipVisible": false,
+        "mainFocused": true,
+        "pixels": [
+          {
+            "x": 87,
+            "y": 24,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 90,
+            "y": 24,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ]
+      },
+      {
+        "afterStep": 3,
+        "focus": {
+          "tag": "BUTTON",
+          "id": "",
+          "text": "Choose project",
+          "role": null,
+          "aria": "Choose project",
+          "tabIndex": 0,
+          "bbox": {
+            "x": 457.25,
+            "y": 681,
+            "w": 132.2734375,
+            "h": 28
+          },
+          "focusVisible": true
+        },
+        "skipVisible": false,
+        "mainFocused": false,
+        "tooltip": {
+          "label": "Select a project to run your chat in",
+          "shortcut": "⌥⇧⌘O",
+          "bbox": {
+            "x": 378,
+            "y": 649,
+            "w": 290.296875,
+            "h": 30
+          }
+        },
+        "selector": "[role=tooltip]",
+        "bbox": {
+          "x": 378,
+          "y": 649,
+          "w": 290.296875,
+          "h": 30
+        },
+        "computed": {
+          "backgroundColor": "rgb(45, 45, 45)"
+        },
+        "pixels": [
+          {
+            "x": 455.5,
+            "y": 695,
+            "rgb": [
+              54,
+              121,
+              227
+            ]
+          }
+        ]
+      },
+      {
+        "afterStep": 4,
+        "focus": {
+          "tag": "BUTTON",
+          "id": "",
+          "text": "Home",
+          "role": null,
+          "aria": null,
+          "tabIndex": 0,
+          "bbox": {
+            "x": 8,
+            "y": 52,
+            "w": 36,
+            "h": 36
+          },
+          "focusVisible": false
+        },
+        "skipVisible": false,
+        "mainFocused": false,
+        "pixels": []
+      },
+      {
+        "afterStep": 5,
+        "focus": {
+          "tag": "A",
+          "id": "",
+          "text": "Skip to content",
+          "role": null,
+          "aria": null,
+          "tabIndex": 0,
+          "bbox": {
+            "x": 88,
+            "y": 8,
+            "w": 132.5859375,
+            "h": 32
+          },
+          "focusVisible": true
+        },
+        "skipVisible": true,
+        "mainFocused": false,
+        "pixels": [
+          {
+            "x": 87,
+            "y": 24,
+            "rgb": [
+              58,
+              131,
+              247
+            ]
+          },
+          {
+            "x": 90,
+            "y": 24,
+            "rgb": [
+              255,
+              255,
+              255
+            ]
+          }
+        ],
+        "selector": "Skip to content",
+        "bbox": {
+          "x": 88,
+          "y": 8,
+          "w": 132.5859375,
+          "h": 32
+        },
+        "computed": {
+          "backgroundColor": "rgb(255, 255, 255)"
+        }
+      },
+      {
+        "afterStep": 6,
+        "focus": {
+          "tag": "MAIN",
+          "id": "_r_2a_",
+          "text": "What should we build?Choose projectThis computerCustomSelect effortGPT-6 AstraLightNoneMinimalLightMediumHighExtra HighM",
+          "role": null,
+          "aria": null,
+          "tabIndex": -1,
+          "bbox": {
+            "x": 340,
+            "y": 44,
+            "w": 936,
+            "h": 784
+          },
+          "focusVisible": true
+        },
+        "skipVisible": false,
+        "mainFocused": true,
+        "pixels": [
+          {
+            "x": 87,
+            "y": 24,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          },
+          {
+            "x": 90,
+            "y": 24,
+            "rgb": [
+              36,
+              36,
+              36
+            ]
+          }
+        ]
+      },
+      {
+        "afterStep": 7,
+        "focus": {
+          "tag": "BUTTON",
+          "id": "",
+          "text": "Choose project",
+          "role": null,
+          "aria": "Choose project",
+          "tabIndex": 0,
+          "bbox": {
+            "x": 457.25,
+            "y": 681,
+            "w": 132.2734375,
+            "h": 28
+          },
+          "focusVisible": true
+        },
+        "skipVisible": false,
+        "mainFocused": false,
+        "tooltip": {
+          "label": "Select a project to run your chat in",
+          "shortcut": "⌥⇧⌘O",
+          "bbox": {
+            "x": 378,
+            "y": 649,
+            "w": 290.296875,
+            "h": 30
+          }
+        },
+        "selector": "[role=tooltip]",
+        "bbox": {
+          "x": 378,
+          "y": 649,
+          "w": 290.296875,
+          "h": 30
+        },
+        "computed": {
+          "backgroundColor": "rgb(45, 45, 45)"
+        },
+        "pixels": [
+          {
+            "x": 455.5,
+            "y": 695,
+            "rgb": [
+              54,
+              121,
+              227
+            ]
+          }
+        ]
+      },
+      {
+        "afterStep": 8,
+        "focus": {
+          "tag": "INPUT",
+          "id": "radix-_r_an_",
+          "text": "",
+          "role": "combobox",
+          "aria": null,
+          "tabIndex": 0,
+          "bbox": {
+            "x": 385,
+            "y": 169,
+            "w": 510,
+            "h": 33
+          },
+          "focusVisible": true
+        },
+        "skipVisible": false,
+        "mainFocused": false,
+        "pixels": [],
+        "tooltip": null
+      },
+      {
+        "afterStep": 9,
+        "focus": {
+          "tag": "INPUT",
+          "id": "radix-_r_an_",
+          "text": "",
+          "role": "combobox",
+          "aria": null,
+          "tabIndex": 0,
+          "bbox": {
+            "x": 385,
+            "y": 169,
+            "w": 510,
+            "h": 33
+          },
+          "focusVisible": true
+        },
+        "skipVisible": false,
+        "mainFocused": false,
+        "pixels": [],
+        "tooltip": null,
+        "labels": [
+          {
+            "label": "Change the greeting in hello.py to \"Hello, Codex\".",
+            "bbox": {
+              "x": 417,
+              "y": 241.5703125,
+              "w": 329.8203125,
+              "h": 21
+            },
+            "scrollWidth": 330,
+            "clientWidth": 330
+          },
+          {
+            "label": "Add a subtract(a, b) function to src/math.py next to add, then run python3 -c '…",
+            "bbox": {
+              "x": 417,
+              "y": 272.5703125,
+              "w": 328.15625,
+              "h": 21
+            },
+            "scrollWidth": 517,
+            "clientWidth": 328
+          }
+        ]
+      },
+      {
+        "afterStep": 10,
+        "focus": {
+          "tag": "INPUT",
+          "id": "radix-_r_an_",
+          "text": "",
+          "role": "combobox",
+          "aria": null,
+          "tabIndex": 0,
+          "bbox": {
+            "x": 385,
+            "y": 169,
+            "w": 510,
+            "h": 33
+          },
+          "focusVisible": true
+        },
+        "skipVisible": false,
+        "mainFocused": false,
+        "pixels": [],
+        "tooltip": null,
+        "labels": [
+          {
+            "label": "Change the greeting in hello.py to \"Hello, Codex\".",
+            "bbox": {
+              "x": 417,
+              "y": 241.5703125,
+              "w": 329.8203125,
+              "h": 21
+            },
+            "scrollWidth": 330,
+            "clientWidth": 330
+          },
+          {
+            "label": "Add a subtract(a, b) function to src/math.py next to add, then run python3 -c '…",
+            "bbox": {
+              "x": 417,
+              "y": 272.5703125,
+              "w": 328.15625,
+              "h": 21
+            },
+            "scrollWidth": 517,
+            "clientWidth": 328
+          }
+        ]
+      },
+      {
+        "afterStep": 11,
+        "focus": {
+          "tag": "INPUT",
+          "id": "radix-_r_an_",
+          "text": "",
+          "role": "combobox",
+          "aria": null,
+          "tabIndex": 0,
+          "bbox": {
+            "x": 385,
+            "y": 169,
+            "w": 510,
+            "h": 33
+          },
+          "focusVisible": true
+        },
+        "skipVisible": false,
+        "mainFocused": false,
+        "pixels": [
+          {
+            "x": 425,
+            "y": 241,
+            "rgb": [
+              45,
+              45,
+              45
+            ]
+          },
+          {
+            "x": 500,
+            "y": 226,
+            "rgb": [
+              45,
+              45,
+              45
+            ]
+          }
+        ],
+        "tooltip": {
+          "label": "Add a subtract(a, b) function to src/math.py next to add, then run python3 -c '…",
+          "bbox": {
+            "x": 421,
+            "y": 222.5,
+            "w": 320,
+            "h": 48
+          }
+        },
+        "selector": "[role=tooltip]",
+        "bbox": {
+          "x": 421,
+          "y": 222.5,
+          "w": 320,
+          "h": 48
+        },
+        "computed": {
+          "backgroundColor": "rgb(45, 45, 45)"
+        },
+        "labels": [
+          {
+            "label": "Change the greeting in hello.py to \"Hello, Codex\".",
+            "bbox": {
+              "x": 417,
+              "y": 241.5703125,
+              "w": 329.8203125,
+              "h": 21
+            },
+            "scrollWidth": 330,
+            "clientWidth": 330
+          },
+          {
+            "label": "Add a subtract(a, b) function to src/math.py next to add, then run python3 -c '…",
+            "bbox": {
+              "x": 417,
+              "y": 272.5703125,
+              "w": 328.15625,
+              "h": 21
+            },
+            "scrollWidth": 517,
+            "clientWidth": 328
+          }
+        ]
+      },
+      {
+        "afterStep": 12,
+        "focus": {
+          "tag": "INPUT",
+          "id": "radix-_r_an_",
+          "text": "",
+          "role": "combobox",
+          "aria": null,
+          "tabIndex": 0,
+          "bbox": {
+            "x": 385,
+            "y": 169,
+            "w": 510,
+            "h": 33
+          },
+          "focusVisible": true
+        },
+        "skipVisible": false,
+        "mainFocused": false,
+        "pixels": [],
+        "tooltip": null,
+        "labels": [
+          {
+            "label": "Change the greeting in hello.py to \"Hello, Codex\".",
+            "bbox": {
+              "x": 417,
+              "y": 241.5703125,
+              "w": 329.8203125,
+              "h": 21
+            },
+            "scrollWidth": 330,
+            "clientWidth": 330
+          },
+          {
+            "label": "Add a subtract(a, b) function to src/math.py next to add, then run python3 -c '…",
+            "bbox": {
+              "x": 417,
+              "y": 272.5703125,
+              "w": 328.15625,
+              "h": 21
+            },
+            "scrollWidth": 517,
+            "clientWidth": 328
+          }
+        ]
+      },
+      {
+        "afterStep": 13,
+        "focus": {
+          "tag": "BODY",
+          "id": "",
+          "text": "Back to ChatGPTSkip to contentHomeSpace ScheduledPlugins  Explore  Code Review  SitesCodexNew chatYour dotProjects  No p",
+          "role": null,
+          "aria": null,
+          "tabIndex": 0,
+          "bbox": {
+            "x": 0,
+            "y": 0,
+            "w": 1280,
+            "h": 832
+          },
+          "focusVisible": false
+        },
+        "skipVisible": false,
+        "mainFocused": false,
+        "pixels": [],
+        "tooltip": null
+      },
+      {
+        "afterStep": 14,
+        "focus": {
+          "tag": "BODY",
+          "id": "",
+          "text": "Back to ChatGPTSkip to contentHomeSpace ScheduledPlugins  Explore  Code Review  SitesCodexNew chatYour dotProjects  No p",
+          "role": null,
+          "aria": null,
+          "tabIndex": 0,
+          "bbox": {
+            "x": 0,
+            "y": 0,
+            "w": 1280,
+            "h": 832
+          },
+          "focusVisible": false
+        },
+        "skipVisible": false,
+        "mainFocused": false,
+        "pixels": [],
+        "tooltip": null
+      }
+    ],
+    "requests": [],
+    "requestsExact": true,
+    "state": {
+      "route": "home"
+    }
+  }
+}

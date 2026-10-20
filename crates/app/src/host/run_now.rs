@@ -12,7 +12,7 @@
 use super::LocalHost;
 use super::{automation_schedule, git};
 use anyhow::{Context as _, Result, bail, ensure};
-use rusqlite::{OpenFlags, params};
+use rusqlite::{OpenFlags, OptionalExtension as _, params};
 use serde_json::{Value, json};
 use std::{fs, process::Command};
 
@@ -403,7 +403,7 @@ impl LocalHost {
     }
 
     /// `ia`: opens an `IN_PROGRESS` row. `None` without the original database.
-    fn begin_run(&self, automation: &str, id: &str, name: &str, cwd: &str) -> Result<()> {
+    fn begin_run(&self, automation: &str, id: &str, name: &str, cwd: Option<&str>) -> Result<()> {
         let Some(db) = self.database(OpenFlags::SQLITE_OPEN_READ_WRITE)? else {
             return Ok(());
         };
@@ -423,7 +423,7 @@ impl LocalHost {
         pending: &str,
         thread: &str,
         name: &str,
-        cwd: &str,
+        cwd: Option<&str>,
     ) -> Result<()> {
         let Some(db) = self.database(OpenFlags::SQLITE_OPEN_READ_WRITE)? else {
             return Ok(());
@@ -542,53 +542,127 @@ impl LocalHost {
         );
     }
 
-    /// The original's turn-completed update (`oa`): an `IN_PROGRESS` run becomes
-    /// `PENDING_REVIEW`. For `failed_runs_only` it is read when the turn completed and unread
-    /// when it did not; otherwise its read state stays. `false` for a thread that is no open run.
-    pub fn finish_run(&self, thread_id: &str, completed: bool) -> Result<bool> {
+    /// Finish the initial automation turn before the notification policy reads the run.
+    pub fn finish_run(&self, thread_id: &str, turn: &Value) -> Result<bool> {
+        let tracked = self
+            .bridge
+            .as_ref()
+            .and_then(|bridge| bridge.automation_turn(thread_id));
+        let finish_unrecorded = || {
+            if let (Some(bridge), Some(tracked)) = (&self.bridge, &tracked)
+                && pollster::block_on(tracked.matches_turn(turn["id"].as_str().unwrap_or_default()))
+            {
+                tracked.mark_completed();
+                bridge.release_automation_turn(thread_id, tracked);
+            }
+            Ok(false)
+        };
         let Some(db) = self.database(OpenFlags::SQLITE_OPEN_READ_WRITE)? else {
-            return Ok(false);
+            return finish_unrecorded();
         };
-        let automation: Option<String> = db
+        let run: Option<(String, String)> = db
             .query_row(
-                "SELECT automation_id FROM automation_runs WHERE thread_id = ? AND status = 'IN_PROGRESS'",
+                "SELECT r.automation_id, r.status FROM automation_runs r JOIN automations a ON a.id = r.automation_id
+                 WHERE r.thread_id = ? AND r.status IN ('IN_PROGRESS', 'PENDING_REVIEW')
+                 AND a.account_id IS NULL AND a.user_id IS NULL AND a.installation_id IS NULL",
                 [thread_id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
-            .ok();
-        let Some(automation) = automation else {
-            return Ok(false);
+            .optional()?;
+        let Some((automation, status)) = run else {
+            return finish_unrecorded();
         };
-        let muted = self.automations()?["items"]
+        if let Some(tracked) = &tracked
+            && !pollster::block_on(tracked.matches_turn(turn["id"].as_str().unwrap_or_default()))
+        {
+            return Ok(false);
+        }
+        if status == "PENDING_REVIEW" && tracked.is_none() {
+            return Ok(false);
+        }
+        let tasks = self.automations()?;
+        let task = tasks["items"]
             .as_array()
             .into_iter()
             .flatten()
-            .any(|a| {
-                a["id"] == automation.as_str() && a["notificationPolicy"] == "failed_runs_only"
-            });
+            .find(|task| task["id"] == automation);
+        let muted = tracked.as_ref().map_or_else(
+            || task.is_some_and(|task| task["notificationPolicy"] == "failed_runs_only"),
+            |tracked| tracked.muted,
+        );
+        let completed = turn["status"] == "completed";
         let now = chrono::Utc::now().timestamp_millis();
-        let changed = if muted {
+        let changed = db.execute(
+            "UPDATE automation_runs SET status = 'PENDING_REVIEW',
+             read_at = CASE WHEN ?1 THEN CASE WHEN ?2 THEN COALESCE(read_at, ?3) ELSE NULL END ELSE read_at END,
+             updated_at = ?3 WHERE thread_id = ?4 AND status IN ('IN_PROGRESS', 'PENDING_REVIEW')",
+            params![muted, completed, now, thread_id],
+        )? > 0;
+        if let (Some(bridge), Some(tracked)) = (&self.bridge, tracked) {
+            if !changed || !tracked.mark_completed() {
+                return Ok(false);
+            }
+            let heartbeat = tasks["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|task| task["kind"] == "heartbeat" && task["targetThreadId"] == thread_id);
+            let archived = if completed && tracked.auto_archive && !heartbeat {
+                let home = self.home.clone();
+                pollster::block_on(bridge.archive_automation_turn(
+                    thread_id,
+                    &tracked,
+                    || Self::mark_run_archived(&db, thread_id),
+                    {
+                        let thread_id = thread_id.to_owned();
+                        move || Self::restore_run_row(&home, &thread_id)
+                    },
+                ))
+            } else {
+                Ok(())
+            };
+            if let Err(error) = archived {
+                eprintln!("codex-gpui: failed to archive automation run: {error:#}");
+            }
+            if !pollster::block_on(tracked.needs_restore()) {
+                bridge.release_automation_turn(thread_id, &tracked);
+            }
+        }
+        Ok(changed)
+    }
+
+    fn mark_run_archived(db: &rusqlite::Connection, thread_id: &str) -> Result<()> {
+        ensure!(
             db.execute(
-                "UPDATE automation_runs SET status = 'PENDING_REVIEW', read_at = ?, updated_at = ?
-                 WHERE thread_id = ? AND status = 'IN_PROGRESS'",
-                params![completed.then_some(now), now, thread_id],
-            )?
-        } else {
-            db.execute(
-                "UPDATE automation_runs SET status = 'PENDING_REVIEW', updated_at = ?
-                 WHERE thread_id = ? AND status = 'IN_PROGRESS'",
-                params![now, thread_id],
-            )?
-        };
-        Ok(changed > 0)
+                "UPDATE automation_runs SET status = 'ARCHIVED', updated_at = ?,
+             archived_reason = COALESCE(archived_reason, 'auto')
+             WHERE thread_id = ? AND status = 'PENDING_REVIEW'",
+                params![chrono::Utc::now().timestamp_millis(), thread_id],
+            )? > 0,
+            "Automation run changed during archive"
+        );
+        Ok(())
+    }
+
+    fn restore_run_row(home: &std::path::Path, thread_id: &str) -> Result<()> {
+        let db = rusqlite::Connection::open_with_flags(
+            home.join("sqlite/codex.db"),
+            OpenFlags::SQLITE_OPEN_READ_WRITE,
+        )?;
+        let now = chrono::Utc::now().timestamp_millis();
+        db.execute(
+            "UPDATE automation_runs SET status = 'ACCEPTED', read_at = COALESCE(read_at, ?),
+             updated_at = ?, archived_reason = NULL WHERE thread_id = ? AND status = 'ARCHIVED'",
+            params![now, now, thread_id],
+        )?;
+        Ok(())
     }
 
     /// The original's `automation-run-now` for a task: one app-server thread per task folder, in
     /// a new worktree of the folder's repository for the original default environment, titled
     /// with the task name, then a turn with the original's run preamble and the prompt. A run
-    /// that cannot start fails with the reason. The original also runs projectless and heartbeat
-    /// tasks; those need workspace directories and renderer thread state, which this host does
-    /// not have, so they fail here instead of running somewhere else.
+    /// that cannot start fails with the reason. Projectless tasks use an owned workspace.
+    /// Heartbeat tasks still need renderer thread state and fail here.
     pub(super) fn automation_run_now(&self, params: &Value) -> Result<Value> {
         let id = params["id"].as_str().context("missing automation id")?;
         let item = self
@@ -614,11 +688,16 @@ impl LocalHost {
             ),
             "Unknown automation execution environment"
         );
+        let bridge = self
+            .bridge
+            .as_ref()
+            .context("The app server is not connected")?;
+        let projectless_target = item["target"]["type"] == "projectless";
         let worktree_env = item["executionEnvironment"] == "worktree";
         let local_environment = item["localEnvironmentConfigPath"]
             .as_str()
             .map(std::path::PathBuf::from);
-        let cwds: Vec<String> = match item["target"]["type"].as_str() {
+        let mut cwds: Vec<String> = match item["target"]["type"].as_str() {
             None => item["cwds"]
                 .as_array()
                 .into_iter()
@@ -628,16 +707,13 @@ impl LocalHost {
             Some("project") => {
                 vec![self.project_root(item["target"]["projectId"].as_str().unwrap_or_default())?]
             }
-            Some(_) => bail!("Projectless tasks cannot be run from this app yet"),
+            Some("projectless") => Vec::new(),
+            Some(_) => bail!("Unknown automation target"),
         };
         ensure!(
-            !cwds.is_empty(),
+            projectless_target || !cwds.is_empty(),
             "Scheduled run skipped: no folders configured"
         );
-        let bridge = self
-            .bridge
-            .as_ref()
-            .context("The app server is not connected")?;
         self.record_run_now(&item, chrono::Utc::now().timestamp_millis());
         let name = item["name"].as_str().unwrap_or_default();
         let last = item["lastRunAt"].as_i64().map_or_else(
@@ -685,13 +761,22 @@ impl LocalHost {
                 json!(item["reasoningEffort"].as_str().unwrap_or(DEFAULT_EFFORT)),
             ),
         };
+        let projectless = if projectless_target {
+            Some(self.create_projectless_workspace(prompt)?)
+        } else {
+            None
+        };
+        if let Some(workspace) = &projectless {
+            cwds = vec![workspace.cwd.clone()];
+        }
         let mut first_error = None;
         for cwd in &cwds {
             let pending = format!("pending:{}", super::device_id());
-            let started = self.begin_run(id, &pending, name, cwd).and_then(|()| {
+            let source_cwd = projectless.is_none().then_some(cwd.as_str());
+            let started = self.begin_run(id, &pending, name, source_cwd).and_then(|()| {
                 // The original's default: the run happens in a fresh worktree of the folder's
                 // repository, or in the folder itself when it is no repository.
-                let worktree = if worktree_env {
+                let worktree = if worktree_env && projectless.is_none() {
                     git::create_worktree(
                         &self.home.join("worktrees"),
                         std::path::Path::new(cwd),
@@ -705,26 +790,27 @@ impl LocalHost {
                     || cwd.clone(),
                     |w| w.workspace_root.to_string_lossy().into_owned(),
                 );
+                let workspace_root = projectless.as_ref().map_or(cwd, |workspace| &workspace.root);
                 let started = pollster::block_on(async {
                     let saved: Value = bridge
                         .request("config/read", json!({"includeLayers": false, "cwd": cwd}))
                         .await?;
                     let config = saved["config"].clone();
                     let first = permissions(
-                        std::slice::from_ref(cwd),
+                        std::slice::from_ref(workspace_root),
                         &config,
                         &requirements,
                         agent_mode.as_deref(),
-                        false,
+                        projectless.is_some(),
                     )?;
-                    let thread: Value = bridge
-                        .request(
-                            "thread/start",
-                            json!({"cwd": run_cwd, "model": model, "approvalPolicy": first.approval_policy,
-                                "approvalsReviewer": first.reviewer, "sandbox": first.sandbox_mode(),
-                                "threadSource": "automation"}),
-                        )
-                        .await?;
+                    let mut params = json!({"cwd": run_cwd, "model": model,
+                        "approvalPolicy": first.approval_policy,
+                        "approvalsReviewer": first.reviewer, "sandbox": first.sandbox_mode(),
+                        "threadSource": "automation"});
+                    if let Some(workspace) = &projectless {
+                        params["developerInstructions"] = json!(workspace.instructions());
+                    }
+                    let thread: Value = bridge.request("thread/start", params).await?;
                     let thread_id = thread["thread"]["id"]
                         .as_str()
                         .context("thread/start returned no thread")?;
@@ -740,18 +826,29 @@ impl LocalHost {
                         return Err(error);
                     }
                 };
+                if let Some(workspace) = &projectless {
+                    self.record_projectless_thread(&thread_id, workspace)?;
+                }
                 if let Some(worktree) = &worktree {
                     // The original only logs a failure to record the owner.
                     let _ = git::set_owner_thread(&worktree.git_root, &thread_id);
                 }
+                if item["target"]["type"] == "project" {
+                    self.set_thread_project_assignment(
+                        &thread_id,
+                        item["target"]["projectId"].as_str().unwrap_or_default(),
+                    )?;
+                }
                 // From here the row follows the thread, so a failure archives that row.
-                let _ = self.name_run(id, &pending, &thread_id, name, cwd);
+                let _ = self.name_run(id, &pending, &thread_id, name, source_cwd);
                 (|| {
-                    let mut roots = vec![cwd.clone(), run_cwd.clone(), memory.clone()];
-                    roots.extend(git_roots(cwd, &run_cwd));
+                    let mut roots = vec![workspace_root.clone(), run_cwd.clone(), memory.clone()];
+                    if projectless.is_none() {
+                        roots.extend(git_roots(cwd, &run_cwd));
+                    }
                     let mut seen = std::collections::HashSet::new();
                     roots.retain(|root| seen.insert(root.clone()));
-                    let turn = permissions(&roots, &config, &requirements, agent_mode.as_deref(), false)?;
+                    let turn = permissions(&roots, &config, &requirements, agent_mode.as_deref(), projectless.is_some())?;
                     pollster::block_on(async {
                         // The title is cosmetic: the original only logs a failure to set it.
                         let _ = bridge
@@ -761,12 +858,13 @@ impl LocalHost {
                             )
                             .await;
                         bridge
-                            .request::<_, Value>(
-                                "turn/start",
+                            .start_automation_turn(
                                 json!({"threadId": thread_id, "cwd": run_cwd, "model": model, "effort": effort,
                                     "approvalPolicy": turn.approval_policy, "approvalsReviewer": turn.reviewer,
                                     "sandboxPolicy": turn.sandbox_policy,
                                     "input": [{ "type": "text", "text": text, "text_elements": [] }]}),
+                                item["notificationPolicy"] == "failed_runs_only",
+                                item["kind"] == "cron" && item["autoArchive"] == true,
                             )
                             .await
                     })
