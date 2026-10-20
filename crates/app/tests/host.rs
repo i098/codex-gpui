@@ -1164,12 +1164,13 @@ fn automation_resume_schedules_when_the_jitter_salt_cannot_be_saved() -> Result<
     Ok(())
 }
 
-/// Mobile `Get started` reads the MFA requirement through the host. A host without the
-/// authenticated transport leaves the initial step with its error; the retry shows the
-/// loading step, then the recorded `required` response opens the MFA step.
+/// Mobile `Get started` reads the MFA requirement, then the MFA status, through the host. A
+/// host without the authenticated transport leaves the initial step with its error; the retry
+/// shows the loading step, then the recorded `required` requirement and `mfa_enabled_v2: true`
+/// status open the allow-host step, not the MFA step.
 #[cfg(target_os = "macos")]
 #[test]
-fn mobile_get_started_follows_the_recorded_mfa_requirement() -> Result<()> {
+fn mobile_get_started_follows_the_recorded_mfa_status() -> Result<()> {
     use ui::screens::mobile::{GetStarted, SetupStep};
     let mut fx = common::Fx::new()?;
     let home = tempfile::tempdir()?;
@@ -1184,7 +1185,9 @@ fn mobile_get_started_follows_the_recorded_mfa_requirement() -> Result<()> {
     fx.click(fx.at("mobile", "Get started")?)?;
     assert_eq!(step(&fx), SetupStep::Error);
 
-    let replay = Arc::new(ReplayHost::from_recording(RECORDING)?);
+    let replay = Arc::new(ReplayHost::from_recording(include_str!(
+        "../../../refs/interactions/mobile-mfa.json"
+    ))?);
     fx.root
         .update(&mut fx.cx, |root, cx| root.set_host(replay, cx));
     fx.cx.update_window(fx.window, |_, window, cx| {
@@ -1192,6 +1195,6 @@ fn mobile_get_started_follows_the_recorded_mfa_requirement() -> Result<()> {
     })?;
     assert_eq!(step(&fx), SetupStep::Pending);
     fx.cx.run_until_parked();
-    assert_eq!(step(&fx), SetupStep::MfaRequired);
+    assert_eq!(step(&fx), SetupStep::AllowHost);
     Ok(())
 }

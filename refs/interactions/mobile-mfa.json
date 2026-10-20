@@ -1,0 +1,187 @@
+{
+ "name": "mobile-mfa",
+ "source": {
+  "mfa_requirement": "refs/interactions/host.json exchange 62 (Codex 26.1007.30912), copied unchanged",
+  "mfa_info": "One GET /accounts/mfa_info on 2026-10-20T09:51Z through the native CloudHost (ureq) in the signed-in scratch session CODEX_HOME=/tmp/cgx-mac/home, the account that recorded host.json. The request field is the original renderer request (yNn, default headers); the wire also carried User-Agent codex-gpui/0.1.0. Scrubbed: factor ids, credential id, timestamps, phone number; set-cookie headers dropped."
+ },
+ "exchanges": [
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/wham/remote/control/mfa_requirement",
+     "method": "GET",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "cf-cache-status",
+         "DYNAMIC"
+        ],
+        [
+         "cf-ray",
+         "a4ac6b690d9f0c60-SJC"
+        ],
+        [
+         "content-length",
+         "31"
+        ],
+        [
+         "content-type",
+         "application/json"
+        ],
+        [
+         "cross-origin-opener-policy",
+         "same-origin-allow-popups"
+        ],
+        [
+         "date",
+         "Thu, 15 Oct 2026 05:28:18 GMT"
+        ],
+        [
+         "nel",
+         "{\"report_to\":\"cf-nel\",\"success_fraction\":0.01,\"max_age\":604800}"
+        ],
+        [
+         "referrer-policy",
+         "strict-origin-when-cross-origin"
+        ],
+        [
+         "report-to",
+         "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=Vucjoy9%2BYVvavdVoFKX%2FuEGgN40Abez8z4%2FPlRvR5HbxssLwcevyXjuMiCdKfpV%2Fx%2FnVJTi9hdIXGNobzPPkUkBsh9v9fmulX5G%2FpTQSSAlXQi9N%2FZJr8LDZJA9s\"}]}"
+        ],
+        [
+         "server",
+         "cloudflare"
+        ],
+        [
+         "strict-transport-security",
+         "max-age=31536000; includeSubDomains; preload"
+        ],
+        [
+         "x-content-type-options",
+         "nosniff"
+        ],
+        [
+         "x-oai-request-id",
+         "cb25f012-884c-419a-8b38-fd06ca0dedc3"
+        ],
+        [
+         "x-openai-proxy-wasm",
+         "v0.1"
+        ]
+       ],
+       "body": "{\n  \"requirement\": \"required\"\n}"
+      }
+     }
+    },
+    "fn": false,
+    "calls": []
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/accounts/mfa_info",
+     "method": "GET",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "cf-cache-status",
+         "DYNAMIC"
+        ],
+        [
+         "cf-ray",
+         "a4d71f60e862cecd-SJC"
+        ],
+        [
+         "connection",
+         "keep-alive"
+        ],
+        [
+         "content-type",
+         "application/json"
+        ],
+        [
+         "cross-origin-opener-policy",
+         "same-origin-allow-popups"
+        ],
+        [
+         "date",
+         "Tue, 20 Oct 2026 09:51:11 GMT"
+        ],
+        [
+         "nel",
+         "{\"report_to\":\"cf-nel\",\"success_fraction\":0.01,\"max_age\":604800}"
+        ],
+        [
+         "referrer-policy",
+         "strict-origin-when-cross-origin"
+        ],
+        [
+         "report-to",
+         "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=bfcwHo5RUMmDMdhkzJ2eENKzYCArtNAhw9HQ7DFPN61CRuYRicEy95N6cTraX9283CEzjoT60acO97pjK%2BY%2B8SKvFUJRpbaOQM5xStyNGljDttJIKQLI1m40UEAC\"}]}"
+        ],
+        [
+         "server",
+         "cloudflare"
+        ],
+        [
+         "strict-transport-security",
+         "max-age=31536000; includeSubDomains; preload"
+        ],
+        [
+         "transfer-encoding",
+         "chunked"
+        ],
+        [
+         "x-build",
+         "b8793fe40bd0"
+        ],
+        [
+         "x-content-type-options",
+         "nosniff"
+        ],
+        [
+         "x-oai-request-id",
+         "a1de1c1b-c2ea-4bc3-8bd3-515f924415a2"
+        ]
+       ],
+       "body": "{\n  \"mfa_enabled\": true,\n  \"mfa_enabled_v2\": true,\n  \"native_default_factor_id\": \"00000000-0000-4000-8000-000000000000\",\n  \"other_providers_without_mfa\": [],\n  \"show_push_auth\": false,\n  \"show_sms\": true,\n  \"show_passkey\": true,\n  \"factors\": {\n    \"totp\": [\n      {\n        \"id\": \"00000000-0000-4000-8000-000000000000\",\n        \"factor_type\": \"totp\",\n        \"is_recovery\": false,\n        \"metadata\": null\n      }\n    ],\n    \"push_auth\": null,\n    \"passkeys\": [\n      {\n        \"id\": \"00000000-0000-4000-8000-000000000000\",\n        \"factor_type\": \"passkey\",\n        \"is_recovery\": false,\n        \"metadata\": {\n          \"update_time_seconds\": 0,\n          \"create_time_seconds\": 0,\n          \"factor_name\": null,\n          \"credential_id\": \"AAAAAAAAAAAAAAAAAAAAAA\",\n          \"authenticator_name\": \"Apple Passwords\",\n          \"is_non_device_bound\": true,\n          \"is_security_key\": false,\n          \"passkey_enrollment_type\": \"login_only\"\n        }\n      }\n    ],\n    \"sms\": [\n      {\n        \"id\": \"00000000-0000-4000-8000-000000000000\",\n        \"factor_type\": \"sms\",\n        \"is_recovery\": false,\n        \"metadata\": {\n          \"phone_number\": \"+10000000000\",\n          \"verified_channels\": [\n            \"sms\"\n          ]\n        }\n      }\n    ]\n  }\n}"
+      }
+     }
+    },
+    "fn": false,
+    "calls": []
+   }
+  }
+ ]
+}

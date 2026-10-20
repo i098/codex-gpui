@@ -1881,13 +1881,12 @@ impl Root {
         .detach();
     }
 
-    /// Mobile `Get started` (`codex-mobile-setup-flow` `P`): the initial step shows its loading
-    /// button while the host reads the account's MFA requirement; `required` moves to the MFA
-    /// step, any other requirement to the allow-host step (whose `Allow` is disabled), and a
-    /// failed read or a body without a `requirement` string back to the initial step with its
+    /// Mobile `Get started` (`codex-mobile-setup-flow` `P`, `XNn`): the initial step shows its
+    /// loading button while the host reads the account's MFA requirement. A non-`required`
+    /// answer opens the allow-host step (whose `Allow` is disabled); `required` also reads
+    /// `/accounts/mfa_info` and opens the MFA step unless `mfa_enabled_v2` is already on. A
+    /// failed read or a body without the expected field returns to the initial step with its
     /// error.
-    // ponytail: on `required` the original also reads `/accounts/mfa_info` and skips the MFA
-    // step when MFA is already on; that read is neither recorded nor authorized here.
     fn start_mobile_setup(&mut self, cx: &mut Context<Self>) {
         let Some(page) = self.mobile_page.clone() else {
             return;
@@ -1896,20 +1895,27 @@ impl Root {
         let host = self.host.clone();
         let read = cx.background_spawn(async move {
             let body = host::json_body(&host.fetch(&host::mfa_requirement())?)?;
-            body["requirement"]
+            let requirement = body["requirement"]
                 .as_str()
-                .map(str::to_owned)
-                .context("MFA requirement response has no requirement")
+                .context("MFA requirement response has no requirement")?;
+            if requirement != "required" {
+                return Ok(mobile::SetupStep::AllowHost);
+            }
+            let info = host::json_body(&host.fetch(&host::mfa_info())?)?;
+            let enabled = info["mfa_enabled_v2"]
+                .as_bool()
+                .context("MFA info response has no mfa_enabled_v2")?;
+            anyhow::Ok(if enabled {
+                mobile::SetupStep::AllowHost
+            } else {
+                mobile::SetupStep::MfaRequired
+            })
         });
         cx.spawn(async move |_, cx| {
-            let step = match read.await.as_deref() {
-                Ok("required") => mobile::SetupStep::MfaRequired,
-                Ok(_) => mobile::SetupStep::AllowHost,
-                Err(error) => {
-                    eprintln!("codex-gpui: mobile setup: MFA requirement read failed: {error:#}");
-                    mobile::SetupStep::Error
-                }
-            };
+            let step = read.await.unwrap_or_else(|error| {
+                eprintln!("codex-gpui: mobile setup: MFA read failed: {error:#}");
+                mobile::SetupStep::Error
+            });
             page.update(cx, |page, cx| page.set_step(step, cx));
         })
         .detach();

@@ -165,6 +165,22 @@ pub fn mfa_requirement() -> Request {
     }))
 }
 
+/// The MFA-status read after a `required` answer (`yNn`: `$l.safeGet("/accounts/mfa_info")`),
+/// with the original's default headers, like `mfa_requirement`.
+pub fn mfa_info() -> Request {
+    Request::Http(json!({
+        "url": "/accounts/mfa_info",
+        "method": "GET",
+        "headers": {
+            "OAI-Language": "en-US",
+            "X-OpenAI-Attach-Auth": "1",
+            "X-OpenAI-Attach-Integrity-State": "1",
+            "originator": "Codex Desktop",
+        },
+        "returnErrorResponse": true,
+    }))
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Exchange {
     pub request: Request,
