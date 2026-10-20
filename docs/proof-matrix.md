@@ -56,6 +56,7 @@ These are the initial executable adapters, not all 175 census surfaces.
 An unknown surface or state fails before a capture starts.
 Add matching original and Root state adapters before running another census cell.
 Do not substitute a static screen or a prior native screenshot for a Root frame.
+The Configuration recipe lets General settle before measuring the next navigation target.
 
 Both themes support the normal census sizes, `1280x832` and `1440x900`.
 Home rest also accepts `767x832` and `600x832`.

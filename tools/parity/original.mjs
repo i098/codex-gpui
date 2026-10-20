@@ -76,6 +76,7 @@ async function configuration() {
     await click("Open profile menu");
     await click("Settings");
     await waitFor(`document.body.innerText.includes('Default permissions')`);
+    await settle(1000);
     await click("Configuration");
     await waitFor(`document.body.innerText.includes('Configure permissions, web access, and agent responses for new chats') || document.body.innerText.includes('Choose how ChatGPT works on your tasks')`);
     if (process.env.R1_CONFIGURATION_SCENARIO) {
