@@ -30,10 +30,10 @@ use std::{
 };
 use theme::{ActiveTheme as _, Theme};
 
-mod configuration;
-mod configuration_network;
 #[path = "computer_use.rs"]
 pub mod computer_use;
+mod configuration;
+mod configuration_network;
 
 /// The app's theme setting (`ThemeSetting`): `system`, `light` or `dark`.
 pub const THEME: &str = "host.appearance-theme";
