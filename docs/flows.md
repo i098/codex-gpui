@@ -714,6 +714,7 @@ The unmanaged-policy fallback uses the already loaded configuration instead of r
 ST-093 opens the personal instructions editor from Personalization.
 The host reads `AGENTS.md` under `CODEX_HOME`, or `~/.codex` by default, through `codex-agents-md`.
 The editor shows `Loading instructions…`, or `Unable to load instructions` with Retry.
+The editor provides a keyboard-accessible Learn more link to the original instructions guide.
 ST-094 saves through `codex-agents-md-save`; the host replaces the file atomically and preserves its permissions.
 Success shows `Instructions updated`; failure shows `Unable to save instructions` and retains the draft.
 Cancel discards the draft.

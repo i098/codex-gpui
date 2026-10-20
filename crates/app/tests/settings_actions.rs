@@ -57,7 +57,7 @@ fn evidence(fx: &mut Fx, name: &str) -> Result<()> {
     };
     let out = std::path::PathBuf::from(out);
     std::fs::create_dir_all(&out)?;
-    fx.shot()?.save(out.join(format!("{name}.png")))?;
+    fx.reference_shot()?.save(out.join(format!("{name}.png")))?;
     Ok(())
 }
 
@@ -145,6 +145,7 @@ fn a_policy_with_no_login_methods_never_starts_authentication() -> Result<()> {
 fn settings_search_and_theme_work_from_the_keyboard() -> Result<()> {
     let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
     fx.keys("cmd-,")?;
+    evidence(&mut fx, "settings-command")?;
     fx.click((200., 118.))?;
     fx.type_text("Appearance")?;
     press(&mut fx, "tab enter")?;
@@ -237,7 +238,7 @@ fn instructions_save_cancel_and_navigation_guard_preserve_the_document() -> Resu
     fx.keys("cmd-a")?;
     fx.type_text("Use tabs.")?;
     evidence(&mut fx, "instructions-edited")?;
-    press(&mut fx, "shift-tab enter")?;
+    press(&mut fx, "shift-tab shift-tab enter")?;
     fx.wait("instructions saved", |fx| {
         fx.read(|root, cx| {
             root.toasts(cx)
@@ -245,12 +246,13 @@ fn instructions_save_cancel_and_navigation_guard_preserve_the_document() -> Resu
                 .any(|text| text.as_ref() == "Instructions updated")
         })
     })?;
+    evidence(&mut fx, "instructions-saved")?;
     assert_eq!(std::fs::read_to_string(&path)?, "Use tabs.");
 
     open_instructions(&mut fx)?;
     fx.keys("cmd-a")?;
     fx.type_text("Do not save this.")?;
-    press(&mut fx, "shift-tab shift-tab enter")?;
+    press(&mut fx, "shift-tab shift-tab shift-tab enter")?;
     assert_eq!(std::fs::read_to_string(&path)?, "Use tabs.");
 
     open_instructions(&mut fx)?;
@@ -310,7 +312,7 @@ fn a_failed_instruction_save_keeps_the_draft_for_retry() -> Result<()> {
     fx.type_text("Retain this draft.")?;
     std::fs::rename(&path, &backup)?;
     std::fs::create_dir(&path)?;
-    press(&mut fx, "shift-tab enter")?;
+    press(&mut fx, "shift-tab shift-tab enter")?;
     fx.wait("instructions save refusal", |fx| {
         fx.read(|root, cx| {
             root.toasts(cx)
