@@ -924,11 +924,12 @@ impl ScheduledSidebar {
                     .child(tooltip(status, label, None, Side::Top))
                     .child(menu),
             );
-        focus::ring(
+        focus::inset_outline(
             row.role(Role::Button).aria_label(task.name.clone()),
             &row_focus,
             px(12.5),
-            px(2.),
+            px(-2.),
+            window,
             cx,
         )
     }
@@ -1041,7 +1042,7 @@ impl Render for ScheduledSidebar {
                             )),
                     )
                     .when(self.filters.search, |d| d.child(self.search.clone()))
-                    .child(focus::ring(
+                    .child(focus::inset_outline(
                         div()
                             .id("new-task")
                             .role(Role::Button)
@@ -1065,7 +1066,8 @@ impl Render for ScheduledSidebar {
                             .child(text("New task", 14., 21., 430., t.text_default_nav)),
                         &new_focus,
                         px(12.5),
-                        px(0.),
+                        px(-2.),
+                        window,
                         cx,
                     )),
             )
