@@ -57,11 +57,12 @@ fn permission_choices_save_and_reopen() -> Result<()> {
     let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
     open_configuration(&mut fx, 1)?;
     evidence(&mut fx, "configuration")?;
-    fx.keys("tab enter")?;
+    fx.click((1100., 278.))?;
     evidence(&mut fx, "approval-menu")?;
     fx.keys("enter")?;
     fx.wait("approval choice", |fx| fx.read(|root, _| root.config()["approval_policy"] == "on-request"))?;
-    fx.keys("tab enter down")?;
+    fx.click((1100., 339.))?;
+    fx.keys("down")?;
     evidence(&mut fx, "sandbox-menu")?;
     fx.keys("enter")?;
     fx.wait("sandbox choice", |fx| fx.read(|root, _| root.config()["sandbox_mode"] == "workspace-write"))?;
@@ -94,7 +95,10 @@ fn managed_permissions_cannot_be_changed() -> Result<()> {
     lines.extend(exchange("config/read", config));
     let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
     open_configuration(&mut fx, 1)?;
-    fx.keys("tab enter down enter tab enter down enter")?;
+    fx.click((1100., 278.))?;
+    fx.keys("enter down enter")?;
+    fx.click((1100., 339.))?;
+    fx.keys("enter down enter")?;
     assert!(!fx.sent()?.iter().any(|request| request["method"] == "config/batchWrite"));
     assert_eq!(fx.read(|root, _| root.config()["sandbox_mode"].clone()), "read-only");
     evidence(&mut fx, "managed")?;
@@ -111,7 +115,8 @@ fn failed_permission_write_keeps_the_saved_value() -> Result<()> {
     lines.extend(failed);
     let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
     open_configuration(&mut fx, 1)?;
-    fx.keys("tab enter enter")?;
+    fx.click((1100., 278.))?;
+    fx.keys("enter")?;
     fx.wait("configuration save failure", |fx| fx.read(|root, cx| root.toasts(cx).iter().any(|title| title.contains("Couldn't update this setting"))))?;
     assert_eq!(fx.read(|root, _| root.config()["approval_policy"].clone()), "never");
     evidence(&mut fx, "failed-write")?;
