@@ -397,6 +397,7 @@ The icon rasterizes during paint in the active compositor layer; the footer reco
 MCP responses use `action`, optional empty `content`, and the selected `_meta.persist`; they never use a command-approval `decision`.
 The host retains the disclosure choice only after an accepted response enters the bridge.
 Run `cargo test -p app --test computer_use_approvals`; the native replay and captures require macOS.
+
 W-04 reuses the command owner's commit `89ab67b0f0591625c9eb9a20a83a4a5997875ccd`.
 The Linux host tests cover patch add, delete, rename, conflicts, and source-preserving worktree forks.
 Worktree forks copy staged and unstaged content, binary files, untracked files, and symbolic links into a new owned worktree.
@@ -406,6 +407,7 @@ The expanded activity list scrolls within the original 224 px limit.
 The Delete confirmation isolates its clipped content without clipping the outer shadow.
 Cancel uses the primary-soft-alpha token, and the close icon preserves the original color-mix channels at 80% alpha.
 Confirmation buttons paint the focus outline before their fill and border.
+Pending-question file cards use the same Undo/Reapply state as other turn cards.
 
 
 MO-36 uses `refs/interactions/ms4.json`, recorded with the original CSS classes in an isolated route1 Chrome context.

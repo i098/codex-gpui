@@ -1698,7 +1698,16 @@ impl ThreadView {
                     )
                     .child(text("Asking question", 14., 20., 430., t.text_tertiary)),
             );
-            if let Some(card) = diff_card(&turn.id, &turn.items, window, t) {
+            if let Some(card) = diff_card(
+                &turn.id,
+                &turn.items,
+                window,
+                t,
+                (
+                    self.reverted.contains(&turn.id),
+                    self.patch_pending.contains(&turn.id),
+                ),
+            ) {
                 col = col.child(div().mt(px(16.)).pb(px(8.)).child(card));
             }
             return col;
