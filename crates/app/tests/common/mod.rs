@@ -121,11 +121,12 @@ pub fn recorded_host_settings() -> Result<app::host_settings::Settings> {
 }
 
 #[cfg(target_os = "macos")]
-fn install_panic_hook() {
+pub fn install_panic_hook() {
     static INSTALLED: std::sync::Once = std::sync::Once::new();
     INSTALLED.call_once(|| {
         std::panic::set_hook(Box::new(|info| {
-            eprintln!("{info}");
+            use std::io::Write as _;
+            let _ = writeln!(std::io::stderr(), "{info}");
             std::process::exit(101);
         }));
     });

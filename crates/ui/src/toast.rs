@@ -8,7 +8,7 @@
 //! moves a toast with the pointer and dismisses it from 45 px, or faster than 0.11 px/ms.
 
 use gpui::{
-    App, BoxShadow, ClickEvent, Context, DispatchPhase, Div, Hsla, InteractiveElement as _,
+    App, ClickEvent, Context, Corners, DispatchPhase, Div, Hsla, InteractiveElement as _,
     IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _,
     Pixels, Render, SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, Task,
     Window, canvas, div, point, prelude::FluentBuilder as _, px, rgba,
@@ -343,20 +343,23 @@ impl Toaster {
             .flex()
             .items_start()
             .gap(px(4.))
-            .px(px(12.))
-            .py(px(8.))
-            .rounded(px(15.))
-            .border_1()
-            .border_color(border)
-            .bg(bg)
+            .px(px(13.))
+            .py(px(9.))
             .text_color(fg)
-            .shadow(vec![BoxShadow {
-                color: gpui::black().opacity(0.1),
-                offset: point(px(0.), px(4.)),
-                blur_radius: px(12.),
-                spread_radius: px(0.),
-                inset: false,
-            }])
+            .child(shapes::decoration(shapes::Decoration {
+                radius: Corners::all(px(15.)),
+                corner: shapes::Corner::Squircle,
+                fill: Some(bg),
+                border: Some((px(1.), border)),
+                shadows: vec![shapes::Shadow {
+                    color: gpui::black().opacity(0.1),
+                    offset: point(px(0.), px(4.)),
+                    blur: px(12.),
+                    spread: px(0.),
+                    inset: false,
+                }],
+                ..Default::default()
+            }))
             .on_hover(cx.listener(move |this, over, _, cx| this.hover(id, *over, cx)))
             .on_mouse_down(
                 MouseButton::Left,
@@ -414,9 +417,7 @@ impl Toaster {
                     .cursor_pointer()
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.dismiss(id, cx)))
-                    // The original's 8 px cross in a 16 px box; `close.svg` is 20 px wide with a
-                    // 9.28 px cross, so 17.24 px draws the same size.
-                    .child(crate::icon::icon("close", 17.24, fg)),
+                    .child(crate::icon::icon("toast-close", 16., fg)),
             )
     }
 }
@@ -454,10 +455,13 @@ impl Render for Toaster {
                     .left(gpui::relative((1. - scale) / 2.))
                     .w(gpui::relative(scale))
                     .h(px(h))
-                    .rounded(px(15. * scale))
-                    .border_1()
-                    .border_color(border)
-                    .bg(surface)
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: Corners::all(px(15. * scale)),
+                        corner: shapes::Corner::Squircle,
+                        fill: Some(surface),
+                        border: Some((px(1.), border)),
+                        ..Default::default()
+                    }))
                     .into_any_element()
             });
             div()
@@ -486,6 +490,13 @@ impl Render for Toaster {
             .absolute()
             .size_0()
         });
-        gpui::deferred(region.child(stack).children(tracker)).with_priority(5)
+        gpui::deferred(
+            div()
+                .absolute()
+                .inset_0()
+                .top_layer()
+                .child(region.child(stack).children(tracker)),
+        )
+        .with_priority(5)
     }
 }

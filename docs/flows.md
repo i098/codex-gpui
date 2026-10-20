@@ -267,6 +267,8 @@ Successful Undo also removes the restored row from an open archive page.
 Two review regressions check cursor traversal and Undo after another toast opens View.
 Both regressions use real app-server replies from a fresh isolated fixture home.
 F3a still checks the toast layout, lifetime, hover pause, swipe, and Undo.
+The shared Toaster paints its Skia decoration, glyphs, and shadow into one viewport-origin compositor layer.
+This preserves low-alpha shadow pixels when the layer blends into the page.
 Archive search, filters, and management actions are separate inventory rows outside AM-101.
 
 The S004 recording uses the original renderer through the Linux route1 stack in an isolated Chrome context.

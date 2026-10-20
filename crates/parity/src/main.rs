@@ -10,6 +10,12 @@ const USAGE: &str =
     "usage: parity [--refs refs] [--out target/parity] [--screen <name>] [--gate] [--self-test]";
 
 fn main() -> Result<()> {
+    #[cfg(target_os = "macos")]
+    std::panic::set_hook(Box::new(|info| {
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stderr(), "{info}");
+        std::process::exit(101);
+    }));
     let (mut refs, mut out) = (PathBuf::from("refs"), PathBuf::from("target/parity"));
     let (mut screen, mut gate) = (None, false);
     let mut args = std::env::args().skip(1);
