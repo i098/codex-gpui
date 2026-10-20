@@ -15,6 +15,6 @@ use gpui::{App, Context, Div};
 pub(crate) fn init(_cx: &mut App) {}
 
 /// Called by `Root::render` on the root element, after the app's own actions.
-pub(crate) fn actions(root: Div, _cx: &mut Context<Root>) -> Div {
-    root
+pub(crate) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
+    crate::windows::actions(root, cx)
 }
