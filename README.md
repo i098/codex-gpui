@@ -238,6 +238,9 @@ Stock GPUI cannot match Chromium's pixels, so the copies change three things:
 - Skia blends: glyph and sprite blending as Skia's 8-bit raster does it, and `SkPaint::setAlphaf` alpha rounded to a byte.
 - Layer compositing: opacity layers and composited layers (`will-change`, scrollers) that blend as Chromium's `saveLayerAlpha` does.
 
+`Window::layout_origin_residual_y` returns the fractional vertical origin removed by layout rounding.
+Use it when placing multiline field glyphs to retain Blink's baseline positions.
+
 Monochrome glyphs and SVGs keep their paint alpha.
 Element opacity is applied once when the enclosing layer is restored.
 
