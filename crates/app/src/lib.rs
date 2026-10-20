@@ -2278,13 +2278,12 @@ impl Root {
                 Some(shell)
             }
             Route::Thread(_) if self.sidebar_automation.is_some() => {
-                let tasks = self.tasks();
-                let task = tasks
-                    .iter()
-                    .find(|t| Some(&t.id) == self.sidebar_automation.as_ref())
-                    .cloned();
-                let selected = task.map(|task| (task, cx.new(|_| ui::EmptyMain).into()));
-                let (shell, sidebar, _) = automations::shell(tasks, selected, utc_offset(), cx);
+                let main: AnyView = cx.new(|_| ui::EmptyMain).into();
+                let (shell, sidebar, _) =
+                    automations::shell(self.tasks(), Some(main), utc_offset(), cx);
+                sidebar.update(cx, |sidebar, cx| {
+                    sidebar.select(self.sidebar_automation.clone(), cx);
+                });
                 self.scheduled = Some(sidebar);
                 self.sync_starting(cx);
                 Some(shell)
