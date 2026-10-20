@@ -40,6 +40,7 @@ use ui::screens::sidebar::Project;
 use url::Url;
 
 mod automation_schedule;
+pub mod computer_use;
 mod git;
 mod projectless;
 mod run_now;
@@ -76,6 +77,11 @@ pub trait Host: Send + Sync {
 
     fn add_project(&self, _root: &Path) -> Result<String> {
         bail!("adding a local project is unsupported by this host")
+    }
+
+    /// Returns the trusted native Settings service, never a model-callable tool.
+    fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
+        bail!("Computer Use settings are unsupported by this host")
     }
 
     /// Finish the initial automation turn and settle its automatic archive before reading the inbox.
@@ -409,11 +415,13 @@ pub struct LocalHost {
     bridge: Option<Arc<Bridge>>,
     opener: PathBuf,
     host_settings_path: PathBuf,
+    computer_use_settings: Option<computer_use::ComputerUseSettings>,
 }
 
 impl LocalHost {
     pub fn new(home: impl Into<PathBuf>) -> Self {
         Self {
+            computer_use_settings: None,
             home: home.into(),
             bridge: None,
             opener: "/usr/bin/open".into(),
@@ -432,6 +440,14 @@ impl LocalHost {
         self
     }
 
+    pub fn with_computer_use_settings(
+        mut self,
+        settings: computer_use::ComputerUseSettings,
+    ) -> Self {
+        self.computer_use_settings = Some(settings);
+        self
+    }
+
     /// Launches editors through `opener`, which takes macOS `open`'s `[-a App] file` arguments.
     pub fn with_opener(mut self, opener: impl Into<PathBuf>) -> Self {
         self.opener = opener.into();
@@ -439,14 +455,19 @@ impl LocalHost {
     }
 
     pub fn from_env() -> Self {
-        Self::new(
+        let mut host = Self::new(
             std::env::var_os("CODEX_HOME")
                 .filter(|s| !s.is_empty())
                 .map(PathBuf::from)
                 .unwrap_or_else(|| {
                     PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".codex")
                 }),
-        )
+        );
+        host.computer_use_settings = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .filter(|home| home.is_absolute())
+            .map(|home| computer_use::ComputerUseSettings::new(home, &host.home));
+        host
     }
 
     fn update_global_state(&self, update: impl FnOnce(&mut Value) -> Result<bool>) -> Result<()> {
@@ -928,6 +949,12 @@ impl LocalHost {
 }
 
 impl Host for LocalHost {
+    fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
+        self.computer_use_settings
+            .as_ref()
+            .context("Computer Use settings require an explicit user home")
+    }
+
     fn projects(&self) -> Result<Vec<Project>> {
         let path = self.home.join(".codex-global-state.json");
         let contents = match fs::read(&path) {
@@ -1437,6 +1464,10 @@ impl CloudHost {
 }
 
 impl Host for CloudHost {
+    fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
+        self.local.computer_use_settings()
+    }
+
     fn projects(&self) -> Result<Vec<Project>> {
         self.local.projects()
     }
