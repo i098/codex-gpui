@@ -187,7 +187,42 @@ impl Render for HomeMain {
             .flex_col()
             .items_center()
             .gap(px(24.))
-            .child(icon("codex-logo", 56., Hsla { a: 0.3, ..t.text }))
+            .child(if crate::HomeAccountAccess::available(cx) {
+                icon("codex-logo", 56., Hsla { a: 0.3, ..t.text }).into_any_element()
+            } else {
+                let color = t.text;
+                canvas(
+                    |_, _, _| (),
+                    move |bounds, _, window, cx| {
+                        shapes::with_layer(77, bounds, window, |window| {
+                            let path = "icons/codex-logo.svg";
+                            if !shapes::paint_icon(
+                                include_bytes!("../../../../assets/icons/codex-logo.svg"),
+                                path,
+                                bounds,
+                                false,
+                                color,
+                                None,
+                                window,
+                                cx,
+                            ) {
+                                window
+                                    .paint_svg(
+                                        bounds,
+                                        path.into(),
+                                        None,
+                                        gpui::TransformationMatrix::unit(),
+                                        color,
+                                        cx,
+                                    )
+                                    .ok();
+                            }
+                        });
+                    },
+                )
+                .size(px(56.))
+                .into_any_element()
+            })
             .child(
                 div()
                     .id("home-project-title")

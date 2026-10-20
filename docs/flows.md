@@ -355,6 +355,8 @@ The native fix reuses Login without starting sign-in.
 `home_account` checks Login after a failed account read and blocks signed-out shortcuts from opening the old chat view.
 It also checks that missing optional account metadata preserves the draft, keeps the editor usable, and restores navigation after recovery.
 The native host reads the original account fields without a new sign-in flow.
+The unavailable Send control paints its background and arrow as one50% layer.
+The fallback hero uses the original30% group opacity, and navigation uses the original85% text color.
 The Login glyphs, header spacing, and dark palette follow the captured original view.
 
 The recorded default sidebar stays visible at 725 px and hides at 724 px.

@@ -104,6 +104,7 @@ impl HomeAccountAccess {
         if !self.available {
             if theme.appearance == theme::Appearance::Dark {
                 theme.text = gpui::rgb(0xdfdfdf).into();
+                theme.text_default_nav = theme.text.opacity(0.85);
                 theme.button_primary_solid = theme.text;
                 theme.text_inverse = gpui::rgb(0x2d2d2d).into();
             }

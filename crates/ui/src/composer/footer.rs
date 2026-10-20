@@ -176,6 +176,9 @@ impl Composer {
             });
         let has_input = !self.content.is_empty() || !self.attachments.is_empty();
         let voice_available = crate::HomeAccountAccess::available(cx);
+        let unavailable_send = !voice_available && !has_input && !self.running && !loading;
+        let primary = t.composer_primary;
+        let on_primary = t.text_composer_primary;
         let stopping = self.running && !has_input;
         let waiting_for_model = loading && !self.running;
         let armed = stopping && self.stop_armed.is_some();
@@ -278,13 +281,60 @@ impl Composer {
             .items_center()
             .justify_center()
             .relative()
-            .when(!voice_available && !has_input && !self.running, |d| {
-                d.opacity(0.5)
+            .when(unavailable_send, |d| {
+                d.child(
+                    gpui::canvas(
+                        |_, _, _| (),
+                        move |bounds, _, window, cx| {
+                            shapes::with_layer(128, bounds, window, |window| {
+                                shapes::paint(
+                                    &deco(9999., primary, vec![]),
+                                    None,
+                                    bounds,
+                                    window,
+                                    cx,
+                                );
+                                let arrow = gpui::Bounds::new(
+                                    bounds.origin + gpui::point(px(6.), px(6.)),
+                                    gpui::size(px(16.), px(16.)),
+                                );
+                                let path = "icons/composer-arrow-up.svg";
+                                if !shapes::paint_icon(
+                                    include_bytes!(
+                                        "../../../../assets/icons/composer-arrow-up.svg"
+                                    ),
+                                    path,
+                                    arrow,
+                                    false,
+                                    on_primary,
+                                    None,
+                                    window,
+                                    cx,
+                                ) {
+                                    window
+                                        .paint_svg(
+                                            arrow,
+                                            path.into(),
+                                            None,
+                                            gpui::TransformationMatrix::unit(),
+                                            on_primary,
+                                            cx,
+                                        )
+                                        .ok();
+                                }
+                            });
+                        },
+                    )
+                    .absolute()
+                    .inset_0(),
+                )
             })
-            .child(if waiting_for_model {
-                loading_send(t.composer_primary, t.text_composer_primary).into_any_element()
-            } else {
-                shapes::decoration(deco(9999., t.composer_primary, vec![])).into_any_element()
+            .when(!unavailable_send, |d| {
+                d.child(if waiting_for_model {
+                    loading_send(primary, on_primary).into_any_element()
+                } else {
+                    shapes::decoration(deco(9999., primary, vec![])).into_any_element()
+                })
             })
             .when(armed, |d| {
                 // `keyboardShortcutLabel`: a 12 px `Esc` replaces the square while armed.
@@ -298,7 +348,7 @@ impl Composer {
                         .bg(t.text_composer_primary),
                 )
             })
-            .when(!stopping && !waiting_for_model, |d| {
+            .when(!stopping && !waiting_for_model && !unavailable_send, |d| {
                 d.child(
                     icon(
                         if has_input || !voice_available {
