@@ -688,6 +688,8 @@ See [the scoped unread issue](https://github.com/i098/codex-gpui/issues/169).
 The replay captures the empty view, streamed output, retained failed output, preview, focus ring, stop failure and successful cleanup.
 It resizes the window to 1280, 767 and 600 px.
 `cargo test -p ui --lib` checks Unicode refit and retained failed output without a native window.
+Reference captures keep composer focus and hide the caret.
+The change card clips overflowing stats to the original subtitle width.
 Stop sends one thread-scoped request and waits for command completion notifications before removing commands from the running list.
 A refused request keeps both commands and permits another attempt.
 The failure toast paints above the open summary.

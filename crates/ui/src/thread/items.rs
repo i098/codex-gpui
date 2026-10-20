@@ -198,7 +198,7 @@ pub(super) fn diff_card(
                             .flex_col()
                             .child(text(title, 14., 21., 500., t.text).text_ellipsis())
                             .child(
-                                div().h(px(19.5)).pt(px(3.)).child(
+                                div().h(px(19.5)).pt(px(3.)).overflow_hidden().child(
                                     crate::screens::diff::panel::stats(added, removed, 13., t),
                                 ),
                             ),

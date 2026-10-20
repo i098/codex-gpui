@@ -58,13 +58,17 @@ fn open(fx: &mut Fx) -> Result<(String, String, serde_json::Value)> {
     ))
 }
 
-fn shot(fx: &mut Fx, name: &str) -> Result<()> {
+fn save_shot(image: image::RgbaImage, name: &str) -> Result<()> {
     let dir = std::env::var_os("CGX_TERMINAL_EVIDENCE")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::env::temp_dir().join("cgx-terminal-release"));
     std::fs::create_dir_all(&dir)?;
-    fx.shot()?.save(dir.join(format!("{name}.png")))?;
+    image.save(dir.join(format!("{name}.png")))?;
     Ok(())
+}
+
+fn shot(fx: &mut Fx, name: &str) -> Result<()> {
+    save_shot(fx.shot()?, name)
 }
 
 #[test]
@@ -79,8 +83,17 @@ fn completion_keeps_the_selected_buffer_when_other_commands_run() -> Result<()> 
             "threadId": SUBTRACT, "turnId": turn, "itemId": item, "delta": "2\n",
         }),
     );
-    fx.hover((1000., 400.))?;
-    shot(&mut fx, "streaming")?;
+    fx.hover(((fx.size.0 * 0.6).round(), 0.))?;
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        ui::composer::Composer::set_caret_transparent(cx, true);
+        window.refresh();
+    })?;
+    let streaming = fx.shot();
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        ui::composer::Composer::set_caret_transparent(cx, false);
+        window.refresh();
+    })?;
+    save_shot(streaming?, "streaming")?;
     let delta = format!("first command\n{}\n\nlast line\n", "0123456789".repeat(20));
     let output = format!("2\n{delta}");
     emit(
