@@ -2489,7 +2489,7 @@ impl Root {
                         this.tabs.clear();
                         this.side = None;
                         this.loaded.clear();
-                        this.approval = None;
+                        this.approvals.clear();
                         this.set_threads(&[], cx);
                         this.set_next_cursor(None, cx);
                         this.automation_load = None;
