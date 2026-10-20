@@ -8,7 +8,6 @@ use std::sync::Arc;
 use theme::ActiveTheme as _;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// The original locked-use gates, supplied by feature and account requirements.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -201,21 +200,6 @@ fn grouped_icons(
     )
 }
 
-#[cfg(test)]
-mod image_tests {
-    use super::*;
-
-    #[test]
-    fn unscaled_icon_origin_snaps_before_the_css_transform() {
-        let origin = icon_origin(
-            Bounds::new(point(px(461.5), px(343.5)), size(px(40.), px(40.))),
-            2.,
-        );
-        assert!((f32::from(origin.x) * 2. - 922.7).abs() < 0.0001);
-        assert!((f32::from(origin.y) * 2. - 686.05).abs() < 0.0001);
-    }
-}
-
 pub fn locked_use_row(window: &mut Window, cx: &mut App) -> Option<Div> {
     let state = cx.try_global::<NativeSettingsState>()?;
     if !state.locked_use.visible(&state.policy) {
@@ -378,54 +362,17 @@ pub fn locked_use_row(window: &mut Window, cx: &mut App) -> Option<Div> {
     )
 }
 
-/// One request owns all updates until completion, failure, or cancellation.
-#[derive(Clone, Debug, Default)]
-pub struct Appshot {
-    pub request_id: String,
-    pub app: Option<Value>,
-    pub ax_text: Option<String>,
-    pub screenshot: Option<Value>,
-    pub completed: bool,
-    pub failure_reason: Option<String>,
-}
+#[cfg(test)]
+mod image_tests {
+    use super::*;
 
-impl Appshot {
-    pub fn new(request_id: String) -> Self {
-        Self {
-            request_id,
-            ..Self::default()
-        }
-    }
-
-    pub fn update(&mut self, request_id: &str, update: &Value) -> Result<(), &'static str> {
-        if self.request_id != request_id || self.completed {
-            return Err("capture request is stale");
-        }
-        match update["type"].as_str() {
-            Some("metadata") if update["app"]["bundleIdentifier"].is_string() => {
-                self.app = Some(update["app"].clone());
-            }
-            Some("axText") if update["text"].is_string() => {
-                self.ax_text = update["text"].as_str().map(str::to_owned);
-            }
-            Some("screenshot") => self.screenshot = Some(update.clone()),
-            Some("completed") => self.completed = true,
-            Some("failed") => {
-                self.completed = true;
-                self.failure_reason = Some(
-                    update["failureReason"]
-                        .as_str()
-                        .filter(|s| !s.trim().is_empty())
-                        .unwrap_or("native_service_failed")
-                        .to_owned(),
-                );
-            }
-            _ => return Err("invalid native capture update"),
-        }
-        Ok(())
-    }
-
-    pub fn cancel(&mut self) {
-        self.completed = true;
+    #[test]
+    fn unscaled_icon_origin_snaps_before_the_css_transform() {
+        let origin = icon_origin(
+            Bounds::new(point(px(461.5), px(343.5)), size(px(40.), px(40.))),
+            2.,
+        );
+        assert!((f32::from(origin.x) * 2. - 922.7).abs() < 0.0001);
+        assert!((f32::from(origin.y) * 2. - 686.05).abs() < 0.0001);
     }
 }
