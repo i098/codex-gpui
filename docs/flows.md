@@ -150,6 +150,21 @@ Cells give `outside count / text percent`; the owned empty `CODEX_HOME` excludes
 | 19 | `⌘⌥1`…`⌘⌥6` | shortcut | Go to recent chat N (`recentThread1..6`: the chats by last update, newest first). | `GoToRecentChat`: the Nth Recents thread by `updatedAt`; past the end does nothing. | PASS (`recent_chat_keys`) |
 | 20 | `⌘+`, `⌘-`, `⌘0` | shortcut | Zoom in, zoom out, actual size. | — | NOT WIRED (`crates/ui/src/lib.rs`: no UI scale) |
 
+### Account logout (RS-036, SH-088)
+
+The command menu, profile menu, and Codex ▸ Log Out open the same confirmation dialog.
+Cancel and Escape send no request.
+Confirm sends `account/logout`.
+Success shows Login and clears the open chat, Recents, panels, and navigation history.
+Failure shows an error and keeps the chat and draft usable.
+Signed-out shortcuts cannot reopen the old account view.
+Logout also clears attachments from both composers and ignores unfinished attachment work from the previous session.
+After sign-in, Recents can load the remaining pages.
+
+Run the focused native replay with `cargo test -p app --test account_logout -- --test-threads=1`.
+It uses replayed success and failure responses and an isolated local host.
+This proves headless native behavior, not live installed-window acceptance.
+
 ## 14.1 Left rail
 
 | # | Item | Kind | Original | Port | Status |
@@ -161,7 +176,7 @@ Cells give `outside count / text percent`; the owned empty `CODEX_HOME` excludes
 | 5 | Explore `…` | click | Opens the Explore menu; blue dot. | Dot shows; no menu. | NOT WIRED (outside v1 scope (no screen): the menu holds the secondary destinations) |
 | 6 | Code Review | click | Navigates to `/pull-requests`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
 | 7 | Sites | click | Navigates to `/sites`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
-| 8 | Profile avatar | click | Opens the profile menu. | Menu above the avatar: `Settings`, `Help` ▸ `Set up mobile`; a click outside or on the avatar closes it. | PASS (`profile_menu_settings`, `profile_menu_dismiss`, `profile_menu_mobile`) |
+| 8 | Profile avatar | click | Opens the profile menu. | Menu above the avatar: `Settings`, `Log out`, `Help` ▸ `Set up mobile`; a click outside or on the avatar closes it. | PASS (`profile_menu_settings`, `profile_menu_dismiss`, `profile_menu_mobile`; logout: `account_logout`) |
 | 9 | Rail item hover | hover | Tooltip on the right side with label and shortcut. | Hover fill shows (4716 px repainted); a tooltip with the item's label opens 200 ms after the pointer enters (at once when another was open), 2 px right of the item; `Explore` and the avatar have none; it closes on leave, press or Escape. | PASS (`rail_hover_fill`; tooltip: `crates/app/tests/f1a.rs` against `refs/interactions/f1a.json`) |
 | 10 | Drag a rail item | click | Reorders pinned items. | — | NOT WIRED (`crates/ui/src/lib.rs` `Shell::rail`) |
 | 11 | Focus ring | focus ring | 2 px ring on the 36×36 button. | No tab stops. | NOT WIRED (`crates/ui/src/lib.rs` `Shell::rail`: no focus handles or `focus_visible` ring) |
@@ -284,7 +299,7 @@ The existing replay checks the original colors, row actions, tooltips, canceled 
 | 13 | `⌘F` | shortcut | Find bar. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 14 | `⌘⇧A` | shortcut | Archives the chat. | `ArchiveChat`: `thread/archive`, the row leaves Recents, the route goes to Home. | PASS (`archive_chat`) |
 | 15 | `⌘⌥R` | shortcut | Rename dialog. | — | NOT WIRED (`crates/ui`: no rename dialog) |
-| 16 | Approval card | click | Approve, Allow similar, Allow all edits, Deny. | `Root::on_event` shows the card; `Allow once`, the scoped allow and `Deny` answer the server request by its id. | PASS (`approval_round_trip`: a command approval request crafted from `CommandApprovalRequest`, because the sessions ran with `approvalPolicy: never`) |
+| 16 | Approval card | click | Approve, Allow similar, Allow all edits, Deny. | `Root::on_event` keeps each command or file-change approval request by its request id and thread, and the thread composer shows the open thread's oldest one. `Allow once`, the scoped allow, `Deny`, `Enter` and `Escape` answer that request once by its id; the next one then shows. `serverRequest/resolved` and the `turn/completed` of a request's turn remove it without an answer. Other server requests (permissions, user input, elicitation, tool calls) stay unanswered. | PASS (`approval_round_trip`: a command approval request crafted from `CommandApprovalRequest`, because the sessions ran with `approvalPolicy: never`; `approval_queue.rs`: five pending requests on two chats, decision order, withdrawal and turn end) |
 | 17 | Stream error | error | `Reconnecting {progress}`. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 18 | Usage limit | error | Usage limit banner. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 19 | Focus ring on cards | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
@@ -317,6 +332,7 @@ The headless S010 replay has no AppKit view; it checks the missing-handle path w
 | 4 | Shift+Enter | shortcut | New line. | New line in the Home and thread composers. | PASS (`shift_enter_newline`) |
 | 5 | `@` | shortcut | Mention list. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 6 | `/` | shortcut | Slash command menu. | Matches the recorded menu, filtering, selected row, editor focus, arrows, Escape, Enter, and Tab. | PASS (`s021::slash_menu_keyboard_replay`) |
+| 6a | `/` then Enter on `Compact`, `Rename`, `Pin chat`, `Fork chat`, `Model`, `Reasoning`, `Work in a project` | shortcut | Runs the chat action (CP-058 to CP-063, CP-068, CP-069). | `Compact`: `thread/compact/start` (resumes the chat first), toast `Compact is disabled while a chat is in progress` while a turn runs, `Failed to compact chat` on error. `Rename`: the `Rename chat` dialog; closing it focuses the composer. `Pin chat`: `thread/section/move`, toggles. `Fork chat`, `Model`, `Reasoning`, `Work in a project`: Enter turns the token into `/id ` and opens a submenu filtered by the text after it; Backspace over the space returns to the list, Escape leaves the text, a pick removes token and query, keeps the rest of the draft, and acts (`thread/fork` in the same workspace with `Failed to fork chat` on error, `config/batchWrite`, the existing-project selection for new chats). Not wired: `Fork chat in new worktree`, the submenu's `Search` input row, the usage text on `Compact`, and the other commands. | PASS (`slash_commands`) |
 | 7 | Paste large text | click | `Pasted text.txt` chip. | Paste inserts the text. | NOT WIRED (`crates/ui/src/composer.rs` `paste`) |
 | 8 | Drag file over composer | hover | `Drop to attach`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 9 | Attachment chip remove | click | Removes the attachment. | Handler exists (`remove-attachment`). | FAIL (no flow: attachments come only from the system file picker, which the headless window does not answer) |
@@ -324,7 +340,7 @@ The headless S010 replay has no AppKit view; it checks the missing-handle path w
 | 11 | Permissions dropdown | click | Ask / Approve for me / Full access / Custom. | Opens. | PASS (`permissions_popover`) |
 | 12 | Submit while running | click | Stop; with text Queue or Steer. | Stop interrupts the active turn. Queue adds a server-owned submission; Steer sends input into the active turn. | PASS (`s023`, `s023b`) |
 | 13 | Stop | click | `turn/interrupt`. | Sends the active thread and turn IDs; completion removes Stop. Errors show `Failed to stop chat`. | PASS (`s023::stop_interrupts_only_the_active_turn`) |
-| 14 | Queued message row | click | Steer, Edit, Delete, Retry. | Steer sends the selected submission once. Delete removes it; Cmd+Z restores its text, identity, order, and chat location. Edit, menus, side chats, and Retry remain outside this slice. | PARTIAL (CP-113/114 pass in `s023b`; CP-115/116 remain open) |
+| 14 | Queued message row | click | Steer, Edit, Delete, Retry. | Steer sends the selected submission once. Delete removes it; Cmd+Z restores its text, identity, order, and chat location. The `…` menu (`Queued message actions`) holds `Edit message` and `Turn off queueing` / `Turn on queueing`. `Edit message` sends `thread/queue/delete`, then moves the exact text and local images back to the composer (a draft already there stays below it; remote images, audio, skills and mentions wait in the app and go out with the next send). Sending queues it again (`thread/queue/add`) and `thread/queue/reorder` puts it before the row that followed it, else after the one before it. If the server already took the submission, only the tray refreshes. The queueing item writes `desktop.followUpQueueMode`, so the next submit queues or steers; a refused write toasts `Couldn’t save your changes. Try again` and keeps the label of the behavior that applies. `Open in side chat` is not in the menu: the original shows it only where a side chat can open, and the port has none (`New side chat`, `/side` and `⌥⌘S` have no handler). Retry and side chats remain outside this slice. | PARTIAL (CP-113/114 pass in `s023b`; CP-115 Edit and queueing pass in `queue_options`; `Open in side chat` and Retry remain open) |
 | 15 | Submit blocked | error | `Unable to send message`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 16 | Upload in progress | loading | `Files uploading…`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 17 | Upload failure | error | `Unable to upload file`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
@@ -590,15 +606,56 @@ It sends no host request, starts no conversation, and writes no preference or ta
 The route stays `Scheduled`, and every card stays enabled.
 `s035b::suggestion_click_says_unsupported_and_sends_nothing` checks the toast, the empty request log, the route, and the cards.
 
+`Run now` (AM-021) is the first item of the row `Scheduled task actions` menu, as in `run-now-11e55df28c95.js`.
+Choosing it sends `automation-run-now` with `{id, collaborationMode, permissions}`; the row reads `Starting run…` and an info toast shows until the host answers.
+`LocalHost` starts one app-server thread per task folder, titles it with the task name, and sends the original's run preamble and the prompt as the first turn.
+The new thread then appears in Recents through `thread/started`.
+Before each thread the host reads the user's saved config (`config/read` for the folder) and the config requirements, and picks the model from `model/list` like the original (`Pr`): the task's model, else `gpt-5.3-codex`, else the default.
+The sandbox and approvals follow the original's agent-mode rules (`Al`): the saved `sandbox_mode` and `approval_policy`, or `auto`; an unattended run sets `never` when the requirements allow it, and the turn's sandbox adds the folder, `$CODEX_HOME/automations/<id>` and the git roots.
+The mode the user last picked is read from `agent-mode-by-host-id` in the global state [INFERENCE: the persisted-atom table is assumed].
+When the original database exists, a `pending:` row in `automation_runs` opens before the thread, takes the thread id, and is archived (`auto`) if the thread or turn fails to start.
+`turn/completed` for the thread then sets the run to `PENDING_REVIEW` (`finish_automation_run`); a `failed_runs_only` task is read when the turn completed and unread otherwise.
+A refusal or `success: false` shows the danger toast `Could not start scheduled task`, with the reason on one line.
+Event-triggered tasks (`## When this happens` prompts) have the item disabled with the tooltip `Automations triggered by events can’t be run manually`; the host refuses them too.
+The project folders or project target (its first root from `.codex-global-state.json`) run, in a new worktree for the original default environment (`create_worktree` and `set_owner_thread`, removed again when no thread starts) or in the folder for `local`; outside a Git repository the run happens in the folder.
+Projectless and heartbeat tasks are refused: the host has no workspace-directory creation or renderer thread state.
+Not yet carried over: the project assignment of the new thread, `autoArchive`, the desktop notification, the unread dot on the rail, `lastRunAt` and next-run updates.
+`automation_run_now` checks the requests the app-server receives and the refusals; the live `Root` flow needs macOS.
+
 `LocalHost` implements the original `automation-update` status change for local tasks (issue https://github.com/i098/codex-gpui/issues/226).
 It accepts `{id, status}` or the original full cron or heartbeat body; any other changed field fails.
+Like the original `ugi`, a task without a target sends its first cwd as `projectId`; the host compares that value with the stored cwd.
 `PAUSED` clears `next_run_at` and `next_run_nominal_at`.
 `ACTIVE` recalculates the original nominal and actual next run with `GF`/`KF`/`JF`/`XF` and the persisted `.run-jitter-salt`; it never reuses a cached time.
 A rule without a future run returns the original `Automation schedule has no future runs…` error.
 The update keeps the task identity, the definition and the unrelated TOML and database fields, and restores the TOML when the database commit fails.
 It returns the original `{item}` shape.
 The recurrence uses the vendored `rrule` 0.14.0 with the original limits: `INTERVAL` and `COUNT` up to the JavaScript safe integers, iteration through year 9999, and `BYSECOND=60` moved into the next minute.
-The `host` checks match the retained original oracle; the row actions do not call this endpoint yet.
+The `host` checks match the retained original oracle.
+
+AM-022, AM-023 and AM-028 use the existing sidebar task list.
+The `Scheduled task actions` menu opens under the row button like the original (right edge 1 px inside the button, 220 px wide); its first item is `Pause` or `Resume`.
+The row status control shows `Pause` or `Resume` on hover or keyboard focus, with a named accessible action.
+Both send `automation-update` with the original cron or heartbeat request, block duplicate writes and refetch the list.
+Success shows `Successfully paused automation` or `Successfully resumed automation`; the row shows `Paused` only after the host reports PAUSED.
+An error keeps the stored state and shows `Could not update scheduled task` with the host error description.
+`s037::task_status_controls_persist_through_the_real_local_host` pauses through the menu with keyboard events, restarts the app on a fresh `LocalHost`, resumes with the pointer and fails a real definition write.
+It checks the TOML, the database row, the recalculated next run and the unchanged task fields.
+It uses an isolated headless native Root and a task-owned `CODEX_HOME`, not an installed window.
+
+`LocalHost` also creates the worktree that the default Run now path needs (issue https://github.com/i098/codex-gpui/issues/254).
+`create-worktree` and `set-worktree-owner-thread` follow the original git worker (`D2`, `e4`) and the automation start `Ol`.
+A cwd outside a Git repository makes no worktree, and the original then runs in the cwd.
+The start is the remote default branch, else `HEAD`: the local branch, or its upstream when only the upstream moved, with a local tracking branch for a remote-only start.
+The worktree is `<worktrees root>/<4 hex>/<repo>` with the `.codex-worktree-name` marker and a 4-digit suffix when the name is taken; the default root is `$CODEX_HOME/worktrees`.
+`git worktree add --detach` runs without clean or smudge filters, and a start branch that is not the default branch is recorded in `codex-synced-branch.json`.
+Ignored `AGENTS.override.md` files and the ignored files that `.worktreeinclude` names are copied only as regular files, never through a symlinked directory or over an existing file.
+The selected local environment is stored in `codex.localEnvironmentConfigPath`, and its setup script runs in the user's login environment with `CODEX_SOURCE_TREE_PATH` and `CODEX_WORKTREE_PATH`; the exported variables go to `codex-shell-environment.json`.
+Like the original, Git's `extensions.worktreeConfig` is enabled in the repository when Git requires it for that store.
+A failure removes only the worktree that the call made, after its cleanup script, without `--force`; a worktree with changes is kept and the error says so.
+`set-worktree-owner-thread` writes `codex-thread.json` for a linked worktree only.
+`crates/app/tests/automation_worktree.rs` proves these effects against disposable repositories and a local bare remote, and the `host::git` unit tests prove the cleanup refusals and the name collision.
+Run now calls `create_worktree` and `set_owner_thread` directly for worktree tasks.
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
@@ -608,11 +665,11 @@ The `host` checks match the retained original oracle; the row actions do not cal
 | 4 | `Create` menu | click | Create with Codex / ChatGPT / manually. | — | NOT WIRED (no host: `automation-create`) |
 | 5 | Search | focus | Filters; `No matching tasks`. | Dispatches `SearchTasks`; no handler. | NOT WIRED (no host: `list-automations`) |
 | 6 | Status filter | click | All / Active / Paused. | — | NOT WIRED (no host: `list-automations`) |
-| 7 | Task row | click | Detail panel. | — | NOT WIRED (no host: `list-automations`) |
-| 8 | Row actions | click | Edit, Run now, Pause, Delete. | — | NOT WIRED (UI; `LocalHost` has `automation-update` pause/resume, no `automation-delete`) |
+| 7 | Task row | click | Detail panel. | Selects the task and opens its thread. | PASS (`s037::task_row_hover_and_click_match_original`) |
+| 8 | Row actions | click | Edit, Run now, Pause, Delete. | `Run now` (through `automation-run-now`) and `Pause` / `Resume` in the row menu; the status control persists through `automation-update`. Edit and Delete remain outside this slice. | PARTIAL (`automation_run_now`; `s037::task_status_controls_persist_through_the_real_local_host`) |
 | 9 | Editor fields | focus | Name, Prompt, schedule. | — | NOT WIRED (no host: `automation-create`) |
 | 10 | Previous runs | click | Run chat, mark read, archive. | — | NOT WIRED (no host: `inbox-items`, `automation-run-archive`) |
-| 11 | Row hover | hover | Row highlight. | No task rows; suggestion hover matches the original recording. | FAIL (no task rows; suggestion hover passes `s035::suggestion_hover_matches_original`) |
+| 11 | Row hover | hover | Row highlight. | The recorded row fill and actions match; the status icon changes to Pause on hover or keyboard focus. | PASS (`s037::task_row_hover_and_click_match_original`; suggestion hover: `s035::suggestion_hover_matches_original`) |
 | 12 | Focus ring | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/screens/automations.rs`) |
 | 13 | No tasks | empty | `No scheduled tasks`, suggestions. | `No scheduled tasks`, server suggestions and distinct landing examples, up to six cards. | PASS (`rail_scheduled`, `parity_automations`, `host::scheduled_suggestions_follow_late_reads_and_host_replacement`) |
 | 14 | Loading | loading | `Loading scheduled tasks…`. | — | NOT WIRED (no host: `list-automations`) |

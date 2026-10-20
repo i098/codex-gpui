@@ -1,0 +1,85 @@
+{
+ "name": "logout",
+ "viewport": {
+  "w": 1280,
+  "h": 832,
+  "dpr": 1,
+  "theme": "dark"
+ },
+ "notes": [
+  "Recorded from the original renderer (Codex 26.1007.30912) in headless Chrome: profile menu, Log out, with the replayed app-server (account user@example.com). Boxes are getBoundingClientRect values.",
+  "The card is centered in the full window (640, 416), not in the chat pane. The overlay is codex-dialog-overlay, rgba(0,0,0,0.133).",
+  "Cancel is the ghost button; Log out is the danger button. The 2 px ring (rgb(58,131,247)) is on Cancel when the dialog opens.",
+  "The body says ChatGPT: the original build's {appName} is ChatGPT (the app is ChatGPT.app; its other strings in the port already use ChatGPT). The Signed in as line shows the account/read email for ChatGPT sign-ins."
+ ],
+ "overlay": {
+  "x": 0,
+  "y": 0,
+  "w": 1280,
+  "h": 832,
+  "backgroundColor": "rgba(0, 0, 0, 0.133)"
+ },
+ "card": {
+  "x": 450,
+  "y": 331,
+  "w": 380,
+  "h": 170,
+  "r": "25px",
+  "bg": "oklab(0.297161 0.0000135154 0.00000594556 / 0.9)"
+ },
+ "title": {
+  "x": 470,
+  "y": 353,
+  "w": 82.78,
+  "h": 23,
+  "font": "20px/28px 600"
+ },
+ "email": {
+  "x": 470,
+  "y": 385,
+  "w": 214.42,
+  "h": 17,
+  "font": "14px/21px 430",
+  "color": "rgba(255, 255, 255, 0.498)"
+ },
+ "body": {
+  "x": 470,
+  "y": 416,
+  "w": 340,
+  "h": 21,
+  "font": "14px/21px 430",
+  "color": "rgb(255, 255, 255)"
+ },
+ "cancel": {
+  "x": 634.27,
+  "y": 449,
+  "w": 79.59,
+  "h": 32,
+  "r": "12.5px",
+  "pad": "6px 16px",
+  "font": "14px/18px 430",
+  "color": "rgba(255, 255, 255, 0.498)",
+  "bg": "rgba(0, 0, 0, 0)",
+  "border": "1px solid rgba(0, 0, 0, 0)",
+  "outline": "rgb(238, 238, 238) none 1px"
+ },
+ "logOut": {
+  "x": 725.86,
+  "y": 449,
+  "w": 84.14,
+  "h": 32,
+  "r": "12.5px",
+  "pad": "6px 16px",
+  "font": "14px/18px 430",
+  "color": "rgb(255, 103, 100)",
+  "bg": "oklab(0.705331 0.169982 0.0764888 / 0.1)",
+  "border": "1px solid rgba(0, 0, 0, 0)"
+ },
+ "close": {
+  "x": 790,
+  "y": 347,
+  "w": 24,
+  "h": 24,
+  "r": "4px"
+ }
+}
