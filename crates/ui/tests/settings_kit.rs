@@ -1,3 +1,4 @@
+// Interaction checks use no GPU renderer; the example owns pixel captures.
 use gpui::{
     AnyWindowHandle, AppContext as _, Context, Focusable, HeadlessAppContext, IntoElement,
     KeyUpEvent, Keystroke, MouseButton, MouseDownEvent, PlatformInput, Render, Window, point, px,
@@ -27,9 +28,7 @@ fn press(cx: &mut HeadlessAppContext, window: AnyWindowHandle, key: &str) {
 #[test]
 fn keyboard_skips_locked_choices_and_restores_trigger_focus() {
     let mut cx =
-        HeadlessAppContext::with_platform(textsys::text_system(), Arc::new(theme::Assets), || {
-            gpui_platform::current_headless_renderer()
-        });
+        HeadlessAppContext::with_asset_source(textsys::text_system(), Arc::new(theme::Assets));
     cx.update(|cx| {
         cx.set_global(theme::Theme::dark());
         theme::load_fonts(cx);
@@ -105,9 +104,7 @@ fn destructive_confirmation_defaults_to_cancel_and_returns_focus() {
     use ui::confirmation::{Confirmation, Outcome};
 
     let mut cx =
-        HeadlessAppContext::with_platform(textsys::text_system(), Arc::new(theme::Assets), || {
-            gpui_platform::current_headless_renderer()
-        });
+        HeadlessAppContext::with_asset_source(textsys::text_system(), Arc::new(theme::Assets));
     cx.update(|cx| cx.set_global(theme::Theme::dark()));
     let outcomes = Rc::new(RefCell::new(Vec::new()));
     let received = outcomes.clone();
@@ -160,9 +157,7 @@ impl Render for TestLink {
 #[test]
 fn link_opens_once_when_enter_is_released() {
     let mut cx =
-        HeadlessAppContext::with_platform(textsys::text_system(), Arc::new(theme::Assets), || {
-            gpui_platform::current_headless_renderer()
-        });
+        HeadlessAppContext::with_asset_source(textsys::text_system(), Arc::new(theme::Assets));
     cx.update(|cx| cx.set_global(theme::Theme::dark()));
     let window = cx
         .open_window(size(px(500.), px(400.)), |_, cx| cx.new(|_| TestLink))
