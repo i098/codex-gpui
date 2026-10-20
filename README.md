@@ -240,6 +240,10 @@ Stock GPUI cannot match Chromium's pixels, so the copies change three things:
 Monochrome glyphs and SVGs keep their paint alpha.
 Element opacity is applied once when the enclosing layer is restored.
 
+Composer permission and model labels paint directly into their parent.
+Only the animated effort label needs its own filter layer.
+An extra layer changes glyph edge bytes even when its opacity is one.
+
 `shapes` links Skia binaries built with Chromium's `SkUserConfig.h` legacy defines.
 `.cargo/config.toml` points `SKIA_BINARIES_URL` to these binaries.
 
