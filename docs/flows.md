@@ -153,8 +153,8 @@ The focused native run passes all four Sidebar comparisons:
 
 | Case | Outside-text pixels | Text difference |
 |---|---:|---:|
-| Dark 1280x832 | 0 | 0.320% |
-| Dark 1440x900 | 0 | 0.316% |
+| Dark 1280x832 | 0 | 0.154% |
+| Dark 1440x900 | 0 | 0.152% |
 | Light 1280x832 | 0 | 0.153% |
 | Light 1440x900 | 0 | 0.152% |
 
