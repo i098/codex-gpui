@@ -25,6 +25,15 @@ fn decode_app_image(url: &str) -> Option<Arc<gpui::Image>> {
 fn app_image(app: &AppApproval, window: &mut Window, cx: &mut App) -> Option<Arc<gpui::Image>> {
     let url = app.icon_data_url.as_deref()?;
     let key = SharedString::from(format!("computer-use-icon-{}", app.bundle_identifier));
+    data_image(url, key, window, cx)
+}
+
+pub(crate) fn data_image(
+    url: &str,
+    key: SharedString,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<Arc<gpui::Image>> {
     let cache = window.use_keyed_state(key, cx, |_, _| (url.to_owned(), decode_app_image(url)));
     cache.update(cx, |cache, _| {
         if cache.0 != url {
@@ -107,6 +116,10 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
     let page = window.use_keyed_state("computer-use-settings", cx, |_, cx| {
         cx.observe_global::<ComputerUseState>(|_, cx| cx.notify())
             .detach();
+        cx.observe_global::<crate::screens::computer_use_native::NativeSettingsState>(|_, cx| {
+            cx.notify()
+        })
+        .detach();
         ComputerUse {
             sound_open: false,
             removal: None,
@@ -579,6 +592,14 @@ impl Render for ComputerUse {
             self.removal = None;
         }
         let control = self.control(&state, window, cx);
+        let locked = state
+            .available
+            .then(|| {
+                crate::screens::computer_use_native::locked_use_row(window, cx).map(|row| {
+                    card(vec![row], self.composited.then_some(&self.layer), &t).mt(px(6.))
+                })
+            })
+            .flatten();
         let approvals = state.available.then(|| self.approvals(&state, window, cx));
         let sound = state
             .available
@@ -615,7 +636,7 @@ impl Render for ComputerUse {
                             .child(text("Manage how ChatGPT uses other applications on your computer", 14., 24., 430., t.text_secondary)))))
                 .child(div().w_full().max_w(px(768.)).mx_auto().p(px(20.))
                     .flex().flex_col().gap(px(40.))
-                    .child(group("Control", control, self.composited.then_some(&self.layer), &t))
+                    .child(group("Control", control, self.composited.then_some(&self.layer), &t).children(locked))
                     .children(state.permission_guidance.as_ref().map(|guidance| row(guidance.clone(), None, None,
                         self.action("computer-use-permissions", "Open System Settings", ComputerUseAction::OpenPermissions, state.pending, window, cx), &t)))
                     .children(state.error.as_ref().map(|error| message(error.clone(), &t)))
@@ -729,6 +750,21 @@ fn message(message: impl Into<SharedString>, t: &Theme) -> Div {
 }
 
 fn group(title: &'static str, rows: Vec<Div>, layer: Option<&Layer>, t: &Theme) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .child(
+            div()
+                .h(px(46.))
+                .pb(px(6.))
+                .flex()
+                .items_center()
+                .child(text(title, 14., 21., 500., t.text)),
+        )
+        .child(card(rows, layer, t))
+}
+
+fn card(rows: Vec<Div>, layer: Option<&Layer>, t: &Theme) -> Div {
     let last = rows.len().saturating_sub(1);
     let surface = match layer {
         Some(layer) => deco(
@@ -746,42 +782,29 @@ fn group(title: &'static str, rows: Vec<Div>, layer: Option<&Layer>, t: &Theme) 
         ),
     };
     div()
-        .flex()
-        .flex_col()
-        .child(
+        .relative()
+        .p(px(1.))
+        .child(surface)
+        .child(crate::rounded_clip(
+            px(19.),
+            shapes::Corner::Squircle,
             div()
-                .h(px(46.))
-                .pb(px(6.))
                 .flex()
-                .items_center()
-                .child(text(title, 14., 21., 500., t.text)),
-        )
-        .child(
-            div()
-                .relative()
-                .p(px(1.))
-                .child(surface)
-                .child(crate::rounded_clip(
-                    px(19.),
-                    shapes::Corner::Squircle,
-                    div()
-                        .flex()
-                        .flex_col()
-                        .children(rows.into_iter().enumerate().map(|(index, row)| {
-                            row.relative().when(index < last, |row| {
-                                row.child(
-                                    div()
-                                        .absolute()
-                                        .left(px(16.))
-                                        .right(px(16.))
-                                        .bottom_0()
-                                        .h(px(1.))
-                                        .bg(t.border),
-                                )
-                            })
-                        })),
-                )),
-        )
+                .flex_col()
+                .children(rows.into_iter().enumerate().map(|(index, row)| {
+                    row.relative().when(index < last, |row| {
+                        row.child(
+                            div()
+                                .absolute()
+                                .left(px(16.))
+                                .right(px(16.))
+                                .bottom_0()
+                                .h(px(1.))
+                                .bg(t.border),
+                        )
+                    })
+                })),
+        ))
 }
 
 #[cfg(test)]
