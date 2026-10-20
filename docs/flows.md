@@ -1050,6 +1050,8 @@ The saved checkbox skips later confirmations.
 The retained original also routes `⌥⇧⌘C` through the working-directory handler, despite the older rollout-path inventory description.
 Home leaves the clipboard unchanged.
 The command group ordering and search rules remain unchanged.
+The command menu uses an independent popup layer and the original scrolling tile grid.
+Clear-unread and rename dialogs snap their independent popup layers to device pixels.
 Mini, side-chat, and control-window products remain inactive.
 
 Run `cargo test -p app --test chat_commands -- --test-threads=1` on macOS for the command scenarios.

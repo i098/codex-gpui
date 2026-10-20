@@ -3652,7 +3652,8 @@ impl Render for CommandMenu {
                     .top(px(top - ink_y))
                     .pl(px(ink_x))
                     .pt(px(ink_y))
-                    .layer()
+                    .top_layer()
+                    .snap_origin()
                     .child(
                         div()
                             .relative()
@@ -3690,6 +3691,7 @@ impl Render for CommandMenu {
                                             // transparent layer, over the dialog's (cc layers
                                             // are flat): a row's opacity restores onto it.
                                             .top_layer()
+                                            .cc_tiles()
                                             .flex()
                                             .flex_col()
                                             .children(groups)

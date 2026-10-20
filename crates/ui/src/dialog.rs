@@ -3216,6 +3216,10 @@ impl Render for Dialog {
                     .top(px(top))
                     .w(px(width))
                     .h(px(height))
+                    .when(
+                        matches!(self.kind, Kind::ClearAllUnreads | Kind::Rename),
+                        |d| d.top_layer().snap_origin(),
+                    )
                     .rounded(px(if announcement {
                         16.
                     } else if commit {
