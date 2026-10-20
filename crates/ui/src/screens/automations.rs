@@ -590,8 +590,10 @@ impl ScheduledSidebar {
         let menu_id = SharedString::from(format!("{group}-actions"));
         let menu_focus = focus::handle(menu_id.clone(), 0, window, cx);
         let status_focused = status_focus.read(cx).handle.is_focused(window);
+        let status_focus_visible = status_focus.read(cx).is_focus_visible(window);
         let open = self.menu.as_deref() == Some(task.id.as_str());
-        let show_controls = status_focused || menu_focus.read(cx).handle.is_focused(window) || open;
+        let show_controls =
+            status_focus_visible || menu_focus.read(cx).is_focus_visible(window) || open;
         let status_task = task.id.clone();
         let (press_task, key_task) = (task.id.clone(), task.id.clone());
         let (press_return, key_return) = (menu_focus.clone(), menu_focus.clone());
@@ -743,7 +745,7 @@ impl ScheduledSidebar {
                     .group_hover(group.clone(), |s| s.opacity(1.))
                     .child(tooltip(
                         status
-                            .opacity(if status_focused { 1. } else { 0. })
+                            .opacity(if status_focus_visible { 1. } else { 0. })
                             .group_hover(group.clone(), |s| s.opacity(1.)),
                         label,
                         None,

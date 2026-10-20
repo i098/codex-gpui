@@ -2192,3 +2192,51 @@ fn heartbeat_completion_releases_only_its_matching_turn_without_a_cron_row() -> 
     }
     Ok(())
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn heartbeat_row_keyboard_focus_survives_motion_and_clears_on_pointer_press() -> Result<()> {
+    use common::{Fx, RAIL_SCHEDULED, changed};
+    let home = tempfile::tempdir()?;
+    let host = LocalHost::new(home.path());
+    heartbeat_definition(&host, "Check")?;
+    let mut fx = Fx::new()?;
+    fx.cx.update(|cx| {
+        fx.root
+            .update(cx, |root, cx| root.set_host(Arc::new(host), cx))
+    });
+    fx.click(RAIL_SCHEDULED)?;
+    fx.wait("heartbeat row", |fx| {
+        fx.read(|r, _| {
+            r.automations()
+                .is_some_and(|a| a.as_ref().is_ok_and(|a| a["items"][0]["id"] == "heartbeat"))
+        })
+    })?;
+    fx.hover((100., 700.))?;
+    fx.advance(std::time::Duration::from_millis(300))?;
+    let region = [290., 174., 38., 36.];
+    let baseline = fx.shot()?;
+    let mut keyboard = None;
+    for _ in 0..32 {
+        fx.keys("tab")?;
+        let frame = fx.shot()?;
+        if changed(&baseline, &frame, region) > 0 {
+            keyboard = Some(frame);
+            break;
+        }
+    }
+    let keyboard = keyboard.expect("keyboard navigation must reveal the task controls");
+    fx.hover((120., 710.))?;
+    let moved = fx.shot()?;
+    ensure!(
+        changed(&keyboard, &moved, region) == 0,
+        "pointer motion hid keyboard controls"
+    );
+    fx.click((120., 710.))?;
+    let pressed = fx.shot()?;
+    ensure!(
+        changed(&baseline, &pressed, region) == 0,
+        "pointer focus retained the controls"
+    );
+    Ok(())
+}

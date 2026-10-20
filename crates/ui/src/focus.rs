@@ -12,6 +12,13 @@ pub struct ControlFocus {
     keyboard: Cell<bool>,
 }
 
+impl ControlFocus {
+    /// Keyboard-visible focus persists through pointer motion, but not a pointer press.
+    pub fn is_focus_visible(&self, window: &Window) -> bool {
+        self.handle.is_focused(window) && (self.keyboard.get() || window.last_input_was_keyboard())
+    }
+}
+
 pub fn handle(
     id: impl Into<ElementId>,
     index: isize,
@@ -66,7 +73,7 @@ fn paint_ring(
                 if handle.is_focused(window) && window.last_input_was_keyboard() {
                     focus.keyboard.set(true);
                 }
-                if handle.is_focused(window) && focus.keyboard.get() {
+                if focus.is_focus_visible(window) {
                     shapes::paint(
                         &shapes::Decoration {
                             radius: Corners::all(if shadow { radius } else { radius + outset }),
