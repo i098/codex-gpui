@@ -42,7 +42,7 @@
         const range = document.createRange();
         range.selectNodeContents(c);
         for (const tr of range.getClientRects())
-          if (tr.width && tr.height) texts.push({ node: id, text: c.textContent.trim().slice(0, 200), rect: r4(tr), font: `${cs.fontWeight} ${cs.fontSize}/${cs.lineHeight} ${cs.fontFamily}`, color: cs.color });
+          if (tr.width && tr.height) texts.push({ node: id, text: c.textContent.trim().slice(0, 200), rect: r4(tr), font: `${cs.fontWeight} ${cs.fontSize}/${cs.lineHeight} ${cs.fontFamily}`, color: cs.color, typography: { fontFamily: cs.fontFamily, fontWeight: cs.fontWeight, fontSize: cs.fontSize, lineHeight: cs.lineHeight, letterSpacing: cs.letterSpacing, fontFeatureSettings: cs.fontFeatureSettings, fontVariantNumeric: cs.fontVariantNumeric, fontVariantLigatures: cs.fontVariantLigatures, fontKerning: cs.fontKerning } });
       } else if (c.nodeType === 1) visit(c, id, depth + 1);
     }
   };

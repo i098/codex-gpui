@@ -83,15 +83,7 @@ impl Root {
         let titles: HashMap<_, _> = self
             .threads
             .iter()
-            .map(|thread| {
-                (
-                    thread.id.clone(),
-                    thread
-                        .name
-                        .clone()
-                        .unwrap_or_else(|| thread.preview.trim().to_owned()),
-                )
-            })
+            .map(|thread| (thread.id.clone(), thread_title(thread)))
             .collect();
         let read = cx.background_spawn(async move {
             let response = host.fetch(&host::Request::post(

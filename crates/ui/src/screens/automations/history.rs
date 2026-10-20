@@ -338,6 +338,10 @@ impl RunHistory {
 
     fn latest(&self, run: &Value, t: &Theme, cx: &Context<Self>) -> Div {
         let thread = run["threadId"].as_str().map(str::to_owned);
+        let summary = run["description"]
+            .as_str()
+            .or_else(|| run["archivedAssistantMessage"].as_str())
+            .unwrap_or_else(|| Self::title(run));
         div()
             .px(px(12.))
             .flex()
@@ -359,7 +363,7 @@ impl RunHistory {
                     ),
             )
             .child(
-                text(Self::title(run).to_owned(), 13., 18.5714, 430., t.text)
+                text(summary.to_owned(), 13., 18.5714, 430., t.text)
                     .mt(px(8.))
                     .whitespace_normal(),
             )
@@ -389,12 +393,7 @@ impl RunHistory {
         cx: &Context<Self>,
     ) -> impl IntoElement + use<> {
         let thread = run["threadId"].as_str().map(str::to_owned);
-        let title = Self::title(run);
-        let title = if title.chars().count() > 100 {
-            format!("{}…", title.chars().take(100).collect::<String>())
-        } else {
-            title.to_owned()
-        };
+        let title = Self::title(run).to_owned();
         let source = run["sourceCwd"]
             .as_str()
             .and_then(|cwd| Path::new(cwd).file_name())

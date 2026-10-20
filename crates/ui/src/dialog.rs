@@ -1160,10 +1160,9 @@ impl Dialog {
             "escape" => self.dismiss(cx),
             "tab" => {
                 let order: Vec<usize> = match self.kind {
-                    Kind::Shortcuts
-                    | Kind::FullAccess
-                    | Kind::LogOut
-                    | Kind::ArchiveSection => vec![0, 1],
+                    Kind::Shortcuts | Kind::FullAccess | Kind::LogOut | Kind::ArchiveSection => {
+                        vec![0, 1]
+                    }
                     Kind::ScheduleTask => vec![0, 3, 4, 5, 1, 2],
                     Kind::Branches => vec![0, 1],
                     Kind::BranchConflict => vec![1, 2],

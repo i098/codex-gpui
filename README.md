@@ -150,6 +150,7 @@ Previous runs offers `Mark all as read` and `Archive all` for the selected task.
 Previous runs uses the original 200-item inbox window.
 The management view separates the latest run from previous runs and keeps the task list visible beside the results.
 Its rows show the recorded chat title, folder, status, and age.
+History uses the same chat-title formatter as the sidebar; the latest run keeps its full saved summary.
 Opening the management view marks its latest run as read without marking older runs.
 Archive requires confirmation and skips running or already archived chats.
 The confirmation shows focus rings for keyboard input, not pointer input.

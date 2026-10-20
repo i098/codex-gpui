@@ -63,6 +63,7 @@ The native adapters preserve the original 20-pixel unread-marker slots, control 
 Menus use top-level layers and device-pixel origin snapping.
 The archive dialog keeps its backdrop compositor and clips only its content.
 Task card dividers use the Skia decoration path.
+Captured text runs include computed font size, weight, line height, letter spacing, and font-feature settings.
 
 Both themes support the normal census sizes, `1280x832` and `1440x900`.
 Home rest also accepts `767x832` and `600x832`.
