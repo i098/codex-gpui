@@ -1,5 +1,5 @@
 use crate::{
-    composer::Composer,
+    composer::{Composer, Dismiss},
     icon::icon,
     text,
     tooltip::{Side, tooltip},
@@ -338,6 +338,16 @@ impl Editor {
         Some(rule)
     }
 
+    fn dismiss(&mut self, cx: &mut Context<Self>) {
+        if self.saving {
+            return;
+        }
+        if self.menu.take().is_none() {
+            cx.emit(Outcome::Dismiss);
+        }
+        cx.notify();
+    }
+
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.saving {
             return;
@@ -397,7 +407,7 @@ impl Editor {
             return;
         }
         match key.key.as_str() {
-            "escape" => cx.emit(Outcome::Dismiss),
+            "escape" => self.dismiss(cx),
             "tab" => {
                 let handles = self.tab_order(cx);
                 let current = handles
@@ -751,6 +761,7 @@ impl Render for Editor {
             .gap(px(16.))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_key_down(cx.listener(Self::key))
+            .on_action(cx.listener(|this, _: &Dismiss, _, cx| this.dismiss(cx)))
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 let key = &event.keystroke;
                 if key.key == "enter" && (key.modifiers.platform || key.modifiers.control) {

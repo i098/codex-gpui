@@ -135,6 +135,7 @@ The time presets use 09:00, 14:00, 18:00, and 22:00.
 The row menu's Edit action updates the task through `automation-update`, without changing its identity or unrelated definition fields.
 The editor keeps an existing advanced rule unchanged when only Name or Prompt changes.
 Prefilled drafts stay in Create mode until their data includes an existing task ID.
+Escape closes an open schedule picker first; otherwise, it discards the editor without saving.
 Run `cargo test -p app --test task_create editor:: -- --test-threads=1` on macOS for the native editor, schedule, and Create menu checks.
 Run `cargo test -p app --test automation_run_now` for the `Run now` requests over a stdio app-server stub.
 
@@ -247,6 +248,7 @@ Stock GPUI cannot match Chromium's pixels, so the copies change three things:
 
 `shapes` links Skia binaries built with Chromium's `SkUserConfig.h` legacy defines.
 `.cargo/config.toml` points `SKIA_BINARIES_URL` to these binaries.
+The rasterizer reuses identical inverse-blend probe results across icon positions without changing their pixels.
 
 On macOS, popup backdrops capture the current frame's scene before the popup.
 The capture includes text, images, clipping, and opacity.
