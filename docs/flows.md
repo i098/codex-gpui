@@ -688,7 +688,8 @@ Permission changes use `config/batchWrite` with `filePath: null` and reload the 
 The page keeps the saved value until the server accepts a change.
 An error keeps that value and shows a failure notice.
 The `settings_configuration` native fixture target covers save, reopen, managed restrictions, and failed writes.
-The native target passes all four checks; original/native appearance approval remains open.
+A prior native run passed all four checks.
+Final post-review replay and original/native appearance approval remain open.
 An owned original app-server smoke confirms both permission values in `config.toml` and after a server restart.
 The scope picker, project config, and additional Configuration products are not part of this delivery.
 

@@ -37,6 +37,15 @@ pub mod computer_use;
 /// The app's theme setting (`ThemeSetting`): `system`, `light` or `dark`.
 pub const THEME: &str = "host.appearance-theme";
 
+/// Applies a dot-separated config key, creating missing tables.
+pub fn set_config_value(values: &mut Value, path: &str, value: Value) {
+    let mut target = values;
+    for key in path.split('.') {
+        target = &mut target[key];
+    }
+    *target = value;
+}
+
 /// The live app-server connection. Settings and sign-in send their writes through it when
 /// the app sets this global; the parity fixture runs without one.
 pub struct AppServer(pub Arc<Bridge>);
@@ -220,8 +229,12 @@ impl SettingsPage {
         self.get(path).as_bool().unwrap_or(default)
     }
 
-    fn choice<'a>(&'a self, path: &str, default: &'a str) -> &'a str {
+    pub fn choice<'a>(&'a self, path: &str, default: &'a str) -> &'a str {
         self.get(path).as_str().unwrap_or(default)
+    }
+
+    pub fn configuration_error(&self) -> Option<&str> {
+        self.configuration_error.as_deref()
     }
 
     /// Stores a setting and reports it to the app's config or host settings service.
@@ -390,9 +403,6 @@ impl SettingsNav {
                     this.page.update(cx, |p, cx| {
                         p.section = label;
                         cx.notify();
-                        if label == "Configuration" {
-                            p.load_configuration(cx);
-                        }
                     })
                 }))
             });
@@ -1516,7 +1526,12 @@ fn button(label: &'static str, fill: Hsla, border: Option<Hsla>, t: &Theme) -> D
         .child(text(label, 13., 18., 430., t.text))
 }
 /// Dropdown trigger: value (with an optional leading app icon) and a chevron.
-fn select(label: &'static str, leading: Option<AnyElement>, disabled: bool, t: &Theme) -> Div {
+fn select(
+    label: impl Into<SharedString>,
+    leading: Option<AnyElement>,
+    disabled: bool,
+    t: &Theme,
+) -> Div {
     div()
         .h(px(28.))
         .px(px(13.))
