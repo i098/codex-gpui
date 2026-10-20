@@ -2074,8 +2074,6 @@ fn login_button(id: &'static str, label: &'static str, color: Hsla, t: &Theme) -
         .justify_center()
         .gap(px(8.))
         .rounded_full()
-        .border_1()
-        .border_color(gpui::transparent_black())
         .bg(t.surface)
         .hover(move |s| s.bg(hover))
         .child(shapes::decoration(shapes::Decoration {

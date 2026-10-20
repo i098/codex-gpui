@@ -2000,26 +2000,12 @@ impl Dialog {
             )
             .hover(|s| s.opacity(0.85))
             .when(self.kind == Kind::DeleteMemories, |button| {
-                let fill = if !primary {
-                    gpui::transparent_black()
-                } else if t.appearance == theme::Appearance::Dark {
-                    // Preserve the original oklab color-mix, including its out-of-gamut red.
-                    gpui::Rgba {
-                        r: 1.000_058_3,
-                        g: 0.403_874_84,
-                        b: 0.392_108_5,
-                        a: 1. - (1. - 0.1),
-                    }
-                    .into()
-                } else {
-                    t.text_error.opacity(0.1)
-                };
                 button
                     .relative()
                     .child(shapes::decoration(shapes::Decoration {
                         radius: Corners::all(px(12.5)),
                         corner: shapes::Corner::Squircle,
-                        fill: Some(fill),
+                        fill: primary.then(|| t.text_error.opacity(0.1)),
                         ..Default::default()
                     }))
             })
@@ -2052,9 +2038,9 @@ impl Dialog {
                     .h(px(32.))
                     .rounded(px(12.5))
                     .bg(gpui::transparent_black())
-                    .border_1()
+                    .border(px(0.))
                     .border_color(rgba(0))
-                    .focus_visible(|style| style.border_color(rgba(0x3a83f7ff)))
+                    .focus_visible(|style| style.border_2().border_color(rgba(0x3a83f7ff)))
                     .when(self.saving && index == 0, |button| button.opacity(0.4))
                     .when(self.saving && index == 1, |button| {
                         button
