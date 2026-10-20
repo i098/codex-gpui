@@ -155,12 +155,12 @@ fn database(home: &std::path::Path) -> Result<Connection> {
         created_at INTEGER, updated_at INTEGER);
         INSERT INTO automations VALUES ('local', 'Local task', 'Fallback prompt', 100, 100, 50, 'FREQ=DAILY;BYHOUR=9', 'ACTIVE', NULL, NULL, NULL);
         INSERT INTO automations VALUES ('private', 'Other account', 'Secret', 100, 100, 50, '', 'ACTIVE', 'account', 'user', 'installation');
-        INSERT INTO automation_runs (thread_id, automation_id, status, created_at, inbox_summary) VALUES
-        ('running', 'local', 'IN_PROGRESS', 1, ''),
-        ('review', 'local', 'PENDING_REVIEW', 2, 'Review this'),
-        ('accepted', 'local', 'ACCEPTED', 3, NULL),
-        ('archived', 'local', 'ARCHIVED', 4, NULL),
-        ('private-run', 'private', 'PENDING_REVIEW', 5, 'Secret');")?;
+        INSERT INTO automation_runs (thread_id, automation_id, status, created_at, updated_at, inbox_summary) VALUES
+        ('running', 'local', 'IN_PROGRESS', 1, 1, ''),
+        ('review', 'local', 'PENDING_REVIEW', 2, 2, 'Review this'),
+        ('accepted', 'local', 'ACCEPTED', 3, 3, NULL),
+        ('archived', 'local', 'ARCHIVED', 4, 4, NULL),
+        ('private-run', 'private', 'PENDING_REVIEW', 5, 5, 'Secret');")?;
     Ok(db)
 }
 
@@ -210,15 +210,19 @@ fn inbox_preserves_order_filtering_counts_and_account_isolation() -> Result<()> 
 }
 
 #[test]
-fn read_actions_preserve_other_accounts_and_running_unread_state() -> Result<()> {
+fn read_actions_respect_run_state_account_and_snapshot_cutoff() -> Result<()> {
     let home = tempfile::tempdir()?;
     let db = database(home.path())?;
     let host = LocalHost::new(home.path());
+    db.execute_batch(
+        "UPDATE automation_runs SET updated_at = 2000 WHERE thread_id = 'accepted';
+        UPDATE automation_runs SET updated_at = 1234 WHERE thread_id = 'review';",
+    )?;
     let bulk = Request::post(
         "inbox-automation-runs-mark-all-read",
         Some(json!({"readAt": 1234})),
     );
-    assert_eq!(json_body(&host.fetch(&bulk)?)?["count"], 3);
+    assert_eq!(json_body(&host.fetch(&bulk)?)?["count"], 2);
     let reads = || -> Result<Vec<(String, Option<i64>)>> {
         Ok(db
             .prepare("SELECT thread_id, read_at FROM automation_runs ORDER BY thread_id")?
@@ -228,7 +232,7 @@ fn read_actions_preserve_other_accounts_and_running_unread_state() -> Result<()>
     assert_eq!(
         reads()?,
         vec![
-            ("accepted".into(), Some(1234)),
+            ("accepted".into(), None),
             ("archived".into(), Some(1234)),
             ("private-run".into(), None),
             ("review".into(), Some(1234)),
@@ -236,6 +240,14 @@ fn read_actions_preserve_other_accounts_and_running_unread_state() -> Result<()>
         ]
     );
     assert_eq!(json_body(&host.fetch(&bulk)?)?["count"], 0);
+    assert_eq!(
+        json_body(&host.fetch(&Request::post(
+            "inbox-automation-runs-mark-all-read",
+            Some(json!({"readAt": 3000}))
+        ))?)?["count"],
+        1
+    );
+    assert_eq!(reads()?[0].1, Some(3000));
     host.fetch(&Request::post(
         "inbox-item-set-read-state",
         Some(json!({"id": "review", "isRead": false})),

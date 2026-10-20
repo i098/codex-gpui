@@ -905,7 +905,7 @@ impl LocalHost {
             return Ok(0);
         };
         Ok(db.execute(
-            "UPDATE automation_runs SET read_at = ? WHERE read_at IS NULL
+            "UPDATE automation_runs SET read_at = ?1 WHERE read_at IS NULL AND updated_at <= ?1
              AND status IN ('PENDING_REVIEW', 'ACCEPTED', 'ARCHIVED') AND automation_id IN
              (SELECT id FROM automations WHERE account_id IS NULL AND user_id IS NULL AND installation_id IS NULL)",
             [read_at],
