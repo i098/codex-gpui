@@ -86,6 +86,7 @@ impl HomeSidebar {
         self.sections.clear();
         self.grouped_rows.clear();
         self.menu = None;
+        self.native_menu_snapshot = None;
         cx.notify();
     }
 
@@ -120,6 +121,12 @@ impl HomeSidebar {
             .iter()
             .any(|f| f.read(cx).handle.is_focused(window))
             || self.section_menu_open(&id);
+        let menu_bounds =
+            window.use_keyed_state(format!("section-menu-bounds:{id}"), cx, |_, _| {
+                Bounds::<Pixels>::default()
+            });
+        let measured_bounds = menu_bounds.clone();
+        let options_focus = options.read(cx).handle.clone();
         let button = |key: String,
                       label: String,
                       icon_name: &'static str,
@@ -160,9 +167,27 @@ impl HomeSidebar {
                     "diff-more",
                     &options,
                 )
+                .relative()
+                .child(
+                    canvas(
+                        |_, _, _| {},
+                        move |bounds, (), _, cx| {
+                            measured_bounds.update(cx, |stored, _| *stored = bounds);
+                        },
+                    )
+                    .absolute()
+                    .inset_0(),
+                )
                 .on_click(cx.listener(
-                    move |this, event: &gpui::ClickEvent, window, cx| {
-                        this.open_section_menu(menu_id.clone(), event.position(), window, cx);
+                    move |this, _: &gpui::ClickEvent, window, cx| {
+                        window.focus(&options_focus, cx);
+                        let bounds = *menu_bounds.read(cx);
+                        this.open_section_menu(
+                            menu_id.clone(),
+                            point(bounds.left(), bounds.bottom()),
+                            window,
+                            cx,
+                        );
                     },
                 )),
             )

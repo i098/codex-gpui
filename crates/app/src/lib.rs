@@ -8,8 +8,8 @@ pub mod host;
 pub mod host_settings;
 pub mod qa;
 mod search;
-pub mod windows;
 mod section_actions;
+pub mod windows;
 
 use anyhow::{Context as _, Result, ensure};
 use async_channel::Receiver;

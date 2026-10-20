@@ -904,9 +904,11 @@ Section creation and new storage remain outside RS-066.
 
 ### Custom section header actions
 
-`crates/app/tests/section_actions.rs` drives the native header menu and section-targeted chat creation.
+`crates/app/tests/section_actions.rs` drives section actions and section-targeted chat creation.
 The header shows Options and New chat when the pointer or keyboard focus enters it.
 Options contains Edit, Mark all as read, Archive chats, New section, and Remove section.
+On macOS, Options opens an AppKit `NSMenu` with 16-pixel template icons and the original button-bottom-left anchor.
+`HomeSidebar::native_menu_snapshot` exposes the actual menu readback, including its open state, native items, and popup anchor.
 Mark all as read requires unread members; Archive chats requires at least one member.
 Remove section preserves its chats.
 The app loads sections through `threadSection/list` and their ordered members through `thread/list`.

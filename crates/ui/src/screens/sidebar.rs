@@ -72,7 +72,6 @@ pub fn title(thread: &Thread) -> SharedString {
     }
 }
 
-
 pub fn archive_shell(cx: &mut App) -> (gpui::Entity<Shell>, gpui::Entity<ArchivedChats>) {
     let sidebar = cx.new(|_| crate::EmptySidebar).into();
     let main = cx.new(ArchivedChats::new);
@@ -287,6 +286,7 @@ pub struct HomeSidebar {
     pub scroll: ScrollHandle,
     /// The open row context menu.
     menu: Option<ThreadMenu>,
+    native_menu_snapshot: Option<serde_json::Value>,
 }
 
 /// Emitted when a Recents row is clicked, with the thread id.
@@ -362,6 +362,7 @@ impl HomeSidebar {
             page_error: false,
             scroll: ScrollHandle::new(),
             menu: None,
+            native_menu_snapshot: None,
         }
     }
 
@@ -1111,7 +1112,12 @@ impl Render for HomeSidebar {
                     }))
                     .child(recents),
             )
-            .children(self.menu.as_ref().map(|_| self.menu_overlay(window, cx)))
+            .children(
+                self.menu
+                    .as_ref()
+                    .filter(|menu| !menu.is_native())
+                    .map(|_| self.menu_overlay(window, cx)),
+            )
             .children(self.worktree_tip.then(|| self.worktree_tooltip_element(cx)))
     }
 }

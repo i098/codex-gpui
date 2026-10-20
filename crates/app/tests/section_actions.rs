@@ -108,20 +108,10 @@ fn section_options_and_targeted_chat() -> Result<()> {
     if let Some(out) = &output {
         fx.shot()?.save(out.join("focused.png"))?;
     }
-    fx.click((286., 271.))?;
-    let menu = fx
-        .read(|root, cx| root.sidebar().read(cx).context_menu())
-        .context("section menu")?;
-    ensure!(
-        menu[0]["id"] == "edit-section"
-            && menu[2]["enabled"] == false
-            && menu[3]["enabled"] == true
-    );
-    if let Some(out) = &output {
-        fx.shot()?.save(out.join("options.png"))?;
-        fs::write(out.join("menu.json"), serde_json::to_vec_pretty(&menu)?)?;
-    }
-    fx.keys("down enter")?;
+    fx.action(Box::new(SectionAction {
+        section: id.clone(),
+        command: SectionCommand::Edit,
+    }))?;
     ensure!(fx.read(|root, cx| {
         root.dialog()
             .is_some_and(|d| d.read(cx).kind() == ui::dialog::Kind::EditSection)

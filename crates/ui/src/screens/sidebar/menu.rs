@@ -3,8 +3,13 @@
 //! transcript link menu (`thread/menu.rs`): the recorded items, order, accelerators and
 //! submenus. `Pin` reads `Unpin` on a pinned row and `Mark as unread` reads `Mark as read` on
 //! an unread one [INFERENCE: only a plain row was recorded].
+//! Custom section Options uses AppKit's native menu on macOS.
 use super::*;
 use gpui::{Anchor, FocusHandle, KeyDownEvent, Point, Role, anchored, deferred};
+
+#[cfg(target_os = "macos")]
+#[path = "menu/native.rs"]
+mod native;
 
 /// One item as the original passes it to `showContextMenu`: id, label, Electron accelerator,
 /// 16 px icon (its svg) and submenu. A separator has an empty label.
@@ -29,6 +34,12 @@ pub(super) struct ThreadMenu {
     sub: Option<Option<usize>>,
     focus: FocusHandle,
     return_focus: Option<FocusHandle>,
+}
+
+impl ThreadMenu {
+    pub(super) fn is_native(&self) -> bool {
+        cfg!(target_os = "macos") && self.section.is_some()
+    }
 }
 
 impl Item {
@@ -201,12 +212,16 @@ pub(super) const ITEMS: [Item; 14] = [
     },
 ];
 
+const MARK_SECTION_READ: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><path d="M11.5624 4.0338C11.7255 3.79403 12.0522 3.73111 12.2919 3.89415C12.5314 4.05717 12.5933 4.38398 12.4306 4.62364L7.539 11.818C7.30083 12.1681 6.80219 12.215 6.50286 11.9156L3.62786 9.03478C3.4231 8.82953 3.42363 8.4964 3.62884 8.29161C3.8341 8.08683 4.16722 8.08733 4.372 8.29259L6.92474 10.8512L11.5624 4.0338Z" fill="currentColor"/></svg>"#;
+
 const SECTION_ITEMS: [Item; 7] = [
     Item {
         id: "edit-section",
         label: "Edit",
         accelerator: None,
-        icon: Some(RENAME_THREAD),
+        icon: Some(include_bytes!(
+            "../../../../../assets/icons/settings-general.svg"
+        )),
         submenu: &[],
     },
     Item {
@@ -220,14 +235,16 @@ const SECTION_ITEMS: [Item; 7] = [
         id: "mark-section-chats-read",
         label: "Mark all as read",
         accelerator: None,
-        icon: Some(MARK_THREAD_UNREAD),
+        icon: Some(MARK_SECTION_READ),
         submenu: &[],
     },
     Item {
         id: "archive-section-chats",
         label: "Archive chats",
         accelerator: None,
-        icon: Some(ARCHIVE_THREAD),
+        icon: Some(include_bytes!(
+            "../../../../../assets/icons/sidebar-archive.svg"
+        )),
         submenu: &[],
     },
     Item {
@@ -241,14 +258,18 @@ const SECTION_ITEMS: [Item; 7] = [
         id: "new-section",
         label: "New section",
         accelerator: None,
-        icon: Some(NEW_CUSTOM_SECTION),
+        icon: Some(include_bytes!(
+            "../../../../../assets/icons/automations-plus.svg"
+        )),
         submenu: &[],
     },
     Item {
         id: "remove-section",
         label: "Remove section",
         accelerator: None,
-        icon: Some(DELETE_THREAD),
+        icon: Some(include_bytes!(
+            "../../../../../assets/icons/toast-close.svg"
+        )),
         submenu: &[],
     },
 ];
@@ -290,8 +311,50 @@ impl HomeSidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_menu(String::new(), position, window, cx);
-        self.menu.as_mut().unwrap().section = Some(section);
+        #[cfg(not(target_os = "macos"))]
+        {
+            self.open_menu(String::new(), position, window, cx);
+            self.menu.as_mut().unwrap().section = Some(section);
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let return_focus = window.focused(cx);
+            self.menu = Some(ThreadMenu {
+                thread: String::new(),
+                section: Some(section),
+                position,
+                active: None,
+                sub: None,
+                focus: return_focus.clone().unwrap_or_else(|| cx.focus_handle()),
+                return_focus,
+            });
+            self.native_menu_snapshot = None;
+            let enabled: [bool; SECTION_ITEMS.len()] =
+                std::array::from_fn(|i| self.item_enabled(SECTION_ITEMS[i].id));
+            let dark = cx.theme().appearance == Appearance::Dark;
+            let this = cx.weak_entity();
+            cx.stop_propagation();
+            cx.notify();
+            // AppKit runs a nested event loop; release the sidebar borrow before tracking.
+            window.defer(cx, move |window, cx| {
+                let result = native::popup(&SECTION_ITEMS, &enabled, position, dark, window);
+                this.update(cx, |this, cx| match result {
+                    Ok(result) => {
+                        this.native_menu_snapshot = Some(result.snapshot);
+                        if let Some(index) = result.selected {
+                            this.activate(SECTION_ITEMS[index].id, window, cx);
+                        } else {
+                            this.close_menu(window, cx);
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!("codex-gpui: section menu: {error:#}");
+                        this.close_menu(window, cx);
+                    }
+                })
+                .ok();
+            });
+        }
     }
     fn label(&self, item: &Item) -> &'static str {
         let thread = self.menu.as_ref().map(|m| m.thread.as_str());
@@ -314,6 +377,10 @@ impl HomeSidebar {
                 .map(|item| self.entry(item))
                 .collect(),
         )
+    }
+
+    pub fn native_menu_snapshot(&self) -> Option<&serde_json::Value> {
+        self.native_menu_snapshot.as_ref()
     }
 
     fn entry(&self, item: &Item) -> serde_json::Value {
