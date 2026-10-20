@@ -691,10 +691,8 @@ ST-085 shows Allow network access only for Workspace write and writes `sandbox_w
 ST-086 offers Disabled, Cached, Indexed, and Live with the original descriptions and installation restrictions.
 Without an explicit search mode, Full access uses Live; other sandbox modes use Cached.
 The `settings_configuration` native fixture target covers save, reopen, managed restrictions, and failed writes.
-A prior native run passed all four checks.
-A temporary Linux headless run passes all six checks, including pointer and keyboard access changes.
-That run uses the no-op text system and does not prove native appearance.
-Final post-review replay and original/native appearance approval remain open.
+The final native run passes all six checks, including pointer and keyboard access changes.
+Original/native appearance approval and the external review verdict remain open.
 An owned original app-server smoke confirms both permission values in `config.toml` and after a server restart.
 An owned original app-server smoke confirms network access and all four search modes on disk and through `config/read`.
 The scope picker, project config, and additional Configuration products are not part of this delivery.
