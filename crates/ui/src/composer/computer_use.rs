@@ -155,7 +155,8 @@ impl Composer {
             .items_center()
             .gap(px(8.))
             .child(if request.high_risk {
-                icon("computer-use-risk", 16., t.text_warning).into_any_element()
+                // The shield retains this space but paints outside the rounded clip.
+                div().size(px(16.)).into_any_element()
             } else {
                 app_icon(self.computer_use_icon.clone(), t.surface_elevated_secondary)
             })
@@ -290,10 +291,32 @@ impl Composer {
                 .absolute()
                 .size_full(),
             )
-            .child(crate::rounded_clip(
-                px(24.),
-                shapes::Corner::Squircle,
-                div().flex().flex_col().child(body).child(footer),
-            ))
+            .child(
+                div()
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .child(crate::rounded_clip(
+                        px(24.),
+                        shapes::Corner::Squircle,
+                        div().flex().flex_col().child(body).child(footer),
+                    ))
+                    .when(request.high_risk, |d| {
+                        d.child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .size_full()
+                                .cc_tiles()
+                                .child(
+                                    icon("computer-use-risk", 16., t.text_warning)
+                                        .absolute()
+                                        .left(px(16.))
+                                        .top(px(18.)),
+                                ),
+                        )
+                    }),
+            )
     }
 }
