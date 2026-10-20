@@ -259,7 +259,7 @@ impl Theme {
             git_modified: rgba(0xff8549ff).into(),
             scrollbar: rgba(0xffffff4c).into(),
             scrollbar_hover: rgba(0xffffff28).into(),
-            switch_track: white_mix(0.1),
+            switch_track: white_mix_fill(0.1),
             switch_track_checked: rgba(0x3a83f7ff).into(),
         }
     }

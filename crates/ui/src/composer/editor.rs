@@ -500,8 +500,8 @@ impl Composer {
         if viewport.size.height <= px(2.) {
             return false;
         }
-        let start = viewport.origin.y + px(1.);
-        let end = viewport.origin.y + viewport.size.height - px(1.);
+        let start = viewport.origin.y;
+        let end = viewport.origin.y + viewport.size.height;
         let adjustment = if top < start {
             start - top
         } else if bottom > end {
@@ -639,7 +639,7 @@ impl Composer {
             .child(
                 div()
                     .when(self.content.is_empty(), |d| d.opacity(0.5))
-                    .layer()
+                    .when(self.plain_field != Some(true), |content| content.layer())
                     .child(Editor(cx.entity())),
             )
     }

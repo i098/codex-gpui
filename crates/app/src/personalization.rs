@@ -903,13 +903,17 @@ impl Root {
         };
         let dialog = cx.new(|cx| Dialog::writing_style(preference.enabled, cx));
         self.writing_dialog_preference = Some(preference);
-        self.state.route = self
+        let (route, automation) = self
             .back
             .iter()
             .rev()
-            .find(|route| **route != crate::Route::Settings)
+            .find(|(route, _)| *route != crate::Route::Settings)
             .cloned()
-            .unwrap_or(crate::Route::Home);
+            .unwrap_or((crate::Route::Home, None));
+        self.remember_thread_settings(cx);
+        self.state.route = route;
+        self.sidebar_automation = automation;
+        self.navigation_epoch += 1;
         self.sync(window, cx);
         self.select_route(cx);
         self.show_dialog(dialog.clone(), window, cx);

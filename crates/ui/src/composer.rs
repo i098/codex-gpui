@@ -1939,7 +1939,15 @@ impl Render for Composer {
                     .as_ref()
                     .expect("multiline field scroll")
                     .clone();
+                let line_height = self.editor_line_height();
+                let mut content_height = px(0.);
+                let scrolling = self.lines.iter().any(|line| {
+                    content_height += line.size(line_height).height;
+                    content_height > self.field_min_height
+                });
                 card.px(px(1.))
+                    .py(px(1.))
+                    .top_layer()
                     .child(shapes::decoration(shapes::Decoration {
                         radius: Corners::all(px(10.)),
                         corner: shapes::Corner::Squircle,
@@ -1950,11 +1958,15 @@ impl Render for Composer {
                     .child(
                         div()
                             .id("textarea-scroll")
-                            .h(self.field_min_height + px(18.))
-                            .py(px(9.))
+                            .h(self.field_min_height + px(16.))
                             .overflow_y_scroll()
                             .track_scroll(&scroll)
-                            .child(self.editor(cx)),
+                            .child(
+                                div()
+                                    .py(px(8.))
+                                    .when(scrolling, |content| content.top_layer())
+                                    .child(self.editor(cx)),
+                            ),
                     )
                     .child(
                         div()
@@ -2059,7 +2071,11 @@ impl Render for Composer {
                         d.child(self.request_number_stepper(&t, cx))
                     })
             };
-            return div().w_full().child(card);
+            return if self.plain_field == Some(true) {
+                div().w_full().child(crate::recorded_bounds(card))
+            } else {
+                div().w_full().child(card)
+            };
         }
         let card = card
             .flex()

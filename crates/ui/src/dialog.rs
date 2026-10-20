@@ -1999,6 +1999,30 @@ impl Dialog {
                 },
             )
             .hover(|s| s.opacity(0.85))
+            .when(self.kind == Kind::DeleteMemories, |button| {
+                let fill = if !primary {
+                    gpui::transparent_black()
+                } else if t.appearance == theme::Appearance::Dark {
+                    // Preserve the original oklab color-mix, including its out-of-gamut red.
+                    gpui::Rgba {
+                        r: 1.000_058_3,
+                        g: 0.403_874_84,
+                        b: 0.392_108_5,
+                        a: 1. - (1. - 0.1),
+                    }
+                    .into()
+                } else {
+                    t.text_error.opacity(0.1)
+                };
+                button
+                    .relative()
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: Corners::all(px(12.5)),
+                        corner: shapes::Corner::Squircle,
+                        fill: Some(fill),
+                        ..Default::default()
+                    }))
+            })
             .child(text(
                 label,
                 14.,
@@ -2027,11 +2051,8 @@ impl Dialog {
                     .aria_disabled(self.saving)
                     .h(px(32.))
                     .rounded(px(12.5))
-                    .bg(if primary {
-                        t.text_error.opacity(0.1)
-                    } else {
-                        gpui::transparent_black()
-                    })
+                    .bg(gpui::transparent_black())
+                    .border_1()
                     .border_color(rgba(0))
                     .focus_visible(|style| style.border_color(rgba(0x3a83f7ff)))
                     .when(self.saving && index == 0, |button| button.opacity(0.4))
@@ -3936,7 +3957,11 @@ impl Render for Dialog {
                         24.
                     }))
                     .when(
-                        !commit && !matches!(self.kind, Kind::LogOut | Kind::WritingStyle),
+                        !commit
+                            && !matches!(
+                                self.kind,
+                                Kind::LogOut | Kind::WritingStyle | Kind::DeleteMemories
+                            ),
                         |d| d.overflow_hidden(),
                     )
                     .map(|d| {
@@ -4037,14 +4062,30 @@ impl Render for Dialog {
                         }
                     })
                     .map(|d| {
-                        if self.kind == Kind::WritingStyle {
+                        if matches!(self.kind, Kind::WritingStyle | Kind::DeleteMemories) {
                             d.child(crate::rounded_clip(
-                                px(20.),
+                                px(if self.kind == Kind::DeleteMemories {
+                                    25.
+                                } else {
+                                    20.
+                                }),
                                 shapes::Corner::Squircle,
                                 content,
                             ))
                         } else {
                             d.child(content)
+                        }
+                    })
+                    .map(|dialog| {
+                        if matches!(self.kind, Kind::WritingStyle | Kind::DeleteMemories) {
+                            div()
+                                .absolute()
+                                .inset_0()
+                                .top_layer()
+                                .child(crate::recorded_bounds(dialog))
+                                .into_any_element()
+                        } else {
+                            dialog.into_any_element()
                         }
                     }),
             )
