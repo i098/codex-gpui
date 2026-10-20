@@ -129,7 +129,6 @@ The multi-select emits `SelectionChanged`; the caller saves the value and can re
 `ui::confirmation::Confirmation` emits one confirm or cancel result and returns focus to the previous control.
 Use `Composer::settings_field` for multiline text and `Toast` for existing information, error, and success messages.
 Run `cargo test -p ui --test settings_kit` for the keyboard and locked-choice check.
-
 Settings > Configuration edits global approval policy, sandbox mode, network access, and web search through the app-server config store.
 The page reads installation restrictions before it enables the controls and keeps saved values after a failed write.
 Allow network access appears only for Workspace write.
