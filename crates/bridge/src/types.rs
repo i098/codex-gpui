@@ -332,6 +332,17 @@ pub struct FileChangeApprovalRequest {
     pub grant_root: Option<String>,
 }
 
+/// `item/permissions/requestApproval`
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionsApprovalRequest {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub item_id: String,
+    pub reason: Option<String>,
+    pub permissions: Value,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ApprovalDecision {

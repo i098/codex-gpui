@@ -399,7 +399,7 @@ impl Composer {
                     .gap(px(8.))
                     .child(
                         button("deny", "Deny".into(), gpui::transparent_black(), t.text).on_click(
-                            cx.listener(|this, _, window, cx| {
+                            self.request_listener(cx, |this, _, window, cx| {
                                 this.decide(ApprovalDecision::Decline, window, cx)
                             }),
                         ),
@@ -411,9 +411,12 @@ impl Composer {
                             t.button_secondary,
                             t.text,
                         )
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.decide(ApprovalDecision::AcceptForSession, window, cx)
-                        })),
+                        .on_click(self.request_listener(
+                            cx,
+                            |this, _, window, cx| {
+                                this.decide(ApprovalDecision::AcceptForSession, window, cx)
+                            },
+                        )),
                     )
                     .child(
                         button(
@@ -422,9 +425,11 @@ impl Composer {
                             t.button_primary_solid,
                             t.text_inverse,
                         )
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.decide(ApprovalDecision::Accept, window, cx)
-                        })),
+                        .on_click(
+                            self.request_listener(cx, |this, _, window, cx| {
+                                this.decide(ApprovalDecision::Accept, window, cx)
+                            }),
+                        ),
                     ),
             )
     }

@@ -368,11 +368,31 @@ The existing replay checks the original colors, row actions, tooltips, canceled 
 | 13 | `⌘F` | shortcut | Find bar. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 14 | `⌘⇧A` | shortcut | Archives the chat. | `ArchiveChat`: `thread/archive`, the row leaves Recents, the route goes to Home. | PASS (`archive_chat`) |
 | 15 | `⌘⌥R` | shortcut | Rename dialog. | — | NOT WIRED (`crates/ui`: no rename dialog) |
-| 16 | Approval card | click | Approve, Allow similar, Allow all edits, Deny. | `Root::on_event` keeps each command or file-change approval request by its request id and thread, and the thread composer shows the open thread's oldest one. `Allow once`, the scoped allow, `Deny`, `Enter` and `Escape` answer that request once by its id; the next one then shows. `serverRequest/resolved` and the `turn/completed` of a request's turn remove it without an answer. Other server requests (permissions, user input, elicitation, tool calls) stay unanswered. | PASS (`approval_round_trip`: a command approval request crafted from `CommandApprovalRequest`, because the sessions ran with `approvalPolicy: never`; `approval_queue.rs`: five pending requests on two chats, decision order, withdrawal and turn end) |
+| 16 | Approval card | click | Approve, Allow similar, Allow all edits, Deny. | `Root::on_event` keeps each pending request by its request id and thread. The open thread shows its oldest request. Command, file-change, permission, user-input, standard MCP elicitation, and supported dynamic-tool forms use this queue. Responses retain the displayed card's identity. Explicit resolution removes requests without answering them. Turn completion removes only turn-bound requests. | PASS (`approval_queue.rs`: command/file-change queue order, withdrawal, thread isolation and turn end; non-command release gates remain open below) |
 | 17 | Stream error | error | `Reconnecting {progress}`. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 18 | Usage limit | error | Usage limit banner. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 19 | Focus ring on cards | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 20 | Resize | resize | The side panel yields width before the chat column. | `panel_width` keeps 320 px for the chat; no flow checks the 3 widths with the panel open. | FAIL (no flow; `crates/ui/src/diff.rs` `panel_width` assumes the sidebar open) |
+
+TH-123/124/125 add permission, user-input, standard MCP elicitation, and supported dynamic-tool forms to the existing request queue.
+The request editor retains drafts by thread and request while switching chats or recovering from a failed cancellation.
+MCP elicitations and nonblocking questions remain pending until explicit resolution.
+Unsupported question and permission requests receive empty-denial responses.
+Skipping an optional final choice submits the answers from earlier fields.
+Enter retains draft submission for command and file-change approvals.
+The original reference frames use the extracted Codex renderer at 1280x832 and scale 2.
+The revised native replay and appearance approval remain pending.
+
+Native Computer Use app approvals use this queue and retain the original request, thread, and turn IDs.
+Only the registered `lcu` server can use the native card.
+The card shows the app name, elevated risk, and first-use disclosure.
+The card uses the shared rounded clip for content and paints the risk shield outside that clip.
+The icon rasterizes during paint in the active compositor layer; the footer records in window space.
+`Allow this conversation` selects the offered session scope; without that scope, `Allow once` permits one use.
+`Always allow` appears only when the server offers that scope in the persistence array.
+MCP responses use `action`, optional empty `content`, and the selected `_meta.persist`; they never use a command-approval `decision`.
+The host retains the disclosure choice only after an accepted response enters the bridge.
+Run `cargo test -p app --test computer_use_approvals`; the native replay and captures require macOS.
 
 MO-36 uses `refs/interactions/ms4.json`, recorded with the original CSS classes in an isolated route1 Chrome context.
 The recording appends synthetic markdown spans and seeks their animations; it does not measure live model segmentation.

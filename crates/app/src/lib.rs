@@ -3,6 +3,7 @@
 //! plus the key bindings and menu bar. `main.rs` only opens the window;
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
+pub mod computer_use_requests;
 mod features;
 pub mod host;
 pub mod host_settings;
@@ -14,10 +15,10 @@ pub mod windows;
 use anyhow::{Context as _, Result, ensure};
 use async_channel::Receiver;
 use bridge::types::{
-    Account, AccountReadResponse, ApprovalDecision, CommandApprovalRequest, ConfigReadResponse,
-    FileChangeApprovalRequest, Model, QueuedSubmission, Thread, ThreadItem, ThreadListResponse,
-    ThreadQueueListResponse, ThreadReadResponse, ThreadSection, ThreadStartResponse,
-    ThreadStartedNotification, ThreadStatus, TurnStatus,
+    Account, AccountReadResponse, CommandApprovalRequest, ConfigReadResponse,
+    FileChangeApprovalRequest, Model, PermissionsApprovalRequest, QueuedSubmission, Thread,
+    ThreadItem, ThreadListResponse, ThreadQueueListResponse, ThreadReadResponse, ThreadSection,
+    ThreadStartResponse, ThreadStartedNotification, ThreadStatus, TurnStatus,
 };
 use bridge::{Bridge, Event};
 use gpui::{
@@ -532,11 +533,12 @@ impl Root {
                 send.update(cx, |this, cx| this.send(s.clone(), window, cx))
                     .ok();
             });
-            composer.on_approval(move |decision, _, cx| {
+            composer.on_approval(move |id, thread, response, _, cx| {
                 // Deferred: answering refreshes this composer's card.
                 let this = this.clone();
                 cx.defer(move |cx| {
-                    this.update(cx, |this, cx| this.answer(decision, cx)).ok();
+                    this.update(cx, |this, cx| this.answer(id, &thread, response, cx))
+                        .ok();
                 });
             });
             composer
@@ -2651,6 +2653,7 @@ impl Root {
                         this.approvals.clear();
                         this.new_chat_section = None;
                         this.sidebar.update(cx, |s, cx| s.clear_sections(cx));
+                        this.show_approval(cx);
                         this.set_threads(&[], cx);
                         this.set_next_cursor(None, cx);
                         this.automation_load = None;
@@ -3980,23 +3983,57 @@ impl Root {
         log_err(task, cx);
     }
 
-    /// Settles the open thread's oldest approval request (the one its card shows) with the
-    /// user's decision, then shows the next one.
-    fn answer(&mut self, decision: ApprovalDecision, cx: &mut Context<Self>) {
-        let open = self.thread.as_ref().map(|v| v.read(cx).id().to_owned());
+    /// Settles only the request whose card produced the answer.
+    fn answer(&mut self, id: Value, thread: &str, response: Value, cx: &mut Context<Self>) {
         let Some(i) = self
             .approvals
             .iter()
-            .position(|p| Some(p.thread()) == open.as_deref())
+            .position(|p| p.id == id && p.thread() == thread)
         else {
             return;
         };
+        if self.approvals[i].interrupting {
+            return;
+        }
+        if response.is_null() && self.approvals[i].method == "item/tool/requestUserInput" {
+            self.approvals[i].interrupting = true;
+            let params =
+                json!({ "threadId": thread, "turnId": self.approvals[i].params["turnId"] });
+            let thread = thread.to_owned();
+            let bridge = self.bridge.clone();
+            cx.spawn(async move |this, cx| {
+                let result = bridge.request::<_, Value>("turn/interrupt", params).await;
+                this.update(cx, |this, cx| {
+                    if let Some(i) = this
+                        .approvals
+                        .iter()
+                        .position(|p| p.id == id && p.thread() == thread)
+                    {
+                        if let Err(error) = result {
+                            this.approvals[i].interrupting = false;
+                            this.toast(
+                                Toast::danger(format!("Could not stop task: {error:#}")),
+                                cx,
+                            );
+                        } else {
+                            this.approvals.remove(i);
+                        }
+                        this.show_approval(cx);
+                    }
+                })
+                .ok();
+            })
+            .detach();
+            self.show_approval(cx);
+            return;
+        }
         let pending = self.approvals.remove(i);
-        if let Err(err) = self
-            .bridge
-            .respond(pending.id, json!({ "decision": decision }))
-        {
+        let native_accept =
+            computer_use_requests::accepted(&pending.method, &pending.params, &response);
+        if let Err(err) = self.bridge.respond(pending.id, response) {
             eprintln!("codex-gpui: approval: {err:#}");
+        } else if native_accept {
+            computer_use_requests::remember_acceptance(cx);
         }
         self.show_approval(cx);
     }
@@ -4007,10 +4044,19 @@ impl Root {
         match pending.method.as_str() {
             "item/commandExecution/requestApproval" => {
                 let request = serde_json::from_value::<CommandApprovalRequest>(params).ok()?;
-                return Some(Approval::command(&request));
+                return Some(Approval::command(pending.id.clone(), &request));
+            }
+            "item/permissions/requestApproval" => {
+                let request = serde_json::from_value::<PermissionsApprovalRequest>(params).ok()?;
+                return Some(Approval::permissions(pending.id.clone(), &request));
+            }
+            "mcpServer/elicitation/request" => {
+                return self
+                    .computer_use_approval(pending, cx)
+                    .or_else(|| Approval::form(pending.id.clone(), &pending.method, &params));
             }
             "item/fileChange/requestApproval" => {}
-            _ => return None,
+            _ => return Approval::form(pending.id.clone(), &pending.method, &params),
         }
         let request = serde_json::from_value::<FileChangeApprovalRequest>(params).ok()?;
         // The edited paths come from the request's thread, when it is the open one.
@@ -4031,19 +4077,40 @@ impl Root {
                     })
             })
             .unwrap_or_default();
-        Some(Approval::file_change(&request, &paths))
+        Some(Approval::file_change(pending.id.clone(), &request, &paths))
     }
 
     /// Puts the open thread's oldest approval request on the thread composer, or no card.
     fn show_approval(&self, cx: &mut Context<Self>) {
         let open = self.thread.as_ref().map(|v| v.read(cx).id().to_owned());
-        let card = self
+        let pending = self
             .approvals
             .iter()
             .find(|p| Some(p.thread()) == open.as_deref())
-            .and_then(|p| self.approval_card(p, cx));
-        self.thread_composer
-            .update(cx, |c, cx| c.set_approval(card, cx));
+            .filter(|p| !p.interrupting);
+        let question = pending
+            .filter(|p| {
+                p.method == "item/tool/requestUserInput"
+                    || (p.method == "item/tool/call"
+                        && p.params["tool"] == "request_onboarding_input")
+            })
+            .and_then(|p| p.params["turnId"].as_str())
+            .map(str::to_owned);
+        if let Some(thread) = &self.thread {
+            thread.update(cx, |thread, cx| {
+                thread.set_pending_question(question, cx);
+                cx.notify();
+            });
+        }
+        let card = pending.and_then(|p| self.approval_card(p, cx));
+        self.thread_composer.update(cx, |composer, cx| {
+            composer.set_approval(card, cx);
+            composer.retain_request_drafts(|id, thread| {
+                self.approvals
+                    .iter()
+                    .any(|pending| pending.id == *id && pending.thread() == thread)
+            });
+        });
     }
 
     /// Every server message: streamed into the open thread and the sign-in view, plus
@@ -4154,10 +4221,14 @@ impl Root {
                         })
                         .detach();
                     }
-                    // The ended turn's requests can no longer be answered.
+                    // Standalone elicitations and nonblocking questions wait for explicit resolution.
                     let turn = &params["turn"]["id"];
                     self.approvals.retain(|p| {
-                        p.params["threadId"] != params["threadId"] || p.params["turnId"] != *turn
+                        p.method == "mcpServer/elicitation/request"
+                            || (p.method == "item/tool/requestUserInput"
+                                && p.params["isBlocking"] == false)
+                            || p.params["threadId"] != params["threadId"]
+                            || p.params["turnId"] != *turn
                     });
                     self.show_approval(cx);
                     self.refresh_threads(cx)
@@ -4186,13 +4257,37 @@ impl Root {
                 }
                 _ => {}
             },
-            // ponytail: other server requests (user input, permissions) stay unanswered;
-            // answer them when their UI lands.
             Event::Request { id, method, params } => {
-                let pending = PendingApproval { id, method, params };
+                let pending = PendingApproval {
+                    id,
+                    method,
+                    params,
+                    interrupting: false,
+                };
+                if self.approvals.iter().any(|p| p.id == pending.id) {
+                    return;
+                }
                 if self.approval_card(&pending, cx).is_some() {
                     self.approvals.push(pending);
                     self.show_approval(cx);
+                } else {
+                    let response = match pending.method.as_str() {
+                        "item/tool/call" => json!({
+                            "success": false,
+                            "contentItems": [{ "type": "inputText", "text": format!("Unsupported dynamic tool: {}", pending.params["tool"].as_str().unwrap_or_default()) }]
+                        }),
+                        "mcpServer/elicitation/request" => json!({
+                            "action": "decline", "content": null, "_meta": null
+                        }),
+                        "item/tool/requestUserInput" => json!({ "answers": {} }),
+                        "item/permissions/requestApproval" => json!({
+                            "permissions": {}, "scope": "turn"
+                        }),
+                        _ => return,
+                    };
+                    if let Err(error) = self.bridge.respond(pending.id, response) {
+                        eprintln!("codex-gpui: unsupported {}: {error:#}", pending.method);
+                    }
                 }
             }
         }
@@ -4466,13 +4561,14 @@ struct Generation {
     done: async_channel::Sender<Result<Option<String>, String>>,
 }
 
-/// A command or file-change approval request that waits for the user's decision.
+/// A server request that waits for the user's answer or a turn interruption.
 #[derive(Clone)]
 struct PendingApproval {
     /// The server request's id: the answer and `serverRequest/resolved` carry it.
     id: Value,
     method: String,
     params: Value,
+    interrupting: bool,
 }
 
 impl PendingApproval {
