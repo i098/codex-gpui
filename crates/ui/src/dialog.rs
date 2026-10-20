@@ -783,6 +783,7 @@ impl Dialog {
                 }
             }
             (Kind::ArchiveRuns { .. }, 0) => "Cancel",
+            (Kind::ArchiveRuns { .. }, 2) => "Close dialog",
             (Kind::ArchiveRuns { count: 1 }, _) => "Archive",
             (Kind::ArchiveRuns { .. }, _) => "Archive all",
             (Kind::ModelAnnouncement, 0) => "Close",
@@ -1162,8 +1163,7 @@ impl Dialog {
                     Kind::Shortcuts
                     | Kind::FullAccess
                     | Kind::LogOut
-                    | Kind::ArchiveSection
-                    | Kind::ArchiveRuns { .. } => vec![0, 1],
+                    | Kind::ArchiveSection => vec![0, 1],
                     Kind::ScheduleTask => vec![0, 3, 4, 5, 1, 2],
                     Kind::Branches => vec![0, 1],
                     Kind::BranchConflict => vec![1, 2],
@@ -1525,8 +1525,8 @@ impl Dialog {
                     .flex()
                     .justify_end()
                     .gap(px(12.))
-                    .child(self.logout_button(0, "Cancel", t, cx))
-                    .child(self.logout_button(1, "Log out", t, cx)),
+                    .child(self.compact_button(0, "Cancel", t, cx))
+                    .child(self.compact_button(1, "Log out", t, cx)),
             )
             .child(
                 div()
@@ -1547,9 +1547,8 @@ impl Dialog {
             )
     }
 
-    /// `Cancel` is the ghost button and `Log out` the danger button: 32 px high, `px-4` and a
-    /// 1 px transparent border, radius 12.5, the 2 px ring outside the box when focused.
-    fn logout_button(
+    /// A ghost cancel or danger action with the original compact focus ring.
+    fn compact_button(
         &self,
         index: usize,
         label: &'static str,
@@ -1657,10 +1656,10 @@ impl Dialog {
     fn archive_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
         let single = self.kind == Kind::ArchiveRuns { count: 1 };
         div()
+            .relative()
             .p(px(20.))
             .flex()
             .flex_col()
-            .gap(px(12.))
             .child(text(self.archive_title(), 20., 28., 600., t.text))
             .child(
                 text(
@@ -1670,25 +1669,44 @@ impl Dialog {
                         "You can find these runs’ chats later in archived chats"
                     },
                     14.,
-                    20.,
-                    400.,
-                    t.text_secondary,
+                    21.,
+                    430.,
+                    t.text_tertiary,
                 )
+                .mt(px(4.))
                 .whitespace_normal(),
             )
             .child(
                 div()
+                    .mt(px(12.))
                     .flex()
                     .justify_end()
                     .gap(px(12.))
-                    .child(self.button(0, "Cancel", 80., t, cx))
-                    .child(self.button(
+                    .child(self.compact_button(0, "Cancel", t, cx))
+                    .child(self.compact_button(
                         1,
                         if single { "Archive" } else { "Archive all" },
-                        108.,
                         t,
                         cx,
                     )),
+            )
+            .child(
+                div()
+                    .id("archive-close")
+                    .role(gpui::Role::Button)
+                    .aria_label("Close dialog")
+                    .track_focus(&self.controls[2])
+                    .absolute()
+                    .right(px(16.))
+                    .top(px(16.))
+                    .size(px(24.))
+                    .rounded(px(4.))
+                    .hover(|s| s.bg(t.ghost_hover))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icon("close", 16., t.text.opacity(0.8)))
+                    .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))),
             )
     }
 
@@ -2996,7 +3014,7 @@ impl Render for Dialog {
             Kind::ArchiveSection => (420., 181.),
             Kind::FullAccess => (520., 420.),
             Kind::LogOut => (380., 145. + if self.email.is_some() { 25. } else { 0. }),
-            Kind::ArchiveRuns { .. } => (420., 172.),
+            Kind::ArchiveRuns { .. } => (420., 137.),
             Kind::ModelAnnouncement => (480., 432.),
             Kind::Commit => (420., self.commit_height()),
             Kind::Branches => (
@@ -3145,7 +3163,7 @@ impl Render for Dialog {
                         20.
                     } else if schedule {
                         30.
-                    } else if self.kind == Kind::LogOut {
+                    } else if matches!(self.kind, Kind::LogOut | Kind::ArchiveRuns { .. }) {
                         25.
                     } else {
                         24.
@@ -3195,12 +3213,20 @@ impl Render for Dialog {
                                 shapes::Fill::Color,
                                 false,
                                 shapes::Decoration {
-                                    radius: Corners::all(px(if self.kind == Kind::LogOut {
-                                        25.
-                                    } else {
-                                        24.
-                                    })),
-                                    corner: if self.kind == Kind::LogOut {
+                                    radius: Corners::all(px(
+                                        if matches!(
+                                            self.kind,
+                                            Kind::LogOut | Kind::ArchiveRuns { .. }
+                                        ) {
+                                            25.
+                                        } else {
+                                            24.
+                                        },
+                                    )),
+                                    corner: if matches!(
+                                        self.kind,
+                                        Kind::LogOut | Kind::ArchiveRuns { .. }
+                                    ) {
                                         shapes::Corner::Squircle
                                     } else {
                                         shapes::Corner::default()

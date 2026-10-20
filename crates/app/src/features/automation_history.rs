@@ -10,34 +10,67 @@ pub(crate) fn actions(root: gpui::Div, cx: &mut Context<Root>) -> gpui::Div {
     )
     .on_action(
         cx.listener(|this, action: &automations::ArchiveAllRuns, window, cx| {
-            let Some(history) = this.run_history(cx).filter(|h| h.read(cx).id == action.id) else {
-                return;
-            };
-            if this.automation_history_updates.contains(&action.id) {
-                return;
-            }
-            let threads: Vec<String> = history
-                .read(cx)
-                .items()
-                .iter()
-                .filter(|run| automations::archiveable(run))
-                .filter_map(|run| run["threadId"].as_str().map(str::to_owned))
-                .collect();
-            if threads.is_empty() {
-                return;
-            }
-            let dialog = cx.new(|cx| Dialog::archive_runs(action.id.clone(), threads, cx));
-            this.show_dialog(dialog, window, cx);
+            this.confirm_archive_runs(&action.id, None, window, cx);
+        }),
+    )
+    .on_action(
+        cx.listener(|this, action: &automations::ArchiveRun, window, cx| {
+            this.confirm_archive_runs(&action.automation, Some(&action.thread), window, cx);
+        }),
+    )
+    .on_action(
+        cx.listener(|this, action: &automations::SetRunRead, _, cx| {
+            this.set_runs_read(
+                &action.automation,
+                vec![action.id.clone()],
+                action.is_read,
+                cx,
+            );
         }),
     )
 }
 
 impl Root {
     pub fn run_history(&self, cx: &App) -> Option<Entity<automations::RunHistory>> {
-        if !matches!(&self.state.route, Route::Automation(_)) {
+        if !matches!(
+            &self.state.route,
+            Route::Automation(_) | Route::AutomationManagement(Some(_))
+        ) {
             return None;
         }
         self.scheduled.as_ref()?.read(cx).history.clone()
+    }
+
+    fn confirm_archive_runs(
+        &mut self,
+        id: &str,
+        thread: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(history) = self
+            .run_history(cx)
+            .filter(|history| history.read(cx).id == id)
+        else {
+            return;
+        };
+        if self.automation_history_updates.contains(id) {
+            return;
+        }
+        let threads = history
+            .read(cx)
+            .items()
+            .iter()
+            .filter(|run| automations::archiveable(run))
+            .filter_map(|run| run["threadId"].as_str())
+            .filter(|id| thread.is_none_or(|selected| selected == *id))
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        if threads.is_empty() {
+            return;
+        }
+        let dialog = cx.new(|cx| Dialog::archive_runs(id.to_owned(), threads, cx));
+        self.show_dialog(dialog, window, cx);
     }
 
     pub(crate) fn load_run_history(&mut self, cx: &mut Context<Self>) {
@@ -47,6 +80,19 @@ impl Root {
         };
         let id = history.read(cx).id.clone();
         let host = self.host.clone();
+        let titles: HashMap<_, _> = self
+            .threads
+            .iter()
+            .map(|thread| {
+                (
+                    thread.id.clone(),
+                    thread
+                        .name
+                        .clone()
+                        .unwrap_or_else(|| thread.preview.trim().to_owned()),
+                )
+            })
+            .collect();
         let read = cx.background_spawn(async move {
             let response = host.fetch(&host::Request::post(
                 "inbox-items",
@@ -60,12 +106,42 @@ impl Root {
                 std::mem::take(items)
                     .into_iter()
                     .filter(|run| run["automationId"] == id)
+                    .map(|mut run| {
+                        if let Some(title) = run["threadId"].as_str().and_then(|id| titles.get(id))
+                        {
+                            run["displayTitle"] = json!(title);
+                        }
+                        run
+                    })
                     .collect(),
             )
         });
-        self.run_history_load = Some(cx.spawn(async move |_, cx| {
+        self.run_history_load = Some(cx.spawn(async move |this, cx| {
             let result = read.await.map_err(|error| error.to_string());
             history.update(cx, |history, cx| history.set_items(result, cx));
+            this.update(cx, |this, cx| {
+                if this.run_history(cx).as_ref() == Some(&history) {
+                    let unread = history
+                        .read(cx)
+                        .items()
+                        .iter()
+                        .any(|run| run["readAt"].is_null());
+                    if let Some(shell) = &this.page {
+                        shell.update(cx, |shell, cx| {
+                            shell.scheduled_attention = unread;
+                            cx.notify();
+                        });
+                    }
+                    if matches!(this.state.route, Route::AutomationManagement(_)) {
+                        let next = history.update(cx, |history, _| history.take_latest_unread());
+                        if let Some(run) = next {
+                            let id = history.read(cx).id.clone();
+                            this.set_runs_read(&id, vec![run], true, cx);
+                        }
+                    }
+                }
+            })
+            .ok();
         }));
     }
 
@@ -73,9 +149,6 @@ impl Root {
         let Some(history) = self.run_history(cx).filter(|h| h.read(cx).id == id) else {
             return;
         };
-        if !self.automation_history_updates.insert(id.to_owned()) {
-            return;
-        }
         let runs: Vec<String> = history
             .read(cx)
             .items()
@@ -83,6 +156,25 @@ impl Root {
             .filter(|run| run["readAt"].is_null())
             .filter_map(|run| run["id"].as_str().map(str::to_owned))
             .collect();
+        self.set_runs_read(id, runs, true, cx);
+    }
+
+    fn set_runs_read(
+        &mut self,
+        id: &str,
+        runs: Vec<String>,
+        is_read: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(history) = self
+            .run_history(cx)
+            .filter(|history| history.read(cx).id == id)
+        else {
+            return;
+        };
+        if !self.automation_history_updates.insert(id.to_owned()) {
+            return;
+        }
         history.update(cx, |history, cx| history.set_busy(true, cx));
         let host = self.host.clone();
         let id = id.to_owned();
@@ -92,7 +184,7 @@ impl Root {
                 let result = host
                     .fetch(&host::Request::post(
                         "inbox-item-set-read-state",
-                        Some(json!({"id":id,"isRead":true})),
+                        Some(json!({"id":id,"isRead":is_read})),
                     ))
                     .and_then(|response| host::json_body(&response));
                 if !matches!(result, Ok(body) if body["success"] == true) {

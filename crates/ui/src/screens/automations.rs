@@ -22,8 +22,13 @@ use serde_json::Value;
 use std::{collections::HashSet, fs, path::Path};
 use theme::{ActiveTheme as _, Theme};
 
+pub mod editor;
 mod history;
-pub use history::{ArchiveAllRuns, MarkAllRunsRead, RunHistory, archiveable};
+mod management;
+mod search;
+pub use history::{
+    ArchiveAllRuns, ArchiveRun, MarkAllRunsRead, RunHistory, SetRunRead, archiveable,
+};
 
 actions!(
     automations,
@@ -49,6 +54,18 @@ pub struct StartSuggestedTask {
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = automations, no_json)]
 pub struct OpenAutomation {
+    pub id: String,
+}
+
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = automations, no_json)]
+pub struct OpenAutomationManagement {
+    pub id: Option<String>,
+}
+
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = automations, no_json)]
+pub struct EditAutomation {
     pub id: String,
 }
 
@@ -303,19 +320,12 @@ fn shell_with(
     Entity<ScheduledSidebar>,
     Option<Entity<AutomationsPage>>,
 ) {
-    let sidebar = cx.new(|cx| ScheduledSidebar {
-        history: None,
+    let sidebar = scheduled_sidebar(
         tasks,
-        selected: selected.as_ref().map(|(task, _)| task.id.clone()),
+        selected.as_ref().map(|(task, _)| task.id.clone()),
         utc_offset,
-        pending: HashSet::new(),
-        starting: HashSet::new(),
-        menu_item: None,
-        menu: None,
-        menu_button_hovered: false,
-        menu_focus: cx.focus_handle(),
-        return_focus: None,
-    });
+        cx,
+    );
     let mut page = None;
     let main: AnyView = match selected {
         Some((task, composer)) => {
@@ -346,6 +356,53 @@ fn shell_with(
     (shell, sidebar, page)
 }
 
+fn scheduled_sidebar(
+    tasks: Vec<Task>,
+    selected: Option<String>,
+    utc_offset: i64,
+    cx: &mut App,
+) -> Entity<ScheduledSidebar> {
+    cx.new(|cx| ScheduledSidebar {
+        history: None,
+        tasks,
+        selected,
+        utc_offset,
+        management: false,
+        pending: HashSet::new(),
+        starting: HashSet::new(),
+        menu_item: None,
+        menu: None,
+        menu_button_hovered: false,
+        menu_focus: cx.focus_handle(),
+        return_focus: None,
+    })
+}
+
+pub fn management_shell(
+    tasks: Vec<Task>,
+    selected: Option<String>,
+    utc_offset: i64,
+    cx: &mut App,
+) -> (Entity<Shell>, Entity<ScheduledSidebar>) {
+    let sidebar = scheduled_sidebar(tasks, selected.clone(), utc_offset, cx);
+    sidebar.update(cx, |sidebar, _| sidebar.management = true);
+    if let Some(id) = selected {
+        let history = cx.new(|cx| RunHistory::new(id, cx));
+        sidebar.update(cx, |sidebar, cx| {
+            cx.observe(&history, |_, _, cx| cx.notify()).detach();
+            sidebar.history = Some(history);
+        });
+    }
+    let main = cx.new(|cx| management::Management::new(sidebar.clone(), cx));
+    let shell = cx.new(|_| {
+        let mut shell = Shell::new(sidebar.clone().into(), main.into());
+        shell.selected_rail = Some("scheduled");
+        shell.new_tab = false;
+        shell
+    });
+    (shell, sidebar)
+}
+
 /// `ScheduledSidebar`: header `Scheduled` + search, `New task`, section `Upcoming` with one
 /// 48 px row per task (`automation-row`): name, `Oct 17 · Weekly`, and on hover the list
 /// fill with the `Scheduled task actions` button fading in. The selected row keeps the fill.
@@ -354,6 +411,7 @@ pub struct ScheduledSidebar {
     pub history: Option<Entity<RunHistory>>,
     selected: Option<String>,
     utc_offset: i64,
+    management: bool,
     pending: HashSet<String>,
     /// Tasks whose run is starting: their row reads `Starting run…` and `Run now` is off.
     starting: HashSet<String>,
@@ -432,6 +490,37 @@ impl ScheduledSidebar {
         window.focus(&self.menu_focus, cx);
         cx.stop_propagation();
         cx.notify();
+    }
+
+    fn header_actions(
+        &self,
+        task: &Task,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let open = self.menu.as_deref() == Some(task.id.as_str());
+        let focus = focus::handle("managed-task-actions", 0, window, cx);
+        let return_focus = focus.clone();
+        let id = task.id.clone();
+        focus::ring(
+            icon_button(
+                "managed-task-actions",
+                icon("thread-chat-actions", 16., t.text_tertiary),
+                t,
+            )
+            .size(px(28.))
+            .role(Role::Button)
+            .aria_label("Scheduled task actions")
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.toggle_menu(&id, return_focus.read(cx).handle.clone(), window, cx);
+            }))
+            .when(open, |d| d.child(self.menu_popup(task, t, cx))),
+            &focus,
+            px(9.375),
+            px(2.),
+            cx,
+        )
     }
 
     fn toggle(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -554,9 +643,22 @@ impl ScheduledSidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
-        let fill = fill(px(12.5), t.ghost_hover);
+        let has_history = self.history.as_ref().is_some_and(|history| {
+            let history = history.read(cx);
+            history.id == task.id && !history.items().is_empty()
+        });
+        let hover = if self.management && t.appearance == theme::Appearance::Dark {
+            gpui::Hsla {
+                a: 1. - (1. - 0.08),
+                ..t.text_alpha_10
+            }
+        } else {
+            t.ghost_hover
+        };
+        let fill = fill(px(12.5), hover);
         let group = SharedString::from(format!("task-row-{}", task.id));
         let id = task.id.clone();
+        let management = self.management;
         let pending = self.pending.contains(&task.id);
         let paused = task.status == "PAUSED";
         let label = if paused { "Resume" } else { "Pause" };
@@ -689,12 +791,30 @@ impl ScheduledSidebar {
                     .group_hover(group.clone(), |s| s.opacity(1.))
             })
             .on_click(move |_, window, cx| {
-                window.dispatch_action(Box::new(OpenAutomation { id: id.clone() }), cx)
+                if management {
+                    window.dispatch_action(
+                        Box::new(OpenAutomationManagement {
+                            id: Some(id.clone()),
+                        }),
+                        cx,
+                    );
+                } else {
+                    window.dispatch_action(Box::new(OpenAutomation { id: id.clone() }), cx);
+                }
             })
             .child(
-                text(task.name.clone(), 14., 20., 430., t.text_default_nav)
-                    .overflow_hidden()
-                    .text_ellipsis(),
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(
+                        text(task.name.clone(), 14., 20., 430., t.text_default_nav)
+                            .overflow_hidden()
+                            .text_ellipsis(),
+                    )
+                    .when(has_history, |d| {
+                        d.child(icon("chevron-down-small", 12., t.text_tertiary))
+                    }),
             )
             .child(
                 secondary
@@ -736,7 +856,64 @@ impl Render for ScheduledSidebar {
         let rows: Vec<_> = self
             .tasks
             .iter()
-            .map(|task| self.row(task, &t, window, cx))
+            .map(|task| {
+                let mut row = div().child(self.row(task, &t, window, cx));
+                if let Some(history) = self
+                    .history
+                    .as_ref()
+                    .filter(|history| history.read(cx).id == task.id)
+                {
+                    for (index, run) in history
+                        .read(cx)
+                        .items()
+                        .iter()
+                        .filter(|run| run["status"] != "ARCHIVED")
+                        .enumerate()
+                    {
+                        let Some(thread) = run["threadId"].as_str().map(str::to_owned) else {
+                            continue;
+                        };
+                        let history = history.clone();
+                        row = row.child(
+                            div()
+                                .id(("scheduled-run", index))
+                                .role(Role::Button)
+                                .h(px(30.))
+                                .mt(px(1.))
+                                .pl(px(24.))
+                                .pr(px(12.))
+                                .rounded(px(12.5))
+                                .flex()
+                                .items_center()
+                                .gap(px(8.))
+                                .hover(|s| s.bg(t.list_hover))
+                                .child(
+                                    text(
+                                        run["title"].as_str().unwrap_or(&task.name).to_owned(),
+                                        14.,
+                                        20.,
+                                        430.,
+                                        t.text_default_nav,
+                                    )
+                                    .flex_1()
+                                    .overflow_hidden()
+                                    .text_ellipsis(),
+                                )
+                                .when(run["readAt"].is_null(), |d| {
+                                    d.child(
+                                        div().size(px(8.)).rounded_full().bg(gpui::rgb(0x3a83f7)),
+                                    )
+                                })
+                                .on_click(move |_, _, cx| {
+                                    history.update(cx, |_, cx| {
+                                        cx.emit(crate::screens::sidebar::OpenThread(thread.clone()))
+                                    })
+                                }),
+                        );
+                    }
+                }
+                row
+            })
             .collect();
         div()
             .size_full()
