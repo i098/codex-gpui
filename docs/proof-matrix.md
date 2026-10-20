@@ -102,3 +102,18 @@ CARGO_TARGET_DIR=<handed-off-Linux-target> \
 This test checks difference-region bounds and text/geometry counts.
 It does not claim Linux rendering parity.
 The ignored `capture_cell` test runs only through the Mac command above.
+
+## Recorded smoke result
+
+The Mac run at native source `28b50bc` produced all three images and a region report for each cell.
+All cells used the dark theme and `1280x832` CSS size.
+
+| Cell | Outside text pixels | Inside text difference | Gate |
+|---|---:|---:|---|
+| Home rest | 0 | 0.376963% | PASS |
+| Terminal rest | 3078 | 0.850551% | FAIL |
+| Settings Configuration | 971375 | 49.345921% | FAIL |
+
+The failed cells demonstrate the nonzero gate result; they do not grant native appearance approval.
+The Configuration native frame shows its heading without the original controls.
+The tool preserves those differences rather than changing the reference or text mask.
