@@ -7,6 +7,7 @@ pub mod computer_use_requests;
 mod features;
 pub mod host;
 pub mod host_settings;
+pub mod native_menus;
 pub mod qa;
 mod routes;
 pub use routes::Route;
@@ -26,9 +27,8 @@ use bridge::{Bridge, Event};
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, BorrowAppContext as _,
     Context, Entity, EntityInputHandler as _, FocusHandle, Focusable as _, InteractiveElement as _,
-    IntoElement, KeyBinding, KeyDownEvent, Menu, MenuItem, OsAction, ParentElement as _,
-    PathPromptOptions, Pixels, Render, SharedString, Styled as _, SystemMenuType, Task, WeakEntity,
-    Window, WindowAppearance, actions, div, px,
+    IntoElement, KeyBinding, KeyDownEvent, ParentElement as _, PathPromptOptions, Pixels, Render,
+    SharedString, Styled as _, Task, WeakEntity, Window, WindowAppearance, actions, div, px,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -76,7 +76,6 @@ actions!(
         Hide,
         HideOthers,
         ShowAll,
-        OpenDocumentation,
         FindInThread,
         FindNext,
         FindPrevious,
@@ -143,67 +142,11 @@ pub fn init(cx: &mut App) {
     );
     ui::composer::bind_keys(cx);
     features::init(cx);
+    native_menus::init(cx);
     cx.on_action(|_: &Quit, cx| cx.quit());
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
-    cx.on_action(|_: &OpenDocumentation, cx| {
-        cx.open_url("https://developers.openai.com/codex/app")
-    });
-}
-
-/// Menu bar of the original (docs/inventory.md §13), limited to commands with a handler.
-pub fn menus() -> Vec<Menu> {
-    vec![
-        Menu::new("Codex").items([
-            MenuItem::action("Settings…", OpenSettings),
-            MenuItem::action("Log Out", LogOut),
-            MenuItem::separator(),
-            MenuItem::os_submenu("Services", SystemMenuType::Services),
-            MenuItem::separator(),
-            MenuItem::action("Hide Codex", Hide),
-            MenuItem::action("Hide Others", HideOthers),
-            MenuItem::action("Show All", ShowAll),
-            MenuItem::separator(),
-            MenuItem::action("Quit Codex", Quit),
-        ]),
-        Menu::new("File").items([
-            MenuItem::action("New Chat", NewChat),
-            MenuItem::action("Open Folder…", OpenFolder),
-            MenuItem::separator(),
-            MenuItem::action("Close", CloseWindow),
-        ]),
-        Menu::new("Edit").items([
-            MenuItem::os_action("Undo", Undo, OsAction::Undo),
-            MenuItem::os_action("Redo", Redo, OsAction::Redo),
-            MenuItem::separator(),
-            MenuItem::os_action("Cut", Cut, OsAction::Cut),
-            MenuItem::os_action("Copy", Copy, OsAction::Copy),
-            MenuItem::os_action("Paste", Paste, OsAction::Paste),
-            MenuItem::os_action("Select All", SelectAll, OsAction::SelectAll),
-            MenuItem::separator(),
-            MenuItem::action("Find", FindInThread),
-            MenuItem::action("Find Next", FindNext),
-            MenuItem::action("Find Previous", FindPrevious),
-        ]),
-        Menu::new("View").items([
-            MenuItem::action("Toggle Sidebar", ToggleSidebar),
-            MenuItem::action("Toggle Changes Panel", ToggleChangesPanel),
-            MenuItem::separator(),
-            MenuItem::action("Previous Chat", PreviousChat),
-            MenuItem::action("Next Chat", NextChat),
-            MenuItem::action("Back", GoBack),
-            MenuItem::action("Forward", GoForward),
-        ]),
-        Menu::new("Window").items([
-            MenuItem::action("Minimize", Minimize),
-            MenuItem::action("Zoom", Zoom),
-        ]),
-        Menu::new("Help").items([
-            MenuItem::action("Documentation", OpenDocumentation),
-            MenuItem::action("Keyboard Shortcuts", ShowKeyboardShortcuts),
-        ]),
-    ]
 }
 
 /// The thread route's side panel tab.

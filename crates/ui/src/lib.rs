@@ -63,7 +63,19 @@ actions!(
 pub struct SetTheme(pub &'static str);
 
 // Edit menu commands; text inputs handle them.
-actions!(edit, [Undo, Redo, Cut, Copy, Paste, SelectAll]);
+actions!(
+    edit,
+    [
+        Undo,
+        Redo,
+        Cut,
+        Copy,
+        Paste,
+        PasteAndMatchStyle,
+        DeleteSelection,
+        SelectAll
+    ]
+);
 
 /// `--app-shell-navigation-rail-width`
 pub const RAIL_WIDTH: Pixels = px(52.);

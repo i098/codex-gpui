@@ -132,7 +132,7 @@ fn recorded_thread_find_query_and_navigation() -> Result<()> {
         find(&fx) == Some(("subtract".into(), 0, 5)),
         "Cmd+Shift+G did not select the previous match"
     );
-    fx.menu("Edit", "Find")?;
+    fx.menu("View", "Find")?;
     fx.type_text("math")?;
     fx.shot()?;
     ensure!(

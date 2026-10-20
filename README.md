@@ -411,6 +411,11 @@ The terminal command opens an existing background command, not an interactive sh
 Unsupported destinations remain known gaps; this change does not implement logout, git operations, cloud operations, or the project picker.
 Recorded command rows, ranking, and keyboard-editing checks remain unchanged.
 
+The native menu lives in `crates/app/src/native_menus.rs`.
+Edit supports plain-text Paste and Match Style and selection-only Delete, including undo.
+View contains Find and Open Terminal; Help opens the Codex changelog, troubleshooting guide, and service status page.
+The `native_menus` and `s013` tests check the edit actions and Find navigation on macOS.
+
 ```sh
 tools/mac.sh -l cgx-command-dispatch 'cargo test -p app --test command_dispatch --test s025 --test s025_rank --test s026 -- --test-threads=1'
 ```

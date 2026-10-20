@@ -1888,6 +1888,16 @@ impl Render for Composer {
             .on_action(cx.listener(Self::copy))
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(|this, _: &crate::Paste, window, cx| this.paste(window, cx)))
+            .on_action(
+                cx.listener(|this, _: &crate::PasteAndMatchStyle, window, cx| {
+                    this.paste_and_match_style(window, cx)
+                }),
+            )
+            .on_action(cx.listener(|this, _: &crate::DeleteSelection, window, cx| {
+                if !this.selected_range.is_empty() {
+                    this.insert("", window, cx);
+                }
+            }))
             .on_action(self.request_listener(cx, Self::dismiss))
             .on_action(cx.listener(Self::complete_command))
             .on_action(cx.listener(Self::next_command))

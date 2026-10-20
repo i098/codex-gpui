@@ -362,6 +362,12 @@ impl Composer {
         }
     }
 
+    pub(super) fn paste_and_match_style(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+            self.insert(&text, window, cx);
+        }
+    }
+
     /// The open right-click menu's items as `(id, label, enabled)`; empty when none is open.
     pub fn context_menu_items(&self) -> impl Iterator<Item = (&str, &str, bool)> {
         self.context_menu.iter().flat_map(ContextMenu::rows)

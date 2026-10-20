@@ -82,7 +82,7 @@ fn main() {
         theme::load_fonts(cx);
         cx.set_global(state.theme.theme(cx.window_appearance()));
         app::init(cx);
-        cx.set_menus(app::menus());
+        cx.set_menus(app::native_menus::menus());
         let handle = app::windows::open_primary(state, cwd, cx).unwrap_or_else(|error| {
             eprintln!("codex-gpui: cannot open the primary window: {error:#}");
             std::process::exit(1)
