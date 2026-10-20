@@ -1131,6 +1131,15 @@ impl Platform for MacPlatform {
         state.system_notifications.on_response(&executor, callback);
     }
 
+    fn on_system_notification_reply(
+        &self,
+        callback: Box<dyn FnMut(gpui::SystemNotificationReply)>,
+    ) {
+        let mut state = self.0.lock();
+        let executor = state.foreground_executor.clone();
+        state.system_notifications.on_reply(&executor, callback);
+    }
+
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         Box::new(MacKeyboardLayout::new())
     }

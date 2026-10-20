@@ -226,6 +226,11 @@ The baseline uses window-local logical pixels from the top left; the adapter han
 Call it on the main thread with the unchanged selection.
 Headless windows return their native-handle error; the adapter has no URL or clipboard fallback.
 
+On macOS, `SystemNotification::reply_placeholder` adds a text-input notification action.
+Register `App::on_system_notification_reply` before posting; it receives the notification identifier and reply text on the main thread.
+Without a registered handler, the notification omits the reply field.
+The local `vendor/gpui_macos` patch tests native request and category fields without posting a notification.
+
 With `test-support`, `HeadlessAppContext::did_prompt_for_paths` reports a pending path dialog.
 Use `simulate_path_prompt_response` to answer it with selected paths or `None` for cancellation.
 These hooks use `TestPlatform` without opening an OS dialog; normal app behavior does not change.
