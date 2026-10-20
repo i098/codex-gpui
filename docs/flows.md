@@ -450,6 +450,7 @@ GPUI previously kept keyboard input mode for an OS file drop, so drop hit testin
 The local pending capture holds an owned `fs/createDirectory` request and then releases a real `ENOTDIR` failure.
 The success capture finishes the two filesystem writes and observes submission preparation after pending Enter.
 The native check covers deferred send, failure, pending cancellation, source-thread identity and restored editor focus.
+Pasted-text cards use the recorded outer stroke and the original icon radius, fill and opacity.
 The capture reuses the original recorded response for the same Subtract thread; it does not invent a response for another thread.
 No remote uploader or unobserved preflight dialog was added.
 Each submission keeps its own attachment recovery state until that request completes.

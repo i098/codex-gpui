@@ -559,15 +559,20 @@ impl Composer {
             .pl(px(6.))
             .pr(px(24.))
             .child(shapes::decoration(shapes::Decoration {
-                border: Some((px(0.5), t.text_alpha_5)),
-                ..deco(10., fill, vec![])
+                corner: shapes::Corner::Squircle,
+                ..deco(10., fill, vec![shadow(t.border_strong, 0., 0., 0.5, false)])
             }))
             .child(
                 div()
                     .size(px(40.))
                     .flex_none()
                     .relative()
-                    .child(shapes::decoration(deco(8., t.surface, vec![])))
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: Corners::all(Theme::RADIUS_LG),
+                        corner: shapes::Corner::Squircle,
+                        fill: Some(t.surface_secondary.opacity(0.92)),
+                        ..Default::default()
+                    }))
                     .flex()
                     .items_center()
                     .justify_center()
