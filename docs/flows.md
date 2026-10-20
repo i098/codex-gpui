@@ -1041,7 +1041,9 @@ These checks do not complete the other command products.
 They select waiting approvals before unread chats, then use descending chat recency.
 `Clear all unreads` and `⇧Esc` open the original confirmation with `Cancel`, `Clear all`, and `Don’t ask me again`.
 The checkbox receives initial focus; Tab reaches Cancel, Clear all, and Close dialog.
+A pointer move does not remove the dialog's keyboard focus ring.
 Confirmation marks unread, finished, local automation runs as read through the shared host endpoint.
+Runs updated after the requested `readAt` stay unread.
 It clears the captured chat indicators after that write succeeds; failure retains them and shows an error.
 The saved checkbox skips later confirmations.
 `⇧⌘C` copies the active working directory; `⌥⌘L` copies `codex://threads/{id}`.

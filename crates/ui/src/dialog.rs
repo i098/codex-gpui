@@ -167,6 +167,7 @@ pub struct Dialog {
     kind: Kind,
     controls: [FocusHandle; 7],
     selected: usize,
+    focus_visible: Option<bool>,
     /// The text of the search, chat title, or task instructions.
     query: String,
     select_all: bool,
@@ -204,6 +205,7 @@ impl Dialog {
             } else {
                 usize::from(kind == Kind::RevertChanges)
             },
+            focus_visible: None,
             query: String::new(),
             select_all: false,
             instruction_cursor: 0,
@@ -1047,6 +1049,7 @@ impl Dialog {
         cx.notify();
     }
     fn key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.focus_visible = Some(true);
         let k = &e.keystroke;
         if self.saving {
             cx.stop_propagation();
@@ -1244,9 +1247,6 @@ impl Dialog {
             .justify_center()
             .rounded(px(12.5))
             .bg(if primary { t.text } else { t.list_hover })
-            .when(self.kind == Kind::ClearAllUnreads, |d| {
-                d.w_auto().px(px(15.))
-            })
             .when(
                 matches!(
                     self.kind,
@@ -1510,8 +1510,8 @@ impl Dialog {
                     .flex()
                     .justify_end()
                     .gap(px(12.))
-                    .child(self.logout_button(0, "Cancel", t, cx))
-                    .child(self.logout_button(1, "Log out", t, cx)),
+                    .child(self.confirmation_button(0, "Cancel", t, cx))
+                    .child(self.confirmation_button(1, "Log out", t, cx)),
             )
             .child(
                 div()
@@ -1532,16 +1532,18 @@ impl Dialog {
             )
     }
 
-    /// `Cancel` is the ghost button and `Log out` the danger button: 32 px high, `px-4` and a
-    /// 1 px transparent border, radius 12.5, the 2 px ring outside the box when focused.
-    fn logout_button(
+    /// The recorded confirmation controls share a 32 px squircle box and an external focus ring.
+    fn confirmation_button(
         &self,
         index: usize,
         label: &'static str,
         t: &Theme,
         cx: &Context<Self>,
     ) -> Stateful<Div> {
-        let danger = index == 1;
+        let primary = index == 1;
+        let clear_unreads = self.kind == Kind::ClearAllUnreads;
+        let rename = self.kind == Kind::Rename;
+        let danger = primary && !clear_unreads && !rename;
         div()
             .id(("dialog-button", index))
             .role(gpui::Role::Button)
@@ -1554,24 +1556,36 @@ impl Dialog {
             .items_center()
             .justify_center()
             .relative()
-            .when(danger, |d| {
+            .when(danger || clear_unreads || rename, |d| {
                 d.child(shapes::decoration(shapes::Decoration {
                     radius: Corners::all(px(12.5)),
                     corner: shapes::Corner::Squircle,
-                    fill: Some(t.text_error.opacity(0.1)),
+                    border: rename.then_some((px(1.), t.border)),
+                    fill: Some(if danger {
+                        t.text_error.opacity(0.1)
+                    } else if primary {
+                        t.text
+                    } else if rename {
+                        t.primary_soft_alpha
+                    } else {
+                        t.text_alpha_5
+                    }),
                     ..Default::default()
                 }))
             })
-            .when(self.selected == index, |d| {
-                d.child(div().absolute().inset(px(-2.)).child(shapes::decoration(
-                    shapes::Decoration {
-                        radius: Corners::all(px(14.5)),
-                        corner: shapes::Corner::Squircle,
-                        border: Some((px(2.), rgba(0x3a83f7ff).into())),
-                        ..Default::default()
-                    },
-                )))
-            })
+            .when(
+                self.selected == index && self.focus_visible == Some(true),
+                |d| {
+                    d.child(div().absolute().inset(px(-2.)).child(shapes::decoration(
+                        shapes::Decoration {
+                            radius: Corners::all(px(14.5)),
+                            corner: shapes::Corner::Squircle,
+                            border: Some((px(2.), rgba(0x3a83f7ff).into())),
+                            ..Default::default()
+                        },
+                    )))
+                },
+            )
             .hover(|s| s.opacity(0.85))
             .child(text(
                 label,
@@ -1580,6 +1594,8 @@ impl Dialog {
                 430.,
                 if danger {
                     t.text_error
+                } else if clear_unreads || rename {
+                    if primary { t.menu_background } else { t.text }
                 } else {
                     t.text_tertiary
                 },
@@ -1634,6 +1650,7 @@ impl Dialog {
     fn close_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
         let revert = self.kind == Kind::RevertChanges;
         let clear_unreads = self.kind == Kind::ClearAllUnreads;
+        let checkbox_focus = self.selected == 2 && self.focus_visible == Some(true);
         let (title, description, checkbox, confirm) = match self.kind {
             Kind::ClearAllUnreads => (
                 "Clear all unreads?",
@@ -1670,9 +1687,13 @@ impl Dialog {
                     14.,
                     if clear_unreads { 21. } else { 20. },
                     if clear_unreads { 430. } else { 400. },
-                    t.text_secondary,
+                    if clear_unreads {
+                        t.text_tertiary
+                    } else {
+                        t.text_secondary
+                    },
                 )
-                .mt(px(8.))
+                .mt(px(if clear_unreads { 4. } else { 8. }))
                 .whitespace_normal()
             }))
             .child(
@@ -1686,7 +1707,7 @@ impl Dialog {
                         gpui::Toggled::False
                     })
                     .track_focus(&self.controls[2])
-                    .mt(px(if clear_unreads { 8. } else { 12. }))
+                    .mt(px(12.))
                     .h(px(if clear_unreads { 21. } else { 18. }))
                     .flex()
                     .items_center()
@@ -1695,12 +1716,57 @@ impl Dialog {
                         div()
                             .size(px(14.))
                             .rounded(px(5.))
-                            .border_1()
-                            .border_color(t.border)
+                            .when(!clear_unreads, |d| d.border_1().border_color(t.border))
+                            .when(clear_unreads, |d| {
+                                let shadow = shapes::Shadow {
+                                    color: rgba(0x00000014).into(),
+                                    offset: point(px(0.), px(1.)),
+                                    blur: px(2.),
+                                    spread: px(-1.),
+                                    inset: false,
+                                };
+                                d.relative()
+                                    .p(px(1.))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(shapes::decoration(shapes::Decoration {
+                                        radius: Corners::all(px(5.)),
+                                        fill: self
+                                            .do_not_ask_again
+                                            .then_some(t.surface_elevated_secondary.opacity(0.96)),
+                                        border: Some((
+                                            px(1.),
+                                            if checkbox_focus {
+                                                rgba(0x3a83f7ff).into()
+                                            } else {
+                                                t.border_strong
+                                            },
+                                        )),
+                                        shadows: if checkbox_focus {
+                                            vec![
+                                                shapes::Shadow {
+                                                    color: rgba(0x3a83f7ff).into(),
+                                                    offset: point(px(0.), px(0.)),
+                                                    blur: px(0.),
+                                                    spread: px(2.),
+                                                    inset: false,
+                                                },
+                                                shadow,
+                                            ]
+                                        } else {
+                                            vec![shadow]
+                                        },
+                                        ..Default::default()
+                                    }))
+                                    .when(self.do_not_ask_again, |d| {
+                                        d.child(icon("menu-check", 12., t.text))
+                                    })
+                            })
                             .when(self.selected == 2 && !clear_unreads, |d| {
                                 d.border_color(rgba(0x3a83f7ff))
                             })
-                            .when(self.do_not_ask_again, |d| {
+                            .when(self.do_not_ask_again && !clear_unreads, |d| {
                                 d.bg(t.text)
                                     .child(text("✓", 12., 12., 600., t.menu_background))
                             }),
@@ -1724,8 +1790,16 @@ impl Dialog {
                     .flex()
                     .justify_end()
                     .gap(px(12.))
-                    .child(self.button(0, "Cancel", 80., t, cx))
-                    .child(self.button(1, confirm, 128., t, cx)),
+                    .child(if clear_unreads {
+                        self.confirmation_button(0, "Cancel", t, cx)
+                    } else {
+                        self.button(0, "Cancel", 80., t, cx)
+                    })
+                    .child(if clear_unreads {
+                        self.confirmation_button(1, confirm, t, cx)
+                    } else {
+                        self.button(1, confirm, 128., t, cx)
+                    }),
             )
             .when(clear_unreads, |d| {
                 d.child(
@@ -2126,50 +2200,69 @@ impl Dialog {
                     .track_focus(&self.controls[0])
                     .mt(px(12.))
                     .h(px(36.))
-                    .rounded(px(10.))
-                    .border_1()
-                    .border_color(if focused {
-                        rgba(0x3a83f7ff).into()
-                    } else {
-                        t.border_strong
-                    })
-                    .bg(t.surface_elevated_secondary.opacity(0.96))
-                    .px(px(10.))
+                    .relative()
+                    .px(px(11.))
                     .flex()
                     .items_center()
-                    .overflow_hidden()
                     .cursor_text()
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: Corners::all(px(10.)),
+                        corner: shapes::Corner::Squircle,
+                        fill: Some(t.surface_elevated_secondary.opacity(0.96)),
+                        border: Some((
+                            px(1.),
+                            if focused {
+                                rgba(0x3a83f7ff).into()
+                            } else {
+                                t.border_strong
+                            },
+                        )),
+                        ..Default::default()
+                    }))
                     .child(
-                        text(
-                            if self.query.is_empty() {
-                                if self.kind == Kind::Rename {
-                                    "Add a title…"
+                        if self.kind == Kind::Rename {
+                            div().w_full().overflow_hidden().flex().justify_end().child(
+                                text(
+                                    if self.query.is_empty() {
+                                        "Add a title…".into()
+                                    } else {
+                                        self.query.clone()
+                                    },
+                                    13.,
+                                    15.,
+                                    430.,
+                                    if self.query.is_empty() {
+                                        t.text_tertiary
+                                    } else {
+                                        t.text
+                                    },
+                                )
+                                .min_w_full()
+                                .flex_shrink_0()
+                                .when(self.select_all && !self.query.is_empty(), |d| {
+                                    d.text_bg(t.text_selection)
+                                }),
+                            )
+                        } else {
+                            text(
+                                if self.query.is_empty() {
+                                    "Section name".into()
                                 } else {
-                                    "Section name"
-                                }
-                                .into()
-                            } else {
-                                self.query.clone()
-                            },
-                            13.,
-                            18.5714,
-                            430.,
-                            if self.query.is_empty() {
-                                t.text_tertiary
-                            } else {
-                                t.text
-                            },
-                        )
-                        .when(
-                            self.select_all && !self.query.is_empty(),
-                            |d| {
-                                d.bg(if self.kind == Kind::Rename {
-                                    rgba(0x3a83f766).into()
+                                    self.query.clone()
+                                },
+                                13.,
+                                18.5714,
+                                430.,
+                                if self.query.is_empty() {
+                                    t.text_tertiary
                                 } else {
-                                    t.text_selection
-                                })
-                            },
-                        ),
+                                    t.text
+                                },
+                            )
+                            .when(self.select_all && !self.query.is_empty(), |d| {
+                                d.bg(t.text_selection)
+                            })
+                        },
                     )
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.selected = 0;
@@ -2183,18 +2276,26 @@ impl Dialog {
                     .flex()
                     .justify_end()
                     .gap(px(12.))
-                    .child(self.button(2, "Cancel", 80., t, cx))
-                    .child(self.button(
-                        1,
-                        self.name_submit(),
-                        if self.kind == Kind::NewSection {
-                            126.
-                        } else {
-                            66.
-                        },
-                        t,
-                        cx,
-                    )),
+                    .child(if self.kind == Kind::Rename {
+                        self.confirmation_button(2, "Cancel", t, cx)
+                    } else {
+                        self.button(2, "Cancel", 80., t, cx)
+                    })
+                    .child(if self.kind == Kind::Rename {
+                        self.confirmation_button(1, "Save", t, cx)
+                    } else {
+                        self.button(
+                            1,
+                            self.name_submit(),
+                            if self.kind == Kind::NewSection {
+                                126.
+                            } else {
+                                66.
+                            },
+                            t,
+                            cx,
+                        )
+                    }),
             )
             .child(
                 div()
@@ -2933,6 +3034,8 @@ fn schedule_time() -> String {
 
 impl Render for Dialog {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.focus_visible
+            .get_or_insert_with(|| window.last_input_was_keyboard());
         let t = cx.theme();
         let viewport = window.viewport_size();
         let visible: Vec<_> = if self.kind == Kind::Shortcuts {
@@ -3096,7 +3199,14 @@ impl Render for Dialog {
                         }
                         cx.stop_propagation();
                     }))
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            this.focus_visible = Some(false);
+                            cx.notify();
+                            cx.stop_propagation();
+                        }),
+                    )
                     .absolute()
                     .left(px(if self.kind == Kind::Branches {
                         (f32::from(viewport.width) - width - 20.).max(0.)

@@ -72,11 +72,13 @@ fn unread_command_is_idempotent_and_opening_the_chat_reads_it() -> Result<()> {
     fx.keys("cmd-shift-u")?;
     ensure!(unread(&fx) == [SUBTRACT]);
     ensure!(fx.route() == Route::Thread(SUBTRACT.into()) && fx.composer_focused()?);
+    fx.proof_shot("accelerator-unread.png")?;
     fx.keys("cmd-1")?;
     fx.wait_thread(GREETING)?;
     fx.keys("alt-cmd-a")?;
     fx.wait_thread(SUBTRACT)?;
     ensure!(unread(&fx).is_empty());
+    fx.proof_shot("reader-read.png")?;
     fx.keys("cmd-n cmd-shift-u alt-cmd-r alt-cmd-p")?;
     ensure!(fx.route() == Route::Home && fx.read(|root, _| root.dialog().is_none()));
     ensure!(unread(&fx).is_empty());
@@ -176,10 +178,6 @@ fn pin_shortcut_reuses_section_moves_and_restores_a_refused_move() -> Result<()>
                 json!({"threadId":SUBTRACT,"sectionId":null,"beforeThreadId":null}),
             ]
     );
-    fx.keys("alt-cmd-r")?;
-    ensure!(fx.read(|root, cx| root.dialog().unwrap().read(cx).kind() == Kind::Rename));
-    fx.keys("escape")?;
-    ensure!(fx.composer_focused()?);
     Ok(())
 }
 
@@ -192,15 +190,14 @@ fn clear_unreads_confirms_cancels_and_remembers_the_checkbox() -> Result<()> {
             |root, cx| root.dialog().unwrap().read(cx).focused_control() == "Don’t ask me again"
         )
     );
-    if let Some(out) = std::env::var_os("CGX_COMMAND_PROOF") {
-        fx.shot()?
-            .save(std::path::Path::new(&out).join("native-clear-unreads.png"))?;
-    }
+    fx.proof_shot("native-clear-unreads.png")?;
     set_unread(&mut fx, &[GREETING, SUBTRACT]);
     fx.keys("tab enter")?;
     ensure!(unread(&fx) == [GREETING, SUBTRACT] && fx.composer_focused()?);
     command(&mut fx, "Clear all unreads")?;
-    fx.keys("space tab tab enter")?;
+    fx.keys("space")?;
+    fx.proof_shot("native-clear-unreads-checked.png")?;
+    fx.keys("tab tab enter")?;
     fx.wait("all chats are read", |fx| unread(fx).is_empty())?;
     ensure!(fx.read(|root, _| root.dialog().is_none()));
     set_unread(&mut fx, &[EXPLAIN]);
@@ -268,5 +265,18 @@ fn hidden_copy_accelerators_use_the_active_chat_and_do_not_overwrite_on_home() -
             .update(|cx| cx.read_from_clipboard().and_then(|item| item.text()))
             == Some(link)
     );
+    Ok(())
+}
+
+#[test]
+fn rename_accelerator_keeps_the_chat_and_restores_composer_focus() -> Result<()> {
+    let mut fx = Fx::new()?;
+    fx.keys("cmd-2")?;
+    fx.wait_thread(SUBTRACT)?;
+    fx.keys("alt-cmd-r")?;
+    ensure!(fx.read(|root, cx| root.dialog().unwrap().read(cx).kind() == Kind::Rename));
+    fx.proof_shot("accelerator-rename.png")?;
+    fx.keys("escape")?;
+    ensure!(fx.route() == Route::Thread(SUBTRACT.into()) && fx.composer_focused()?);
     Ok(())
 }

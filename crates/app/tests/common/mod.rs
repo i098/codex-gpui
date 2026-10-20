@@ -526,9 +526,18 @@ impl Fx {
         self.cx.capture_screenshot(self.window)
     }
 
+    /// Retains requested evidence with the existing reference preparation when CGX_COMMAND_PROOF names an output directory.
+    pub fn proof_shot(&mut self, name: &str) -> Result<()> {
+        if let Some(output) = env::var_os("CGX_COMMAND_PROOF") {
+            self.reference_shot()?.save(Path::new(&output).join(name))?;
+        }
+        Ok(())
+    }
+
     /// Matches the reference pointer and caret preparation without changing keyboard focus.
     pub fn reference_shot(&mut self) -> Result<RgbaImage> {
         self.hover(((self.size.0 * 0.6).round(), 6.))?;
+        self.advance(ui::motion::BASIC)?;
         self.cx.update_window(self.window, |_, window, cx| {
             Composer::set_caret_transparent(cx, true);
             window.refresh();
@@ -646,7 +655,10 @@ pub fn assert_hover(fx: &mut Fx, at: (f32, f32), rect: [f32; 4], min: usize) -> 
 
 /// Compares a captured image with the original reference and fails on a strict pixel mismatch.
 pub fn parity_image(screen: &str, theme: &str, port: &RgbaImage) -> Result<String> {
-    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("flows-parity");
+    let out = env::var_os("CGX_COMMAND_PROOF")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_TARGET_TMPDIR")))
+        .join("flows-parity");
     let refs = PathBuf::from(format!("{ROOT}/refs"));
     let m = parity::diff_ref(&refs, &out, screen, theme, port)?;
     let note = format!(

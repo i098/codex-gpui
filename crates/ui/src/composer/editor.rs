@@ -931,7 +931,7 @@ impl gpui::Element for Editor {
         }
         let caret = (c.selected_range.is_empty()
             && focus.is_focused(window)
-            && !cx.try_global::<TransparentCaret>().is_some_and(|s| s.0))
+            && !Composer::caret_transparent(cx))
         .then(|| c.point_for_index(c.cursor()))
         .flatten();
         // Each chip's 16 px icon sits in its slot, 2 px under the line top (`_IconContainer`).

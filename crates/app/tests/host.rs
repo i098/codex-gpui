@@ -155,12 +155,12 @@ fn database(home: &std::path::Path) -> Result<Connection> {
         created_at INTEGER, updated_at INTEGER);
         INSERT INTO automations VALUES ('local', 'Local task', 'Fallback prompt', 100, 100, 50, 'FREQ=DAILY;BYHOUR=9', 'ACTIVE', NULL, NULL, NULL);
         INSERT INTO automations VALUES ('private', 'Other account', 'Secret', 100, 100, 50, '', 'ACTIVE', 'account', 'user', 'installation');
-        INSERT INTO automation_runs (thread_id, automation_id, status, created_at, inbox_summary) VALUES
-        ('running', 'local', 'IN_PROGRESS', 1, ''),
-        ('review', 'local', 'PENDING_REVIEW', 2, 'Review this'),
-        ('accepted', 'local', 'ACCEPTED', 3, NULL),
-        ('archived', 'local', 'ARCHIVED', 4, NULL),
-        ('private-run', 'private', 'PENDING_REVIEW', 5, 'Secret');")?;
+        INSERT INTO automation_runs (thread_id, automation_id, status, created_at, updated_at, inbox_summary) VALUES
+        ('running', 'local', 'IN_PROGRESS', 1, 1, ''),
+        ('review', 'local', 'PENDING_REVIEW', 2, 2, 'Review this'),
+        ('accepted', 'local', 'ACCEPTED', 3, 3, NULL),
+        ('archived', 'local', 'ARCHIVED', 4, 4, NULL),
+        ('private-run', 'private', 'PENDING_REVIEW', 5, 5, 'Secret');")?;
     Ok(db)
 }
 
@@ -1200,19 +1200,23 @@ fn mobile_get_started_follows_the_recorded_mfa_status() -> Result<()> {
 }
 
 #[test]
-fn clear_all_unreads_updates_only_unread_finished_local_runs() -> Result<()> {
+fn clear_all_unreads_updates_only_unread_finished_local_runs_at_snapshot() -> Result<()> {
     let home = tempfile::tempdir()?;
     let db = database(home.path())?;
     db.execute(
         "UPDATE automation_runs SET read_at = 7 WHERE thread_id = 'accepted'",
         [],
     )?;
+    db.execute_batch(
+        "UPDATE automation_runs SET updated_at = 1234 WHERE thread_id = 'review';
+         UPDATE automation_runs SET updated_at = 2000 WHERE thread_id = 'archived';",
+    )?;
     let host = LocalHost::new(home.path());
     let request = Request::post(
         "inbox-automation-runs-mark-all-read",
         Some(json!({"readAt":1234})),
     );
-    assert_eq!(json_body(&host.fetch(&request)?)?["count"], 2);
+    assert_eq!(json_body(&host.fetch(&request)?)?["count"], 1);
     let states = db
         .prepare("SELECT thread_id, read_at FROM automation_runs ORDER BY thread_id")?
         .query_map([], |row| {
@@ -1223,13 +1227,26 @@ fn clear_all_unreads_updates_only_unread_finished_local_runs() -> Result<()> {
         states,
         vec![
             ("accepted".into(), Some(7)),
-            ("archived".into(), Some(1234)),
+            ("archived".into(), None),
             ("private-run".into(), None),
             ("review".into(), Some(1234)),
             ("running".into(), None),
         ]
     );
     assert_eq!(json_body(&host.fetch(&request)?)?["count"], 0);
+    let later = Request::post(
+        "inbox-automation-runs-mark-all-read",
+        Some(json!({"readAt":3000})),
+    );
+    assert_eq!(json_body(&host.fetch(&later)?)?["count"], 1);
+    assert_eq!(
+        db.query_row(
+            "SELECT read_at FROM automation_runs WHERE thread_id = 'archived'",
+            [],
+            |row| row.get::<_, i64>(0)
+        )?,
+        3000
+    );
     assert!(
         host.fetch(&Request::post(
             "inbox-automation-runs-mark-all-read",

@@ -106,6 +106,7 @@ fn command_menu_groups_and_chat_search_match_the_original() -> Result<()> {
     fx.advance(wait(&steps[0]))?;
     let port = rows_only(describe(&mut fx)?);
     ensure!(port == groups(&dom[0]), "empty query: {port:#?}");
+    fx.proof_shot("menu-open.png")?;
 
     // HC-083: `greet` keeps the greeting chat with its title highlighted and the snippet.
     fx.type_text(steps[1]["text"].as_str().unwrap())?;
@@ -119,6 +120,7 @@ fn command_menu_groups_and_chat_search_match_the_original() -> Result<()> {
     })?;
     let port = rows_only(describe(&mut fx)?);
     ensure!(port == groups(&dom[2]), "query greet: {port:#?}");
+    fx.proof_shot("menu-search-greet.png")?;
     let settled_header = image::imageops::crop_imm(&fx.shot()?, 870, 432, 30, 30).to_image();
     fx.shot()?
         .save(std::env::temp_dir().join("s026-greet.png"))?;
@@ -176,6 +178,7 @@ fn command_menu_groups_and_chat_search_match_the_original() -> Result<()> {
         port == groups(&recording["result"]["threadRoute"]),
         "thread route: {port:#?}"
     );
+    fx.proof_shot("menu-groups-thread.png")?;
     fx.keys("escape")?;
 
     // The unread dot [INFERENCE: 8 px `info-solid` dot centred in the leading slot; the
