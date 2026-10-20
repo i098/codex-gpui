@@ -152,6 +152,7 @@ Archive requires confirmation and skips running or already archived chats.
 The app keeps failed rows and reloads the run store after each action.
 New reloads replace older reloads.
 Local read and archive writes exclude account-owned tasks and never remove worktrees.
+Global read leaves running runs and updates newer than the read snapshot unread.
 Run `cargo test -p app --test automation_history -- --test-threads=1` on macOS for confirmation, cancellation, read failure, and archive rollback proof.
 
 ## Release bundle
