@@ -372,10 +372,24 @@ impl IntoElement for RoundedClip {
 
 /// Tracks decoration bounds for an existing compositor layer without adding a layer.
 pub fn recorded_bounds(child: impl IntoElement) -> impl IntoElement {
-    RecordedBounds(child.into_any_element())
+    RecordedBounds {
+        child: child.into_any_element(),
+        dense: false,
+    }
 }
 
-struct RecordedBounds(AnyElement);
+/// Tracks the tight bounds of a compositor layer, including shadow overflow.
+pub fn composited_bounds(child: impl IntoElement) -> impl IntoElement {
+    RecordedBounds {
+        child: child.into_any_element(),
+        dense: true,
+    }
+}
+
+struct RecordedBounds {
+    child: AnyElement,
+    dense: bool,
+}
 
 impl gpui::Element for RecordedBounds {
     type RequestLayoutState = ();
@@ -396,7 +410,7 @@ impl gpui::Element for RecordedBounds {
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, ()) {
-        (self.0.request_layout(window, cx), ())
+        (self.child.request_layout(window, cx), ())
     }
 
     fn prepaint(
@@ -409,7 +423,7 @@ impl gpui::Element for RecordedBounds {
         cx: &mut App,
     ) -> Self::PrepaintState {
         shapes::recorded_bounds(|| {
-            self.0.prepaint(window, cx);
+            self.child.prepaint(window, cx);
         })
     }
 
@@ -423,7 +437,13 @@ impl gpui::Element for RecordedBounds {
         window: &mut Window,
         cx: &mut App,
     ) {
-        shapes::with_recorded_bounds(*recorded, || self.0.paint(window, cx));
+        let dense = self.dense;
+        let paint = || self.child.paint(window, cx);
+        if dense {
+            shapes::with_composited_bounds(*recorded, paint);
+        } else {
+            shapes::with_recorded_bounds(*recorded, paint);
+        }
     }
 }
 

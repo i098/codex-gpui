@@ -397,6 +397,18 @@ pub fn with_composited_opacity<R>(
     }
 }
 
+/// Paints a tightly bounded compositor recording, including its shadow overflow.
+/// Take `bounds` from [`recorded_bounds`], which clips them to the current content mask.
+pub fn with_composited_bounds<R>(bounds: Option<[i32; 4]>, paint: impl FnOnce() -> R) -> R {
+    #[cfg(target_os = "macos")]
+    return skia::with_composited_bounds(bounds, paint);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = bounds;
+        paint()
+    }
+}
+
 /// Paints the svg icon `src` (asset bytes; `key` names it for the cache) into `bounds`,
 /// mirrored horizontally if `flip_x`, in `color`; `layer` as in [`paint`].
 /// An explicit layer origin composites the complete SVG, including overlapping paths.

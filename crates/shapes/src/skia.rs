@@ -915,15 +915,38 @@ impl Layer {
             })
             .map(|[x, y]| [x - origin[0], y - origin[1]]);
         let window = [dev(vp.width), dev(vp.height)];
-        let recorded = recorded_bounds
-            .map(|r| recording_rect(r, origin, [window[0] - origin[0], window[1] - origin[1]]));
+        let sparse = recorded_bounds.is_none_or(|recording| recording.sparse);
+        let recorded = recorded_bounds.map(|recording| {
+            if recording.sparse {
+                recording_rect(
+                    recording.bounds,
+                    origin,
+                    [window[0] - origin[0], window[1] - origin[1]],
+                )
+            } else {
+                let [x0, y0, x1, y1] = recording.bounds;
+                [
+                    x0 - origin[0],
+                    y0 - origin[1],
+                    x1 - origin[0],
+                    y1 - origin[1],
+                ]
+            }
+        });
         Self {
             origin,
             tile_origin,
             window,
             tile: recorded.map_or_else(
                 || size.map_or([TILE; 2], cc_tile),
-                |r| recorded_tile([r[2] - r[0], r[3] - r[1]]),
+                |r| {
+                    let size = [r[2] - r[0], r[3] - r[1]];
+                    if sparse {
+                        recorded_tile(size)
+                    } else {
+                        cc_tile(size)
+                    }
+                },
             ),
             composited: composited.is_some(),
             device,
@@ -1756,6 +1779,12 @@ pub(crate) fn alpha_byte(a: f32) -> u8 {
     (a.clamp(0., 1.) * 255.).round() as u8
 }
 
+#[derive(Clone, Copy)]
+struct RecordingBounds {
+    bounds: [i32; 4],
+    sparse: bool,
+}
+
 thread_local! {
     /// The anti-aliased clips of [`with_rounded_clip`], window device px, outermost first;
     /// with `layers: false`, the origin of the layer they apply in.
@@ -1763,7 +1792,7 @@ thread_local! {
     /// The device origin of the innermost [`with_layer`], window device px.
     static DEVICE: Cell<Option<[i32; 2]>> = const { Cell::new(None) };
     static COLLECTED_BOUNDS: Cell<(bool, Option<[i32; 4]>)> = const { Cell::new((false, None)) };
-    static RECORDED_BOUNDS: Cell<Option<[i32; 4]>> = const { Cell::new(None) };
+    static RECORDED_BOUNDS: Cell<Option<RecordingBounds>> = const { Cell::new(None) };
 }
 
 fn extend_recorded_bounds(bounds: [i32; 4]) {
@@ -1792,7 +1821,15 @@ pub(crate) fn recorded_bounds(prepaint: impl FnOnce()) -> Option<[i32; 4]> {
 }
 
 pub(crate) fn with_recorded_bounds<R>(bounds: Option<[i32; 4]>, paint: impl FnOnce() -> R) -> R {
-    let previous = RECORDED_BOUNDS.replace(bounds);
+    with_recording(bounds, true, paint)
+}
+
+pub(crate) fn with_composited_bounds<R>(bounds: Option<[i32; 4]>, paint: impl FnOnce() -> R) -> R {
+    with_recording(bounds, false, paint)
+}
+
+fn with_recording<R>(bounds: Option<[i32; 4]>, sparse: bool, paint: impl FnOnce() -> R) -> R {
+    let previous = RECORDED_BOUNDS.replace(bounds.map(|bounds| RecordingBounds { bounds, sparse }));
     let result = paint();
     RECORDED_BOUNDS.set(previous);
     result
@@ -3043,6 +3080,70 @@ mod tests {
             (1643, 211, [67, 27, 26, 255]),
         ] {
             assert_eq!(image.get_pixel(x, y).0, expected, "corner ({x}, {y})");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn composited_recording_preserves_original_shadow() -> anyhow::Result<()> {
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        struct Recording;
+        impl Render for Recording {
+            fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+                let decoration = Decoration {
+                    radius: Corners::all(px(20.)),
+                    corner: Corner::Squircle,
+                    fill: Some(gpui::rgb(0x2d2d2d).into()),
+                    border: Some((px(1.), gpui::white().opacity(0.05))),
+                    shadows: vec![crate::Shadow {
+                        color: gpui::rgba(0x0f172a33).into(),
+                        offset: point(px(0.), px(8.)),
+                        blur: px(18.),
+                        spread: px(0.),
+                        inset: false,
+                    }],
+                    ..Default::default()
+                };
+                div().size_full().bg(gpui::rgb(0x3a83f7)).child(
+                    div().size_full().top_layer().child(
+                        canvas(
+                            move |bounds, window, _| {
+                                let recorded = recorded_bounds(|| {
+                                    record_decoration(&decoration, bounds, window);
+                                });
+                                (decoration, recorded)
+                            },
+                            |bounds, (decoration, recorded), window, cx| {
+                                with_composited_bounds(recorded, || {
+                                    paint(&decoration, None, bounds, window, cx);
+                                });
+                            },
+                        )
+                        .absolute()
+                        .left(px(378.))
+                        .top(px(649.))
+                        .w(px(290.296_88))
+                        .h(px(30.)),
+                    ),
+                )
+            }
+        }
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(()),
+            gpui_platform::current_headless_renderer,
+        );
+        let window = cx.open_window(size(px(1280.), px(832.)), |_, cx| cx.new(|_| Recording))?;
+        cx.run_until_parked();
+        let image = cx.capture_screenshot(window.into())?;
+        for (x, y, expected) in [
+            (1000, 1358, [51, 114, 213, 255]),
+            (1180, 1390, [56, 126, 239, 255]),
+        ] {
+            assert_eq!(image.get_pixel(x, y).0, expected, "shadow ({x}, {y})");
         }
         Ok(())
     }
