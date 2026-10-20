@@ -12,12 +12,19 @@ const SERVER: &str = r#"
 [ -n "$REQUIREMENTS" ] || REQUIREMENTS='null'
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG"
+  case "$line" in
+    *'"turn/start"'*) [ -z "$STATE_ON_TURN" ] || cp "$STATE" "$STATE_ON_TURN" ;;
+  esac
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
   case "$line" in
     *'"model/list"'*) printf '{"id":%s,"result":{"data":%s}}\n' "$id" "$MODELS" ;;
     *'"config/read"'*) printf '{"id":%s,"result":{"config":%s}}\n' "$id" "$CONFIG" ;;
     *'"configRequirements/read"'*) printf '{"id":%s,"result":{"requirements":%s}}\n' "$id" "$REQUIREMENTS" ;;
-    *'"thread/start"'*) [ -z "$FAIL_THREAD" ] || { printf '{"id":%s,"error":{"code":-32000,"message":"no thread"}}\n' "$id"; continue; }; printf '{"id":%s,"result":{"thread":{"id":"thread-%s"}}}\n' "$id" "$id" ;;
+    *'"thread/start"'*)
+      [ -z "$FAIL_THREAD" ] || { printf '{"id":%s,"error":{"code":-32000,"message":"no thread"}}\n' "$id"; continue; }
+      [ -z "$STATE_AFTER_THREAD" ] || printf '%s' "$STATE_AFTER_THREAD" > "$STATE"
+      [ -z "$BLOCK_STATE" ] || { mv "$STATE" "$STATE.saved"; mkdir "$STATE"; }
+      printf '{"id":%s,"result":{"thread":{"id":"%s"}}}\n' "$id" "${THREAD_ID:-thread-$id}" ;;
     *'"turn/start"'*REFUSE*) printf '{"id":%s,"error":{"code":-32000,"message":"model unavailable"}}\n' "$id" ;;
     *'"turn/start"'*) [ -z "$SLOW" ] || sleep 2; printf '{"id":%s,"result":{}}\n' "$id" ;;
     *) printf '{"id":%s,"result":{}}\n' "$id" ;;
@@ -37,6 +44,7 @@ fn host_with(home: &Path, log: &Path, slow: bool, env: &[(&str, &str)]) -> Resul
         .arg("-c")
         .arg(SERVER)
         .env("LOG", log)
+        .env("STATE", home.join(".codex-global-state.json"))
         .env("SLOW", if slow { "1" } else { "" });
     let (bridge, _events) = Bridge::spawn(server)?;
     Ok(LocalHost::new(home).with_bridge(Arc::new(bridge)))
@@ -332,6 +340,223 @@ fn run_now_resolves_a_project_target_to_its_first_root() -> Result<()> {
     ensure!(requests(&log)?.is_empty());
     ensure!(run(&host, "known")? == json!({"success": true}));
     ensure!(requests(&log)?[0]["params"]["cwd"] == json!(root));
+    Ok(())
+}
+
+fn project_task(
+    host: &LocalHost,
+    id: &str,
+    project: &str,
+    environment: &str,
+    prompt: &str,
+) -> Result<()> {
+    host.write_automation(
+        id,
+        &format!(
+            "version = 1\nid = \"{id}\"\nname = \"Review\"\nprompt = \"{prompt}\"\nstatus = \"ACTIVE\"\ncwds = []\ncreated_at = 1\nupdated_at = 1\nexecution_environment = \"{environment}\"\n[target]\ntype = \"project\"\nproject_id = \"{project}\"\n"
+        ),
+    )
+}
+
+#[test]
+fn project_runs_save_assignments_before_the_turn_and_keep_other_memberships() -> Result<()> {
+    let outer = tempfile::tempdir()?;
+    for environment in ["local", "worktree"] {
+        let dir = outer.path().join(environment);
+        fs::create_dir(&dir)?;
+        let home = dir.join("home");
+        fs::create_dir(&home)?;
+        let repo = repository(&dir)?;
+        let project = format!("project-{environment}");
+        let state = json!({
+            "local-projects": {"p": {"id": project, "rootPaths": [repo, "/unused/root"]}},
+            "project-order": ["p"],
+            "thread-project-assignments": {
+                "owned-thread": {"projectKind": "remote", "projectId": "old", "hostId": "remote"},
+                "other": {"projectKind": "local", "projectId": "untouched", "projectOrigin": "chatgpt"}
+            },
+            "projectless-thread-ids": ["owned-thread", "other"],
+            "thread-workspace-root-hints": {"other": "/workspace"},
+            "thread-projectless-output-directories": {"other": "/output"},
+            "electron-persisted-atom-state": {"keep": [1, 2]},
+            "unknown": {"keep": true}
+        });
+        let path = home.join(".codex-global-state.json");
+        fs::write(&path, state.to_string())?;
+        let observed = dir.join("state-on-turn.json");
+        let host = host_with(
+            &home,
+            &dir.join("requests.jsonl"),
+            false,
+            &[
+                ("THREAD_ID", "owned-thread"),
+                ("STATE_ON_TURN", observed.to_str().unwrap()),
+            ],
+        )?;
+        project_task(&host, "assigned", &project, environment, "Review")?;
+        ensure!(run(&host, "assigned")? == json!({"success": true}));
+        let mut expected = state;
+        expected["thread-project-assignments"]["owned-thread"] =
+            json!({"projectKind": "local", "projectId": project});
+        let saved: Value = serde_json::from_slice(&fs::read(&path)?)?;
+        ensure!(saved == expected, "{saved}");
+        ensure!(serde_json::from_slice::<Value>(&fs::read(observed)?)? == expected);
+        ensure!(!home.join("sqlite/codex.db").exists());
+    }
+    for environment in ["local", "worktree"] {
+        let path = outer
+            .path()
+            .join(environment)
+            .join("home/.codex-global-state.json");
+        let state: Value = serde_json::from_slice(&fs::read(path)?)?;
+        ensure!(
+            state["thread-project-assignments"]["owned-thread"]["projectId"]
+                == format!("project-{environment}")
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn assignment_failures_stop_before_the_turn_and_preserve_the_owned_worktree() -> Result<()> {
+    for (fault, expected) in [
+        ("thread", "no thread"),
+        ("state", "thread-project-assignments"),
+        ("write", "global state"),
+        ("turn", "model unavailable"),
+    ] {
+        let dir = tempfile::tempdir()?;
+        let home = dir.path().join("home");
+        fs::create_dir_all(home.join("sqlite"))?;
+        let db = rusqlite::Connection::open(home.join("sqlite/codex.db"))?;
+        db.execute(RUNS, [])?;
+        db.execute(AUTOMATIONS, [])?;
+        let repo = repository(dir.path())?;
+        let state = json!({"local-projects": {"p": {"id": "p", "rootPaths": [repo]}}});
+        let path = home.join(".codex-global-state.json");
+        fs::write(&path, state.to_string())?;
+        let log = dir.path().join("requests.jsonl");
+        let env = match fault {
+            "thread" => vec![("FAIL_THREAD", "1")],
+            "state" => vec![(
+                "STATE_AFTER_THREAD",
+                r#"{"thread-project-assignments":[],"keep":true}"#,
+            )],
+            "write" => vec![("BLOCK_STATE", "1")],
+            _ => vec![],
+        };
+        let host = host_with(&home, &log, false, &env)?;
+        project_task(&host, "assigned", "p", "worktree", "REFUSE this")?;
+        let error = run(&host, "assigned").unwrap_err().to_string();
+        ensure!(error.contains(expected), "{fault}: {error}");
+        let sent = requests(&log)?;
+        ensure!(sent.len() == if fault == "turn" { 3 } else { 1 });
+        let rows = runs(&home)?;
+        ensure!(rows.len() == 1 && rows[0].1 == "ARCHIVED" && rows[0].3.as_deref() == Some("auto"));
+        if fault == "turn" {
+            let thread = sent[0]["id"].as_u64().unwrap();
+            let saved: Value = serde_json::from_slice(&fs::read(&path)?)?;
+            ensure!(
+                saved["thread-project-assignments"][format!("thread-{thread}")]
+                    == json!({"projectKind": "local", "projectId": "p"})
+            );
+            ensure!(!rows[0].0.starts_with("pending:"));
+        } else {
+            ensure!(rows[0].0.starts_with("pending:"));
+            if fault == "write" {
+                ensure!(path.is_dir());
+                ensure!(
+                    fs::read_to_string(home.join(".codex-global-state.json.saved"))?
+                        == state.to_string()
+                );
+            } else if fault == "state" {
+                ensure!(fs::read_to_string(&path)? == env[0].1);
+            } else {
+                ensure!(fs::read_to_string(&path)? == state.to_string());
+            }
+        }
+        let trees = git(&repo, &["worktree", "list", "--porcelain"])?;
+        ensure!(trees.matches("worktree ").count() == if fault == "thread" { 1 } else { 2 });
+        if fault != "thread" {
+            let cwd = Path::new(sent[0]["params"]["cwd"].as_str().unwrap());
+            let owner = git(cwd, &["rev-parse", "--git-path", "codex-thread.json"])?;
+            let owner: Value = serde_json::from_slice(&fs::read(cwd.join(owner))?)?;
+            ensure!(owner["ownerThreadId"] == format!("thread-{}", sent[0]["id"]));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_legacy_folder_run_does_not_assign_its_thread_to_a_matching_project() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join(".codex-global-state.json");
+    let state = json!({
+        "local-projects": {"p": {"id": "p", "rootPaths": [dir.path()]}},
+        "thread-project-assignments": {"other": {"projectKind": "remote", "projectId": "r"}}
+    })
+    .to_string();
+    fs::write(&path, &state)?;
+    let host = host(dir.path(), &dir.path().join("requests.jsonl"), false)?;
+    let id = create(&host, dir.path(), "Review")?;
+    ensure!(run(&host, &id)? == json!({"success": true}));
+    ensure!(fs::read_to_string(path)? == state);
+    Ok(())
+}
+
+#[test]
+fn adding_projects_during_a_run_keeps_every_global_state_write() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let home = dir.path().join("home");
+    fs::create_dir(&home)?;
+    let repo = repository(dir.path())?;
+    fs::write(
+        home.join(".codex-global-state.json"),
+        json!({"local-projects": {"p": {"id": "p", "rootPaths": [repo]}}}).to_string(),
+    )?;
+    let host = host(&home, &dir.path().join("requests.jsonl"), false)?;
+    project_task(&host, "assigned", "p", "local", "Review")?;
+    let folders: Vec<_> = (0..8)
+        .map(|i| dir.path().join(format!("folder-{i}")))
+        .collect();
+    for folder in &folders {
+        fs::create_dir(folder)?;
+    }
+    let barrier = std::sync::Barrier::new(folders.len() + 1);
+    std::thread::scope(|scope| -> Result<()> {
+        let writers: Vec<_> = folders
+            .iter()
+            .map(|folder| {
+                let (barrier, home) = (&barrier, &home);
+                scope.spawn(move || {
+                    barrier.wait();
+                    LocalHost::new(home).add_project(folder)
+                })
+            })
+            .collect();
+        barrier.wait();
+        run(&host, "assigned")?;
+        for writer in writers {
+            writer.join().unwrap()?;
+        }
+        Ok(())
+    })?;
+    let state: Value = serde_json::from_slice(&fs::read(home.join(".codex-global-state.json"))?)?;
+    let assigned = state["thread-project-assignments"].as_object().unwrap();
+    ensure!(
+        assigned
+            .values()
+            .any(|a| a == &json!({"projectKind": "local", "projectId": "p"}))
+    );
+    for folder in &folders {
+        ensure!(
+            state["local-projects"]
+                .as_object()
+                .unwrap()
+                .values()
+                .any(|p| p["rootPaths"][0] == json!(folder))
+        );
+    }
     Ok(())
 }
 
