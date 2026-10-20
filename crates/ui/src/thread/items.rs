@@ -735,6 +735,7 @@ fn mcp_output(id: String, language: &'static str, value: &str, t: &Theme) -> Div
         .p(px(1.))
         .child(shapes::decoration(shapes::Decoration {
             radius: Corners::all(px(12.5)),
+            corner: shapes::Corner::Squircle,
             fill: Some(t.ghost_hover),
             border: Some((px(1.), t.border_strong)),
             ..Default::default()
