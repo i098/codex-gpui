@@ -36,10 +36,24 @@ It disables an existing `cua_repl` server and installed `unified-computer-use` p
 Setup updates older LCU installations and fails if the signed runtime is missing, the manifest differs, or the CLI cannot trust the hooks.
 Normal startup reads the saved configuration; Rust does not run a second MCP client or send duplicate turn cleanup.
 
-Restart the app after setup.
+Restart the app after command-line setup.
+Settings > Computer use runs setup off the UI thread and reloads the app-server configuration after success.
 Registration does not grant macOS permissions, approve applications, enable Chrome or audio, or prove native input works.
 The original runtime requests its permissions and approvals when you use it.
 This setup applies only to the Codex app-server backend, not ACP.
+
+The Settings page reads the helper's allowed apps and sound setting through the native host service.
+The Any App switch changes the provider and its existing lifecycle hooks together.
+Stop active chats before changing that switch or installing the runtime.
+Failed writes keep the last confirmed Settings values.
+
+Thread items retain MCP arguments, text, images, structured results, errors, progress, and unknown metadata.
+Open a tool row to inspect its result.
+Repeated Stop actions send one interrupt while the turn stops.
+LCU and the trusted app-server hooks own cleanup, including reset; the native app does not send another `turn_ended`.
+An in-flight JavaScript call can delay Interrupt cleanup; the original hook can report a timeout before cleanup completes.
+
+Run `cargo test -p app --test computer_use_lifecycle` on macOS for native Stop and thread-projection regression checks.
 
 ## ACP backend
 

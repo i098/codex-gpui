@@ -388,6 +388,7 @@ struct RequestIdentity {
 struct RequestDraft {
     fields: Vec<Entity<Composer>>,
     selected: Vec<Vec<Value>>,
+    accept_focus: Option<FocusHandle>,
     index: usize,
     error: Option<String>,
 }
@@ -624,6 +625,7 @@ pub struct Composer {
     request_drafts: Vec<(Rc<RequestIdentity>, RequestDraft)>,
     request_focus_pending: bool,
     request_compact: bool,
+    request_number: bool,
     request_label: Option<SharedString>,
     secret: bool,
     request_parent: Option<(gpui::WeakEntity<Composer>, Rc<RequestIdentity>, usize)>,
@@ -704,6 +706,7 @@ impl Composer {
             request_drafts: Vec::new(),
             request_focus_pending: false,
             request_compact: false,
+            request_number: false,
             request_label: None,
             secret: false,
             request_parent: None,
@@ -1847,7 +1850,7 @@ impl Render for Composer {
                     } else if approval.form.is_some() {
                         self.request_card(approval, &t, cx)
                     } else {
-                        self.permission_request_card(approval, &t, cx)
+                        self.permission_request_card(approval, &t, window, cx)
                     }),
             );
         }
@@ -1891,23 +1894,34 @@ impl Render for Composer {
             .relative();
         if self.plain_field.is_some() {
             return div().w_full().child(
-                card.border_1()
-                    .border_color(t.border)
-                    .rounded(px(if self.request_parent.is_some() {
-                        10.
-                    } else {
-                        8.
-                    }))
-                    .bg(if self.request_parent.is_some() {
-                        t.surface_elevated_secondary
-                    } else {
-                        t.background_panel
+                card.key_context(KEY_CONTEXT)
+                    .when(self.request_parent.is_none(), |d| {
+                        d.border_1()
+                            .border_color(t.border)
+                            .rounded(px(8.))
+                            .bg(t.background_panel)
+                            .py(px(8.))
                     })
-                    .py(px(if self.request_parent.is_some() {
-                        if self.request_compact { 7. } else { 12. }
-                    } else {
-                        8.
-                    }))
+                    .when(self.request_parent.is_some(), |d| {
+                        d.px(px(1.))
+                            .py(px(if self.secret {
+                                8.449_219
+                            } else if self.request_compact {
+                                8.
+                            } else {
+                                13.
+                            }))
+                            .child(shapes::decoration(shapes::Decoration {
+                                radius: Corners::all(px(if self.request_compact && !self.secret {
+                                    10.
+                                } else {
+                                    12.5
+                                })),
+                                corner: shapes::Corner::Squircle,
+                                border: Some((px(1.), t.border_strong)),
+                                ..Default::default()
+                            }))
+                    })
                     .when(self.request_parent.is_some(), |d| {
                         d.role(if self.secret {
                             gpui::Role::PasswordInput
@@ -1923,7 +1937,10 @@ impl Render for Composer {
                         .aria_placeholder(self.placeholder.clone())
                         .when(!self.secret, |d| d.aria_value(self.content.clone()))
                     })
-                    .child(self.editor(cx)),
+                    .child(self.editor(cx).when(self.request_number, |d| d.pr(px(30.))))
+                    .when(self.request_number, |d| {
+                        d.child(self.request_number_stepper(&t, cx))
+                    }),
             );
         }
         let card = card

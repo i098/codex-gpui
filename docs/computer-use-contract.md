@@ -18,7 +18,8 @@ Rust does not create another MCP client.
 Run setup outside the UI thread.
 Show its error if registration fails.
 Refresh host readiness and app-server configuration only after setup succeeds.
-Restart the existing app-server after registration before starting another turn.
+Reload the app-server with `config/mcpServer/reload`, then refresh `config/read`, after a Settings change.
+Command-line setup still requires an app restart.
 Do not show an enabled provider before that refresh succeeds.
 
 Setup selects the same executable as `bridge::default_command()`.
@@ -63,11 +64,15 @@ Setup installs and trusts the original `Stop`, `Interrupt`, and `SubagentStop` h
 Their `turn_ended` input retains `hook_event_name`, `session_id`, and `turn_id` substitutions.
 E must not send a second cleanup call for those events.
 Unsupported hooks fail setup before the provider becomes enabled.
+The Any App switch changes the provider and these existing hooks in one `config/batchWrite`.
+Hook enablement uses `hooks.state.<quoted opaque key>.enabled`; it does not change the trusted hash or create another hook.
+Repeated native Stop actions share one pending interrupt for each thread and turn.
 
 ## Elicitation requests and responses
 
 The app-server sends `mcpServer/elicitation/request` as a server-originated request.
 Keep the enclosing `id`, `threadId`, and any supplied `turnId` unchanged.
+Only requests whose `serverName` is `lcu` use the native Computer Use approval card.
 Native app approval has this payload shape; retain all other supplied fields:
 
 ```json
@@ -112,6 +117,8 @@ Never send command-approval `{ "decision": ... }` values for an elicitation requ
 Never approve the agent's host application.
 Keep the upstream relay guard active.
 Other form schemas remain with the existing request-form implementation.
+Turn-bound LCU approvals leave the queue when that turn completes.
+Standalone requests remain until they receive an answer or the server resolves them.
 
 ## Host readiness and settings
 
@@ -160,3 +167,11 @@ The runtime slice checks installation and registration without a model turn or n
 An isolated Mac check used the installed ChatGPT `26.1013.40934` and CUA `0.0.30/20261014203459-0849368674e2`.
 The app-server reported the three LCU lifecycle hooks as trusted.
 This is registration proof, not acceptance of permissions, desktop input, browser control, Messages, or locked use.
+
+A native Root turn used GPT-6.1 Sol and LCU to read an owned, nonactivating scratch app.
+The thread retained the returned marker and its app approval.
+The Stop hook ran once.
+Reset ran one live cleanup; the final Stop had no live surface to clean.
+A 30-second JavaScript wait delayed the single Interrupt cleanup until the call ended.
+The original one-second hook envelope timed out before that cleanup completed.
+This does not verify built-in Browser, Messages, or locked use.

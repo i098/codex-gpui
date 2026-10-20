@@ -1,5 +1,5 @@
 //! v2 app-server types at `rust-v0.162.0-alpha.17.2`, only the fields the UI reads.
-//! Unknown fields are ignored; unknown enum tags land in `Other`.
+//! MCP calls retain unknown metadata; other unknown fields are ignored and unknown enum tags land in `Other`.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -141,6 +141,15 @@ pub enum ThreadItem {
         server: String,
         tool: String,
         status: String,
+        #[serde(default)]
+        arguments: Box<Value>,
+        result: Option<Value>,
+        error: Option<Value>,
+        duration_ms: Option<i64>,
+        #[serde(default)]
+        progress: Vec<Value>,
+        #[serde(flatten)]
+        metadata: serde_json::Map<String, Value>,
     },
     ContextCompaction {
         id: String,

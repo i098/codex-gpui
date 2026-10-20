@@ -8,8 +8,16 @@ use common::{EXPLAIN, Fx, SUBTRACT, script};
 use gpui::Focusable as _;
 use serde_json::{Value, json};
 
+fn exit_on_panic() {
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("{info}");
+        std::process::exit(101);
+    }));
+}
+
 #[test]
 fn proxy() {
+    exit_on_panic();
     common::proxy_child();
 }
 
@@ -42,6 +50,7 @@ fn permission(id: u64, thread: &str, turn: &str) -> Event {
 
 #[test]
 fn withdrawn_answer_cannot_settle_the_next_request_or_another_thread() -> Result<()> {
+    exit_on_panic();
     let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
     fx.click(fx.at("home", "Add a subtract")?)?;
     fx.wait_thread(SUBTRACT)?;
@@ -98,7 +107,7 @@ fn withdrawn_answer_cannot_settle_the_next_request_or_another_thread() -> Result
         "the stale rendered card answered its replacement"
     );
     fx.advance(std::time::Duration::ZERO)?;
-    fx.keys("tab tab tab enter")?;
+    fx.keys("tab enter")?;
     fx.advance(std::time::Duration::ZERO)?;
     ensure!(
         fx.sent()?.iter().all(|message| message["reply"] != 104),
@@ -139,6 +148,7 @@ fn withdrawn_answer_cannot_settle_the_next_request_or_another_thread() -> Result
 
 #[test]
 fn native_forms_send_typed_answers_and_cancel_without_accepting() -> Result<()> {
+    exit_on_panic();
     let mut lines = script(None, |_| {})?;
     for thread in [SUBTRACT, EXPLAIN] {
         let request = lines
@@ -224,6 +234,15 @@ fn native_forms_send_typed_answers_and_cancel_without_accepting() -> Result<()> 
         },
     );
     fx.capture_evidence("CGX_REQUEST_EVIDENCE", "elicitation")?;
+    for keys in [
+        "up up up up up up up up up",
+        "down down down down down down down down down",
+        "up up up",
+    ] {
+        fx.keys(keys)?;
+    }
+    fx.click((1143., 724.))?;
+    fx.keys("down down up")?;
     fx.focus_composer()?;
     fx.keys("cmd-enter")?;
     ensure!(
@@ -238,7 +257,8 @@ fn native_forms_send_typed_answers_and_cancel_without_accepting() -> Result<()> 
             .iter()
             .any(|message| message["reply"] == 202)
     })?;
-    ensure!(fx.sent()?.contains(&json!({ "reply": 202, "result": { "action": "accept", "content": { "copies": 2, "publish": false }, "_meta": null } })), "the elicitation answer changed value types");
+    let replies = fx.sent()?;
+    ensure!(replies.contains(&json!({ "reply": 202, "result": { "action": "accept", "content": { "copies": 4, "publish": false }, "_meta": null } })), "number steps did not preserve types or honor both bounds: {replies:?}");
 
     emit(
         &mut fx,
@@ -388,6 +408,7 @@ fn native_forms_send_typed_answers_and_cancel_without_accepting() -> Result<()> 
 
 #[test]
 fn cancelling_input_retains_the_request_when_interrupt_fails() -> Result<()> {
+    exit_on_panic();
     let mut lines = script(None, |_| {})?;
     let turn = last_turn(SUBTRACT)?;
     lines.extend([
@@ -455,6 +476,7 @@ fn cancelling_input_retains_the_request_when_interrupt_fails() -> Result<()> {
 
 #[test]
 fn standalone_requests_outlive_the_correlated_turn() -> Result<()> {
+    exit_on_panic();
     let thread = common::recorded_thread(SUBTRACT)?;
     let turn = thread["turns"]
         .as_array()

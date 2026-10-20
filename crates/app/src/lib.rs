@@ -22,11 +22,11 @@ use bridge::types::{
 };
 use bridge::{Bridge, Event};
 use gpui::{
-    Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Context, Entity,
-    EntityInputHandler as _, FocusHandle, Focusable as _, InteractiveElement as _, IntoElement,
-    KeyBinding, KeyDownEvent, Menu, MenuItem, OsAction, ParentElement as _, PathPromptOptions,
-    Pixels, Render, SharedString, Styled as _, SystemMenuType, Task, WeakEntity, Window,
-    WindowAppearance, actions, div, px,
+    Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, BorrowAppContext as _,
+    Context, Entity, EntityInputHandler as _, FocusHandle, Focusable as _, InteractiveElement as _,
+    IntoElement, KeyBinding, KeyDownEvent, Menu, MenuItem, OsAction, ParentElement as _,
+    PathPromptOptions, Pixels, Render, SharedString, Styled as _, SystemMenuType, Task, WeakEntity,
+    Window, WindowAppearance, actions, div, px,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -36,6 +36,10 @@ use theme::Theme;
 use ui::composer::{Approval, Composer, Permission, QueueAction, Submission};
 use ui::dialog::{
     CommitRepository, CommitStep, Dialog, Kind as DialogKind, Outcome as DialogOutcome, Selection,
+};
+use ui::screens::computer_use::{
+    AppApproval as ComputerUseAppApproval, ComputerUseAction, ComputerUseState, Load,
+    Plugin as ComputerUsePlugin, SoundMode as ComputerUseSoundMode,
 };
 use ui::screens::diff::panel::{
     ActivateSideTab, CloseSideTab, DiffPanel, DiffRequest, FileView, OpenFile, RevertChanges,
@@ -458,6 +462,7 @@ pub struct Root {
     /// Server approval requests waiting for a decision, oldest first. The thread composer
     /// shows the open thread's oldest one.
     approvals: Vec<PendingApproval>,
+    interrupting: HashSet<(String, String)>,
     /// A commit, push or branch workflow is running (the original's single workflow state).
     git_busy: Option<&'static str>,
     git_status_load: Option<Task<()>>,
@@ -507,6 +512,19 @@ impl Root {
             }
         }
         let this = cx.weak_entity();
+        let computer_use = this.clone();
+        cx.set_global(ComputerUseState {
+            available: cfg!(target_os = "macos") && !bridge.is_acp(),
+            permission_guidance: Some(
+                "macOS controls Accessibility and Screen Recording access.".into(),
+            ),
+            dispatch: Some(Arc::new(move |action, cx| {
+                computer_use
+                    .update(cx, |root, cx| root.computer_use_action(action, cx))
+                    .ok();
+            })),
+            ..Default::default()
+        });
         // Both pickers write the user's `config.toml`, like the original's `writeModel`.
         let on_model = |this: WeakEntity<Self>| {
             move |model: &str, effort: &str, cx: &mut App| {
@@ -722,6 +740,7 @@ impl Root {
             deleted_queued: Vec::new(),
             steered_queued: HashSet::new(),
             approvals: Vec::new(),
+            interrupting: HashSet::new(),
             git_busy: None,
             git_status_load: None,
             commit_cwd: None,
@@ -2112,6 +2131,7 @@ impl Root {
         self.mobile_page = None;
         self.page = match self.state.route.clone() {
             Route::Settings => {
+                self.load_computer_use(cx);
                 // The Appearance page shows the theme the app keeps.
                 let mut config = self.config.clone();
                 config["host"] = cx
@@ -3046,9 +3066,13 @@ impl Root {
             .unwrap_or(&self.cwd)
             .clone();
         let section = self.new_chat_section.clone();
+        let computer_use = computer_use_overrides(&self.config);
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let mut params = json!({ "cwd": cwd, "model": model(&s) });
             apply_permissions(&mut params, s.permission);
+            if let Some(config) = computer_use {
+                params["config"] = config;
+            }
             let mut thread = match bridge
                 .request::<_, ThreadStartResponse>("thread/start", params)
                 .await
@@ -3495,11 +3519,18 @@ impl Root {
             return;
         };
         let (thread_id, turn_id) = (id.clone(), turn.id.clone());
+        if !self
+            .interrupting
+            .insert((thread_id.clone(), turn_id.clone()))
+        {
+            return;
+        }
         let bridge = self.bridge.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {
             let result = bridge.turn_interrupt(&thread_id, &turn_id).await;
             if result.is_err() {
                 this.update(cx, |this, cx| {
+                    this.interrupting.remove(&(thread_id, turn_id));
                     this.toast(Toast::danger("Failed to stop chat"), cx)
                 })?;
             }
@@ -3585,12 +3616,15 @@ impl Root {
         let Some(view) = &self.thread else { return };
         let id = view.read(cx).id().to_owned();
         let bridge = self.bridge.clone();
+        let computer_use = computer_use_overrides(&self.config);
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let forked = async {
+                let mut params = json!({ "threadId": id });
+                if let Some(config) = computer_use {
+                    params["config"] = config;
+                }
                 // Both answer `{ thread }`, like `thread/read`.
-                let mut read: ThreadReadResponse = bridge
-                    .request("thread/fork", json!({ "threadId": id }))
-                    .await?;
+                let mut read: ThreadReadResponse = bridge.request("thread/fork", params).await?;
                 if later > 0 {
                     let params = json!({ "threadId": read.thread.id, "numTurns": later });
                     read = bridge.request("thread/rollback", params).await?;
@@ -3826,6 +3860,200 @@ impl Root {
     /// Titles of the toasts shown, newest first.
     pub fn toasts(&self, cx: &App) -> Vec<SharedString> {
         self.toaster.read(cx).titles()
+    }
+
+    fn load_computer_use(&self, cx: &mut Context<Self>) {
+        if cx.global::<ComputerUseState>().pending {
+            return;
+        }
+        cx.update_global::<ComputerUseState, _>(|state, _| {
+            state.pending = true;
+            state.error = None;
+        });
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move {
+            let service = host
+                .computer_use_settings()
+                .map_err(|error| error.to_string())?;
+            Ok::<_, String>((
+                service.readiness().map_err(|error| error.to_string()),
+                service
+                    .get_app_approvals()
+                    .map_err(|error| error.to_string()),
+                service.get_sound_mode().map_err(|error| error.to_string()),
+            ))
+        });
+        cx.spawn(async move |_, cx| {
+            let result = read.await;
+            cx.update_global::<ComputerUseState, _>(|state, _| {
+                state.pending = false;
+                match result {
+                    Ok((readiness, approvals, sound)) => {
+                        state.plugin = match readiness {
+                            Ok(readiness) => {
+                                Load::Ready(readiness.supported.then_some(ComputerUsePlugin {
+                                    installed: readiness.relay_installed,
+                                    enabled: readiness.provider_registered,
+                                }))
+                            }
+                            Err(error) => Load::Failed(error),
+                        };
+                        state.approvals = match approvals {
+                            Ok(approvals) => Load::Ready(
+                                approvals
+                                    .into_iter()
+                                    .flat_map(|approvals| approvals.approved_apps)
+                                    .map(|app| ComputerUseAppApproval {
+                                        bundle_identifier: app.bundle_identifier,
+                                        display_name: app.display_name,
+                                        icon_data_url: app.icon_data_url,
+                                    })
+                                    .collect(),
+                            ),
+                            Err(error) => Load::Failed(error),
+                        };
+                        match sound {
+                            Ok(sound) => {
+                                state.sound = sound.map(|mode| {
+                                    match mode {
+                                host::computer_use::SoundMode::ForegroundClicks => {
+                                    ComputerUseSoundMode::ForegroundClicks
+                                }
+                                host::computer_use::SoundMode::ForegroundAndBackgroundClicks => {
+                                    ComputerUseSoundMode::ForegroundAndBackgroundClicks
+                                }
+                                host::computer_use::SoundMode::Off => ComputerUseSoundMode::Off,
+                            }
+                                })
+                            }
+                            Err(error) => state.error = Some(error),
+                        }
+                    }
+                    Err(error) => {
+                        state.plugin = Load::Failed(error.clone());
+                        state.approvals = Load::Failed(error);
+                    }
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn computer_use_action(&mut self, action: ComputerUseAction, cx: &mut Context<Self>) {
+        if matches!(action, ComputerUseAction::Refresh) {
+            self.load_computer_use(cx);
+            return;
+        }
+        if matches!(action, ComputerUseAction::OpenPermissions) {
+            cx.open_url(
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+            );
+            return;
+        }
+        let state = cx.global::<ComputerUseState>();
+        if state.pending || !state.available {
+            return;
+        }
+        if matches!(action, ComputerUseAction::SetEnabled(true))
+            && !matches!(&state.plugin, Load::Ready(Some(plugin)) if plugin.installed)
+        {
+            cx.update_global::<ComputerUseState, _>(|state, _| {
+                state.error = Some("Install Computer Use before enabling it.".into());
+            });
+            return;
+        }
+        let reload = matches!(
+            action,
+            ComputerUseAction::Install | ComputerUseAction::SetEnabled(_)
+        );
+        if reload
+            && (self
+                .threads
+                .iter()
+                .any(|thread| thread.status == ThreadStatus::Active)
+                || !self.approvals.is_empty())
+        {
+            cx.update_global::<ComputerUseState, _>(|state, _| {
+                state.error = Some("Stop active chats before changing Computer Use.".into());
+            });
+            return;
+        }
+        cx.update_global::<ComputerUseState, _>(|state, _| {
+            state.pending = true;
+            state.error = None;
+        });
+        let host = self.host.clone();
+        let bridge = self.bridge.clone();
+        let operation = cx.background_spawn(async move {
+            match action {
+                ComputerUseAction::Install => bridge::setup_computer_use()?,
+                ComputerUseAction::SetEnabled(enabled) => {
+                    let listed: Value = bridge.request("hooks/list", json!({})).await?;
+                    let hooks: Vec<&Value> = listed["data"].as_array().into_iter().flatten()
+                        .flat_map(|entry| entry["hooks"].as_array().into_iter().flatten())
+                        .filter(|hook| hook["server"] == "lcu" && hook["tool"] == "turn_ended")
+                        .collect();
+                    if enabled {
+                        for event in ["stop", "interrupt", "subagentStop"] {
+                            ensure!(hooks.iter().filter(|hook| hook["eventName"] == event
+                                && hook["trustStatus"] == "trusted").count() == 1,
+                                "Run Computer Use setup to install trusted lifecycle hooks");
+                        }
+                    }
+                    let mut edits = vec![json!({
+                        "keyPath": "mcp_servers.lcu.enabled", "value": enabled,
+                        "mergeStrategy": "upsert",
+                    })];
+                    for hook in hooks {
+                        let key = hook["key"].as_str().context("Computer Use hook has no key")?;
+                        edits.push(json!({
+                            "keyPath": format!("hooks.state.{}.enabled", serde_json::to_string(key)?),
+                            "value": enabled, "mergeStrategy": "upsert",
+                        }));
+                    }
+                    bridge.request::<_, Value>("config/batchWrite", json!({
+                        "edits": edits, "reloadUserConfig": true,
+                    })).await?;
+                }
+                ComputerUseAction::SetSoundMode(mode) => {
+                    let mode = match mode {
+                        ComputerUseSoundMode::ForegroundClicks => host::computer_use::SoundMode::ForegroundClicks,
+                        ComputerUseSoundMode::ForegroundAndBackgroundClicks => host::computer_use::SoundMode::ForegroundAndBackgroundClicks,
+                        ComputerUseSoundMode::Off => host::computer_use::SoundMode::Off,
+                    };
+                    host.computer_use_settings()?.set_sound_mode(mode)?;
+                }
+                ComputerUseAction::RemoveApproval(bundle) => {
+                    host.computer_use_settings()?.remove_app_approval(&bundle)?;
+                }
+                ComputerUseAction::Refresh | ComputerUseAction::OpenPermissions => unreachable!(),
+            }
+            let config = if reload {
+                bridge.request::<_, Value>("config/mcpServer/reload", json!({})).await?;
+                Some(bridge.config_read().await?.config)
+            } else {
+                None
+            };
+            Ok::<_, anyhow::Error>(config)
+        });
+        cx.spawn(async move |this, cx| {
+            let result = operation.await;
+            let success = result.is_ok();
+            this.update(cx, |this, cx| {
+                cx.update_global::<ComputerUseState, _>(|state, _| {
+                    state.pending = false;
+                    state.error = result.as_ref().err().map(|error| error.to_string());
+                });
+                if let Ok(Some(config)) = result {
+                    this.config = config;
+                }
+                if success {
+                    this.load_computer_use(cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Settings at `section`, whether or not Settings is open.
@@ -4275,8 +4503,13 @@ impl Root {
                     }
                     // Standalone elicitations and nonblocking questions wait for explicit resolution.
                     let turn = &params["turn"]["id"];
+                    self.interrupting.retain(|(thread, pending_turn)| {
+                        params["threadId"].as_str() != Some(thread.as_str())
+                            || turn.as_str() != Some(pending_turn.as_str())
+                    });
                     self.approvals.retain(|p| {
-                        p.method == "mcpServer/elicitation/request"
+                        (p.method == "mcpServer/elicitation/request"
+                            && p.params["serverName"] != "lcu")
                             || (p.method == "item/tool/requestUserInput"
                                 && p.params["isBlocking"] == false)
                             || p.params["threadId"] != params["threadId"]
@@ -4446,9 +4679,11 @@ async fn resume_if(
     cx: &mut AsyncWindowContext,
 ) -> Result<()> {
     if resume {
-        bridge
-            .request::<_, Value>("thread/resume", json!({ "threadId": id }))
-            .await?;
+        let mut params = json!({ "threadId": id });
+        if let Some(config) = this.update(cx, |root, _| computer_use_overrides(&root.config))? {
+            params["config"] = config;
+        }
+        bridge.request::<_, Value>("thread/resume", params).await?;
         this.update(cx, |this, _| this.loaded.insert(id.to_owned()))?;
     }
     Ok(())
@@ -4462,6 +4697,31 @@ fn project_name(root: &str) -> SharedString {
         .unwrap_or(root)
         .to_owned()
         .into()
+}
+
+fn computer_use_overrides(config: &Value) -> Option<Value> {
+    if config["mcp_servers"]["lcu"]["enabled"] != true {
+        return None;
+    }
+    let mut overrides = serde_json::Map::new();
+    if config["mcp_servers"]
+        .get("cua_repl")
+        .is_some_and(Value::is_object)
+    {
+        overrides.insert("mcp_servers.cua_repl.enabled".into(), Value::Bool(false));
+    }
+    if let Some(plugins) = config["plugins"].as_object() {
+        for name in plugins
+            .keys()
+            .filter(|name| name.split('@').next() == Some("unified-computer-use"))
+        {
+            overrides.insert(
+                format!("plugins.{}.enabled", serde_json::to_string(name).ok()?),
+                Value::Bool(false),
+            );
+        }
+    }
+    (!overrides.is_empty()).then_some(Value::Object(overrides))
 }
 
 /// `None` (the server's default) when `model/list` gave the picker nothing.
@@ -5338,4 +5598,40 @@ fn automation_update_body(item: &Value, status: &str) -> Value {
         body["localEnvironmentConfigPath"] = item["localEnvironmentConfigPath"].clone();
     }
     body
+}
+
+#[cfg(test)]
+mod computer_use_tests {
+    use super::*;
+
+    #[test]
+    fn lcu_cutover_disables_only_the_original_computer_use_surface() {
+        let mut config = json!({
+            "mcp_servers": {
+                "lcu": {"enabled": true},
+                "cua_repl": {"enabled": true, "command": "original"}
+            },
+            "plugins": {
+                "unified-computer-use@openai-bundled": {"enabled": true},
+                "unrelated@openai-bundled": {"enabled": true}
+            }
+        });
+        assert_eq!(
+            computer_use_overrides(&config),
+            Some(json!({
+                "mcp_servers.cua_repl.enabled": false,
+                "plugins.\"unified-computer-use@openai-bundled\".enabled": false
+            }))
+        );
+        config["mcp_servers"]["lcu"]["enabled"] = false.into();
+        assert_eq!(computer_use_overrides(&config), None);
+    }
+
+    #[test]
+    fn lcu_without_an_original_provider_does_not_create_an_invalid_transport() {
+        assert_eq!(
+            computer_use_overrides(&json!({"mcp_servers": {"lcu": {"enabled": true}}})),
+            None
+        );
+    }
 }

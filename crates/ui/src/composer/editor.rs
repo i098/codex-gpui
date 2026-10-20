@@ -257,7 +257,11 @@ impl Composer {
         self.move_to(to, cx);
     }
 
-    pub(super) fn up(&mut self, _: &Up, _: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn up(&mut self, _: &Up, window: &mut Window, cx: &mut Context<Self>) {
+        if self.request_number {
+            self.step_request_number(1., window, cx);
+            return;
+        }
         if self.move_slash(false, cx) {
             return;
         }
@@ -265,7 +269,11 @@ impl Composer {
         self.move_to(to, cx);
     }
 
-    pub(super) fn down(&mut self, _: &Down, _: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn down(&mut self, _: &Down, window: &mut Window, cx: &mut Context<Self>) {
+        if self.request_number {
+            self.step_request_number(-1., window, cx);
+            return;
+        }
         if self.move_slash(true, cx) {
             return;
         }
@@ -546,11 +554,13 @@ impl Composer {
 
     pub(super) fn editor(&self, cx: &mut Context<Self>) -> Div {
         div()
-            .px(px(if self.request_parent.is_some() {
-                10.
-            } else {
-                12.
-            }))
+            .px(px(
+                if self.request_parent.is_some() && self.request_compact && !self.secret {
+                    10.
+                } else {
+                    12.
+                },
+            ))
             .pb(px(if self.request_parent.is_some() {
                 0.
             } else {
