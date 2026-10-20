@@ -6,8 +6,8 @@ use crate::{EmptySidebar, Shell, icon, text};
 use gpui::{
     AnyView, App, AppContext as _, Bounds, Context, Corners, Div, Entity, Hsla,
     InteractiveElement as _, IntoElement, ParentElement, Pixels, Render, RenderImage, Stateful,
-    StatefulInteractiveElement as _, Styled, Window, actions, canvas, div, point,
-    prelude::FluentBuilder as _, px, rgb, size,
+    StatefulInteractiveElement as _, Styled, Transformation, Window, actions, canvas, div, point,
+    prelude::FluentBuilder as _, px, radians, rgb, size,
 };
 use image::{Frame, Rgba, RgbaImage};
 use shapes::Corner::Squircle;
@@ -102,6 +102,8 @@ pub struct MobileSetupPage {
     /// Pointer over the step's primary button.
     hovered: bool,
     step: SetupStep,
+    /// When `Pending` began: the loading spinner's `animate-spin` phase.
+    pending_since: Option<std::time::Instant>,
 }
 
 impl MobileSetupPage {
@@ -110,6 +112,9 @@ impl MobileSetupPage {
     }
 
     pub fn set_step(&mut self, step: SetupStep, cx: &mut Context<Self>) {
+        if step == SetupStep::Pending && self.step != step {
+            self.pending_since = Some(cx.background_executor().now());
+        }
         self.step = step;
         self.hovered = false;
         cx.notify();
@@ -290,10 +295,17 @@ fn compose(w: u32, h: u32) -> RenderImage {
 }
 
 impl Render for MobileSetupPage {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
         let step = self.step;
         let pending = step == SetupStep::Pending;
+        // `animate-spin`: one turn per second, linear, while the read runs.
+        let spin = pending.then(|| {
+            window.request_animation_frame();
+            let now = cx.background_executor().now();
+            let turn = now - self.pending_since.unwrap_or(now);
+            (turn.as_secs_f32() % 1.) * std::f32::consts::TAU
+        });
         // Primary solid button; dark mode text is `#2d2d2d`, not `--color-text-inverse`.
         let button_fg = if t.appearance == Appearance::Dark {
             rgb(0x2d2d2d).into()
@@ -327,9 +339,11 @@ impl Render for MobileSetupPage {
                     this.hovered = *hovered;
                     cx.notify();
                 }))
-                // ponytail: the original spins it (`animate-spin`); animations are out of scope.
-                .when(pending, |b| {
-                    b.child(icon::icon("sidebar-cmd-spinner", 12., button_fg))
+                .when_some(spin, |b, angle| {
+                    b.child(
+                        crate::icon("sidebar-cmd-spinner", 12., button_fg)
+                            .with_transformation(Transformation::rotate(radians(angle))),
+                    )
                 })
                 .child(text(label, 14., 18., 430., button_fg))
         };
