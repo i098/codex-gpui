@@ -48,7 +48,7 @@ use ui::screens::diff::panel::{
     with_side_tabs,
 };
 use ui::screens::home::{HomeMain, OpenFolder};
-use ui::screens::settings::{self, AppServer, Login, SettingChanged};
+use ui::screens::settings::{self, AppServer, Login, SettingChanged, workspace};
 use ui::screens::sidebar::{
     ArchiveThread, ArchivedChats, CommandMenu, CommandMenuEvent, HomeSidebar, LoadMore, OpenThread,
     PINNED_SECTION_ID, PinThread, RenameThread, SEARCH_LIMIT, SearchHit, SearchRequest,
@@ -206,6 +206,7 @@ pub fn menus() -> Vec<Menu> {
     ]
 }
 
+
 /// The thread route's side panel tab.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SidePanel {
@@ -279,7 +280,10 @@ impl State {
         let state: Self = fs::read(&path)
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or_default();
+            .unwrap_or_else(|| Self {
+                route: Route::SelectWorkspace,
+                ..Self::default()
+            });
         Self {
             path: Some(path),
             ..state
@@ -363,6 +367,17 @@ struct DeletedQueuedMessage {
     next: Option<String>,
 }
 
+enum SettingsLeave {
+    Section(&'static str),
+    Editor,
+    Route(Route, Option<String>),
+    History(bool),
+    Window,
+    NativeWindow,
+    LogOut,
+    Quit,
+}
+
 pub struct Root {
     /// Window size, sidebar and route, saved back on every change.
     state: State,
@@ -407,6 +422,8 @@ pub struct Root {
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
     settings_page: Option<Entity<settings::SettingsPage>>,
+    pending_settings_leave: Option<SettingsLeave>,
+    workspace: Entity<workspace::Workspace>,
     /// `⌘K` command menu over the window.
     command_menu: Option<Entity<CommandMenu>>,
     dialog: Option<Entity<Dialog>>,
@@ -693,6 +710,8 @@ impl Root {
             mobile_page: None,
             settings_section: None,
             settings_page: None,
+            pending_settings_leave: None,
+            workspace: cx.new(workspace::Workspace::new),
             command_menu: None,
             dialog: None,
             dialog_to_composer: false,
@@ -737,9 +756,23 @@ impl Root {
             _events,
             state,
         };
+        let workspace = root.workspace.clone();
+        cx.subscribe_in(
+            &workspace,
+            window,
+            |this, _, event, window, cx| match event {
+                workspace::Event::PickFolder => this.open_folder(window, cx),
+                workspace::Event::CreateProject => this.create_onboarding_workspace(window, cx),
+            },
+        )
+        .detach();
         let this = cx.weak_entity();
         window.on_window_should_close(cx, move |window, cx| {
             this.update(cx, |this, cx| {
+                if this.instructions_changed(cx) {
+                    this.confirm_instructions_leave(SettingsLeave::NativeWindow, window, cx);
+                    return false;
+                }
                 if this.state.confirm_before_close != ConfirmBeforeClose::Always {
                     this.flush_settings(cx);
                     return windows::allow_close(window, cx);
@@ -826,7 +859,7 @@ impl Root {
                     matches!(account.account, Some(Account::Chatgpt { .. }))
                 });
                 if account.is_some_and(|a| a.account.is_none() && a.requires_openai_auth) {
-                    this.login = Some(cx.new(Login::new));
+                    this.show_login(config.config["forced_login_method"].clone(), cx);
                 }
                 this.set_threads(&threads.data, cx);
                 this.set_next_cursor(threads.next_cursor, cx);
@@ -889,7 +922,7 @@ impl Root {
                         .expect("close preference");
                 this.skills = skills;
                 this.models = models;
-                this.ready = true;
+                this.ready = this.login.is_none();
                 this.select_route(cx);
                 this.sync(window, cx);
                 if bridge.is_acp() {
@@ -1069,10 +1102,17 @@ impl Root {
     }
 
     fn open_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.picking_project {
+        if self.picking_project
+            || (self.state.route == Route::SelectWorkspace && self.workspace.read(cx).busy())
+        {
             return;
         }
         self.picking_project = true;
+        if self.state.route == Route::SelectWorkspace {
+            self.workspace.update(cx, |workspace, cx| {
+                workspace.begin(workspace::Pending::Picking, cx)
+            });
+        }
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
@@ -1097,6 +1137,14 @@ impl Root {
             .await;
             this.update_in(cx, |this, window, cx| {
                 this.picking_project = false;
+                if this.state.route == Route::SelectWorkspace {
+                    let error = result
+                        .as_ref()
+                        .err()
+                        .map(|_| "Could not add the selected folders".to_owned());
+                    this.workspace
+                        .update(cx, |workspace, cx| workspace.finish(error, cx));
+                }
                 match result {
                     Ok(Some((root, projects))) => {
                         this.project_load = None;
@@ -1107,8 +1155,54 @@ impl Root {
                     Ok(None) => {}
                     Err(error) => {
                         eprintln!("codex-gpui: cannot choose project: {error:#}");
-                        this.toast(Toast::danger("Cannot open project folder"), cx);
+                        if this.state.route != Route::SelectWorkspace {
+                            this.toast(Toast::danger("Cannot open project folder"), cx);
+                        }
                     }
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn create_onboarding_workspace(&mut self, window: &Window, cx: &mut Context<Self>) {
+        if self.workspace.read(cx).busy() || self.picking_project {
+            return;
+        }
+        self.workspace.update(cx, |workspace, cx| {
+            workspace.begin(workspace::Pending::Creating, cx)
+        });
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move {
+            let response = host::json_body(&host.fetch(&host::Request::post(
+                "electron-onboarding-skip-workspace",
+                None,
+            ))?)?;
+            anyhow::ensure!(
+                response["success"] == true,
+                "Could not create a new project"
+            );
+            let root = response["root"]
+                .as_str()
+                .context("created project has no root")?
+                .to_owned();
+            Ok::<_, anyhow::Error>((root, host.projects()?))
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = read.await;
+            this.update_in(cx, |this, window, cx| {
+                let error = result
+                    .as_ref()
+                    .err()
+                    .map(|error| format!("Couldn't create a new project: {error}"));
+                this.workspace
+                    .update(cx, |workspace, cx| workspace.finish(error, cx));
+                if this.state.route == Route::SelectWorkspace
+                    && let Ok((root, projects)) = result
+                {
+                    this.set_projects(projects, cx);
+                    this.select_project(root, window, cx);
                 }
             })
             .ok();
@@ -2070,6 +2164,7 @@ impl Root {
         }
     }
 
+
     /// HC-033: a printable key (no ⌘/⌃, not Space) typed outside an editable, with no
     /// dialog, menu or popover open, goes to the route's composer and focuses it.
     /// Content ancestors can hold plain focus handles without being popovers.
@@ -2259,6 +2354,15 @@ impl Root {
         self.dialog.as_ref()
     }
 
+    pub fn personal_instructions<'a>(
+        &'a self,
+        cx: &'a App,
+    ) -> Option<&'a Entity<settings::personalization::Personalization>> {
+        self.settings_page
+            .as_ref()
+            .map(|page| &page.read(cx).personalization)
+    }
+
     fn model_announcement_history(cx: &App) -> &[Value] {
         cx.try_global::<host_settings::Settings>()
             .and_then(|settings| settings.read_all().get("seen-model-upgrade-list"))
@@ -2397,15 +2501,23 @@ impl Root {
             };
             match outcome {
                 DialogOutcome::Dismiss => {
+                    this.pending_settings_leave = None;
                     if git_dialog {
                         this.commit_cwd = None;
                         window.focus(&this.composer(cx).focus_handle(cx), cx);
+                    } else if dialog.read(cx).kind() == DialogKind::DiscardInstructions {
+                        if let Some(focus) = this.settings_page.as_ref().and_then(|page| {
+                            page.read(cx).personalization.read(cx).editor_focus(cx)
+                        }) {
+                            window.focus(&focus, cx);
+                        }
                     } else {
                         window.focus(&focus, cx);
                     }
                 }
                 DialogOutcome::LogOut => this.logout(window, cx),
                 DialogOutcome::RevertChanges { .. } => window.focus(&this.focus, cx),
+                DialogOutcome::DiscardInstructions => this.finish_instructions_leave(window, cx),
                 DialogOutcome::DismissAnnouncement(model)
                 | DialogOutcome::UseAnnouncedModel { model, .. } => {
                     if let DialogOutcome::UseAnnouncedModel {
@@ -2490,7 +2602,7 @@ impl Root {
                 this.logout_pending = false;
                 match result {
                     Ok(_) => {
-                        this.login = Some(cx.new(Login::new));
+                        this.show_login(this.config["forced_login_method"].clone(), cx);
                         this.account_email = None;
                         this.chatgpt_account = false;
                         let host = this.host.clone();
@@ -2548,6 +2660,10 @@ impl Root {
     /// route's panel shows a tab, else the window closes.
     fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.dialog.is_some() {
+            return;
+        }
+        if self.instructions_changed(cx) {
+            self.confirm_instructions_leave(SettingsLeave::Window, window, cx);
             return;
         }
         if let Some(side) = self.side.filter(|_| self.split.is_some()) {
@@ -3849,6 +3965,10 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.instructions_changed(cx) {
+            self.confirm_instructions_leave(SettingsLeave::Section(section), window, cx);
+            return;
+        }
         self.settings_section = Some(section);
         if self.state.route == Route::Settings {
             self.sync(window, cx);
@@ -3904,6 +4024,164 @@ impl Root {
             done.map(drop)
         });
         log_err(task, cx);
+    }
+
+    fn instructions_changed(&self, cx: &App) -> bool {
+        self.personal_instructions(cx)
+            .is_some_and(|editor| editor.read(cx).saving() || editor.read(cx).dirty(cx))
+    }
+
+    fn confirm_instructions_leave(
+        &mut self,
+        target: SettingsLeave,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.dialog.is_some() {
+            return;
+        }
+        if self
+            .settings_page
+            .as_ref()
+            .is_some_and(|page| page.read(cx).personalization.read(cx).saving())
+        {
+            return;
+        }
+        self.pending_settings_leave = Some(target);
+        self.open_dialog(DialogKind::DiscardInstructions, window, cx);
+    }
+
+    fn finish_instructions_leave(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(target) = self.pending_settings_leave.take() else {
+            return;
+        };
+        if let Some(page) = &self.settings_page {
+            page.read(cx)
+                .personalization
+                .clone()
+                .update(cx, |editor, cx| editor.discard(cx));
+        }
+        match target {
+            SettingsLeave::Section(label) => {
+                if let Some(page) = self.settings_page.clone() {
+                    page.update(cx, |page, cx| page.select_section(label, cx));
+                }
+            }
+            SettingsLeave::Editor => window.focus(&self.focus, cx),
+            SettingsLeave::Route(route, automation) => {
+                self.navigate_with_sidebar(route, automation, window, cx)
+            }
+            SettingsLeave::History(back) => self.step(back, window, cx),
+            SettingsLeave::Window => self.close_window(window, cx),
+            SettingsLeave::NativeWindow => {
+                if self.state.confirm_before_close == ConfirmBeforeClose::Always {
+                    self.open_dialog(DialogKind::CloseWindow, window, cx);
+                } else {
+                    self.flush_settings(cx);
+                    window.remove_window();
+                }
+            }
+            SettingsLeave::LogOut => {
+                let dialog = cx.new(|cx| Dialog::logout(self.account_email.clone(), cx));
+                self.show_dialog(dialog, window, cx);
+            }
+            SettingsLeave::Quit => cx.quit(),
+        }
+    }
+
+    fn instructions_event(
+        &mut self,
+        event: &settings::personalization::Event,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(page) = self.settings_page.clone() else {
+            return;
+        };
+        let view = page.read(cx).personalization.clone();
+        match event {
+            settings::personalization::Event::Load => {
+                let host = self.host.clone();
+                let read = cx.background_spawn(async move {
+                    host.fetch(&host::Request::post(
+                        "codex-agents-md",
+                        Some(json!({"hostId": "local"})),
+                    ))
+                    .and_then(|response| host::json_body(&response))
+                    .map_err(|error| error.to_string())
+                });
+                cx.spawn_in(window, async move |this, cx| {
+                    let result = read.await;
+                    this.update_in(cx, |this, window, cx| {
+                        if this
+                            .settings_page
+                            .as_ref()
+                            .is_some_and(|page| page.read(cx).personalization == view)
+                            && view.read(cx).opened()
+                        {
+                            view.update(cx, |view, cx| view.loaded(result, window, cx));
+                        }
+                    })
+                    .ok();
+                })
+                .detach();
+            }
+            settings::personalization::Event::Save(contents) => {
+                let contents = contents.clone();
+                let host = self.host.clone();
+                let params = json!({"hostId": "local", "contents": contents});
+                let write = cx.background_spawn(async move {
+                    host.fetch(&host::Request::post("codex-agents-md-save", Some(params)))
+                        .and_then(|response| host::json_body(&response))
+                        .and_then(|value| {
+                            anyhow::ensure!(
+                                value["path"].is_string(),
+                                "saved instructions have no path"
+                            );
+                            Ok(())
+                        })
+                });
+                cx.spawn(async move |this, cx| {
+                    let result = write.await;
+                    this.update(cx, |this, cx| {
+                        if !this
+                            .settings_page
+                            .as_ref()
+                            .is_some_and(|page| page.read(cx).personalization == view)
+                        {
+                            return;
+                        }
+                        match result {
+                            Ok(()) => {
+                                view.update(cx, |view, cx| view.saved(contents, cx));
+                                this.toast(Toast::success("Instructions updated"), cx);
+                            }
+                            Err(error) => {
+                                eprintln!("codex-gpui: save personal instructions: {error:#}");
+                                view.update(cx, |view, cx| view.save_failed(cx));
+                                this.toast(Toast::danger("Unable to save instructions"), cx);
+                            }
+                        }
+                    })
+                    .ok();
+                })
+                .detach();
+            }
+            settings::personalization::Event::Leave => {
+                if self.instructions_changed(cx) {
+                    self.confirm_instructions_leave(SettingsLeave::Editor, window, cx);
+                } else {
+                    view.update(cx, |view, cx| view.discard(cx));
+                }
+            }
+            settings::personalization::Event::Section(label) => {
+                if self.instructions_changed(cx) {
+                    self.confirm_instructions_leave(SettingsLeave::Section(label), window, cx);
+                } else {
+                    page.update(cx, |page, cx| page.select_section(label, cx));
+                }
+            }
+        }
     }
 
     fn flush_settings(&mut self, cx: &mut Context<Self>) {
@@ -4021,27 +4299,26 @@ impl Root {
     ) {
         self.qa_work_started = true;
         let bridge = self.bridge.clone();
-        let review_delivery = params["keyPath"] == "desktop.reviewDelivery";
+        let failure = match (
+            params["keyPath"].as_str(),
+            self.state.route == Route::Settings,
+        ) {
+            (Some("desktop.reviewDelivery"), _) => "Could not save review delivery preference",
+            (Some("desktop.followUpQueueMode"), true) => "Could not save follow-up behavior",
+            (Some("desktop.followUpQueueMode"), false) => "Couldn’t save your changes. Try again",
+            _ => "Couldn't save your changes. Try again",
+        };
         let queue_mode = params["keyPath"] == "desktop.followUpQueueMode";
         let task = cx.spawn(async move |this, cx| -> Result<()> {
             if let Err(error) = bridge.request::<_, Value>(method, params).await {
-                if review_delivery {
-                    this.update(cx, |this, cx| {
-                        this.toast(
-                            Toast::danger("Could not save review delivery preference"),
-                            cx,
-                        );
-                    })?;
-                }
-                if queue_mode {
-                    // The composer shows the behavior that still applies.
-                    this.update(cx, |this, cx| {
+                this.update(cx, |this, cx| {
+                    if queue_mode {
                         let queue = this.config["desktop"]["followUpQueueMode"] == "queue";
                         this.thread_composer
                             .update(cx, |c, cx| c.set_queue_mode(queue, cx));
-                        this.toast(Toast::danger("Couldn’t save your changes. Try again"), cx);
-                    })?;
-                }
+                    }
+                    this.toast(Toast::danger(failure), cx);
+                })?;
                 return Err(error);
             }
             this.update(cx, |this, _| apply(&mut this.config))
@@ -4183,16 +4460,8 @@ impl Root {
     /// Recents updates and approval prompts.
     pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
         if let Some(login) = &self.login {
-            login.update(cx, |login, cx| login.apply(&event, cx));
-            if matches!(&event, Event::Notification { method, params }
-                if method == "account/login/completed" && params["success"] == true)
-            {
-                self.login = None;
-                self.read_account_email(cx);
-                self.refresh_threads(cx);
-                self.load_projects(cx);
-                self.load_sections(cx);
-                cx.notify();
+            if login.update(cx, |login, cx| login.apply(&event, cx)) {
+                self.finish_sign_in(cx);
             }
             return;
         }
@@ -4362,6 +4631,30 @@ impl Root {
                 }
             }
         }
+    }
+
+    fn show_login(&mut self, forced_login_method: Value, cx: &mut Context<Self>) {
+        self.ready = false;
+        let login = cx.new(|cx| Login::with_login_policy(forced_login_method, cx));
+        cx.subscribe(&login, |this, _, _: &settings::LoginMethodsLoaded, cx| {
+            this.ready = true;
+            cx.notify();
+        })
+        .detach();
+        cx.subscribe(&login, |this, _, _: &settings::LoggedIn, cx| {
+            this.finish_sign_in(cx);
+        })
+        .detach();
+        self.login = Some(login);
+    }
+
+    fn finish_sign_in(&mut self, cx: &mut Context<Self>) {
+        self.login = None;
+        self.read_account_email(cx);
+        self.refresh_threads(cx);
+        self.load_projects(cx);
+        self.load_sections(cx);
+        cx.notify();
     }
 
     /// Reads the first `thread/list` page again; threads of later loaded pages stay after it.
@@ -5146,12 +5439,32 @@ impl Render for Root {
                 .relative()
                 .font_family(ui::SANS)
                 .track_focus(&self.focus)
+                .on_key_down(ui::focus::tab)
                 .on_action(cx.listener(|this, _: &CloseWindow, window, cx| {
                     this.close_window(window, cx);
                 }))
                 .on_action(|_: &Minimize, window, _| window.minimize_window())
                 .on_action(|_: &Zoom, window, _| window.zoom_window())
                 .child(login.clone())
+                .children(self.dialog.clone())
+                .into_any_element();
+        }
+        if self.state.route == Route::SelectWorkspace {
+            return div()
+                .size_full()
+                .relative()
+                .track_focus(&self.focus)
+                .on_key_down(ui::focus::tab)
+                .on_action(
+                    cx.listener(|this, _: &OpenFolder, window, cx| this.open_folder(window, cx)),
+                )
+                .on_action(
+                    cx.listener(|this, _: &CloseWindow, window, cx| this.close_window(window, cx)),
+                )
+                .on_action(|_: &Minimize, window, _| window.minimize_window())
+                .on_action(|_: &Zoom, window, _| window.zoom_window())
+                .child(self.workspace.clone())
+                .child(self.toaster.clone())
                 .children(self.dialog.clone())
                 .into_any_element();
         }
@@ -5172,6 +5485,7 @@ impl Render for Root {
             .capture_action(cx.listener(|this, _: &Undo, window, cx| {
                 this.undo_queued(window, cx);
             }))
+
             .on_action(cx.listener(|this, _: &GoBack, window, cx| this.step(true, window, cx)))
             .on_action(cx.listener(|this, _: &GoForward, window, cx| this.step(false, window, cx)))
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
@@ -5193,6 +5507,14 @@ impl Render for Root {
             .on_action(
                 cx.listener(|this, _: &CloseWindow, window, cx| this.close_window(window, cx)),
             )
+            .on_action(cx.listener(|this, _: &Quit, window, cx| {
+                cx.stop_propagation();
+                if this.instructions_changed(cx) {
+                    this.confirm_instructions_leave(SettingsLeave::Quit, window, cx);
+                } else {
+                    cx.quit();
+                }
+            }))
             .on_action(|_: &Minimize, window, _| window.minimize_window())
             .on_action(|_: &Zoom, window, _| window.zoom_window())
             .child(content)
