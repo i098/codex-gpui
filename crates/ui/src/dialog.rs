@@ -1051,11 +1051,11 @@ impl Dialog {
             "enter" if self.multiline() => self.insert("\n", cx),
             "enter" | "space"
                 if matches!(
-                        | Kind::DeleteTask
                     self.kind,
                     Kind::CloseWindow
                         | Kind::FullAccess
                         | Kind::LogOut
+                        | Kind::DeleteTask
                         | Kind::ModelAnnouncement
                         | Kind::RevertChanges
                 ) || (self.selected != 0 && !self.editing()) =>
