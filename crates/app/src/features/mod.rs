@@ -13,13 +13,16 @@ use gpui::{App, Context, Div};
 
 mod command_destinations;
 pub(crate) use command_destinations::OpenThreadInNewWindow;
+pub(super) mod chat_commands;
 
 /// Called by [`crate::init`], after the app's own bindings.
 pub(crate) fn init(cx: &mut App) {
     command_destinations::init(cx);
+    chat_commands::init(cx);
 }
 
 /// Called by `Root::render` on the root element, after the app's own actions.
 pub(crate) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
-    command_destinations::actions(crate::windows::actions(root, cx), cx)
+    let root = command_destinations::actions(crate::windows::actions(root, cx), cx);
+    chat_commands::actions(root, cx)
 }

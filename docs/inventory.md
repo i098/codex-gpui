@@ -787,6 +787,10 @@ Scope `app` means the renderer handles the key; `OS-global` keys are registered 
 | `closeWindow` | Close | `CmdOrCtrl+W` | menu | — | no | .vite/build/src-BJv5Mk7n.js |
 | `newWindow` | New Window | — | menu | — | no | .vite/build/src-BJv5Mk7n.js |
 
+The original thread overflow handler routes `copyConversationPath` and `copyWorkingDirectory` through `Gda`.
+Both copy the working directory or latest worktree workspace root, not the rollout file.
+The older TH-026 rollout-path description is incorrect for this retained source.
+
 Fixed menu accelerators (main): `Command+G` find next, `Command+Shift+G` find previous, `CmdOrCtrl+Plus` / `CmdOrCtrl+-` / `CmdOrCtrl+0` zoom, `Command+Control+F` full screen, `Command+Control+R` reload window, `Command+Option+Shift+V` paste and match style, `CmdOrCtrl+Alt+Y` query devtools (internal).
 
 ## 13. Menu bar (macOS)

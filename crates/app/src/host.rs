@@ -945,6 +945,19 @@ impl LocalHost {
         )? > 0)
     }
 
+    fn mark_all_runs_read(&self, read_at: i64) -> Result<usize> {
+        let Some(db) = self.database(OpenFlags::SQLITE_OPEN_READ_WRITE)? else {
+            return Ok(0);
+        };
+        Ok(db.execute(
+            "UPDATE automation_runs SET read_at = ? WHERE read_at IS NULL
+             AND status IN ('PENDING_REVIEW', 'ACCEPTED', 'ARCHIVED')
+             AND automation_id IN (SELECT id FROM automations
+                 WHERE account_id IS NULL AND user_id IS NULL AND installation_id IS NULL)",
+            [read_at],
+        )?)
+    }
+
     fn inbox(&self, params: &Value) -> Result<Value> {
         let limit = match params.get("limit").filter(|v| !v.is_null()) {
             Some(limit) => limit
@@ -1109,6 +1122,10 @@ impl Host for LocalHost {
             "automation-update" => self.update_automation(&params)?,
             "automation-run-now" => self.automation_run_now(&params)?,
             "inbox-items" => self.inbox(&params)?,
+            "inbox-automation-runs-mark-all-read" => {
+                let read_at = params["readAt"].as_i64().context("invalid inbox readAt")?;
+                json!({"count": self.mark_all_runs_read(read_at)?})
+            }
             "git-changes" | "git-stage" | "git-unstage" | "git-revert" | "git-init-repo"
             | "git-commit-status" | "git-commit-diff" | "git-commit" | "git-push"
             | "git-checkout" | "apply-patch" => git::fetch(endpoint, &params)?,

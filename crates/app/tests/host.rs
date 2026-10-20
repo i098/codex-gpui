@@ -1198,3 +1198,44 @@ fn mobile_get_started_follows_the_recorded_mfa_status() -> Result<()> {
     assert_eq!(step(&fx), SetupStep::AllowHost);
     Ok(())
 }
+
+#[test]
+fn clear_all_unreads_updates_only_unread_finished_local_runs() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let db = database(home.path())?;
+    db.execute(
+        "UPDATE automation_runs SET read_at = 7 WHERE thread_id = 'accepted'",
+        [],
+    )?;
+    let host = LocalHost::new(home.path());
+    let request = Request::post(
+        "inbox-automation-runs-mark-all-read",
+        Some(json!({"readAt":1234})),
+    );
+    assert_eq!(json_body(&host.fetch(&request)?)?["count"], 2);
+    let states = db
+        .prepare("SELECT thread_id, read_at FROM automation_runs ORDER BY thread_id")?
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    assert_eq!(
+        states,
+        vec![
+            ("accepted".into(), Some(7)),
+            ("archived".into(), Some(1234)),
+            ("private-run".into(), None),
+            ("review".into(), Some(1234)),
+            ("running".into(), None),
+        ]
+    );
+    assert_eq!(json_body(&host.fetch(&request)?)?["count"], 0);
+    assert!(
+        host.fetch(&Request::post(
+            "inbox-automation-runs-mark-all-read",
+            Some(json!({"readAt":"invalid"}))
+        ))
+        .is_err()
+    );
+    Ok(())
+}

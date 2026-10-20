@@ -54,6 +54,7 @@ pub enum Kind {
     LogOut,
     RevertChanges,
     DeleteThread,
+    ClearAllUnreads,
     ModelAnnouncement,
     /// `Schedule a task`: the Scheduled sidebar's `New task` create editor (AM-005).
     ScheduleTask,
@@ -84,6 +85,9 @@ pub enum Outcome {
         do_not_ask_again: bool,
     },
     RevertChanges {
+        do_not_ask_again: bool,
+    },
+    ClearAllUnreads {
         do_not_ask_again: bool,
     },
     /// `Save` or Enter in `Rename chat`: `thread/name/set` of `thread` to `name`.
@@ -197,7 +201,11 @@ impl Dialog {
         Self {
             kind,
             controls: std::array::from_fn(|_| cx.focus_handle()),
-            selected: usize::from(kind == Kind::RevertChanges),
+            selected: if kind == Kind::ClearAllUnreads {
+                2
+            } else {
+                usize::from(kind == Kind::RevertChanges)
+            },
             query: String::new(),
             select_all: false,
             instruction_cursor: 0,
@@ -763,6 +771,10 @@ impl Dialog {
             (Kind::RevertChanges, 0) => "Cancel",
             (Kind::RevertChanges, 1) => "Confirm",
             (Kind::RevertChanges, _) => "Don't ask again",
+            (Kind::ClearAllUnreads, 0) => "Cancel",
+            (Kind::ClearAllUnreads, 1) => "Clear all",
+            (Kind::ClearAllUnreads, 2) => "Don’t ask me again",
+            (Kind::ClearAllUnreads, _) => "Close dialog",
             (Kind::FullAccess, 0) => "Cancel",
             (Kind::FullAccess, _) => "Confirm",
             (Kind::LogOut, 0) => "Cancel",
@@ -955,7 +967,10 @@ impl Dialog {
             (Kind::RevertChanges, 1) => cx.emit(Outcome::RevertChanges {
                 do_not_ask_again: self.do_not_ask_again,
             }),
-            (Kind::CloseWindow | Kind::RevertChanges, 2) => {
+            (Kind::ClearAllUnreads, 1) => cx.emit(Outcome::ClearAllUnreads {
+                do_not_ask_again: self.do_not_ask_again,
+            }),
+            (Kind::CloseWindow | Kind::RevertChanges | Kind::ClearAllUnreads, 2) => {
                 self.do_not_ask_again = !self.do_not_ask_again;
                 cx.notify();
             }
@@ -1158,6 +1173,7 @@ impl Dialog {
                     | Kind::LogOut
                     | Kind::ArchiveSection
                     | Kind::DeleteThread => vec![0, 1],
+                    Kind::ClearAllUnreads => vec![2, 0, 1, 3],
                     Kind::ScheduleTask => vec![0, 3, 4, 5, 1, 2],
                     Kind::Branches => vec![0, 1],
                     Kind::BranchConflict => vec![1, 2],
@@ -1203,6 +1219,7 @@ impl Dialog {
                         | Kind::DeleteThread
                         | Kind::ModelAnnouncement
                         | Kind::RevertChanges
+                        | Kind::ClearAllUnreads
                 ) || (self.selected != 0 && !self.editing()) =>
             {
                 self.activate(cx);
@@ -1250,6 +1267,9 @@ impl Dialog {
             .justify_center()
             .rounded(px(12.5))
             .bg(if primary { t.text } else { t.list_hover })
+            .when(self.kind == Kind::ClearAllUnreads, |d| {
+                d.w_auto().px(px(15.))
+            })
             .when(
                 matches!(
                     self.kind,
@@ -1649,43 +1669,48 @@ impl Dialog {
 
     fn close_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
         let revert = self.kind == Kind::RevertChanges;
-        let checkbox = if revert {
-            "Don't ask again"
-        } else {
-            "Do not ask me again"
+        let clear_unreads = self.kind == Kind::ClearAllUnreads;
+        let (title, description, checkbox, confirm) = match self.kind {
+            Kind::ClearAllUnreads => (
+                "Clear all unreads?",
+                Some("This will mark all chats and scheduled task updates in Codex as read"),
+                "Don’t ask me again",
+                "Clear all",
+            ),
+            Kind::RevertChanges => (
+                "Revert changes?",
+                Some("This action removes all of these changes."),
+                "Don't ask again",
+                "Confirm",
+            ),
+            _ => (
+                "Are you sure you want to close the window?",
+                None,
+                "Do not ask me again",
+                "Close Window",
+            ),
         };
         div()
+            .relative()
             .p(px(20.))
             .flex()
             .flex_col()
             .child(
-                text(
-                    if revert {
-                        "Revert changes?"
-                    } else {
-                        "Are you sure you want to close the window?"
-                    },
-                    20.,
-                    28.,
-                    600.,
-                    t.text,
-                )
-                .whitespace_normal()
-                .h(px(if revert { 28. } else { 56. })),
+                text(title, 20., 28., 600., t.text)
+                    .whitespace_normal()
+                    .h(px(if revert || clear_unreads { 28. } else { 56. })),
             )
-            .when(revert, |d| {
-                d.child(
-                    text(
-                        "This action removes all of these changes.",
-                        14.,
-                        20.,
-                        400.,
-                        t.text_secondary,
-                    )
-                    .mt(px(8.))
-                    .whitespace_normal(),
+            .children(description.map(|description| {
+                text(
+                    description,
+                    14.,
+                    if clear_unreads { 21. } else { 20. },
+                    if clear_unreads { 430. } else { 400. },
+                    t.text_secondary,
                 )
-            })
+                .mt(px(8.))
+                .whitespace_normal()
+            }))
             .child(
                 div()
                     .id("close-do-not-ask")
@@ -1697,8 +1722,8 @@ impl Dialog {
                         gpui::Toggled::False
                     })
                     .track_focus(&self.controls[2])
-                    .mt(px(12.))
-                    .h(px(18.))
+                    .mt(px(if clear_unreads { 8. } else { 12. }))
+                    .h(px(if clear_unreads { 21. } else { 18. }))
                     .flex()
                     .items_center()
                     .gap(px(8.))
@@ -1708,13 +1733,21 @@ impl Dialog {
                             .rounded(px(5.))
                             .border_1()
                             .border_color(t.border)
-                            .when(self.selected == 2, |d| d.border_color(rgba(0x3a83f7ff)))
+                            .when(self.selected == 2 && !clear_unreads, |d| {
+                                d.border_color(rgba(0x3a83f7ff))
+                            })
                             .when(self.do_not_ask_again, |d| {
                                 d.bg(t.text)
                                     .child(text("✓", 12., 12., 600., t.menu_background))
                             }),
                     )
-                    .child(text(checkbox, 13., 19., 430., t.text))
+                    .child(text(
+                        checkbox,
+                        if clear_unreads { 14. } else { 13. },
+                        if clear_unreads { 21. } else { 19. },
+                        430.,
+                        t.text,
+                    ))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.selected = 2;
                         this.controls[2].focus(window, cx);
@@ -1728,14 +1761,28 @@ impl Dialog {
                     .justify_end()
                     .gap(px(12.))
                     .child(self.button(0, "Cancel", 80., t, cx))
-                    .child(self.button(
-                        1,
-                        if revert { "Confirm" } else { "Close Window" },
-                        128.,
-                        t,
-                        cx,
-                    )),
+                    .child(self.button(1, confirm, 128., t, cx)),
             )
+            .when(clear_unreads, |d| {
+                d.child(
+                    div()
+                        .id("clear-unreads-close")
+                        .role(gpui::Role::Button)
+                        .aria_label("Close dialog")
+                        .track_focus(&self.controls[3])
+                        .absolute()
+                        .right(px(16.))
+                        .top(px(16.))
+                        .size(px(24.))
+                        .rounded(px(4.))
+                        .hover(|s| s.bg(t.ghost_hover))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(icon("close", 16., t.text.opacity(0.8)))
+                        .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))),
+                )
+            })
     }
     /// The multi-line text input of `Instructions…` and `Commit message`: lines with the
     /// selection and caret, scrolling with the caret. The caller sizes and frames it.
@@ -2946,6 +2993,7 @@ impl Render for Dialog {
             Kind::Shortcuts => (600., shortcuts_height),
             Kind::CloseWindow => (420., 171.),
             Kind::RevertChanges => (420., 199.),
+            Kind::ClearAllUnreads => (420., 191.),
             Kind::ScheduleTask => (680., 422.),
             Kind::Rename | Kind::NewSection | Kind::EditSection => (420., 185.),
             Kind::ArchiveSection => (420., 181.),
@@ -2969,7 +3017,9 @@ impl Render for Dialog {
         let height = height.min(f32::from(viewport.height) * 0.92);
         let content = match self.kind {
             Kind::Shortcuts => self.shortcuts_content(&visible, t, cx),
-            Kind::CloseWindow | Kind::RevertChanges => self.close_content(t, cx),
+            Kind::CloseWindow | Kind::RevertChanges | Kind::ClearAllUnreads => {
+                self.close_content(t, cx)
+            }
             Kind::ScheduleTask => self.schedule_content(t, cx),
             Kind::Rename | Kind::NewSection | Kind::EditSection => self.rename_content(t, cx),
             Kind::ArchiveSection => self.archive_section_content(t, cx),
@@ -3014,6 +3064,7 @@ impl Render for Dialog {
                         Kind::Shortcuts => "Keyboard shortcuts".into(),
                         Kind::CloseWindow => "Are you sure you want to close the window?".into(),
                         Kind::RevertChanges => "Revert changes?".into(),
+                        Kind::ClearAllUnreads => "Clear all unreads?".into(),
                         Kind::ScheduleTask => "Schedule a task".into(),
                         Kind::Rename | Kind::NewSection | Kind::EditSection => {
                             self.name_title().into()
@@ -3100,7 +3151,7 @@ impl Render for Dialog {
                         20.
                     } else if schedule {
                         30.
-                    } else if self.kind == Kind::LogOut {
+                    } else if matches!(self.kind, Kind::LogOut | Kind::ClearAllUnreads) {
                         25.
                     } else {
                         24.
@@ -3150,12 +3201,18 @@ impl Render for Dialog {
                                 shapes::Fill::Color,
                                 false,
                                 shapes::Decoration {
-                                    radius: Corners::all(px(if self.kind == Kind::LogOut {
-                                        25.
-                                    } else {
-                                        24.
-                                    })),
-                                    corner: if self.kind == Kind::LogOut {
+                                    radius: Corners::all(px(
+                                        if matches!(self.kind, Kind::LogOut | Kind::ClearAllUnreads)
+                                        {
+                                            25.
+                                        } else {
+                                            24.
+                                        },
+                                    )),
+                                    corner: if matches!(
+                                        self.kind,
+                                        Kind::LogOut | Kind::ClearAllUnreads
+                                    ) {
                                         shapes::Corner::Squircle
                                     } else {
                                         shapes::Corner::default()
