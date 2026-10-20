@@ -7,6 +7,7 @@ pub(super) enum Kind {
     Header,
     Body,
     Source,
+    Options,
 }
 
 pub(super) struct Menu {
@@ -24,6 +25,16 @@ impl DiffPanel {
     ) -> impl ExactSizeIterator<Item = (&'static str, bool)> + Clone + use<> {
         let (items, count) = match &self.menu {
             None => ([("", false); 5], 0),
+            Some(menu) if menu.kind == Kind::Options => (
+                [
+                    ("Expand all diffs", true),
+                    ("Collapse all diffs", true),
+                    ("Word wrap", true),
+                    (self.layout.label(), true),
+                    ("", false),
+                ],
+                4,
+            ),
             Some(menu) if menu.kind == Kind::Source => (
                 [
                     ("Last Turn", true),
@@ -215,6 +226,18 @@ impl DiffPanel {
             cx.notify();
             return;
         }
+        if menu.kind == Kind::Options {
+            match label {
+                "Expand all diffs" => self.files.iter_mut().for_each(|file| file.open = true),
+                "Collapse all diffs" => self.files.iter_mut().for_each(|file| file.open = false),
+                "Word wrap" => self.wrap = !self.wrap,
+                _ => self.layout = self.layout.next(),
+            }
+            self.selection = None;
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
         let root = self.file_root().to_owned();
         let file = &mut self.files[menu.file];
         match label {
@@ -285,10 +308,10 @@ impl DiffPanel {
             .pl_0()
             .id("diff-menu")
             .role(Role::Menu)
-            .aria_label(if menu.kind == Kind::Source {
-                "Changes source"
-            } else {
-                "File actions"
+            .aria_label(match menu.kind {
+                Kind::Source => "Changes source",
+                Kind::Options => "Changes options",
+                _ => "File actions",
             })
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation());
