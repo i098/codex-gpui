@@ -311,7 +311,7 @@ impl Composer {
     }
 
     pub(super) fn copy(&mut self, _: &crate::Copy, _: &mut Window, cx: &mut Context<Self>) {
-        if !self.selected_range.is_empty() {
+        if !self.secret && !self.selected_range.is_empty() {
             let s = self.content[self.selected_range.clone()].to_string();
             cx.write_to_clipboard(ClipboardItem::new_string(s));
         }
@@ -364,6 +364,10 @@ impl Composer {
     /// need a selection) and Paste ⌘V. A right-click outside the selection moves the caret
     /// there first, as Chromium does.
     fn on_right_click(&mut self, e: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.secret {
+            cx.stop_propagation();
+            return;
+        }
         window.focus(&self.focus_handle, cx);
         self.menu = None;
         let at = self.index_for_point(e.position);
@@ -537,9 +541,21 @@ impl Composer {
 
     pub(super) fn editor(&self, cx: &mut Context<Self>) -> Div {
         div()
-            .px(px(12.))
-            .pb(px(4.))
-            .min_h(px(48.))
+            .px(px(if self.request_parent.is_some() {
+                10.
+            } else {
+                12.
+            }))
+            .pb(px(if self.request_parent.is_some() {
+                0.
+            } else {
+                4.
+            }))
+            .min_h(px(if self.request_parent.is_some() {
+                20.
+            } else {
+                48.
+            }))
             .cursor(CursorStyle::IBeam)
             .text_size(FONT_SIZE)
             .line_height(LINE_HEIGHT)
@@ -577,7 +593,11 @@ impl EntityInputHandler for Composer {
     ) -> Option<String> {
         let range = self.range_from_utf16(&range_utf16);
         actual_range.replace(self.range_to_utf16(&range));
-        Some(self.content[range].to_string())
+        Some(if self.secret {
+            "*".repeat(self.content[range].encode_utf16().count())
+        } else {
+            self.content[range].to_owned()
+        })
     }
 
     fn selected_text_range(
@@ -727,7 +747,14 @@ pub(super) fn shape(
     let (s, color) = if composer.content.is_empty() {
         (composer.placeholder.to_string(), placeholder)
     } else {
-        (composer.content.clone(), color)
+        (
+            if composer.secret {
+                "*".repeat(composer.content.len())
+            } else {
+                composer.content.clone()
+            },
+            color,
+        )
     };
     let marked = composer
         .marked_range
@@ -768,7 +795,17 @@ pub(super) fn shape(
         .collect::<Vec<_>>();
     window
         .text_system()
-        .shape_text(s.into(), FONT_SIZE, &runs, width, None)
+        .shape_text(
+            s.into(),
+            if composer.request_compact && !composer.secret {
+                px(13.)
+            } else {
+                FONT_SIZE
+            },
+            &runs,
+            width,
+            None,
+        )
         .map(|lines| lines.into_iter().collect())
         .unwrap_or_default()
 }

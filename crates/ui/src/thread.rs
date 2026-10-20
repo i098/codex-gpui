@@ -133,6 +133,7 @@ pub struct ThreadView {
     /// Open disclosures: turns whose `Worked for` is expanded, by turn id, and activity groups
     /// whose rows show, by the id of their first item.
     expanded: HashSet<String>,
+    pending_question: Option<String>,
     scroll: ScrollHandle,
     /// The turns as last laid out, to stand in for the ones far off screen.
     laid_out: Rc<RefCell<LaidOut>>,
@@ -577,6 +578,7 @@ impl ThreadView {
             _tick: None,
             stream_fades: HashMap::new(),
             expanded: HashSet::new(),
+            pending_question: None,
             scroll: ScrollHandle::new(),
             laid_out: Rc::default(),
             focus: None,
@@ -598,6 +600,14 @@ impl ThreadView {
 
     pub fn turns(&self) -> &[Turn] {
         &self.turns
+    }
+
+    /// Projects the visible question's turn from the root request queue.
+    pub fn set_pending_question(&mut self, turn_id: Option<String>, cx: &mut Context<Self>) {
+        if self.pending_question != turn_id {
+            self.pending_question = turn_id;
+            cx.notify();
+        }
     }
 
     pub fn transcript_focused(&self, window: &Window) -> bool {
@@ -1390,6 +1400,43 @@ impl ThreadView {
             });
         }
         let (work, final_answer) = work(turn);
+        if self.pending_question.as_deref() == Some(turn.id.as_str()) {
+            col = col
+                .child(div().h(px(16.)))
+                .child(self.activity(work, false, window, t, cx));
+            if let Some((item, answer)) = final_answer {
+                col = col.child(div().h(px(16.))).child(markdown::with_find(
+                    answer,
+                    window,
+                    t,
+                    self.find_paint(item).as_ref(),
+                    self.fades(item),
+                ));
+            }
+            col = col.child(
+                div()
+                    .mt(px(16.))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .size(px(14.))
+                            .border_1()
+                            .border_color(t.text_tertiary)
+                            .rounded(px(999.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(text("?", 10., 12., 430., t.text_tertiary)),
+                    )
+                    .child(text("Asking question", 14., 20., 430., t.text_tertiary)),
+            );
+            if let Some(card) = diff_card(&turn.id, &turn.items, window, t) {
+                col = col.child(div().mt(px(16.)).pb(px(8.)).child(card));
+            }
+            return col;
+        }
         if let Some((item, answer)) = final_answer {
             let secs = turn.duration_ms.unwrap_or(0) / 1000;
             let open = self.expanded.contains(&turn.id)
