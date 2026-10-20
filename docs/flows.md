@@ -623,7 +623,9 @@ Event-triggered tasks (`## When this happens` prompts) have the item disabled wi
 The project folders or project target (its first root from `.codex-global-state.json`) run, in a new worktree for the original default environment (`create_worktree` and `set_owner_thread`, removed again when no thread starts) or in the folder for `local`; outside a Git repository the run happens in the folder.
 Projectless and heartbeat tasks are refused: the host has no workspace-directory creation or renderer thread state.
 Not yet carried over: the project assignment of the new thread, the desktop notification and the unread dot on the rail.
-`automation_run_now` checks the requests the app-server receives and the refusals; the live `Root` flow needs macOS.
+`automation_run_now` checks the real host's saved policy, early completion, user cancellation and archive failures against a stdio peer.
+It also checks account isolation, recoverable restore writes and retained worktrees.
+The native row-menu replay needs macOS.
 
 `LocalHost` implements the original `automation-update` status change for local tasks (issue https://github.com/i098/codex-gpui/issues/226).
 It accepts `{id, status}` or the original full cron or heartbeat body; any other changed field fails.
