@@ -173,6 +173,10 @@ The lifecycle check rejects pointer-focus opening, delayed reopening after Escap
 F1d retains the original `(455.5, 695)` probes at steps 3 and 7.
 Functional readiness is reported independently from the remaining Home visual parity.
 The original Home-mask, border-box, and keyboard-tooltip caller differences remain recorded; their checks are not removed or relaxed.
+The combined native check on `96995c3` passes S033 and both functional F1d paths with all 880 source hashes verified.
+The shared guard allows main-content ancestors and the exact Thread transcript focus while keeping popup input separate.
+This includes blank-Home typing, Thread insertion and caret edits, and popup isolation.
+This result does not clear the separate appearance gate or the retained Home visual failures.
 
 ### Account logout (RS-036, SH-088)
 
