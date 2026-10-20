@@ -453,6 +453,8 @@ The native check covers deferred send, failure, pending cancellation, source-thr
 Pasted-text cards use the recorded outer stroke and the original icon radius, fill and opacity.
 The docked fade takes its raster origin from the current layout, including changes in attachment height.
 The pending-paste replay checks the original fade pixels after the card changes height.
+Editor text disables optional ligatures, matching the original ProseMirror style.
+Numeric badges retain the original fractional letter spacing without rounding to hundredths of a pixel.
 The capture reuses the original recorded response for the same Subtract thread; it does not invent a response for another thread.
 No remote uploader or unobserved preflight dialog was added.
 Each submission keeps its own attachment recovery state until that request completes.

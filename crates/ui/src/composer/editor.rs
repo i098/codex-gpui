@@ -3,6 +3,16 @@ use crate::screens::thread::view::menu::{ContextMenu, Item, selection_url};
 use gpui::TransformationMatrix;
 use std::time::Instant;
 
+static EDITOR_FONT_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
+    std::sync::LazyLock::new(|| {
+        gpui::FontFeatures(std::sync::Arc::new(
+            ["liga", "clig", "dlig", "hlig", "calt"]
+                .into_iter()
+                .map(|tag| (tag.to_owned(), 0))
+                .collect(),
+        ))
+    });
+
 type EditState = (String, Range<usize>, Vec<mention::Mention>);
 
 #[derive(Default)]
@@ -791,6 +801,7 @@ pub(super) fn shape(
             let within = |r: &Range<usize>| r.start <= w[0] && w[1] <= r.end;
             let in_chip = composer.mentions.iter().any(|m| within(&m.range));
             let mut font = style.font();
+            font.features = EDITOR_FONT_FEATURES.clone();
             if in_chip {
                 font.weight = gpui::FontWeight(500.);
             }
