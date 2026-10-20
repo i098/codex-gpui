@@ -14,6 +14,8 @@
 //! a replay) as they are; `acp::Acp` translates them for an Agent Client Protocol agent.
 
 mod acp;
+mod automation;
+pub use automation::AutomationTurn;
 mod replay;
 pub mod types;
 
@@ -130,6 +132,7 @@ pub struct Bridge {
     next_id: AtomicI64,
     child: Option<Child>,
     acp: bool,
+    automation_turns: Mutex<HashMap<String, Arc<AutomationTurn>>>,
 }
 
 /// `$CODEX_BIN`, else the binary bundled in ChatGPT.app, else `codex` on `PATH`; runs `app-server`.
@@ -210,6 +213,7 @@ impl Bridge {
             next_id: AtomicI64::new(1),
             child,
             acp,
+            automation_turns: Mutex::new(HashMap::new()),
         }
     }
 
@@ -223,8 +227,26 @@ impl Bridge {
         method: &str,
         params: P,
     ) -> Result<R> {
+        let msg = message(method, params)?;
+        self.observe_automation_request(method, &msg["params"])
+            .await?;
+        self.request_message(method, msg).await
+    }
+
+    async fn request_inner<P: Serialize, R: DeserializeOwned>(
+        &self,
+        method: &str,
+        params: P,
+    ) -> Result<R> {
+        self.request_message(method, message(method, params)?).await
+    }
+
+    async fn request_message<R: DeserializeOwned>(
+        &self,
+        method: &str,
+        mut msg: Value,
+    ) -> Result<R> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let mut msg = message(method, params)?;
         msg["id"] = id.into();
         let (tx, rx) = async_channel::bounded(1);
         self.pending
