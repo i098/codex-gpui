@@ -392,10 +392,15 @@ impl Toaster {
                             .when(e.toast.description.is_some(), |d| {
                                 d.flex_col().items_start().max_w(px(360.))
                             })
-                            .child(crate::text(e.toast.title.clone(), 14., 21., 500., fg))
+                            .child(
+                                crate::text(e.toast.title.clone(), 14., 21., 500., fg)
+                                    .flex()
+                                    .items_center()
+                                    .min_h(px(24.)),
+                            )
                             .when_some(e.toast.description.clone(), |d, description| {
                                 d.child(
-                                    crate::text(description, 13., 18.5714, 430., fg)
+                                    crate::text(description, 14., 21., 430., fg)
                                         .whitespace_normal(),
                                 )
                             }),

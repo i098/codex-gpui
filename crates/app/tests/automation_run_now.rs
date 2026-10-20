@@ -731,6 +731,29 @@ fn row_menu_run_now_starts_the_task_through_the_app_server() -> Result<()> {
     shot(&mut fx, "5-event-task-disabled")?;
     fx.click((250., 277.))?;
     ensure!(requests(&log)?.len() == 3, "an event task starts nothing");
+
+    fs::write(
+        dir.path().join("automations/plain/automation.toml"),
+        task("plain", "REFUSE this", 2),
+    )?;
+    fx.keys("escape")?;
+    fx.click((302., 190.))?;
+    fx.click((250., 228.))?;
+    fx.wait("run refusal", |fx| {
+        fx.read(|r, cx| r.toasts(cx))
+            .first()
+            .is_some_and(|title| title == "Could not start scheduled task")
+    })?;
+    ensure!(!starting(&fx), "the refused run keeps the row pending");
+    ensure!(
+        requests(&log)?.last().is_some_and(|request| {
+            request["params"]["input"][0]["text"]
+                .as_str()
+                .is_some_and(|text| text.ends_with("REFUSE this"))
+        }),
+        "the app-server did not refuse the changed prompt"
+    );
+    shot(&mut fx, "6-run-error")?;
     Ok(())
 }
 
