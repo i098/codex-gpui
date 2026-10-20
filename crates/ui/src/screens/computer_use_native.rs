@@ -79,6 +79,18 @@ struct SystemIcons {
     raster: Option<IconRaster>,
 }
 
+fn icon_cache(window: &mut Window, cx: &mut App) -> gpui::Entity<Option<SystemIcons>> {
+    window.use_keyed_state("locked-use-system-icons", cx, |window, cx| {
+        cx.on_release_in(window, |entry: &mut Option<SystemIcons>, window, _| {
+            if let Some((_, _, _, _, image)) = entry.take().and_then(|entry| entry.raster) {
+                window.drop_image(image).ok();
+            }
+        })
+        .detach();
+        None::<SystemIcons>
+    })
+}
+
 fn icon_origin(bounds: Bounds<Pixels>, scale: f32) -> gpui::Point<Pixels> {
     let wrapper = point(px(62.), px(63.));
     let unscaled = bounds.origin + (gpui::Point::from(bounds.size) - wrapper) / 2.;
@@ -96,7 +108,7 @@ fn grouped_icons(
     if !cfg!(target_os = "macos") {
         return None;
     }
-    let cache = window.use_keyed_state("locked-use-system-icons", cx, |_, _| None::<SystemIcons>);
+    let cache = icon_cache(window, cx);
     let ready = cache.update(cx, |entry, _| {
         if entry.as_ref().is_some_and(|entry| {
             Arc::ptr_eq(&entry.sources[0], computer) && Arc::ptr_eq(&entry.sources[1], lock)
@@ -363,8 +375,87 @@ pub fn locked_use_row(window: &mut Window, cx: &mut App) -> Option<Div> {
 }
 
 #[cfg(test)]
-mod image_tests {
+mod tests {
     use super::*;
+    use gpui::{AppContext as _, BorrowAppContext as _, Context, HeadlessAppContext, Render};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn app() -> HeadlessAppContext {
+        let mut cx =
+            HeadlessAppContext::with_asset_source(textsys::text_system(), Arc::new(theme::Assets));
+        cx.update(|cx| {
+            theme::load_fonts(cx);
+            cx.set_global(theme::Theme::dark());
+            cx.set_global(NativeSettingsState::default());
+        });
+        cx
+    }
+
+    fn click_toggle(window: &mut Window, cx: &mut App) {
+        let position = point(px(700.), px(30.));
+        window.dispatch_event(
+            gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
+                button: gpui::MouseButton::Left,
+                position,
+                modifiers: Default::default(),
+                click_count: 1,
+                first_mouse: false,
+            }),
+            cx,
+        );
+        window.dispatch_event(
+            gpui::PlatformInput::MouseUp(gpui::MouseUpEvent {
+                button: gpui::MouseButton::Left,
+                position,
+                modifiers: Default::default(),
+                click_count: 1,
+            }),
+            cx,
+        );
+    }
+
+    struct LockedRow {
+        present: bool,
+    }
+
+    impl Render for LockedRow {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let row = locked_use_row(window, cx);
+            self.present = row.is_some();
+            div().w_full().children(row)
+        }
+    }
+
+    struct CachedIcons {
+        image: Arc<RenderImage>,
+        source: Arc<gpui::Image>,
+        visible: bool,
+    }
+
+    impl Render for CachedIcons {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let mut content = div();
+            if self.visible {
+                let cache = icon_cache(window, cx);
+                cache.update(cx, |entry, cx| {
+                    let pixels = image::RgbaImage::from_pixel(2, 2, image::Rgba([20, 40, 60, 255]));
+                    *entry = Some(SystemIcons {
+                        sources: [self.source.clone(), self.source.clone()],
+                        pixels: [pixels.clone(), pixels],
+                        raster: Some((
+                            Bounds::default(),
+                            1.,
+                            cx.theme().background_panel,
+                            Bounds::default(),
+                            self.image.clone(),
+                        )),
+                    });
+                });
+                content = content.child(img(self.image.clone()).size(px(2.)));
+            }
+            content
+        }
+    }
 
     #[test]
     fn unscaled_icon_origin_snaps_before_the_css_transform() {
@@ -374,5 +465,126 @@ mod image_tests {
         );
         assert!((f32::from(origin.x) * 2. - 922.7).abs() < 0.0001);
         assert!((f32::from(origin.y) * 2. - 686.05).abs() < 0.0001);
+    }
+
+    #[test]
+    fn leaving_the_page_releases_its_icon_atlas_entry() {
+        let pixels = image::RgbaImage::from_pixel(2, 2, image::Rgba([20, 40, 60, 255]));
+        let mut png = std::io::Cursor::new(Vec::new());
+        pixels.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let source = Arc::new(gpui::Image::from_bytes(
+            gpui::ImageFormat::Png,
+            png.into_inner(),
+        ));
+        let image = Arc::new(RenderImage::new([image::Frame::new(pixels)]));
+        let mut cx = app();
+        let view = cx.update(|cx| {
+            cx.new(|_| CachedIcons {
+                image: image.clone(),
+                source,
+                visible: true,
+            })
+        });
+        let window = cx
+            .open_window(size(px(100.), px(100.)), |_, _| view.clone())
+            .unwrap();
+        for _ in 0..3 {
+            cx.update(|cx| {
+                view.update(cx, |view, cx| {
+                    view.visible = true;
+                    cx.notify();
+                })
+            });
+            cx.run_until_parked();
+            assert!(
+                cx.update_window(window.into(), |_, window, _| {
+                    window.has_image_atlas_entry(&image)
+                })
+                .unwrap()
+            );
+            cx.update(|cx| {
+                view.update(cx, |view, cx| {
+                    view.visible = false;
+                    cx.notify();
+                })
+            });
+            cx.run_until_parked();
+            cx.update(|cx| view.update(cx, |_, cx| cx.notify()));
+            cx.run_until_parked();
+            assert!(
+                !cx.update_window(window.into(), |_, window, _| {
+                    window.has_image_atlas_entry(&image)
+                })
+                .unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn locked_use_requires_confirmed_policy_and_rejects_repeated_pending_input() {
+        let mut cx = app();
+        let view = cx.update(|cx| cx.new(|_| LockedRow { present: false }));
+        let window = cx
+            .open_window(size(px(726.), px(100.)), |_, _| view.clone())
+            .unwrap();
+        let allowed = LockedUsePolicy {
+            locked_use_enabled: true,
+            slingshot_enabled: true,
+            ..Default::default()
+        };
+        for (policy, enabled, present) in [
+            (LockedUsePolicy::default(), Some(false), false),
+            (allowed.clone(), None, false),
+            (allowed.clone(), Some(false), true),
+        ] {
+            cx.update(|cx| {
+                cx.set_global(NativeSettingsState {
+                    policy,
+                    locked_use: LockedUseState {
+                        enabled,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                });
+                view.update(cx, |_, cx| cx.notify());
+            });
+            cx.run_until_parked();
+            cx.update(|cx| assert_eq!(view.read(cx).present, present));
+        }
+        cx.update_window(window.into(), |_, window, cx| click_toggle(window, cx))
+            .unwrap();
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let state = cx.global::<NativeSettingsState>();
+            assert!(!state.pending);
+            assert_eq!(state.locked_use.enabled, Some(false));
+        });
+
+        let requests = Arc::new(AtomicUsize::new(0));
+        let sent = requests.clone();
+        cx.update(|cx| {
+            cx.update_global::<NativeSettingsState, _>(|state, _| {
+                state.dispatch = Some(Arc::new(move |enabled, cx| {
+                    assert!(enabled);
+                    sent.fetch_add(1, Ordering::Relaxed);
+                    cx.update_global::<NativeSettingsState, _>(|state, _| state.pending = true);
+                }));
+            });
+            view.update(cx, |_, cx| cx.notify());
+        });
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| {
+            for _ in 0..2 {
+                click_toggle(window, cx);
+            }
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(requests.load(Ordering::Relaxed), 1);
+        cx.update(|cx| {
+            let state = cx.global::<NativeSettingsState>();
+            assert!(state.pending);
+            assert_eq!(state.locked_use.enabled, Some(false));
+        });
     }
 }
