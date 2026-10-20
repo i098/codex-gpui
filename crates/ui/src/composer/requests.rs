@@ -737,7 +737,7 @@ impl Composer {
         let title = div().id("request-title").flex_1().min_w_0().child(text(
             title,
             if form.picker() { 13. } else { 14. },
-            if form.picker() { 18.5703125 } else { 20. },
+            if form.picker() { 18.570_313 } else { 20. },
             500.,
             t.text,
         ));
@@ -1273,7 +1273,7 @@ impl Composer {
         div()
             .id(id)
             .relative()
-            .h(px(if mcp && !primary { 24.5703125 } else { 28. }))
+            .h(px(if mcp && !primary { 24.570_313 } else { 28. }))
             .px(px(9.))
             .when(native, |d| d.py(px(1.)))
             .when(permission && primary, |d| d.pr(px(4.)))
@@ -1310,7 +1310,7 @@ impl Composer {
             .child(text(
                 label,
                 13.,
-                if mcp { 18.5703125 } else { 18. },
+                if mcp { 18.570_313 } else { 18. },
                 if form_submit { 500. } else { 430. },
                 foreground,
             ))

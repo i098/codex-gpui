@@ -1,5 +1,6 @@
 use super::*;
 use base64::Engine as _;
+use gpui::{Image, ImageFormat};
 
 pub(super) type McpImages = RefCell<HashMap<String, Vec<(usize, Arc<Image>)>>>;
 
@@ -566,15 +567,11 @@ pub(super) fn activity(
             Activity::Mcp(item) => {
                 let ThreadItem::McpToolCall {
                     id,
-                    server,
-                    tool,
                     status,
-                    arguments,
                     result,
                     error,
-                    duration_ms,
                     progress,
-                    metadata,
+                    ..
                 } = item
                 else {
                     unreachable!();
@@ -590,10 +587,10 @@ pub(super) fn activity(
                     .w_full()
                     .flex()
                     .flex_col()
-                    .gap(px(8.))
+                    .gap(px(4.))
                     .child(disclosure(
                         key,
-                        "settings-computer-use",
+                        "thread-mcp",
                         label(mcp_label(item), color),
                         is_open,
                     ));
@@ -606,9 +603,15 @@ pub(super) fn activity(
                     }
                     if let Some(result) = result {
                         if let Some(blocks) = result["content"].as_array() {
+                            let mut output = div().flex().flex_col().gap(px(2.));
                             for (index, block) in blocks.iter().enumerate() {
                                 if let Some(text) = block["text"].as_str() {
-                                    content = content.child(markdown(text, window, t, &[]));
+                                    output = output.child(mcp_output(
+                                        format!("{id}-text-{index}"),
+                                        "plaintext",
+                                        text,
+                                        t,
+                                    ));
                                 } else if block["type"] == "image" {
                                     let mut images = images.borrow_mut();
                                     let decoded = images.entry(id.clone()).or_insert_with(|| {
@@ -633,10 +636,10 @@ pub(super) fn activity(
                                     if let Some((_, image)) =
                                         decoded.iter().find(|(at, _)| *at == index)
                                     {
-                                        content =
-                                            content.child(gpui::img(image.clone()).max_w_full());
+                                        output =
+                                            output.child(gpui::img(image.clone()).max_w_full());
                                     } else {
-                                        content = content.child(text(
+                                        output = output.child(text(
                                             "Could not display tool image",
                                             14.,
                                             21.,
@@ -646,43 +649,23 @@ pub(super) fn activity(
                                     }
                                 }
                             }
+                            content = content.child(output);
                         }
                         if let Some(structured) = result.get("structuredContent") {
-                            content = content.child(markdown(
-                                &format!("```json\n{structured:#}\n```"),
-                                window,
+                            content = content.child(mcp_output(
+                                format!("{id}-structured"),
+                                "json",
+                                &format!("{structured:#}"),
                                 t,
-                                &[],
                             ));
                         }
                     }
                     if let Some(error) = error {
-                        content = content.child(markdown(
+                        content = content.child(mcp_output(
+                            format!("{id}-error"),
+                            "plaintext",
                             error["message"].as_str().unwrap_or("Tool call failed"),
-                            window,
                             t,
-                            &[],
-                        ));
-                    }
-                    let raw_key = format!("mcp-raw-{id}");
-                    let raw_open = open.contains(&raw_key);
-                    content = content.child(disclosure(
-                        raw_key,
-                        "thread-read",
-                        label("Show raw tool call output".into(), text60),
-                        raw_open,
-                    ));
-                    if raw_open {
-                        let raw = serde_json::json!({
-                            "server": server, "tool": tool, "arguments": arguments,
-                            "result": result, "error": error, "durationMs": duration_ms,
-                            "metadata": metadata,
-                        });
-                        content = content.child(markdown(
-                            &format!("```json\n{raw:#}\n```"),
-                            window,
-                            t,
-                            &[],
                         ));
                     }
                 }
@@ -742,6 +725,40 @@ pub(super) fn activity(
         });
     }
     col
+}
+
+fn mcp_output(id: String, language: &'static str, value: &str, t: &Theme) -> Div {
+    let color = t.text_alpha_60.opacity(5. / 6.);
+    div()
+        .relative()
+        .w_full()
+        .p(px(1.))
+        .child(shapes::decoration(shapes::Decoration {
+            radius: Corners::all(px(12.5)),
+            fill: Some(t.ghost_hover),
+            border: Some((px(1.), t.border_strong)),
+            ..Default::default()
+        }))
+        .child(
+            div()
+                .px(px(8.))
+                .py(px(4.))
+                .layer()
+                .child(text(language, 13., 18.570_313, 430., color)),
+        )
+        .child(
+            div()
+                .id(SharedString::from(id))
+                .max_h(px(192.))
+                .overflow_y_scroll()
+                .layer()
+                .p(px(8.))
+                .child(
+                    text(value.to_owned(), 14., 22.75, 430., color)
+                        .font_family(MONO)
+                        .whitespace_normal(),
+                ),
+        )
 }
 
 fn mcp_label(item: &ThreadItem) -> String {

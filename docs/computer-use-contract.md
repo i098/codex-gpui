@@ -164,3 +164,11 @@ The runtime slice checks installation and registration without a model turn or n
 An isolated Mac check used the installed ChatGPT `26.1013.40934` and CUA `0.0.30/20261014203459-0849368674e2`.
 The app-server reported the three LCU lifecycle hooks as trusted.
 This is registration proof, not acceptance of permissions, desktop input, browser control, Messages, or locked use.
+
+A native Root turn used GPT-6.1 Sol and LCU to read an owned, nonactivating scratch app.
+The thread retained the returned marker and its app approval.
+The Stop hook ran once.
+Reset ran one live cleanup; the final Stop had no live surface to clean.
+A 30-second JavaScript wait delayed the single Interrupt cleanup until the call ended.
+The original one-second hook envelope timed out before that cleanup completed.
+This does not verify built-in Browser, Messages, or locked use.

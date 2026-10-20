@@ -48,9 +48,10 @@ Stop active chats before changing that switch or installing the runtime.
 Failed writes keep the last confirmed Settings values.
 
 Thread items retain MCP arguments, text, images, structured results, errors, progress, and unknown metadata.
-Open a tool row to inspect its result or raw output.
+Open a tool row to inspect its result.
 Repeated Stop actions send one interrupt while the turn stops.
 LCU and the trusted app-server hooks own cleanup, including reset; the native app does not send another `turn_ended`.
+An in-flight JavaScript call can delay Interrupt cleanup; the original hook can report a timeout before cleanup completes.
 
 Run `cargo test -p app --test computer_use_lifecycle` on macOS for native Stop and thread-projection regression checks.
 

@@ -1905,7 +1905,7 @@ impl Render for Composer {
                     .when(self.request_parent.is_some(), |d| {
                         d.px(px(1.))
                             .py(px(if self.secret {
-                                8.44921875
+                                8.449_219
                             } else if self.request_compact {
                                 8.
                             } else {
