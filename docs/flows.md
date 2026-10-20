@@ -327,9 +327,11 @@ The existing replay checks the original colors, row actions, tooltips, canceled 
 
 The retained native Home input capture reaches `Choose project` and `This computer` with Tab and Shift-Tab.
 Pointer movement keeps the keyboard ring; a pointer press clears it.
+Tab and Shift-Tab scroll an overflowing utility bar to the focused control.
 `Choose project` keeps the existing native folder picker; `This computer` still has no location-menu handler.
+The original `⌥⇧⌘O` shortcut and `⌘O` open that same picker.
 Home derives live fades from the scroll range and captures the finished-animation mask for static references.
-The project folder uses the existing runtime icon path so the mask affects its pixels.
+Both utility icons use the runtime path so the scroll masks affect their pixels.
 The capture regression checks live-state restoration, another window, a closed-window error, and the reduced-motion preference.
 The focused project-control crop now matches the original, including the tooltip shadow over the ring.
 The original recordings, masks and strict gates stay unchanged; remaining tooltip and rail differences are tracked separately.
@@ -1111,7 +1113,7 @@ The [strict static report](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/f
 
 ## Native project selection and chat directories
 
-`Choose project`, the selected Home title, `⌘O`, File > Open Folder, and the `Open folder` command use GPUI's folder picker.
+`Choose project`, the selected Home title, `⌘O`, `⌥⇧⌘O`, File > Open Folder, and the `Open folder` command use GPUI's folder picker.
 The picker accepts one folder and does not change the selection or the current chat when canceled.
 The local host adds the folder to the existing `local-projects` and `project-order` records.
 It retains other projects and unrelated values in `.codex-global-state.json`.
