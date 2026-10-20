@@ -7,8 +7,9 @@ use crate::{Shell, focus, icon::icon, rounded_clip, text};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyView, AnyWindowHandle, App, AppContext as _, Context, Corners, Div, Entity, Global, Hsla,
-    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement, Pixels, Render, ScrollHandle,
-    SharedString, Stateful, StatefulInteractiveElement as _, Styled, Window, actions, div, px,
+    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement, Pixels, Render,
+    ScrollHandle, SharedString, Stateful, StatefulInteractiveElement as _, Styled, Window, actions,
+    div, px,
 };
 use theme::{ActiveTheme as _, Theme};
 
