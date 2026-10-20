@@ -9,7 +9,9 @@ use crate::{
     icon::icon,
     in_layer, layout_color,
     motion::{self, HoverFade},
-    over, rounded_clip, sidebar_section, text,
+    over, rounded_clip,
+    settings_kit::{self, MultiSelect, select_control},
+    sidebar_section, text,
 };
 use bridge::Bridge;
 use bridge::types::{AccountReadResponse, ConfigReadResponse, Model};
@@ -554,6 +556,7 @@ pub struct SettingsPane {
     menu_hovered: bool,
     config_menu_index: Option<usize>,
     git_fields: Vec<(&'static str, Entity<Composer>)>,
+    reasoning_select: Option<Entity<MultiSelect>>,
 }
 
 /// `Confirm before closing a window` options, default first.
@@ -571,13 +574,16 @@ const SEND_OPTIONS: &[(&str, &str)] = &[
 
 impl SettingsPane {
     fn new(page: Entity<SettingsPage>, cx: &mut Context<Self>) -> Self {
-        cx.observe(&page, |_, page, cx| {
+        cx.observe(&page, |this, page, cx| {
             if page.read(cx).section != "Git" {
                 page.update(cx, |page, cx| {
                     for change in page.take_pending_instructions() {
                         page.set(change.path, change.value, cx);
                     }
                 });
+            }
+            if page.read(cx).section == "Configuration" {
+                this.sync_reasoning_select(cx);
             }
             cx.notify();
         })
@@ -589,6 +595,7 @@ impl SettingsPane {
             menu_hovered: false,
             config_menu_index: None,
             git_fields: Vec::new(),
+            reasoning_select: None,
         }
     }
 
@@ -1292,6 +1299,7 @@ impl Render for SettingsPane {
         }
         if section == "Configuration" {
             self.page.update(cx, |page, cx| page.load_configuration(cx));
+            self.ensure_reasoning_select(cx);
         }
         let groups = match section {
             "General" => self.general(&t, window, cx),
@@ -1314,14 +1322,7 @@ impl Render for SettingsPane {
             } else {
                 None
             };
-            let heading = heading.unwrap_or_else(|| {
-                div()
-                    .h(px(46.))
-                    .pb(px(6.))
-                    .flex()
-                    .items_center()
-                    .child(text(title, 14., 21., 500., t.text))
-            });
+            let heading = heading.unwrap_or_else(|| settings_kit::section_header(title, &t));
             div()
                 .flex()
                 .flex_col()
@@ -1644,35 +1645,6 @@ fn select(
         t,
         icon("chevron-down", 14., t.text_tertiary),
     )
-}
-
-fn select_control(
-    label: Div,
-    leading: Option<AnyElement>,
-    disabled: bool,
-    fill: Hsla,
-    t: &Theme,
-    chevron: impl IntoElement,
-) -> Div {
-    div()
-        .h(px(28.))
-        .px(px(13.))
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap(px(4.))
-        .relative()
-        .child(on_card(12.5, Squircle, fill, Some(t.border)))
-        .when(disabled, |d| d.opacity(0.4))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(6.))
-                .children(leading)
-                .child(label),
-        )
-        .child(chevron)
 }
 
 /// The `Zed` app icon `<img>` (the app's 64 px `apps/zed.png` in an 18 px box) over the

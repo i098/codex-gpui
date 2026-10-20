@@ -99,6 +99,69 @@ fn keyboard_skips_locked_choices_and_restores_trigger_focus() {
 }
 
 #[test]
+fn live_choices_preserve_open_menu_and_pending_writes_block_toggles() {
+    let choice = |value: &'static str, checked, disabled| Choice {
+        value: value.into(),
+        label: value.into(),
+        checked,
+        disabled,
+    };
+    let mut cx =
+        HeadlessAppContext::with_platform(textsys::text_system(), Arc::new(theme::Assets), || {
+            gpui_platform::current_headless_renderer()
+        });
+    cx.update(|cx| cx.set_global(theme::Theme::dark()));
+    let window = cx
+        .open_window(size(px(500.), px(400.)), move |window, cx| {
+            let menu = cx.new(|cx| {
+                MultiSelect::new(
+                    "Efforts",
+                    vec![choice("medium", true, true), choice("max", false, false)],
+                    cx,
+                )
+            });
+            menu.read(cx).focus_handle(cx).focus(window, cx);
+            menu
+        })
+        .unwrap();
+    cx.run_until_parked();
+    press(&mut cx, window.into(), "down");
+    cx.update(|cx| {
+        window
+            .update(cx, |menu, _, cx| menu.set_disabled(true, cx))
+            .unwrap()
+    });
+    press(&mut cx, window.into(), "space");
+    cx.update(|cx| {
+        window
+            .update(cx, |menu, _, cx| {
+                assert!(!menu.choices()[1].checked);
+                menu.set_choices(
+                    vec![
+                        choice("medium", true, true),
+                        choice("max", false, false),
+                        choice("ultra", false, false),
+                    ],
+                    cx,
+                );
+                menu.set_disabled(false, cx);
+            })
+            .unwrap()
+    });
+    press(&mut cx, window.into(), "end");
+    press(&mut cx, window.into(), "space");
+    cx.update(|cx| {
+        window
+            .update(cx, |menu, _, _| {
+                assert!(menu.choices()[0].checked);
+                assert!(!menu.choices()[1].checked);
+                assert!(menu.choices()[2].checked);
+            })
+            .unwrap()
+    });
+}
+
+#[test]
 fn destructive_confirmation_defaults_to_cancel_and_returns_focus() {
     use std::{cell::RefCell, rc::Rc};
     use ui::confirmation::{Confirmation, Outcome};

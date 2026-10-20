@@ -428,7 +428,10 @@ fn open_config_preserves_existing_content_and_creates_missing_file() -> Result<(
     );
     std::fs::remove_file(&config_path)?;
     std::fs::remove_file(&opened)?;
-    fx.click((1080., 278.))?;
+    fx.keys("enter")?;
+    fx.input(gpui::PlatformInput::KeyUp(gpui::KeyUpEvent {
+        keystroke: gpui::Keystroke::parse("enter")?,
+    }))?;
     fx.wait("new config opened", |_| {
         std::fs::read_to_string(&opened).is_ok_and(|text| text.contains("config.toml"))
     })?;

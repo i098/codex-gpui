@@ -277,180 +277,69 @@ impl SettingsPane {
         });
     }
 
+    pub(super) fn ensure_reasoning_select(&mut self, cx: &mut Context<Self>) {
+        if self.reasoning_select.is_some() {
+            return;
+        }
+        let choices = reasoning_choices(self.page.read(cx));
+        let disabled = self
+            .page
+            .read(cx)
+            .pending_config
+            .contains(&"host.enabled-reasoning-efforts");
+        let select = cx.new(|cx| {
+            MultiSelect::new("Available reasoning efforts", choices, cx)
+                .menu_width(240.)
+                .row_padding(5.)
+                .menu_offset(30.)
+        });
+        if disabled {
+            select.update(cx, |select, cx| select.set_disabled(true, cx));
+        }
+        cx.subscribe(
+            &select,
+            |this, _, change: &settings_kit::SelectionChanged, cx| {
+                let effort = match change.value.as_ref() {
+                    "max" => "max",
+                    "ultra" => "ultra",
+                    _ => return,
+                };
+                this.toggle_reasoning_effort(effort, cx);
+            },
+        )
+        .detach();
+        self.reasoning_select = Some(select);
+    }
+
+    pub(super) fn sync_reasoning_select(&self, cx: &mut Context<Self>) {
+        let Some(select) = &self.reasoning_select else {
+            return;
+        };
+        let page = self.page.read(cx);
+        let choices = reasoning_choices(page);
+        let disabled = page
+            .pending_config
+            .contains(&"host.enabled-reasoning-efforts");
+        select.update(cx, |select, cx| {
+            select.set_choices(choices, cx);
+            select.set_disabled(disabled, cx);
+        });
+    }
+
     fn model_features(
         &self,
         t: &Theme,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<(&'static str, Vec<Div>)> {
-        const KEY: &str = "host.enabled-reasoning-efforts";
         let page = self.page.read(cx);
-        let optional = [
-            ("max", page.supports_max_effort),
-            ("ultra", page.supports_ultra_effort),
-        ];
-        if !optional.iter().any(|(_, supported)| *supported) && !page.supports_persistent_effort {
+        if !page.supports_max_effort
+            && !page.supports_ultra_effort
+            && !page.supports_persistent_effort
+        {
             return None;
         }
-        let selected = 4
-            + usize::from(page.supports_persistent_effort)
-            + optional
-                .iter()
-                .filter(|(effort, supported)| {
-                    *supported && crate::composer::reasoning_effort_enabled(effort, page.get(KEY))
-                })
-                .count();
-        let pending = page.pending_config.contains(&KEY);
-        let open = self.open_select == Some(KEY);
-        let menu = open.then(|| {
-            let mut items = Vec::new();
-            for effort in crate::composer::DEFAULT_REASONING_EFFORTS[..4]
-                .iter()
-                .copied()
-                .chain(page.supports_persistent_effort.then_some("persistent"))
-            {
-                items.push(
-                    div()
-                        .px(px(8.))
-                        .py(px(5.))
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .opacity(0.5)
-                        .child(text(
-                            crate::composer::effort_label(effort),
-                            13.,
-                            18.571_428,
-                            430.,
-                            t.text,
-                        ))
-                        .child(icon("menu-check", 16., t.text).runtime())
-                        .into_any_element(),
-                );
-            }
-            for (index, (effort, supported)) in optional.into_iter().enumerate() {
-                if !supported {
-                    continue;
-                }
-                let enabled = crate::composer::reasoning_effort_enabled(effort, page.get(KEY));
-                let hover = t.menu_item_hover;
-                let row = div()
-                    .id(effort)
-                    .px(px(8.))
-                    .py(px(5.))
-                    .rounded(px(12.))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .when(self.config_menu_index == Some(index), |d| d.bg(hover))
-                    .hover(move |style| style.bg(hover))
-                    .child(text(
-                        crate::composer::effort_label(effort),
-                        13.,
-                        18.571_428,
-                        430.,
-                        t.text,
-                    ))
-                    .child(div().size(px(16.)).when(enabled, |d| {
-                        d.child(icon("menu-check", 16., t.text).runtime())
-                    }))
-                    .when(!pending, |d| {
-                        d.on_click(cx.listener(move |this, _, _, cx| {
-                            this.toggle_reasoning_effort(effort, cx)
-                        }))
-                    });
-                items.push(row.into_any_element());
-            }
-            deferred(
-                div().absolute().top_0().right_0().child(
-                    anchored()
-                        .anchor(Anchor::TopRight)
-                        .offset(point(px(0.), px(30.)))
-                        .child(
-                            div()
-                                .id("reasoning-effort-menu")
-                                .on_hover(cx.listener(|this, hovered: &bool, _, _| {
-                                    this.menu_hovered = *hovered
-                                }))
-                                .child(popover(t, 240., |d| d.children(items))),
-                        ),
-                ),
-            )
-        });
-        let focus = focus::handle(KEY, 0, window, cx);
-        let handle = focus.read(cx).handle.clone();
-        let control = focus::ring(
-            select_control(
-                text(format!("{selected} selected"), 13., 18., 430., t.text),
-                None,
-                pending,
-                if open {
-                    t.ghost_hover
-                } else {
-                    t.primary_soft_alpha
-                },
-                t,
-                icon("chevron-down", 14., t.text_tertiary).runtime(),
-            )
-            .id(KEY)
-            .relative(),
-            &focus,
-            px(12.5),
-            px(2.),
-            cx,
-        )
-        .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
-            handle.focus(window, cx)
-        })
-        .on_click(cx.listener(move |this, _, _, cx| {
-            if !pending {
-                this.open_select = (!open).then_some(KEY);
-                this.config_menu_index = None;
-                cx.notify();
-            }
-        }))
-        .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
-            focus::tab(event, window, cx);
-            if matches!(event.keystroke.key.as_str(), "escape" | "tab") {
-                this.open_select = None;
-                cx.notify();
-                return;
-            }
-            if pending {
-                return;
-            }
-            match event.keystroke.key.as_str() {
-                "enter" | "space" if this.open_select == Some(KEY) => {
-                    let index = this
-                        .config_menu_index
-                        .unwrap_or_else(|| usize::from(!optional[0].1));
-                    this.toggle_reasoning_effort(optional[index].0, cx);
-                }
-                "enter" | "space" | "down" | "up" | "home" | "end" => {
-                    let index = if event.keystroke.key == "end" {
-                        1
-                    } else if event.keystroke.key == "home" {
-                        0
-                    } else {
-                        this.config_menu_index.map_or(0, |index| 1 - index)
-                    };
-                    this.config_menu_index =
-                        Some(if optional[index].1 { index } else { 1 - index });
-                    this.open_select = Some(KEY);
-                }
-                _ => return,
-            }
-            cx.stop_propagation();
-            cx.notify();
-        }))
-        .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
-            if open && !this.menu_hovered {
-                this.open_select = None;
-                cx.notify();
-            }
-        }))
-        .children(menu)
-        .into_any_element();
+        let control = self.reasoning_select.as_ref()?.clone().into_any_element();
         Some((
             "Model features",
             vec![settings_row(
@@ -618,41 +507,21 @@ impl SettingsPane {
         cx: &mut Context<Self>,
     ) -> Div {
         let enabled = self.page.read(cx).configuration_loaded;
-        let open = div()
-            .id("open-config-toml")
-            .h(px(28.))
-            .px(px(9.))
-            .flex()
-            .items_center()
-            .gap(px(4.))
-            .child(text("Open config.toml", 13., 18., 430., t.text_tertiary))
-            .child(icon("arrow-up-right", 14., t.text_tertiary).runtime());
-        let open = if enabled {
-            let state = focus::handle("open-config-toml", 0, window, cx);
-            let handle = state.read(cx).handle.clone();
-            focus::ring(open.relative(), &state, px(12.5), px(2.), cx)
-                .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
-                    handle.focus(window, cx)
-                })
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.page.update(cx, |_, cx| cx.emit(OpenConfigToml));
-                }))
-                .into_any_element()
-        } else {
-            open.opacity(0.4).into_any_element()
-        };
+        let open = settings_kit::external_action_row(
+            "open-config-toml",
+            "Open config.toml",
+            enabled,
+            cx.listener(|this, _, _, cx| {
+                this.page.update(cx, |_, cx| cx.emit(OpenConfigToml));
+            }),
+            window,
+            cx,
+        );
         let scope = self.user_config_scope(t, window, cx);
         div()
             .flex()
             .flex_col()
-            .child(
-                div()
-                    .h(px(46.))
-                    .pb(px(6.))
-                    .flex()
-                    .items_center()
-                    .child(text("Agent defaults", 14., 21., 500., t.text)),
-            )
+            .child(settings_kit::section_header("Agent defaults", t))
             .child(
                 div()
                     .h(px(46.))
@@ -970,4 +839,37 @@ pub(super) fn subtitle(t: &Theme, window: &mut Window, cx: &mut App) -> AnyEleme
             }
         })
         .into_any_element()
+}
+
+fn reasoning_choices(page: &SettingsPage) -> Vec<settings_kit::Choice> {
+    let mut choices = Vec::with_capacity(7);
+    for effort in crate::composer::DEFAULT_REASONING_EFFORTS[..4]
+        .iter()
+        .copied()
+        .chain(page.supports_persistent_effort.then_some("persistent"))
+    {
+        choices.push(settings_kit::Choice {
+            value: effort.into(),
+            label: crate::composer::effort_label(effort).into(),
+            checked: true,
+            disabled: true,
+        });
+    }
+    for (effort, supported) in [
+        ("max", page.supports_max_effort),
+        ("ultra", page.supports_ultra_effort),
+    ] {
+        if supported {
+            choices.push(settings_kit::Choice {
+                value: effort.into(),
+                label: crate::composer::effort_label(effort).into(),
+                checked: crate::composer::reasoning_effort_enabled(
+                    effort,
+                    page.get("host.enabled-reasoning-efforts"),
+                ),
+                disabled: false,
+            });
+        }
+    }
+    choices
 }

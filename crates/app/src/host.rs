@@ -523,7 +523,8 @@ impl LocalHost {
                 .unwrap_or_else(|| {
                     PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".codex")
                 }),
-        ).with_dependencies_root(
+        )
+        .with_dependencies_root(
             PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
                 .join(".cache")
                 .join("codex-runtimes"),
