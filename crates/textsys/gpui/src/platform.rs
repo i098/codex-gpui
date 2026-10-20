@@ -548,6 +548,11 @@ pub trait Platform: 'static {
         _ = callback;
     }
 
+    /// Registers the main-thread handler for submitted inline notification replies.
+    fn on_system_notification_reply(&self, callback: Box<dyn FnMut(SystemNotificationReply)>) {
+        _ = callback;
+    }
+
     fn compositor_name(&self) -> &'static str {
         ""
     }
@@ -657,6 +662,9 @@ pub struct SystemNotification {
     /// Buttons offered on the notification. Platforms that cannot display
     /// action buttons show the notification without them.
     pub actions: Vec<SystemNotificationAction>,
+    /// Inline-reply prompt on platforms that support text-input notification actions.
+    /// The macOS reply field is omitted until a reply handler is registered.
+    pub reply_placeholder: Option<SharedString>,
 }
 
 /// A button offered on a [`SystemNotification`].
@@ -677,6 +685,15 @@ pub struct SystemNotificationResponse {
     /// The pressed action button's [`SystemNotificationAction::id`], or
     /// `None` when the user activated the notification body itself.
     pub action_id: Option<SharedString>,
+}
+
+/// Text submitted through a notification's inline-reply action.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SystemNotificationReply {
+    /// The identifier of the notification being answered.
+    pub tag: SharedString,
+    /// The submitted text, without application-specific normalization.
+    pub text: SharedString,
 }
 
 /// Thermal state of the system

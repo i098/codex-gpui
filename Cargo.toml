@@ -1,8 +1,10 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+members = ["crates/*", "vendor/gpui_macos"]
+default-members = ["crates/*"]
 # Vendored gpui (Blink pixel snapping) and gpui_apple (Skia glyph blend); used through
 # [patch], not members. Vendored rrule 0.14.0 (original recurrence limits) is a path dependency.
+# The macOS platform is a member so its native payload tests can run.
 exclude = ["crates/textsys/gpui", "crates/textsys/gpui_apple", "vendor/rrule"]
 
 [workspace.package]
@@ -27,6 +29,7 @@ calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee
 [patch."https://github.com/zed-industries/zed"]
 gpui = { path = "crates/textsys/gpui" }
 gpui_apple = { path = "crates/textsys/gpui_apple" }
+gpui_macos = { path = "vendor/gpui_macos" }
 
 [profile.dev]
 debug = "limited"
