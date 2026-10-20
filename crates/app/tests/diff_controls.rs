@@ -13,7 +13,7 @@ use std::{
     process::Command,
     sync::Arc,
 };
-use ui::screens::diff::panel::{DiffPanel, RepositoryChanges};
+use ui::screens::diff::panel::{DiffLayout, DiffPanel, RepositoryChanges};
 
 const PATCH: &str = "diff --git a/src/math.py b/src/math.py\n--- a/src/math.py\n+++ b/src/math.py\n@@ -1,2 +1,2 @@\n def add(a, b):\n-    return a - b\n+    return a + b\n";
 fn out() -> PathBuf {
@@ -213,14 +213,27 @@ fn header_wrap_retry_and_line_navigation_use_native_input() -> Result<()> {
     let standalone = fx.cx.open_window(size(px(1280.), px(832.)), |_, cx| {
         cx.new(|_| DiffPanel::from_patch(&cwd, PATCH))
     })?;
+    let standalone_panel = fx.cx.read_window(&standalone, |panel, _| panel)?;
     fx.window = standalone.into();
     fx.size = (1280., 832.);
     shot(&mut fx, "standalone-auto-1280")?;
-    fx.click((1183., 22.))?;
+    fx.click((1153., 22.))?;
+    ensure!(
+        standalone_panel.read_with(&fx.cx, |panel, _| panel.layout()) == DiffLayout::Unified,
+        "the unified control did not select unified layout"
+    );
     shot(&mut fx, "standalone-unified")?;
-    fx.click((1219., 22.))?;
+    fx.click((1189., 22.))?;
+    ensure!(
+        standalone_panel.read_with(&fx.cx, |panel, _| panel.layout()) == DiffLayout::Split,
+        "the split control did not select split layout"
+    );
     shot(&mut fx, "standalone-split")?;
-    fx.click((1255., 22.))?;
+    fx.click((1225., 22.))?;
+    ensure!(
+        standalone_panel.read_with(&fx.cx, |panel, _| panel.layout()) == DiffLayout::Auto,
+        "the auto control did not select automatic layout"
+    );
     fx.resize(767., 832.)?;
     shot(&mut fx, "standalone-auto-767")?;
     fx.resize(600., 832.)?;

@@ -482,6 +482,7 @@ Diff controls reuse `DiffPanel` for the thread panel and the standalone `/diff <
 The standalone entry reads a Git-style unified patch from disk without starting an app-server.
 Auto uses split layout only when both sides change and the file pane is at least 800 px wide.
 The file tree filter changes the tree, not the displayed code.
+Paired replacement lines mark the changed text range.
 The header and context menu share the same word-wrap state.
 The file viewer handles `⌘L`, clamps line numbers, and counts negative numbers from the end.
 The line input stays closed until file contents are available.
@@ -493,7 +494,9 @@ A failed read or mutation adds a status row with Retry.
 `cargo test -p app --test diff_controls -- --nocapture --test-threads=1` runs the native input proof on macOS.
 `CGX_DIFF_EVIDENCE` selects its screenshot folder; the default is the system temporary folder under `cgx-diff-controls`.
 The proof covers header wrap, file filtering, layout changes, empty and loading states, real read failure, Retry, and line navigation.
-Final appearance approval remains pending.
+Original captures for the file tree and file filter remain open capture items.
+The release comparison omits both pairs and identifies its exact matching component crops.
+Whole-window pixel parity is not claimed by those component comparisons.
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
@@ -507,7 +510,7 @@ Final appearance approval remains pending.
 | 8 | Revert all | click | `Revert changes?` dialog. | File and hunk actions use the original confirmation and saved skip preference. Section-wide Revert all remains separate. | PARTIAL (`git_revert_ui`) |
 | 9 | Split / unified toggle | click | Switch diff layout. | Unified, Split, and Auto share the existing line renderer. The narrow header exposes layout through Changes options. | PASS (`diff_controls`; split pairing regression check) |
 | 10 | Word wrap | click | Toggles wrap. | The header, Changes options, and body menu toggle the same wrap state. | PASS (`diff_controls`; `s027::diff_selection_and_hover_replay`) |
-| 11 | Mark as viewed | click | Branch diffs collapse and retain the reviewed revision. | The checkbox and saved revision handling await the separate Branch source integration. Other sources do not show the checkbox. | NOT WIRED (Branch source dependency) |
+| 11 | Mark as viewed | click | Branch diffs collapse and retain the reviewed revision. | Deferred until the Branch source and stable revision contract are available. | Follow-up: [issue 300](https://github.com/i098/codex-gpui/issues/300), dependent on the operations source-menu work |
 | 12 | `⌘F` in diff | shortcut | `Search diff…`. | Focus the panel, open find, and type a query; matches highlight and update with the diff. | PASS (`s028::streamed_diff_and_find_replay`) |
 | 13 | `⌘L` | shortcut | Go to line in the file viewer. | Available files expose the line input; Enter navigates, Escape closes, and negative numbers count from the end. Unavailable files keep the input closed. | PASS (`diff_controls`; whole-line validation regression check) |
 | 14 | Line hover | hover | No background change in the recorded Last Turn state; no `data-hovered` attribute. | No background change. | PASS (`s027::diff_selection_and_hover_replay`; corrects DT-014) |

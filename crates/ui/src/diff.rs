@@ -16,7 +16,7 @@ use gpui::{
     Hsla, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
     ParentElement, Pixels, Render, Rgba, ScrollHandle, SharedString, Stateful,
     StatefulInteractiveElement, Styled, StyledText, TextRun, Window, black, combine_highlights,
-    deferred, div, font, prelude::FluentBuilder as _, px, rgb, white,
+    deferred, div, font, prelude::FluentBuilder as _, px, rgb,
 };
 use shapes::Decoration;
 use std::{cell::Cell, ops::Range, sync::Arc};
@@ -27,7 +27,7 @@ mod menu;
 
 #[path = "diff/controls.rs"]
 mod controls;
-pub use controls::{DiffLayout, ViewedChange};
+pub use controls::DiffLayout;
 
 /// Panel width the capture had stored (`app-shell:right-panel-width:v3`) before clamping.
 const STORED_WIDTH: f32 = 664.17;
@@ -37,7 +37,7 @@ const MIN_CHAT: f32 = 320.;
 const CODE_SIZE: f32 = 12.;
 const CODE_LINE: f32 = 21.6;
 /// Menlo advance at 12 px (0.602em); `--diffs-min-number-column-width` is 4ch.
-const CH: f32 = 7.224;
+const CH: f32 = 7.224_609_4;
 
 /// The panel width the user last dragged the divider to (DT-056); `STORED_WIDTH` until then.
 struct PanelWidth(Pixels);
@@ -93,6 +93,7 @@ struct Line {
     matches: Vec<Range<usize>>,
     old_number: u32,
     match_start: usize,
+    word_change: Option<Range<usize>>,
 }
 
 struct Hunk {
@@ -110,8 +111,6 @@ pub struct FileDiff {
     hunks: Vec<Hunk>,
     pub open: bool,
     problem: Option<&'static str>,
-    revision: u64,
-    viewed_key: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -188,7 +187,6 @@ pub struct DiffPanel {
     filter_focus: Option<FocusHandle>,
     scroll: ScrollHandle,
     standalone: bool,
-    viewed: std::collections::BTreeMap<String, u64>,
 }
 
 impl DiffPanel {
@@ -254,8 +252,6 @@ impl DiffPanel {
                     hunks,
                     open: true,
                     problem,
-                    revision: controls::revision(&change.diff),
-                    viewed_key: String::new(),
                 }),
             }
         }
@@ -284,7 +280,6 @@ impl DiffPanel {
             filter_focus: None,
             scroll: ScrollHandle::new(),
             standalone: false,
-            viewed: Default::default(),
         }
     }
 
@@ -450,26 +445,12 @@ impl DiffPanel {
             })
             .unwrap_or(0);
         for file in &mut files {
-            file.viewed_key = serde_json::to_string(&(
-                &self.workspace,
-                self.source.label(),
-                &file.dir,
-                &file.name,
-            ))
-            .expect("string tuple");
             if let Some(old) = self
                 .files
                 .iter()
                 .find(|old| old.dir == file.dir && old.name == file.name)
             {
-                file.open = if old.revision != file.revision && self.is_viewed(old) {
-                    true
-                } else {
-                    old.open
-                };
-            }
-            if self.is_viewed(file) {
-                file.open = false;
+                file.open = old.open;
             }
         }
         self.files = files;
@@ -922,7 +903,12 @@ impl Render for DiffPanel {
                 .flex_col()
                 .flex_none()
                 .when(self.standalone, |d| {
-                    d.bg(t.surface).rounded(px(10.)).overflow_hidden()
+                    d.relative()
+                        .overflow_hidden()
+                        .child(shapes::decoration(Decoration {
+                            fill: Some(t.surface),
+                            ..Default::default()
+                        }))
                 })
                 .on_mouse_down(
                     MouseButton::Right,
@@ -1012,6 +998,14 @@ impl Render for DiffPanel {
                                 + file.hunks.iter().map(|h| h.lines.len()).sum::<usize>(),
                         );
                         d
+                    }
+                })
+                .map(|d| {
+                    if self.standalone {
+                        crate::rounded_clip(px(12.5), shapes::Corner::Squircle, d)
+                            .into_any_element()
+                    } else {
+                        d.into_any_element()
                     }
                 })
         });
@@ -2009,50 +2003,6 @@ fn file_header(
                 .items_center()
                 .gap(px(4.))
                 .child(stats(file.added, file.removed, 14., t).mx(px(4.)))
-                .when(panel.source.label() == "Branch", |d| {
-                    let viewed = panel.is_viewed(file);
-                    d.child(
-                        div()
-                            .id(("diff-viewed", i))
-                            .role(gpui::Role::CheckBox)
-                            .aria_label(if viewed {
-                                "Mark as unviewed"
-                            } else {
-                                "Mark as viewed"
-                            })
-                            .aria_toggled(if viewed {
-                                gpui::Toggled::True
-                            } else {
-                                gpui::Toggled::False
-                            })
-                            .focusable()
-                            .tab_index(0)
-                            .cursor_pointer()
-                            .size(px(20.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.toggle_viewed(i, cx);
-                                cx.stop_propagation();
-                            }))
-                            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
-                                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                                    this.toggle_viewed(i, cx);
-                                    cx.stop_propagation();
-                                }
-                            }))
-                            .child(
-                                div()
-                                    .size(px(14.))
-                                    .rounded(px(3.))
-                                    .border_1()
-                                    .border_color(t.text_tertiary)
-                                    .when(viewed, |d| d.child(icon("menu-check", 12., t.text))),
-                            ),
-                    )
-                })
                 .when(panel.source != DiffSource::LastTurn, |d| {
                     d.child(
                         small("thread-undo")
@@ -2123,6 +2073,9 @@ struct Syntax {
     string: Hsla,
     comment: Hsla,
     literal: Hsla,
+    parameter: Hsla,
+    punctuation: Hsla,
+    operator: Hsla,
 }
 
 impl Syntax {
@@ -2136,11 +2089,14 @@ impl Syntax {
             .into()
         };
         Self {
-            keyword: c(0xf8a6c8, 0xab4f7a),
-            name: c(0x63a8f8, 0x1f4e94),
+            keyword: c(0xf67576, 0xd53538),
+            name: c(0xb06dff, 0x751ed9),
             string: c(0x83d197, 0x3a843f),
             comment: c(0xb9b9b9, 0x4f4f4f),
             literal: c(0xf1a275, 0xac4f23),
+            parameter: c(0xfa994c, 0xbd5800),
+            punctuation: c(0x999999, 0x666666),
+            operator: c(0x6dcbf4, 0x0071ea),
         }
     }
 }
@@ -2156,6 +2112,8 @@ const KEYWORDS: &[&str] = &[
 fn highlight(line: &str, s: &Syntax) -> Vec<(Range<usize>, HighlightStyle)> {
     let b = line.as_bytes();
     let (mut i, mut prev, mut out) = (0, "", Vec::new());
+    let signature =
+        line.trim_start().starts_with("def ") || line.trim_start().starts_with("async def ");
     while i < b.len() {
         let start = i;
         let color = match b[i] {
@@ -2182,17 +2140,29 @@ fn highlight(line: &str, s: &Syntax) -> Vec<(Range<usize>, HighlightStyle)> {
                     i += 1;
                 }
                 let word = &line[start..i];
-                let color = if KEYWORDS.contains(&word) {
+                let color = if matches!(word, "def" | "class") {
+                    Some(s.name)
+                } else if KEYWORDS.contains(&word) {
                     Some(s.keyword)
                 } else if matches!(word, "True" | "False" | "None") {
                     Some(s.literal)
                 } else if matches!(prev, "def" | "class") {
                     Some(s.name)
+                } else if signature {
+                    Some(s.parameter)
                 } else {
                     None
                 };
                 prev = word;
                 color
+            }
+            b'(' | b')' | b'[' | b']' | b'{' | b'}' | b',' | b':' | b'.' => {
+                i += 1;
+                Some(s.punctuation)
+            }
+            b'+' | b'-' | b'*' | b'/' | b'%' | b'=' | b'<' | b'>' | b'&' | b'|' | b'^' | b'~' => {
+                i += 1;
+                Some(s.operator)
             }
             _ => {
                 i += 1;
@@ -2223,6 +2193,86 @@ fn mix(a: Hsla, b: Hsla, w: f32) -> Hsla {
     .into()
 }
 
+fn line_colors(kind: Kind, t: &Theme) -> (Hsla, Hsla, Hsla) {
+    let color = |dark, light| {
+        rgb(if t.appearance == Appearance::Dark {
+            dark
+        } else {
+            light
+        })
+        .into()
+    };
+    match kind {
+        Kind::Context => (t.surface, t.surface, color(0xa1a1a1, 0x585858)),
+        Kind::Added => (
+            color(0x132017, 0xedf7ed),
+            color(0x1f3124, 0xe7f4e7),
+            t.git_added,
+        ),
+        Kind::Removed => (
+            color(0x28130e, 0xfdece9),
+            color(0x3b1f1a, 0xfbe6e2),
+            t.git_deleted,
+        ),
+    }
+}
+
+fn word_mark(line: &Line, layout: gpui::TextLayout, t: &Theme) -> Option<gpui::AnyElement> {
+    let range = line.word_change.clone()?;
+    let text = line.text.clone();
+    let color = if line.kind == Kind::Added {
+        t.git_added
+    } else {
+        t.git_deleted
+    };
+    Some(
+        gpui::canvas(
+            |_, _, _| {},
+            move |_, (), window, cx| {
+                let Some(mut start) = layout.position_for_index(range.start) else {
+                    return;
+                };
+                let mut end = start;
+                let decoration = Decoration {
+                    radius: Corners::all(px(3.)),
+                    fill: Some(color.opacity(0.2)),
+                    ..Default::default()
+                };
+                let paint =
+                    |start: gpui::Point<Pixels>, end: gpui::Point<Pixels>, window: &mut Window| {
+                        shapes::paint(
+                            &decoration,
+                            None,
+                            gpui::Bounds::new(
+                                start + gpui::point(px(0.), px(3.5)),
+                                gpui::size(end.x - start.x, px(14.)),
+                            ),
+                            window,
+                            cx,
+                        );
+                    };
+                for (offset, ch) in text[range.clone()].char_indices() {
+                    let Some(here) = layout.position_for_index(range.start + offset) else {
+                        continue;
+                    };
+                    if here.y != start.y {
+                        paint(start, end, window);
+                        start = here;
+                    }
+                    let next = layout.position_for_index(range.start + offset + ch.len_utf8());
+                    end = next
+                        .filter(|p| p.y == here.y)
+                        .unwrap_or(here + gpui::point(px(CH), px(0.)));
+                }
+                paint(start, end, window);
+            },
+        )
+        .absolute()
+        .size_full()
+        .into_any_element(),
+    )
+}
+
 fn hunk(
     h: &Hunk,
     t: &Theme,
@@ -2240,7 +2290,7 @@ fn hunk(
         .unwrap_or(0)
         .to_string()
         .len();
-    let gutter = px(CH * digits.max(4) as f32 + if panel.standalone { 24. } else { 16. });
+    let gutter = px(52.5625 + CH * digits.saturating_sub(4) as f32);
     let base_index = line_index.get();
     line_index.set(base_index + h.lines.len());
     let content_width = h
@@ -2250,19 +2300,22 @@ fn hunk(
         .max()
         .unwrap_or(0) as f32
         * CH;
-    let minimum_width = (gutter + px(content_width + 8.)) * if split { 2. } else { 1. };
-    let (base, mixer) = match t.appearance {
-        Appearance::Dark => (black(), 0.15),
-        Appearance::Light => (white(), 0.09),
-    };
-    let row = |number: Option<u32>, number_bg: Hsla, bg: Hsla, content: StyledText| {
+    let minimum_width = (gutter + px(content_width + CH)) * if split { 2. } else { 1. };
+    let row = |number: Option<u32>,
+               (number_bg, number_fg): (Hsla, Hsla),
+               bg: Hsla,
+               content: StyledText,
+               mark: Option<gpui::AnyElement>,
+               bar: Option<Hsla>| {
         div()
             .h(px(CODE_LINE))
             .when(panel.wrap, |d| d.h_auto().min_h(px(CODE_LINE)))
             .flex()
+            .gap(px(2.))
             .child(
                 div()
-                    .w(gutter)
+                    .relative()
+                    .w(gutter - px(2.))
                     .flex_none()
                     .h_full()
                     .when(panel.wrap, |d| d.h_auto())
@@ -2270,36 +2323,45 @@ fn hunk(
                     .justify_end()
                     .items_center()
                     .when(panel.wrap, |d| d.items_start())
-                    .pr(px(8.))
-                    .bg(number_bg)
-                    .text_color(t.text_tertiary)
+                    .pr(px(CH))
+                    .child(shapes::decoration(Decoration {
+                        fill: Some(number_bg),
+                        ..Default::default()
+                    }))
+                    .when_some(bar, |d, color| {
+                        d.child(div().absolute().left_0().top_0().w(px(4.)).h_full().child(
+                            shapes::decoration(Decoration {
+                                fill: Some(color),
+                                ..Default::default()
+                            }),
+                        ))
+                    })
+                    .text_color(number_fg)
                     .when_some(number, |d, n| d.child(n.to_string())),
             )
             .child(
                 div()
+                    .relative()
                     .flex_1()
                     .h_full()
                     .when(panel.wrap, |d| d.h_auto().min_h(px(CODE_LINE)).min_w_0())
                     .flex()
                     .items_center()
                     .when(panel.wrap, |d| d.flex_col().items_stretch())
-                    .pl(px(8.))
-                    .bg(bg)
+                    .pl(px(7.21875))
+                    .child(shapes::decoration(Decoration {
+                        fill: Some(bg),
+                        ..Default::default()
+                    }))
                     .whitespace_nowrap()
                     .when(panel.wrap, |d| d.whitespace_normal())
+                    .children(mark)
                     .child(content),
             )
     };
     let separator = mix(t.surface, t.info_solid, 0.06);
     let render_line = |l: &Line, index: usize, number: u32| {
-        let (number_bg, bg) = match l.kind {
-            Kind::Context => (t.surface, t.surface),
-            Kind::Added => (mix(base, t.git_added, mixer), over(t.diff_added, t.surface)),
-            Kind::Removed => (
-                mix(base, t.git_deleted, mixer),
-                over(t.diff_deleted, t.surface),
-            ),
-        };
+        let (number_bg, bg, number_fg) = line_colors(l.kind, t);
         let found = l.matches.iter().enumerate().map(|(ordinal, range)| {
             let index = l.match_start + ordinal;
             (
@@ -2333,62 +2395,84 @@ fn hunk(
                 },
             ))
         });
+        let word = l.word_change.clone().map(|range| {
+            (
+                range,
+                HighlightStyle {
+                    color: Some(t.text),
+                    ..Default::default()
+                },
+            )
+        });
         let content = StyledText::new(l.text.clone()).with_highlights(combine_highlights(
-            combine_highlights(highlight(&l.text, &syntax), found),
+            combine_highlights(combine_highlights(highlight(&l.text, &syntax), word), found),
             selection,
         ));
         let down_layout = content.layout().clone();
         let move_layout = down_layout.clone();
-        row(Some(number), number_bg, bg, content)
-            .cursor_pointer()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
-                    let offset = down_layout
+        let mark = word_mark(l, down_layout.clone(), t);
+        row(
+            Some(number),
+            (number_bg, number_fg),
+            bg,
+            content,
+            mark,
+            (l.kind != Kind::Context).then_some(number_fg),
+        )
+        .cursor_pointer()
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                let offset = down_layout
+                    .index_for_position(event.position)
+                    .unwrap_or_else(|i| i);
+                let point = (index, offset);
+                let anchor = if event.modifiers.shift {
+                    this.selection.map_or(point, |s| s.0)
+                } else {
+                    point
+                };
+                this.selection = Some((anchor, point));
+                this.selecting = true;
+                if let Some(focus) = &this.focus {
+                    window.focus(focus, cx);
+                }
+                cx.stop_propagation();
+                cx.notify();
+            }),
+        )
+        .on_mouse_move(
+            cx.listener(move |this, event: &gpui::MouseMoveEvent, _, cx| {
+                if this.selecting && event.pressed_button == Some(MouseButton::Left) {
+                    let offset = move_layout
                         .index_for_position(event.position)
                         .unwrap_or_else(|i| i);
-                    let point = (index, offset);
-                    let anchor = if event.modifiers.shift {
-                        this.selection.map_or(point, |s| s.0)
-                    } else {
-                        point
-                    };
-                    this.selection = Some((anchor, point));
-                    this.selecting = true;
-                    if let Some(focus) = &this.focus {
-                        window.focus(focus, cx);
+                    if let Some(selection) = &mut this.selection {
+                        selection.1 = (index, offset);
+                        cx.notify();
                     }
-                    cx.stop_propagation();
-                    cx.notify();
-                }),
-            )
-            .on_mouse_move(
-                cx.listener(move |this, event: &gpui::MouseMoveEvent, _, cx| {
-                    if this.selecting && event.pressed_button == Some(MouseButton::Left) {
-                        let offset = move_layout
-                            .index_for_position(event.position)
-                            .unwrap_or_else(|i| i);
-                        if let Some(selection) = &mut this.selection {
-                            selection.1 = (index, offset);
-                            cx.notify();
-                        }
-                    }
-                }),
-            )
+                }
+            }),
+        )
     };
     div()
         .flex()
         .flex_col()
         .when(!panel.wrap, |d| d.min_w(minimum_width))
         .font_family(MONO)
+        .font_weight(FontWeight(430.))
         .text_size(px(CODE_SIZE))
         .line_height(px(CODE_LINE))
-        .text_color(t.text)
+        .text_color(rgb(if t.appearance == Appearance::Dark {
+            0xfcfcfc
+        } else {
+            0x0d0d0d
+        }))
         .when_some(h.separator.clone(), |d, label| {
             let len = label.len();
             d.child(row(
                 None,
-                separator,
+                (separator, t.text_tertiary),
                 separator,
                 StyledText::new(label).with_highlights([(
                     0..len,
@@ -2397,6 +2481,8 @@ fn hunk(
                         ..Default::default()
                     },
                 )]),
+                None,
+                None,
             ))
         })
         .map(|d| {
@@ -2404,6 +2490,7 @@ fn hunk(
                 d.children(controls::split_rows(&h.lines).map(|(old, new)| {
                     div()
                         .flex()
+                        .gap(px(2.))
                         .items_stretch()
                         .child(
                             div()
@@ -2463,6 +2550,7 @@ fn parse(diff: &str, raw: Option<Kind>) -> Result<Vec<Hunk>, &'static str> {
                     text: text.to_owned().into(),
                     matches: Vec::new(),
                     match_start: 0,
+                    word_change: None,
                 })
                 .collect(),
         }]);
@@ -2525,9 +2613,55 @@ fn parse(diff: &str, raw: Option<Kind>) -> Result<Vec<Hunk>, &'static str> {
             text: line.get(1..).unwrap_or("").to_owned().into(),
             matches: Vec::new(),
             match_start: 0,
+            word_change: None,
         });
     }
+    for hunk in &mut hunks {
+        let mut removed = 0..0;
+        for index in 0..hunk.lines.len() {
+            match hunk.lines[index].kind {
+                Kind::Removed => {
+                    if index == 0 || hunk.lines[index - 1].kind != Kind::Removed {
+                        removed = index..index + 1;
+                    } else {
+                        removed.end = index + 1;
+                    }
+                }
+                Kind::Added => {
+                    if let Some(old) = removed.next() {
+                        let (a, b) = word_changes(&hunk.lines[old].text, &hunk.lines[index].text);
+                        hunk.lines[old].word_change = a;
+                        hunk.lines[index].word_change = b;
+                    }
+                }
+                Kind::Context => removed = 0..0,
+            }
+        }
+    }
     Ok(hunks)
+}
+
+// ponytail: one changed span per paired line; use token diff for separate marks within a line.
+fn word_changes(old: &str, new: &str) -> (Option<Range<usize>>, Option<Range<usize>>) {
+    let prefix: usize = old
+        .chars()
+        .zip(new.chars())
+        .take_while(|(a, b)| a == b)
+        .map(|(c, _)| c.len_utf8())
+        .sum();
+    let suffix: usize = old[prefix..]
+        .chars()
+        .rev()
+        .zip(new[prefix..].chars().rev())
+        .take_while(|(a, b)| a == b)
+        .map(|(c, _)| c.len_utf8())
+        .sum();
+    let end_old = old.len() - suffix;
+    let end_new = new.len() - suffix;
+    (
+        (prefix < end_old).then_some(prefix..end_old),
+        (prefix < end_new).then_some(prefix..end_new),
+    )
 }
 
 /// `path` relative to directory `base`, both absolute (`path.relative` of the original).
@@ -2564,19 +2698,22 @@ mod tests {
     }
 
     #[test]
-    fn python_tokens() {
-        let s = Syntax::of(&Theme::dark());
-        let spans: Vec<_> = highlight("def subtract(a, b): # x", &s)
-            .into_iter()
-            .map(|(r, h)| (r, h.color))
-            .collect();
+    fn word_changes_keep_unicode_boundaries_and_pair_replacements() {
+        assert_eq!(word_changes("é = old", "é = new"), (Some(5..8), Some(5..8)));
+        assert_eq!(word_changes("αβ", "αxβ"), (None, Some(2..3)));
+        assert_eq!(word_changes("same", "same"), (None, None));
+        let hunks = parse(
+            "@@ -1,3 +1,3 @@\n-a = 1\n-b = 2\n+a = 3\n+b = 4\n same",
+            None,
+        )
+        .unwrap();
+        let lines = &hunks[0].lines;
         assert_eq!(
-            spans,
-            [
-                (0..3, Some(s.keyword)),
-                (4..12, Some(s.name)),
-                (20..23, Some(s.comment))
-            ]
+            lines
+                .iter()
+                .map(|line| line.word_change.clone())
+                .collect::<Vec<_>>(),
+            vec![Some(4..5), Some(4..5), Some(4..5), Some(4..5), None]
         );
     }
 }

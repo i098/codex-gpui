@@ -1,8 +1,4 @@
 use super::*;
-use std::{
-    collections::BTreeMap,
-    hash::{Hash, Hasher},
-};
 
 #[derive(Default)]
 pub(super) struct TextField {
@@ -74,7 +70,7 @@ impl DiffLayout {
 
     pub(super) fn icon(self) -> &'static str {
         match self {
-            Self::Auto => "diff-auto",
+            Self::Auto => "diff-word-diffs",
             Self::Unified => "diff-unified",
             Self::Split => "diff-split",
         }
@@ -84,19 +80,6 @@ impl DiffLayout {
         self == Self::Split
             || self == Self::Auto && width >= px(800.) && file.added > 0 && file.removed > 0
     }
-}
-
-pub struct ViewedChange {
-    pub key: String,
-    pub revision: Option<u64>,
-}
-
-impl gpui::EventEmitter<ViewedChange> for DiffPanel {}
-
-pub(super) fn revision(diff: &str) -> u64 {
-    let mut hash = std::collections::hash_map::DefaultHasher::new();
-    diff.hash(&mut hash);
-    hash.finish()
 }
 
 pub(super) fn split_rows(
@@ -147,6 +130,7 @@ impl FileDiff {
                         text: line.to_owned().into(),
                         matches: Vec::new(),
                         match_start: 0,
+                        word_change: None,
                     })
                     .collect(),
             });
@@ -165,8 +149,6 @@ impl FileDiff {
             hunks,
             open: true,
             problem,
-            revision: revision(diff),
-            viewed_key: String::new(),
         }
     }
 }
@@ -200,34 +182,8 @@ impl DiffPanel {
         panel
     }
 
-    pub fn restore_viewed(&mut self, viewed: BTreeMap<String, u64>) {
-        self.viewed = viewed;
-    }
-
-    pub(super) fn is_viewed(&self, file: &FileDiff) -> bool {
-        self.source.label() == "Branch" && self.viewed.get(&file.viewed_key) == Some(&file.revision)
-    }
-
-    pub(super) fn toggle_viewed(&mut self, file: usize, cx: &mut Context<Self>) {
-        let key = self.files[file].viewed_key.clone();
-        let revision = (!self.is_viewed(&self.files[file])).then_some(self.files[file].revision);
-        cx.emit(ViewedChange { key, revision });
-    }
-
-    pub fn apply_viewed(&mut self, change: &ViewedChange, cx: &mut Context<Self>) {
-        if let Some(revision) = change.revision {
-            self.viewed.insert(change.key.clone(), revision);
-        } else {
-            self.viewed.remove(&change.key);
-        }
-        if let Some(index) = self
-            .files
-            .iter()
-            .position(|file| file.viewed_key == change.key)
-        {
-            self.files[index].open = change.revision.is_none();
-        }
-        cx.notify();
+    pub fn layout(&self) -> DiffLayout {
+        self.layout
     }
 
     pub(super) fn layout_button(&self, t: &Theme, cx: &Context<Self>) -> Stateful<Div> {
@@ -275,8 +231,8 @@ impl DiffPanel {
                             if self.files.len() == 1 { "" } else { "s" }
                         ),
                         13.,
-                        20.,
-                        400.,
+                        18.5714,
+                        430.,
                         t.text,
                     ))
                     .child(stats(
@@ -287,44 +243,67 @@ impl DiffPanel {
                     )),
             )
             .child(
-                div().flex().items_center().gap(px(2.)).children(
-                    [
-                        (DiffLayout::Unified, "Switch to unified diff"),
-                        (DiffLayout::Split, "Switch to split diff"),
-                        (DiffLayout::Auto, "Auto"),
-                    ]
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, (layout, label))| {
-                        div()
-                            .id(("diff-layout-choice", i))
-                            .role(gpui::Role::Button)
-                            .aria_label(label)
-                            .aria_selected(self.layout == layout)
-                            .focusable()
-                            .tab_index(0)
-                            .cursor_pointer()
-                            .rounded(px(12.))
-                            .w(px(34.))
-                            .h(px(28.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .when(self.layout == layout, |d| d.bg(t.list_hover))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.layout = layout;
-                                cx.notify();
-                            }))
-                            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
-                                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(2.))
+                    .mr(px(30.))
+                    .children(
+                        [
+                            (DiffLayout::Unified, "Switch to unified diff"),
+                            (DiffLayout::Split, "Switch to split diff"),
+                            (DiffLayout::Auto, "Auto"),
+                        ]
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, (layout, label))| {
+                            div()
+                                .id(("diff-layout-choice", i))
+                                .role(gpui::Role::Button)
+                                .aria_label(label)
+                                .aria_selected(self.layout == layout)
+                                .focusable()
+                                .tab_index(0)
+                                .cursor_pointer()
+                                .relative()
+                                .w(px(34.))
+                                .h(px(28.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .when(self.layout == layout, |d| {
+                                    d.layer().child(shapes::decoration(shapes::Decoration {
+                                        radius: gpui::Corners::all(px(12.5)),
+                                        corner: shapes::Corner::Squircle,
+                                        fill: Some(t.text_alpha_5),
+                                        ..Default::default()
+                                    }))
+                                })
+                                .on_click(cx.listener(move |this, _, _, cx| {
                                     this.layout = layout;
-                                    cx.stop_propagation();
                                     cx.notify();
-                                }
-                            }))
-                            .child(icon(layout.icon(), 16., t.text_tertiary))
-                    }),
-                ),
+                                }))
+                                .on_key_down(cx.listener(
+                                    move |this, event: &KeyDownEvent, _, cx| {
+                                        if matches!(event.keystroke.key.as_str(), "enter" | "space")
+                                        {
+                                            this.layout = layout;
+                                            cx.stop_propagation();
+                                            cx.notify();
+                                        }
+                                    },
+                                ))
+                                .child(icon(
+                                    layout.icon(),
+                                    16.,
+                                    if self.layout == layout {
+                                        t.text
+                                    } else {
+                                        t.text_tertiary
+                                    },
+                                ))
+                        }),
+                    ),
             )
     }
 
@@ -342,13 +321,13 @@ impl DiffPanel {
             .aria_expanded(file.open)
             .focusable()
             .tab_index(0)
-            .h(px(38.))
+            .h(px(36.))
             .flex_none()
             .flex()
             .items_center()
             .gap(px(8.))
-            .pl(px(20.))
-            .pr(px(20.))
+            .pl(px(22.))
+            .pr(px(16.))
             .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
                 if matches!(event.keystroke.key.as_str(), "enter" | "space") {
                     this.files[index].open = !this.files[index].open;
@@ -362,8 +341,30 @@ impl DiffPanel {
                     .min_w_0()
                     .overflow_hidden(),
             )
-            .child(stats(file.added, file.removed, 14., t))
-            .child(icon("diff-chevron-down", 12., t.text_tertiary))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(stats(file.added, file.removed, 14., t))
+                    .child(div().size(px(28.)))
+                    .child(
+                        div()
+                            .size(px(28.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(icon(
+                                if file.open {
+                                    "diff-file-toggle"
+                                } else {
+                                    "thread-chevron-right"
+                                },
+                                14.,
+                                t.text_tertiary,
+                            )),
+                    ),
+            )
     }
 
     pub(super) fn file_tree(
