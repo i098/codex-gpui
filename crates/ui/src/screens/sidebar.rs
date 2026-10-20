@@ -31,6 +31,7 @@ use theme::{ActiveTheme as _, Appearance, Theme};
 mod menu;
 use menu::ThreadMenu;
 mod activity;
+pub use activity::{ActivityOpened, ArchiveActivity};
 
 pub mod sections;
 
@@ -275,6 +276,7 @@ pub struct HomeSidebar {
     pub threads_state: ListState,
     pub projects_state: ListState,
     pub activity_clock: Option<crate::screens::thread::view::Clock>,
+    activity: activity::State,
     worktree_tip: bool,
     worktree_tip_epoch: u64,
     worktree_tip_bounds: Bounds<Pixels>,
@@ -361,6 +363,7 @@ impl HomeSidebar {
             threads_state: ListState::Ready,
             projects_state: ListState::Ready,
             activity_clock: None,
+            activity: activity::State::default(),
             worktree_tip: false,
             worktree_tip_epoch: 0,
             worktree_tip_bounds: Bounds::default(),
@@ -692,6 +695,7 @@ impl HomeSidebar {
     /// spinner in place of the unread dot until the status goes idle.
     pub fn set_running(&mut self, id: &str, running: bool, cx: &mut Context<Self>) {
         if running {
+            self.note_activity(id);
             self.running
                 .entry(id.to_owned())
                 .or_insert_with(|| cx.background_executor().now());
@@ -707,6 +711,7 @@ impl HomeSidebar {
 
     /// A turn completed in thread `id` while it was not open: unread dot.
     pub fn set_unread(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.note_activity(id);
         if !self.unread.iter().any(|u| u == id) {
             self.unread.push(id.to_owned());
         }
@@ -962,22 +967,27 @@ impl HomeSidebar {
             end,
             cx,
             (
-                focused || (self.activity_clock.is_some() && end.is_none()),
+                focused,
                 self.pinned.contains(id),
+                self.activity_clock.is_some(),
             ),
             [&row_focus, &pin_focus, &archive_focus],
         )
         .when(self.activity_clock.is_some(), |d| {
-            d.h(px(54.)).child(
+            d.h(px(53.5)).child(
                 div()
                     .absolute()
                     .left(px(8.))
-                    .top(px(26.))
+                    .top(px(28.))
                     .flex()
                     .items_center()
                     .gap(px(4.))
-                    .child(icon("laptop", 12., cx.theme().text_tertiary))
-                    .child(text("Codex", 12., 18., 430., cx.theme().text_tertiary)),
+                    .child(icon(
+                        "sidebar-activity-computer",
+                        12.,
+                        cx.theme().text_tertiary,
+                    ))
+                    .child(text("Codex", 12., 16., 430., cx.theme().text_tertiary)),
             )
         })
         .on_click(cx.listener(move |_, _, _, cx| cx.emit(OpenThread(open.clone()))))
@@ -1226,6 +1236,7 @@ impl Render for HomeSidebar {
                     .filter(|menu| !menu.is_native())
                     .map(|_| self.menu_overlay(window, cx)),
             )
+            .children(self.activity_menu_overlay(window, cx))
             .children(self.worktree_tip.then(|| self.worktree_tooltip_element(cx)))
     }
 }
@@ -1283,7 +1294,7 @@ fn thread_row(
     selected: bool,
     end: Option<RowEnd>,
     cx: &App,
-    (focused, pinned): (bool, bool),
+    (focused, pinned, activity): (bool, bool, bool),
     handles: [&gpui::Entity<focus::ControlFocus>; 3],
 ) -> Stateful<Div> {
     let t = cx.theme();
@@ -1312,7 +1323,7 @@ fn thread_row(
                 .group_hover(group.clone(), |s| s.opacity(1.))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(crate::motion::ButtonVisual {
-                    glyph: icon(name, 14., t.text_tertiary),
+                    glyph: icon(name, if activity { 16. } else { 14. }, t.text_tertiary),
                     radius: px(6.),
                     hover: t.ghost_hover,
                     foreground: t.text.opacity(0.85),
@@ -1348,13 +1359,22 @@ fn thread_row(
                     .id(SharedString::from(format!("thread-title-{id}")))
                     .absolute()
                     .left_0()
-                    .top(px(5.))
-                    .w(px(if focused { 216. } else { 264. - clip }))
-                    .group_hover(group.clone(), |s| s.w(px(216.)))
+                    .top(px(if activity { 6. } else { 5. }))
+                    .w(px(if activity {
+                        if focused { 187. } else { 267. }
+                    } else if focused {
+                        216.
+                    } else {
+                        264. - clip
+                    }))
+                    .group_hover(group.clone(), |s| {
+                        s.w(px(if activity { 187. } else { 216. }))
+                    })
                     .h(px(20.))
                     .pl(px(8.))
                     .overflow_hidden()
-                    .layer()
+                    .when(activity, |d| d.saved_layer())
+                    .when(!activity, |d| d.layer())
                     .child(text(label, 14., 20., 430., t.text_default_nav))
                     .child(shapes::x_fade(px(8.), px(16.))),
             )
@@ -1403,10 +1423,10 @@ fn thread_row(
                 div()
                     .absolute()
                     .top_0()
-                    .right(px(2.))
+                    .right(px(if activity { 0. } else { 2. }))
                     .h_full()
-                    .w(px(54.))
-                    .pr(px(6.))
+                    .w(px(if activity { 52. } else { 54. }))
+                    .pr(px(if activity { 5. } else { 6. }))
                     .flex()
                     .items_center()
                     .justify_end()

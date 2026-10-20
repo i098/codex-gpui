@@ -48,9 +48,10 @@ use ui::screens::diff::panel::{
 use ui::screens::home::{HomeMain, OpenFolder};
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
 use ui::screens::sidebar::{
-    ArchiveThread, ArchivedChats, CommandMenu, CommandMenuEvent, HomeSidebar, ListState, LoadMore,
-    OpenThread, PINNED_SECTION_ID, PinThread, RenameThread, RetryProjects, RetryThreads,
-    SEARCH_LIMIT, SearchHit, SearchRequest, SelectProject, title as thread_title,
+    ActivityOpened, ArchiveActivity, ArchiveThread, ArchivedChats, CommandMenu, CommandMenuEvent,
+    HomeSidebar, ListState, LoadMore, OpenThread, PINNED_SECTION_ID, PinThread, RenameThread,
+    RetryProjects, RetryThreads, SEARCH_LIMIT, SearchHit, SearchRequest, SelectProject,
+    title as thread_title,
 };
 use ui::screens::terminal::{OpenTerminalItem, StopBackgroundTerminals, Xterm};
 use ui::screens::thread::view::{
@@ -616,6 +617,7 @@ impl Root {
         let sidebar = cx.new(|_| {
             let mut sidebar = HomeSidebar::new(&[], None);
             sidebar.threads_state = ListState::Loading;
+            sidebar.set_activity_archive_supported(!bridge.is_acp());
             sidebar
         });
         cx.subscribe_in(
@@ -628,6 +630,10 @@ impl Root {
         .detach();
         cx.subscribe_in(&sidebar, window, |this, _, _: &LoadMore, _, cx| {
             this.load_more_threads(cx)
+        })
+        .detach();
+        cx.subscribe_in(&sidebar, window, |this, _, _: &ActivityOpened, _, cx| {
+            this.load_activity_threads(cx)
         })
         .detach();
         let main = cx.new(|_| ui::EmptyMain).into();
@@ -1085,6 +1091,36 @@ impl Root {
             })
             .ok();
         }));
+    }
+
+    fn load_activity_threads(&self, cx: &mut Context<Self>) {
+        let host = self.host.clone();
+        let source = host.clone();
+        let read = cx
+            .background_spawn(async move { host.fetch(&host::Request::post("inbox-items", None)) });
+        cx.spawn(async move |this, cx| {
+            let result = read.await;
+            this.update(cx, |this, cx| {
+                if !Arc::ptr_eq(&this.host, &source) {
+                    return;
+                }
+                match result {
+                    Ok(inbox) => {
+                        let ids = inbox["items"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|item| item["threadId"].as_str().map(str::to_owned))
+                            .collect();
+                        this.sidebar
+                            .update(cx, |s, cx| s.set_scheduled_threads(ids, cx));
+                    }
+                    Err(error) => eprintln!("codex-gpui: cannot read activity runs: {error:#}"),
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// The sidebar's projects, and Home's `/project` choices: the ones with a root on disk.
@@ -5621,6 +5657,36 @@ impl Render for Root {
                 if !this.shell.read(cx).sidebar_open {
                     this.shell.update(cx, |s, cx| s.toggle_sidebar(cx));
                 }
+            }))
+            .on_action(cx.listener(|this, action: &ArchiveActivity, window, cx| {
+                if action.0.is_empty() || this.bridge.is_acp() {
+                    return;
+                }
+                let ids = action.0.clone();
+                let title = format!(
+                    "Archive {} priority thread{}?",
+                    ids.len(),
+                    if ids.len() == 1 { "" } else { "s" }
+                );
+                let answer = window.prompt(
+                    gpui::PromptLevel::Warning,
+                    &title,
+                    Some("Recent threads won’t be archived"),
+                    &["Cancel", "Archive"],
+                    cx,
+                );
+                cx.spawn_in(window, async move |this, cx| {
+                    if answer.await.ok() != Some(1) {
+                        return;
+                    }
+                    this.update_in(cx, |this, window, cx| {
+                        for id in ids {
+                            this.archive(id, window, cx);
+                        }
+                    })
+                    .ok();
+                })
+                .detach();
             }))
             .on_action(cx.listener(|this, _: &RetryThreads, _, cx| this.refresh_threads(cx)))
             .on_action(cx.listener(|this, _: &RetryProjects, _, cx| {

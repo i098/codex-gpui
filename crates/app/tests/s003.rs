@@ -361,7 +361,10 @@ fn sidebar_shot(fx: &mut Fx, name: &str) -> Result<()> {
     if let Some(path) = std::env::var_os("CGX_SIDEBAR_PROOF_DIR") {
         fs::create_dir_all(&path)?;
         let image = fx.shot()?;
-        image.save(std::path::PathBuf::from(path).join(format!("{name}.png")))?;
+        image.save(std::path::PathBuf::from(path).join(format!(
+            "{name}-{}-{}x{}.png",
+            fx.theme, fx.size.0, fx.size.1
+        )))?;
     }
     Ok(())
 }
@@ -553,15 +556,28 @@ fn project_load_failure_retries_the_owned_state_file() -> Result<()> {
 #[test]
 fn activity_opens_running_chats_and_shortcut_restores_the_sidebar() -> Result<()> {
     let mut fx = Fx::new()?;
-    fx.hover((1270., 820.))?;
     fx.click((282., 70.))?;
-    assert!(fx.read(|r, cx| r.sidebar().read(cx).activity_clock.is_some()));
-    sidebar_shot(&mut fx, "activity-empty")?;
+    for theme in ["dark", "light"] {
+        fx.action(Box::new(ui::SetTheme(theme)))?;
+        fx.theme = theme;
+        for size in [(1280., 832.), (1440., 900.)] {
+            fx.resize(size.0, size.1)?;
+            fx.hover((size.0 * 0.6, 6.))?;
+            assert!(fx.read(|r, cx| r.sidebar().read(cx).activity_clock.is_some()));
+            sidebar_shot(&mut fx, "activity-empty")?;
+            fx.hover((150., 300.))?;
+            sidebar_shot(&mut fx, "activity-hover")?;
+        }
+    }
+    fx.action(Box::new(ui::SetTheme("dark")))?;
+    fx.theme = "dark";
+    fx.resize(1280., 832.)?;
+    fx.hover((768., 6.))?;
     fx.root.update(&mut fx.cx, |r, cx| {
         r.on_event(Event::Notification {
-        method: "thread/status/changed".into(),
-        params: json!({"threadId": SUBTRACT, "status": {"type": "active", "activeFlags": []}}),
-    }, cx)
+            method: "thread/status/changed".into(),
+            params: json!({"threadId": SUBTRACT, "status": {"type": "active", "activeFlags": []}}),
+        }, cx)
     });
     fx.advance(Duration::from_millis(300))?;
     sidebar_shot(&mut fx, "activity-running")?;
@@ -573,5 +589,105 @@ fn activity_opens_running_chats_and_shortcut_restores_the_sidebar() -> Result<()
     assert!(fx.read(|r, cx| r.sidebar().read(cx).activity_clock.is_some()));
     fx.keys("alt-cmd-u")?;
     assert_eq!(fx.route(), app::Route::Thread(SUBTRACT.into()));
+    Ok(())
+}
+
+#[test]
+fn activity_options_change_the_visible_list_without_navigation() -> Result<()> {
+    let mut fx = Fx::new()?;
+    fx.click((282., 70.))?;
+    fx.click((314., 184.))?;
+    fx.keys("enter")?;
+    assert_eq!(fx.route(), app::Route::Home);
+    fx.click((150., 214.))?;
+    fx.wait_thread(common::GREETING)?;
+    Ok(())
+}
+
+#[test]
+fn activity_mark_read_keeps_the_snapshot_until_clear_read() -> Result<()> {
+    let mut fx = Fx::new()?;
+    fx.root.update(&mut fx.cx, |r, cx| {
+        r.sidebar().update(cx, |s, cx| s.set_unread(SUBTRACT, cx))
+    });
+    fx.click((282., 70.))?;
+    fx.click((314., 184.))?;
+    fx.keys("down down down enter")?;
+    assert!(!fx.read(|r, cx| r.sidebar().read(cx).unread.iter().any(|id| id == SUBTRACT)));
+    fx.click((314., 184.))?;
+    fx.click((150., 297.))?;
+    fx.wait_thread(common::GREETING)?;
+    Ok(())
+}
+
+struct ArchivePrompt {
+    focus: gpui::FocusHandle,
+}
+
+impl gpui::Focusable for ArchivePrompt {
+    fn focus_handle(&self, _: &gpui::App) -> gpui::FocusHandle {
+        self.focus.clone()
+    }
+}
+
+impl gpui::EventEmitter<gpui::PromptResponse> for ArchivePrompt {}
+
+impl gpui::Render for ArchivePrompt {
+    fn render(
+        &mut self,
+        _: &mut gpui::Window,
+        _: &mut gpui::Context<Self>,
+    ) -> impl gpui::IntoElement {
+        use gpui::InteractiveElement as _;
+        gpui::div().id("archive-prompt").track_focus(&self.focus)
+    }
+}
+
+#[test]
+fn activity_archive_requires_confirmation_and_keeps_recent_chats() -> Result<()> {
+    use gpui::AppContext as _;
+    use std::{cell::RefCell, rc::Rc};
+    let mut lines = script(None, |_| {})?;
+    lines.extend(exchange("thread/archive", json!({})));
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    let prompt = Rc::new(RefCell::new(None));
+    let opened = prompt.clone();
+    fx.cx.update(|cx| {
+        cx.set_prompt_builder(move |_, _, _, _, handle, window, cx| {
+            let view = cx.new(|cx| ArchivePrompt {
+                focus: cx.focus_handle(),
+            });
+            *opened.borrow_mut() = Some(view.clone());
+            handle.with_view(view, window, cx)
+        });
+    });
+    fx.root.update(&mut fx.cx, |r, cx| {
+        r.sidebar().update(cx, |s, cx| s.set_unread(SUBTRACT, cx))
+    });
+    fx.click((282., 70.))?;
+    for choice in [0, 1] {
+        fx.click((314., 184.))?;
+        fx.keys("down down down down enter")?;
+        fx.wait("archive confirmation", |_| prompt.borrow().is_some())?;
+        let view = prompt.borrow_mut().take().unwrap();
+        view.update(&mut fx.cx, |_, cx| cx.emit(gpui::PromptResponse(choice)));
+        if choice == 0 {
+            fx.advance(Duration::from_millis(100))?;
+            assert!(fx.read(|r, _| r.recents().iter().any(|id| id == SUBTRACT)));
+            assert!(
+                !fx.sent()?
+                    .iter()
+                    .any(|request| request["method"] == "thread/archive")
+            );
+        }
+    }
+    fx.wait("confirmed priority archive", |fx| {
+        fx.sent()
+            .is_ok_and(|sent| sent.iter().any(|r| r["method"] == "thread/archive"))
+    })?;
+    let chats = fx.read(|r, _| r.recents());
+    assert!(!chats.iter().any(|id| id == SUBTRACT));
+    assert!(chats.iter().any(|id| id == common::GREETING));
+    assert!(chats.iter().any(|id| id == common::EXPLAIN));
     Ok(())
 }

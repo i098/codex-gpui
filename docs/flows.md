@@ -284,6 +284,10 @@ Thread-to-Home navigation keeps the Home composer focus set by `Root::new_chat`.
 Activity uses the existing Sidebar unread and running states, Root navigation, and paging path.
 Its recent groups cover seven local calendar days, ordered by each thread's update time.
 Loaded chat rows remain available during background refreshes and after a background read fails.
+The options menu changes Priority, Pinned, and Scheduled visibility.
+Mark all as read changes the existing unread state; Clear read chats removes read items from the activity snapshot.
+Archive requires confirmation and uses Root's existing per-thread archive path.
+`s003::activity_archive_requires_confirmation_and_keeps_recent_chats` checks cancellation and excludes recent chats from the confirmed archive.
 The native pending-state capture selects the component state explicitly; it does not test delayed server timing.
 The mode switch and Your dot remain outside the accepted native destinations.
 The native app does not create placeholder modes, an orbit service, or a second notification store.

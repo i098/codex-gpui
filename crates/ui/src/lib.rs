@@ -575,6 +575,8 @@ pub fn home_shell(_: &mut Window, cx: &mut App) -> AnyView {
 /// `New chat` and `Your dot` rows. With `unread` chats the bell carries the blue dot.
 pub fn home_sidebar_header(unread: bool, activity: bool, cx: &App) -> Div {
     let t = cx.theme();
+    // The original's --color-background-info-soft-alpha is #0285ff at 13% in both themes.
+    let activity_background: Hsla = gpui::rgba(0x0285ff21).into();
     let activity_label = if activity {
         "Turn off activity view"
     } else if unread {
@@ -651,25 +653,55 @@ pub fn home_sidebar_header(unread: bool, activity: bool, cx: &App) -> Div {
                 )
                 .child(div().flex_1())
                 .child(tooltip(
-                    icon_button(
-                        "activity",
-                        icon::icon(
-                            if unread { "bell-unread" } else { "bell" },
-                            16.,
-                            if activity {
+                    div()
+                        .id("activity")
+                        .relative()
+                        .flex_none()
+                        .size(px(28.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(RADIUS_BUTTON_MD)
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .when(activity, |d| {
+                            // The original button pseudo-element has will-change: transform.
+                            d.child(div().absolute().inset_0().top_layer().child(
+                                shapes::decoration(shapes::Decoration {
+                                    radius: Corners::all(RADIUS_BUTTON_MD),
+                                    corner: shapes::Corner::Squircle,
+                                    fill: Some(activity_background),
+                                    ..Default::default()
+                                }),
+                            ))
+                        })
+                        .child(motion::ButtonVisual {
+                            glyph: icon::icon(
+                                if unread { "bell-unread" } else { "bell" },
+                                16.,
+                                if activity {
+                                    t.info_solid
+                                } else {
+                                    t.text_tertiary
+                                },
+                            ),
+                            radius: RADIUS_BUTTON_MD,
+                            hover: if activity {
+                                activity_background
+                            } else {
+                                t.ghost_hover
+                            },
+                            foreground: if activity {
                                 t.info_solid
                             } else {
-                                t.text_tertiary
+                                t.text.opacity(0.85)
                             },
-                        ),
-                        t,
-                    )
-                    .tab_index(0)
-                    .role(gpui::Role::Button)
-                    .aria_label(activity_label)
-                    .focus_visible(keyboard_ring(false))
-                    .when(activity, |d| d.bg(t.info_solid.opacity(0.1)))
-                    .on_click(dispatch::<ToggleActivity>),
+                            selected: activity,
+                        })
+                        .tab_index(0)
+                        .role(gpui::Role::Button)
+                        .aria_label(activity_label)
+                        .focus_visible(keyboard_ring(false))
+                        .on_click(dispatch::<ToggleActivity>),
                     activity_label,
                     Some("⌥⌘U"),
                     Side::Bottom,
