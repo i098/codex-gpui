@@ -213,6 +213,15 @@ fn pending_paste_keeps_its_submission_and_failure_in_the_source_thread() -> Resu
         fx.hover((1155., 790.))?;
         fx.advance(Duration::from_millis(350))?;
         let pending = fx.shot()?;
+        if outcome == "failed" {
+            let fade: [u8; 8] =
+                std::array::from_fn(|x| pending.get_pixel(1024 + x as u32, 1244)[0]);
+            assert_eq!(
+                fade,
+                [24, 23, 24, 23, 24, 23, 24, 23],
+                "The pending attachment must keep the original fade phase."
+            );
+        }
         assert!(fx.read(|_, cx| ui::tooltip::shown(cx).is_none()));
         fx.keys("enter")?;
         assert!(fx.read(|root, _| root.dialog().is_none()));

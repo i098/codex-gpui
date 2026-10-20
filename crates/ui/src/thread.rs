@@ -1908,9 +1908,7 @@ impl Render for ThreadView {
                 }
             }
         };
-        // The thread fills the main panel: window minus titlebar (44) and bottom inset (4).
-        let viewport = window.viewport_size();
-        let width = f32::from(viewport.width);
+        let width = f32::from(window.viewport_size().width);
         let scale = window.scale_factor();
         let fade = |a: f32| Hsla { a, ..t.surface };
         let clear = gpui::transparent_black();
