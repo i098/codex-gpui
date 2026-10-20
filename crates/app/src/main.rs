@@ -14,6 +14,13 @@ fn main() {
         return;
     }
     app::qa::prepare().expect("prepare isolated QA profile");
+    if std::env::args().nth(1).as_deref() == Some("--setup-computer-use") {
+        if let Err(error) = bridge::setup_computer_use() {
+            eprintln!("codex-gpui: {error:#}");
+            std::process::exit(1);
+        }
+        return;
+    }
     let state = State::load();
     // Project new threads start in: `$CODEX_GPUI_CWD`, else the launch directory.
     let cwd = std::env::var_os("CODEX_GPUI_CWD")
