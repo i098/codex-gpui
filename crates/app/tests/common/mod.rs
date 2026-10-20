@@ -3,6 +3,8 @@
 
 #![allow(dead_code)]
 
+pub mod automation;
+
 use anyhow::{Context as _, Result, ensure};
 use app::{Root, Route, SidePanel, State, ThemeSetting};
 use bridge::{Bridge, Event, RpcError};
