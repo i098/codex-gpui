@@ -22,6 +22,9 @@ use serde_json::Value;
 use std::{collections::HashSet, fs, path::Path};
 use theme::{ActiveTheme as _, Theme};
 
+mod history;
+pub use history::{ArchiveAllRuns, MarkAllRunsRead, RunHistory, archiveable};
+
 actions!(
     automations,
     [
@@ -301,6 +304,7 @@ fn shell_with(
     Option<Entity<AutomationsPage>>,
 ) {
     let sidebar = cx.new(|cx| ScheduledSidebar {
+        history: None,
         tasks,
         selected: selected.as_ref().map(|(task, _)| task.id.clone()),
         utc_offset,
@@ -314,13 +318,17 @@ fn shell_with(
     });
     let mut page = None;
     let main: AnyView = match selected {
-        Some((task, composer)) => cx
-            .new(|_| AutomationThread {
+        Some((task, composer)) => {
+            let history = cx.new(|cx| RunHistory::new(task.id.clone(), cx));
+            sidebar.update(cx, |sidebar, _| sidebar.history = Some(history.clone()));
+            cx.new(|_| AutomationThread {
                 task,
                 composer,
                 utc_offset,
+                history,
             })
-            .into(),
+            .into()
+        }
         None => page
             .insert(cx.new(|_| AutomationsPage {
                 cards: cards(server),
@@ -343,6 +351,7 @@ fn shell_with(
 /// fill with the `Scheduled task actions` button fading in. The selected row keeps the fill.
 pub struct ScheduledSidebar {
     tasks: Vec<Task>,
+    pub history: Option<Entity<RunHistory>>,
     selected: Option<String>,
     utc_offset: i64,
     pending: HashSet<String>,
@@ -1065,12 +1074,11 @@ impl Render for AutomationsPage {
 /// Main column of `/scheduled?automationId=<id>`: the task's thread as the original shows it
 /// before any run (date separator, the prompt as the user's message, `Your task is
 /// scheduled…` with the automation card) over the docked composer.
-/// ponytail: no scroll fades, corner clip, message hover actions or run items; add with the
-/// run-history rows.
 pub struct AutomationThread {
     task: Task,
     composer: AnyView,
     utc_offset: i64,
+    history: Entity<RunHistory>,
 }
 
 impl Render for AutomationThread {
@@ -1211,7 +1219,8 @@ impl Render for AutomationThread {
                                             .items_center()
                                             .child(text("Open", 14., 18., 430., t.text)),
                                     ),
-                            ),
+                            )
+                            .child(self.history.clone()),
                     )
                     // Room for the docked composer.
                     .child(div().h(px(114.))),
