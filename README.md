@@ -83,7 +83,8 @@ The host exposes installation, explicit helper startup, Locked use, and Appshots
 Construction and status reads do not start the helper or request macOS permissions.
 Locked use requires the original feature, remote-control, and account-policy gates.
 `LockedUseState::visible` applies those gates to confirmed host state.
-The settings UI is a separate follow-up; this service does not activate a settings page.
+The Computer use page shows Locked use only when the native policy and confirmed state are supplied.
+The control requires a trusted callback and stays disabled while a change is pending.
 The helper's nested installer handles `status`, `install`, and `uninstall`; errors remain visible.
 Appshots use the original Apple Event protocol and retain request IDs through completion or cancellation.
 Capture files must be PNG or JPEG files inside the helper's temporary folder and at most 25 MiB.
