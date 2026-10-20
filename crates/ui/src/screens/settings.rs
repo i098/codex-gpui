@@ -556,7 +556,11 @@ impl SettingsPane {
                     .hover(move |s| s.bg(hover))
                     .child(text(label, 14., 20., 430., t.text))
                     .when_some(configuration::option_description(key, value), |d, detail| {
-                        d.flex_col().items_start().child(text(detail, 12., 18., 400., t.text_secondary))
+                        d.flex_col().items_start().child(
+                            text(detail, 14., 20., 400., t.text_secondary)
+                                .w_full()
+                                .whitespace_normal(),
+                        )
                     })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.page.update(cx, |p, cx| p.set(key, json!(value), cx));
