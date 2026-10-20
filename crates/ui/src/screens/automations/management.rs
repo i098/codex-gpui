@@ -408,10 +408,11 @@ impl Render for Management {
                                             .h_full()
                                             .flex()
                                             .items_center()
-                                            .gap(px(6.))
+                                            .gap(px(5.))
                                             .child(
                                                 icon("automations-plus", 16., t.menu_background)
-                                                    .ml(px(-1.)),
+                                                    .relative()
+                                                    .left(px(-1.)),
                                             )
                                             .child(text("Add", 14., 14., 400., t.menu_background)),
                                     )
