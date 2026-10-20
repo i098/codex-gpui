@@ -4,6 +4,7 @@
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
 pub mod computer_use_requests;
+mod diff_find;
 mod features;
 pub mod host;
 pub mod host_settings;
@@ -5423,16 +5424,12 @@ impl Render for Root {
                     }
                 }
             }))
-            .on_action(cx.listener(|this, _: &FindNext, _, cx| {
-                if let Some(thread) = &this.thread {
-                    thread.update(cx, |thread, cx| thread.next_find(false, cx));
-                }
-            }))
-            .on_action(cx.listener(|this, _: &FindPrevious, _, cx| {
-                if let Some(thread) = &this.thread {
-                    thread.update(cx, |thread, cx| thread.next_find(true, cx));
-                }
-            }))
+            .on_action(cx.listener(Self::find_in_chat))
+            .on_action(cx.listener(Self::find_in_diff))
+            .on_action(cx.listener(|this, _: &FindNext, _, cx| this.next_search_result(false, cx)))
+            .on_action(
+                cx.listener(|this, _: &FindPrevious, _, cx| this.next_search_result(true, cx)),
+            )
             .on_action(cx.listener(|this, _: &NewChat, window, cx| this.new_chat(window, cx)))
             .on_action(cx.listener(|this, _: &OpenFolder, window, cx| this.open_folder(window, cx)))
             .on_action(cx.listener(|this, _: &ui::composer::Stop, _, cx| this.stop(cx)))

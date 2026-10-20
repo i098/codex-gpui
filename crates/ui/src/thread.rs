@@ -238,7 +238,7 @@ impl FindPaint {
     }
 }
 
-fn find_ranges(text: &str, query: &str, limit: usize) -> (Vec<Range<usize>>, usize) {
+pub(crate) fn find_ranges(text: &str, query: &str, limit: usize) -> (Vec<Range<usize>>, usize) {
     if query.is_empty() {
         return (Vec::new(), 0);
     }
@@ -656,6 +656,16 @@ impl ThreadView {
             .map(|find| (find.query.as_str(), find.active, find.total))
     }
 
+    pub fn close_find(&mut self, cx: &mut Context<Self>) {
+        self.find = None;
+        cx.notify();
+    }
+
+    pub fn set_find_query(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_find(window, cx);
+        self.replace_find(query, cx);
+    }
+
     pub fn open_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let find = self.find.get_or_insert_with(|| FindState {
             query: String::new(),
@@ -960,6 +970,13 @@ impl ThreadView {
                                     .inset_0(),
                                 ),
                         )
+                        .when(!self.clip_right, |d| {
+                            d.child(crate::screens::diff::panel::find_scope_buttons(
+                                &find.query,
+                                false,
+                                t,
+                            ))
+                        })
                         .child(
                             button("thread-find-close", "close", "Close find", 24.).on_click(
                                 cx.listener(|this, _, window, cx| {

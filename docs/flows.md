@@ -492,7 +492,10 @@ The replay checks that diff find never opens thread find.
 It resolves `View changes` from the static reference because Linux text layout places that button below the Mac reference.
 Run `tools/mac.sh -l s028-repair 'cargo test -p app --test s028 -- --nocapture --test-threads=1'`.
 The open panel keeps its state across streamed updates and uses `turn/diff/updated` as the authoritative diff.
-Search scope switching and repository-watch sources remain separate inventory slices.
+Search chat and Search diffs keep the query while switching the active find surface.
+Enter, Shift+Enter, and the Find Next commands move the active diff highlight and scroll it into view.
+The diff matcher reuses the chat's Unicode matcher and retains the total count beyond the 250 highlighted matches.
+Repository-watch sources remain a separate slice.
 
 `refs/interactions/s027.json` records the original diff menus, text selection, clipboard writes, and line hover.
 `s027::diff_selection_and_hover_replay` checks forward and reverse text selection and `Cmd+C` without line numbers.
@@ -583,6 +586,7 @@ A failed read or mutation adds a status row with Retry.
 `cargo test -p app --test diff_controls -- --nocapture --test-threads=1` runs the native input proof on macOS.
 `CGX_DIFF_EVIDENCE` selects its screenshot folder; the default is the system temporary folder under `cgx-diff-controls`.
 The proof covers header wrap, file filtering, layout changes, empty and loading states, real read failure, Retry, and line navigation.
+The `diff_review` native proof also checks visible find navigation, scope changes, and Escape against the recorded subtract patch.
 `cargo test -p app --test diff_review -- --nocapture --test-threads=1` checks the Word diffs toggle and four real Git file states.
 `CGX_DIFF_REVIEW_EVIDENCE` retains that proof's screenshots and source patch.
 Original captures for the file tree and file filter remain open capture items.
