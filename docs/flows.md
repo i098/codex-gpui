@@ -182,12 +182,12 @@ The repair is tracked in [the Sidebar issue](https://github.com/i098/codex-gpui/
 | 12 | Window minimum size | resize | `getPrimaryMinimumSize()` 480x600. | `window_min_size` in `main.rs`. | FAIL (no headless check: the test window does not apply a minimum size) |
 | 13 | Live window resize across 768 px | resize | The sidebar hides below 768 px and comes back above it. | `Root::fit` on `observe_window_bounds`: live resizes to 767, 1280, 600 and 1440 px hide and show the sidebar; a sidebar the user closed stays closed. | PASS (`resize_live`, `resize_three_widths`) |
 | 14 | `⌘K`, `⌘⇧P` | shortcut | Command menu. | `CommandMenu` over live Recents, focused; Escape or a click outside closes it; Enter or a click runs the row (chat, `New chat`, `Manage scheduled tasks`, settings pages). | PASS (`command_menu_keys`, `command_menu_settings_page`) |
-| 15 | `⌘F` | shortcut | Find in chat. | — | NOT WIRED (`crates/ui/src/thread.rs`: no find bar) |
+| 15 | `⌘F`, `⌘G`, `⌘⇧G` | shortcut | Find in chat; next and previous match. | `FindInThread`, `FindNext`, and `FindPrevious` use the existing thread or Changes search field. | WIRED (unchanged; `command_dispatch::find_keeps_its_input_focus_after_the_command_menu_closes`) |
 | 16 | `⌥⌘B` | shortcut | Toggle Changes panel. | The thread route's side panel (`ui::screens::diff::panel::with_side_tabs`) shows the last turn's diff in a `Changes` tab beside the other open tabs; the tab's close button closes it. | PASS (`changes_panel_keys`) |
-| 17 | `⌘J` | shortcut | Toggle bottom panel. | — | NOT WIRED (`crates/ui/src/lib.rs` `Shell`: no bottom panel) |
-| 18 | `⌘⇧N`, `⌘⌥O` | shortcut | Temporary chat, standalone chat. | — | NOT WIRED (`crates/app/src/lib.rs`: no projects or temporary chats) |
+| 17 | `⌘J` | shortcut | Toggle bottom panel; inactive in the captured legacy thread layout. | No bottom panel. The owned original replay shows no visible transition, even after thread hydration. | NOT WIRED (an active accepted original state remains required) |
+| 18 | `⌘⇧N`, `⌘⌥O` | shortcut | Temporary chat is ChatGPT-only; standalone chat clears the selected project. | `NewStandaloneChat` clears the project, search roots, and draft, then focuses Home. New turns use the default workspace. | PASS (`shell_release::standalone_chat_discards_the_selected_project_and_draft`); temporary chat stays outside the Codex destinations |
 | 19 | `⌘⌥1`…`⌘⌥6` | shortcut | Go to recent chat N (`recentThread1..6`: the chats by last update, newest first). | `GoToRecentChat`: the Nth Recents thread by `updatedAt`; past the end does nothing. | PASS (`recent_chat_keys`) |
-| 20 | `⌘+`, `⌘-`, `⌘0` | shortcut | Zoom in, zoom out, actual size. | — | NOT WIRED (`crates/ui/src/lib.rs`: no UI scale) |
+| 20 | `⌘+`, `⌘-`, `⌘0` | shortcut | Zoom in, zoom out, actual size; 10% steps from 50% to 300%. | The full shell scales, including layout and pointer input. The native window size stays unchanged. | PASS (`shell_release::zoom_preserves_draft_focus_and_scaled_pointer_targets`) |
 
 F1d covers SH-020 and SH-135 with `refs/interactions/f1d.json` and `cargo test -p app --test f1d`.
 The original Mac recording proves a native 1280×832 viewport at scale 2.
@@ -245,13 +245,26 @@ This proves headless native behavior, not live installed-window acceptance.
 | 7 | Sites | click | Navigates to `/sites`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
 | 8 | Profile avatar | click | Opens the profile menu. | Menu above the avatar: `Settings`, `Log out`, `Help` ▸ `Set up mobile`; a click outside or on the avatar closes it. | PASS (`profile_menu_settings`, `profile_menu_dismiss`, `profile_menu_mobile`; logout: `account_logout`) |
 | 9 | Rail item hover | hover | Tooltip on the right side with label and shortcut. | Hover fill shows (4716 px repainted); a tooltip with the item's label opens 200 ms after the pointer enters (at once when another was open), 2 px right of the item; `Explore` and the avatar have none; it closes on leave, press or Escape. | PASS (`rail_hover_fill`; tooltip: `crates/app/tests/f1a.rs` against `refs/interactions/f1a.json`) |
-| 10 | Drag a rail item | click | Reorders pinned items. | — | NOT WIRED (`crates/ui/src/lib.rs` `Shell::rail`) |
-| 11 | Focus ring | focus ring | 2 px ring on the 36×36 button. | No tab stops. | NOT WIRED (`crates/ui/src/lib.rs` `Shell::rail`: no focus handles or `focus_visible` ring) |
+| 10 | Drag a rail item | click | Only pinned secondary destinations reorder. Home and Scheduled stay fixed. | Home and Scheduled remain fixed. The sortable Code Review and Sites destinations remain outside v1. | No native change required for the accepted destinations |
+| 11 | Focus ring | focus ring | 2 px ring on the 36×36 button. | The existing `focus::handle` and `focus::ring` support keyboard traversal and pointer cancellation. | PASS (`f1b`, `f1c`; unchanged implementation) |
 | 12 | Resize | resize | At 1280, 767 and 600 px the rail stays 52 px. | The rail stays and rail Home answers at all 3 widths. | PASS (`resize_three_widths`) |
 
 Home reselect clears the draft and keeps the current focus only when the main view is `HomeMain`.
 Home rail selection can identify the Thread route family; it does not identify the current Home view.
 Thread-to-Home navigation keeps the Home composer focus set by `Root::new_chat`.
+
+
+### Shell shortcut replay
+
+`shell_release` starts a chat after selecting a different project and checks the outgoing `thread/start` workspace.
+It also checks draft focus, scaled pointer targets, actual size, and resize after zoom.
+The selected project stays cleared until the user selects a project again.
+The zoom feedback uses the existing theme and keeps its controls at a fixed display size.
+Run `cargo test -p app --test shell_release --test f1b --test f1c -- --test-threads=1` on macOS.
+Set `CGX_SHELL_PROOF` to an owned directory to retain the native zoom frame.
+The original's `temporaryChatEnabled` is false in the accepted Codex thread.
+The original bottom-panel command still needs an active accepted capture before this port can add its content.
+Native IME popup positioning has coordinate conversion, but this replay does not exercise the operating-system popup.
 
 ## 14.2 Sidebar
 
