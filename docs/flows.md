@@ -732,7 +732,7 @@ The conversation prepare, its stream, and the navigation into the started conver
 
 `Run now` (AM-021) is the first item of the row `Scheduled task actions` menu, as in `run-now-11e55df28c95.js`.
 Choosing it sends `automation-run-now` with `{id, collaborationMode, permissions}` and disables duplicate starts until the host answers.
-The information toast and row show `Starting run…` until the host answers.
+The information toast reads `Starting run…`; the row keeps its cadence and next-run text.
 `LocalHost` starts one app-server thread per task folder, titles it with the task name, and sends the original's run preamble and the prompt as the first turn.
 The new thread then appears in Recents through `thread/started`.
 Before each thread the host reads the user's saved config (`config/read` for the folder) and the config requirements, and picks the model from `model/list` like the original (`Pr`): the task's model, else `gpt-5.3-codex`, else the default.

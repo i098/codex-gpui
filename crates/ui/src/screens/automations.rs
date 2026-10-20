@@ -130,18 +130,52 @@ fn day_time(at_ms: i64, utc_offset: i64) -> (String, String) {
 impl Task {
     fn rule(&self, key: &str) -> Option<&str> {
         self.rrule
-            .split(';')
+            .lines()
+            .flat_map(|line| line.trim().trim_start_matches("RRULE:").split(';'))
             .find_map(|part| part.strip_prefix(key)?.strip_prefix('='))
     }
 
-    /// Sidebar cadence: `scheduled.sidebar.weekly` / `.daily`.
-    /// ponytail: the original's `pr()` labels every rrule shape; the port covers the
-    /// `New task` dialog's weekly and daily rules and reads everything else as daily.
-    fn cadence(&self) -> &'static str {
-        match self.rule("FREQ") {
-            Some("WEEKLY") => "Weekly",
-            _ => "Daily",
+    /// Sidebar cadence for the dialog rules and heartbeat intervals.
+    fn cadence(&self) -> SharedString {
+        const MINUTES_PER_HOUR: u64 = 60;
+        const MINUTES_PER_DAY: u64 = 24 * MINUTES_PER_HOUR;
+        const MINUTES_PER_WEEK: u64 = 7 * MINUTES_PER_DAY;
+        let factor = match self.rule("FREQ") {
+            Some("MINUTELY") => 1,
+            Some("HOURLY") => MINUTES_PER_HOUR,
+            Some("WEEKLY") => return "Weekly".into(),
+            _ => return "Daily".into(),
+        };
+        let Some(minutes) = self
+            .rule("INTERVAL")
+            .unwrap_or("1")
+            .parse::<u64>()
+            .ok()
+            .and_then(|n| n.checked_mul(factor))
+            .filter(|n| *n > 0)
+        else {
+            return "Custom schedule".into();
+        };
+        let fixed = match minutes {
+            1 => Some("Every minute"),
+            MINUTES_PER_HOUR => Some("Hourly"),
+            MINUTES_PER_DAY => Some("Daily"),
+            MINUTES_PER_WEEK => Some("Weekly"),
+            _ => None,
+        };
+        if let Some(label) = fixed {
+            return label.into();
         }
+        let (count, unit) = if minutes.is_multiple_of(MINUTES_PER_WEEK) {
+            (minutes / MINUTES_PER_WEEK, "weeks")
+        } else if minutes.is_multiple_of(MINUTES_PER_DAY) {
+            (minutes / MINUTES_PER_DAY, "days")
+        } else if minutes.is_multiple_of(MINUTES_PER_HOUR) {
+            (minutes / MINUTES_PER_HOUR, "hours")
+        } else {
+            (minutes, "minutes")
+        };
+        format!("Every {count} {unit}").into()
     }
 
     /// Card schedule: `Fridays at 9:00 AM`, `Daily at 8:00 AM`.
@@ -346,7 +380,7 @@ pub struct ScheduledSidebar {
     selected: Option<String>,
     utc_offset: i64,
     pending: HashSet<String>,
-    /// Tasks whose run is starting: their row reads `Starting run…` and `Run now` is off.
+    /// Tasks whose pending run disables `Run now`.
     starting: HashSet<String>,
     /// The keyboard-active menu item (`0` Run now, `1` Pause or Resume) once an arrow key moved it.
     menu_item: Option<usize>,
@@ -646,12 +680,8 @@ impl ScheduledSidebar {
             px(2.),
             cx,
         );
-        let starting = self.starting.contains(&task.id);
         let mut secondary = div().h(px(16.)).pr(px(5.)).flex().items_center();
-        if !paused
-            && !starting
-            && let Some(next) = task.next_run_at
-        {
+        if !paused && let Some(next) = task.next_run_at {
             secondary = secondary
                 .child(text(
                     day_time(next, self.utc_offset).0,
@@ -687,20 +717,17 @@ impl ScheduledSidebar {
                     .overflow_hidden()
                     .text_ellipsis(),
             )
-            .child(
-                secondary
-                    .child(text(
-                        if paused { "Paused" } else { task.cadence() },
-                        12.,
-                        16.,
-                        430.,
-                        t.text_tertiary,
-                    ))
-                    .when(starting, |d| {
-                        d.child(text("·", 12., 16., 430., t.text_tertiary).mx(px(4.)))
-                            .child(text("Starting run…", 12., 16., 430., t.text_tertiary))
-                    }),
-            )
+            .child(secondary.child(text(
+                if paused {
+                    "Paused".into()
+                } else {
+                    task.cadence()
+                },
+                12.,
+                16.,
+                430.,
+                t.text_tertiary,
+            )))
             .child(
                 div()
                     .absolute()
@@ -1243,6 +1270,27 @@ fn status_icon(paused: bool, color: gpui::Hsla) -> crate::icon::Icon {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn interval_units_keep_distinct_and_equivalent_cadences() {
+        let cadence = |rule: &str| {
+            let task: super::Task = serde_json::from_value(serde_json::json!({
+                "id": "interval", "name": "Monitor", "prompt": "Check", "status": "ACTIVE", "rrule": rule,
+            })).unwrap();
+            task.cadence()
+        };
+        assert_ne!(cadence("FREQ=MINUTELY;INTERVAL=30"), cadence("FREQ=DAILY"));
+        assert_ne!(
+            cadence("FREQ=MINUTELY;INTERVAL=30"),
+            cadence("FREQ=HOURLY;INTERVAL=30")
+        );
+        assert_eq!(cadence("FREQ=MINUTELY;INTERVAL=60"), cadence("FREQ=HOURLY"));
+        assert_eq!(
+            cadence("FREQ=MINUTELY;INTERVAL=1440"),
+            cadence("FREQ=DAILY")
+        );
+        assert_eq!(cadence("FREQ=HOURLY;INTERVAL=168"), cadence("FREQ=WEEKLY"));
+    }
+
     #[test]
     fn only_the_original_event_prompt_is_event_triggered() {
         let event = "## When this happens\n> a PR opens\n>\n> in main\n\n## Perform action\n> review it\n\nTrailing";

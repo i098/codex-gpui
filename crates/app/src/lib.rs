@@ -1844,7 +1844,7 @@ impl Root {
             .and_then(|t| self.thread_run_settings.get(t))
             .cloned();
         self.sync_starting(cx);
-        self.toast(Toast::info("Starting run…"), cx);
+        self.toast(Toast::info("Starting run…").icon("toast-info"), cx);
         let epoch = self.navigation_epoch;
         let host = self.host.clone();
         let bridge = self.bridge.clone();
