@@ -2167,6 +2167,7 @@ impl Dialog {
     /// `Close dialog` 24 px at the top right.
     fn rename_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
         let focused = self.selected == 0;
+        let line_height = 130. / 7.;
         div()
             .p(px(20.))
             .flex()
@@ -3056,6 +3057,10 @@ impl Render for Dialog {
         let schedule = self.kind == Kind::ScheduleTask;
         let announcement = self.kind == Kind::ModelAnnouncement;
         let commit = self.kind == Kind::Commit;
+        let squircle_popup = matches!(
+            self.kind,
+            Kind::LogOut | Kind::ClearAllUnreads | Kind::Rename
+        );
         let (width, height): (f32, f32) = match self.kind {
             Kind::Shortcuts => (600., shortcuts_height),
             Kind::CloseWindow => (420., 171.),
@@ -3216,23 +3221,18 @@ impl Render for Dialog {
                     .top(px(top))
                     .w(px(width))
                     .h(px(height))
-                    .when(self.kind == Kind::ClearAllUnreads, |d| {
-                        d.top_layer().snap_origin()
-                    })
                     .rounded(px(if announcement {
                         16.
                     } else if commit {
                         20.
                     } else if schedule {
                         30.
-                    } else if matches!(self.kind, Kind::LogOut | Kind::ClearAllUnreads) {
+                    } else if squircle_popup {
                         25.
                     } else {
                         24.
                     }))
-                    .when(!commit && self.kind != Kind::LogOut, |d| {
-                        d.overflow_hidden()
-                    })
+                    .when(!commit && !squircle_popup, |d| d.overflow_hidden())
                     .map(|d| {
                         if announcement {
                             d.child(shapes::decoration(shapes::Decoration {
@@ -3275,18 +3275,12 @@ impl Render for Dialog {
                                 shapes::Fill::Color,
                                 false,
                                 shapes::Decoration {
-                                    radius: Corners::all(px(
-                                        if matches!(self.kind, Kind::LogOut | Kind::ClearAllUnreads)
-                                        {
-                                            25.
-                                        } else {
-                                            24.
-                                        },
-                                    )),
-                                    corner: if matches!(
-                                        self.kind,
-                                        Kind::LogOut | Kind::ClearAllUnreads
-                                    ) {
+                                    radius: Corners::all(px(if squircle_popup {
+                                        25.
+                                    } else {
+                                        24.
+                                    })),
+                                    corner: if squircle_popup {
                                         shapes::Corner::Squircle
                                     } else {
                                         shapes::Corner::default()

@@ -79,6 +79,9 @@ fn unread_command_is_idempotent_and_opening_the_chat_reads_it() -> Result<()> {
     fx.wait_thread(SUBTRACT)?;
     ensure!(unread(&fx).is_empty());
     fx.proof_shot("reader-read.png")?;
+    fx.keys("cmd-k")?;
+    fx.proof_shot("menu-groups-thread.png")?;
+    fx.keys("escape")?;
     fx.keys("cmd-n cmd-shift-u alt-cmd-r alt-cmd-p")?;
     ensure!(fx.route() == Route::Home && fx.read(|root, _| root.dialog().is_none()));
     ensure!(unread(&fx).is_empty());

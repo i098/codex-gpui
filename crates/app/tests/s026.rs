@@ -178,7 +178,7 @@ fn command_menu_groups_and_chat_search_match_the_original() -> Result<()> {
         port == groups(&recording["result"]["threadRoute"]),
         "thread route: {port:#?}"
     );
-    fx.proof_shot("menu-groups-thread.png")?;
+    fx.proof_shot("menu-groups-greeting.png")?;
     fx.keys("escape")?;
 
     // The unread dot [INFERENCE: 8 px `info-solid` dot centred in the leading slot; the

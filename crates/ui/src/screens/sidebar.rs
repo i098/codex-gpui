@@ -3564,18 +3564,16 @@ impl Render for CommandMenu {
                 .flex()
                 .flex_col()
                 .gap(px(4.))
-                // `pt-2` over a 13 px / 18.57 line; 26.5 keeps the rows on the original's
-                // device-pixel-snapped edges.
                 .when(!heading.is_empty(), |group| {
                     group.child(
                         div()
-                            .h(px(26.5))
+                            .h(px(8. + 130. / 7.))
                             .pt(px(8.))
                             .px(px(8.))
                             .flex()
                             .items_center()
                             .gap(px(8.))
-                            .child(text(heading, 13., 18.5, 430., t.text_tertiary))
+                            .child(text(heading, 13., 130. / 7., 430., t.text_tertiary))
                             .when(searching, |d| {
                                 d.child(icon("sidebar-cmd-spinner", 12., t.text_tertiary))
                             }),
