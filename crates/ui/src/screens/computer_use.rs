@@ -805,11 +805,15 @@ mod tests {
 
     #[test]
     fn failed_writes_keep_confirmed_settings_and_removal_dialog() {
-        let mut cx = HeadlessAppContext::with_platform(
-            textsys::text_system(),
-            Arc::new(theme::Assets),
-            gpui_platform::current_headless_renderer,
-        );
+        let mut cx = if std::env::var_os("CGX_COMPUTER_USE_SHOTS").is_some() {
+            HeadlessAppContext::with_platform(
+                textsys::text_system(),
+                Arc::new(theme::Assets),
+                gpui_platform::current_headless_renderer,
+            )
+        } else {
+            HeadlessAppContext::with_asset_source(textsys::text_system(), Arc::new(theme::Assets))
+        };
         let requests = Arc::new(AtomicUsize::new(0));
         let sent = requests.clone();
         let app = AppApproval {
