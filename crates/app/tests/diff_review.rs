@@ -253,3 +253,97 @@ fn file_jump_sticky_header_and_native_tab_keep_the_selected_file() -> Result<()>
     fx.reference_shot()?.save(out.join("file-b.png"))?;
     Ok(())
 }
+
+fn active_find_rows(image: &image::RgbaImage) -> Result<(u32, u32)> {
+    let rows = image
+        .enumerate_pixels()
+        .filter(|(x, _, pixel)| *x > 1320 && pixel.0[..3] == [0xfb, 0x6a, 0x22])
+        .map(|(_, y, _)| y)
+        .collect::<std::collections::BTreeSet<_>>();
+    Ok((
+        *rows.first().context("missing active find highlight")?,
+        *rows.last().context("missing active find highlight")?,
+    ))
+}
+
+#[test]
+fn diff_find_moves_the_visible_match_and_preserves_scope_query() -> Result<()> {
+    common::install_panic_hook();
+    let fallback = tempfile::tempdir()?;
+    let out = std::env::var_os("CGX_DIFF_REVIEW_EVIDENCE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| fallback.path().to_owned());
+    fs::create_dir_all(&out)?;
+    let event: serde_json::Value = include_str!("../../../fixtures/sessions/subtract.jsonl")
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find(|line| line["msg"]["method"] == "turn/diff/updated")
+        .context("recorded subtract diff")?;
+    let mut fx = Fx::new()?;
+    fx.keys("cmd-2")?;
+    fx.wait_thread(SUBTRACT)?;
+    fx.keys("alt-cmd-b")?;
+    fx.root.update(&mut fx.cx, |root, cx| {
+        root.on_event(
+            Event::Notification {
+                method: "turn/diff/updated".into(),
+                params: event["msg"]["params"].clone(),
+            },
+            cx,
+        );
+    });
+    fx.cx.run_until_parked();
+    fx.click((1000., 160.))?;
+    fx.keys("cmd-f")?;
+    fx.type_text("return")?;
+    let first = fx.reference_shot()?;
+    let first_rows = active_find_rows(&first)?;
+    first.save(out.join("find-first.png"))?;
+    fx.keys("enter")?;
+    let next = fx.reference_shot()?;
+    ensure!(
+        active_find_rows(&next)? != first_rows,
+        "Enter did not move the visible match"
+    );
+    next.save(out.join("find-next.png"))?;
+    fx.keys("shift-enter")?;
+    ensure!(
+        active_find_rows(&fx.reference_shot()?)? == first_rows,
+        "Shift+Enter did not return to the previous match"
+    );
+    fx.action(Box::new(ui::screens::diff::panel::FindInChat(
+        "return".into(),
+    )))?;
+    ensure!(
+        fx.read(|root, cx| root.diff_panel().unwrap().read(cx).search().is_none()),
+        "the diff find bar stayed open in chat scope"
+    );
+    ensure!(
+        fx.read(|root, cx| root
+            .thread()
+            .unwrap()
+            .read(cx)
+            .find_state()
+            .is_some_and(|(query, _, _)| query == "return")),
+        "chat scope lost the query"
+    );
+    fx.reference_shot()?.save(out.join("find-chat.png"))?;
+    fx.action(Box::new(ui::screens::diff::panel::FindInDiff(
+        "return".into(),
+    )))?;
+    ensure!(
+        fx.read(|root, cx| root
+            .diff_panel()
+            .unwrap()
+            .read(cx)
+            .search()
+            .is_some_and(|(query, count)| query == "return" && count == 2)),
+        "diff scope lost the query or matches"
+    );
+    fx.keys("escape")?;
+    ensure!(
+        fx.read(|root, cx| root.diff_panel().unwrap().read(cx).search().is_none()),
+        "Escape did not close diff find"
+    );
+    Ok(())
+}

@@ -39,7 +39,12 @@ mod patch;
 
 #[path = "diff/navigation.rs"]
 mod navigation;
+
+#[path = "diff/find.rs"]
+mod find;
 pub use controls::DiffLayout;
+pub(crate) use find::find_scope_buttons;
+pub use find::{FindInChat, FindInDiff};
 
 /// Panel width the capture had stored (`app-shell:right-panel-width:v3`) before clamping.
 const STORED_WIDTH: f32 = 664.17;
@@ -229,6 +234,8 @@ pub struct DiffPanel {
     focus: Option<FocusHandle>,
     query: Option<String>,
     matches: usize,
+    match_total: usize,
+    find_scroll: find::FindScroll,
     active_match: usize,
     selected_query: bool,
     aggregated_turn: Option<String>,
@@ -330,6 +337,8 @@ impl DiffPanel {
             focus: None,
             query: None,
             matches: 0,
+            match_total: 0,
+            find_scroll: find::FindScroll::default(),
             active_match: 0,
             selected_query: false,
             aggregated_turn: None,
@@ -552,7 +561,7 @@ impl DiffPanel {
     }
 
     pub fn search(&self) -> Option<(&str, usize)> {
-        self.query.as_deref().map(|query| (query, self.matches))
+        self.query.as_deref().map(|query| (query, self.match_total))
     }
 
     pub fn open_find(&mut self, window: &Window, cx: &mut Context<Self>) -> bool {
@@ -642,34 +651,28 @@ impl DiffPanel {
     }
 
     fn search_changed(&mut self) {
-        let query = self.query.as_deref().unwrap_or("");
+        let query = self.query.as_deref().unwrap_or("").trim().to_lowercase();
         self.matches = 0;
+        self.match_total = 0;
         for file in &mut self.files {
             let before = self.matches;
             for line in file.hunks.iter_mut().flat_map(|h| &mut h.lines) {
                 line.match_start = self.matches;
-                line.matches.clear();
-                if !query.is_empty() {
-                    let mut end = 0;
-                    for (start, _) in line.text.char_indices() {
-                        if start >= end
-                            && line
-                                .text
-                                .get(start..start + query.len())
-                                .is_some_and(|s| s.eq_ignore_ascii_case(query))
-                        {
-                            end = start + query.len();
-                            line.matches.push(start..end);
-                        }
-                    }
-                }
+                let (matches, total) = crate::screens::thread::view::find_ranges(
+                    &line.text,
+                    &query,
+                    250 - self.matches,
+                );
+                line.matches = matches;
                 self.matches += line.matches.len();
+                self.match_total += total;
             }
             if self.matches > before {
                 file.open = true;
             }
         }
         self.active_match = self.active_match.min(self.matches.saturating_sub(1));
+        self.find_scroll.pending.set(self.matches > 0);
     }
 
     pub fn selected_text(&self) -> String {
@@ -736,16 +739,13 @@ impl DiffPanel {
             self.open_find(window, cx);
             cx.stop_propagation();
             return;
+        } else if key.key == "enter" && self.query.is_some() {
+            self.next_find(key.modifiers.shift, cx);
+            cx.stop_propagation();
+            return;
         } else if let Some(query) = &mut self.query {
             match key.key.as_str() {
                 "escape" => self.query = None,
-                "enter" if self.matches > 0 => {
-                    self.active_match = if key.modifiers.shift {
-                        (self.active_match + self.matches - 1) % self.matches
-                    } else {
-                        (self.active_match + 1) % self.matches
-                    };
-                }
                 "backspace" => {
                     if self.selected_query {
                         query.clear();
@@ -783,7 +783,7 @@ impl DiffPanel {
             } else {
                 self.active_match + 1
             },
-            self.matches
+            self.match_total
         );
         let button = |id, name, label| {
             round_icon(name, 28., t)
@@ -841,13 +841,13 @@ impl DiffPanel {
                                     },
                                 )),
                         )
-                        .child(button("diff-find-close", "close", "Close find").on_click(
-                            cx.listener(|this, _, _, cx| {
-                                this.query = None;
-                                this.search_changed();
-                                cx.notify();
-                            }),
-                        )),
+                        .when(!self.standalone, |d| {
+                            d.child(find_scope_buttons(query, true, t))
+                        })
+                        .child(
+                            button("diff-find-close", "close", "Close find")
+                                .on_click(cx.listener(|this, _, _, cx| this.close_find(cx))),
+                        ),
                 )
                 .child(
                     div()
@@ -860,20 +860,13 @@ impl DiffPanel {
                         .child(
                             button("diff-find-previous", "composer-arrow-up", "Previous result")
                                 .on_click(cx.listener(|this, _, _, cx| {
-                                    if this.matches > 0 {
-                                        this.active_match =
-                                            (this.active_match + this.matches - 1) % this.matches;
-                                    }
-                                    cx.notify();
+                                    this.next_find(true, cx);
                                 })),
                         )
                         .child(
                             button("diff-find-next", "diff-chevron-down", "Next result").on_click(
                                 cx.listener(|this, _, _, cx| {
-                                    if this.matches > 0 {
-                                        this.active_match = (this.active_match + 1) % this.matches;
-                                    }
-                                    cx.notify();
+                                    this.next_find(false, cx);
                                 }),
                             ),
                         )
@@ -1103,6 +1096,7 @@ impl DiffPanel {
 
 impl Render for DiffPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        *self.find_scroll.target.borrow_mut() = None;
         let t = cx.theme().clone();
         let width = if self.standalone {
             window.viewport_size().width
@@ -1453,6 +1447,12 @@ impl Render for DiffPanel {
             })
             .when(self.jump.is_some(), |d| {
                 d.child(self.jump_overlay(window, cx))
+            })
+            .when(self.query.is_some(), |d| {
+                d.child(
+                    self.find_scroll
+                        .probe(self.scroll.clone(), cx.entity().entity_id()),
+                )
             })
     }
 }
@@ -2645,6 +2645,7 @@ fn hunk(
             selection,
         ));
         let down_layout = content.layout().clone();
+        panel.find_scroll.track(l, panel.active_match, &down_layout);
         let move_layout = down_layout.clone();
         let mark = l
             .word_changes
