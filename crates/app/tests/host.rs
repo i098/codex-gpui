@@ -338,6 +338,7 @@ fn cloud_requests_replay_the_recorded_endpoints_with_the_original_auth_headers()
         "/beacons/home?",
         "/automations?filter=scheduled",
         "/suggested_automations",
+        "/wham/remote/control/mfa_requirement",
     ];
     let requests: Vec<Value> = endpoints.iter().map(|e| recorded_http(e)).collect();
     let answers = requests
@@ -1160,5 +1161,40 @@ fn automation_resume_schedules_when_the_jitter_salt_cannot_be_saved() -> Result<
     assert_eq!(resumed["status"], "ACTIVE");
     assert!(resumed["nextRunAt"].as_i64().unwrap() >= resumed["updatedAt"].as_i64().unwrap());
     assert!(salt.is_dir());
+    Ok(())
+}
+
+/// Mobile `Get started` reads the MFA requirement, then the MFA status, through the host. A
+/// host without the authenticated transport leaves the initial step with its error; the retry
+/// shows the loading step, then the recorded `required` requirement and `mfa_enabled_v2: true`
+/// status open the allow-host step, not the MFA step.
+#[cfg(target_os = "macos")]
+#[test]
+fn mobile_get_started_follows_the_recorded_mfa_status() -> Result<()> {
+    use ui::screens::mobile::{GetStarted, SetupStep};
+    let mut fx = common::Fx::new()?;
+    let home = tempfile::tempdir()?;
+    fx.root.update(&mut fx.cx, |root, cx| {
+        root.set_host(Arc::new(LocalHost::new(home.path())), cx)
+    });
+    fx.action(Box::new(ui::OpenMobileSetup))?;
+    let page = fx.read(|root, _| root.mobile_page().unwrap().clone());
+    let step = |fx: &common::Fx| fx.read(|_, cx| page.read(cx).step());
+    assert_eq!(step(&fx), SetupStep::Initial);
+
+    fx.click(fx.at("mobile", "Get started")?)?;
+    assert_eq!(step(&fx), SetupStep::Error);
+
+    let replay = Arc::new(ReplayHost::from_recording(include_str!(
+        "../../../refs/interactions/mobile-mfa.json"
+    ))?);
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(replay, cx));
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        window.dispatch_action(Box::new(GetStarted), cx);
+    })?;
+    assert_eq!(step(&fx), SetupStep::Pending);
+    fx.cx.run_until_parked();
+    assert_eq!(step(&fx), SetupStep::AllowHost);
     Ok(())
 }

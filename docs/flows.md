@@ -37,8 +37,8 @@ The rows were not clicked again on the original through `tools/route1`: its `ser
 | 14.7 Settings, login and onboarding | 20 | 7 | 8 | 5 |
 | 15.1 Automations | 16 | 2 | 2 | 12 |
 | 15.2 Background terminal | 10 | 10 | 0 | 0 |
-| 15.3 Mobile setup | 10 | 2 | 1 | 7 |
-| **All** | **192** | **74** | **31** | **87** |
+| 15.3 Mobile setup | 10 | 3 | 2 | 5 |
+| **All** | **192** | **75** | **32** | **85** |
 
 Before round 5 (F2Flows): 57 PASS, 33 FAIL, 102 NOT WIRED. Before round 4 (F1Flows): 42 PASS, 25 FAIL, 125 NOT WIRED.
 
@@ -863,9 +863,9 @@ They do not replace original-versus-native appearance approval or the strict pix
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Profile menu → Help → `Set up mobile` | entry | `/codex-mobile`. | `Route::Mobile`: sidebar closed, no rail item selected. | PASS (`profile_menu_mobile`, `parity_mobile`) |
-| 2 | Initial step | click | `Get started` / `Later`. | Dispatches `GetStarted`; no handler, no `Later`. | NOT WIRED (`crates/ui/src/screens/mobile.rs`: no allow-host step view) |
-| 3 | Allow host step | click | `remoteControl/enable`. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`, then `crates/app/src/lib.rs`) |
-| 4 | MFA required | error | `Turn on Multi-Factor Authentication`. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
+| 2 | Initial step | click | `Get started` reads `/wham/remote/control/mfa_requirement`, then on `required` `/accounts/mfa_info`; `Later` (dialog only). | `GetStarted`: loading button; `required` with `mfa_enabled_v2` off opens the MFA step, otherwise the allow-host step; a failed read or a body without the expected field shows `Couldn’t check security requirements. Try again`. | PASS (`mobile_get_started_follows_the_recorded_mfa_status`) |
+| 3 | Allow host step | click | `Allow`: `remoteControl/enable`. | Step view; `Allow` is disabled with `Remote control can’t be turned on from this app yet`. | NOT WIRED (`crates/app/src/lib.rs`: no `remoteControl/enable`) |
+| 4 | MFA required | error | `Turn on Multi-Factor Authentication`, `Continue on chatgpt.com`. | Step view; the button opens `chatgpt.com/#settings/Security`. | FAIL (no flow reaches it: the recorded account has MFA on, and no MFA-off response is recorded) |
 | 5 | Waiting / pairing step | loading | QR code, pairing code. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
 | 6 | Pairing unavailable | error | `Pairing code unavailable`. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
 | 7 | Connected step | click | Toggles, `Done`, `Manage connections`. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
@@ -879,7 +879,7 @@ A row above that names a `crates/ui` owner needs that change first. The changes 
 
 1. `crates/ui/src/thread.rs`: click handlers on the reasoning and command cards, `Reapply`, the user message's hover actions, a find bar, and loading and error views.
 2. `crates/ui/src/diff.rs`: the Changes header controls (source selector, file tree, layout, wrap, refresh), empty, loading and error states.
-3. `crates/ui/src/screens/mobile.rs`: the allow-host, pairing and connected steps (`remoteControl/*`).
+3. `crates/ui/src/screens/mobile.rs`: the pairing and connected steps (`remoteControl/*`).
 4. Focus-visible rings on the shared buttons (`icon_button`, `pill`, rail items), and tooltips on the composer and sidebar row buttons.
 
 ## S016: Thread header

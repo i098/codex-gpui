@@ -411,6 +411,8 @@ pub struct Root {
     /// The route's own shell.
     page: Option<Entity<Shell>>,
     archive_page: Option<Entity<ArchivedChats>>,
+    /// The Mobile route's setup page.
+    mobile_page: Option<Entity<mobile::MobileSetupPage>>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
     settings_page: Option<Entity<settings::SettingsPage>>,
@@ -683,6 +685,7 @@ impl Root {
             side: None,
             page: None,
             archive_page: None,
+            mobile_page: None,
             settings_section: None,
             settings_page: None,
             command_menu: None,
@@ -949,6 +952,10 @@ impl Root {
 
     pub fn archived_chats(&self) -> Option<&Entity<ArchivedChats>> {
         self.archive_page.as_ref()
+    }
+
+    pub fn mobile_page(&self) -> Option<&Entity<mobile::MobileSetupPage>> {
+        self.mobile_page.as_ref()
     }
 
     /// The Home sidebar of the chat routes.
@@ -1901,6 +1908,46 @@ impl Root {
         .detach();
     }
 
+    /// Mobile `Get started` (`codex-mobile-setup-flow` `P`, `XNn`): the initial step shows its
+    /// loading button while the host reads the account's MFA requirement. A non-`required`
+    /// answer opens the allow-host step (whose `Allow` is disabled); `required` also reads
+    /// `/accounts/mfa_info` and opens the MFA step unless `mfa_enabled_v2` is already on. A
+    /// failed read or a body without the expected field returns to the initial step with its
+    /// error.
+    fn start_mobile_setup(&mut self, cx: &mut Context<Self>) {
+        let Some(page) = self.mobile_page.clone() else {
+            return;
+        };
+        page.update(cx, |page, cx| page.set_step(mobile::SetupStep::Pending, cx));
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move {
+            let body = host::json_body(&host.fetch(&host::mfa_requirement())?)?;
+            let requirement = body["requirement"]
+                .as_str()
+                .context("MFA requirement response has no requirement")?;
+            if requirement != "required" {
+                return Ok(mobile::SetupStep::AllowHost);
+            }
+            let info = host::json_body(&host.fetch(&host::mfa_info())?)?;
+            let enabled = info["mfa_enabled_v2"]
+                .as_bool()
+                .context("MFA info response has no mfa_enabled_v2")?;
+            anyhow::Ok(if enabled {
+                mobile::SetupStep::AllowHost
+            } else {
+                mobile::SetupStep::MfaRequired
+            })
+        });
+        cx.spawn(async move |_, cx| {
+            let step = read.await.unwrap_or_else(|error| {
+                eprintln!("codex-gpui: mobile setup: MFA read failed: {error:#}");
+                mobile::SetupStep::Error
+            });
+            page.update(cx, |page, cx| page.set_step(step, cx));
+        })
+        .detach();
+    }
+
     fn set_threads(&mut self, threads: &[Thread], cx: &mut Context<Self>) {
         self.threads = threads.to_vec();
         self.sidebar.update(cx, |s, cx| s.set_threads(threads, cx));
@@ -2062,6 +2109,7 @@ impl Root {
         self.suggestion_load = None;
         let (can_back, can_forward) = (!self.back.is_empty(), !self.forward.is_empty());
         self.archive_page = None;
+        self.mobile_page = None;
         self.page = match self.state.route.clone() {
             Route::Settings => {
                 // The Appearance page shows the theme the app keeps.
@@ -2133,7 +2181,11 @@ impl Root {
                 self.sync_starting(cx);
                 Some(shell)
             }
-            Route::Mobile => Some(mobile::shell(cx)),
+            Route::Mobile => {
+                let (shell, page) = mobile::shell(cx);
+                self.mobile_page = Some(page);
+                Some(shell)
+            }
             Route::Home | Route::Thread(_) => None,
         };
         if let Some(sidebar) = &self.scheduled {
@@ -5144,6 +5196,9 @@ impl Render for Root {
             .on_action(cx.listener(|this, _: &OpenMobileSetup, window, cx| {
                 this.navigate(Route::Mobile, window, cx)
             }))
+            .on_action(
+                cx.listener(|this, _: &mobile::GetStarted, _, cx| this.start_mobile_setup(cx)),
+            )
             .on_action(cx.listener(|this, _: &ToggleChangesPanel, window, cx| {
                 if this.side == Some(SidePanel::Changes) {
                     this.close_side(SidePanel::Changes, window, cx)
