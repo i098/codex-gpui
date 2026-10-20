@@ -41,6 +41,7 @@ use url::Url;
 
 mod automation_schedule;
 pub mod computer_use;
+pub mod computer_use_native;
 mod git;
 mod projectless;
 mod run_now;
@@ -69,6 +70,10 @@ impl Request {
 pub trait Host: Send + Sync {
     /// Returns the original wire response. Call this off the UI thread for a local host.
     fn fetch(&self, request: &Request) -> Result<Value>;
+
+    fn computer_use_native(&self) -> Option<Arc<computer_use_native::NativeComputerUse>> {
+        None
+    }
 
     /// Reads the original sidebar project state off the UI thread.
     fn projects(&self) -> Result<Vec<Project>> {
@@ -416,13 +421,16 @@ pub struct LocalHost {
     opener: PathBuf,
     host_settings_path: PathBuf,
     computer_use_settings: Option<computer_use::ComputerUseSettings>,
+    native_computer_use: Arc<computer_use_native::NativeComputerUse>,
 }
 
 impl LocalHost {
     pub fn new(home: impl Into<PathBuf>) -> Self {
+        let home = home.into();
         Self {
             computer_use_settings: None,
-            home: home.into(),
+            native_computer_use: Arc::new(computer_use_native::NativeComputerUse::new(&home)),
+            home,
             bridge: None,
             opener: "/usr/bin/open".into(),
             host_settings_path: PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
@@ -955,6 +963,10 @@ impl Host for LocalHost {
             .context("Computer Use settings require an explicit user home")
     }
 
+    fn computer_use_native(&self) -> Option<Arc<computer_use_native::NativeComputerUse>> {
+        Some(self.native_computer_use.clone())
+    }
+
     fn projects(&self) -> Result<Vec<Project>> {
         let path = self.home.join(".codex-global-state.json");
         let contents = match fs::read(&path) {
@@ -1466,6 +1478,10 @@ impl CloudHost {
 impl Host for CloudHost {
     fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
         self.local.computer_use_settings()
+    }
+
+    fn computer_use_native(&self) -> Option<Arc<computer_use_native::NativeComputerUse>> {
+        self.local.computer_use_native()
     }
 
     fn projects(&self) -> Result<Vec<Project>> {

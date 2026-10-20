@@ -75,6 +75,23 @@ It does not use optional agent capabilities (`loadSession`, session list, image 
 An unsupported method gets the JSON-RPC error `<method> is not supported by the ACP backend`, and the app shows its usual failure state.
 The client offers no file system or terminal capability, so the agent uses its own tools.
 
+## Native Computer Use service
+
+The host keeps one managed native helper at `$CODEX_HOME/computer-use/Codex Computer Use.app`.
+Setup copies the signed OpenAI helper without changing its signature.
+The host exposes installation, explicit helper startup, Locked use, and Appshots through `Host::computer_use_native`.
+Construction and status reads do not start the helper or request macOS permissions.
+Locked use requires the original feature, remote-control, and account-policy gates.
+`LockedUseState::visible` applies those gates to confirmed host state.
+The settings UI is a separate follow-up; this service does not activate a settings page.
+The helper's nested installer handles `status`, `install`, and `uninstall`; errors remain visible.
+Appshots use the original Apple Event protocol and retain request IDs through completion or cancellation.
+Capture files must be PNG or JPEG files inside the helper's temporary folder and at most 25 MiB.
+Accessibility and Screen Recording remain separate macOS permissions.
+Model-driven computer use stays on the LCU relay and original native sockets.
+Do not grant SSH Automation access to test the separate Appshots Apple Event path.
+These native operations require macOS; Linux checks cover policy, capture-file boundaries, and request state only.
+
 ## Build and run
 
 ```sh
