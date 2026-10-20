@@ -73,7 +73,7 @@ async function configuration() {
     await click("Settings");
     await waitFor(`document.body.innerText.includes('Default permissions')`);
     await click("Configuration");
-    await waitFor(`document.body.innerText.includes('Configure permissions, web access, and agent responses for new chats')`);
+    await waitFor(`document.body.innerText.includes('Configure permissions, web access, and agent responses for new chats') || document.body.innerText.includes('Choose how ChatGPT works on your tasks')`);
     await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: Math.round(w * 0.6), y: 6 });
     await settle(1500);
     await page.evaluate(`(() => {
@@ -104,6 +104,12 @@ async function configuration() {
     fs.mkdirSync(path.dirname(stem), { recursive: true });
     fs.writeFileSync(`${stem}.png`, Buffer.from(shot.data, "base64"));
     fs.writeFileSync(`${stem}.spec.json`, JSON.stringify(spec, null, 1));
+  } catch (error) {
+    fs.mkdirSync(output, { recursive: true });
+    const shot = await page.send("Page.captureScreenshot", { format: "png" });
+    fs.writeFileSync(path.join(output, "configuration-failure.png"), Buffer.from(shot.data, "base64"));
+    fs.writeFileSync(path.join(output, "configuration-failure.json"), JSON.stringify(await page.evaluate(`({url:location.href,text:document.body.innerText})`), null, 2));
+    throw error;
   } finally {
     await page.close();
   }
