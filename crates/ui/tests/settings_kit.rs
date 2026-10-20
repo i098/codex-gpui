@@ -1,6 +1,28 @@
-use gpui::{AppContext as _, Focusable, HeadlessAppContext, Keystroke, px, size};
+use gpui::{
+    AnyWindowHandle, AppContext as _, Context, Focusable, HeadlessAppContext, IntoElement,
+    KeyUpEvent, Keystroke, MouseButton, MouseDownEvent, PlatformInput, Render, Window, point, px,
+    size,
+};
 use std::sync::Arc;
 use ui::settings_kit::{Choice, MultiSelect};
+
+fn press(cx: &mut HeadlessAppContext, window: AnyWindowHandle, key: &str) {
+    cx.update_window(window, |_, window, cx| {
+        window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| {
+        window.dispatch_event(
+            PlatformInput::KeyUp(KeyUpEvent {
+                keystroke: Keystroke::parse(key).unwrap(),
+            }),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
 
 #[test]
 fn keyboard_skips_locked_choices_and_restores_trigger_focus() {
@@ -40,11 +62,7 @@ fn keyboard_skips_locked_choices_and_restores_trigger_focus() {
         .unwrap();
     cx.run_until_parked();
     for key in ["down", "space", "escape"] {
-        cx.update_window(window.into(), |_, window, cx| {
-            window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx);
-        })
-        .unwrap();
-        cx.run_until_parked();
+        press(&mut cx, window.into(), key);
     }
     cx.update(|cx| {
         window
@@ -54,6 +72,28 @@ fn keyboard_skips_locked_choices_and_restores_trigger_focus() {
                 assert!(menu.focus_handle(cx).is_focused(window));
                 menu.set_checked("max", true, cx);
                 assert!(menu.choices()[1].checked);
+            })
+            .unwrap()
+    });
+    press(&mut cx, window.into(), "down");
+    cx.update_window(window.into(), |_, window, cx| {
+        window.dispatch_event(
+            PlatformInput::MouseDown(MouseDownEvent {
+                button: MouseButton::Left,
+                position: point(px(450.), px(350.)),
+                modifiers: Default::default(),
+                click_count: 1,
+                first_mouse: false,
+            }),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        window
+            .update(cx, |menu, window, cx| {
+                assert!(menu.focus_handle(cx).is_focused(window));
             })
             .unwrap()
     });
@@ -94,14 +134,59 @@ fn destructive_confirmation_defaults_to_cancel_and_returns_focus() {
         })
         .unwrap();
     cx.run_until_parked();
-    cx.update_window(window.into(), |_, window, cx| {
-        window.dispatch_keystroke(Keystroke::parse("enter").unwrap(), cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
+    press(&mut cx, window.into(), "enter");
     assert_eq!(*outcomes.borrow(), [Outcome::Cancel]);
     cx.update_window(window.into(), |_, window, _| {
         assert!(return_focus.is_focused(window));
     })
     .unwrap();
+}
+
+struct TestLink;
+
+impl Render for TestLink {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        ui::settings_kit::external_link_row(
+            "documentation",
+            "Documentation",
+            None,
+            "https://example.com/docs",
+            window,
+            cx,
+        )
+    }
+}
+
+#[test]
+fn link_opens_once_when_enter_is_released() {
+    let mut cx =
+        HeadlessAppContext::with_platform(textsys::text_system(), Arc::new(theme::Assets), || {
+            gpui_platform::current_headless_renderer()
+        });
+    cx.update(|cx| cx.set_global(theme::Theme::dark()));
+    let window = cx
+        .open_window(size(px(500.), px(400.)), |_, cx| cx.new(|_| TestLink))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(window.into(), |_, window, cx| {
+        window.focus_next(cx);
+        window.dispatch_keystroke(Keystroke::parse("enter").unwrap(), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(cx.take_opened_url().is_none());
+    cx.update_window(window.into(), |_, window, cx| {
+        window.dispatch_event(
+            PlatformInput::KeyUp(KeyUpEvent {
+                keystroke: Keystroke::parse("enter").unwrap(),
+            }),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        cx.take_opened_url().as_deref(),
+        Some("https://example.com/docs")
+    );
 }

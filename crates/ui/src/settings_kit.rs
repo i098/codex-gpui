@@ -211,7 +211,7 @@ impl Render for MultiSelect {
             )
             .child(text(format!("{count} selected"), 13., 18., 430., t.text))
             .child(icon("chevron-down", 14., t.text_tertiary))
-            .on_key_down(cx.listener(Self::key))
+            .capture_key_down(cx.listener(Self::key))
             .on_click(cx.listener(|this, _, window, cx| {
                 if this.open {
                     this.close(window, cx);
@@ -221,11 +221,9 @@ impl Render for MultiSelect {
                     cx.notify();
                 }
             }))
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+            .on_mouse_down_out(cx.listener(|this, _, window, cx| {
                 if this.open && !this.menu_hovered {
-                    this.open = false;
-                    this.search.clear();
-                    cx.notify();
+                    this.close(window, cx);
                 }
             }));
         if self.open {
@@ -258,7 +256,7 @@ impl Render for MultiSelect {
                             .size(px(16.))
                             .children(choice.checked.then(|| icon("menu-check", 16., t.text))),
                     )
-                    .on_key_down(cx.listener(Self::key))
+                    .capture_key_down(cx.listener(Self::key))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |this, _, window, cx| {
                         if !this.choices[index].disabled {
@@ -303,7 +301,6 @@ pub fn external_link_row(
     let focus = focus::handle(id.clone(), 0, window, cx);
     let handle = focus.read(cx).handle.clone();
     let t = cx.theme();
-    let keyboard_url = url.clone();
     focus::ring(
         div()
             .id(id)
@@ -339,10 +336,4 @@ pub fn external_link_row(
         handle.focus(window, cx)
     })
     .on_click(move |_, _, cx| cx.open_url(&url))
-    .on_key_down(move |event, _, cx| {
-        if event.keystroke.key == "enter" {
-            cx.open_url(&keyboard_url);
-            cx.stop_propagation();
-        }
-    })
 }

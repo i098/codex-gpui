@@ -173,7 +173,7 @@ impl Render for Confirmation {
                     .aria_label(self.title.clone())
                     .w(px(width))
                     .relative()
-                    .on_key_down(cx.listener(Self::key))
+                    .capture_key_down(cx.listener(Self::key))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(shapes::backdrop_blur(
                         px(24.),
