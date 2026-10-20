@@ -4,6 +4,41 @@ use theme::{ActiveTheme as _, Theme};
 use super::ThreadView;
 use crate::text;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum UsageLimitNotice {
+    #[default]
+    RetryLater,
+    Upgrade,
+    UpgradeOrAddCredits,
+    AddCredits,
+}
+
+impl UsageLimitNotice {
+    pub fn for_plan(plan: Option<&str>) -> Self {
+        match plan {
+            Some("free" | "go") => Self::Upgrade,
+            Some("plus" | "prolite") => Self::UpgradeOrAddCredits,
+            Some("pro" | "promax") => Self::AddCredits,
+            _ => Self::RetryLater,
+        }
+    }
+
+    fn message(self) -> &'static str {
+        match self {
+            Self::RetryLater => "You've hit your usage limit. Try again later.",
+            Self::Upgrade => {
+                "You've hit your usage limit. Upgrade your plan to continue, or try again later."
+            }
+            Self::UpgradeOrAddCredits => {
+                "You've hit your usage limit. Upgrade your plan or add credits to continue, or try again later."
+            }
+            Self::AddCredits => {
+                "You've hit your usage limit. Add credits to continue, or try again later."
+            }
+        }
+    }
+}
+
 pub struct RetryHistory;
 
 pub struct History {
@@ -119,6 +154,11 @@ impl Render for History {
 }
 
 impl ThreadView {
+    pub fn set_usage_limit_notice(&mut self, notice: UsageLimitNotice, cx: &mut Context<Self>) {
+        self.usage_limit_notice = notice;
+        cx.notify();
+    }
+
     pub(super) fn render_failure(
         &self,
         turn: &str,
@@ -156,34 +196,61 @@ impl ThreadView {
                     })),
             )
     }
-    pub fn turn_error_message(&self, turn: &str) -> Option<String> {
-        let turn = self.turns.iter().find(|t| t.id == turn)?;
-        let (error, retrying) = self.turn_failure(turn)?;
-        Some(error_title(error, retrying))
+    pub fn turn_error_messages(&self, turn: &str) -> Vec<String> {
+        self.turns
+            .iter()
+            .find(|t| t.id == turn)
+            .into_iter()
+            .flat_map(|turn| self.turn_failures(turn))
+            .map(|(error, retrying)| error_title(error, retrying, self.usage_limit_notice))
+            .collect()
     }
 
     pub fn render_error(&self, turn: &str) -> Option<String> {
         self.render_errors.borrow().get(turn).cloned()
     }
 
-    fn turn_failure<'a>(
+    fn turn_failures<'a>(
         &'a self,
         turn: &'a bridge::types::Turn,
-    ) -> Option<(&'a bridge::types::TurnError, bool)> {
-        self.stream_errors
-            .get(&turn.id)
-            .map(|n| (&n.error, n.will_retry))
-            .or_else(|| turn.error.as_ref().map(|error| (error, false)))
+    ) -> impl Iterator<Item = (&'a bridge::types::TurnError, bool)> + 'a {
+        let errors = self.stream_errors.get(&turn.id);
+        let terminal = turn
+            .error
+            .as_ref()
+            .filter(|_| errors.is_none_or(|errors| errors.iter().all(|(_, retrying)| *retrying)));
+        errors
+            .into_iter()
+            .flatten()
+            .map(|(error, retrying)| (error, *retrying))
+            .chain(terminal.map(|error| (error, false)))
     }
 
-    pub(super) fn turn_error(
+    pub(super) fn turn_errors(
         &self,
         turn: &bridge::types::Turn,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<gpui::Stateful<Div>> {
-        let (error, retrying) = self.turn_failure(turn)?;
-        let title = error_title(error, retrying);
+    ) -> Option<Div> {
+        let mut errors = self.turn_failures(turn).peekable();
+        errors.peek()?;
+        Some(
+            div().flex().flex_col().children(
+                errors
+                    .enumerate()
+                    .map(|(index, error)| self.error_notice((&turn.id, index), error, window, cx)),
+            ),
+        )
+    }
+
+    fn error_notice(
+        &self,
+        (turn, index): (&str, usize),
+        (error, retrying): (&bridge::types::TurnError, bool),
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<Div> {
+        let title = error_title(error, retrying, self.usage_limit_notice);
         let details = match (
             (title != error.message).then_some(error.message.as_str()),
             error.additional_details.as_deref(),
@@ -193,29 +260,49 @@ impl ThreadView {
             (None, Some(details)) => details.to_owned(),
             (None, None) => String::new(),
         };
-        let turn = &turn.id;
-        let t = cx.theme();
+        let t = cx.theme().clone();
+        let usage = !retrying
+            && error
+                .codex_error_info
+                .as_ref()
+                .is_some_and(|info| info == "usageLimitExceeded");
+        let mut summary = div().flex().items_center().gap(px(6.));
+        if usage {
+            summary = summary
+                .gap(px(8.))
+                .child(div().flex_1().min_w(px(12.)).h(px(1.)).bg(t.border))
+                .child(crate::icon::icon("toast-error", 16., t.text_secondary));
+        } else if retrying {
+            summary = summary.child(crate::icon::icon("thread-reconnect", 16., t.text_secondary));
+        }
+        summary = summary.child(
+            text(title.clone(), 14., 20., 400., t.text_secondary)
+                .flex_shrink_1()
+                .min_w(px(0.)),
+        );
+        if usage {
+            summary = summary.child(div().flex_1().min_w(px(12.)).h(px(1.)).bg(t.border));
+        }
         let mut notice = div()
-            .id(format!("turn-error-{turn}"))
+            .id(format!("turn-error-{turn}-{index}"))
             .mt(px(16.))
             .flex()
             .flex_col()
             .gap(px(4.));
         if details.is_empty() {
-            return Some(notice.child(text(title, 14., 20., 400., t.text_secondary)));
+            return notice.child(summary);
         }
-        let id = format!("error-details-{turn}");
+        let id = format!("error-details-{turn}-{index}");
         let focus = crate::focus::handle(id.clone(), 0, window, cx);
         let open = self.expanded.contains(&id);
         let keyboard_id = id.clone();
         let summary = crate::focus::ring(
-            div()
+            summary
                 .id(id.clone())
                 .relative()
                 .role(gpui::Role::Button)
-                .aria_label(title.clone())
-                .cursor_pointer()
-                .child(text(title, 14., 20., 400., cx.theme().text_secondary)),
+                .aria_label(title)
+                .cursor_pointer(),
             &focus,
             Theme::RADIUS_SM,
             px(2.),
@@ -241,11 +328,15 @@ impl ThreadView {
         if open {
             notice = notice.child(text(details, 14., 20., 400., cx.theme().text_secondary));
         }
-        Some(notice)
+        notice
     }
 }
 
-fn error_title(error: &bridge::types::TurnError, retrying: bool) -> String {
+fn error_title(
+    error: &bridge::types::TurnError,
+    retrying: bool,
+    usage: UsageLimitNotice,
+) -> String {
     let info = error.codex_error_info.as_ref();
     if retrying {
         let busy = info.is_some_and(|info| {
@@ -270,7 +361,7 @@ fn error_title(error: &bridge::types::TurnError, retrying: bool) -> String {
         };
     }
     if info.is_some_and(|info| info == "usageLimitExceeded") {
-        "You've hit your usage limit. Try again later.".to_owned()
+        usage.message().to_owned()
     } else {
         error.message.clone()
     }
@@ -278,7 +369,7 @@ fn error_title(error: &bridge::types::TurnError, retrying: bool) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::error_title;
+    use super::{UsageLimitNotice, error_title};
     use bridge::types::TurnError;
     use serde_json::{Value, json};
 
@@ -292,6 +383,7 @@ mod tests {
                     additional_details: None,
                 },
                 retrying,
+                UsageLimitNotice::RetryLater,
             )
         };
         for message in ["Reconnecting... 2/5", "Reconnecting 2/5"] {
@@ -325,5 +417,33 @@ mod tests {
             title("Source failure", Value::Null, false),
             "Source failure"
         );
+    }
+
+    #[test]
+    fn account_plans_select_supported_usage_advice() {
+        for plan in ["free", "go"] {
+            assert_eq!(
+                UsageLimitNotice::for_plan(Some(plan)),
+                UsageLimitNotice::Upgrade
+            );
+        }
+        for plan in ["plus", "prolite"] {
+            assert_eq!(
+                UsageLimitNotice::for_plan(Some(plan)),
+                UsageLimitNotice::UpgradeOrAddCredits
+            );
+        }
+        for plan in ["pro", "promax"] {
+            assert_eq!(
+                UsageLimitNotice::for_plan(Some(plan)),
+                UsageLimitNotice::AddCredits
+            );
+        }
+        for plan in [None, Some("unknown")] {
+            assert_eq!(
+                UsageLimitNotice::for_plan(plan),
+                UsageLimitNotice::RetryLater
+            );
+        }
     }
 }

@@ -60,6 +60,7 @@ use ui::screens::sidebar::{
 use ui::screens::terminal::{OpenTerminalItem, StopBackgroundTerminals, Xterm};
 use ui::screens::thread::view::{
     Clock, EditMessage, ForkThread, GitAction, History, RetryHistory, RevertTurn, ThreadView,
+    UsageLimitNotice,
 };
 use ui::screens::{automations, mobile};
 use ui::toast::{Toast, Toaster};
@@ -372,6 +373,7 @@ pub struct Root {
     /// The signed-in ChatGPT account's email (`account/read`), shown in the logout dialog.
     account_email: Option<String>,
     chatgpt_account: bool,
+    usage_limit_notice: UsageLimitNotice,
     bridge: Arc<Bridge>,
     host: Arc<dyn host::Host>,
     project_load: Option<Task<()>>,
@@ -657,6 +659,7 @@ impl Root {
             logout_pending: false,
             account_email: None,
             chatgpt_account: false,
+            usage_limit_notice: UsageLimitNotice::RetryLater,
             host: Arc::new(
                 host::CloudHost::from_env(host::app_server_credentials(bridge.clone()))
                     .with_bridge(bridge.clone())
@@ -781,10 +784,7 @@ impl Root {
             };
             this.update_in(cx, |this, window, cx| {
                 this._update_policy = updater::poll_policy(bridge.clone(), cx);
-                this.account_email = account.as_ref().and_then(chatgpt_email);
-                this.chatgpt_account = account.as_ref().is_some_and(|account| {
-                    matches!(account.account, Some(Account::Chatgpt { .. }))
-                });
+                this.set_account(account.as_ref(), cx);
                 if account.is_some_and(|a| a.account.is_none() && a.requires_openai_auth) {
                     this.login = Some(cx.new(Login::new));
                 }
@@ -2465,8 +2465,7 @@ impl Root {
                 match result {
                     Ok(_) => {
                         this.login = Some(cx.new(Login::new));
-                        this.account_email = None;
-                        this.chatgpt_account = false;
+                        this.set_account(None, cx);
                         let host = this.host.clone();
                         cx.background_spawn(async move { host.invalidate_identity() })
                             .detach();
@@ -2824,7 +2823,10 @@ impl Root {
         self.diff = Some(diff);
         self.file = None;
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
-        view.update(cx, |view, cx| view.set_git_phase(self.git_busy, cx));
+        view.update(cx, |view, cx| {
+            view.set_git_phase(self.git_busy, cx);
+            view.set_usage_limit_notice(self.usage_limit_notice, cx);
+        });
         cx.subscribe_in(
             &view,
             window,
@@ -4194,7 +4196,7 @@ impl Root {
                 if method == "account/login/completed" && params["success"] == true)
             {
                 self.login = None;
-                self.read_account_email(cx);
+                self.read_account(cx);
                 self.refresh_threads(cx);
                 self.load_projects(cx);
                 self.load_sections(cx);
@@ -4370,9 +4372,23 @@ impl Root {
         }
     }
 
-    /// Reads the first `thread/list` page again; threads of later loaded pages stay after it.
-    /// Reads the email of the account that just signed in; a failure leaves the dialog without it.
-    fn read_account_email(&self, cx: &mut Context<Self>) {
+    fn set_account(&mut self, account: Option<&AccountReadResponse>, cx: &mut Context<Self>) {
+        self.account_email = account.and_then(chatgpt_email);
+        self.chatgpt_account =
+            account.is_some_and(|account| matches!(account.account, Some(Account::Chatgpt { .. })));
+        let plan = account.and_then(|account| match &account.account {
+            Some(Account::Chatgpt { plan_type, .. }) => Some(plan_type.as_str()),
+            _ => None,
+        });
+        self.usage_limit_notice = UsageLimitNotice::for_plan(plan);
+        if let Some(view) = &self.thread {
+            view.update(cx, |view, cx| {
+                view.set_usage_limit_notice(self.usage_limit_notice, cx)
+            });
+        }
+    }
+
+    fn read_account(&self, cx: &mut Context<Self>) {
         let bridge = self.bridge.clone();
         let host = self.host.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {
@@ -4380,8 +4396,7 @@ impl Root {
                 .await;
             let account = bridge.account_read().await?;
             this.update(cx, |this, cx| {
-                this.account_email = chatgpt_email(&account);
-                this.chatgpt_account = matches!(account.account, Some(Account::Chatgpt { .. }));
+                this.set_account(Some(&account), cx);
                 if this.chatgpt_account
                     && this.host.supports_cloud_search()
                     && let Some(menu) = &this.command_menu

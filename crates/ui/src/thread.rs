@@ -55,7 +55,7 @@ mod recovery;
 #[path = "thread/select.rs"]
 mod select;
 
-pub use recovery::{History, RetryHistory};
+pub use recovery::{History, RetryHistory, UsageLimitNotice};
 
 use actions::action_row;
 pub use actions::{EditMessage, ForkThread, RevertTurn};
@@ -133,7 +133,8 @@ pub struct ThreadView {
     pub terminals_stopping: bool,
     turns: Vec<Turn>,
     render_errors: RefCell<HashMap<String, String>>,
-    stream_errors: HashMap<String, bridge::types::ErrorNotification>,
+    stream_errors: HashMap<String, Vec<(bridge::types::TurnError, bool)>>,
+    usage_limit_notice: UsageLimitNotice,
     clock: Clock,
     composer: AnyView,
     embedded: bool,
@@ -588,6 +589,7 @@ impl ThreadView {
             turns: thread.turns,
             render_errors: RefCell::default(),
             stream_errors: HashMap::new(),
+            usage_limit_notice: UsageLimitNotice::RetryLater,
             clock,
             composer,
             embedded: false,
@@ -1424,14 +1426,6 @@ impl ThreadView {
                 let Ok(n) = serde_json::from_value::<TurnNotification>(params.clone()) else {
                     return;
                 };
-                if method == "turn/started"
-                    || self
-                        .stream_errors
-                        .get(&n.turn.id)
-                        .is_some_and(|e| e.will_retry)
-                {
-                    self.stream_errors.remove(&n.turn.id);
-                }
                 match self.turns.iter_mut().find(|t| t.id == n.turn.id) {
                     Some(turn) => {
                         turn.status = n.turn.status;
@@ -1515,13 +1509,6 @@ impl ThreadView {
                     }
                     None => turn.items.push(n.item),
                 }
-                if self
-                    .stream_errors
-                    .get(&n.turn_id)
-                    .is_some_and(|error| error.will_retry)
-                {
-                    self.stream_errors.remove(&n.turn_id);
-                }
             }
             "item/mcpToolCall/progress" => {
                 let Some(item_id) = params["itemId"].as_str() else {
@@ -1569,13 +1556,6 @@ impl ThreadView {
                     }) => aggregated_output.get_or_insert_default().push_str(&n.delta),
                     _ => {}
                 }
-                if self
-                    .stream_errors
-                    .get(&n.turn_id)
-                    .is_some_and(|error| error.will_retry)
-                {
-                    self.stream_errors.remove(&n.turn_id);
-                }
             }
             "error" => {
                 let Ok(error) =
@@ -1583,7 +1563,11 @@ impl ThreadView {
                 else {
                     return;
                 };
-                self.stream_errors.insert(error.turn_id.clone(), error);
+                let errors = self.stream_errors.entry(error.turn_id).or_default();
+                match errors.last_mut() {
+                    Some((last, true)) if error.will_retry => *last = error.error,
+                    _ => errors.push((error.error, error.will_retry)),
+                }
             }
             _ => return,
         }
@@ -1957,7 +1941,7 @@ impl Render for ThreadView {
                             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                                 self.turn(turn, i + 1 == n, window, &t, cx)
                             })) {
-                                Ok(body) => body.children(self.turn_error(turn, window, cx)),
+                                Ok(body) => body.children(self.turn_errors(turn, window, cx)),
                                 Err(error) => {
                                     let error = error
                                         .downcast_ref::<String>()

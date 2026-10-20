@@ -34,8 +34,12 @@ fn event(fx: &mut Fx, method: &str, params: Value) {
     fx.cx.run_until_parked();
 }
 
-fn error(fx: &Fx, turn: &str) -> Option<String> {
-    fx.read(|root, cx| root.thread()?.read(cx).turn_error_message(turn))
+fn errors(fx: &Fx, turn: &str) -> Vec<String> {
+    fx.read(|root, cx| {
+        root.thread()
+            .map(|view| view.read(cx).turn_error_messages(turn))
+            .unwrap_or_default()
+    })
 }
 
 #[test]
@@ -135,7 +139,7 @@ fn history_failure_retries_and_navigation_ignores_the_old_request() -> Result<()
 }
 
 #[test]
-fn stream_errors_keep_their_thread_and_turn_and_clear_only_after_recovery() -> Result<()> {
+fn stream_errors_stay_with_their_thread_and_turn_after_progress() -> Result<()> {
     if !cfg!(target_os = "macos") {
         return Ok(());
     }
@@ -162,16 +166,13 @@ fn stream_errors_keep_their_thread_and_turn_and_clear_only_after_recovery() -> R
         "error",
         notice("another-thread", true, "Reconnecting... 1/5", Value::Null),
     );
-    assert_eq!(error(&fx, "recovery-turn"), None);
+    assert!(errors(&fx, "recovery-turn").is_empty());
     event(
         &mut fx,
         "error",
         notice(SUBTRACT, true, "Reconnecting... 1/5", Value::Null),
     );
-    assert_eq!(
-        error(&fx, "recovery-turn").as_deref(),
-        Some("Reconnecting 1/5")
-    );
+    assert_eq!(errors(&fx, "recovery-turn"), vec!["Reconnecting 1/5"]);
     shot(&mut fx, "reconnecting")?;
     event(
         &mut fx,
@@ -184,8 +185,8 @@ fn stream_errors_keep_their_thread_and_turn_and_clear_only_after_recovery() -> R
         ),
     );
     assert_eq!(
-        error(&fx, "recovery-turn").as_deref(),
-        Some("Server is busy, reconnecting 2/5")
+        errors(&fx, "recovery-turn"),
+        vec!["Server is busy, reconnecting 2/5"]
     );
     shot(&mut fx, "server-busy")?;
     event(
@@ -193,7 +194,11 @@ fn stream_errors_keep_their_thread_and_turn_and_clear_only_after_recovery() -> R
         "item/agentMessage/delta",
         json!({"threadId":SUBTRACT,"turnId":"recovery-turn","itemId":"recovery-message","delta":" again"}),
     );
-    assert_eq!(error(&fx, "recovery-turn"), None);
+    fx.advance(ui::motion::STREAMING_TEXT)?;
+    assert_eq!(
+        errors(&fx, "recovery-turn"),
+        vec!["Server is busy, reconnecting 2/5"]
+    );
     event(
         &mut fx,
         "error",
@@ -205,8 +210,11 @@ fn stream_errors_keep_their_thread_and_turn_and_clear_only_after_recovery() -> R
         ),
     );
     assert_eq!(
-        error(&fx, "recovery-turn").as_deref(),
-        Some("You've hit your usage limit. Try again later.")
+        errors(&fx, "recovery-turn"),
+        vec![
+            "Server is busy, reconnecting 2/5",
+            "You've hit your usage limit. Add credits to continue, or try again later.",
+        ]
     );
     shot(&mut fx, "usage-limit")?;
     turn["status"] = "failed".into();
@@ -216,15 +224,20 @@ fn stream_errors_keep_their_thread_and_turn_and_clear_only_after_recovery() -> R
         json!({"threadId":SUBTRACT,"turn":turn}),
     );
     assert_eq!(
-        error(&fx, "recovery-turn").as_deref(),
-        Some("You've hit your usage limit. Try again later.")
+        errors(&fx, "recovery-turn"),
+        vec![
+            "Server is busy, reconnecting 2/5",
+            "You've hit your usage limit. Add credits to continue, or try again later.",
+        ]
     );
+    turn["id"] = "next-turn".into();
+    turn["status"] = "inProgress".into();
     event(
         &mut fx,
         "turn/started",
         json!({"threadId":SUBTRACT,"turn":turn}),
     );
-    assert_eq!(error(&fx, "recovery-turn"), None);
+    assert!(errors(&fx, "next-turn").is_empty());
     Ok(())
 }
 

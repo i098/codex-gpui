@@ -380,8 +380,8 @@ The original recordings, masks and strict gates stay unchanged; remaining toolti
 | 14 | `⌘⇧A` | shortcut | Archives the chat. | `ArchiveChat`: `thread/archive`, the row leaves Recents, the route goes to Home. | PASS (`archive_chat`) |
 | 15 | `⌘⌥R` | shortcut | Rename dialog. | — | NOT WIRED (`crates/ui`: no rename dialog) |
 | 16 | Approval card | click | Approve, Allow similar, Allow all edits, Deny. | `Root::on_event` keeps each pending request by its request id and thread. The open thread shows its oldest request. Command, file-change, permission, user-input, standard MCP elicitation, and supported dynamic-tool forms use this queue. Responses retain the displayed card's identity. Explicit resolution removes requests without answering them. Turn completion removes only turn-bound requests. | PASS (`approval_queue.rs`: command/file-change queue order, withdrawal, thread isolation and turn end; non-command release gates remain open below) |
-| 17 | Stream error | error | `Reconnecting {progress}`. | Thread-bound `error` notifications show reconnect progress or a busy notice for `serverOverloaded` and HTTP 429 stream disconnects. Successful stream activity clears retry notices. | PASS (`thread_recovery`: thread isolation, progress, busy state and recovery) |
-| 18 | Usage limit | error | Usage limit banner. | `usageLimitExceeded` shows the usage-limit notice. The source error remains available in the details. Completion does not discard a terminal error. | PASS (`thread_recovery`: usage-limit and terminal-error retention) |
+| 17 | Stream error | error | `Reconnecting {progress}`. | Thread-bound notices show reconnect progress or busy status for `serverOverloaded` and HTTP 429 stream disconnects. Progress updates replace the current retry count. Later activity and completion retain source notices with their turn. | PASS (`thread_recovery`: thread and turn isolation, progress, busy status and retained notices) |
+| 18 | Usage limit | error | Usage limit banner. | `usageLimitExceeded` shows the divider and the advice for the plan reported by `account/read`. Unknown plans use the retry-later fallback. Source details remain available, and completion retains terminal errors. | PASS (`thread_recovery`: account-plan advice and source-error retention) |
 | 19 | Focus ring on cards | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 20 | Resize | resize | The side panel yields width before the chat column. | `panel_width` keeps 320 px for the chat; no flow checks the 3 widths with the panel open. | FAIL (no flow; `crates/ui/src/diff.rs` `panel_width` assumes the sidebar open) |
 
@@ -409,8 +409,7 @@ Run `cargo test -p app --test computer_use_approvals`; the native replay and cap
 
 The native recovery replay runs with `cargo test -p app --test thread_recovery -- --test-threads=1`.
 It exercises Root, ThreadView, the replayed JSON-RPC bridge and the Metal renderer on macOS.
-The original history-failure surface was captured at 1280x832 and scale 2.
-The remaining original recovery captures and appearance approval remain pending.
+Set `CGX_THREAD_RECOVERY_PROOF` to an output directory to retain native captures.
 
 MO-36 uses `refs/interactions/ms4.json`, recorded with the original CSS classes in an isolated route1 Chrome context.
 The recording appends synthetic markdown spans and seeks their animations; it does not measure live model segmentation.
