@@ -213,6 +213,8 @@ impl Render for RunHistory {
                                         div()
                                             .id("previous-run-menu")
                                             .role(Role::Menu)
+                                            .top_layer()
+                                            .snap_origin()
                                             .w(px(224.))
                                             .p(px(4.))
                                             .rounded(px(12.))

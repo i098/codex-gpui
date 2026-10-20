@@ -558,7 +558,11 @@ impl ScheduledSidebar {
                         cx.stop_propagation();
                         cx.notify();
                     }))
-                    .child(crate::composer::popover(t, 180., |d| d.children(options))),
+                    .child(
+                        crate::composer::popover(t, 180., |d| d.children(options))
+                            .top_layer()
+                            .snap_origin(),
+                    ),
             ),
         )
         .with_priority(1)
@@ -724,9 +728,11 @@ impl ScheduledSidebar {
                     this.close_menu(window, cx);
                 }
             }))
-            .child(crate::composer::popover(t, 220., |menu| {
-                menu.child(run).child(item)
-            }));
+            .child(
+                crate::composer::popover(t, 220., |menu| menu.child(run).child(item))
+                    .top_layer()
+                    .snap_origin(),
+            );
         deferred(
             div().absolute().top(px(30.)).right(px(1.)).child(
                 anchored()
@@ -1000,7 +1006,7 @@ impl Render for ScheduledSidebar {
                                         cx.stop_propagation()
                                     })
                                     .when(self.filters.search, |d| {
-                                        d.child(fill(px(9.375), search_background).layer())
+                                        d.child(fill(px(9.375), search_background).top_layer())
                                     })
                                     .child(ButtonVisual {
                                         glyph: icon(
@@ -1423,6 +1429,7 @@ impl Render for AutomationsPage {
                     .id("automations-scroll")
                     .flex_1()
                     .overflow_y_scroll()
+                    .cc_tiles()
                     .child(
                         div()
                             .min_h_full()
@@ -1526,6 +1533,7 @@ impl Render for AutomationThread {
                     .id("automation-thread")
                     .size_full()
                     .overflow_y_scroll()
+                    .cc_tiles()
                     .pt(px(32.))
                     .child(
                         column(div())
