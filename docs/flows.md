@@ -395,7 +395,6 @@ The icon rasterizes during paint in the active compositor layer; the footer reco
 MCP responses use `action`, optional empty `content`, and the selected `_meta.persist`; they never use a command-approval `decision`.
 The host retains the disclosure choice only after an accepted response enters the bridge.
 Run `cargo test -p app --test computer_use_approvals`; the native replay and captures require macOS.
-
 MO-36 uses `refs/interactions/ms4.json`, recorded with the original CSS classes in an isolated route1 Chrome context.
 The recording appends synthetic markdown spans and seeks their animations; it does not measure live model segmentation.
 Run `tools/mac.sh -l ms4 'cargo test -p app --test stream_fade'` for native glyph-alpha checks.

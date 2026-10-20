@@ -2090,7 +2090,11 @@ impl Render for Composer {
             .flex_col()
             .gap(px(8.))
             .when_some(self.approval.clone(), |d, a| {
-                d.child(self.approval_card(&a, &t, cx))
+                d.child(if a.form.is_some() {
+                    self.request_card(&a, &t, cx)
+                } else {
+                    self.approval_card(&a, &t, cx)
+                })
             })
             .child(div().children(tray).child(card))
             .when_some(self.context_menu.as_ref(), |d, menu| {

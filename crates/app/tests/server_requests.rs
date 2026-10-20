@@ -48,6 +48,7 @@ fn permission(id: u64, thread: &str, turn: &str) -> Event {
     }
 }
 
+
 #[test]
 fn withdrawn_answer_cannot_settle_the_next_request_or_another_thread() -> Result<()> {
     exit_on_panic();

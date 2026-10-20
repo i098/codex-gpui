@@ -15,13 +15,24 @@ impl Approval {
         params.as_object()?;
         let (title, fields, unsupported) = match method {
             "item/tool/requestUserInput" => {
-                params["turnId"].as_str()?;
-                params["itemId"].as_str()?;
-                let fields = params["questions"].as_array()?;
-                if fields.is_empty() {
+                let request: bridge::types::ToolRequestUserInput =
+                    serde_json::from_value(params.clone()).ok()?;
+                if request.questions.is_empty() {
                     return None;
                 }
-                ("Answer the questions".to_owned(), fields.clone(), false)
+                let mut ids = std::collections::HashSet::new();
+                if request
+                    .questions
+                    .iter()
+                    .any(|question| !ids.insert(&question.id))
+                {
+                    return None;
+                }
+                (
+                    "Answer the questions".to_owned(),
+                    params["questions"].as_array()?.clone(),
+                    false,
+                )
             }
             "item/tool/call" => match params["tool"].as_str()? {
                 "request_onboarding_input" => {
@@ -131,7 +142,7 @@ impl Approval {
         {
             return None;
         }
-        if method != "mcpServer/elicitation/request" && fields.len() > 1 {
+        if method == "item/tool/call" && fields.len() > 1 {
             let mut ids = std::collections::HashSet::new();
             if fields
                 .iter()
@@ -1828,9 +1839,9 @@ mod tests {
     fn user_answers_keep_question_ids_and_dynamic_picker_actions() {
         let mut context = gpui::HeadlessAppContext::new(textsys::text_system());
         context.update(|cx| {
-            let params = json!({ "threadId": "thread-a", "turnId": "turn-a", "itemId": "input-a",
+            let params = json!({ "threadId": "thread-a", "turnId": "turn-a", "itemId": "input-a", "isBlocking": true,
                 "questions": [{ "id": "language", "header": "Language", "question": "Choose a language",
-                    "isOther": true, "isSecret": false, "options": [{ "label": "Rust" }] }]
+                    "isOther": true, "isSecret": false, "options": [{ "label": "Rust", "description": "Native" }] }]
             });
             let composer = cx.new(|cx| Composer::new("", false, cx));
             composer.update(cx, |composer, cx| {
