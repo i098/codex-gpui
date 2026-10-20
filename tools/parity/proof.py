@@ -179,7 +179,7 @@ def original_through_tunnel(args, ssh):
             "-R", f"{server_port}:127.0.0.1:{server_port}", args.mac,
         ]
         with background(["node", str(local / "tools/route1/server.mjs")], env, args.out / "server.log") as server, \
-                background(tunnel_command, env, args.out / "tunnel.log") as tunnel:
+                background(tunnel_command, os.environ, args.out / "tunnel.log") as tunnel:
             ready(server, env["R1_SERVER"] + "/index.html")
             browser = json.loads(ready(tunnel, env["R1_CDP"] + "/json/version"))
             if browser["Browser"] != "HeadlessChrome/155.0.8059.79" or "a49e2e3d4addfd84e765b52afe230bedb81096db" not in browser["WebKit-Version"]:
