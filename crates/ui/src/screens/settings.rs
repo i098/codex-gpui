@@ -30,6 +30,9 @@ use std::{
 };
 use theme::{ActiveTheme as _, Theme};
 
+#[path = "computer_use.rs"]
+pub mod computer_use;
+
 /// The app's theme setting (`ThemeSetting`): `system`, `light` or `dark`.
 pub const THEME: &str = "host.appearance-theme";
 
@@ -1136,6 +1139,9 @@ impl Render for SettingsPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let section = self.page.read(cx).section;
+        if section == "Computer use" {
+            return super::computer_use::render(window, cx);
+        }
         // Unimplemented sections retain their title-only surface.
         let groups = match section {
             "General" => self.general(&t, window, cx),
@@ -1240,6 +1246,7 @@ impl Render for SettingsPane {
                         ),
                     ),
             )
+            .into_any_element()
     }
 }
 
