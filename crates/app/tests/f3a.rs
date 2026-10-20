@@ -127,6 +127,7 @@ struct Fx {
     cx: HeadlessAppContext,
     root: Entity<Root>,
     window: AnyWindowHandle,
+    _host_home: tempfile::TempDir,
 }
 
 impl Fx {
@@ -158,10 +159,14 @@ impl Fx {
             cx.new(|cx| Root::new(state, bridge, events, CWD.into(), window, cx))
         })?;
         let root = cx.read_window(&window, |root, _| root)?;
+        let host_home = tempfile::tempdir()?;
+        let host = Arc::new(app::host::LocalHost::new(host_home.path()));
+        cx.update(|cx| root.update(cx, |root, cx| root.set_host(host, cx)));
         let mut fx = Self {
             cx,
             root,
             window: window.into(),
+            _host_home: host_home,
         };
         fx.wait("startup", |fx| fx.root.read_with(&fx.cx, |r, _| r.ready()))?;
         Ok(fx)

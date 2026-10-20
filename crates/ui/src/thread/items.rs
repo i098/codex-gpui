@@ -198,7 +198,7 @@ pub(super) fn diff_card(
                             .flex_col()
                             .child(text(title, 14., 21., 500., t.text).text_ellipsis())
                             .child(
-                                div().h(px(19.5)).pt(px(3.)).child(
+                                div().h(px(19.5)).pt(px(3.)).overflow_hidden().child(
                                     crate::screens::diff::panel::stats(added, removed, 13., t),
                                 ),
                             ),
@@ -397,7 +397,7 @@ fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
                 // command line without one. ponytail: `search` and `list_files` rows also read
                 // as `Ran <command>`; the original words them per action (`Searched for …`).
                 let parsed = match command_actions.as_slice() {
-                    [] => shell_command(command),
+                    [] => shell_command(command).to_owned(),
                     actions => actions
                         .iter()
                         .map(|a| a.command.as_str())
@@ -419,7 +419,7 @@ fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
                         stats: None,
                         shell: Some(Shell {
                             key: format!("shell-{id}"),
-                            command: shell_command(command),
+                            command: shell_command(command).to_owned(),
                             output: aggregated_output
                                 .as_deref()
                                 .unwrap_or_default()

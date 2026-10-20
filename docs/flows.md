@@ -31,9 +31,9 @@ The rows were not clicked again on the original through `tools/route1`: its `ser
 | 14.6 Diff view | 20 | 2 | 1 | 17 |
 | 14.7 Settings, login and onboarding | 20 | 7 | 8 | 5 |
 | 15.1 Automations | 16 | 2 | 2 | 12 |
-| 15.2 Background terminal | 10 | 2 | 2 | 6 |
+| 15.2 Background terminal | 10 | 10 | 0 | 0 |
 | 15.3 Mobile setup | 10 | 2 | 1 | 7 |
-| **All** | **192** | **66** | **33** | **93** |
+| **All** | **192** | **74** | **31** | **87** |
 
 Before round 5 (F2Flows): 57 PASS, 33 FAIL, 102 NOT WIRED. Before round 4 (F1Flows): 42 PASS, 25 FAIL, 125 NOT WIRED.
 
@@ -739,18 +739,30 @@ The complete strict Terminal pixel gate still fails; the separate rail and captu
 References, text boxes, route checks, and thresholds stay unchanged.
 See [the scoped unread issue](https://github.com/i098/codex-gpui/issues/169).
 
+`cargo test -p app --test terminal_states -- --test-threads=1` exercises the native terminal states on macOS.
+The replay captures the empty view, streamed output, retained failed output, preview, focus ring, stop failure and successful cleanup.
+It resizes the window to 1280, 767 and 600 px.
+`cargo test -p ui --lib` checks Unicode refit and retained failed output without a native window.
+Reference captures keep composer focus and hide the caret.
+The change card clips overflowing stats to the original subtitle width.
+Stop sends one thread-scoped request and waits for command completion notifications before removing commands from the running list.
+A refused request keeps both commands and permits another attempt.
+The failure toast paints above the open summary.
+These checks use isolated replay data and do not stop real processes.
+They do not replace original-versus-native appearance approval or the strict pixel gate.
+
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Thread with a running background command | entry | `Background terminal` entry in the thread. | `Toggle summary` lists it under `Background processes`, as refs/terminal shows. | PASS (`background_terminal_tab`, `parity_terminal`) |
 | 2 | Click the entry | click | Opens the side panel tab. | `OpenBackgroundTerminal`: the command's tab (`Xterm`) in the side panel. | PASS (`background_terminal_tab`, `parity_terminal`) |
-| 3 | Output streaming | loading | Appends `outputDelta`; `No output yet`. | The tab shows the replayed `outputDelta`; no `No output yet`. | FAIL (no `No output yet`: `crates/ui/src/screens/terminal.rs` `Xterm`; output checked by `parity_terminal`) |
-| 4 | `Stop all background terminals` | click | `thread/backgroundTerminals/clean`. | — | NOT WIRED (`crates/ui/src/thread.rs`: no stop button; no recorded `thread/backgroundTerminals/clean`) |
-| 5 | Stop failure | error | Toast. | — | NOT WIRED (`crates/ui`) |
+| 3 | Output streaming | loading | Appends `outputDelta`; `No output yet`. | Shows the empty placeholder, then the selected command's streamed output. | PASS (`terminal_states`) |
+| 4 | `Stop all background terminals` | click | `thread/backgroundTerminals/clean`. | The summary action sends the thread ID; pending requests cannot send a duplicate. | PASS (`terminal_states`) |
+| 5 | Stop failure | error | Toast. | Shows `Unable to stop background terminals` above the summary and retains the running commands. | PASS (`terminal_states`) |
 | 6 | Tab close | click | Closes the tab; `⌘W`. | The tab's `×` or `⌘W` closes the selected tab; the next tab, else the previous, is selected; the last tab closes the panel. | PASS (`s029::panel_tabs_replay`, `background_terminal_tab`, `changes_panel_keys`) |
-| 7 | Tab thumbnail | hover | Thumbnail preview. | — | NOT WIRED (`crates/ui/src/diff.rs` `tab_strip`) |
-| 8 | Command finishes | empty | Leaves the running list; buffer kept. | The tab follows the running list only, so its buffer goes with the command. | NOT WIRED (`crates/ui/src/screens/terminal.rs` `Xterm`: no kept buffer) |
-| 9 | Focus ring | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/diff.rs` `tab_strip`) |
-| 10 | Resize | resize | xterm refits columns. | — | NOT WIRED (`crates/ui/src/screens/terminal.rs`) |
+| 7 | Tab thumbnail | hover | Thumbnail preview. | Shows the command title and the last eight rendered output rows. | PASS (`terminal_states`, native capture) |
+| 8 | Command finishes | empty | Leaves the running list; buffer kept. | Keeps the selected item and its streamed output, including a failure without a final output snapshot. | PASS (`terminal_states`) |
+| 9 | Focus ring | focus ring | 2 px ring. | Uses the shared 2 px overlay ring for tabs and close buttons; keyboard activation and close work. | PASS (`terminal_states`) |
+| 10 | Resize | resize | xterm refits columns. | Refits read-only output to the panel width without changing its stored buffer. | PASS (`terminal_states`, Unicode refit check) |
 
 ## 15.3 Mobile setup
 

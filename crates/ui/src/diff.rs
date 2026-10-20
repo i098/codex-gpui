@@ -997,7 +997,7 @@ impl SplitScreen {
     /// selected one on its surface, the others `text-tertiary`, surface and `×` on hover),
     /// `New tab`, and the `Enter full view` / `Hide tabs` buttons. The caller places it from
     /// the panel's left edge to the window's right edge, 44 px tall.
-    fn tab_strip(&self, t: &Theme, window: &Window, cx: &mut Context<Self>) -> Div {
+    fn tab_strip(&self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
         /// Label box width and its `text-fade-truncate` distance.
         const LABEL_WIDTH: f32 = 181.;
         const FADE: f32 = 16.;
@@ -1006,7 +1006,7 @@ impl SplitScreen {
             Appearance::Dark => t.ghost_hover,
             Appearance::Light => t.surface_elevated_secondary,
         };
-        let tab = |ix: usize, (tab_icon, label): &Tab, cx: &mut Context<Self>| {
+        let mut tab = |ix: usize, (tab_icon, label): &Tab, cx: &mut Context<Self>| {
             let selected = ix == self.active;
             let hovered = self.hovered == Some(ix);
             let color = if selected { t.text } else { t.text_tertiary };
@@ -1036,8 +1036,18 @@ impl SplitScreen {
                 LABEL_WIDTH + 20.
             };
             let fade = width > px(label_width - FADE);
-            div()
+            let focus = crate::focus::handle(("side-tab", ix), 0, window, cx);
+            let control = div()
                 .id(("side-tab", ix))
+                .tab_index(0)
+                .role(gpui::Role::Tab)
+                .aria_label(label.clone())
+                .on_key_down(move |event, window, cx| {
+                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                        window.dispatch_action(Box::new(ActivateSideTab(ix)), cx);
+                        cx.stop_propagation();
+                    }
+                })
                 .relative()
                 .w(px(238.))
                 .h(px(32.))
@@ -1111,21 +1121,39 @@ impl SplitScreen {
                         ),
                 )
                 .when(closable, |d| {
-                    d.child(
-                        div()
-                            .id("side-panel-close-tab")
-                            .absolute()
-                            .top(px(6.))
-                            .right(px(7.))
-                            .size(px(20.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .on_click(dispatch_action(CloseSideTab(ix)))
-                            .child(icon("diff-tab-close", 14., t.text_tertiary)),
-                    )
-                })
+                    let close_focus = crate::focus::handle(("side-tab-close", ix), 0, window, cx);
+                    let close = div()
+                        .id("side-panel-close-tab")
+                        .tab_index(0)
+                        .aria_label(format!("Close {} tab", self.tabs[ix].1))
+                        .on_key_down(move |event, window, cx| {
+                            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                window.dispatch_action(Box::new(CloseSideTab(ix)), cx);
+                                cx.stop_propagation();
+                            }
+                        })
+                        .absolute()
+                        .top(px(6.))
+                        .right(px(7.))
+                        .size(px(20.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(move |_, window, cx| {
+                            window.dispatch_action(Box::new(CloseSideTab(ix)), cx);
+                            cx.stop_propagation();
+                        })
+                        .child(icon("diff-tab-close", 14., t.text_tertiary));
+                    d.child(crate::focus::ring(
+                        close,
+                        &close_focus,
+                        Theme::RADIUS_SM,
+                        px(0.),
+                        cx,
+                    ))
+                });
+            crate::focus::ring(control, &focus, Theme::RADIUS_MD, px(0.), cx)
         };
         // 28 px `_Button`: 12.5 px `--codex-corner-shape` squircle, `border border-transparent`.
         // Blink's clip layer for its fill composites onto the titlebar layer's transparent tile
@@ -1296,6 +1324,7 @@ impl Render for SplitScreen {
             .size_full()
             .relative()
             .font_family(SANS)
+            .on_key_down(crate::focus::tab)
             .child(self.shell.clone())
             .when(open, |d| {
                 d.child(
@@ -1339,6 +1368,32 @@ impl Render for SplitScreen {
                         ),
                 )
             })
+            .when_some(
+                self.hovered.filter(|ix| {
+                    self.tabs
+                        .get(*ix)
+                        .is_some_and(|tab| tab.0 == "thread-terminal")
+                }),
+                |d, ix| {
+                    let left = (left.unwrap_or_default() + px(8. + ix as f32 * 240.))
+                        .min(window.viewport_size().width - px(328.))
+                        .max(px(8.));
+                    d.child(
+                        deferred(
+                            div()
+                                .absolute()
+                                .top(Theme::TITLEBAR_HEIGHT)
+                                .left(left)
+                                .child(crate::screens::terminal::thumbnail(
+                                    self.thread.read(cx),
+                                    window,
+                                    cx,
+                                )),
+                        )
+                        .with_priority(4),
+                    )
+                },
+            )
     }
 }
 

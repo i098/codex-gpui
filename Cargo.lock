@@ -5591,6 +5591,7 @@ dependencies = [
  "syntect",
  "textsys",
  "theme",
+ "unicode-width",
  "uuid",
 ]
 
