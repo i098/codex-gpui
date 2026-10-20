@@ -64,7 +64,7 @@ fn zoom_preserves_draft_focus_and_scaled_pointer_targets() -> Result<()> {
     fx.keys("backspace")?;
     if let Some(directory) = std::env::var_os("CGX_SHELL_PROOF") {
         std::fs::create_dir_all(&directory)?;
-        fx.shot()?
+        fx.reference_shot()?
             .save(std::path::Path::new(&directory).join("native-zoom.png"))?;
     }
     fx.action(Box::new(ui::OpenScheduled))?;
