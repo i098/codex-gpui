@@ -36,7 +36,7 @@ use ui::dialog::{
 };
 use ui::screens::diff::panel::{
     ActivateSideTab, CloseSideTab, DiffPanel, DiffRequest, FileView, OpenFile, RevertChanges,
-    SplitScreen, Tab, with_side_tabs,
+    SplitScreen, Tab, ViewedChange, with_side_tabs,
 };
 use ui::screens::home::{HomeMain, OpenFolder};
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
@@ -2798,7 +2798,37 @@ impl Root {
             elapsed_since: None,
         });
         let composer = self.thread_composer.clone().into();
-        let diff = cx.new(|_| DiffPanel::last_turn(&self.cwd, &thread.cwd, &thread.turns));
+        let viewed = cx
+            .try_global::<host_settings::Settings>()
+            .and_then(|settings| settings.read_all().get("review-viewed-file-v1"))
+            .and_then(|value| serde_json::from_value(value.clone()).ok())
+            .unwrap_or_default();
+        let diff = cx.new(|_| {
+            let mut panel = DiffPanel::last_turn(&self.cwd, &thread.cwd, &thread.turns);
+            panel.restore_viewed(viewed);
+            panel
+        });
+        cx.subscribe(&diff, |this, panel, change: &ViewedChange, cx| {
+            let mut saved = cx
+                .try_global::<host_settings::Settings>()
+                .and_then(|settings| settings.read_all().get("review-viewed-file-v1"))
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            if let Some(revision) = change.revision {
+                saved.insert(change.key.clone(), revision.into());
+            } else {
+                saved.remove(&change.key);
+            }
+            match cx
+                .default_global::<host_settings::Settings>()
+                .write("review-viewed-file-v1", Value::Object(saved))
+            {
+                Ok(()) => panel.update(cx, |panel, cx| panel.apply_viewed(change, cx)),
+                Err(_) => this.toast(Toast::danger("Could not save viewed state"), cx),
+            }
+        })
+        .detach();
         let cwd = thread.cwd.clone();
         cx.subscribe_in(
             &diff,

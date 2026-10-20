@@ -33,7 +33,7 @@ The rows were not clicked again on the original through `tools/route1`: its `ser
 | 14.3 Home | 21 | 10 | 3 | 8 |
 | 14.4 Thread view | 20 | 6 | 3 | 11 |
 | 14.5 Composer | 20 | 6 | 5 | 9 |
-| 14.6 Diff view | 20 | 2 | 1 | 17 |
+| 14.6 Diff view | 20 | 13 | 6 | 1 |
 | 14.7 Settings, login and onboarding | 20 | 7 | 8 | 5 |
 | 15.1 Automations | 16 | 2 | 2 | 12 |
 | 15.2 Background terminal | 10 | 10 | 0 | 0 |
@@ -478,29 +478,46 @@ It checks cancellation, preference reload, file and hunk effects on disk and ind
 Remote Git, hunk staging, and section-wide `Revert all` remain separate work.
 Commit and push are in DT-139 below.
 
+Diff controls reuse `DiffPanel` for the thread panel and the standalone `/diff <patch-file>` entry.
+The standalone entry reads a Git-style unified patch from disk without starting an app-server.
+Auto uses split layout only when both sides change and the file pane is at least 800 px wide.
+The file tree filter changes the tree, not the displayed code.
+The header and context menu share the same word-wrap state.
+The file viewer handles `⌘L`, clamps line numbers, and counts negative numbers from the end.
+The line input stays closed until file contents are available.
+The parser stops above 2,000,000 input bytes, 20,000 input lines, or 10,000 bytes per input line.
+Invalid hunk numbers show `Diff failed to render` instead of overflowing a line counter.
+File boundaries must start a line; a `diff --git` string inside changed code does not split the file.
+Refresh retains the displayed changes.
+A failed read or mutation adds a status row with Retry.
+`cargo test -p app --test diff_controls -- --nocapture --test-threads=1` runs the native input proof on macOS.
+`CGX_DIFF_EVIDENCE` selects its screenshot folder; the default is the system temporary folder under `cgx-diff-controls`.
+The proof covers header wrap, file filtering, layout changes, empty and loading states, real read failure, Retry, and line navigation.
+Final appearance approval remains pending.
+The final unavailable-file guard still needs a native run; the Mac build stopped because its disk was full.
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Open Changes panel | entry | `⌥⌘B` or `View changes`. | Both open the last turn's diff (`Last Turn` source). A file link opens the File viewer, as S009 records. | PASS (`changes_panel_keys`, `view_changes_opens_panel`, `s009`); strict pixels FAIL (`parity_diff`) |
-| 2 | `/diff` window | entry | Single file diff. | — | NOT WIRED (`crates/app/src/main.rs`: one window only) |
+| 2 | `/diff` window | entry | Single file diff. | `/diff <patch-file>` opens the shared renderer in its own window without a chat backend. | PASS (`diff_controls`; standalone executable accepts the route and reports unreadable input) |
 | 3 | Source selector | click | Uncommitted / Staged / … | Last Turn, Unstaged, Staged, and Refresh read the open thread's local repository. | PARTIAL (`git_stage`; other sources remain separate) |
-| 4 | Show / Hide files | click | Toggles the file tree. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 5 | File tree filter | focus | `Filter files…`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
+| 4 | Show / Hide files | click | Toggles the file tree. | The header toggles the file tree without losing its filter. | PASS (`diff_controls` native frames) |
+| 5 | File tree filter | focus | `Filter files…`. | Filters paths and shows `No matching files`; typing and paste retain keyboard ownership. | PASS (`diff_controls` native frames) |
 | 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Copy path and Collapse/Expand work. Open in editor works from the header icon and the menu. Local sources add Stage file, Unstage file, and confirmed Revert file. | PARTIAL (`s027::diff_selection_and_hover_replay`, `s027::open_in_editor_native_input_reaches_the_host_opener`, `git_stage`, `git_revert_ui`) |
 | 7 | Hunk revert / stage | click | Revert, Stage / Unstage hunk. | Local staged and unstaged hunks have confirmed Revert controls. Hunk staging and unstaging remain separate. | PARTIAL (`git_revert_ui`) |
 | 8 | Revert all | click | `Revert changes?` dialog. | File and hunk actions use the original confirmation and saved skip preference. Section-wide Revert all remains separate. | PARTIAL (`git_revert_ui`) |
-| 9 | Split / unified toggle | click | Switch diff layout. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 10 | Word wrap | click | Toggles wrap. | The body context menu toggles wrap; the header control remains separate work. | PARTIAL (`s027::diff_selection_and_hover_replay`) |
-| 11 | Mark as viewed | click | Collapses, persists. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
+| 9 | Split / unified toggle | click | Switch diff layout. | Unified, Split, and Auto share the existing line renderer. The narrow header exposes layout through Changes options. | PASS (`diff_controls`; split pairing regression check) |
+| 10 | Word wrap | click | Toggles wrap. | The header, Changes options, and body menu toggle the same wrap state. | PASS (`diff_controls`; `s027::diff_selection_and_hover_replay`) |
+| 11 | Mark as viewed | click | Branch diffs collapse and retain the reviewed revision. | The checkbox and saved revision handling await the separate Branch source integration. Other sources do not show the checkbox. | NOT WIRED (Branch source dependency) |
 | 12 | `⌘F` in diff | shortcut | `Search diff…`. | Focus the panel, open find, and type a query; matches highlight and update with the diff. | PASS (`s028::streamed_diff_and_find_replay`) |
-| 13 | `⌘L` | shortcut | Go to line. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
+| 13 | `⌘L` | shortcut | Go to line in the file viewer. | Available files expose the line input; Enter navigates, Escape closes, and negative numbers count from the end. | PARTIAL (positive navigation verified; final unavailable-file guard awaits native validation) |
 | 14 | Line hover | hover | No background change in the recorded Last Turn state; no `data-hovered` attribute. | No background change. | PASS (`s027::diff_selection_and_hover_replay`; corrects DT-014) |
-| 15 | No changes | empty | `No file changes yet`. | Local sources show `No changes`. | PARTIAL (`git_stage`; Last Turn unchanged) |
+| 15 | No changes | empty | `No file changes yet`. | Last Turn shows `No file changes yet`; local sources show `No staged changes` or `No unstaged changes`. | PASS (`diff_controls` native frames) |
 | 16 | Not a git repo | empty | `Create a Git repository`. | Local sources show the Git error; repository creation remains separate. | PARTIAL (`crates/ui/src/diff.rs`) |
-| 17 | Loading | loading | `Loading diff`. | Local sources show `Loading changes…` and disable mutations until completion. | PARTIAL (`crates/ui/src/diff.rs`) |
-| 18 | Load failure | error | `Couldn't load changes`. | Local sources show the host error; Refresh retries the read. | PARTIAL (`git_stage` checks index-lock failure and recovery) |
-| 19 | Too large | error | `Diff too large to display`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 20 | Resize | resize | Split → inline for narrow panes. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
+| 17 | Loading | loading | `Loading diff`. | Initial local reads show `Loading diff`. Refresh retains the file list and disables mutations until completion. | PASS (`diff_controls` native frame) |
+| 18 | Load failure | error | `Couldn't load changes`. | Shows the host error and Retry without hiding existing changes. Invalid hunk data shows `Diff failed to render`. | PASS (`diff_controls` real read failure and recovery; parser regression checks) |
+| 19 | Too large | error | `Diff too large to display`. | Oversized input shows the boundary and retains the file header. | PASS (`diff_controls` native frame; parser limit checks) |
+| 20 | Resize | resize | Split → inline for narrow panes. | Auto uses inline at 767 and 600 px and split for a wide, two-sided diff. | PASS (`diff_controls`; original 1280, 767, and 600 px captures) |
 
 ### DT-139: Commit or push
 
