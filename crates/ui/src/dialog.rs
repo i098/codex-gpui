@@ -1501,7 +1501,7 @@ impl Dialog {
     /// the button row, 32 px buttons sized to their text plus 16 px each side, 12 px apart,
     /// 20 px from the right and bottom edges, and a 24 px close button 16 px from the corner.
     /// The `Signed in as <email>` line sits 4 px under the title and adds 25 px.
-    fn logout_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+    fn logout_content(&self, t: &Theme, window: &Window, cx: &Context<Self>) -> Div {
         div()
             .relative()
             .p(px(20.))
@@ -1536,8 +1536,8 @@ impl Dialog {
                     .flex()
                     .justify_end()
                     .gap(px(12.))
-                    .child(self.logout_button(0, "Cancel", t, cx))
-                    .child(self.logout_button(1, "Log out", t, cx)),
+                    .child(self.logout_button(0, "Cancel", t, window, cx))
+                    .child(self.logout_button(1, "Log out", t, window, cx)),
             )
             .child(
                 div()
@@ -1565,9 +1565,15 @@ impl Dialog {
         index: usize,
         label: &'static str,
         t: &Theme,
+        window: &Window,
         cx: &Context<Self>,
     ) -> Stateful<Div> {
         let danger = index == 1;
+        let focused = if self.kind == Kind::DeleteThread {
+            self.controls[index].is_focused(window) && window.last_input_was_keyboard()
+        } else {
+            self.selected == index
+        };
         div()
             .id(("dialog-button", index))
             .role(gpui::Role::Button)
@@ -1588,39 +1594,25 @@ impl Dialog {
                     ..Default::default()
                 }))
             })
-            .when(self.kind == Kind::DeleteThread, |d| {
-                d.focus_visible(|s| {
-                    s.shadow(vec![gpui::BoxShadow {
-                        color: rgba(0x3a83f7ff).into(),
-                        offset: point(px(0.), px(0.)),
-                        blur_radius: px(0.),
-                        spread_radius: px(2.),
-                        inset: true,
-                    }])
-                })
-                .when(!danger, |d| {
-                    d.child(shapes::decoration(shapes::Decoration {
-                        radius: Corners::all(px(12.5)),
-                        corner: shapes::Corner::Squircle,
-                        fill: Some(t.ghost_hover),
-                        border: Some((px(1.), t.border)),
-                        ..Default::default()
-                    }))
-                })
+            .when(self.kind == Kind::DeleteThread && !danger, |d| {
+                d.child(shapes::decoration(shapes::Decoration {
+                    radius: Corners::all(px(12.5)),
+                    corner: shapes::Corner::Squircle,
+                    fill: Some(t.text.opacity(0.03)),
+                    border: Some((px(1.), t.border)),
+                    ..Default::default()
+                }))
             })
-            .when(
-                self.selected == index && self.kind != Kind::DeleteThread,
-                |d| {
-                    d.child(div().absolute().inset(px(-2.)).child(shapes::decoration(
-                        shapes::Decoration {
-                            radius: Corners::all(px(14.5)),
-                            corner: shapes::Corner::Squircle,
-                            border: Some((px(2.), rgba(0x3a83f7ff).into())),
-                            ..Default::default()
-                        },
-                    )))
-                },
-            )
+            .when(focused, |d| {
+                d.child(div().absolute().inset(px(-2.)).child(shapes::decoration(
+                    shapes::Decoration {
+                        radius: Corners::all(px(14.5)),
+                        corner: shapes::Corner::Squircle,
+                        border: Some((px(2.), rgba(0x3a83f7ff).into())),
+                        ..Default::default()
+                    },
+                )))
+            })
             .hover(|s| s.opacity(0.85))
             .child(text(
                 label,
@@ -1642,18 +1634,18 @@ impl Dialog {
             }))
     }
 
-    fn delete_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+    fn delete_content(&self, t: &Theme, window: &Window, cx: &Context<Self>) -> Div {
         div().relative().size_full().p(px(20.)).flex().flex_col().gap(px(4.))
             .child(text("Delete task?", 20., 28., 600., t.text))
             .child(text("This permanently deletes the task and its subagent tasks. This cannot be undone.",
-                14., 21., 430., t.text_secondary).whitespace_normal())
+                14., 21., 430., t.text_tertiary).whitespace_normal())
             .child(div().mt(px(8.)).flex().justify_end().gap(px(12.))
-                .child(self.logout_button(0, "Cancel", t, cx))
-                .child(self.logout_button(1, if self.saving { "Deleting…" } else { "Delete" }, t, cx)))
+                .child(self.logout_button(0, "Cancel", t, window, cx))
+                .child(self.logout_button(1, if self.saving { "Deleting…" } else { "Delete" }, t, window, cx)))
             .child(div().id("delete-close").role(gpui::Role::Button).aria_label("Close dialog")
                 .track_focus(&self.controls[2]).absolute().top(px(16.)).right(px(16.))
                 .size(px(24.)).rounded(px(4.)).flex().items_center().justify_center()
-                .hover(|s| s.bg(t.ghost_hover)).child(icon("close", 16., t.text.opacity(0.8)))
+                .hover(|s| s.bg(t.ghost_hover)).child(icon("diff-tab-close", 16., t.text.opacity(0.8)))
                 .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))))
     }
 
@@ -3054,8 +3046,8 @@ impl Render for Dialog {
             Kind::Rename | Kind::NewSection | Kind::EditSection => self.rename_content(t, cx),
             Kind::ArchiveSection => self.archive_section_content(t, cx),
             Kind::FullAccess => self.full_access_content(t, cx),
-            Kind::LogOut => self.logout_content(t, cx),
-            Kind::DeleteThread => self.delete_content(t, cx),
+            Kind::LogOut => self.logout_content(t, window, cx),
+            Kind::DeleteThread => self.delete_content(t, window, cx),
             Kind::ModelAnnouncement => self.announcement_content(t, cx),
             Kind::Commit => self.commit_content(t, cx),
             Kind::Branches | Kind::CreateBranch | Kind::BranchConflict => {

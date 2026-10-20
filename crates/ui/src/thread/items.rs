@@ -811,46 +811,61 @@ pub(super) fn activity(
             } => {
                 let is_open = open.contains(key);
                 let header = disclosure(key.to_owned(), icon_name, summary, is_open);
-                let mut col = div()
-                    .flex()
-                    .flex_col()
-                    .items_start()
-                    .gap(px(4.))
-                    .child(header);
+                let mut col = div().flex().flex_col().items_start().child(header);
                 if is_open {
-                    col = col.children(rows.into_iter().map(|r| {
-                        if let Some(shell) = r.shell {
-                            let is_open = open.contains(&shell.key);
-                            let key = shell.key.clone();
-                            return div()
-                                .w_full()
-                                .flex()
-                                .flex_col()
-                                .items_start()
-                                .child(disclosure(key, r.icon, r.verb, is_open))
-                                .when(is_open, |d| d.child(shell_card(&shell, t)));
-                        }
-                        let mut words = div()
-                            .flex()
-                            .items_center()
-                            .gap(px(4.))
-                            .child(plain(label(r.verb, text60)));
-                        if let Some(file) = r.file {
-                            // A file link: `text/30` after `Read`, `text-tertiary` after
-                            // `Edited`. ponytail: solid underline, GPUI has no dotted one.
-                            let color = match r.stats {
-                                Some(_) => t.text_tertiary,
-                                None => t.text.opacity(0.3),
-                            };
-                            let (link, w) = label(file, color);
-                            words = words
-                                .child(plain((link.underline().text_decoration_color(color), w)));
-                        }
-                        if let Some((added, removed)) = r.stats {
-                            words = words.children(stats(added, removed, text60));
-                        }
-                        row(r.icon, words)
-                    }));
+                    col = col.child(
+                        div()
+                            .id(SharedString::from(format!("activity-rows-{key}")))
+                            .w_full()
+                            .max_h(px(224.))
+                            .overflow_y_scroll()
+                            .child(
+                                div()
+                                    .w_full()
+                                    .flex_none()
+                                    .flex()
+                                    .flex_col()
+                                    .pt(px(4.))
+                                    .gap(px(4.))
+                                    .children(rows.into_iter().map(|r| {
+                                        if let Some(shell) = r.shell {
+                                            let is_open = open.contains(&shell.key);
+                                            let key = shell.key.clone();
+                                            return div()
+                                                .w_full()
+                                                .flex()
+                                                .flex_col()
+                                                .items_start()
+                                                .child(disclosure(key, r.icon, r.verb, is_open))
+                                                .when(is_open, |d| {
+                                                    d.child(shell_card(&shell, window, t))
+                                                });
+                                        }
+                                        let mut words = div()
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(4.))
+                                            .child(plain(label(r.verb, text60)));
+                                        if let Some(file) = r.file {
+                                            // A file link: `text/30` after `Read`, `text-tertiary` after
+                                            // `Edited`. ponytail: solid underline, GPUI has no dotted one.
+                                            let color = match r.stats {
+                                                Some(_) => t.text_tertiary,
+                                                None => t.text.opacity(0.3),
+                                            };
+                                            let (link, w) = label(file, color);
+                                            words = words.child(plain((
+                                                link.underline().text_decoration_color(color),
+                                                w,
+                                            )));
+                                        }
+                                        if let Some((added, removed)) = r.stats {
+                                            words = words.children(stats(added, removed, text60));
+                                        }
+                                        row(r.icon, words)
+                                    })),
+                            ),
+                    );
                 }
                 col
             }
@@ -919,14 +934,12 @@ fn mcp_label(item: &ThreadItem) -> String {
     format!("{server}.{tool}")
 }
 
-/// The card under an open `Ran` row, 8 px below it and 4 px above the next row, 10 px short
-/// of the column (the original's row list keeps that for its scrollbar): a 27 px `Shell`
-/// header, `$ command`, the output (144 px max; ponytail: scrolls from the top, the original
-/// sticks to the bottom) and a 27 px footer with `Success` or `Exit code N` at the right.
-fn shell_card(shell: &Shell, t: &Theme) -> Div {
+// ponytail: output scrolls from the top; follow the tail if live-output parity needs it.
+fn shell_card(shell: &Shell, window: &Window, t: &Theme) -> Div {
     let description = t.text.opacity(0.7);
     let mono =
         |s: String, weight: f32, color: Hsla| text(s, 13., 19.5, weight, color).font_family(MONO);
+    let character_width = width(window, "0", 13., 430., Some(MONO));
     let command_group = SharedString::from(format!("{}-command", shell.key));
     let output_group = SharedString::from(format!("{}-output-group", shell.key));
     let copy = |label: &'static str, value: String, group: SharedString| {
@@ -946,8 +959,8 @@ fn shell_card(shell: &Shell, t: &Theme) -> Div {
             .tab_index(0)
             .opacity(0.)
             .group_hover(group, |s| s.opacity(1.))
-            .focus(|s| s.opacity(1.))
-            .focus_visible(|s| s.shadow(focus_ring()))
+            .hover(|s| s.bg(t.ghost_hover))
+            .focus_visible(|s| s.opacity(1.).shadow(focus_ring()))
             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(move |_, _, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(value.clone()))
@@ -958,6 +971,7 @@ fn shell_card(shell: &Shell, t: &Theme) -> Div {
     let footer = div()
         .h(px(27.))
         .pt(px(2.))
+        .pb(px(4.))
         .px(px(10.))
         .flex()
         .items_center()
@@ -967,61 +981,79 @@ fn shell_card(shell: &Shell, t: &Theme) -> Div {
             d.child(icon("thread-check", 12., t.text_tertiary))
         })
         .when(!shell.footer.is_empty(), |d| {
-            d.child(text(shell.footer.clone(), 14., 21., 430., t.text_tertiary))
-        });
-    div().w_full().pt(px(8.)).pb(px(4.)).pr(px(10.)).child(
-        div()
-            .w_full()
-            .flex()
-            .flex_col()
-            .overflow_hidden()
-            .rounded(Theme::RADIUS_LG)
-            .border_1()
-            .border_color(t.border_strong)
-            .bg(t.ghost_hover)
-            .child(div().h(px(27.)).px(px(8.)).py(px(4.)).child(text(
-                "Shell",
-                13.,
-                18.571_428,
+            d.child(measured(
+                window,
+                shell.footer.clone(),
+                14.,
+                21.,
                 430.,
-                description,
-            )))
-            .child(
-                div()
-                    .relative()
-                    .group(command_group.clone())
-                    .pt(px(8.))
-                    .pl(px(8.))
-                    .pr(px(24.))
-                    .flex()
-                    .gap(px(8.))
-                    .child(mono("$".into(), 430., t.text_tertiary))
-                    .child(mono(shell.command.clone(), 430., description))
-                    .child(copy("Copy command", shell.command.clone(), command_group)),
-            )
-            .child(
-                div()
-                    .relative()
-                    .group(output_group.clone())
-                    .child(
-                        div()
-                            .id(SharedString::from(format!("{}-output", shell.key)))
-                            .max_h(px(144.))
-                            .overflow_y_scroll()
-                            .child(div().p(px(8.)).child(mono(
-                                if shell.output.is_empty() {
-                                    "No output".into()
-                                } else {
-                                    shell.output.trim_end().to_owned()
-                                },
-                                500.,
-                                description,
-                            ))),
-                    )
-                    .child(copy("Copy output", shell.output.clone(), output_group)),
-            )
-            .child(footer),
-    )
+                t.text_tertiary,
+                None,
+            ))
+        });
+    let card = div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .relative()
+        .p(px(1.))
+        .child(shapes::decoration(shapes::Decoration {
+            radius: Corners::all(Theme::RADIUS_LG),
+            corner: shapes::Corner::Squircle,
+            fill: Some(t.ghost_hover),
+            border: Some((px(1.), t.border_strong)),
+            ..Default::default()
+        }))
+        .child(
+            div()
+                .px(px(8.))
+                .py(px(4.))
+                .child(text("Shell", 13., 18.571_428, 430., description)),
+        )
+        .child(
+            div()
+                .relative()
+                .group(command_group.clone())
+                .pt(px(8.))
+                .pl(px(8.))
+                .pr(px(24.))
+                .flex()
+                .gap(character_width)
+                .child(mono("$".into(), 430., t.text_tertiary).w(character_width))
+                .child(mono(shell.command.clone(), 430., description))
+                .child(copy("Copy command", shell.command.clone(), command_group)),
+        )
+        .child(
+            div()
+                .relative()
+                .group(output_group.clone())
+                .child(
+                    div()
+                        .id(SharedString::from(format!("{}-output", shell.key)))
+                        .max_h(px(144.))
+                        .overflow_y_scroll()
+                        .child(div().p(px(8.)).child(mono(
+                            if shell.output.is_empty() {
+                                "No output".into()
+                            } else {
+                                shell.output.trim_end().to_owned()
+                            },
+                            500.,
+                            description,
+                        ))),
+                )
+                .child(copy("Copy output", shell.output.clone(), output_group)),
+        )
+        .child(footer);
+    div()
+        .w_full()
+        .pt(px(8.))
+        .pb(px(4.))
+        .child(crate::rounded_clip(
+            Theme::RADIUS_LG,
+            shapes::Corner::Squircle,
+            card,
+        ))
 }
 
 /// `+4`, `-0` in one colour: 13 px tabular figures, tracked like the diff header's.

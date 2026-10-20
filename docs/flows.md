@@ -402,6 +402,7 @@ The Linux host tests cover patch add, delete, rename, conflicts, and source-pres
 Worktree forks copy staged and unstaged content, binary files, untracked files, and symbolic links into a new owned worktree.
 Native row tests verify Copy target identity, both Fork routes, Delete failure/retry/focus, and real worktree creation.
 The dedicated reasoning flow verifies disclosure, its focus ring, and scrolling back to the newest turn.
+The expanded activity list scrolls within the original 224 px limit.
 
 
 MO-36 uses `refs/interactions/ms4.json`, recorded with the original CSS classes in an isolated route1 Chrome context.
