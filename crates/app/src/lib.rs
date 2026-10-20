@@ -2661,6 +2661,19 @@ impl Root {
                     this.flush_settings(cx);
                     windows::close(window, cx);
                 }
+                DialogOutcome::ClearAllUnreads { do_not_ask_again } => {
+                    window.focus(&focus, cx);
+                    if *do_not_ask_again {
+                        this.write_setting(
+                            &SettingChanged {
+                                path: "host.skip-clear-all-unreads-confirmation",
+                                value: true.into(),
+                            },
+                            cx,
+                        );
+                    }
+                    this.clear_all_unreads(cx);
+                }
                 DialogOutcome::Rename { thread, name } => {
                     window.focus(&focus, cx);
                     this.rename(thread.clone(), name.clone(), window, cx);
@@ -2840,6 +2853,19 @@ impl Root {
                 }
                 "Open folder" => window.dispatch_action(Box::new(OpenFolder), cx),
                 "Archive chat" => window.dispatch_action(Box::new(ArchiveChat), cx),
+                "Toggle pin" => {
+                    window.dispatch_action(Box::new(features::chat_commands::ToggleChatPin), cx)
+                }
+                "Mark as unread" => {
+                    window.dispatch_action(Box::new(features::chat_commands::MarkChatUnread), cx)
+                }
+                "Next chat needing attention" => window.dispatch_action(
+                    Box::new(features::chat_commands::NextChatNeedingAttention),
+                    cx,
+                ),
+                "Clear all unreads" => {
+                    window.dispatch_action(Box::new(features::chat_commands::ClearAllUnreads), cx)
+                }
                 "Find" => window.dispatch_action(Box::new(FindInThread), cx),
                 "Back" => window.dispatch_action(Box::new(GoBack), cx),
                 "Forward" => window.dispatch_action(Box::new(GoForward), cx),

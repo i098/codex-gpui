@@ -1032,6 +1032,28 @@ The detached chat test closes the first window, then receives another backend tu
 The bridge regression also checks both event receivers and connection closure.
 These checks do not complete the other command products.
 
+### W-05: Chat commands and hidden accelerators
+
+`Toggle pin` and `⌥⌘P` use the existing section move and rollback.
+`⌥⌘R` opens the existing rename dialog for the active chat.
+`Mark as unread` and `⇧⌘U` mark the active chat once; opening that chat removes its unread indicator.
+`Next chat needing attention` and `⌥⌘A` exclude the active chat.
+They select waiting approvals before unread chats, then use descending chat recency.
+`Clear all unreads` and `⇧Esc` open the original confirmation with `Cancel`, `Clear all`, and `Don’t ask me again`.
+The checkbox receives initial focus; Tab reaches Cancel, Clear all, and Close dialog.
+Confirmation marks unread, finished, local automation runs as read through the shared host endpoint.
+It clears the captured chat indicators after that write succeeds; failure retains them and shows an error.
+The saved checkbox skips later confirmations.
+`⇧⌘C` copies the active working directory; `⌥⌘L` copies `codex://threads/{id}`.
+The retained original also routes `⌥⇧⌘C` through the working-directory handler, despite the older rollout-path inventory description.
+Home leaves the clipboard unchanged.
+The command group ordering and search rules remain unchanged.
+Mini, side-chat, and control-window products remain inactive.
+
+Run `cargo test -p app --test chat_commands -- --test-threads=1` on macOS for the command scenarios.
+Run `cargo test -p app --test host clear_all_unreads_updates_only_unread_finished_local_runs` for storage isolation and idempotency.
+
+
 ## F0b: Recording contract dispatch
 
 `crates/app/tests/replay.rs` checks every JSON recording in `refs/interactions/`.
