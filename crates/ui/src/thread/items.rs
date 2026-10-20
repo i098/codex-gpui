@@ -352,6 +352,7 @@ pub(super) fn activities<'a>(items: &'a [ThreadItem], running: bool) -> Vec<Acti
                 flush(&mut out, &mut group);
                 out.push(Activity::Running(command));
             }
+            ThreadItem::McpToolCall { .. } if super::automation_item(item).is_some() => {}
             ThreadItem::McpToolCall { .. } => {
                 flush(&mut out, &mut group);
                 out.push(Activity::Mcp(item));

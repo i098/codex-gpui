@@ -56,7 +56,7 @@ use ui::screens::sidebar::{
 };
 use ui::screens::terminal::{OpenTerminalItem, StopBackgroundTerminals, Xterm};
 use ui::screens::thread::view::{
-    Clock, EditMessage, ForkThread, GitAction, RevertTurn, ThreadView,
+    Clock, EditMessage, ForkThread, GitAction, OpenAutomationCard, RevertTurn, ThreadView,
 };
 use ui::screens::{automations, mobile};
 use ui::toast::{Toast, Toaster};
@@ -442,6 +442,9 @@ pub struct Root {
     qa_work_started: bool,
     /// Threads started or resumed by this app-server; others need `thread/resume` first.
     loaded: HashSet<String>,
+    /// The original backend's automation tags, omitted by the compact Thread DTO.
+    automation_threads: HashSet<String>,
+    automation_card_results: HashMap<(String, String), Value>,
     queue_load: Option<Task<()>>,
     queue_pending: bool,
     deleted_queued: Vec<DeletedQueuedMessage>,
@@ -463,6 +466,7 @@ pub struct Root {
     /// The `Notifications` region over the window.
     toaster: Entity<Toaster>,
     _events: Task<()>,
+    app_tool_events: Option<Task<()>>,
 }
 
 impl Root {
@@ -724,6 +728,8 @@ impl Root {
             ready: false,
             qa_work_started: false,
             loaded: HashSet::new(),
+            automation_threads: HashSet::new(),
+            automation_card_results: HashMap::new(),
             queue_load: None,
             queue_pending: false,
             deleted_queued: Vec::new(),
@@ -737,6 +743,7 @@ impl Root {
             generation: None,
             toaster: cx.new(|_| Toaster::new()),
             _events,
+            app_tool_events: None,
             state,
         };
         let this = cx.weak_entity();
@@ -1031,6 +1038,9 @@ impl Root {
             thread.update(cx, |view, cx| view.set_git_repository(None, cx));
         }
         self.host = host;
+        self.automation_threads.clear();
+        self.automation_card_results.clear();
+        self.app_tool_events = None;
         self.automations = None;
         self.load_projects(cx);
         if self.scheduled_route() {
@@ -1039,6 +1049,36 @@ impl Root {
         }
         self.refresh_git_actions(cx);
         cx.notify();
+    }
+
+    fn listen_to_app_tools(&mut self, window: &Window, cx: &mut Context<Self>) {
+        if self.app_tool_events.is_some() {
+            return;
+        }
+        let Some(events) = self.host.take_app_tool_events() else {
+            return;
+        };
+        self.app_tool_events = Some(cx.spawn_in(window, async move |this, cx| {
+            while let Ok(event) = events.recv().await {
+                if this
+                    .update_in(cx, |this, _, cx| this.on_app_tool_event(event, cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        }));
+    }
+
+    fn on_app_tool_event(&mut self, event: host::ToolEvent, cx: &mut Context<Self>) {
+        match event {
+            host::ToolEvent::ThreadsChanged => self.refresh_threads(cx),
+            host::ToolEvent::AutomationsChanged => {
+                if self.scheduled_route() {
+                    self.load_automations(cx);
+                }
+            }
+        }
     }
 
     fn load_projects(&mut self, cx: &mut Context<Self>) {
@@ -1834,6 +1874,7 @@ impl Root {
             .as_ref()
             .and_then(|t| self.thread_run_settings.get(t))
             .cloned();
+        self.listen_to_app_tools(window, cx);
         self.sync_starting(cx);
         self.toast(Toast::info("Starting run…"), cx);
         let epoch = self.navigation_epoch;
@@ -2337,9 +2378,6 @@ impl Root {
     }
 
     fn edit_automation(&mut self, id: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
-        if self.automation_editor.is_some() || self.dialog.is_some() {
-            return;
-        }
         let item = id.as_ref().and_then(|id| {
             self.automations.as_ref()?.as_ref().ok()?["items"]
                 .as_array()?
@@ -2351,6 +2389,23 @@ impl Root {
             self.toast(Toast::danger("Task details could not be loaded"), cx);
             return;
         }
+        self.show_automation_editor(item, None, window, cx);
+    }
+
+    fn show_automation_editor(
+        &mut self,
+        item: Option<Value>,
+        origin: Option<(String, String)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.automation_editor.is_some() || self.dialog.is_some() {
+            return;
+        }
+        let id = item
+            .as_ref()
+            .and_then(|item| item["id"].as_str())
+            .map(str::to_owned);
         let editor = cx.new(|cx| automations::editor::Editor::new(item.as_ref(), cx));
         cx.subscribe_in(
             &editor,
@@ -2362,15 +2417,31 @@ impl Root {
                     cx.notify();
                 }
                 automations::editor::Outcome::Save(draft) => {
-                    let mut body =
-                        json!({"name": draft.name, "prompt": draft.prompt, "rrule": draft.rrule});
-                    let endpoint = if let Some(id) = &id {
+                    let proposal = origin.is_some()
+                        && item
+                            .as_ref()
+                            .and_then(|item| item["mode"].as_str())
+                            .is_some_and(|mode| mode.starts_with("suggested_"));
+                    let mut body = if proposal {
+                        item.clone().unwrap()
+                    } else {
+                        json!({})
+                    };
+                    body["name"] = json!(draft.name);
+                    body["prompt"] = json!(draft.prompt);
+                    body["rrule"] = json!(draft.rrule);
+                    let (endpoint, body) = if proposal {
+                        (
+                            "apply-automation-proposal",
+                            json!({"arguments": body, "threadId": origin.as_ref().unwrap().0}),
+                        )
+                    } else if let Some(id) = &id {
                         body["id"] = json!(id);
                         body["status"] = item.as_ref().unwrap()["status"].clone();
-                        "automation-update"
+                        ("automation-update", body)
                     } else {
                         body["cwds"] = json!([this.cwd]);
-                        "automation-create"
+                        ("automation-create", body)
                     };
                     let host = this.host.clone();
                     let write = cx.background_spawn(async move {
@@ -2381,6 +2452,7 @@ impl Root {
                         Ok::<_, anyhow::Error>(response["item"].clone())
                     });
                     let editor = editor.clone();
+                    let origin = origin.clone();
                     cx.spawn_in(window, async move |this, cx| {
                         let result = write.await;
                         this.update_in(cx, |this, window, cx| {
@@ -2402,8 +2474,20 @@ impl Root {
                                             items.push(item.clone());
                                         }
                                     }
-                                    let route =
-                                        Route::Automation(item["id"].as_str().unwrap().to_owned());
+                                    let route = if let Some((thread, call)) = &origin {
+                                        this.automation_card_results
+                                            .insert((thread.clone(), call.clone()), item.clone());
+                                        if let Some(view) = &this.thread
+                                            && view.read(cx).id() == thread
+                                        {
+                                            view.update(cx, |view, cx| {
+                                                view.set_automation_card_result(call, &item, cx)
+                                            });
+                                        }
+                                        Route::Thread(thread.clone())
+                                    } else {
+                                        Route::Automation(item["id"].as_str().unwrap().to_owned())
+                                    };
                                     if this.state.route == route {
                                         this.sync(window, cx);
                                     } else {
@@ -2612,6 +2696,8 @@ impl Root {
                         this.tabs.clear();
                         this.side = None;
                         this.loaded.clear();
+                        this.automation_threads.clear();
+                        this.automation_card_results.clear();
                         this.approvals.clear();
                         this.new_chat_section = None;
                         this.sidebar.update(cx, |s, cx| s.clear_sections(cx));
@@ -2854,9 +2940,16 @@ impl Root {
     fn load_thread(&self, id: String, window: &Window, cx: &mut Context<Self>) {
         let bridge = self.bridge.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            let read = bridge.thread_read(&id, true).await?;
+            let response: Value = bridge
+                .request("thread/read", json!({"threadId": id, "includeTurns": true}))
+                .await?;
+            let automation = response["thread"]["threadSource"] == "automation";
+            let read: ThreadReadResponse = serde_json::from_value(response)?;
             this.update_in(cx, |this, window, cx| {
-                if this.state.route == Route::Thread(id) {
+                if matches!(&this.state.route, Route::Thread(current) if current == &id) {
+                    if automation {
+                        this.automation_threads.insert(id);
+                    }
                     this.show_thread(read.thread, window, cx);
                 }
             })
@@ -2926,6 +3019,26 @@ impl Root {
         self.file = None;
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
         view.update(cx, |view, cx| view.set_git_phase(self.git_busy, cx));
+        view.update(cx, |view, cx| {
+            for ((thread, call), item) in &self.automation_card_results {
+                if view.id() == thread {
+                    view.set_automation_card_result(call, item, cx);
+                }
+            }
+        });
+        cx.subscribe_in(
+            &view,
+            window,
+            |this, _, event: &OpenAutomationCard, window, cx| {
+                this.show_automation_editor(
+                    Some(event.arguments.clone()),
+                    Some((event.thread_id.clone(), event.call_id.clone())),
+                    window,
+                    cx,
+                );
+            },
+        )
+        .detach();
         cx.subscribe_in(
             &view,
             window,
@@ -4572,9 +4685,35 @@ async fn resume_if(
     cx: &mut AsyncWindowContext,
 ) -> Result<()> {
     if resume {
+        let (host, source, computer_use) = this.update(cx, |this, _| {
+            (
+                this.host.clone(),
+                this.automation_threads.contains(id).then_some("automation"),
+                computer_use_overrides(&this.config),
+            )
+        })?;
+        let thread_id = id.to_owned();
+        let config = cx
+            .background_spawn(async move { host.app_tool_thread_config(&thread_id, source) })
+            .await
+            .unwrap_or_else(|error| {
+                eprintln!(
+                    "codex-gpui: optional app tools are unavailable while resuming: {error:#}"
+                );
+                None
+            });
         let mut params = json!({ "threadId": id });
-        if let Some(config) = this.update(cx, |root, _| computer_use_overrides(&root.config))? {
+        if let Some(config) = config {
+            this.update_in(cx, |this, window, cx| this.listen_to_app_tools(window, cx))?;
             params["config"] = config;
+            params["dynamicTools"] = json!([]);
+        }
+        if let Some(Value::Object(overrides)) = computer_use {
+            if let Some(Value::Object(config)) = params.get_mut("config") {
+                config.extend(overrides);
+            } else {
+                params["config"] = Value::Object(overrides);
+            }
         }
         bridge.request::<_, Value>("thread/resume", params).await?;
         this.update(cx, |this, _| this.loaded.insert(id.to_owned()))?;
