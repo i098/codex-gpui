@@ -338,7 +338,7 @@ impl SettingsPane {
                     .id(effort)
                     .px(px(8.))
                     .py(px(5.))
-                    .rounded(px(12.))
+                    .rounded(px(15.))
                     .flex()
                     .items_center()
                     .justify_between()
@@ -365,14 +365,18 @@ impl SettingsPane {
                 div().absolute().top_0().right_0().child(
                     anchored()
                         .anchor(Anchor::TopRight)
-                        .offset(point(px(0.), px(30.)))
+                        .offset(point(px(-1.), px(30.)))
                         .child(
                             div()
                                 .id("reasoning-effort-menu")
                                 .on_hover(cx.listener(|this, hovered: &bool, _, _| {
                                     this.menu_hovered = *hovered
                                 }))
-                                .child(popover(t, 240., |d| d.children(items))),
+                                .child(
+                                    popover(t, 240., |d| d.children(items))
+                                        .top_layer()
+                                        .snap_origin(),
+                                ),
                         ),
                 ),
             )
@@ -679,48 +683,52 @@ impl SettingsPane {
                 div().absolute().top_0().left_0().child(
                     anchored()
                         .anchor(Anchor::TopLeft)
-                        .offset(point(px(0.), px(30.)))
+                        .offset(point(px(1.), px(30.)))
                         .child(
                             div()
                                 .id("configuration-scope-menu")
                                 .on_hover(cx.listener(|this, hovered: &bool, _, _| {
                                     this.menu_hovered = *hovered
                                 }))
-                                .child(popover(t, 240., |d| {
-                                    d.child(div().px(px(8.)).py(px(4.)).child(text(
-                                        "Global config",
-                                        13.,
-                                        18.571_428,
-                                        430.,
-                                        t.text_tertiary,
-                                    )))
-                                    .child(
-                                        div()
-                                            .id("user-config")
-                                            .px(px(8.))
-                                            .py(px(5.))
-                                            .rounded(px(12.))
-                                            .flex()
-                                            .items_center()
-                                            .justify_between()
-                                            .child(text(
-                                                "User config",
-                                                13.,
-                                                18.571_428,
-                                                430.,
-                                                t.text,
-                                            ))
-                                            .child(
-                                                icon("settings-menu-check", 16., t.text)
-                                                    .opacity(0.75),
-                                            )
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.open_select = None;
-                                                this.menu_hovered = false;
-                                                cx.notify();
-                                            })),
-                                    )
-                                })),
+                                .child(
+                                    popover(t, 240., |d| {
+                                        d.child(div().px(px(8.)).py(px(4.)).child(text(
+                                            "Global config",
+                                            13.,
+                                            18.571_428,
+                                            430.,
+                                            t.text_tertiary,
+                                        )))
+                                        .child(
+                                            div()
+                                                .id("user-config")
+                                                .px(px(8.))
+                                                .py(px(5.))
+                                                .rounded(px(15.))
+                                                .flex()
+                                                .items_center()
+                                                .justify_between()
+                                                .child(text(
+                                                    "User config",
+                                                    13.,
+                                                    18.571_428,
+                                                    430.,
+                                                    t.text,
+                                                ))
+                                                .child(
+                                                    icon("settings-menu-check", 16., t.text)
+                                                        .opacity(0.75),
+                                                )
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.open_select = None;
+                                                    this.menu_hovered = false;
+                                                    cx.notify();
+                                                })),
+                                        )
+                                    })
+                                    .top_layer()
+                                    .snap_origin(),
+                                ),
                         ),
                 ),
             )

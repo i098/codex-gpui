@@ -523,6 +523,7 @@ impl Render for SettingsNav {
                     // A composited scroller: a cc layer of its own over the sidebar's (cc
                     // layers are flat), so its text blends onto the final sidebar pixel.
                     .top_layer()
+                    .when(page.section == "Configuration", |d| d.cc_tiles())
                     .flex()
                     .flex_col()
                     .gap(px(16.))
@@ -616,7 +617,7 @@ impl SettingsPane {
                         .id(value)
                         .px(px(8.))
                         .py(px(if is_configuration { 5. } else { 6. }))
-                        .rounded(px(12.))
+                        .rounded(px(if is_configuration { 15. } else { 12. }))
                         .when(value == current && !is_configuration, |d| d.bg(hover))
                         .when(
                             is_configuration && self.config_menu_index == Some(index),
@@ -667,18 +668,22 @@ impl SettingsPane {
                 div().absolute().top_0().right_0().child(
                     anchored()
                         .anchor(Anchor::TopRight)
-                        .offset(point(px(0.), px(if is_configuration { 30. } else { 32. })))
+                        .offset(point(
+                            px(if is_configuration { -1. } else { 0. }),
+                            px(if is_configuration { 30. } else { 32. }),
+                        ))
                         .child(
                             div()
                                 .id("select-menu")
                                 .on_hover(cx.listener(|this, hovered: &bool, _, _| {
                                     this.menu_hovered = *hovered
                                 }))
-                                .child(popover(
-                                    t,
-                                    if is_configuration { 360. } else { 280. },
-                                    |d| d.children(rows),
-                                )),
+                                .child(
+                                    popover(t, if is_configuration { 360. } else { 280. }, |d| {
+                                        d.children(rows)
+                                    })
+                                    .when(is_configuration, |d| d.top_layer().snap_origin()),
+                                ),
                         ),
                 ),
             )
@@ -1381,6 +1386,7 @@ impl Render for SettingsPane {
                     .flex_1()
                     .overflow_y_scroll()
                     .layer()
+                    .when(section == "Configuration", |d| d.cc_tiles())
                     .child(probe(&self.layer))
                     .child(
                         div()
