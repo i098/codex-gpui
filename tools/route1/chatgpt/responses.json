@@ -1,0 +1,2644 @@
+{
+  "schema": "codex.route1.chatgpt.v1",
+  "original": "26.1007.30912",
+  "now": "2026-10-15T17:00:00-07:00",
+  "ids": {
+    "conversation": "10000000-0000-4000-8000-000000000001",
+    "root": "10000000-0000-4000-8000-000000000002",
+    "user_message": "10000000-0000-4000-8000-000000000003",
+    "assistant_message": "10000000-0000-4000-8000-000000000004",
+    "space": "10000000-0000-4000-8000-000000000005",
+    "page": "10000000-0000-4000-8000-000000000006",
+    "site": "10000000-0000-4000-8000-000000000007",
+    "dot": "10000000-0000-4000-8000-000000000008",
+    "task": "10000000-0000-4000-8000-000000000009",
+    "turn": "10000000-0000-4000-8000-000000000010",
+    "directory": "10000000-0000-4000-8000-000000000011",
+    "gizmo": "g-owned-demo",
+    "health": "g-owned-health",
+    "file": "file-owned-notes",
+    "image": "file-owned-image",
+    "account": "00000000-0000-4000-8000-000000000000"
+  },
+  "gates": {
+    "770071981": false,
+    "2200939124": true,
+    "637432221": true,
+    "3085093835": true,
+    "998088620": true,
+    "2998660035": true,
+    "262557526": true,
+    "663642302": false,
+    "1803173780": true,
+    "3066066594": true,
+    "1598376": true,
+    "2039979220": true,
+    "499051678": true
+  },
+  "parameters": {
+    "conversation_id": "10000000-0000-4000-8000-000000000001",
+    "shared_conversation_id": "10000000-0000-4000-8000-000000000001",
+    "gizmo_id": "g-owned-demo",
+    "gizmo_id_or_short_url": "g-owned-demo",
+    "space_id": "10000000-0000-4000-8000-000000000005",
+    "page_id": "10000000-0000-4000-8000-000000000006",
+    "library_file_id": "file-owned-notes",
+    "directory_id": "10000000-0000-4000-8000-000000000011",
+    "project_id": "10000000-0000-4000-8000-000000000007",
+    "tbo_id": "10000000-0000-4000-8000-000000000008",
+    "thread_id": "10000000-0000-4000-8000-000000000001",
+    "task_id": "10000000-0000-4000-8000-000000000009",
+    "task_turn_id": "10000000-0000-4000-8000-000000000010"
+  },
+  "records": [
+    {
+      "method": "GET",
+      "path": "/conversations",
+      "family": "conversation",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 2039783,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [
+          {
+            "id": "10000000-0000-4000-8000-000000000001",
+            "title": "A walk after lunch",
+            "create_time": "2026-10-16T00:00:00Z",
+            "update_time": "2026-10-16T00:00:00Z",
+            "is_archived": false,
+            "is_starred": false,
+            "gizmo_id": null,
+            "conversation_origin": null,
+            "snippet": "Take a 20-minute walk."
+          }
+        ],
+        "next_cursor": null,
+        "total": 1,
+        "limit": 28,
+        "offset": 0
+      },
+      "empty": {
+        "items": [],
+        "next_cursor": null,
+        "total": 0,
+        "limit": 28,
+        "offset": 0
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/conversation/{conversation_id}",
+      "family": "conversation",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 2265015,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "title": "A walk after lunch",
+        "create_time": 1792108800,
+        "update_time": 1792108800,
+        "mapping": {
+          "10000000-0000-4000-8000-000000000002": {
+            "id": "10000000-0000-4000-8000-000000000002",
+            "message": null,
+            "parent": null,
+            "children": [
+              "10000000-0000-4000-8000-000000000003"
+            ]
+          },
+          "10000000-0000-4000-8000-000000000003": {
+            "id": "10000000-0000-4000-8000-000000000003",
+            "message": {
+              "id": "10000000-0000-4000-8000-000000000003",
+              "author": {
+                "role": "user",
+                "name": null,
+                "metadata": {}
+              },
+              "create_time": 1792108800,
+              "update_time": null,
+              "content": {
+                "content_type": "text",
+                "parts": [
+                  "Plan a short walk after lunch."
+                ]
+              },
+              "status": "finished_successfully",
+              "end_turn": false,
+              "weight": 1,
+              "metadata": {
+                "model_slug": "gpt-5"
+              },
+              "recipient": "all",
+              "channel": null
+            },
+            "parent": "10000000-0000-4000-8000-000000000002",
+            "children": [
+              "10000000-0000-4000-8000-000000000004"
+            ]
+          },
+          "10000000-0000-4000-8000-000000000004": {
+            "id": "10000000-0000-4000-8000-000000000004",
+            "message": {
+              "id": "10000000-0000-4000-8000-000000000004",
+              "author": {
+                "role": "assistant",
+                "name": null,
+                "metadata": {}
+              },
+              "create_time": 1792108800,
+              "update_time": null,
+              "content": {
+                "content_type": "text",
+                "parts": [
+                  "Take a 20-minute walk. Bring water and choose a shaded route."
+                ]
+              },
+              "status": "finished_successfully",
+              "end_turn": true,
+              "weight": 1,
+              "metadata": {
+                "model_slug": "gpt-5"
+              },
+              "recipient": "all",
+              "channel": null
+            },
+            "parent": "10000000-0000-4000-8000-000000000003",
+            "children": []
+          }
+        },
+        "current_node": "10000000-0000-4000-8000-000000000004",
+        "conversation_id": "10000000-0000-4000-8000-000000000001",
+        "is_archived": false,
+        "is_starred": false,
+        "default_model_slug": "gpt-5",
+        "gizmo_id": null,
+        "moderation_results": [],
+        "safe_urls": [],
+        "plugin_ids": null,
+        "conversation_origin": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/conversation/{conversation_id}/stream_status",
+      "family": "conversation",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 4331231,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "status": "finished",
+        "is_complete": true
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "POST",
+      "path": "/conversation/{conversation_id}/async-status",
+      "family": "conversation",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 3480398,
+        "method": "safePost"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "status": "completed"
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/conversations/{conversation_id}/messages",
+      "family": "conversation",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 2265638,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "messages": [
+          {
+            "id": "10000000-0000-4000-8000-000000000003",
+            "author": {
+              "role": "user",
+              "name": null,
+              "metadata": {}
+            },
+            "create_time": 1792108800,
+            "update_time": null,
+            "content": {
+              "content_type": "text",
+              "parts": [
+                "Plan a short walk after lunch."
+              ]
+            },
+            "status": "finished_successfully",
+            "end_turn": false,
+            "weight": 1,
+            "metadata": {
+              "model_slug": "gpt-5"
+            },
+            "recipient": "all",
+            "channel": null
+          },
+          {
+            "id": "10000000-0000-4000-8000-000000000004",
+            "author": {
+              "role": "assistant",
+              "name": null,
+              "metadata": {}
+            },
+            "create_time": 1792108800,
+            "update_time": null,
+            "content": {
+              "content_type": "text",
+              "parts": [
+                "Take a 20-minute walk. Bring water and choose a shaded route."
+              ]
+            },
+            "status": "finished_successfully",
+            "end_turn": true,
+            "weight": 1,
+            "metadata": {
+              "model_slug": "gpt-5"
+            },
+            "recipient": "all",
+            "channel": null
+          }
+        ],
+        "page_info": {
+          "has_previous_page": false,
+          "has_next_page": false,
+          "start_cursor": null,
+          "end_cursor": null
+        }
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/share/{shared_conversation_id}",
+      "family": "conversation",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 2271400,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "title": "A walk after lunch",
+        "create_time": 1792108800,
+        "update_time": 1792108800,
+        "mapping": {
+          "10000000-0000-4000-8000-000000000002": {
+            "id": "10000000-0000-4000-8000-000000000002",
+            "message": null,
+            "parent": null,
+            "children": [
+              "10000000-0000-4000-8000-000000000003"
+            ]
+          },
+          "10000000-0000-4000-8000-000000000003": {
+            "id": "10000000-0000-4000-8000-000000000003",
+            "message": {
+              "id": "10000000-0000-4000-8000-000000000003",
+              "author": {
+                "role": "user",
+                "name": null,
+                "metadata": {}
+              },
+              "create_time": 1792108800,
+              "update_time": null,
+              "content": {
+                "content_type": "text",
+                "parts": [
+                  "Plan a short walk after lunch."
+                ]
+              },
+              "status": "finished_successfully",
+              "end_turn": false,
+              "weight": 1,
+              "metadata": {
+                "model_slug": "gpt-5"
+              },
+              "recipient": "all",
+              "channel": null
+            },
+            "parent": "10000000-0000-4000-8000-000000000002",
+            "children": [
+              "10000000-0000-4000-8000-000000000004"
+            ]
+          },
+          "10000000-0000-4000-8000-000000000004": {
+            "id": "10000000-0000-4000-8000-000000000004",
+            "message": {
+              "id": "10000000-0000-4000-8000-000000000004",
+              "author": {
+                "role": "assistant",
+                "name": null,
+                "metadata": {}
+              },
+              "create_time": 1792108800,
+              "update_time": null,
+              "content": {
+                "content_type": "text",
+                "parts": [
+                  "Take a 20-minute walk. Bring water and choose a shaded route."
+                ]
+              },
+              "status": "finished_successfully",
+              "end_turn": true,
+              "weight": 1,
+              "metadata": {
+                "model_slug": "gpt-5"
+              },
+              "recipient": "all",
+              "channel": null
+            },
+            "parent": "10000000-0000-4000-8000-000000000003",
+            "children": []
+          }
+        },
+        "current_node": "10000000-0000-4000-8000-000000000004",
+        "conversation_id": "10000000-0000-4000-8000-000000000001",
+        "is_archived": false,
+        "is_starred": false,
+        "default_model_slug": "gpt-5",
+        "gizmo_id": null,
+        "moderation_results": [],
+        "safe_urls": [],
+        "plugin_ids": null,
+        "conversation_origin": null,
+        "shared_conversation_id": "10000000-0000-4000-8000-000000000001",
+        "is_public": true
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/shared_conversations",
+      "family": "conversation",
+      "source": {
+        "file": "dialog-25b40827e9fe.js",
+        "offset": 10733,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/conversations/search",
+      "family": "conversation",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 3454804,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [
+          {
+            "id": "10000000-0000-4000-8000-000000000001",
+            "title": "A walk after lunch",
+            "create_time": "2026-10-16T00:00:00Z",
+            "update_time": "2026-10-16T00:00:00Z",
+            "is_archived": false,
+            "is_starred": false,
+            "gizmo_id": null,
+            "conversation_origin": null,
+            "snippet": "Take a 20-minute walk."
+          }
+        ],
+        "cursor": null,
+        "total": 1
+      },
+      "empty": {
+        "items": [],
+        "cursor": null,
+        "total": 0
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "POST",
+      "path": "/f/conversation",
+      "family": "conversation",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 1893787,
+        "method": "POST"
+      },
+      "status": 200,
+      "content_type": "text/event-stream",
+      "body": "data: {\"message\": {\"id\": \"10000000-0000-4000-8000-000000000004\", \"author\": {\"role\": \"assistant\", \"name\": null, \"metadata\": {}}, \"create_time\": 1792108800, \"update_time\": null, \"content\": {\"content_type\": \"text\", \"parts\": [\"Take a 20-minute walk. Bring water and choose a shaded route.\"]}, \"status\": \"finished_successfully\", \"end_turn\": true, \"weight\": 1, \"metadata\": {\"model_slug\": \"gpt-5\"}, \"recipient\": \"all\", \"channel\": null}, \"conversation_id\": \"10000000-0000-4000-8000-000000000001\", \"error\": null}\n\ndata: [DONE]\n\n",
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/gizmos/bootstrap",
+      "family": "gpts",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 5213417,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [
+          {
+            "item": {
+              "gizmo": {
+                "id": "g-owned-demo",
+                "short_url": "g-owned-demo",
+                "gizmo_type": "gpt",
+                "display": {
+                  "name": "Trail planner",
+                  "description": "Plan a short walk.",
+                  "welcome_message": "Where would you like to walk?",
+                  "prompt_starters": [
+                    "Plan a walk after lunch."
+                  ],
+                  "profile_picture_url": null
+                },
+                "instructions": "Give short walking plans.",
+                "tools": [],
+                "files": [],
+                "tags": [],
+                "version": 1,
+                "visibility": "private",
+                "author": {
+                  "user_id": "user-000000000000000000000000",
+                  "display_name": "Demo User",
+                  "is_verified": false
+                },
+                "share_recipient": "private",
+                "updated_at": "2026-10-16T00:00:00Z",
+                "created_at": "2026-10-16T00:00:00Z"
+              },
+              "tools": [],
+              "files": [],
+              "product_features": {}
+            },
+            "conversations": [
+              {
+                "id": "10000000-0000-4000-8000-000000000001",
+                "title": "A walk after lunch",
+                "create_time": "2026-10-16T00:00:00Z",
+                "update_time": "2026-10-16T00:00:00Z",
+                "is_archived": false,
+                "is_starred": false,
+                "gizmo_id": null,
+                "conversation_origin": null,
+                "snippet": "Take a 20-minute walk."
+              }
+            ]
+          }
+        ],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/gizmos/{gizmo_id_or_short_url}",
+      "family": "gpts",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 1980273,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "gizmo": {
+          "id": "g-owned-demo",
+          "short_url": "g-owned-demo",
+          "gizmo_type": "gpt",
+          "display": {
+            "name": "Trail planner",
+            "description": "Plan a short walk.",
+            "welcome_message": "Where would you like to walk?",
+            "prompt_starters": [
+              "Plan a walk after lunch."
+            ],
+            "profile_picture_url": null
+          },
+          "instructions": "Give short walking plans.",
+          "tools": [],
+          "files": [],
+          "tags": [],
+          "version": 1,
+          "visibility": "private",
+          "author": {
+            "user_id": "user-000000000000000000000000",
+            "display_name": "Demo User",
+            "is_verified": false
+          },
+          "share_recipient": "private",
+          "updated_at": "2026-10-16T00:00:00Z",
+          "created_at": "2026-10-16T00:00:00Z"
+        },
+        "tools": [],
+        "files": [],
+        "product_features": {}
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/gizmos/snorlax/sidebar",
+      "family": "gpts",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 2048239,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [
+          {
+            "gizmo": {
+              "id": "g-owned-demo",
+              "short_url": "g-owned-demo",
+              "gizmo_type": "snorlax",
+              "display": {
+                "name": "Trail planner",
+                "description": "Plan a short walk.",
+                "welcome_message": "Where would you like to walk?",
+                "prompt_starters": [
+                  "Plan a walk after lunch."
+                ],
+                "profile_picture_url": null
+              },
+              "instructions": "Give short walking plans.",
+              "tools": [],
+              "files": [],
+              "tags": [],
+              "version": 1,
+              "visibility": "private",
+              "author": {
+                "user_id": "user-000000000000000000000000",
+                "display_name": "Demo User",
+                "is_verified": false
+              },
+              "share_recipient": "private",
+              "updated_at": "2026-10-16T00:00:00Z",
+              "created_at": "2026-10-16T00:00:00Z"
+            },
+            "conversations": [
+              {
+                "id": "10000000-0000-4000-8000-000000000001",
+                "title": "A walk after lunch",
+                "create_time": "2026-10-16T00:00:00Z",
+                "update_time": "2026-10-16T00:00:00Z",
+                "is_archived": false,
+                "is_starred": false,
+                "gizmo_id": null,
+                "conversation_origin": null,
+                "snippet": "Take a 20-minute walk."
+              }
+            ]
+          }
+        ],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/gizmos/firstparty/sidebar",
+      "family": "health",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 2984088,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": [
+        {
+          "gizmo": {
+            "id": "g-owned-health",
+            "short_url": "g-owned-health",
+            "gizmo_type": "snorlax",
+            "display": {
+              "name": "Health",
+              "description": "Plan a short walk.",
+              "welcome_message": "Where would you like to walk?",
+              "prompt_starters": [
+                "Plan a walk after lunch."
+              ],
+              "profile_picture_url": null
+            },
+            "instructions": "Give short walking plans.",
+            "tools": [],
+            "files": [],
+            "tags": [],
+            "version": 1,
+            "visibility": "private",
+            "author": {
+              "user_id": "user-000000000000000000000000",
+              "display_name": "Demo User",
+              "is_verified": false
+            },
+            "share_recipient": "private",
+            "updated_at": "2026-10-16T00:00:00Z",
+            "created_at": "2026-10-16T00:00:00Z",
+            "gizmo_snorlax_type": "potion"
+          },
+          "tools": [],
+          "files": [],
+          "product_features": {}
+        }
+      ],
+      "empty": [],
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/gizmos/{gizmo_id}/conversations",
+      "family": "gpts",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 2041310,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [
+          {
+            "id": "10000000-0000-4000-8000-000000000001",
+            "title": "A walk after lunch",
+            "create_time": "2026-10-16T00:00:00Z",
+            "update_time": "2026-10-16T00:00:00Z",
+            "is_archived": false,
+            "is_starred": false,
+            "gizmo_id": null,
+            "conversation_origin": null,
+            "snippet": "Take a 20-minute walk."
+          }
+        ],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/gizmos/{gizmo_id}/about",
+      "family": "gpts",
+      "source": {
+        "file": "gpt-about-dialog-6cbd71c8ca5d.js",
+        "offset": 15112,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "gizmo": {
+          "id": "g-owned-demo",
+          "short_url": "g-owned-demo",
+          "gizmo_type": "gpt",
+          "display": {
+            "name": "Trail planner",
+            "description": "Plan a short walk.",
+            "welcome_message": "Where would you like to walk?",
+            "prompt_starters": [
+              "Plan a walk after lunch."
+            ],
+            "profile_picture_url": null
+          },
+          "instructions": "Give short walking plans.",
+          "tools": [],
+          "files": [],
+          "tags": [],
+          "version": 1,
+          "visibility": "private",
+          "author": {
+            "user_id": "user-000000000000000000000000",
+            "display_name": "Demo User",
+            "is_verified": false
+          },
+          "share_recipient": "private",
+          "updated_at": "2026-10-16T00:00:00Z",
+          "created_at": "2026-10-16T00:00:00Z"
+        },
+        "author": {
+          "user_id": "user-000000000000000000000000",
+          "display_name": "Demo User",
+          "is_verified": false
+        },
+        "tools": [],
+        "ratings": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/gizmos/search",
+      "family": "gpts",
+      "source": {
+        "file": "directory-banner-9747d934a9a2.js",
+        "offset": 5885,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [
+          {
+            "gizmo": {
+              "id": "g-owned-demo",
+              "short_url": "g-owned-demo",
+              "gizmo_type": "gpt",
+              "display": {
+                "name": "Trail planner",
+                "description": "Plan a short walk.",
+                "welcome_message": "Where would you like to walk?",
+                "prompt_starters": [
+                  "Plan a walk after lunch."
+                ],
+                "profile_picture_url": null
+              },
+              "instructions": "Give short walking plans.",
+              "tools": [],
+              "files": [],
+              "tags": [],
+              "version": 1,
+              "visibility": "private",
+              "author": {
+                "user_id": "user-000000000000000000000000",
+                "display_name": "Demo User",
+                "is_verified": false
+              },
+              "share_recipient": "private",
+              "updated_at": "2026-10-16T00:00:00Z",
+              "created_at": "2026-10-16T00:00:00Z"
+            },
+            "tools": [],
+            "files": [],
+            "product_features": {}
+          }
+        ],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/public-api/gizmos/discovery",
+      "family": "gpts",
+      "source": {
+        "file": "gpt-discovery-page-4a0ec48a7b4c.js",
+        "offset": 7555,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "cuts": [
+          {
+            "info": {
+              "id": "featured",
+              "title": "Featured",
+              "display_group": "featured"
+            },
+            "list": {
+              "items": [
+                {
+                  "resource": {
+                    "gizmo": {
+                      "id": "g-owned-demo",
+                      "short_url": "g-owned-demo",
+                      "gizmo_type": "gpt",
+                      "display": {
+                        "name": "Trail planner",
+                        "description": "Plan a short walk.",
+                        "welcome_message": "Where would you like to walk?",
+                        "prompt_starters": [
+                          "Plan a walk after lunch."
+                        ],
+                        "profile_picture_url": null
+                      },
+                      "instructions": "Give short walking plans.",
+                      "tools": [],
+                      "files": [],
+                      "tags": [],
+                      "version": 1,
+                      "visibility": "private",
+                      "author": {
+                        "user_id": "user-000000000000000000000000",
+                        "display_name": "Demo User",
+                        "is_verified": false
+                      },
+                      "share_recipient": "private",
+                      "updated_at": "2026-10-16T00:00:00Z",
+                      "created_at": "2026-10-16T00:00:00Z"
+                    },
+                    "tools": [],
+                    "files": [],
+                    "product_features": {}
+                  }
+                }
+              ],
+              "cursor": null
+            }
+          }
+        ],
+        "categories": []
+      },
+      "empty": {
+        "cuts": [],
+        "categories": []
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/images/init",
+      "family": "images",
+      "source": {
+        "file": "prompts-24d6626ea9e7.js",
+        "offset": 855,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "groups": [
+          {
+            "id": "walks",
+            "title": "Outdoors",
+            "kind": "prompt_collection",
+            "action": {
+              "type": "prompt",
+              "input_requirements": {}
+            },
+            "items": [
+              {
+                "id": "walk-prompt",
+                "title": "A quiet trail",
+                "prompt": "Draw a quiet woodland trail.",
+                "image_url": "/__r1/media/walking-route.svg",
+                "section": "trending"
+              }
+            ]
+          }
+        ]
+      },
+      "empty": {
+        "groups": []
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/images/styles",
+      "family": "images",
+      "source": {
+        "file": "prompts-24d6626ea9e7.js",
+        "offset": 1089,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "styles": [],
+        "image_suggestions": []
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/images/prompt-items",
+      "family": "images",
+      "source": {
+        "file": "followup-suggestions-513169d75204.js",
+        "offset": 2332,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [
+          {
+            "id": "walk-prompt",
+            "prompt": "Draw a quiet woodland trail."
+          }
+        ],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/images/image-tags",
+      "family": "images",
+      "source": {
+        "file": "state-dfda062c3a01.js",
+        "offset": 450,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/aip/olympic/chats",
+      "family": "health",
+      "source": {
+        "file": "page-81bbc8bec72a.js",
+        "offset": 14393,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [
+          {
+            "id": "10000000-0000-4000-8000-000000000001",
+            "title": "A walk after lunch",
+            "create_time": "2026-10-16T00:00:00Z",
+            "update_time": "2026-10-16T00:00:00Z",
+            "is_archived": false,
+            "is_starred": false,
+            "gizmo_id": null,
+            "conversation_origin": null,
+            "snippet": "Take a 20-minute walk."
+          }
+        ],
+        "cursor": null,
+        "total": 1,
+        "limit": 20,
+        "offset": 0
+      },
+      "empty": {
+        "items": [],
+        "cursor": null,
+        "total": 0,
+        "limit": 20,
+        "offset": 0
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/spaces",
+      "family": "space",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 3230511,
+        "method": "literal"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [
+          {
+            "id": "10000000-0000-4000-8000-000000000005",
+            "name": "Walking notes",
+            "root_page_id": "10000000-0000-4000-8000-000000000006",
+            "backing_type": "native",
+            "created_at": "2026-10-16T00:00:00Z",
+            "updated_at": "2026-10-16T00:00:00Z",
+            "deleted_at": null,
+            "is_personal": false,
+            "current_user_role": "owner",
+            "icon": null,
+            "root_page_metadata": {
+              "page_id": "10000000-0000-4000-8000-000000000006",
+              "id": "10000000-0000-4000-8000-000000000006",
+              "title": "Walking notes",
+              "drive_space_id": "10000000-0000-4000-8000-000000000005",
+              "parent_page_id": null,
+              "created_at": "2026-10-16T00:00:00Z",
+              "updated_at": "2026-10-16T00:00:00Z",
+              "deleted_at": null,
+              "has_children": false,
+              "content": {
+                "type": "doc",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "Bring water for the afternoon walk."
+                      }
+                    ]
+                  }
+                ]
+              },
+              "version": 1,
+              "icon": null,
+              "cover": null,
+              "permissions": {
+                "can_edit": true,
+                "can_share": true
+              },
+              "access": {
+                "can_read": true,
+                "can_write": true
+              }
+            }
+          }
+        ],
+        "next_cursor": null
+      },
+      "empty": {
+        "items": [],
+        "next_cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/spaces/v2",
+      "family": "space",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 3287959,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [
+          {
+            "id": "10000000-0000-4000-8000-000000000005",
+            "name": "Walking notes",
+            "root_page_id": "10000000-0000-4000-8000-000000000006",
+            "backing_type": "native",
+            "created_at": "2026-10-16T00:00:00Z",
+            "updated_at": "2026-10-16T00:00:00Z",
+            "deleted_at": null,
+            "is_personal": false,
+            "current_user_role": "owner",
+            "icon": null,
+            "root_page_metadata": {
+              "page_id": "10000000-0000-4000-8000-000000000006",
+              "id": "10000000-0000-4000-8000-000000000006",
+              "title": "Walking notes",
+              "drive_space_id": "10000000-0000-4000-8000-000000000005",
+              "parent_page_id": null,
+              "created_at": "2026-10-16T00:00:00Z",
+              "updated_at": "2026-10-16T00:00:00Z",
+              "deleted_at": null,
+              "has_children": false,
+              "content": {
+                "type": "doc",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "Bring water for the afternoon walk."
+                      }
+                    ]
+                  }
+                ]
+              },
+              "version": 1,
+              "icon": null,
+              "cover": null,
+              "permissions": {
+                "can_edit": true,
+                "can_share": true
+              },
+              "access": {
+                "can_read": true,
+                "can_write": true
+              }
+            }
+          }
+        ],
+        "next_cursor": null
+      },
+      "empty": {
+        "items": [],
+        "next_cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/spaces/v2/{space_id}",
+      "family": "space",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 3289774,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "id": "10000000-0000-4000-8000-000000000005",
+        "name": "Walking notes",
+        "root_page_id": "10000000-0000-4000-8000-000000000006",
+        "backing_type": "native",
+        "created_at": "2026-10-16T00:00:00Z",
+        "updated_at": "2026-10-16T00:00:00Z",
+        "deleted_at": null,
+        "is_personal": false,
+        "current_user_role": "owner",
+        "icon": null,
+        "root_page_metadata": {
+          "page_id": "10000000-0000-4000-8000-000000000006",
+          "id": "10000000-0000-4000-8000-000000000006",
+          "title": "Walking notes",
+          "drive_space_id": "10000000-0000-4000-8000-000000000005",
+          "parent_page_id": null,
+          "created_at": "2026-10-16T00:00:00Z",
+          "updated_at": "2026-10-16T00:00:00Z",
+          "deleted_at": null,
+          "has_children": false,
+          "content": {
+            "type": "doc",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Bring water for the afternoon walk."
+                  }
+                ]
+              }
+            ]
+          },
+          "version": 1,
+          "icon": null,
+          "cover": null,
+          "permissions": {
+            "can_edit": true,
+            "can_share": true
+          },
+          "access": {
+            "can_read": true,
+            "can_write": true
+          }
+        }
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/spaces/{space_id}/pages",
+      "family": "space",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 3192818,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [
+          {
+            "page_id": "10000000-0000-4000-8000-000000000006",
+            "id": "10000000-0000-4000-8000-000000000006",
+            "title": "Walking notes",
+            "drive_space_id": "10000000-0000-4000-8000-000000000005",
+            "parent_page_id": null,
+            "created_at": "2026-10-16T00:00:00Z",
+            "updated_at": "2026-10-16T00:00:00Z",
+            "deleted_at": null,
+            "has_children": false,
+            "content": {
+              "type": "doc",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Bring water for the afternoon walk."
+                    }
+                  ]
+                }
+              ]
+            },
+            "version": 1,
+            "icon": null,
+            "cover": null,
+            "permissions": {
+              "can_edit": true,
+              "can_share": true
+            }
+          }
+        ],
+        "next_cursor": null
+      },
+      "empty": {
+        "items": [],
+        "next_cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/spaces/people",
+      "family": "space",
+      "source": {
+        "file": "content-fe0352f21c09.js",
+        "offset": 673617,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [
+          {
+            "id": "user-000000000000000000000000",
+            "name": "Demo User",
+            "email": "user@example.com"
+          }
+        ],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/pages",
+      "family": "space",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 3185068,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [
+          {
+            "page_id": "10000000-0000-4000-8000-000000000006",
+            "id": "10000000-0000-4000-8000-000000000006",
+            "title": "Walking notes",
+            "drive_space_id": "10000000-0000-4000-8000-000000000005",
+            "parent_page_id": null,
+            "created_at": "2026-10-16T00:00:00Z",
+            "updated_at": "2026-10-16T00:00:00Z",
+            "deleted_at": null,
+            "has_children": false,
+            "content": {
+              "type": "doc",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Bring water for the afternoon walk."
+                    }
+                  ]
+                }
+              ]
+            },
+            "version": 1,
+            "icon": null,
+            "cover": null,
+            "permissions": {
+              "can_edit": true,
+              "can_share": true
+            }
+          }
+        ],
+        "next_cursor": null
+      },
+      "empty": {
+        "items": [],
+        "next_cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/pages/{page_id}",
+      "family": "space",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 3239893,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "page_id": "10000000-0000-4000-8000-000000000006",
+        "id": "10000000-0000-4000-8000-000000000006",
+        "title": "Walking notes",
+        "drive_space_id": "10000000-0000-4000-8000-000000000005",
+        "parent_page_id": null,
+        "created_at": "2026-10-16T00:00:00Z",
+        "updated_at": "2026-10-16T00:00:00Z",
+        "deleted_at": null,
+        "has_children": false,
+        "content": {
+          "type": "doc",
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Bring water for the afternoon walk."
+                }
+              ]
+            }
+          ]
+        },
+        "version": 1,
+        "icon": null,
+        "cover": null,
+        "permissions": {
+          "can_edit": true,
+          "can_share": true
+        }
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/pages/archived",
+      "family": "space",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 3158539,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [],
+        "next_cursor": null
+      },
+      "empty": {
+        "items": [],
+        "next_cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/pages/suggestions",
+      "family": "space",
+      "source": {
+        "file": "personalized-pages-6219b27bdb35.js",
+        "offset": 36248,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/pages/mentions/inbox",
+      "family": "space",
+      "source": {
+        "file": "inbox-125bd1223897.js",
+        "offset": 1382,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/pages/{page_id}/versions",
+      "family": "space",
+      "source": {
+        "file": "panel-106a901476dc.js",
+        "offset": 4109,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/pages/{page_id}/files",
+      "family": "space",
+      "source": {
+        "file": "content-fe0352f21c09.js",
+        "offset": 857344,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [
+          {
+            "id": "file-owned-notes",
+            "name": "walking-notes.txt",
+            "file_name": "walking-notes.txt",
+            "mime_type": "text/plain",
+            "size": 40,
+            "created_at": "2026-10-16T00:00:00Z",
+            "updated_at": "2026-10-16T00:00:00Z",
+            "status": "ready",
+            "source": "upload",
+            "conversation_id": "10000000-0000-4000-8000-000000000001",
+            "is_favorite": false,
+            "download_url": "/__r1/media/walking-notes.txt"
+          }
+        ],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "POST",
+      "path": "/files/library",
+      "family": "library",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 1734837,
+        "method": "safePost"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [
+          {
+            "id": "file-owned-notes",
+            "name": "walking-notes.txt",
+            "file_name": "walking-notes.txt",
+            "mime_type": "text/plain",
+            "size": 40,
+            "created_at": "2026-10-16T00:00:00Z",
+            "updated_at": "2026-10-16T00:00:00Z",
+            "status": "ready",
+            "source": "upload",
+            "conversation_id": "10000000-0000-4000-8000-000000000001",
+            "is_favorite": false,
+            "download_url": "/__r1/media/walking-notes.txt"
+          },
+          {
+            "id": "file-owned-image",
+            "name": "walking-route.svg",
+            "file_name": "walking-route.svg",
+            "mime_type": "image/svg+xml",
+            "size": 40,
+            "created_at": "2026-10-16T00:00:00Z",
+            "updated_at": "2026-10-16T00:00:00Z",
+            "status": "ready",
+            "source": "imagegen",
+            "conversation_id": "10000000-0000-4000-8000-000000000001",
+            "is_favorite": false,
+            "download_url": "/__r1/media/walking-route.svg",
+            "thumbnail_url": "/__r1/media/walking-route.svg",
+            "width": 640,
+            "height": 480
+          }
+        ],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/files/library/nodes",
+      "family": "library",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 3156418,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [
+          {
+            "id": "10000000-0000-4000-8000-000000000011",
+            "type": "directory",
+            "name": "Walks",
+            "parent_directory_id": null,
+            "created_at": "2026-10-16T00:00:00Z",
+            "updated_at": "2026-10-16T00:00:00Z"
+          },
+          {
+            "id": "file-owned-notes",
+            "type": "file",
+            "name": "walking-notes.txt",
+            "file": {
+              "id": "file-owned-notes",
+              "name": "walking-notes.txt",
+              "file_name": "walking-notes.txt",
+              "mime_type": "text/plain",
+              "size": 40,
+              "created_at": "2026-10-16T00:00:00Z",
+              "updated_at": "2026-10-16T00:00:00Z",
+              "status": "ready",
+              "source": "upload",
+              "conversation_id": "10000000-0000-4000-8000-000000000001",
+              "is_favorite": false,
+              "download_url": "/__r1/media/walking-notes.txt"
+            },
+            "parent_directory_id": "10000000-0000-4000-8000-000000000011",
+            "created_at": "2026-10-16T00:00:00Z",
+            "updated_at": "2026-10-16T00:00:00Z"
+          }
+        ],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/files/library/recents",
+      "family": "library",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 1735245,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [
+          {
+            "id": "file-owned-notes",
+            "name": "walking-notes.txt",
+            "file_name": "walking-notes.txt",
+            "mime_type": "text/plain",
+            "size": 40,
+            "created_at": "2026-10-16T00:00:00Z",
+            "updated_at": "2026-10-16T00:00:00Z",
+            "status": "ready",
+            "source": "upload",
+            "conversation_id": "10000000-0000-4000-8000-000000000001",
+            "is_favorite": false,
+            "download_url": "/__r1/media/walking-notes.txt"
+          },
+          {
+            "id": "file-owned-image",
+            "name": "walking-route.svg",
+            "file_name": "walking-route.svg",
+            "mime_type": "image/svg+xml",
+            "size": 40,
+            "created_at": "2026-10-16T00:00:00Z",
+            "updated_at": "2026-10-16T00:00:00Z",
+            "status": "ready",
+            "source": "imagegen",
+            "conversation_id": "10000000-0000-4000-8000-000000000001",
+            "is_favorite": false,
+            "download_url": "/__r1/media/walking-route.svg",
+            "thumbnail_url": "/__r1/media/walking-route.svg",
+            "width": 640,
+            "height": 480
+          }
+        ],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/files/library/directories/path",
+      "family": "library",
+      "source": {
+        "file": "selectable-library-item-5c0317138e13.js",
+        "offset": 25586,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "path": [
+          {
+            "id": "10000000-0000-4000-8000-000000000011",
+            "type": "directory",
+            "name": "Walks",
+            "parent_directory_id": null,
+            "created_at": "2026-10-16T00:00:00Z",
+            "updated_at": "2026-10-16T00:00:00Z"
+          }
+        ],
+        "items": [
+          {
+            "id": "10000000-0000-4000-8000-000000000011",
+            "type": "directory",
+            "name": "Walks",
+            "parent_directory_id": null,
+            "created_at": "2026-10-16T00:00:00Z",
+            "updated_at": "2026-10-16T00:00:00Z"
+          }
+        ]
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/files/library/files/{library_file_id}",
+      "family": "library",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 1734245,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "id": "file-owned-notes",
+        "name": "walking-notes.txt",
+        "file_name": "walking-notes.txt",
+        "mime_type": "text/plain",
+        "size": 40,
+        "created_at": "2026-10-16T00:00:00Z",
+        "updated_at": "2026-10-16T00:00:00Z",
+        "status": "ready",
+        "source": "upload",
+        "conversation_id": "10000000-0000-4000-8000-000000000001",
+        "is_favorite": false,
+        "download_url": "/__r1/media/walking-notes.txt"
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/files/library/files/{library_file_id}/node",
+      "family": "library",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 1734381,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "id": "file-owned-notes",
+        "type": "file",
+        "name": "walking-notes.txt",
+        "file": {
+          "id": "file-owned-notes",
+          "name": "walking-notes.txt",
+          "file_name": "walking-notes.txt",
+          "mime_type": "text/plain",
+          "size": 40,
+          "created_at": "2026-10-16T00:00:00Z",
+          "updated_at": "2026-10-16T00:00:00Z",
+          "status": "ready",
+          "source": "upload",
+          "conversation_id": "10000000-0000-4000-8000-000000000001",
+          "is_favorite": false,
+          "download_url": "/__r1/media/walking-notes.txt"
+        },
+        "parent_directory_id": "10000000-0000-4000-8000-000000000011",
+        "created_at": "2026-10-16T00:00:00Z",
+        "updated_at": "2026-10-16T00:00:00Z"
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/files/library/files/{library_file_id}/versions",
+      "family": "library",
+      "source": {
+        "file": "query-b62246123e86.js",
+        "offset": 2010,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/files/library/favorites",
+      "family": "library",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 3151467,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "POST",
+      "path": "/files/library/favorites/status",
+      "family": "library",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 9903626,
+        "method": "safePost"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "favorites": []
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "POST",
+      "path": "/files/library/image-favorites/status",
+      "family": "images",
+      "source": {
+        "file": "action-4fe851aed760.js",
+        "offset": 1171,
+        "method": "safePost"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "favorites": []
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/files/library/storage/usage",
+      "family": "library",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 2163294,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "used_bytes": 80,
+        "limit_bytes": 1073741824
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/files/library/mounted/capabilities",
+      "family": "library",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 5947016,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/files/library/reference-images",
+      "family": "images",
+      "source": {
+        "file": "query-523e41ca78e2.js",
+        "offset": 11151,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [
+          {
+            "id": "file-owned-image",
+            "name": "walking-route.svg",
+            "file_name": "walking-route.svg",
+            "mime_type": "image/svg+xml",
+            "size": 40,
+            "created_at": "2026-10-16T00:00:00Z",
+            "updated_at": "2026-10-16T00:00:00Z",
+            "status": "ready",
+            "source": "imagegen",
+            "conversation_id": "10000000-0000-4000-8000-000000000001",
+            "is_favorite": false,
+            "download_url": "/__r1/media/walking-route.svg",
+            "thumbnail_url": "/__r1/media/walking-route.svg",
+            "width": 640,
+            "height": 480
+          }
+        ],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/files/library/files/{library_file_id}/content_url",
+      "family": "library",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 1739651,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "url": "/__r1/media/walking-notes.txt"
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/files/library/files/{library_file_id}/download_url",
+      "family": "library",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 1739803,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "url": "/__r1/media/walking-notes.txt"
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/files/library/files/{library_file_id}/thumbnail_url",
+      "family": "library",
+      "source": {
+        "file": "api-9ad099b61242.js",
+        "offset": 3279,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "url": "/__r1/media/walking-route.svg"
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/websites/access",
+      "family": "sites",
+      "source": {
+        "file": "app-shared-8bd9d0399038.js",
+        "offset": 3881037,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "enabled": true,
+        "supports_workspace_listing": true,
+        "supports_editable_listing": true
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/wham/sites/access",
+      "family": "sites",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 3144923,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "enabled": true,
+        "supports_workspace_listing": true,
+        "supports_editable_listing": true
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/websites",
+      "family": "sites",
+      "source": {
+        "file": "appgen-sites-query-8ee1359247fa.js",
+        "offset": 797,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [
+          {
+            "id": "10000000-0000-4000-8000-000000000007",
+            "title": "Walking club",
+            "description": "Short walks near home.",
+            "slug": "owned-walking-club",
+            "status": "active",
+            "live_url": null,
+            "hosted_url": null,
+            "latest_edit_context": null,
+            "screenshot_url": null,
+            "current_user_role": "owner",
+            "is_pinned": false,
+            "owner": {
+              "name": "Demo User",
+              "email": "user@example.com"
+            },
+            "sharing": {
+              "access_mode": "admins_only",
+              "user_count": 1,
+              "group_count": 0
+            },
+            "updated_at": "2026-10-16T00:00:00Z",
+            "created_at": "2026-10-16T00:00:00Z"
+          }
+        ],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/websites/shared",
+      "family": "sites",
+      "source": {
+        "file": "appgen-sites-query-8ee1359247fa.js",
+        "offset": 1507,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/websites/pinned",
+      "family": "sites",
+      "source": {
+        "file": "appgen-page-b82d5b7d6ec0.js",
+        "offset": 8856,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/websites/{project_id}",
+      "family": "sites",
+      "source": {
+        "file": "appgen-sites-query-8ee1359247fa.js",
+        "offset": 386,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "id": "10000000-0000-4000-8000-000000000007",
+        "title": "Walking club",
+        "description": "Short walks near home.",
+        "slug": "owned-walking-club",
+        "status": "active",
+        "live_url": null,
+        "hosted_url": null,
+        "latest_edit_context": null,
+        "screenshot_url": null,
+        "current_user_role": "owner",
+        "is_pinned": false,
+        "owner": {
+          "name": "Demo User",
+          "email": "user@example.com"
+        },
+        "sharing": {
+          "access_mode": "admins_only",
+          "user_count": 1,
+          "group_count": 0
+        },
+        "updated_at": "2026-10-16T00:00:00Z",
+        "created_at": "2026-10-16T00:00:00Z"
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/websites/{project_id}/share_access",
+      "family": "sites",
+      "source": {
+        "file": "sites-share-query-8b23e8cf2d2b.js",
+        "offset": 4574,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "access_policy": null,
+        "current_user_role": "owner"
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/websites/{project_id}/plugins",
+      "family": "sites",
+      "source": {
+        "file": "page-26ffb5452812.js",
+        "offset": 1127,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "POST",
+      "path": "/websites/{project_id}/automation-attachments",
+      "family": "sites",
+      "source": {
+        "file": "site-automation-create-panel-8cfaaef720cf.js",
+        "offset": 5174,
+        "method": "safePost"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/websites/automation-attachments",
+      "family": "sites",
+      "source": {
+        "file": "appgen-automations-state-ea21e15b40a3.js",
+        "offset": 457,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/websites/{project_id}/environment",
+      "family": "sites",
+      "source": {
+        "file": "app-shared-8bd9d0399038.js",
+        "offset": 3880641,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "status": "stopped",
+        "environment": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/websites/{project_id}/custom_domains",
+      "family": "sites",
+      "source": {
+        "file": "app-shared-8bd9d0399038.js",
+        "offset": 3881170,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/tbo/primary",
+      "family": "dots",
+      "source": {
+        "file": "app-shared-8bd9d0399038.js",
+        "offset": 3677617,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "selection": {
+          "available": true,
+          "thread_id": "10000000-0000-4000-8000-000000000001",
+          "tbo_id": "10000000-0000-4000-8000-000000000008",
+          "generation": 1
+        },
+        "profile": {
+          "id": "10000000-0000-4000-8000-000000000008",
+          "display_name": "Trail buddy",
+          "description": "A walking companion.",
+          "status": "ready",
+          "messaging_room_id": "10000000-0000-4000-8000-000000000001",
+          "root_thread_id": "10000000-0000-4000-8000-000000000001",
+          "created_at": "2026-10-16T00:00:00Z",
+          "updated_at": "2026-10-16T00:00:00Z",
+          "generation": 1,
+          "profile": {
+            "name": "Trail buddy",
+            "description": "A walking companion."
+          },
+          "avatar_url": null
+        }
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/tbo/{tbo_id}",
+      "family": "dots",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 5447266,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "id": "10000000-0000-4000-8000-000000000008",
+        "display_name": "Trail buddy",
+        "description": "A walking companion.",
+        "status": "ready",
+        "messaging_room_id": "10000000-0000-4000-8000-000000000001",
+        "root_thread_id": "10000000-0000-4000-8000-000000000001",
+        "created_at": "2026-10-16T00:00:00Z",
+        "updated_at": "2026-10-16T00:00:00Z",
+        "generation": 1,
+        "profile": {
+          "name": "Trail buddy",
+          "description": "A walking companion."
+        },
+        "avatar_url": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/tbo/by-thread/{thread_id}",
+      "family": "dots",
+      "source": {
+        "file": "app-shared-8bd9d0399038.js",
+        "offset": 3677205,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "id": "10000000-0000-4000-8000-000000000008",
+        "display_name": "Trail buddy",
+        "description": "A walking companion.",
+        "status": "ready",
+        "messaging_room_id": "10000000-0000-4000-8000-000000000001",
+        "root_thread_id": "10000000-0000-4000-8000-000000000001",
+        "created_at": "2026-10-16T00:00:00Z",
+        "updated_at": "2026-10-16T00:00:00Z",
+        "generation": 1,
+        "profile": {
+          "name": "Trail buddy",
+          "description": "A walking companion."
+        },
+        "avatar_url": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/tbo/{tbo_id}/threads",
+      "family": "dots",
+      "source": {
+        "file": "app-shared-8bd9d0399038.js",
+        "offset": 3676983,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [
+          {
+            "thread_id": "10000000-0000-4000-8000-000000000001",
+            "created_at": "2026-10-16T00:00:00Z",
+            "title": "A walk after lunch"
+          }
+        ],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/tbo/{tbo_id}/automations",
+      "family": "dots",
+      "source": {
+        "file": "state-2f9a9a282f44.js",
+        "offset": 630,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/tbo/{tbo_id}/activity",
+      "family": "dots",
+      "source": {
+        "file": "side-panel-783fddc08d7c.js",
+        "offset": 19232,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/tbo/{tbo_id}/activity/stream",
+      "family": "dots",
+      "source": {
+        "file": "side-panel-783fddc08d7c.js",
+        "offset": 20406,
+        "method": "literal"
+      },
+      "status": 200,
+      "content_type": "text/event-stream",
+      "body": "data: [DONE]\n\n",
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/tbo/{tbo_id}/computers",
+      "family": "dots",
+      "source": {
+        "file": "desktop-connection-b4c7d0a39c06.js",
+        "offset": 4245,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/profiles/me",
+      "family": "profile",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 5227980,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "profile_details": {
+          "username": "demo",
+          "display_name": "Demo User",
+          "profile_picture_url": null
+        },
+        "viewer_access": {
+          "is_self": true,
+          "can_edit": true
+        }
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/profiles/me/page",
+      "family": "profile",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 5236701,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "profile_details": {
+          "username": "demo",
+          "display_name": "Demo User",
+          "profile_picture_url": null
+        },
+        "pins": [],
+        "viewer_access": {
+          "is_self": true,
+          "can_edit": true
+        }
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/wham/tasks/list",
+      "family": "remote",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 7838964,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [
+          {
+            "task": {
+              "id": "10000000-0000-4000-8000-000000000009",
+              "title": "Review walking notes",
+              "created_at": "2026-10-16T00:00:00Z",
+              "updated_at": "2026-10-16T00:00:00Z",
+              "archived": false,
+              "status": "completed",
+              "environment_id": null
+            }
+          }
+        ],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/wham/tasks/{task_id}",
+      "family": "remote",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 3522455,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "task": {
+          "id": "10000000-0000-4000-8000-000000000009",
+          "title": "Review walking notes",
+          "created_at": "2026-10-16T00:00:00Z",
+          "updated_at": "2026-10-16T00:00:00Z",
+          "archived": false,
+          "status": "completed",
+          "environment_id": null
+        }
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/wham/tasks/{task_id}/turns",
+      "family": "remote",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 3522658,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "items": [
+          {
+            "id": "10000000-0000-4000-8000-000000000010",
+            "status": "completed",
+            "created_at": "2026-10-16T00:00:00Z",
+            "items": []
+          }
+        ],
+        "cursor": null
+      },
+      "empty": {
+        "items": [],
+        "cursor": null
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/wham/tasks/{task_id}/turns/{task_turn_id}",
+      "family": "remote",
+      "source": {
+        "file": "app-initial-6350d04672d0.js",
+        "offset": 3523566,
+        "method": "safeGet"
+      },
+      "status": 200,
+      "content_type": "application/json",
+      "body": {
+        "id": "10000000-0000-4000-8000-000000000010",
+        "status": "completed",
+        "items": []
+      },
+      "origin": "source-derived-owned"
+    },
+    {
+      "method": "GET",
+      "path": "/wham/tasks/{task_id}/turns/{task_turn_id}/stream",
+      "family": "remote",
+      "source": {
+        "file": "remote-conversation-page-d5c77768f912.js",
+        "offset": 51807,
+        "method": "stream GET"
+      },
+      "status": 200,
+      "content_type": "text/event-stream",
+      "body": "data: [DONE]\n\n",
+      "origin": "source-derived-owned"
+    }
+  ]
+}
