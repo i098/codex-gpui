@@ -440,6 +440,7 @@ pub struct Root {
     /// Tasks whose `automation-run-now` request has not answered.
     running_automations: HashSet<String>,
     automation_updates: HashMap<String, Task<()>>,
+    automation_history_updates: HashSet<String>,
     suggestion_load: Option<Task<()>>,
     /// The Scheduled routes' sidebar, fed the host's list when the read completes.
     scheduled: Option<Entity<automations::ScheduledSidebar>>,
@@ -724,6 +725,7 @@ impl Root {
             project_load: None,
             picking_project: false,
             automation_updates: HashMap::new(),
+            automation_history_updates: HashSet::new(),
             suggestion_load: None,
             scheduled: None,
             suggestions: None,
@@ -2192,6 +2194,16 @@ impl Root {
                     (task, composer)
                 });
                 let (shell, sidebar, page) = automations::shell(tasks, selected, utc_offset(), cx);
+                if let Some(history) = sidebar.read(cx).history.clone() {
+                    cx.subscribe_in(
+                        &history,
+                        window,
+                        |this, _, open: &OpenThread, window, cx| {
+                            this.navigate(Route::Thread(open.0.clone()), window, cx);
+                        },
+                    )
+                    .detach();
+                }
                 self.scheduled = Some(sidebar);
                 self.sync_starting(cx);
                 self.suggestions = page;
@@ -2228,6 +2240,7 @@ impl Root {
         }
         if self.scheduled_route() {
             self.load_suggestions(cx);
+            self.load_run_history(cx);
         }
         if let Some(page) = &self.page {
             page.update(cx, |shell, _| {
@@ -2625,6 +2638,12 @@ impl Root {
             } else {
                 this.focus.clone()
             };
+            let focus = if matches!(dialog.read(cx).kind(), DialogKind::ArchiveRuns { .. }) {
+                this.run_history(cx)
+                    .map_or(focus, |history| history.focus_handle(cx))
+            } else {
+                focus
+            };
             match outcome {
                 DialogOutcome::Dismiss => {
                     if git_dialog {
@@ -2636,6 +2655,13 @@ impl Root {
                 }
                 DialogOutcome::LogOut => this.logout(window, cx),
                 DialogOutcome::RevertChanges { .. } => window.focus(&this.focus, cx),
+                DialogOutcome::ArchiveRuns {
+                    automation,
+                    threads,
+                } => {
+                    window.focus(&focus, cx);
+                    this.archive_runs(automation.clone(), threads.clone(), cx);
+                }
                 DialogOutcome::DismissAnnouncement(model)
                 | DialogOutcome::UseAnnouncedModel { model, .. } => {
                     if let DialogOutcome::UseAnnouncedModel {
@@ -4510,9 +4536,16 @@ impl Root {
                         self.sidebar.update(cx, |s, cx| s.set_unread(id, cx));
                         let host = self.host.clone();
                         let (id, turn) = (id.to_owned(), params["turn"].clone());
-                        cx.background_spawn(async move {
-                            if let Err(error) = host.finish_automation_run(&id, &turn) {
-                                eprintln!("codex-gpui: failed to finish automation run: {error:#}");
+                        let finish = cx.background_spawn(async move {
+                            host.finish_automation_run(&id, &turn)
+                        });
+                        cx.spawn(async move |this, cx| match finish.await {
+                            Ok(true) => {
+                                this.update(cx, |this, cx| this.load_run_history(cx)).ok();
+                            }
+                            Ok(false) => {}
+                            Err(error) => {
+                                eprintln!("codex-gpui: failed to finish automation run: {error:#}")
                             }
                         })
                         .detach();

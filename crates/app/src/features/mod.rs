@@ -11,6 +11,7 @@
 use crate::Root;
 use gpui::{App, Context, Div};
 
+mod automation_history;
 mod command_destinations;
 pub(crate) use command_destinations::OpenThreadInNewWindow;
 
@@ -21,5 +22,6 @@ pub(crate) fn init(cx: &mut App) {
 
 /// Called by `Root::render` on the root element, after the app's own actions.
 pub(crate) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
-    command_destinations::actions(crate::windows::actions(root, cx), cx)
+    let root = command_destinations::actions(crate::windows::actions(root, cx), cx);
+    automation_history::actions(root, cx)
 }
