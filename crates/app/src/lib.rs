@@ -420,6 +420,8 @@ pub struct Root {
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
     settings_page: Option<Entity<settings::SettingsPage>>,
+    dependency_state: settings::DependencyState,
+    dependency_task: Option<Task<()>>,
     /// `⌘K` command menu over the window.
     command_menu: Option<Entity<CommandMenu>>,
     dialog: Option<Entity<Dialog>>,
@@ -448,6 +450,7 @@ pub struct Root {
     cwd: String,
     clock: Option<Clock>,
     config: Value,
+    codex_home: PathBuf,
     skills: Value,
     models: Vec<Model>,
     ready: bool,
@@ -706,6 +709,8 @@ impl Root {
             mobile_page: None,
             settings_section: None,
             settings_page: None,
+            dependency_state: settings::DependencyState::default(),
+            dependency_task: None,
             command_menu: None,
             dialog: None,
             dialog_to_composer: false,
@@ -730,6 +735,7 @@ impl Root {
             cwd,
             clock: None,
             config: Value::Null,
+            codex_home: PathBuf::new(),
             skills: Value::Null,
             models: Vec::new(),
             ready: false,
@@ -764,6 +770,11 @@ impl Root {
         });
         cx.on_app_quit(|this, cx| {
             this.flush_settings(cx);
+            if this.dependency_task.is_some() {
+                let _ = this
+                    .host
+                    .fetch(&host::Request::post("primary-runtime-cancel", None));
+            }
             async {}
         })
         .detach();
@@ -800,7 +811,7 @@ impl Root {
                 Some(bridge.account_read().await?)
             };
             let threads = bridge.thread_list().await?;
-            let (mut catalog, config, skills) = if acp {
+            let (mut catalog, mut config, skills) = if acp {
                 // The picker's one row says the agent picks: an empty id sends no model, and
                 // an empty effort shows no effort label.
                 let model = Model {
@@ -886,6 +897,11 @@ impl Root {
                     });
                 let models: Vec<Model> =
                     catalog.data.into_iter().map(|entry| entry.model).collect();
+                config.config["host"]["enabled-reasoning-efforts"] = cx
+                    .try_global::<host_settings::Settings>()
+                    .and_then(|settings| settings.read_all().get("enabled-reasoning-efforts"))
+                    .cloned()
+                    .unwrap_or(Value::Null);
                 let composers = [
                     this.home.read(cx).composer.clone(),
                     this.thread_composer.clone(),
@@ -897,6 +913,7 @@ impl Root {
                     });
                 }
                 this.config = config.config;
+                this.codex_home = PathBuf::from(server.codex_home);
                 this.config["host"]["confirm-before-close"] =
                     serde_json::to_value(this.state.confirm_before_close)
                         .expect("close preference");
@@ -1030,6 +1047,15 @@ impl Root {
 
     /// Replaces the desktop host and cancels pending UI callbacks for its reads and updates.
     pub fn set_host(&mut self, host: Arc<dyn host::Host>, cx: &mut Context<Self>) {
+        let refresh_dependencies =
+            self.dependency_state.data.is_some() || self.dependency_task.is_some();
+        if self.dependency_task.is_some() {
+            let _ = self
+                .host
+                .fetch(&host::Request::post("primary-runtime-cancel", None));
+        }
+        self.dependency_task = None;
+        self.dependency_state = settings::DependencyState::default();
         self.automation_load = None;
         self.project_load = None;
         self.suggestion_load = None;
@@ -1051,6 +1077,9 @@ impl Root {
             self.load_suggestions(cx);
         }
         self.refresh_git_actions(cx);
+        if refresh_dependencies {
+            self.configuration_dependencies(settings::DependencyAction::Load, cx);
+        }
         cx.notify();
     }
 
@@ -1262,6 +1291,133 @@ impl Root {
             }
         })
         .detach();
+    }
+
+    fn open_config_toml(&mut self, cx: &mut Context<Self>) {
+        let target = cx
+            .try_global::<host_settings::Settings>()
+            .and_then(|settings| settings.read_all().get("open-in-target-preferences"))
+            .and_then(|preferences| preferences["global"].as_str());
+        let request = host::Request::post(
+            "open-config-toml",
+            Some(json!({"codexHome": self.codex_home, "target": target})),
+        );
+        let host = self.host.clone();
+        let opened = cx.background_spawn(async move {
+            host.fetch(&request)
+                .and_then(|response| host::json_body(&response))
+        });
+        cx.spawn(async move |this, cx| {
+            if let Err(error) = opened.await {
+                eprintln!("codex-gpui: open config.toml: {error:#}");
+                let _ = this.update(cx, |this, cx| {
+                    this.toast(Toast::danger("Unable to open config.toml"), cx)
+                });
+            }
+        })
+        .detach();
+    }
+
+    fn publish_dependencies(&self, cx: &mut Context<Self>) {
+        if let Some(page) = &self.settings_page {
+            page.update(cx, |page, cx| {
+                page.set_dependency_state(self.dependency_state.clone(), cx)
+            });
+        }
+    }
+
+    fn configuration_dependencies(
+        &mut self,
+        action: settings::DependencyAction,
+        cx: &mut Context<Self>,
+    ) {
+        use settings::DependencyAction;
+        let cancel = action == DependencyAction::Cancel;
+        if cancel {
+            if self.dependency_state.operation != Some(DependencyAction::Reinstall)
+                || self.dependency_state.cancel_pending
+            {
+                return;
+            }
+            self.dependency_state.cancel_pending = true;
+        } else {
+            if self.dependency_task.is_some() || self.dependency_state.cancel_pending {
+                self.publish_dependencies(cx);
+                return;
+            }
+            self.dependency_state.operation = Some(action);
+            self.dependency_state.error = None;
+        }
+        if action != DependencyAction::Load {
+            self.qa_work_started = true;
+        }
+        self.publish_dependencies(cx);
+        let endpoint = match action {
+            DependencyAction::Load | DependencyAction::Diagnose => "primary-runtime-diagnose",
+            DependencyAction::Reinstall => "primary-runtime-reinstall",
+            DependencyAction::Cancel => "primary-runtime-cancel",
+        };
+        let request = host::Request::post(
+            endpoint,
+            Some(json!({
+                "hostId": "local", "probeExecutables": action == DependencyAction::Diagnose,
+            })),
+        );
+        let host = self.host.clone();
+        let worker = host.clone();
+        let read = cx.background_spawn(async move {
+            worker
+                .fetch(&request)
+                .and_then(|response| host::json_body(&response))
+        });
+        let task = cx.spawn(async move |this, cx| {
+            let result = read.await;
+            let _ = this.update(cx, |this, cx| {
+                if !Arc::ptr_eq(&host, &this.host) { return; }
+                if cancel {
+                    this.dependency_state.cancel_pending = false;
+                    if let Err(error) = result {
+                        this.dependency_state.error = Some(error.to_string());
+                        this.toast(Toast::danger("Couldn’t cancel Codex dependency download"), cx);
+                    }
+                } else {
+                    this.dependency_task = None;
+                    this.dependency_state.operation = None;
+                    match result {
+                        Ok(state) => {
+                            if action == DependencyAction::Diagnose {
+                                let toast = if state["installed"] == true {
+                                    Toast::success("Codex dependencies look healthy")
+                                } else {
+                                    Toast::info("Codex dependencies may need repair. Send /feedback if this keeps happening")
+                                };
+                                this.toast(toast, cx);
+                            } else if action == DependencyAction::Reinstall {
+                                this.toast(Toast::success("Codex dependencies were reinstalled"), cx);
+                            }
+                            this.dependency_state.data = Some(state);
+                        }
+                        Err(error) => {
+                            let error = error.to_string();
+                            if action == DependencyAction::Reinstall && error.contains("download canceled") {
+                                this.toast(Toast::success("Canceled Codex dependency download"), cx);
+                            } else {
+                                this.dependency_state.error = Some(error);
+                                if action != DependencyAction::Load {
+                                    this.toast(Toast::danger("Couldn’t update Codex dependencies"), cx);
+                                }
+                            }
+                        }
+                    }
+                }
+                this.publish_dependencies(cx);
+            });
+        });
+        if cancel {
+            task.detach();
+        } else {
+            self.dependency_task = Some(task);
+        }
     }
 
     fn refresh_git_actions(&mut self, cx: &mut Context<Self>) {
@@ -2160,6 +2316,10 @@ impl Root {
                 config["host"]["confirm-before-close"] = json!(self.state.confirm_before_close);
                 let section = self.settings_section.take();
                 let (shell, page) = settings::shell(&config, &self.skills, section, cx);
+                page.update(cx, |page, cx| {
+                    page.set_model_features(&self.models, cx);
+                    page.set_dependency_state(self.dependency_state.clone(), cx);
+                });
                 self.settings_page = Some(page.clone());
                 cx.subscribe(&page, |this, page, e: &SettingChanged, cx| {
                     this.write_setting(e, cx);
@@ -2172,6 +2332,14 @@ impl Root {
                         values["confirm-before-close"] = json!(this.state.confirm_before_close);
                         page.update(cx, |page, cx| page.refresh_host(values, cx));
                     }
+                })
+                .detach();
+                cx.subscribe(&page, |this, _, _: &settings::OpenConfigToml, cx| {
+                    this.open_config_toml(cx);
+                })
+                .detach();
+                cx.subscribe(&page, |this, _, action: &settings::DependencyAction, cx| {
+                    this.configuration_dependencies(*action, cx);
                 })
                 .detach();
                 Some(shell)
@@ -4151,6 +4319,10 @@ impl Root {
 
     /// Window preferences keep their state storage; other host settings use the desktop service.
     fn write_setting(&mut self, e: &SettingChanged, cx: &mut Context<Self>) {
+        if e.path == "host.enabled-reasoning-efforts" {
+            self.write_reasoning_efforts(e.value.clone(), cx);
+            return;
+        }
         if e.path.starts_with("config.") {
             self.write_configuration(e, cx);
             return;
@@ -4247,6 +4419,69 @@ impl Root {
             "expectedVersion": null,
         });
         self.write_config("config/value/write", params, cx, apply);
+    }
+
+    fn write_reasoning_efforts(&mut self, preferences: Value, cx: &mut Context<Self>) {
+        self.qa_work_started = true;
+        let current_effort = self.config["model_reasoning_effort"].as_str().unwrap_or("");
+        let fallback = (matches!(current_effort, "max" | "ultra")
+            && !ui::composer::reasoning_effort_enabled(current_effort, &preferences))
+        .then(|| {
+            self.models
+                .iter()
+                .find(|model| Some(model.model.as_str()) == self.config["model"].as_str())
+                .or_else(|| self.models.iter().find(|model| model.is_default))
+                .map(|model| (model.model.clone(), model.default_reasoning_effort.clone()))
+        })
+        .flatten();
+        let bridge = self.bridge.clone();
+        let page = self.settings_page.clone();
+        cx.spawn(async move |this, cx| {
+            let result: Result<()> = async {
+                if let Some((model, effort)) = &fallback {
+                    let _: Value = bridge.request("config/batchWrite", json!({
+                        "edits": [
+                            {"keyPath": "model", "value": model, "mergeStrategy": "upsert"},
+                            {"keyPath": "model_reasoning_effort", "value": effort, "mergeStrategy": "upsert"}
+                        ],
+                        "filePath": null, "expectedVersion": null, "reloadUserConfig": true,
+                    })).await?;
+                }
+                Ok(())
+            }.await;
+            let _ = this.update(cx, |this, cx| {
+                if result.is_ok() && let Some((model, effort)) = &fallback {
+                    this.config["model"] = json!(model);
+                    this.config["model_reasoning_effort"] = json!(effort);
+                    for composer in [this.home.read(cx).composer.clone(), this.thread_composer.clone()] {
+                        composer.update(cx, |composer, cx| composer.set_model_and_effort(model, effort, cx));
+                    }
+                }
+                let result = result.and_then(|_| {
+                    if cx.has_global::<host_settings::Settings>() {
+                        cx.global_mut::<host_settings::Settings>().write("enabled-reasoning-efforts", preferences.clone())
+                    } else {
+                        Err(anyhow::anyhow!("host settings could not be loaded"))
+                    }
+                });
+                if let Err(error) = result {
+                    eprintln!("codex-gpui: reasoning effort preferences: {error:#}");
+                    this.toast(Toast::danger("Could not save reasoning effort preferences"), cx);
+                } else {
+                    this.config["host"]["enabled-reasoning-efforts"] = preferences.clone();
+                    for composer in [this.home.read(cx).composer.clone(), this.thread_composer.clone()] {
+                        composer.update(cx, |composer, cx| composer.refresh_reasoning_efforts(&this.models, &preferences, cx));
+                    }
+                }
+                if let Some(page) = this.settings_page.clone().or(page) {
+                    let mut values = cx.try_global::<host_settings::Settings>()
+                        .map(|settings| Value::Object(settings.read_all().clone())).unwrap_or(Value::Null);
+                    values["appearance-theme"] = json!(this.state.theme);
+                    values["confirm-before-close"] = json!(this.state.confirm_before_close);
+                    page.update(cx, |page, cx| page.finish_reasoning_efforts(values, cx));
+                }
+            });
+        }).detach();
     }
 
     fn write_configuration(&mut self, e: &SettingChanged, cx: &mut Context<Self>) {

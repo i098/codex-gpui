@@ -10,7 +10,71 @@ const SANDBOX_OPTIONS: &[(&str, &str)] = &[
     ("danger-full-access", "Full access"),
 ];
 
+const VERBOSITY_OPTIONS: &[(&str, &str)] = &[
+    ("", "Model default"),
+    ("low", "Low"),
+    ("medium", "Medium"),
+    ("high", "High"),
+];
+const SUMMARY_OPTIONS: &[(&str, &str)] = &[
+    ("auto", "Auto"),
+    ("concise", "Concise"),
+    ("detailed", "Detailed"),
+    ("none", "None"),
+];
+
 impl SettingsPage {
+    pub fn set_model_features(&mut self, models: &[Model], cx: &mut Context<Self>) {
+        self.supports_max_effort = false;
+        self.supports_ultra_effort = false;
+        self.supports_persistent_effort = false;
+        for effort in models
+            .iter()
+            .flat_map(|model| &model.supported_reasoning_efforts)
+        {
+            match effort["reasoningEffort"].as_str() {
+                Some("max") => self.supports_max_effort = true,
+                Some("ultra") => self.supports_ultra_effort = true,
+                Some("persistent") => self.supports_persistent_effort = true,
+                _ => {}
+            }
+        }
+        cx.notify();
+    }
+
+    pub fn finish_reasoning_efforts(&mut self, values: Value, cx: &mut Context<Self>) {
+        self.pending_config
+            .retain(|key| *key != "host.enabled-reasoning-efforts");
+        self.refresh_host(values, cx);
+    }
+
+    pub fn set_dependency_state(&mut self, state: DependencyState, cx: &mut Context<Self>) {
+        self.dependency_state = state;
+        cx.notify();
+    }
+
+    pub fn dependencies_ready(&self) -> bool {
+        self.dependency_state.operation.is_none()
+            && (self.dependency_state.data.is_some() || self.dependency_state.error.is_some())
+    }
+
+    fn request_dependencies(&mut self, action: DependencyAction, cx: &mut Context<Self>) {
+        if action == DependencyAction::Cancel {
+            if self.dependency_state.operation != Some(DependencyAction::Reinstall)
+                || self.dependency_state.cancel_pending
+            {
+                return;
+            }
+        } else if action != DependencyAction::Load
+            && (self.dependency_state.operation.is_some()
+                || !self.configuration_loaded
+                || !self.flag("config.features.workspace_dependencies", true))
+        {
+            return;
+        }
+        cx.emit(action);
+    }
+
     pub(super) fn load_configuration(&mut self, cx: &mut Context<Self>) {
         if self.configuration_loaded
             || self.configuration_loading
@@ -23,6 +87,7 @@ impl SettingsPage {
         };
         let bridge = bridge.clone();
         self.configuration_loading = true;
+        self.request_dependencies(DependencyAction::Load, cx);
         cx.spawn(async move |page, cx| {
             let result = async {
                 let config: Value = bridge
@@ -42,6 +107,9 @@ impl SettingsPage {
                             "sandbox_mode",
                             "sandbox_workspace_write",
                             "web_search",
+                            "model_verbosity",
+                            "model_reasoning_summary",
+                            "features",
                         ] {
                             page.values[key] = config["config"][key].clone();
                         }
@@ -158,7 +226,554 @@ impl SettingsPane {
             rows.push(settings_row(title, lock.or(Some(detail)), control, t));
         }
         rows.extend(self.configuration_network(t, window, cx));
-        vec![("Codex", rows)]
+        for (key, title, detail, options) in [
+            (
+                "config.model_verbosity",
+                "Output detail",
+                "Choose how much detail ChatGPT includes in responses",
+                VERBOSITY_OPTIONS,
+            ),
+            (
+                "config.model_reasoning_summary",
+                "Reasoning summary",
+                "Choose how ChatGPT summarizes its reasoning",
+                SUMMARY_OPTIONS,
+            ),
+        ] {
+            rows.push(settings_row(
+                title,
+                self.page.read(cx).config_lock(key).or(Some(detail)),
+                self.configuration_select(key, options, t, window, cx),
+                t,
+            ));
+        }
+        let mut groups = vec![("Codex", rows)];
+        if let Some(group) = self.model_features(t, window, cx) {
+            groups.push(group);
+        }
+        groups.push(self.workspace_dependencies(t, window, cx));
+        groups
+    }
+
+    fn toggle_reasoning_effort(&mut self, effort: &'static str, cx: &mut Context<Self>) {
+        let page = self.page.read(cx);
+        let mut enabled = page
+            .get("host.enabled-reasoning-efforts")
+            .as_array()
+            .cloned()
+            .unwrap_or_else(|| {
+                crate::composer::DEFAULT_REASONING_EFFORTS
+                    .iter()
+                    .map(|effort| json!(effort))
+                    .collect()
+            });
+        if enabled.iter().any(|value| value == effort) {
+            enabled.retain(|value| value != effort);
+        } else {
+            enabled.push(json!(effort));
+        }
+        self.page.update(cx, |page, cx| {
+            page.set("host.enabled-reasoning-efforts", json!(enabled), cx)
+        });
+    }
+
+    fn model_features(
+        &self,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<(&'static str, Vec<Div>)> {
+        const KEY: &str = "host.enabled-reasoning-efforts";
+        let page = self.page.read(cx);
+        let optional = [
+            ("max", page.supports_max_effort),
+            ("ultra", page.supports_ultra_effort),
+        ];
+        if !optional.iter().any(|(_, supported)| *supported) && !page.supports_persistent_effort {
+            return None;
+        }
+        let selected = 4
+            + usize::from(page.supports_persistent_effort)
+            + optional
+                .iter()
+                .filter(|(effort, supported)| {
+                    *supported && crate::composer::reasoning_effort_enabled(effort, page.get(KEY))
+                })
+                .count();
+        let pending = page.pending_config.contains(&KEY);
+        let open = self.open_select == Some(KEY);
+        let menu = open.then(|| {
+            let mut items = Vec::new();
+            for effort in crate::composer::DEFAULT_REASONING_EFFORTS[..4]
+                .iter()
+                .copied()
+                .chain(page.supports_persistent_effort.then_some("persistent"))
+            {
+                items.push(
+                    div()
+                        .px(px(8.))
+                        .py(px(5.))
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .opacity(0.4)
+                        .child(text(
+                            crate::composer::effort_label(effort),
+                            13.,
+                            18.571_428,
+                            430.,
+                            t.text,
+                        ))
+                        .child(icon("menu-check", 17., t.text_secondary))
+                        .into_any_element(),
+                );
+            }
+            for (index, (effort, supported)) in optional.into_iter().enumerate() {
+                if !supported {
+                    continue;
+                }
+                let enabled = crate::composer::reasoning_effort_enabled(effort, page.get(KEY));
+                let hover = t.menu_item_hover;
+                let row = div()
+                    .id(effort)
+                    .px(px(8.))
+                    .py(px(5.))
+                    .rounded(px(12.))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .when(self.config_menu_index == Some(index), |d| d.bg(hover))
+                    .hover(move |style| style.bg(hover))
+                    .child(text(
+                        crate::composer::effort_label(effort),
+                        13.,
+                        18.571_428,
+                        430.,
+                        t.text,
+                    ))
+                    .child(div().size(px(17.)).when(enabled, |d| {
+                        d.child(icon("menu-check", 17., t.text_secondary))
+                    }))
+                    .when(!pending, |d| {
+                        d.on_click(cx.listener(move |this, _, _, cx| {
+                            this.toggle_reasoning_effort(effort, cx)
+                        }))
+                    });
+                items.push(row.into_any_element());
+            }
+            deferred(
+                div().absolute().top_0().right_0().child(
+                    anchored()
+                        .anchor(Anchor::TopRight)
+                        .offset(point(px(0.), px(30.)))
+                        .child(
+                            div()
+                                .id("reasoning-effort-menu")
+                                .on_hover(cx.listener(|this, hovered: &bool, _, _| {
+                                    this.menu_hovered = *hovered
+                                }))
+                                .child(popover(t, 240., |d| d.children(items))),
+                        ),
+                ),
+            )
+        });
+        let focus = focus::handle(KEY, 0, window, cx);
+        let handle = focus.read(cx).handle.clone();
+        let control = focus::ring(
+            select_control(
+                text(format!("{selected} selected"), 13., 18., 430., t.text),
+                None,
+                pending,
+                if open {
+                    t.ghost_hover
+                } else {
+                    t.primary_soft_alpha
+                },
+                t,
+                icon("chevron-down", 14., t.text_tertiary).runtime(),
+            )
+            .id(KEY)
+            .relative(),
+            &focus,
+            px(12.5),
+            px(2.),
+            cx,
+        )
+        .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
+            handle.focus(window, cx)
+        })
+        .on_click(cx.listener(move |this, _, _, cx| {
+            if !pending {
+                this.open_select = (!open).then_some(KEY);
+                this.config_menu_index = None;
+                cx.notify();
+            }
+        }))
+        .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+            focus::tab(event, window, cx);
+            if matches!(event.keystroke.key.as_str(), "escape" | "tab") {
+                this.open_select = None;
+                cx.notify();
+                return;
+            }
+            if pending {
+                return;
+            }
+            match event.keystroke.key.as_str() {
+                "enter" | "space" if this.open_select == Some(KEY) => {
+                    let index = this
+                        .config_menu_index
+                        .unwrap_or_else(|| usize::from(!optional[0].1));
+                    this.toggle_reasoning_effort(optional[index].0, cx);
+                }
+                "enter" | "space" | "down" | "up" | "home" | "end" => {
+                    let index = if event.keystroke.key == "end" {
+                        1
+                    } else if event.keystroke.key == "home" {
+                        0
+                    } else {
+                        this.config_menu_index.map_or(0, |index| 1 - index)
+                    };
+                    this.config_menu_index =
+                        Some(if optional[index].1 { index } else { 1 - index });
+                    this.open_select = Some(KEY);
+                }
+                _ => return,
+            }
+            cx.stop_propagation();
+            cx.notify();
+        }))
+        .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
+            if open && !this.menu_hovered {
+                this.open_select = None;
+                cx.notify();
+            }
+        }))
+        .children(menu)
+        .into_any_element();
+        Some((
+            "Model features",
+            vec![settings_row(
+                "Available reasoning efforts",
+                Some(
+                    "Choose which reasoning effort levels appear in model controls. Availability varies by model",
+                ),
+                control,
+                t,
+            )],
+        ))
+    }
+
+    fn workspace_dependencies(
+        &self,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (&'static str, Vec<Div>) {
+        let key = "config.features.workspace_dependencies";
+        let page = self.page.read(cx);
+        let busy =
+            page.dependency_state.operation.is_some() || page.dependency_state.cancel_pending;
+        let locked = page.config_lock(key).is_some() || busy || page.pending_config.contains(&key);
+        let enabled = page.flag(key, true);
+        let feature = if locked {
+            switch(key, enabled, true, t).into_any_element()
+        } else {
+            self.toggle(key, true, t, window, cx)
+        };
+        let reinstalling =
+            self.page.read(cx).dependency_state.operation == Some(DependencyAction::Reinstall);
+        let cancelling = self.page.read(cx).dependency_state.cancel_pending;
+        let mut button = |action: DependencyAction,
+                          label: &'static str,
+                          glyph: &'static str,
+                          danger: bool,
+                          disabled: bool,
+                          cx: &mut Context<Self>| {
+            let color = if danger { t.text_error } else { t.text };
+            let fill = if danger {
+                Hsla {
+                    a: 0.1,
+                    ..t.text_error
+                }
+            } else {
+                t.text_alpha_5
+            };
+            let control = div()
+                .id(label)
+                .h(px(28.))
+                .px(px(9.))
+                .relative()
+                .flex()
+                .items_center()
+                .gap(px(4.))
+                .child(on_card(12.5, Squircle, fill, None))
+                .child(icon(glyph, 14., color).runtime())
+                .child(text(label, 13., 18., 430., color));
+            if disabled {
+                return control.opacity(0.4).into_any_element();
+            }
+            let state = focus::handle(label, 0, window, cx);
+            let handle = state.read(cx).handle.clone();
+            focus::ring(control, &state, px(12.5), px(2.), cx)
+                .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
+                    handle.focus(window, cx)
+                })
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.page
+                        .update(cx, |page, cx| page.request_dependencies(action, cx));
+                }))
+                .into_any_element()
+        };
+        let diagnose = button(
+            DependencyAction::Diagnose,
+            "Diagnose",
+            "settings-diagnose",
+            false,
+            busy || !enabled,
+            cx,
+        );
+        let repair = if reinstalling {
+            button(
+                DependencyAction::Cancel,
+                "Cancel download",
+                "close",
+                true,
+                cancelling,
+                cx,
+            )
+        } else {
+            button(
+                DependencyAction::Reinstall,
+                "Reinstall",
+                "workspace-reinstall",
+                true,
+                busy || !enabled,
+                cx,
+            )
+        };
+        (
+            "Workspace Dependencies",
+            vec![
+                settings_row(
+                    "Codex dependencies",
+                    Some("Allow ChatGPT to install and expose bundled Node.js and Python tools"),
+                    feature,
+                    t,
+                ),
+                settings_row(
+                    "Diagnose issues in Codex Workspace",
+                    Some("Checks the current bundle and records diagnostic logs"),
+                    diagnose,
+                    t,
+                ),
+                settings_row(
+                    "Reset and install Workspace",
+                    Some("Downloads a fresh bundle, installs it, and reloads tools"),
+                    repair,
+                    t,
+                ),
+            ],
+        )
+    }
+
+    pub(super) fn dependency_footer(&self, t: &Theme, cx: &App) -> Div {
+        let state = &self.page.read(cx).dependency_state;
+        let version = state
+            .data
+            .as_ref()
+            .and_then(|data| data["bundleVersion"].as_str())
+            .unwrap_or(
+                if state.operation == Some(DependencyAction::Load) && state.data.is_none() {
+                    "Checking…"
+                } else if state.error.is_some() {
+                    "Unavailable"
+                } else {
+                    "Not installed"
+                },
+            );
+        div()
+            .px(px(16.))
+            .pt(px(6.))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(text("Current version:", 12., 16., 430., t.text_secondary))
+                    .child(text(version.to_owned(), 12., 16., 430., t.text_secondary)),
+            )
+            .children(
+                state
+                    .error
+                    .clone()
+                    .map(|error| text(error, 12., 16., 430., t.text_error).whitespace_normal()),
+            )
+    }
+
+    pub(super) fn configuration_heading(
+        &self,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let enabled = self.page.read(cx).configuration_loaded;
+        let open = div()
+            .id("open-config-toml")
+            .h(px(28.))
+            .px(px(9.))
+            .flex()
+            .items_center()
+            .gap(px(4.))
+            .child(text("Open config.toml", 13., 18., 430., t.text_tertiary))
+            .child(icon("arrow-up-right", 14., t.text_tertiary).runtime());
+        let open = if enabled {
+            let state = focus::handle("open-config-toml", 0, window, cx);
+            let handle = state.read(cx).handle.clone();
+            focus::ring(open.relative(), &state, px(12.5), px(2.), cx)
+                .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
+                    handle.focus(window, cx)
+                })
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.page.update(cx, |_, cx| cx.emit(OpenConfigToml));
+                }))
+                .into_any_element()
+        } else {
+            open.opacity(0.4).into_any_element()
+        };
+        let scope = self.user_config_scope(t, window, cx);
+        div()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .h(px(46.))
+                    .pb(px(6.))
+                    .flex()
+                    .items_center()
+                    .child(text("Agent defaults", 14., 21., 500., t.text)),
+            )
+            .child(
+                div()
+                    .h(px(46.))
+                    .pb(px(6.))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(scope)
+                    .child(open),
+            )
+    }
+
+    fn user_config_scope(
+        &self,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        const KEY: &str = "configuration-scope";
+        let enabled = self.page.read(cx).configuration_loaded;
+        let open = enabled && self.open_select == Some(KEY);
+        let menu = open.then(|| {
+            deferred(
+                div().absolute().top_0().left_0().child(
+                    anchored()
+                        .anchor(Anchor::TopLeft)
+                        .offset(point(px(0.), px(30.)))
+                        .child(
+                            div()
+                                .id("configuration-scope-menu")
+                                .on_hover(cx.listener(|this, hovered: &bool, _, _| {
+                                    this.menu_hovered = *hovered
+                                }))
+                                .child(popover(t, 240., |d| {
+                                    d.child(div().px(px(8.)).py(px(4.)).child(text(
+                                        "Global config",
+                                        13.,
+                                        18.571_428,
+                                        430.,
+                                        t.text_secondary,
+                                    )))
+                                    .child(
+                                        div()
+                                            .id("user-config")
+                                            .px(px(8.))
+                                            .py(px(5.))
+                                            .rounded(px(12.))
+                                            .flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .child(text(
+                                                "User config",
+                                                13.,
+                                                18.571_428,
+                                                430.,
+                                                t.text,
+                                            ))
+                                            .child(icon("menu-check", 17., t.text_secondary))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.open_select = None;
+                                                this.menu_hovered = false;
+                                                cx.notify();
+                                            })),
+                                    )
+                                })),
+                        ),
+                ),
+            )
+        });
+        let trigger = select_control(
+            text("User config", 13., 18., 500., t.text),
+            None,
+            !enabled,
+            if open {
+                t.ghost_hover
+            } else {
+                t.primary_soft_alpha
+            },
+            t,
+            icon("chevron-down", 14., t.text_tertiary).runtime(),
+        )
+        .id(KEY)
+        .relative();
+        if !enabled {
+            return trigger.into_any_element();
+        }
+        let state = focus::handle(KEY, 0, window, cx);
+        let handle = state.read(cx).handle.clone();
+        focus::ring(trigger, &state, px(12.5), px(2.), cx)
+            .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
+                handle.focus(window, cx)
+            })
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.open_select = (!open).then_some(KEY);
+                cx.notify();
+            }))
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                focus::tab(event, window, cx);
+                match event.keystroke.key.as_str() {
+                    "escape" | "tab" => this.open_select = None,
+                    "enter" | "space" => {
+                        this.open_select = if this.open_select == Some(KEY) {
+                            None
+                        } else {
+                            Some(KEY)
+                        }
+                    }
+                    "down" | "up" | "home" | "end" => this.open_select = Some(KEY),
+                    _ => return,
+                }
+                cx.stop_propagation();
+                cx.notify();
+            }))
+            .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
+                if open && !this.menu_hovered {
+                    this.open_select = None;
+                    cx.notify();
+                }
+            }))
+            .children(menu)
+            .into_any_element()
     }
 
     pub(super) fn configuration_select(
@@ -171,11 +786,19 @@ impl SettingsPane {
     ) -> AnyElement {
         let page = self.page.read(cx);
         if page.config_lock(key).is_some() || page.pending_config.contains(&key) {
-            return select(
-                config_label(key, page.choice(key, options[0].0), options),
+            return select_control(
+                text(
+                    config_label(key, page.choice(key, options[0].0), options),
+                    13.,
+                    18.,
+                    430.,
+                    t.text,
+                ),
                 None,
                 true,
+                t.primary_soft_alpha,
                 t,
+                icon("chevron-down", 14., t.text_tertiary).runtime(),
             )
             .into_any_element();
         }
@@ -295,6 +918,53 @@ pub(super) fn option_description(key: &str, value: &str) -> Option<&'static str>
         ("config.web_search", "cached") => Some("Use OpenAI's maintained search index"),
         ("config.web_search", "indexed") => Some("Allow indexed external web access"),
         ("config.web_search", "live") => Some("Allow unrestricted, current web access"),
+        ("config.model_verbosity", "low") => Some("Keep responses concise"),
+        ("config.model_verbosity", "medium") => Some("Balance detail and brevity"),
+        ("config.model_verbosity", "high") => Some("Include more detail in responses"),
+        ("config.model_reasoning_summary", "auto") => {
+            Some("Let the model choose the summary detail")
+        }
+        ("config.model_reasoning_summary", "concise") => Some("Show a brief reasoning summary"),
+        ("config.model_reasoning_summary", "detailed") => {
+            Some("Show a more detailed reasoning summary")
+        }
+        ("config.model_reasoning_summary", "none") => Some("Don't show reasoning summaries"),
         _ => None,
     }
+}
+
+pub(super) fn subtitle(t: &Theme, window: &mut Window, cx: &mut App) -> AnyElement {
+    const PREFIX: &str = "Configure permissions, web access, and agent responses for new chats ";
+    const TEXT: &str =
+        "Configure permissions, web access, and agent responses for new chats Learn more";
+    const URL: &str = "https://developers.openai.com/codex/config-basic";
+    let range = PREFIX.len()..TEXT.len();
+    let styled = StyledText::new(TEXT).with_highlights(Some((
+        range.clone(),
+        HighlightStyle {
+            color: Some(t.text_accent),
+            ..Default::default()
+        },
+    )));
+    let state = focus::handle("configuration-learn-more", 0, window, cx);
+    let control = div()
+        .id("configuration-learn-more")
+        .relative()
+        .text_size(px(14.))
+        .line_height(px(24.))
+        .font_weight(FontWeight(430.))
+        .text_color(t.text_secondary)
+        .child(
+            InteractiveText::new("configuration-help-text", styled)
+                .on_click(vec![range], |_, _, cx| cx.open_url(URL)),
+        );
+    focus::ring(control, &state, px(2.), px(2.), cx)
+        .on_key_down(|event: &KeyDownEvent, window, cx| {
+            focus::tab(event, window, cx);
+            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                cx.open_url(URL);
+                cx.stop_propagation();
+            }
+        })
+        .into_any_element()
 }

@@ -12,14 +12,14 @@ use crate::{
     over, rounded_clip, sidebar_section, text,
 };
 use bridge::Bridge;
-use bridge::types::{AccountReadResponse, ConfigReadResponse};
+use bridge::types::{AccountReadResponse, ConfigReadResponse, Model};
 use gpui::{
     Anchor, AnyElement, AnyView, App, AppContext as _, Bounds, Context, Corners, Div, Entity,
     EventEmitter, FocusHandle, Focusable, Font, FontWeight, Global, HighlightStyle, Hsla,
-    InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Pixels, Point, Render,
-    RenderImage, SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun,
-    Window, anchored, canvas, deferred, div, font, img, point, prelude::FluentBuilder as _, px,
-    size,
+    InteractiveElement, InteractiveText, IntoElement, KeyDownEvent, ParentElement, Pixels, Point,
+    Render, RenderImage, SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText,
+    TextRun, Window, anchored, canvas, deferred, div, font, img, point,
+    prelude::FluentBuilder as _, px, size,
 };
 use serde_json::{Value, json};
 use shapes::Corner::{self, Round, Squircle};
@@ -188,6 +188,10 @@ pub struct SettingsPage {
     configuration_loading: bool,
     configuration_error: Option<String>,
     pending_config: Vec<&'static str>,
+    supports_max_effort: bool,
+    supports_ultra_effort: bool,
+    supports_persistent_effort: bool,
+    dependency_state: DependencyState,
 }
 
 impl SettingsPage {
@@ -215,6 +219,10 @@ impl SettingsPage {
             configuration_loading: false,
             configuration_error: None,
             pending_config: Vec::new(),
+            supports_max_effort: false,
+            supports_ultra_effort: false,
+            supports_persistent_effort: false,
+            dependency_state: DependencyState::default(),
         }
     }
 
@@ -249,7 +257,19 @@ impl SettingsPage {
     }
 
     /// Stores a setting and reports it to the app's config or host settings service.
-    fn set(&mut self, path: &'static str, value: Value, cx: &mut Context<Self>) {
+    fn set(&mut self, path: &'static str, mut value: Value, cx: &mut Context<Self>) {
+        if path == "host.enabled-reasoning-efforts" {
+            if self.pending_config.contains(&path) {
+                return;
+            }
+            self.pending_config.push(path);
+            cx.emit(SettingChanged { path, value });
+            cx.notify();
+            return;
+        }
+        if path == "config.model_verbosity" && value == "" {
+            value = Value::Null;
+        }
         if path.starts_with("config.") {
             if !self.configuration_loaded
                 || self.config_lock(path).is_some()
@@ -303,6 +323,28 @@ pub struct SettingChanged {
 }
 
 impl EventEmitter<SettingChanged> for SettingsPage {}
+
+pub struct OpenConfigToml;
+
+impl EventEmitter<OpenConfigToml> for SettingsPage {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DependencyAction {
+    Load,
+    Diagnose,
+    Reinstall,
+    Cancel,
+}
+
+#[derive(Clone, Default)]
+pub struct DependencyState {
+    pub data: Option<Value>,
+    pub operation: Option<DependencyAction>,
+    pub error: Option<String>,
+    pub cancel_pending: bool,
+}
+
+impl EventEmitter<DependencyAction> for SettingsPage {}
 
 /// `--sidebar-navigation` background, opaque.
 fn sidebar_color(t: &Theme) -> Hsla {
@@ -372,8 +414,6 @@ impl SettingsNav {
             .child(text(s, 14., 18., 430., color))
     }
 
-    /// A nav row: `overflow: hidden`, so Skia draws a runtime icon (the viewport cuts the last
-    /// one at 1440: no fitted image) under the row's AA clip; its own fill is outside it.
     fn item(
         &self,
         label: &'static str,
@@ -649,21 +689,33 @@ impl SettingsPane {
                 ),
             )
         });
-        select(label, None, false, t)
-            .id(key)
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.open_select = (!open).then_some(key);
-                this.config_menu_index = None;
+        select_control(
+            text(label, 13., 18., 430., t.text),
+            None,
+            false,
+            if open && is_configuration {
+                t.ghost_hover
+            } else {
+                t.primary_soft_alpha
+            },
+            t,
+            icon("chevron-down", 14., t.text_tertiary)
+                .when(is_configuration, |icon| icon.runtime()),
+        )
+        .id(key)
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.open_select = (!open).then_some(key);
+            this.config_menu_index = None;
+            cx.notify();
+        }))
+        .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
+            if open && !this.menu_hovered {
+                this.open_select = None;
                 cx.notify();
-            }))
-            .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
-                if open && !this.menu_hovered {
-                    this.open_select = None;
-                    cx.notify();
-                }
-            }))
-            .children(menu)
-            .into_any_element()
+            }
+        }))
+        .children(menu)
+        .into_any_element()
     }
 
     fn toggle(
@@ -1254,39 +1306,32 @@ impl Render for SettingsPane {
             "Configuration" => self.configuration(&t, window, cx),
             _ => Vec::new(),
         };
+        let subtitle =
+            (section == "Configuration").then(|| configuration::subtitle(&t, window, cx));
+        let mut configuration_heading =
+            (section == "Configuration").then(|| self.configuration_heading(&t, window, cx));
+        let mut dependency_footer =
+            (section == "Configuration").then(|| self.dependency_footer(&t, cx));
         let card_border = over(t.border, t.background_panel);
         let groups = groups.into_iter().map(|(title, rows)| {
             let last = rows.len() - 1;
+            let heading = if title == "Codex" {
+                configuration_heading.take()
+            } else {
+                None
+            };
+            let heading = heading.unwrap_or_else(|| {
+                div()
+                    .h(px(46.))
+                    .pb(px(6.))
+                    .flex()
+                    .items_center()
+                    .child(text(title, 14., 21., 500., t.text))
+            });
             div()
                 .flex()
                 .flex_col()
-                .child(
-                    div()
-                        .h(px(46.))
-                        .pb(px(6.))
-                        .flex()
-                        .items_center()
-                        .when(section == "Configuration", |d| {
-                            d.child(
-                                div()
-                                    .h(px(28.))
-                                    .px(px(13.))
-                                    .relative()
-                                    .flex()
-                                    .items_center()
-                                    .child(on_card(
-                                        12.5,
-                                        Squircle,
-                                        t.primary_soft_alpha,
-                                        Some(t.border),
-                                    ))
-                                    .child(text(title, 13., 18., 500., t.text)),
-                            )
-                        })
-                        .when(section != "Configuration", |d| {
-                            d.child(text(title, 14., 21., 500., t.text))
-                        }),
-                )
+                .child(heading)
                 .child(
                     div()
                         .flex()
@@ -1325,6 +1370,9 @@ impl Render for SettingsPane {
                                 })),
                         )),
                 )
+                .when(title == "Workspace Dependencies", |d| {
+                    d.children(dependency_footer.take())
+                })
         });
         let column = |d: Div| d.w_full().max_w(px(768.));
         div()
@@ -1338,7 +1386,6 @@ impl Render for SettingsPane {
                     .id("settings-page")
                     .flex_1()
                     .overflow_y_scroll()
-                    .when(section == "Configuration", |d| d.pr(px(10.)))
                     .layer()
                     .child(probe(&self.layer))
                     .child(
@@ -1358,13 +1405,7 @@ impl Render for SettingsPane {
                                         .justify_center()
                                         .child(text(section, 28., 33.6, 500., t.text))
                                         .when(section == "Configuration", |d| {
-                                            d.gap(px(4.)).child(text(
-                                                "Choose how ChatGPT works on your tasks",
-                                                14.,
-                                                24.,
-                                                430.,
-                                                t.text_secondary,
-                                            ))
+                                            d.gap(px(4.)).children(subtitle)
                                         }),
                                 ),
                             ),
@@ -1601,6 +1642,24 @@ fn select(
     disabled: bool,
     t: &Theme,
 ) -> Div {
+    select_control(
+        text(label, 13., 18., 430., t.text),
+        leading,
+        disabled,
+        t.primary_soft_alpha,
+        t,
+        icon("chevron-down", 14., t.text_tertiary),
+    )
+}
+
+fn select_control(
+    label: Div,
+    leading: Option<AnyElement>,
+    disabled: bool,
+    fill: Hsla,
+    t: &Theme,
+    chevron: impl IntoElement,
+) -> Div {
     div()
         .h(px(28.))
         .px(px(13.))
@@ -1609,12 +1668,7 @@ fn select(
         .justify_between()
         .gap(px(4.))
         .relative()
-        .child(on_card(
-            12.5,
-            Squircle,
-            t.primary_soft_alpha,
-            Some(t.border),
-        ))
+        .child(on_card(12.5, Squircle, fill, Some(t.border)))
         .when(disabled, |d| d.opacity(0.4))
         .child(
             div()
@@ -1622,9 +1676,9 @@ fn select(
                 .items_center()
                 .gap(px(6.))
                 .children(leading)
-                .child(text(label, 13., 18., 430., t.text)),
+                .child(label),
         )
-        .child(icon("chevron-down", 14., t.text_tertiary))
+        .child(chevron)
 }
 
 /// The `Zed` app icon `<img>` (the app's 64 px `apps/zed.png` in an 18 px box) over the

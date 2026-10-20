@@ -690,15 +690,20 @@ An error keeps that value and shows a failure notice.
 ST-085 shows Allow network access only for Workspace write and writes `sandbox_workspace_write.network_access`.
 ST-086 offers Disabled, Cached, Indexed, and Live with the original descriptions and installation restrictions.
 Without an explicit search mode, Full access uses Live; other sandbox modes use Cached.
-The `settings_configuration` native fixture target covers save, reopen, managed restrictions, and failed writes.
-The final native run passes all six checks, including pointer and keyboard access changes.
+The `settings_configuration` fixture target covers save, reopen, managed restrictions, failed writes, response preferences, reasoning preferences, and config file opening.
 Appearance review compares the actual original renderer and native source-matched captures.
 Original/native appearance approval remains open.
 An owned original app-server smoke confirms both permission values in `config.toml` and after a server restart.
 An owned original app-server smoke confirms network access and all four search modes on disk and through `config/read`.
-The scope picker, project config, and additional Configuration products are not part of this delivery.
-The page uses the original subtitle, Codex context, scrollbar gutter, and permission menu metrics.
-The Codex label identifies the fixed global scope and is not a scope selector.
+When Work is unavailable, the original shows Agent defaults and the User config menu under Global config.
+The native client follows that capability state; it does not add Work or project configuration products.
+The header uses the original subtitle and opens its Learn more documentation link.
+Open config.toml preserves an existing file and creates an empty file only when it is missing.
+Output detail and Reasoning summary use the existing global config write path, including the original null/default values.
+Available reasoning efforts keeps the baseline choices and exposes optional levels only when the model catalog supports them.
+It persists the enabled levels in host settings and updates the composer choices.
+Workspace Dependencies reads installed bundle state and provides diagnostics, reset/install, and cancellation.
+Installation checks the manifest platform, archive paths, and SHA-256 before it replaces the bundle; a failed replacement restores the previous bundle.
 
 
 | # | Item | Kind | Original | Port | Status |
