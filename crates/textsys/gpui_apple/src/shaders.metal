@@ -731,7 +731,7 @@ uint4 skia_layer(uint4 l, uint4 d, uint a) {
   return ((l * a256 + d * dst_scale) & 0xFFFF) >> 8;
 }
 
-struct MonochromeSpriteTargets {
+struct SpriteLayerTargets {
   float4 color [[color(0)]];
   // Per-pixel state of the layers (scene.rs `MonochromeSprite::layers`): the outer and inner
   // layer pixels, what is under the outer layer, and (outer id, inner id, inner alpha).
@@ -741,7 +741,59 @@ struct MonochromeSpriteTargets {
   float4 ids [[color(4)]];
 };
 
-fragment MonochromeSpriteTargets monochrome_sprite_fragment(
+SpriteLayerTargets composite_sprite(
+    uint mode, uint m, uint4 src, float4 fsrc, uint layers,
+    float4 target, float4 outer, float4 inner, float4 backdrop, float4 ids) {
+  uint4 d = uint4(round(target * 255.0));
+  uint4 l1 = uint4(round(outer * 255.0));
+  uint4 l2 = uint4(round(inner * 255.0));
+  uint4 b = uint4(round(backdrop * 255.0));
+  uint4 s = uint4(round(ids * 255.0));
+  if (layers == 0) {
+    d = skia_blit(mode, m, src, src.a, d, fsrc);
+    s.x = 0;
+  } else {
+    // Blit into the layer's pixel and blend the layers onto their backdrop, as Chromium
+    // composites them once at the end. The state is resumed if this outer layer left it and
+    // the target still shows it (nothing else painted over it); else the layer starts here,
+    // transparent, over the target.
+    uint id1 = (layers >> 8) & 0xFF, a1 = layers & 0xFF;
+    uint id2 = layers >> 24, a2 = (layers >> 16) & 0xFF;
+    bool resume = s.x == id1 &&
+        all(skia_layer(s.y != 0 ? skia_layer(l2, l1, s.z) : l1, b, a1) == d);
+    if (!resume) {
+      b = d;
+      l1 = 0;
+      s.y = 0;
+    }
+    if (s.y != 0 && s.y != id2) {
+      // The inner layer ended: Chromium restores it into the outer one.
+      l1 = skia_layer(l2, l1, s.z);
+      s.y = 0;
+    }
+    if (id2 == 0 && mode == 7) {
+      // viz's software renderer blits a clipped quad's px at partial coverage `cov` with
+      // `SkBlendARGB32` (`blitAntiH`); at 0 the layer's pixel stays. The layer is kept.
+      uint cov = 255 - m;
+      d = cov == 0 ? l1 : skia_blit(1, cov, b, b.a, l1, float4(0.0));
+    } else if (id2 == 0) {
+      l1 = skia_blit(mode, m, src, src.a, l1, fsrc);
+      d = skia_layer(l1, b, a1);
+    } else {
+      if (s.y == 0) {
+        l2 = 0;
+        s.yz = uint2(id2, a2);
+      }
+      l2 = skia_blit(mode, m, src, src.a, l2, fsrc);
+      d = skia_layer(skia_layer(l2, l1, a2), b, a1);
+    }
+    s.x = id1;
+  }
+  return SpriteLayerTargets{float4(d) / 255.0, float4(l1) / 255.0, float4(l2) / 255.0,
+                                 float4(b) / 255.0, float4(s) / 255.0};
+}
+
+fragment SpriteLayerTargets monochrome_sprite_fragment(
     MonochromeSpriteFragmentInput input [[stage_in]],
     constant MonochromeSprite *sprites [[buffer(SpriteInputIndex_Sprites)]],
     texture2d<float> atlas_texture [[texture(SpriteInputIndex_AtlasTexture)]],
@@ -774,53 +826,7 @@ fragment MonochromeSpriteTargets monochrome_sprite_fragment(
   if (any(input.color.rgb > 1.0)) {
     mode = mode == 0 || mode == 2 ? 4 : mode == 3 ? 6 : mode;
   }
-  uint4 d = uint4(round(target * 255.0));
-  uint4 l1 = uint4(round(outer * 255.0));
-  uint4 l2 = uint4(round(inner * 255.0));
-  uint4 b = uint4(round(backdrop * 255.0));
-  uint4 s = uint4(round(ids * 255.0));
-  if (layers == 0) {
-    d = skia_blit(mode, m, src, c.a, d, fsrc);
-    s.x = 0;
-  } else {
-    // Blit into the layer's pixel and blend the layers onto their backdrop, as Chromium
-    // composites them once at the end. The state is resumed if this outer layer left it and
-    // the target still shows it (nothing else painted over it); else the layer starts here,
-    // transparent, over the target.
-    uint id1 = (layers >> 8) & 0xFF, a1 = layers & 0xFF;
-    uint id2 = layers >> 24, a2 = (layers >> 16) & 0xFF;
-    bool resume = s.x == id1 &&
-        all(skia_layer(s.y != 0 ? skia_layer(l2, l1, s.z) : l1, b, a1) == d);
-    if (!resume) {
-      b = d;
-      l1 = 0;
-      s.y = 0;
-    }
-    if (s.y != 0 && s.y != id2) {
-      // The inner layer ended: Chromium restores it into the outer one.
-      l1 = skia_layer(l2, l1, s.z);
-      s.y = 0;
-    }
-    if (id2 == 0 && mode == 7) {
-      // viz's software renderer blits a clipped quad's px at partial coverage `cov` with
-      // `SkBlendARGB32` (`blitAntiH`); at 0 the layer's pixel stays. The layer is kept.
-      uint cov = 255 - m;
-      d = cov == 0 ? l1 : skia_blit(1, cov, b, b.a, l1, float4(0.0));
-    } else if (id2 == 0) {
-      l1 = skia_blit(mode, m, src, c.a, l1, fsrc);
-      d = skia_layer(l1, b, a1);
-    } else {
-      if (s.y == 0) {
-        l2 = 0;
-        s.yz = uint2(id2, a2);
-      }
-      l2 = skia_blit(mode, m, src, c.a, l2, fsrc);
-      d = skia_layer(skia_layer(l2, l1, a2), b, a1);
-    }
-    s.x = id1;
-  }
-  return MonochromeSpriteTargets{float4(d) / 255.0, float4(l1) / 255.0, float4(l2) / 255.0,
-                                 float4(b) / 255.0, float4(s) / 255.0};
+  return composite_sprite(mode, m, src, fsrc, layers, target, outer, inner, backdrop, ids);
 }
 
 struct PolychromeSpriteVertexOutput {
@@ -891,6 +897,28 @@ fragment float4 polychrome_sprite_fragment(
   }
   color.a *= sprite.opacity * saturate(0.5 - distance);
   return color;
+}
+
+fragment SpriteLayerTargets polychrome_sprite_layer_fragment(
+    PolychromeSpriteFragmentInput input [[stage_in]],
+    constant PolychromeSprite *sprites [[buffer(SpriteInputIndex_Sprites)]],
+    texture2d<float> atlas_texture [[texture(SpriteInputIndex_AtlasTexture)]],
+    float4 target [[color(0)]], float4 outer [[color(1)]], float4 inner [[color(2)]],
+    float4 backdrop [[color(3)]], float4 ids [[color(4)]]) {
+  PolychromeSprite sprite = sprites[input.sprite_id];
+  constexpr sampler image_sampler(mag_filter::linear, min_filter::linear);
+  float4 sample = atlas_texture.sample(image_sampler, input.tile_position);
+  float coverage = saturate(0.5 - quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii));
+  if (coverage == 0.0 || sample.a == 0.0) {
+    discard_fragment();
+  }
+  if (sprite.grayscale) {
+    sample.rgb = float3(dot(sample.rgb, float3(0.2126, 0.7152, 0.0722)));
+  }
+  sample.a *= sprite.opacity * coverage;
+  float4 src = float4(sample.rgb * sample.a, sample.a);
+  return composite_sprite(4, 255, uint4(round(saturate(src) * 255.0)), src, sprite.layers,
+                          target, outer, inner, backdrop, ids);
 }
 
 struct PathRasterizationVertexOutput {

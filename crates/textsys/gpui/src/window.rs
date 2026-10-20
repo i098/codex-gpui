@@ -1257,6 +1257,7 @@ pub struct Window {
     /// The bounds of the innermost `Styled::layer` element being painted, and whether they
     /// set its cc tile size (`Styled::cc_tiles`).
     composited_layer: Option<(Bounds<Pixels>, bool)>,
+    composited_layer_id: Option<u8>,
     /// The bounds of the innermost `Styled::saved_layer` element being painted.
     saved_layer: Option<Bounds<Pixels>>,
     next_layer_id: u8,
@@ -2171,6 +2172,7 @@ impl Window {
             element_opacity: 1.0,
             element_layers: Vec::new(),
             composited_layer: None,
+            composited_layer_id: None,
             saved_layer: None,
             next_layer_id: 0,
             requested_autoscroll: None,
@@ -4305,7 +4307,11 @@ impl Window {
             return f(self);
         }
         let previous_opacity = self.element_opacity;
-        let (previous_layer, previous_saved) = (self.composited_layer, self.saved_layer);
+        let (previous_layer, previous_saved, previous_layer_id) = (
+            self.composited_layer,
+            self.saved_layer,
+            self.composited_layer_id,
+        );
         self.element_opacity = previous_opacity * opacity;
         match layer {
             Some((b, s)) if s.saved_layer => self.saved_layer = Some(b),
@@ -4323,13 +4329,19 @@ impl Window {
             .then(|| std::mem::take(&mut self.element_layers));
         // Skia's `SkPaint::setAlphaf`: rounded to a byte.
         let alpha = (opacity.clamp(0., 1.) * 255.).round() as u8;
-        let result = self.push_layer(alpha, f);
+        let result = self.push_layer(alpha, |window| {
+            if layer.is_some_and(|(_, style)| !style.saved_layer) {
+                window.composited_layer_id = window.element_layers.last().map(|&(id, _)| id);
+            }
+            f(window)
+        });
         if let Some(outer) = outer {
             self.element_layers = outer;
         }
         self.element_opacity = previous_opacity;
         self.composited_layer = previous_layer;
         self.saved_layer = previous_saved;
+        self.composited_layer_id = previous_layer_id;
         result
     }
 
@@ -4338,6 +4350,11 @@ impl Window {
     /// and whether they are Chromium's layer rect, whose size sets the tile size.
     pub fn composited_layer(&self) -> Option<(Bounds<Pixels>, bool)> {
         self.composited_layer
+    }
+
+    /// The innermost composited layer's identifier in the current frame.
+    pub fn composited_layer_id(&self) -> Option<u8> {
+        self.composited_layer_id
     }
 
     /// The window bounds of the innermost `Styled::saved_layer` element being painted: Skia
@@ -4352,6 +4369,14 @@ impl Window {
         self.push_layer(alpha, f)
     }
 
+    /// Paints directly on the compositor target, outside the active sprite layers.
+    pub fn with_unlayered_paint<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let layers = std::mem::take(&mut self.element_layers);
+        let result = f(self);
+        self.element_layers = layers;
+        result
+    }
+
     fn push_layer<R>(&mut self, alpha: u8, f: impl FnOnce(&mut Self) -> R) -> R {
         // Ids only tell overlapping layers apart within a frame.
         self.next_layer_id = self.next_layer_id % 255 + 1;
@@ -4361,11 +4386,11 @@ impl Window {
         result
     }
 
-    /// A monochrome sprite's unchanged paint color and enclosing layer alphas.
+    /// A sprite's enclosing layer alphas.
     /// None under an opacity of 0: Chromium paints nothing there, and a sprite outside the
     /// layers would reset the layer state of the pixels it covers (a hidden hover fill would
     /// detach the text painted over it from its composited layer).
-    fn sprite_color_and_layers(&self, color: Hsla) -> Option<(Hsla, u32)> {
+    fn sprite_layers(&self) -> Option<u32> {
         if self.element_opacity <= 0. {
             return None;
         }
@@ -4379,10 +4404,14 @@ impl Window {
                     });
                     u32::from(id) << 8 | alpha
                 });
-                (color, u32::from(id) << 8 | u32::from(alpha) | inner << 16)
+                u32::from(id) << 8 | u32::from(alpha) | inner << 16
             }
-            _ => (color, 0),
+            _ => 0,
         })
+    }
+
+    fn sprite_color_and_layers(&self, color: Hsla) -> Option<(Hsla, u32)> {
+        self.sprite_layers().map(|layers| (color, layers))
     }
 
     /// Perform prepaint on child elements in a "retryable" manner, so that any side effects
@@ -5092,6 +5121,10 @@ impl Window {
         font_size: Pixels,
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
+        #[cfg(target_vendor = "apple")]
+        if self.element_opacity() <= 0. {
+            return Ok(());
+        }
 
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
@@ -5128,6 +5161,8 @@ impl Window {
             self.next_frame.scene.insert_primitive(PolychromeSprite {
                 order: 0,
                 skia: 1,
+                #[cfg(target_vendor = "apple")]
+                layers: 0,
                 grayscale: false.into(),
                 bounds,
                 corner_radii: Default::default(),
@@ -5224,6 +5259,10 @@ impl Window {
         grayscale: bool,
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
+        #[cfg(target_vendor = "apple")]
+        let Some(layers) = self.sprite_layers() else {
+            return Ok(());
+        };
 
         let visible_bounds = bounds.intersect(&image_bounds);
         if visible_bounds.size.width <= Pixels::ZERO || visible_bounds.size.height <= Pixels::ZERO {
@@ -5298,10 +5337,14 @@ impl Window {
             .clamp_radii_for_quad_size(visible_bounds.size)
             .scale(self.scale_factor());
         let opacity = self.element_opacity();
+        #[cfg(target_vendor = "apple")]
+        let opacity = if layers == 0 { opacity } else { 1. };
 
         self.next_frame.scene.insert_primitive(PolychromeSprite {
             order: 0,
             skia: 0,
+            #[cfg(target_vendor = "apple")]
+            layers,
             grayscale: grayscale.into(),
             bounds: visible_bounds_snapped,
             content_mask,

@@ -512,6 +512,42 @@ fn fill_paint(col: Color4f) -> Paint {
 }
 
 impl Op {
+    pub(crate) fn moved(self, offset: [f32; 2]) -> Self {
+        match self {
+            Self::Fill(contour) => Self::Fill(contour.moved(offset)),
+            Self::ClipFill(contour) => Self::ClipFill(contour.moved(offset)),
+            Self::Border {
+                outer,
+                inner,
+                dashed,
+            } => Self::Border {
+                outer: outer.moved(offset),
+                inner: inner.moved(offset),
+                dashed,
+            },
+            Self::Shadow {
+                border,
+                opaque_bg,
+                has_radius,
+                s,
+            } => Self::Shadow {
+                border: border.moved(offset),
+                opaque_bg,
+                has_radius,
+                s,
+            },
+            Self::Inset { bounds, s } => Self::Inset {
+                bounds: bounds.moved(offset),
+                s,
+            },
+            Self::ClipLayer { outer, inner, fill } => Self::ClipLayer {
+                outer: outer.moved(offset),
+                inner: inner.moved(offset),
+                fill,
+            },
+        }
+    }
+
     /// Whether Chromium's raster does not blit the draw itself but restores a layer: Blink's
     /// slow (superellipse) or dashed border path paints a translucent border opaque inside a
     /// `saveLayerAlphaf` (whose draws the earlier AA clips do not cut), restored through those
@@ -846,12 +882,15 @@ impl Layer {
         let dev = |v: Pixels| (f32::from(v) * s).round() as i32;
         let (origin, size) = match composited {
             Some(o) => ([dev(o.x), dev(o.y)], None),
-            None => window.composited_layer().map_or(([0, 0], None), |(b, cc)| {
-                (
-                    [dev(b.origin.x), dev(b.origin.y)],
-                    cc.then(|| [dev(b.size.width), dev(b.size.height)]),
-                )
-            }),
+            None => match crate::backdrop::compositor_rect(window) {
+                Some([x0, y0, x1, y1]) => ([x0, y0], Some([x1 - x0, y1 - y0])),
+                None => window.composited_layer().map_or(([0, 0], None), |(b, cc)| {
+                    (
+                        [dev(b.origin.x), dev(b.origin.y)],
+                        cc.then(|| [dev(b.size.width), dev(b.size.height)]),
+                    )
+                }),
+            },
         };
         // The innermost `with_layer`, else a `saved_layer` div: Skia's layer device.
         let floor = |v: Pixels| (f32::from(v) * s).floor() as i32;
@@ -2327,7 +2366,6 @@ pub(crate) fn paint_icon(
         snap(b.origin.x + bounds.size.width),
         snap(b.origin.y + bounds.size.height),
     );
-    let rgba = Rgba::from(color);
     let clips = clips(window, layer);
     for (n, p) in icon.paths.iter().enumerate() {
         let draw = |c: &Canvas, col: Color4f| {
@@ -2359,20 +2397,22 @@ pub(crate) fn paint_icon(
         if !shown(bbox, layer, window) {
             continue;
         }
-        let c = p.color.unwrap_or(rgba);
+        // Keep the CSS color outside the sRGB gamut; conversion to Rgba clamps its channels.
+        let c = p.color.map(Hsla::from).unwrap_or(color);
         // ponytail: the svg's `opacity` (a layer in Chromium) is folded into the paint alpha.
-        let a = if p.color.is_some() { 1. } else { rgba.a } * p.opacity * p.layer;
-        let color = Rgba { a, ..c };
+        let a = if p.color.is_some() { 1. } else { color.a } * p.opacity * p.layer;
+        let color = c.alpha(a);
         let a = alpha_byte(a);
-        let black = is_black(color.into(), a);
+        let black = is_black(color, a);
+        let wide = p.color.is_none() && wide(color);
         let sprites = sprites(
             format!(
-                "{key}#{n}{flip_x}{clip:?}{w}x{h}{:?}{a}{black}{clips:?}",
+                "{key}#{n}{flip_x}{clip:?}{w}x{h}{:?}{a}{black}{wide}{clips:?}",
                 layer.key()
             ),
-            || raster(bbox, layer, a, black, false, &clips, &draw),
+            || raster(bbox, layer, a, black, wide, &clips, &draw),
         );
-        paint_sprites(&sprites, color.into(), layer.origin, window, cx);
+        paint_sprites(&sprites, color, layer.origin, window, cx);
     }
     true
 }
@@ -2380,6 +2420,245 @@ pub(crate) fn paint_icon(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate as shapes;
+    use gpui::{
+        AppContext, Corners, IntoElement, ParentElement, Render, Styled, Window, canvas, div,
+        prelude::FluentBuilder, px, size,
+    };
+    use std::sync::Arc;
+
+    struct ImageLayers {
+        scope_backdrop: bool,
+    }
+
+    impl Render for ImageLayers {
+        fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+            let mut root = div().size_full().relative().bg(gpui::rgb(0x2b2b2b));
+            for row in 0..3 {
+                let mut panel = div()
+                    .absolute()
+                    .left(px(10.))
+                    .top(px(10. + row as f32 * 40.))
+                    .w(px(30.))
+                    .h(px(30.))
+                    .when(row != 0, |d| d.top_layer());
+                if row == 2 {
+                    panel = panel.child(shapes::decoration(shapes::Decoration {
+                        fill: Some(gpui::rgb(0x2b2b2b).into()),
+                        ..Default::default()
+                    }));
+                } else {
+                    let image = Arc::new(gpui::RenderImage::new([image::Frame::new(
+                        image::RgbaImage::from_pixel(2, 2, image::Rgba([43, 43, 43, 255])),
+                    )]));
+                    panel = panel.child(
+                        canvas(
+                            |_, _, _| (),
+                            move |bounds, (), window, _| {
+                                window
+                                    .paint_image(
+                                        bounds,
+                                        bounds,
+                                        Corners::default(),
+                                        image,
+                                        0,
+                                        false,
+                                    )
+                                    .expect("opaque image");
+                            },
+                        )
+                        .absolute()
+                        .size_full(),
+                    );
+                }
+                panel = panel.child(shapes::decoration(shapes::Decoration {
+                    fill: Some(gpui::Hsla {
+                        a: 0.1,
+                        ..gpui::rgb(0xff6764).into()
+                    }),
+                    ..Default::default()
+                }));
+                root = root.child(panel);
+            }
+            let scope_box = || {
+                div()
+                    .absolute()
+                    .left(px(50.))
+                    .top(px(210.))
+                    .w(px(420.))
+                    .h(px(158.))
+            };
+            root.child(
+            div()
+                .absolute()
+                .left(px(10.))
+                .top(px(130.))
+                .size(px(30.))
+                .bg(gpui::rgb(0x151515))
+                .child(
+                    div()
+                        .size_full()
+                        .top_layer()
+                        .child(shapes::backdrop_blur(
+                            px(0.),
+                            shapes::Fill::Color,
+                            false,
+                            shapes::Decoration {
+                                fill: Some(gpui::Hsla {
+                                    a: 0.9,
+                                    ..gpui::rgb(0x2d2d2d).into()
+                                }),
+                                ..Default::default()
+                            },
+                        ))
+                        .child(shapes::decoration(shapes::Decoration {
+                            fill: Some(gpui::rgba(0xffffff06).into()),
+                            ..Default::default()
+                        })),
+                ),
+        )
+        .child(
+            div()
+                .absolute()
+                .left(px(10.))
+                .top(px(170.))
+                .size(px(30.))
+                .bg(gpui::rgb(0x151515))
+                .child(
+                    canvas(
+                        |_, _, _| (),
+                        |bounds, (), window, cx| {
+                            shapes::paint_icon(
+                                br#"<svg viewBox="0 0 10 10"><path d="M0 0H10V10H0Z" fill="black"/></svg>"#,
+                                "wide-image-layer-test",
+                                bounds,
+                                false,
+                                gpui::Rgba { r: 1.2, g: 0.2, b: 0.3, a: 0.5 }.into(),
+                                None,
+                                window,
+                                cx,
+                            );
+                        },
+                    )
+                    .absolute()
+                    .size_full(),
+                ),
+        )
+        .child(
+            div()
+                .absolute()
+                .left(px(10.))
+                .top(px(210.))
+                .size(px(30.))
+                .bg(gpui::rgb(0x151515))
+                .child(
+                    div()
+                        .size_full()
+                        .top_layer()
+                        .child(shapes::backdrop_blur(
+                            px(0.),
+                            shapes::Fill::Color,
+                            false,
+                            shapes::Decoration {
+                                fill: Some(gpui::rgb(0x2b2b2b).into()),
+                                ..Default::default()
+                            },
+                        ))
+                        .child(
+                            div()
+                                .size_full()
+                                .layer()
+                                .child(shapes::backdrop_blur(
+                                    px(0.),
+                                    shapes::Fill::Color,
+                                    false,
+                                    shapes::Decoration::default(),
+                                ))
+                                .child(shapes::decoration(shapes::Decoration {
+                                    fill: Some(gpui::rgba(0xffffff06).into()),
+                                    ..Default::default()
+                                })),
+                        ),
+                ),
+        )
+        .when(self.scope_backdrop, |root| {
+            root.child(scope_box().top_layer().child(shapes::backdrop_blur(
+                px(0.),
+                shapes::Fill::Color,
+                false,
+                shapes::Decoration {
+                    fill: Some(gpui::rgb(0x2d2d2d).into()),
+                    shadows: vec![shapes::Shadow {
+                        color: gpui::rgba(0x00000033).into(),
+                        offset: gpui::point(px(0.), px(4.)),
+                        blur: px(8.),
+                        spread: px(-2.),
+                        inset: false,
+                    }],
+                    ..Default::default()
+                },
+            )))
+        })
+        .child(
+            scope_box()
+                .bg(gpui::rgb(0x151515))
+                .child(
+                    div()
+                        .size_full()
+                        .top_layer()
+                        .child(shapes::decoration(shapes::Decoration {
+                            radius: Corners::all(px(25.)),
+                            corner: shapes::Corner::Squircle,
+                            fill: Some(gpui::rgba(0x2d2d2de6).into()),
+                            ..Default::default()
+                        })),
+                ),
+        )
+        }
+    }
+
+    #[test]
+    fn image_background_keeps_the_destination_for_following_masks() -> anyhow::Result<()> {
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(()),
+            gpui_platform::current_headless_renderer,
+        );
+        let window = cx.open_window(size(px(512.), px(400.)), |_, cx| {
+            cx.new(|_| ImageLayers {
+                scope_backdrop: true,
+            })
+        })?;
+        let view = cx.read_window(&window, |view, _| view)?;
+        cx.run_until_parked();
+        let image = cx.capture_screenshot(window.into())?;
+        for y in [40, 120, 200] {
+            assert_eq!(image.get_pixel(40, y).0, [64, 49, 48, 255]);
+        }
+        assert_eq!(image.get_pixel(40, 280).0, [48, 48, 48, 255]);
+        assert_eq!(image.get_pixel(40, 360).0, [164, 36, 49, 255]);
+        assert_eq!(image.get_pixel(40, 440).0, [48, 48, 48, 255]);
+        view.update(&mut cx, |view, cx| {
+            view.scope_backdrop = false;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let isolated = cx.capture_screenshot(window.into())?;
+        for y in 420..736 {
+            for x in 100..940 {
+                assert_eq!(
+                    image.get_pixel(x, y),
+                    isolated.get_pixel(x, y),
+                    "an unrelated layer must not change the raster at {x},{y}"
+                );
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn image_decode_keeps_the_larger_mip() {
