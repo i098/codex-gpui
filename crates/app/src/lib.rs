@@ -7,6 +7,7 @@ mod features;
 pub mod host;
 pub mod host_settings;
 pub mod qa;
+pub mod windows;
 
 use anyhow::{Context as _, Result, ensure};
 use async_channel::Receiver;
@@ -708,7 +709,7 @@ impl Root {
             this.update(cx, |this, cx| {
                 if this.state.confirm_before_close != ConfirmBeforeClose::Always {
                     this.flush_settings(cx);
-                    return true;
+                    return windows::allow_close(window, cx);
                 }
                 this.open_dialog(DialogKind::CloseWindow, window, cx);
                 false
@@ -727,6 +728,7 @@ impl Root {
             .detach();
         root.connect(window, cx);
         root.load_projects(cx);
+        windows::bind_root(window, cx);
         root
     }
 
@@ -2425,7 +2427,7 @@ impl Root {
                         this.state.save();
                     }
                     this.flush_settings(cx);
-                    window.remove_window();
+                    windows::close(window, cx);
                 }
                 DialogOutcome::Rename { thread, name } => {
                     window.focus(&focus, cx);
@@ -2533,7 +2535,7 @@ impl Root {
         }
         if self.state.confirm_before_close == ConfirmBeforeClose::Never {
             self.flush_settings(cx);
-            window.remove_window();
+            windows::close(window, cx);
         } else {
             self.open_dialog(DialogKind::CloseWindow, window, cx);
         }
@@ -2576,6 +2578,9 @@ impl Root {
                 "Open Changes tab" => window.dispatch_action(Box::new(OpenChangesPanel), cx),
                 "New tab" => window.dispatch_action(Box::new(ToggleChangesPanel), cx),
                 "Open terminal" => window.dispatch_action(Box::new(OpenBackgroundTerminal), cx),
+                "Open in new window" => {
+                    window.dispatch_action(Box::new(windows::OpenThreadWindow), cx)
+                }
                 "Commit or push" => self.open_git_form(DialogKind::Commit, window, cx),
                 "Manage scheduled tasks" => window.dispatch_action(Box::new(OpenScheduled), cx),
                 "Log out" => window.dispatch_action(Box::new(LogOut), cx),
