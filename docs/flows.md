@@ -62,7 +62,7 @@ Each screen still runs both themes and sizes before it returns its combined fail
 The flow executable exits 1 if any flow fails.
 There is no report-only or optional mode.
 
-`Fx::reference_shot` parks the pointer at `(round(width * 0.6), 6)` and makes only the captured composer caret transparent.
+`Fx::reference_shot` parks the pointer at `(round(width * 0.6), 6)` and makes the captured composer and search input carets transparent.
 It keeps keyboard focus, selection, and editor input intact, then restores normal caret drawing.
 The fixture clock uses the original `2026-10-15T17:00:00Z` base and `-07:00` offset, plus monotonic elapsed time from test startup.
 The original preload also advances from its base; the exact historical screenshot instant is not retained.
@@ -95,7 +95,7 @@ The prior large-window clicks miss the menu; the corrected clicks and reference 
 
 Pointer, clock, and composer-caret preparation now follow the reference; other fixture, host-data, and drawing differences remain unresolved.
 None of these remaining causes waives a failure.
-Keep S026's recorded command groups and settled search behavior instead of restoring an older pending-search screenshot state.
+Keep S026's recorded command groups and settled local search behavior; the independent ChatGPT search can still be pending.
 Keep S009's File viewer behavior; its recorded test replaces the obsolete file-link-to-Changes assertion.
 The S009, S026, F3b, and S034b recorded tests pass with the strict shared helper.
 Formatting and `cargo clippy --workspace --all-targets -- -D warnings` pass after integrating current main.
@@ -129,6 +129,40 @@ Cells give `outside count / text percent`; the owned empty `CODEX_HOME` excludes
 | Remaining full-Root failure | Dark 1280x832 | Dark 1440x900 | Light 1280x832 | Light 1440x900 |
 |---|---|---|---|---|
 | Sidebar | 95831 / 12.250% | 102522 / 9.995% | 128199 / 13.491% | 137557 / 10.381% |
+
+### Sidebar multi-source search
+
+The fixed Sidebar reference shows a completed local content search while the separate ChatGPT search remains pending.
+The Root now consumes both sources through the existing app-server and `CloudHost`.
+The spinner remains while either source is pending.
+Cloud failures retain local results and expose Retry by pointer or keyboard.
+The cloud source uses the original three retries, after one, two, and four seconds.
+Query generations reject stale results, and a closed menu sends no later retry.
+
+Local results open the native thread route.
+Cloud conversations and dot messages open their encoded canonical ChatGPT pages through the existing platform URL action.
+This repair does not add a separate ChatGPT application mode.
+
+`sidebar-math-search.jsonl` retains the real local answer from the recovered original rollout files and history database.
+`sidebar-cloud-search.json` retains the original owned fixture server's HTTP response.
+That response triggers the original pending retry interval without fabricated search results or production pending overrides.
+The search input uses the same transparent-caret capture setting as the composer.
+The references, text masks, and strict assertions remain unchanged.
+
+The focused native run passes all four Sidebar comparisons:
+
+| Case | Outside-text pixels | Text difference |
+|---|---:|---:|
+| Dark 1280x832 | 0 | 0.154% |
+| Dark 1440x900 | 0 | 0.152% |
+| Light 1280x832 | 0 | 0.153% |
+| Light 1440x900 | 0 | 0.152% |
+
+Run `cargo test -p app --test flows -- parity_sidebar` on the Mac for the unchanged pixel gate.
+Run `cargo test -p app --test sidebar_search` for source completion, failure, retry, selection, and canonical navigation checks.
+The S026 control creates its own Git repository; it no longer depends on the shared temporary project surviving system cleanup.
+The repair is tracked in [the Sidebar issue](https://github.com/i098/codex-gpui/issues/273).
+
 
 ## App shell: shortcuts, menu bar, window (§2.2, §12, §13)
 

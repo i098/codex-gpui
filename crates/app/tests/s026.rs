@@ -60,11 +60,26 @@ fn command_menu_groups_and_chat_search_match_the_original() -> Result<()> {
     };
     let wait = |step: &Value| Duration::from_millis(step["waitMs"].as_u64().unwrap_or(0));
 
-    let mut fx = Fx::captured(
-        "dark",
-        (1280., 832.),
-        script(Some("sessions/s026-thread-search.jsonl"), |_| {})?,
-    )?;
+    let workspace = tempfile::tempdir()?;
+    let cwd = workspace.path().join("proj");
+    std::fs::create_dir(&cwd)?;
+    let git = std::process::Command::new("git")
+        .args(["init", "-q", "-b", "main"])
+        .current_dir(&cwd)
+        .output()?;
+    ensure!(
+        git.status.success(),
+        "{}",
+        String::from_utf8_lossy(&git.stderr)
+    );
+    std::fs::write(cwd.join("proof.txt"), "recorded commit availability\n")?;
+    let mut lines = script(Some("sessions/s026-thread-search.jsonl"), |_| {})?;
+    for line in &mut lines {
+        if let Some(thread) = line.pointer_mut("/msg/result/thread") {
+            thread["cwd"] = cwd.to_string_lossy().into_owned().into();
+        }
+    }
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
     // The port's rows in the recorder's format, per visible group.
     let describe = |fx: &mut Fx| -> Result<MenuGroups> {
         let menu = fx
@@ -149,6 +164,13 @@ fn command_menu_groups_and_chat_search_match_the_original() -> Result<()> {
     fx.action(Box::new(GoToChat(0)))?;
     fx.wait_thread(GREETING)?;
     fx.action(Box::new(OpenCommandMenu))?;
+    fx.wait("the owned repository offers Commit or push", |fx| {
+        describe(fx)
+            .unwrap()
+            .into_iter()
+            .flat_map(|(_, rows)| rows)
+            .any(|(text, _)| text.starts_with("Commit or push"))
+    })?;
     let port = rows_only(describe(&mut fx)?);
     ensure!(
         port == groups(&recording["result"]["threadRoute"]),

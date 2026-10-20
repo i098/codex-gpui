@@ -666,7 +666,8 @@ pub fn parity_flow(screen: &str, reach: fn(&mut Fx) -> Result<()>) -> Result<Str
     for theme in ["dark", "light"] {
         for size in [(1280., 832.), (1440., 900.)] {
             let result = (|| {
-                let mut fx = Fx::with(theme, size, None, |_| {})?;
+                let session = (screen == "sidebar").then_some("sessions/sidebar-math-search.jsonl");
+                let mut fx = Fx::with(theme, size, session, |_| {})?;
                 reach(&mut fx)?;
                 fx.cx.run_until_parked();
                 ensure!(
@@ -824,4 +825,79 @@ fn serve_proxy(script: &Path, log: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+pub struct SidebarSearchHost {
+    pub response: Mutex<Value>,
+    pub requests: Mutex<Vec<app::host::Request>>,
+    device_id: String,
+}
+
+impl SidebarSearchHost {
+    pub fn recorded() -> Result<Self> {
+        let recording: Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/sidebar-cloud-search.json"
+        ))?;
+        Ok(Self {
+            device_id: recording["request"]["headers"]["oai-did"]
+                .as_str()
+                .context("recorded search device")?
+                .to_owned(),
+            response: Mutex::new(recording["response"].clone()),
+            requests: Mutex::new(Vec::new()),
+        })
+    }
+}
+
+impl app::host::Host for SidebarSearchHost {
+    fn fetch(&self, request: &app::host::Request) -> Result<Value> {
+        ensure!(
+            matches!(request, app::host::Request::Http(http) if http["url"] == "/global/search"),
+            "unrecorded sidebar host request: {request:?}"
+        );
+        self.requests.lock().unwrap().push(request.clone());
+        Ok(self.response.lock().unwrap().clone())
+    }
+
+    fn supports_cloud_search(&self) -> bool {
+        true
+    }
+
+    fn identity(&self) -> Option<app::host::Identity> {
+        Some(app::host::Identity {
+            account_id: "00000000-0000-4000-8000-000000000000".into(),
+            user_id: "user-000000000000000000000000".into(),
+            device_id: self.device_id.clone(),
+        })
+    }
+
+    fn projects(&self) -> Result<Vec<ui::screens::sidebar::Project>> {
+        Ok(Vec::new())
+    }
+}
+
+pub fn open_recorded_sidebar_search(fx: &mut Fx) -> Result<Arc<SidebarSearchHost>> {
+    let host = Arc::new(SidebarSearchHost::recorded()?);
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
+    fx.click(SEARCH)?;
+    fx.keys("m a t h")?;
+    fx.advance(ui::screens::sidebar::SEARCH_DEBOUNCE)?;
+    fx.wait(
+        "local content with the independent cloud search pending",
+        |fx| {
+            fx.read(|root, cx| {
+                root.command_menu().is_some_and(|menu| {
+                    let menu = menu.read(cx);
+                    menu.search_pending() == (false, true)
+                        && menu
+                            .describe()
+                            .iter()
+                            .flat_map(|(_, rows)| rows)
+                            .any(|(text, _)| text.contains(" || "))
+                })
+            })
+        },
+    )?;
+    Ok(host)
 }

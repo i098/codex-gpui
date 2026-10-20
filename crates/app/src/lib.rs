@@ -7,6 +7,7 @@ mod features;
 pub mod host;
 pub mod host_settings;
 pub mod qa;
+mod search;
 pub mod windows;
 
 use anyhow::{Context as _, Result, ensure};
@@ -42,8 +43,8 @@ use ui::screens::home::{HomeMain, OpenFolder};
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
 use ui::screens::sidebar::{
     ArchiveThread, ArchivedChats, CommandMenu, CommandMenuEvent, HomeSidebar, LoadMore, OpenThread,
-    PINNED_SECTION_ID, PinThread, RenameThread, SEARCH_LIMIT, SearchHit, SelectProject,
-    title as thread_title,
+    PINNED_SECTION_ID, PinThread, RenameThread, SEARCH_LIMIT, SearchHit, SearchRequest,
+    SelectProject, title as thread_title,
 };
 use ui::screens::terminal::{OpenTerminalItem, StopBackgroundTerminals, Xterm};
 use ui::screens::thread::view::{
@@ -420,6 +421,7 @@ pub struct Root {
     logout_pending: bool,
     /// The signed-in ChatGPT account's email (`account/read`), shown in the logout dialog.
     account_email: Option<String>,
+    chatgpt_account: bool,
     bridge: Arc<Bridge>,
     host: Arc<dyn host::Host>,
     project_load: Option<Task<()>>,
@@ -674,6 +676,7 @@ impl Root {
             login: None,
             logout_pending: false,
             account_email: None,
+            chatgpt_account: false,
             host: Arc::new(
                 host::CloudHost::from_env(host::app_server_credentials(bridge.clone()))
                     .with_bridge(bridge.clone()),
@@ -795,6 +798,9 @@ impl Root {
             };
             this.update_in(cx, |this, window, cx| {
                 this.account_email = account.as_ref().and_then(chatgpt_email);
+                this.chatgpt_account = account.as_ref().is_some_and(|account| {
+                    matches!(account.account, Some(Account::Chatgpt { .. }))
+                });
                 if account.is_some_and(|a| a.account.is_none() && a.requires_openai_auth) {
                     this.login = Some(cx.new(Login::new));
                 }
@@ -2348,8 +2354,11 @@ impl Root {
         }
         let unread = self.sidebar.read(cx).unread.clone();
         let thread_open = matches!(self.state.route, Route::Thread(_));
-        let menu =
-            cx.new(|cx| CommandMenu::with_threads(&self.threads, &unread, thread_open, "", cx));
+        let cloud = self.chatgpt_account && self.host.supports_cloud_search();
+        let menu = cx.new(|cx| {
+            CommandMenu::with_threads(&self.threads, &unread, thread_open, "", cx)
+                .with_cloud_search(cloud)
+        });
         cx.subscribe_in(&menu, window, |this, _, event, window, cx| {
             this.run_command(event, window, cx)
         })
@@ -2589,6 +2598,10 @@ impl Root {
                     Ok(_) => {
                         this.login = Some(cx.new(Login::new));
                         this.account_email = None;
+                        this.chatgpt_account = false;
+                        let host = this.host.clone();
+                        cx.background_spawn(async move { host.invalidate_identity() })
+                            .detach();
                         this.command_menu = None;
                         this.dialog = None;
                         this.thread = None;
@@ -2659,13 +2672,23 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let CommandMenuEvent::Search(term) = event {
-            return self.search_threads(term.clone(), window, cx);
+        match event {
+            CommandMenuEvent::Search(request) => {
+                return self.search_threads(request.clone(), window, cx);
+            }
+            CommandMenuEvent::RetryCloudSearch(request) => {
+                return self.search_cloud_threads(request.clone(), window, cx);
+            }
+            _ => {}
         }
         self.command_menu = None;
         window.focus(&self.route_focus(cx), cx);
         match event {
-            CommandMenuEvent::Dismiss | CommandMenuEvent::Search(_) => {}
+            CommandMenuEvent::Dismiss
+            | CommandMenuEvent::Search(_)
+            | CommandMenuEvent::RetryCloudSearch(_) => {}
+            // Cloud conversations belong to ChatGPT, not the local Codex app-server.
+            CommandMenuEvent::OpenUrl(url) => cx.open_url(url),
             CommandMenuEvent::OpenThread(id) => {
                 self.navigate(Route::Thread(id.clone()), window, cx)
             }
@@ -2706,10 +2729,13 @@ impl Root {
 
     /// The command menu's content search: `thread/search` for `term` (the original's
     /// `searchThreads`), answered into the open menu.
-    fn search_threads(&self, term: String, window: &Window, cx: &mut Context<Self>) {
+    fn search_threads(&self, request: SearchRequest, window: &Window, cx: &mut Context<Self>) {
         let Some(menu) = self.command_menu.clone() else {
             return;
         };
+        if menu.read(cx).cloud_search_enabled() {
+            self.search_cloud_threads(request.clone(), window, cx);
+        }
         let bridge = self.bridge.clone();
         let task = cx.spawn_in(window, async move |_, cx| -> Result<()> {
             let result = async {
@@ -2722,7 +2748,7 @@ impl Root {
                             "sortKey": "recency_at",
                             "archived": false,
                             "sourceKinds": [],
-                            "searchTerm": term,
+                            "searchTerm": request.term.as_ref(),
                         }),
                     )
                     .await?;
@@ -2736,9 +2762,72 @@ impl Root {
                 Err(error) => (Vec::new(), Some(error)),
             };
             cx.update(|_, cx| {
-                menu.update(cx, |menu, cx| menu.set_search_results(&term, hits, cx))
+                menu.update(cx, |menu, cx| menu.set_search_results(&request, hits, cx))
             })?;
             error.map_or(Ok(()), Err)
+        });
+        log_err(task, cx);
+    }
+
+    fn search_cloud_threads(
+        &self,
+        request: SearchRequest,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(menu) = self.command_menu.clone() else {
+            return;
+        };
+        let host = self.host.clone();
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let lookup = host.clone();
+            let identity = cx.background_spawn(async move { lookup.identity() }).await;
+            let result = if let Some(identity) = identity {
+                let http = Arc::new(search::request(
+                    &request.term,
+                    &identity,
+                    &host::device_id(),
+                ));
+                let mut result = Err(anyhow::anyhow!("ChatGPT search did not complete"));
+                for attempt in 0..4 {
+                    if attempt > 0 {
+                        cx.background_executor()
+                            .timer(Duration::from_secs(1 << (attempt - 1)))
+                            .await;
+                    }
+                    if !this.update_in(cx, |root, _, cx| {
+                        root.command_menu.as_ref() == Some(&menu)
+                            && menu.read(cx).current_search(&request)
+                    })? {
+                        return Ok(());
+                    }
+                    let host = host.clone();
+                    let http = http.clone();
+                    // ponytail: Host reads are synchronous; stale answers and later retries are discarded.
+                    // Add cancellable reads if overlapping searches exhaust the background pool.
+                    result = cx
+                        .background_spawn(async move {
+                            host.fetch(&http)
+                                .and_then(|response| host::json_body(&response))
+                                .and_then(search::results)
+                        })
+                        .await;
+                    if result.is_ok() {
+                        break;
+                    }
+                }
+                result
+            } else {
+                Err(anyhow::anyhow!("No authenticated workspace is available"))
+            };
+            this.update_in(cx, |root, _, cx| {
+                if root.command_menu.as_ref() == Some(&menu) {
+                    menu.update(cx, |menu, cx| {
+                        menu.set_cloud_search_results(&request, result.map_err(|_| ()), cx)
+                    });
+                }
+            })?;
+            Ok(())
         });
         log_err(task, cx);
     }
@@ -4024,9 +4113,21 @@ impl Root {
     /// Reads the email of the account that just signed in; a failure leaves the dialog without it.
     fn read_account_email(&self, cx: &mut Context<Self>) {
         let bridge = self.bridge.clone();
+        let host = self.host.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {
+            cx.background_spawn(async move { host.invalidate_identity() })
+                .await;
             let account = bridge.account_read().await?;
-            this.update(cx, |this, _| this.account_email = chatgpt_email(&account))
+            this.update(cx, |this, cx| {
+                this.account_email = chatgpt_email(&account);
+                this.chatgpt_account = matches!(account.account, Some(Account::Chatgpt { .. }));
+                if this.chatgpt_account
+                    && this.host.supports_cloud_search()
+                    && let Some(menu) = &this.command_menu
+                {
+                    menu.update(cx, |menu, cx| menu.enable_cloud_search(cx));
+                }
+            })
         });
         log_err(task, cx);
     }
