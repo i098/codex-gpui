@@ -146,9 +146,12 @@ def configuration_fixture(local, reply_path):
 
 def build(env, output):
     with (output / "build.log").open("w") as log:
-        result = run(["cargo", "test", "--locked", "--offline", "-p", "app", "--test",
-                      "proof_matrix", "--no-run", "--message-format=json"],
-                     cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=log, timeout=900)
+        result = subprocess.run(
+            ["cargo", "test", "--locked", "--offline", "-p", "app", "--test",
+             "proof_matrix", "--no-run", "--message-format=json"],
+            cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE, stderr=log, timeout=900)
+        log.write(result.stdout)
+        result.check_returncode()
     for line in result.stdout.splitlines():
         message = json.loads(line)
         if message.get("executable") and message.get("target", {}).get("name") == "proof_matrix":
@@ -319,7 +322,11 @@ def dispatch(args):
         run(transfer + [f"{args.mac}:{scratch}/output/", str(args.out) + "/"])
         retrieved = True
         (args.out / "source-head.txt").write_text(head + "\n")
-        print(f"{'PASS' if result.returncode == 0 else 'FAIL'} {args.out}/differences.md")
+        report = args.out / "differences.md"
+        if report.exists():
+            print(f"{'PASS' if result.returncode == 0 else 'FAIL'} {report}")
+        else:
+            print(f"CAPTURE FAILED {args.out}; no comparison report was generated")
         return result.returncode
     finally:
         if retrieved:

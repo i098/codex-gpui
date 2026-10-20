@@ -31,6 +31,16 @@ fn capture_cell() -> Result<()> {
         .transpose()?;
     let mut fx = if let Some(configuration) = &configuration {
         let mut lines = common::script(None, |_| {})?;
+        let config_id = lines
+            .iter()
+            .find(|line| line["dir"] == "send" && line["msg"]["method"] == "config/read")
+            .and_then(|line| line["msg"]["id"].as_u64())
+            .ok_or_else(|| anyhow::anyhow!("missing initial config/read request"))?;
+        let initial_reply = lines
+            .iter_mut()
+            .find(|line| line["dir"] == "recv" && line["msg"]["id"].as_u64() == Some(config_id))
+            .ok_or_else(|| anyhow::anyhow!("missing initial config/read reply"))?;
+        initial_reply["msg"]["result"] = configuration.clone();
         lines.extend(common::exchange("config/read", configuration.clone()));
         lines.extend(common::exchange(
             "configRequirements/read",
@@ -116,7 +126,8 @@ fn open_configuration(fx: &mut Fx, state: &str, configuration: Option<&Value>) -
             fx.read(|root, cx| {
                 root.settings_page().is_some_and(|page| {
                     let page = page.read(cx);
-                    page.dependencies_ready() && page.config_lock("config.web_search").is_none()
+                    page.dependencies_ready()
+                        && page.choice("config.sandbox_mode", "") == "workspace-write"
                 })
             })
         })?;
