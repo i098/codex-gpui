@@ -1490,7 +1490,7 @@ impl Dialog {
     /// the button row, 32 px buttons sized to their text plus 16 px each side, 12 px apart,
     /// 20 px from the right and bottom edges, and a 24 px close button 16 px from the corner.
     /// The `Signed in as <email>` line sits 4 px under the title and adds 25 px.
-    fn logout_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+    fn logout_content(&self, t: &Theme, window: &Window, cx: &Context<Self>) -> Div {
         div()
             .relative()
             .p(px(20.))
@@ -1525,8 +1525,8 @@ impl Dialog {
                     .flex()
                     .justify_end()
                     .gap(px(12.))
-                    .child(self.compact_button(0, "Cancel", t, cx))
-                    .child(self.compact_button(1, "Log out", t, cx)),
+                    .child(self.compact_button(0, "Cancel", t, window, cx))
+                    .child(self.compact_button(1, "Log out", t, window, cx)),
             )
             .child(
                 div()
@@ -1553,6 +1553,7 @@ impl Dialog {
         index: usize,
         label: &'static str,
         t: &Theme,
+        window: &Window,
         cx: &Context<Self>,
     ) -> Stateful<Div> {
         let danger = index == 1;
@@ -1576,16 +1577,19 @@ impl Dialog {
                     ..Default::default()
                 }))
             })
-            .when(self.selected == index, |d| {
-                d.child(div().absolute().inset(px(-2.)).child(shapes::decoration(
-                    shapes::Decoration {
-                        radius: Corners::all(px(14.5)),
-                        corner: shapes::Corner::Squircle,
-                        border: Some((px(2.), rgba(0x3a83f7ff).into())),
-                        ..Default::default()
-                    },
-                )))
-            })
+            .when(
+                self.selected == index && window.last_input_was_keyboard(),
+                |d| {
+                    d.child(div().absolute().inset(px(-2.)).child(shapes::decoration(
+                        shapes::Decoration {
+                            radius: Corners::all(px(14.5)),
+                            corner: shapes::Corner::Squircle,
+                            border: Some((px(2.), rgba(0x3a83f7ff).into())),
+                            ..Default::default()
+                        },
+                    )))
+                },
+            )
             .hover(|s| s.opacity(0.85))
             .child(text(
                 label,
@@ -1653,7 +1657,7 @@ impl Dialog {
         }
     }
 
-    fn archive_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+    fn archive_content(&self, t: &Theme, window: &Window, cx: &Context<Self>) -> Div {
         let single = self.kind == Kind::ArchiveRuns { count: 1 };
         div()
             .relative()
@@ -1682,11 +1686,12 @@ impl Dialog {
                     .flex()
                     .justify_end()
                     .gap(px(12.))
-                    .child(self.compact_button(0, "Cancel", t, cx))
+                    .child(self.compact_button(0, "Cancel", t, window, cx))
                     .child(self.compact_button(
                         1,
                         if single { "Archive" } else { "Archive all" },
                         t,
+                        window,
                         cx,
                     )),
             )
@@ -3037,8 +3042,8 @@ impl Render for Dialog {
             Kind::Rename | Kind::NewSection | Kind::EditSection => self.rename_content(t, cx),
             Kind::ArchiveSection => self.archive_section_content(t, cx),
             Kind::FullAccess => self.full_access_content(t, cx),
-            Kind::LogOut => self.logout_content(t, cx),
-            Kind::ArchiveRuns { .. } => self.archive_content(t, cx),
+            Kind::LogOut => self.logout_content(t, window, cx),
+            Kind::ArchiveRuns { .. } => self.archive_content(t, window, cx),
             Kind::ModelAnnouncement => self.announcement_content(t, cx),
             Kind::Commit => self.commit_content(t, cx),
             Kind::Branches | Kind::CreateBranch | Kind::BranchConflict => {
