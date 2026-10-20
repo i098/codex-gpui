@@ -126,7 +126,8 @@ An assignment write failure stops the run; legacy folder tasks do not change pro
 Projectless tasks use an owned folder under `~/Documents/Codex/<local-date>/<prompt-name>/`, with separate `work` and `outputs` folders.
 The `projectlessWorkspaceRoot` host setting overrides the root.
 The host saves projectless thread IDs, workspace-root hints, and output paths in `.codex-global-state.json`.
-Heartbeat tasks fail with the reason in the `Could not start scheduled task` toast.
+Heartbeat tasks resume their existing thread with its selected model and permissions.
+The app opens that thread after a successful start, unless you navigate away while the run starts.
 Run `cargo test -p app --test task_create -- --test-threads=1` on macOS for the native creation and reload proof.
 Run `cargo test -p app --test automation_run_now` for the `Run now` requests over a stdio app-server stub.
 

@@ -636,7 +636,8 @@ The oracle answers that read with the host's 499, so the recorded outcome is the
 The conversation prepare, its stream, and the navigation into the started conversation are not recorded and not wired.
 
 `Run now` (AM-021) is the first item of the row `Scheduled task actions` menu, as in `run-now-11e55df28c95.js`.
-Choosing it sends `automation-run-now` with `{id, collaborationMode, permissions}`; the row reads `Starting run…` and an info toast shows until the host answers.
+Choosing it sends `automation-run-now` with `{id, collaborationMode, permissions}` and disables duplicate starts until the host answers.
+The information toast and row show `Starting run…` until the host answers.
 `LocalHost` starts one app-server thread per task folder, titles it with the task name, and sends the original's run preamble and the prompt as the first turn.
 The new thread then appears in Recents through `thread/started`.
 Before each thread the host reads the user's saved config (`config/read` for the folder) and the config requirements, and picks the model from `model/list` like the original (`Pr`): the task's model, else `gpt-5.3-codex`, else the default.
@@ -672,11 +673,20 @@ A failed start retains the owned folder and archives the pending run; a failed t
 Successful projectless runs use the same automatic archive completion path and retain their saved folders and metadata.
 The host reads config requirements before it creates a projectless workspace, as in the original `Ll`.
 A failed metadata write retains the started thread and its folder without starting a turn.
-Heartbeat tasks still require renderer thread state.
+Heartbeat tasks use the original `Wl` path: read the target thread, check its active flags and recent turns, then resume it.
+The renderer supplies the target thread's selected collaboration mode and permissions, not another thread's composer settings.
+The heartbeat retains saved approvals when no renderer permission override exists.
+Permission resolution fails if the managed requirements cannot be read.
+The heartbeat uses the thread's saved effort when no renderer snapshot exists.
+The host starts one turn with `automation_heartbeat_run_now` and the original heartbeat XML prompt, without creating or renaming a thread.
+Success waits for a matching `turn/started` or `turn/completed` notification.
+It opens the existing thread with the Scheduled sidebar only if the original navigation location still matches.
+Missing, busy, loading, resume, and turn failures clear `Starting run…`, keep the location, and show the existing failure toast.
+An interval heartbeat recalculates its next run from the current run time and does not create a cron run row.
 Not yet carried over: the desktop notification and the unread dot on the rail.
 `automation_run_now` checks projectless metadata, project assignment, saved policy, early completion, user cancellation, and archive failures against a stdio peer.
 It also checks account isolation, recoverable restore writes, and retained worktrees.
-The native row-menu replay needs macOS.
+Its native window proof also checks pending state, duplicate suppression, success navigation, failure, Back/Forward, and navigation away.
 
 `LocalHost` implements the original `automation-update` status change for local tasks (issue https://github.com/i098/codex-gpui/issues/226).
 It accepts `{id, status}` or the original full cron or heartbeat body; any other changed field fails.

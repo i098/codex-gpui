@@ -44,7 +44,7 @@ pub mod computer_use;
 pub mod computer_use_native;
 mod git;
 mod projectless;
-mod run_now;
+pub(crate) mod run_now;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "transport", content = "request", rename_all = "kebab-case")]
