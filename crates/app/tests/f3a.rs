@@ -320,6 +320,7 @@ fn translate_x(css: &str) -> Option<f32> {
 
 #[test]
 fn toast_region_and_undo() -> Result<()> {
+    common::install_panic_hook();
     let rec: Value =
         serde_json::from_slice(&fs::read(format!("{ROOT}/refs/interactions/f3a.json"))?)?;
     let archives = requests(&rec, "thread/archive");

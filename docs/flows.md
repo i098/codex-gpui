@@ -9,6 +9,11 @@ The fixtures do not record some methods (`thread/archive`, `thread/fork`, `threa
 Run it on the Mac: `tools/mac.sh -l flows 'cargo test -p app'`.
 To run some flows only, add a name filter: `cargo test -p app --test flows -- settings`.
 
+The shared macOS test setup installs an exit-on-panic hook before GPUI starts.
+A panic prints its message and exits with code 101 instead of opening a system crash dialog.
+Check `~/Library/Logs/DiagnosticReports` before and after each Mac run.
+Stop and fix the cause if a new report appears.
+
 ## Status values
 
 - **PASS (flow)**: the named flow or slice test in `crates/app/tests/` passes.
@@ -262,6 +267,8 @@ Successful Undo also removes the restored row from an open archive page.
 Two review regressions check cursor traversal and Undo after another toast opens View.
 Both regressions use real app-server replies from a fresh isolated fixture home.
 F3a still checks the toast layout, lifetime, hover pause, swipe, and Undo.
+The shared Toaster paints its Skia decoration, glyphs, and shadow into one viewport-origin compositor layer.
+This preserves low-alpha shadow pixels when the layer blends into the page.
 Archive search, filters, and management actions are separate inventory rows outside AM-101.
 
 The S004 recording uses the original renderer through the Linux route1 stack in an isolated Chrome context.
