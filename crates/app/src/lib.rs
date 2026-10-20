@@ -2599,6 +2599,9 @@ impl Root {
                         this.login = Some(cx.new(Login::new));
                         this.account_email = None;
                         this.chatgpt_account = false;
+                        let host = this.host.clone();
+                        cx.background_spawn(async move { host.invalidate_identity() })
+                            .detach();
                         this.command_menu = None;
                         this.dialog = None;
                         this.thread = None;
@@ -4110,11 +4113,20 @@ impl Root {
     /// Reads the email of the account that just signed in; a failure leaves the dialog without it.
     fn read_account_email(&self, cx: &mut Context<Self>) {
         let bridge = self.bridge.clone();
+        let host = self.host.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {
+            cx.background_spawn(async move { host.invalidate_identity() })
+                .await;
             let account = bridge.account_read().await?;
-            this.update(cx, |this, _| {
+            this.update(cx, |this, cx| {
                 this.account_email = chatgpt_email(&account);
                 this.chatgpt_account = matches!(account.account, Some(Account::Chatgpt { .. }));
+                if this.chatgpt_account
+                    && this.host.supports_cloud_search()
+                    && let Some(menu) = &this.command_menu
+                {
+                    menu.update(cx, |menu, cx| menu.enable_cloud_search(cx));
+                }
             })
         });
         log_err(task, cx);

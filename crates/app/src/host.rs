@@ -79,6 +79,9 @@ pub trait Host: Send + Sync {
         false
     }
 
+    /// Invalidates cached account credentials after a login or logout.
+    fn invalidate_identity(&self) {}
+
     /// Reads the original sidebar project state off the UI thread.
     fn projects(&self) -> Result<Vec<Project>> {
         bail!("sidebar project state is unsupported by this host")
@@ -1492,6 +1495,14 @@ impl Host for CloudHost {
 
     fn computer_use_native(&self) -> Option<Arc<computer_use_native::NativeComputerUse>> {
         self.local.computer_use_native()
+    }
+
+    fn invalidate_identity(&self) {
+        *self.cached.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        *self
+            .integrity_state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = None;
     }
 
     fn projects(&self) -> Result<Vec<Project>> {

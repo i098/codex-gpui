@@ -2289,6 +2289,16 @@ impl CommandMenu {
         self
     }
 
+    pub fn enable_cloud_search(&mut self, cx: &mut Context<Self>) {
+        if self.cloud_enabled {
+            return;
+        }
+        self.cloud_enabled = true;
+        if self.query.trim().chars().count() >= SEARCH_MIN_CHARS {
+            self.retry_cloud_search(cx);
+        }
+    }
+
     pub fn cloud_search_enabled(&self) -> bool {
         self.cloud_enabled
     }

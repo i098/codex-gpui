@@ -281,4 +281,37 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn an_account_change_uses_the_new_identity_instead_of_cached_credentials() {
+        use crate::host::{CloudHost, Credentials, Host, LocalHost};
+        use base64::Engine as _;
+        use std::sync::{Arc, Mutex};
+
+        let account = Arc::new(Mutex::new("first".to_owned()));
+        let source = account.clone();
+        let home = tempfile::tempdir().unwrap();
+        let host = CloudHost::new(
+            LocalHost::new(home.path()),
+            Box::new(move |_| {
+                let account = source.lock().unwrap();
+                let claims = json!({"https://api.openai.com/auth": {
+                    "chatgpt_account_id": account.as_str(),
+                    "chatgpt_user_id": "user",
+                }});
+                let payload =
+                    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claims.to_string());
+                Ok(Some(Credentials {
+                    token: format!("e30.{payload}.signature"),
+                    backend_origin: None,
+                    routing_override: None,
+                }))
+            }),
+            "https://chatgpt.com/backend-api",
+        );
+        assert_eq!(host.identity().unwrap().account_id, "first");
+        *account.lock().unwrap() = "second".to_owned();
+        host.invalidate_identity();
+        assert_eq!(host.identity().unwrap().account_id, "second");
+    }
 }
