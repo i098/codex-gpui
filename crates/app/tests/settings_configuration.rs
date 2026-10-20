@@ -73,13 +73,16 @@ fn permission_choices_save_and_reopen() -> Result<()> {
     let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
     open_configuration(&mut fx, 1)?;
     evidence(&mut fx, "configuration")?;
-    fx.click((1100., 278.))?;
+    fx.click((1100., 351.))?;
+    evidence(&mut fx, "sandbox-baseline-menu")?;
+    fx.keys("escape")?;
+    fx.click((1100., 290.))?;
     evidence(&mut fx, "approval-menu")?;
     fx.keys("enter")?;
     fx.wait("approval choice", |fx| {
         fx.read(|root, _| root.config()["approval_policy"] == "on-request")
     })?;
-    fx.click((1100., 339.))?;
+    fx.click((1100., 351.))?;
     fx.keys("down")?;
     evidence(&mut fx, "sandbox-menu")?;
     fx.keys("enter")?;
@@ -131,9 +134,9 @@ fn managed_permissions_cannot_be_changed() -> Result<()> {
     lines.extend(exchange("config/read", config));
     let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
     open_configuration(&mut fx, 1)?;
-    fx.click((1100., 278.))?;
+    fx.click((1100., 290.))?;
     fx.keys("enter down enter")?;
-    fx.click((1100., 339.))?;
+    fx.click((1100., 351.))?;
     fx.keys("enter down enter")?;
     assert!(
         !fx.sent()?
@@ -159,7 +162,7 @@ fn failed_permission_write_keeps_the_saved_value() -> Result<()> {
     lines.extend(failed);
     let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
     open_configuration(&mut fx, 1)?;
-    fx.click((1100., 278.))?;
+    fx.click((1100., 290.))?;
     fx.keys("enter")?;
     fx.wait("configuration save failure", |fx| {
         fx.read(|root, cx| {
