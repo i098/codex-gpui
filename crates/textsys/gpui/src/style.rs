@@ -318,6 +318,9 @@ pub struct Style {
     /// (`Window::composited_layer`).
     pub cc_tiles: bool,
 
+    /// Construct this layer's Skia paths in window coordinates while retaining its tile grid.
+    pub window_space_recording: bool,
+
     /// The element and its content start at its origin rounded to device pixels
     /// (`Styled::snap_origin`).
     pub snap_origin: bool,
@@ -834,6 +837,7 @@ impl Default for Style {
             top_layer: false,
             saved_layer: false,
             cc_tiles: false,
+            window_space_recording: false,
             snap_origin: false,
             grid_rows: None,
             grid_cols: None,
