@@ -711,7 +711,7 @@ impl Markdown<'_> {
                         } else {
                             let next = Bounds::new(
                                 point(bounds.left() - px(6.), top),
-                                gpui::size(right - bounds.left() + px(6.), px(glyph_line_height + 2.)),
+                                gpui::size(right - bounds.left() + px(6.), bounds.size.height + px(2.)),
                             );
                             if let Some(rect) = line.replace(next) {
                                 shapes::paint(&decoration, None, rect, window, cx);
