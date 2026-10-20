@@ -844,7 +844,6 @@ impl Editor {
                 .py(px(1.))
                 .child(shapes::decoration(shapes::Decoration {
                     radius: gpui::Corners::all(px(20.)),
-                    corner: shapes::Corner::Squircle,
                     border: Some((px(1.), t.border)),
                     ..Default::default()
                 }))
@@ -961,10 +960,22 @@ impl Editor {
         let selected = (0..self.option_count(picker))
             .position(|index| self.option_label(picker, index).as_ref() == value)
             .unwrap_or(0);
-        let color = if picker == Picker::Trigger {
+        let setting = matches!(
+            picker,
+            Picker::Notifications | Picker::Project | Picker::Thread
+        );
+        let compact = matches!(picker, Picker::Trigger | Picker::Model | Picker::Effort);
+        let color = if setting {
+            t.text
+        } else if matches!(picker, Picker::Trigger | Picker::Effort) {
             t.text_tertiary
         } else {
             t.text_secondary
+        };
+        let icon_color = if setting || compact {
+            t.text_tertiary
+        } else {
+            color
         };
         div()
             .id(("automation-picker", control))
@@ -974,29 +985,50 @@ impl Editor {
             .aria_label(label)
             .aria_expanded(self.menu.is_some_and(|(open, _)| open == picker))
             .track_focus(&self.controls[control])
-            .h(px(40.))
+            .h(px(if setting { 28. } else { 40. }))
             .when(picker == Picker::Time, |d| d.w(px(20.)).flex_none())
             .rounded(px(10.))
+            .when(setting, |d| d.px(px(7.)).rounded(px(9999.)))
             .focus_visible(|s| s.border_2().border_color(gpui::rgb(0x3a83f7)))
             .flex()
             .items_center()
             .justify_end()
-            .gap(px(if picker == Picker::Trigger { 6. } else { 8. }))
+            .gap(px(if setting {
+                4.
+            } else if picker == Picker::Trigger {
+                6.
+            } else {
+                8.
+            }))
             .hover(|s| s.bg(t.ghost_hover))
             .when(!value.is_empty(), |d| {
-                d.child(text(value.to_owned(), 14., 20., 400., color))
+                d.child(text(
+                    value.to_owned(),
+                    14.,
+                    if setting { 18. } else { 20. },
+                    400.,
+                    color,
+                ))
             })
             .when(picker == Picker::Trigger, |d| {
                 d.child(icon("automation-scheduled", 16., color))
             })
             .child(icon(
-                if picker == Picker::Trigger {
+                if setting {
+                    "chevron-down"
+                } else if compact {
                     "chevron-down-medium"
                 } else {
                     "automation-chevron-down"
                 },
-                if picker == Picker::Trigger { 16. } else { 20. },
-                color,
+                if setting {
+                    14.
+                } else if compact {
+                    16.
+                } else {
+                    20.
+                },
+                icon_color,
             ))
             .on_click(cx.listener(move |this, _, window, cx| {
                 if !this.saving {
@@ -1255,7 +1287,11 @@ impl Editor {
             })
             .when(control == ADVANCED, |d| {
                 d.aria_expanded(self.advanced).child(icon(
-                    "automation-chevron-down",
+                    if self.advanced {
+                        "automation-chevron-up"
+                    } else {
+                        "automation-chevron-down"
+                    },
                     20.,
                     t.text_secondary,
                 ))

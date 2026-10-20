@@ -233,13 +233,18 @@ impl Execution {
         if index == 0 {
             "Default".into()
         } else {
-            self.selected_model().unwrap().efforts[index - 1].clone()
+            crate::composer::effort_label(
+                self.selected_model().unwrap().efforts[index - 1].as_ref(),
+            )
+            .to_owned()
+            .into()
         }
     }
     pub fn effort_value(&self) -> SharedString {
-        self.values["reasoningEffort"]
-            .as_str()
-            .map_or_else(|| "Default".into(), |value| value.to_owned().into())
+        self.values["reasoningEffort"].as_str().map_or_else(
+            || "Default".into(),
+            |value| crate::composer::effort_label(value).to_owned().into(),
+        )
     }
     pub fn select_effort(&mut self, index: usize) {
         self.set(
@@ -247,7 +252,7 @@ impl Execution {
             if index == 0 {
                 Value::Null
             } else {
-                json!(self.effort_label(index).as_ref())
+                json!(self.selected_model().unwrap().efforts[index - 1].as_ref())
             },
         );
     }
@@ -386,5 +391,7 @@ mod tests {
             (true, false, false)
         );
         assert_eq!(execution.model_value().as_ref(), "Updated Astra");
+        execution.select_effort(1);
+        assert_eq!(execution.changes()["reasoningEffort"], "high");
     }
 }
