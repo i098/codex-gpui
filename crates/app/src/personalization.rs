@@ -1087,6 +1087,7 @@ impl Root {
                     });
                 }
                 if saved {
+                    dialog.read(cx).release_artwork(window);
                     this.dialog = None;
                     this.writing_dialog_preference = None;
                     this.navigate(crate::Route::Home, window, cx);

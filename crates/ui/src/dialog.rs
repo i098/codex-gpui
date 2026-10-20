@@ -28,7 +28,17 @@ fn contains_ignore_ascii_case(text: &str, query: &str) -> bool {
 
 type Shortcut = (&'static str, &'static str, &'static [&'static str]);
 
-type AnnouncementArtworkCache = Rc<RefCell<Option<(Bounds<Pixels>, f32, Arc<RenderImage>, bool)>>>;
+type ArtworkCache = Rc<
+    RefCell<
+        Option<(
+            Bounds<Pixels>,
+            f32,
+            &'static RgbaImage,
+            Arc<RenderImage>,
+            bool,
+        )>,
+    >,
+>;
 
 struct ModelAnnouncement {
     model: SharedString,
@@ -37,7 +47,7 @@ struct ModelAnnouncement {
     title: SharedString,
     message: SharedString,
     primary_label: SharedString,
-    artwork: AnnouncementArtworkCache,
+    artwork: ArtworkCache,
 }
 
 struct ArchiveSection {
@@ -110,6 +120,7 @@ struct WritingSetup {
     error: Option<String>,
     authorization: Option<Arc<Vec<WritingAuthorization>>>,
     authorization_index: usize,
+    artwork: ArtworkCache,
 }
 
 #[derive(Clone)]
@@ -314,6 +325,7 @@ impl Dialog {
                 error: None,
                 authorization: None,
                 authorization_index: 0,
+                artwork: Rc::new(RefCell::new(None)),
             }),
             ..Self::new(Kind::WritingStyle, cx)
         }
@@ -681,6 +693,8 @@ impl Dialog {
                                 .aria_label(label)
                                 .h(px(28.))
                                 .px(px(8.))
+                                .border_1()
+                                .border_color(gpui::transparent_black())
                                 .rounded(px(12.5))
                                 .bg(gpui::transparent_black())
                                 .text_size(px(13.))
@@ -755,17 +769,22 @@ impl Dialog {
             .flex()
             .flex_col()
             .child(
-                gpui::img(if t.appearance == theme::Appearance::Dark {
-                    "ui/announcement/writing-gradient.png"
-                } else {
-                    "ui/announcement/writing-gradient-light.png"
-                })
-                .absolute()
-                .top_0()
-                .left_0()
-                .w_full()
-                .rounded_t(px(20.))
-                .h(px(217.)),
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .w_full()
+                    .h(px(217.))
+                    .child(draw_artwork(
+                        writing.artwork.clone(),
+                        if t.appearance == theme::Appearance::Dark {
+                            &WRITING_ARTWORK_DARK
+                        } else {
+                            &WRITING_ARTWORK_LIGHT
+                        },
+                        px(20.),
+                        shapes::Corner::Squircle,
+                    )),
             )
             .child(
                 div()
@@ -780,6 +799,7 @@ impl Dialog {
                             .relative()
                             .child(shapes::decoration(shapes::Decoration {
                                 radius: Corners::all(px(20.)),
+                                corner: shapes::Corner::Squircle,
                                 fill: Some(t.surface),
                                 border: Some((px(1.), t.border)),
                                 shadows: vec![crate::composer::shadow(
@@ -858,6 +878,8 @@ impl Dialog {
                         .flex_none()
                         .w_full()
                         .h(px(44.))
+                        .border_1()
+                        .border_color(t.border)
                         .rounded(px(9999.))
                         .bg(t.button_primary_solid)
                         .text_size(px(13.))
@@ -1396,12 +1418,18 @@ impl Dialog {
             ..Self::new(Kind::ModelAnnouncement, cx)
         }
     }
-    /// Evicts the announcement image when its dialog leaves the window.
+    /// Evicts a dialog's cached artwork when it leaves the window.
     pub fn release_artwork(&self, window: &mut Window) {
-        if let Some(announcement) = &self.announcement
-            && let Some((_, _, image, _)) = announcement.artwork.borrow_mut().take()
+        for cache in [
+            self.announcement.as_ref().map(|state| &state.artwork),
+            self.writing.as_ref().map(|state| &state.artwork),
+        ]
+        .into_iter()
+        .flatten()
         {
-            window.drop_image(image).ok();
+            if let Some((_, _, _, image, _)) = cache.borrow_mut().take() {
+                window.drop_image(image).ok();
+            }
         }
     }
     pub fn kind(&self) -> Kind {
@@ -2097,7 +2125,12 @@ impl Dialog {
                             .role(gpui::Role::Image)
                             .aria_label(announcement.label.clone())
                             .size_full()
-                            .child(announcement_artwork(announcement.artwork.clone())),
+                            .child(draw_artwork(
+                                announcement.artwork.clone(),
+                                &ANNOUNCEMENT_ARTWORK,
+                                px(16.),
+                                shapes::Corner::Round,
+                            )),
                     )
                     .child(
                         div()
@@ -3594,37 +3627,58 @@ const REPEAT: [(&str, &str); 8] = [
     ("Saturdays", "SA"),
     ("Sundays", "SU"),
 ];
-// Original gradient-e8375b62d61e.png, retained unchanged for SH-142.
-static ANNOUNCEMENT_ARTWORK: LazyLock<RgbaImage> = LazyLock::new(|| {
-    let mut image = image::load_from_memory(include_bytes!(
-        "../../../assets/ui/announcement/gradient.png"
-    ))
-    .expect("original announcement PNG")
-    .to_rgba8();
+fn load_artwork(bytes: &[u8]) -> RgbaImage {
+    let mut image = image::load_from_memory(bytes)
+        .expect("original dialog artwork")
+        .to_rgba8();
     shapes::premultiply(&mut image);
     image
+}
+
+// Original gradient-e8375b62d61e.png, retained unchanged for SH-142.
+static ANNOUNCEMENT_ARTWORK: LazyLock<RgbaImage> = LazyLock::new(|| {
+    load_artwork(include_bytes!(
+        "../../../assets/ui/announcement/gradient.png"
+    ))
 });
 
-fn announcement_artwork(cache: AnnouncementArtworkCache) -> impl IntoElement {
+static WRITING_ARTWORK_DARK: LazyLock<RgbaImage> = LazyLock::new(|| {
+    load_artwork(include_bytes!(
+        "../../../assets/ui/announcement/writing-gradient.png"
+    ))
+});
+
+static WRITING_ARTWORK_LIGHT: LazyLock<RgbaImage> = LazyLock::new(|| {
+    load_artwork(include_bytes!(
+        "../../../assets/ui/announcement/writing-gradient-light.png"
+    ))
+});
+
+fn draw_artwork(
+    cache: ArtworkCache,
+    image: &'static RgbaImage,
+    radius: Pixels,
+    corner: shapes::Corner,
+) -> impl IntoElement {
     let radius = Corners {
-        top_left: px(16.),
-        top_right: px(16.),
+        top_left: radius,
+        top_right: radius,
         ..Default::default()
     };
     canvas(
         move |bounds, window, _| {
             let scale = window.scale_factor();
             let mut cached = cache.borrow_mut();
-            if let Some((previous, previous_scale, image, rounded)) = &*cached
+            if let Some((previous, previous_scale, previous_image, raster, rounded)) = &*cached
                 && *previous == bounds
                 && *previous_scale == scale
+                && std::ptr::eq(*previous_image, image)
             {
-                return (image.clone(), *rounded);
+                return (raster.clone(), *rounded);
             }
-            if let Some((_, _, image, _)) = cached.take() {
+            if let Some((_, _, _, image, _)) = cached.take() {
                 window.drop_image(image).ok();
             }
-            let image = &*ANNOUNCEMENT_ARTWORK;
             let device = |value: Pixels| (f32::from(value) * scale).round() as u32;
             let (width, height) = (device(bounds.size.width), device(bounds.size.height));
             let factor =
@@ -3644,7 +3698,7 @@ fn announcement_artwork(cache: AnnouncementArtworkCache) -> impl IntoElement {
                 &[(image, destination)],
                 bounds,
                 radius,
-                shapes::Corner::Round,
+                corner,
                 shapes::ImageComposition::Direct(rgba(0x00000000).into()),
                 window,
             );
@@ -3661,7 +3715,7 @@ fn announcement_artwork(cache: AnnouncementArtworkCache) -> impl IntoElement {
                         .to_image();
                 RenderImage::new([Frame::new(pixels)])
             }));
-            *cached = Some((bounds, scale, raster.clone(), rounded));
+            *cached = Some((bounds, scale, image, raster.clone(), rounded));
             (raster, rounded)
         },
         move |bounds, (image, rounded), window, _| {
@@ -3902,6 +3956,7 @@ impl Render for Dialog {
                         } else if self.kind == Kind::WritingStyle {
                             d.child(shapes::decoration(shapes::Decoration {
                                 radius: Corners::all(px(20.)),
+                                corner: shapes::Corner::Squircle,
                                 fill: Some(if t.appearance == theme::Appearance::Dark {
                                     t.surface_tertiary
                                 } else {
@@ -3983,7 +4038,11 @@ impl Render for Dialog {
                     })
                     .map(|d| {
                         if self.kind == Kind::WritingStyle {
-                            d.child(crate::rounded_clip(px(20.), shapes::Corner::Round, content))
+                            d.child(crate::rounded_clip(
+                                px(20.),
+                                shapes::Corner::Squircle,
+                                content,
+                            ))
                         } else {
                             d.child(content)
                         }
