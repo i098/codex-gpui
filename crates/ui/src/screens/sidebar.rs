@@ -1085,8 +1085,8 @@ impl Render for HomeSidebar {
                     self.rows(ThreadGroup::Recents, window, cx)
                 }
             };
-            let pinned = (!self.pinned.is_empty())
-                .then(|| self.rows(ThreadGroup::Pinned, window, cx));
+            let pinned =
+                (!self.pinned.is_empty()).then(|| self.rows(ThreadGroup::Pinned, window, cx));
             let section = |i: usize,
                            title: SharedString,
                            body: AnyElement,
@@ -1099,92 +1099,93 @@ impl Render for HomeSidebar {
                     (custom.collapsed, custom.id.clone())
                 };
                 let header_focus = focus::handle(key.clone(), -1, window, cx);
-            div()
-                .flex()
-                .flex_col()
-                .child(
-                    div()
-                        .group(key.clone())
-                        .relative()
-                        .h(px(30.))
-                        .flex()
-                        .items_center()
-                        .pl(px(8.))
-                        .child(text(
-                            title.clone(),
-                            14.,
-                            21.,
-                            500.,
-                            cx.theme().text_tertiary,
-                        ))
-                        .child(
-                            svg()
-                                .path("icons/chevron-down.svg")
-                                .w(px(14.))
-                                .h(px(14.7))
-                                .ml(px(4.))
-                                .text_color(cx.theme().text_tertiary)
-                                .opacity(if collapsed { 1. } else { 0. })
-                                .group_hover(key.clone(), |s| s.opacity(1.))
-                                .with_transformation(Transformation::rotate(radians(
-                                    if collapsed {
-                                        -std::f32::consts::FRAC_PI_2
-                                    } else {
-                                        0.
-                                    },
-                                ))),
-                        )
-                        .child(
-                            focus::ring(
-                                div()
-                                    .id(key.clone())
-                                    .role(gpui::Role::Button)
-                                    .aria_label(title)
-                                    .aria_expanded(!collapsed)
-                                    .absolute()
-                                    .top(px(2.5))
-                                    .left(px(4.))
-                                    .right(px(66.))
-                                    .h(px(25.)),
-                                &header_focus,
-                                px(10.),
-                                px(2.),
-                                cx,
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .group(key.clone())
+                            .relative()
+                            .h(px(30.))
+                            .flex()
+                            .items_center()
+                            .pl(px(8.))
+                            .child(text(
+                                title.clone(),
+                                14.,
+                                21.,
+                                500.,
+                                cx.theme().text_tertiary,
+                            ))
+                            .child(
+                                svg()
+                                    .path("icons/chevron-down.svg")
+                                    .w(px(14.))
+                                    .h(px(14.7))
+                                    .ml(px(4.))
+                                    .text_color(cx.theme().text_tertiary)
+                                    .opacity(if collapsed { 1. } else { 0. })
+                                    .group_hover(key.clone(), |s| s.opacity(1.))
+                                    .with_transformation(Transformation::rotate(radians(
+                                        if collapsed {
+                                            -std::f32::consts::FRAC_PI_2
+                                        } else {
+                                            0.
+                                        },
+                                    ))),
                             )
-                            .on_click(cx.listener(
-                                move |this, _, window, cx| {
-                                    header_focus.read(cx).handle.clone().focus(window, cx);
-                                    if i < this.collapsed.len() {
-                                        this.collapsed[i] ^= true;
-                                    } else {
-                                        this.sections[i - this.collapsed.len()].collapsed ^= true;
-                                    }
-                                    cx.notify();
-                                },
-                            )),
-                        )
-                        .when(i >= self.collapsed.len(), |d| {
-                            d.child(self.section_actions(i - self.collapsed.len(), window, cx))
-                        }),
-                )
-                .when(!collapsed, |d| d.child(div().pt(px(4.)).child(body)))
-        };
-        let project_rows = match self.projects_state {
-            ListState::Loading => sidebar_empty("Loading projects…", cx).into_any_element(),
-            ListState::Failed => load_error::<RetryProjects>(
-                "Projects couldn't be loaded",
-                "retry-projects",
-                window,
-                cx,
-            ),
-            ListState::Ready if self.projects.is_empty() => {
-                sidebar_empty("No projects", cx).into_any_element()
-            }
-            ListState::Ready => self.project_rows(cx),
-        };
-        let projects = section(0, "Projects".into(), project_rows, window, cx);
-        let recents = section(1, "Recents".into(), recents, window, cx);
-        let pinned = pinned.map(|rows| section(2, "Pinned".into(), rows, window, cx));
+                            .child(
+                                focus::ring(
+                                    div()
+                                        .id(key.clone())
+                                        .role(gpui::Role::Button)
+                                        .aria_label(title)
+                                        .aria_expanded(!collapsed)
+                                        .absolute()
+                                        .top(px(2.5))
+                                        .left(px(4.))
+                                        .right(px(66.))
+                                        .h(px(25.)),
+                                    &header_focus,
+                                    px(10.),
+                                    px(2.),
+                                    cx,
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _, window, cx| {
+                                        header_focus.read(cx).handle.clone().focus(window, cx);
+                                        if i < this.collapsed.len() {
+                                            this.collapsed[i] ^= true;
+                                        } else {
+                                            this.sections[i - this.collapsed.len()].collapsed ^=
+                                                true;
+                                        }
+                                        cx.notify();
+                                    },
+                                )),
+                            )
+                            .when(i >= self.collapsed.len(), |d| {
+                                d.child(self.section_actions(i - self.collapsed.len(), window, cx))
+                            }),
+                    )
+                    .when(!collapsed, |d| d.child(div().pt(px(4.)).child(body)))
+            };
+            let project_rows = match self.projects_state {
+                ListState::Loading => sidebar_empty("Loading projects…", cx).into_any_element(),
+                ListState::Failed => load_error::<RetryProjects>(
+                    "Projects couldn't be loaded",
+                    "retry-projects",
+                    window,
+                    cx,
+                ),
+                ListState::Ready if self.projects.is_empty() => {
+                    sidebar_empty("No projects", cx).into_any_element()
+                }
+                ListState::Ready => self.project_rows(cx),
+            };
+            let projects = section(0, "Projects".into(), project_rows, window, cx);
+            let recents = section(1, "Recents".into(), recents, window, cx);
+            let pinned = pinned.map(|rows| section(2, "Pinned".into(), rows, window, cx));
             div()
                 .flex()
                 .flex_col()

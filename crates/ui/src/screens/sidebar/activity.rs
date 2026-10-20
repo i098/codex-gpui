@@ -136,18 +136,18 @@ impl HomeSidebar {
                 .collect();
             if priority.is_empty() {
                 list = list.child(match self.threads_state {
-                    ListState::Loading => sidebar_empty("Checking unread chats…", cx)
-                        .top_layer()
-                        .into_any_element(),
+                    ListState::Loading => {
+                        sidebar_empty("Checking unread chats…", cx).into_any_element()
+                    }
                     ListState::Failed => load_error::<RetryThreads>(
                         "Unread chats couldn't be loaded",
                         "retry-activity",
                         window,
                         cx,
                     ),
-                    ListState::Ready => sidebar_empty("Nothing needs attention", cx)
-                        .top_layer()
-                        .into_any_element(),
+                    ListState::Ready => {
+                        sidebar_empty("Nothing needs attention", cx).into_any_element()
+                    }
                 });
             } else {
                 list = list.child(

@@ -289,6 +289,7 @@ Mark all as read changes the existing unread state; Clear read chats removes rea
 Archive requires confirmation and uses Root's existing per-thread archive path.
 `s003::activity_archive_requires_confirmation_and_keeps_recent_chats` checks cancellation and excludes recent chats from the confirmed archive.
 The native pending-state capture selects the component state explicitly; it does not test delayed server timing.
+Empty activity labels retain their 50% opacity inside the activity layer, with the original text colour and font weight.
 The mode switch and Your dot remain outside the accepted native destinations.
 The native app does not create placeholder modes, an orbit service, or a second notification store.
 
