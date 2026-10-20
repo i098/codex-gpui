@@ -331,7 +331,8 @@ Pointer movement keeps the keyboard ring; a pointer press clears it.
 Home derives live fades from the scroll range and captures the finished-animation mask for static references.
 The project folder uses the existing runtime icon path so the mask affects its pixels.
 The capture regression checks live-state restoration, another window, a closed-window error, and the reduced-motion preference.
-The original focus-edge pixel comparison remains open; recordings and strict gates stay unchanged.
+The focused project-control crop now matches the original, including the tooltip shadow over the ring.
+The original recordings, masks and strict gates stay unchanged; remaining tooltip and rail differences are tracked separately.
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|

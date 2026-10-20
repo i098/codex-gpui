@@ -342,6 +342,10 @@ fn html(report: &[Metrics]) -> String {
 fn frozen_home_capture_restores_live_scroll_masks() -> Result<()> {
     use gpui::PlatformWindow as _;
     use ui::screens::home::FinishedScrollAnimation;
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("{info}");
+        std::process::exit(101);
+    }));
 
     let mut cx = headless(Arc::new(theme::Assets));
     cx.update(|cx| {
