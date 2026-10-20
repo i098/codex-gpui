@@ -219,6 +219,28 @@ pub enum Route {
     Archive,
 }
 
+impl Route {
+    pub fn from_url(url: &str) -> Option<Self> {
+        let base = url::Url::parse("codex-gpui://app/").ok()?;
+        let url = base.join(url).ok()?;
+        let scheduled = match (url.scheme(), url.host_str()) {
+            ("https", Some("chatgpt.com")) | ("codex-gpui", Some("app")) => {
+                url.path() == "/scheduled"
+            }
+            ("codex-gpui", Some("scheduled")) => url.path().is_empty() || url.path() == "/",
+            _ => false,
+        };
+        if !scheduled {
+            return None;
+        }
+        Some(
+            url.query_pairs()
+                .find(|(key, value)| key == "automationId" && !value.is_empty())
+                .map_or(Self::Scheduled, |(_, id)| Self::Automation(id.into_owned())),
+        )
+    }
+}
+
 /// The thread route's side panel tab.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SidePanel {
@@ -444,6 +466,7 @@ pub struct Root {
     suggestion_load: Option<Task<()>>,
     /// The Scheduled routes' sidebar, fed the host's list when the read completes.
     scheduled: Option<Entity<automations::ScheduledSidebar>>,
+    automation_detail: Option<Entity<automations::AutomationDetail>>,
     /// The Scheduled empty page: its suggestion cards start guided conversations.
     suggestions: Option<Entity<automations::AutomationsPage>>,
     cwd: String,
@@ -728,6 +751,7 @@ impl Root {
             automation_history_updates: HashSet::new(),
             suggestion_load: None,
             scheduled: None,
+            automation_detail: None,
             suggestions: None,
             cwd,
             clock: None,
@@ -1043,10 +1067,15 @@ impl Root {
         }
         self.host = host;
         self.automations = None;
+        if let Some(history) = self.run_history(cx) {
+            history.update(cx, |history, cx| history.reset(cx));
+        }
+        self.sync_automation_views(cx);
         self.load_projects(cx);
         if self.scheduled_route() {
             self.load_automations(cx);
             self.load_suggestions(cx);
+            self.load_run_history(cx);
         }
         self.refresh_git_actions(cx);
         cx.notify();
@@ -1659,7 +1688,33 @@ impl Root {
         matches!(self.state.route, Route::Scheduled | Route::Automation(_))
     }
 
+    pub fn open_url(&mut self, url: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if let Some(route) = Route::from_url(url) {
+            self.navigate(route, window, cx);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn sync_automation_views(&self, cx: &mut Context<Self>) {
+        if let Some(sidebar) = &self.scheduled {
+            sidebar.update(cx, |sidebar, cx| {
+                sidebar.set_result(self.automations.as_ref(), cx)
+            });
+        }
+        if let Some(detail) = &self.automation_detail {
+            detail.update(cx, |detail, cx| {
+                detail.set_result(self.automations.as_ref(), cx)
+            });
+        }
+    }
+
     fn load_automations(&mut self, cx: &mut Context<Self>) {
+        if !matches!(self.automations, Some(Ok(_))) {
+            self.automations = None;
+            self.sync_automation_views(cx);
+        }
         let host = self.host.clone();
         let read = cx.background_spawn(async move {
             host.fetch(&host::Request::post("list-automations", None))
@@ -1672,13 +1727,9 @@ impl Root {
                 if result.is_err() && this.scheduled_route() {
                     this.toast(Toast::danger("Failed to load automations"), cx);
                 }
-                let tasks = result
-                    .as_ref()
-                    .map_or_else(|_| Vec::new(), automations::tasks);
-                if let Some(sidebar) = &this.scheduled {
-                    sidebar.update(cx, |sidebar, cx| sidebar.set_tasks(tasks, cx));
-                }
+                this.automation_load = None;
                 this.automations = Some(result);
+                this.sync_automation_views(cx);
                 cx.notify();
             })
             .ok();
@@ -1738,10 +1789,7 @@ impl Root {
                         {
                             *stored = item;
                         }
-                        let tasks = this.tasks();
-                        if let Some(sidebar) = &this.scheduled {
-                            sidebar.update(cx, |sidebar, cx| sidebar.set_tasks(tasks, cx));
-                        }
+                        this.sync_automation_views(cx);
                         this.toast(
                             Toast::success(if status == "PAUSED" {
                                 "Successfully paused automation"
@@ -2144,6 +2192,12 @@ impl Root {
         let (can_back, can_forward) = (!self.back.is_empty(), !self.forward.is_empty());
         self.archive_page = None;
         self.mobile_page = None;
+        let filters = self
+            .scheduled
+            .as_ref()
+            .map(|sidebar| sidebar.read(cx).filters())
+            .unwrap_or_default();
+        self.automation_detail = None;
         self.page = match self.state.route.clone() {
             Route::Settings => {
                 self.load_computer_use(cx);
@@ -2188,25 +2242,34 @@ impl Root {
                 if self.automations.is_none() && self.automation_load.is_none() {
                     self.load_automations(cx);
                 }
-                let tasks = self.tasks();
-                let selected = tasks.iter().find(|t| t.id == id).cloned().map(|task| {
-                    let composer: AnyView = cx.new(|cx| Composer::automation(window, cx)).into();
-                    (task, composer)
-                });
-                let (shell, sidebar, page) = automations::shell(tasks, selected, utc_offset(), cx);
-                if let Some(history) = sidebar.read(cx).history.clone() {
-                    cx.subscribe_in(
-                        &history,
-                        window,
-                        |this, _, open: &OpenThread, window, cx| {
-                            this.navigate(Route::Thread(open.0.clone()), window, cx);
-                        },
+                let composer: AnyView = cx.new(|cx| Composer::automation(window, cx)).into();
+                let history = cx.new(|cx| automations::RunHistory::new(id.clone(), cx));
+                cx.subscribe_in(
+                    &history,
+                    window,
+                    |this, _, open: &OpenThread, window, cx| {
+                        this.navigate(Route::Thread(open.0.clone()), window, cx);
+                    },
+                )
+                .detach();
+                let detail = cx.new(|_| {
+                    automations::AutomationDetail::new(
+                        id.clone(),
+                        composer,
+                        utc_offset(),
+                        history.clone(),
                     )
-                    .detach();
-                }
+                });
+                let (shell, sidebar, _) =
+                    automations::shell(self.tasks(), Some(detail.clone().into()), utc_offset(), cx);
+                sidebar.update(cx, |sidebar, cx| {
+                    sidebar.history = Some(history);
+                    sidebar.select(Some(id), cx);
+                });
+                self.automation_detail = Some(detail);
                 self.scheduled = Some(sidebar);
                 self.sync_starting(cx);
-                self.suggestions = page;
+                self.suggestions = None;
                 Some(shell)
             }
             Route::Archive => {
@@ -2234,10 +2297,12 @@ impl Root {
             Route::Home | Route::Thread(_) => None,
         };
         if let Some(sidebar) = &self.scheduled {
+            sidebar.update(cx, |sidebar, cx| sidebar.set_filters(filters, cx));
             for id in self.automation_updates.keys() {
                 sidebar.update(cx, |sidebar, cx| sidebar.set_pending(id, true, cx));
             }
         }
+        self.sync_automation_views(cx);
         if self.scheduled_route() {
             self.load_suggestions(cx);
             self.load_run_history(cx);
@@ -2336,7 +2401,7 @@ impl Root {
         let editing = window
             .context_stack()
             .iter()
-            .any(|context| context.contains("Composer"));
+            .any(|context| context.contains("Composer") || context.contains("TextInput"));
         if !printable
             || keystroke.modifiers.platform
             || keystroke.modifiers.control
@@ -5479,6 +5544,9 @@ impl Render for Root {
             }))
             .on_action(cx.listener(|this, _: &OpenScheduled, window, cx| {
                 this.navigate(Route::Scheduled, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &automations::ReloadTasks, _, cx| {
+                this.load_automations(cx);
             }))
             .on_action(
                 cx.listener(|this, a: &automations::OpenAutomation, window, cx| {

@@ -19,7 +19,7 @@ fn main() {
         }
         return;
     }
-    let state = State::load();
+    let mut state = State::load();
     if std::env::args().nth(1).as_deref() == Some("/diff") {
         let path = std::env::args_os().nth(2).unwrap_or_else(|| {
             eprintln!("usage: codex-gpui /diff <patch-file>");
@@ -65,6 +65,12 @@ fn main() {
             });
         return;
     }
+    if let Some(route) = std::env::args()
+        .skip(1)
+        .find_map(|url| app::Route::from_url(&url))
+    {
+        state.route = route;
+    }
     // Project new threads start in: `$CODEX_GPUI_CWD`, else the launch directory.
     let cwd = std::env::var_os("CODEX_GPUI_CWD")
         .map(PathBuf::from)
@@ -78,6 +84,12 @@ fn main() {
             eprintln!("codex-gpui: cannot reopen the window: {error:#}");
         }
     });
+    let (url_sender, url_receiver) = async_channel::unbounded();
+    application.on_open_urls(move |urls| {
+        for url in urls {
+            url_sender.try_send(url).ok();
+        }
+    });
     application.run(move |cx| {
         theme::load_fonts(cx);
         cx.set_global(state.theme.theme(cx.window_appearance()));
@@ -88,6 +100,24 @@ fn main() {
             std::process::exit(1)
         });
         app::qa::monitor(handle, cx);
+        cx.spawn(async move |cx| {
+            while let Ok(url) = url_receiver.recv().await {
+                if let Ok(true) =
+                    handle.update(cx, |root, window, cx| root.open_url(&url, window, cx))
+                {
+                    if let Err(error) = cx.update(|cx| {
+                        app::windows::show(
+                            handle.into(),
+                            app::windows::Presentation::Foreground,
+                            cx,
+                        )
+                    }) {
+                        eprintln!("codex-gpui: cannot show the scheduled task window: {error:#}");
+                    }
+                }
+            }
+        })
+        .detach();
         if !app::qa::ENABLED {
             cx.activate(true);
         }

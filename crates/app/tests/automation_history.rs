@@ -5,7 +5,7 @@ mod common;
 use anyhow::Result;
 use app::host::LocalHost;
 use common::*;
-use gpui::Focusable as _;
+use gpui::{Focusable as _, KeyDownEvent, KeyUpEvent, Keystroke, PlatformInput};
 use rusqlite::Connection;
 use serde_json::json;
 use std::{fs, sync::Arc};
@@ -171,6 +171,26 @@ fn previous_runs_confirm_cancel_and_persist_partial_results() -> Result<()> {
     if let Some(dir) = &shots {
         fx.shot()?.save(dir.join("native-partial.png"))?;
     }
+    history_keys(&mut fx, "tab")?;
+    let keystroke = Keystroke::parse("enter")?;
+    fx.input(PlatformInput::KeyDown(KeyDownEvent {
+        keystroke: keystroke.clone(),
+        is_held: false,
+        prefer_character_input: false,
+    }))?;
+    fx.input(PlatformInput::KeyUp(KeyUpEvent { keystroke }))?;
+    fx.wait_thread(EXPLAIN)?;
+    if let Some(dir) = &shots {
+        fx.shot()?.save(dir.join("native-run-chat.png"))?;
+    }
+    fx.action(Box::new(ui::GoBack))?;
+    fx.wait("return to stored previous runs", |fx| {
+        fx.route() == app::Route::Automation("owned-review".into())
+            && fx.read(|root, cx| {
+                root.run_history(cx)
+                    .is_some_and(|h| h.read(cx).items().len() == 4)
+            })
+    })?;
     println!(
         "Owned stored results: Cancel and Escape write nothing; read failure preserves unread state; read success persists; archive skips running/archived and retains the refused run."
     );

@@ -43,6 +43,7 @@ impl Root {
         };
         let id = history.read(cx).id.clone();
         let host = self.host.clone();
+        let expected_host = host.clone();
         let read = cx.background_spawn(async move {
             let response = host.fetch(&host::Request::post(
                 "inbox-items",
@@ -59,9 +60,14 @@ impl Root {
                     .collect(),
             )
         });
-        cx.spawn(async move |_, cx| {
+        cx.spawn(async move |this, cx| {
             let result = read.await.map_err(|error| error.to_string());
-            history.update(cx, |history, cx| history.set_items(result, cx));
+            this.update(cx, |this, cx| {
+                if Arc::ptr_eq(&this.host, &expected_host) {
+                    history.update(cx, |history, cx| history.set_items(result, cx));
+                }
+            })
+            .ok();
         })
         .detach();
     }

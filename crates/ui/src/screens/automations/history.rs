@@ -55,6 +55,13 @@ impl RunHistory {
         &self.items
     }
 
+    pub fn reset(&mut self, cx: &mut Context<Self>) {
+        self.items.clear();
+        self.loading = true;
+        self.error = false;
+        cx.notify();
+    }
+
     pub fn set_items(&mut self, result: Result<Vec<Value>, String>, cx: &mut Context<Self>) {
         self.loading = false;
         self.error = result.is_err();
@@ -105,35 +112,41 @@ impl RunHistory {
 }
 
 impl Render for RunHistory {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = cx.theme();
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.theme().clone();
+        let actions_focus = focus::handle("previous-run-actions", 0, window, cx);
+        self.focus = actions_focus.read(cx).handle.clone();
         let rows = self
             .items
             .iter()
             .enumerate()
             .map(|(index, run)| {
                 let id = run["threadId"].as_str().map(str::to_owned);
-                div()
+                let row_focus = focus::handle(
+                    SharedString::from(format!("previous-run-{}", id.as_deref().unwrap_or(""))),
+                    0,
+                    window,
+                    cx,
+                );
+                let title = run["title"].as_str().unwrap_or("Scheduled run").to_owned();
+                let row = div()
                     .id(("previous-run", index))
                     .role(Role::Button)
+                    .aria_label(title.clone())
+                    .relative()
                     .py(px(10.))
                     .px(px(12.))
                     .rounded(px(10.))
                     .hover(|s| s.bg(t.list_hover))
                     .flex()
                     .items_center()
-                    .child(text(
-                        run["title"].as_str().unwrap_or("Scheduled run").to_owned(),
-                        14.,
-                        20.,
-                        430.,
-                        t.text,
-                    ))
+                    .child(text(title, 14., 20., 430., t.text))
                     .on_click(cx.listener(move |_, _, _, cx| {
                         if let Some(id) = &id {
                             cx.emit(OpenThread(id.clone()));
                         }
-                    }))
+                    }));
+                focus::ring(row, &row_focus, px(10.), px(2.), cx)
             })
             .collect::<Vec<_>>();
         div()
@@ -150,15 +163,14 @@ impl Render for RunHistory {
                     .child(
                         div()
                             .relative()
-                            .child(
+                            .child(focus::ring(
                                 icon_button(
                                     "previous-run-actions",
                                     icon("thread-chat-actions", 16., t.text_secondary),
-                                    t,
+                                    &t,
                                 )
                                 .role(Role::Button)
                                 .aria_label("Previous run actions")
-                                .track_focus(&self.focus)
                                 .on_key_down(cx.listener(
                                     |this, event: &KeyDownEvent, window, cx| {
                                         match event.keystroke.key.as_str() {
@@ -190,7 +202,11 @@ impl Render for RunHistory {
                                         cx.notify();
                                     },
                                 )),
-                            )
+                                &actions_focus,
+                                px(8.),
+                                px(2.),
+                                cx,
+                            ))
                             .when(self.menu, |d| {
                                 d.child(deferred(
                                     anchored().anchor(Anchor::TopRight).child(
