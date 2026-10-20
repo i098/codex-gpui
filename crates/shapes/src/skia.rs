@@ -810,6 +810,7 @@ fn blend(mode: u8, c: u8, a: u8, d: u8, m: u8) -> u8 {
 
 /// Coverage and blend mode of up to two blits per pixel: `[m1, mode1, m2, mode2]`.
 pub(crate) type Blits = [u8; 4];
+type InverseBlitKey = (u8, bool, [[u8; 3]; 5]);
 
 /// A probe paint: unpremultiplied rgb and alpha over an opaque rgb background.
 #[derive(Clone, Copy)]
@@ -1072,20 +1073,31 @@ fn raster(
                 let blits = match (fixed, last) {
                     (Some(mode), _) => [m, mode, 0, MASK],
                     (None, Some((prev, b))) if prev == buf => b,
-                    (None, _) => solve(&probes, px, m, modes).unwrap_or_else(|| {
-                        // AAA may split a translucent paint's edge px into other blits than the
-                        // opaque probe's: one `blitAntiH` (as under an AA clip, which forces
-                        // AAA's run blitter) of the coverage the translucent white probe shows,
-                        // the nearest to the opaque one.
-                        let v = px[px.len() - 1][0];
-                        let fit = |c: &u8| blend(MASK, 255, alpha, 0, *c) == v;
-                        let rle = (0..=255).filter(fit).min_by_key(|c| c.abs_diff(m));
-                        [
-                            if alpha == 255 { m } else { rle.unwrap_or(m) },
-                            MASK,
-                            0,
-                            MASK,
-                        ]
+                    (None, _) => INVERSE_BLITS.with_borrow_mut(|cache| {
+                        let key = (alpha, black, buf);
+                        if let Some(&blits) = cache.get(&key) {
+                            return blits;
+                        }
+                        let blits = solve(&probes, px, m, modes).unwrap_or_else(|| {
+                            // AAA may split a translucent paint's edge px into other blits than the
+                            // opaque probe's: one `blitAntiH` (as under an AA clip, which forces
+                            // AAA's run blitter) of the coverage the translucent white probe shows,
+                            // the nearest to the opaque one.
+                            let v = px[px.len() - 1][0];
+                            let fit = |c: &u8| blend(MASK, 255, alpha, 0, *c) == v;
+                            let rle = (0..=255).filter(fit).min_by_key(|c| c.abs_diff(m));
+                            [
+                                if alpha == 255 { m } else { rle.unwrap_or(m) },
+                                MASK,
+                                0,
+                                MASK,
+                            ]
+                        });
+                        if cache.len() >= CACHE_MAX {
+                            cache.clear();
+                        }
+                        cache.insert(key, blits);
+                        blits
                     }),
                 };
                 last = Some((buf, blits));
@@ -1113,6 +1125,8 @@ thread_local! {
     /// and clear for every draw.
     /// ponytail: kept for the thread's life, a few per tile size; cap them if sizes multiply.
     static SURFACES: RefCell<HashMap<(i32, i32), Vec<Surface>>> = Default::default();
+    // These probes depend on alpha and black; equal responses have position-independent blits.
+    static INVERSE_BLITS: RefCell<HashMap<InverseBlitKey, Blits>> = Default::default();
 }
 
 /// [`tile_pixels`] for the layer px `[x0, y0, x1, y1]` of the tile only, rows packed, drawn on
@@ -2234,7 +2248,6 @@ mod tests {
     #[test]
     fn decoded_image_group_preserves_mips_and_alpha() -> anyhow::Result<()> {
         use gpui::{AppContext, IntoElement, ParentElement, Render, Styled};
-
         std::panic::set_hook(Box::new(|info| {
             eprintln!("{info}");
             std::process::exit(101);
@@ -2294,6 +2307,45 @@ mod tests {
         let image = cx.capture_screenshot(window.into())?;
         assert_eq!(image.get_pixel(8, 8).0, [90, 129, 191, 255]);
         Ok(())
+    }
+
+    #[test]
+    fn inverse_blits_preserve_pixels_across_paint_history() {
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        let layer = Layer {
+            origin: [0, 0],
+            window: [4, 4],
+            tile: [TILE, TILE],
+            composited: false,
+            device: None,
+        };
+        let draw = |canvas: &Canvas, color: Color4f| {
+            let paint = fill_paint(color);
+            canvas.draw_rect(Rect::new(0.3, 0.6, 2.8, 2.7), &paint);
+            canvas.draw_rect(Rect::new(1.2, 1.1, 3.7, 3.5), &paint);
+        };
+        let cases = [
+            (63, false),
+            (127, false),
+            (255, false),
+            (63, true),
+            (127, true),
+            (255, true),
+        ];
+        let expected = cases.map(|(alpha, black)| {
+            INVERSE_BLITS.with_borrow_mut(HashMap::clear);
+            raster([0, 0, 4, 4], layer, alpha, black, false, &[], &draw)
+        });
+        for (index, (alpha, black)) in cases.into_iter().enumerate().rev() {
+            assert_eq!(
+                raster([0, 0, 4, 4], layer, alpha, black, false, &[], &draw),
+                expected[index],
+                "alpha={alpha}, black={black}"
+            );
+        }
     }
 
     #[test]
