@@ -9,11 +9,13 @@ import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import signal
 import socket
 import subprocess
 import sys
 import time
+import tempfile
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -124,60 +126,71 @@ def worker(args):
         raise RuntimeError("the capture worker requires macOS")
     output = args.out.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    pin_assets(args.webview)
     scratch = ROOT.parent
     env = dict(os.environ)
-    env.pop("R1_SF_FONTS", None)
     toolchain = "/tmp/cgx-mac/rustup/toolchains/1.98.1-aarch64-apple-darwin/bin"
-    env.update(PATH=f"{scratch}/bin:{toolchain}:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+    env.update(PATH=f"{toolchain}:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
                CARGO_HOME="/tmp/cgx-mac/cargo", CARGO_INCREMENTAL="0",
-               CARGO_TARGET_DIR=str(scratch / "target"), TMPDIR=str(scratch / "tmp"),
-               R1_OFFLINE="1", R1_WEBVIEW=str(args.webview),
-               MOCK_FIXTURES=str(ROOT / "fixtures"), MOCK_LOG=str(output / "requests.log"))
+               CARGO_TARGET_DIR=str(scratch / "target"), TMPDIR=str(scratch / "tmp"))
     (scratch / "tmp").mkdir()
-    (scratch / "bin").mkdir()
-    shim = scratch / "bin/ssh"
-    shim.write_text("#!/bin/sh\nexec /opt/homebrew/bin/node " + shlex.quote(str(ROOT / "tools/route1/linux/mock-app-server.mjs")) + "\n")
-    shim.chmod(0o700)
     run(["cp", "-cR", args.warm_target, str(scratch / "target")])
     for source in ROOT.rglob("*"):
         if source.is_file() and (source.suffix == ".rs" or source.name == "Cargo.toml"):
             source.touch()
-    port, browser_port = free_port(), free_port()
-    env.update(R1_PORT=str(port), R1_SERVER=f"http://127.0.0.1:{port}",
-               R1_CDP=f"http://127.0.0.1:{browser_port}")
-    chrome = [
-        "/tmp/cgx-mac/chrome-headless-shell-mac-arm64/chrome-headless-shell",
-        "--headless", "--hide-scrollbars", "--force-device-scale-factor=2",
-        "--num-raster-threads=1", "--disable-checker-imaging", "--disable-partial-raster",
-        f"--remote-debugging-port={browser_port}", f"--user-data-dir={scratch}/browser",
-        "about:blank",
-    ]
-    with background(chrome, env, output / "browser.log") as browser_process, \
-            background(["node", "tools/route1/server.mjs"], env, output / "server.log") as server:
-        browser = json.loads(ready(browser_process, env["R1_CDP"] + "/json/version"))
-        if browser["Browser"] != "HeadlessChrome/155.0.8059.79" or "a49e2e3d4addfd84e765b52afe230bedb81096db" not in browser["WebKit-Version"]:
-            raise RuntimeError(f"unpinned browser: {browser}")
-        ready(server, env["R1_SERVER"] + "/index.html")
-        (output / "provenance.json").write_text(json.dumps({
-            "surface": args.surface, "state": args.state, "theme": args.theme,
-            "size": args.size, "browser": browser, "browser_command": chrome,
-            "asset_sha256": PINS, "fonts": "macOS native; R1_SF_FONTS unset",
-            "warm_target": args.warm_target,
-        }, indent=2) + "\n")
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-            executable = pool.submit(build, env, output)
-            original = pool.submit(capture_original, args, env, output)
-            original.result()
-            binary = executable.result()
-        env.update(CGX_PROOF_SURFACE=args.surface, CGX_PROOF_STATE=args.state,
-                   CGX_PROOF_THEME=args.theme, CGX_PROOF_WIDTH=str(args.width),
-                   CGX_PROOF_HEIGHT=str(args.height), CGX_PROOF_OUT=str(output))
-        with (output / "native.log").open("w") as native_log:
-            result = subprocess.run([binary, "--ignored", "--exact", "capture_cell", "--nocapture"],
-                                    cwd=ROOT, env=env, stdout=native_log,
-                                    stderr=subprocess.STDOUT, timeout=180)
-        return result.returncode
+    binary = build(env, output)
+    for _ in range(300):
+        if (output / "original-ready").exists():
+            break
+        time.sleep(1)
+    else:
+        raise RuntimeError("the original capture did not return")
+    if (output / "original-error.txt").exists():
+        raise RuntimeError((output / "original-error.txt").read_text())
+    env.update(CGX_PROOF_SURFACE=args.surface, CGX_PROOF_STATE=args.state,
+               CGX_PROOF_THEME=args.theme, CGX_PROOF_WIDTH=str(args.width),
+               CGX_PROOF_HEIGHT=str(args.height), CGX_PROOF_OUT=str(output))
+    with (output / "native.log").open("w") as native_log:
+        result = subprocess.run([binary, "--ignored", "--exact", "capture_cell", "--nocapture"],
+                                cwd=ROOT, env=env, stdout=native_log,
+                                stderr=subprocess.STDOUT, timeout=180)
+    return result.returncode
+
+
+def original_through_tunnel(args, ssh):
+    env = dict(os.environ)
+    env.pop("R1_SF_FONTS", None)
+    server_port, cdp_port = free_port(), free_port()
+    with tempfile.TemporaryDirectory(prefix="route1-", dir=args.out) as temporary:
+        local = Path(temporary)
+        shutil.copytree(ROOT / "tools/route1", local / "tools/route1")
+        (local / "fixtures").symlink_to(ROOT / "fixtures", target_is_directory=True)
+        (local / "tools/capture").symlink_to(ROOT / "tools/capture", target_is_directory=True)
+        (local / "bin").mkdir()
+        shim = local / "bin/ssh"
+        shim.write_text("#!/bin/sh\nexec node " + shlex.quote(str(ROOT / "tools/route1/linux/mock-app-server.mjs")) + "\n")
+        shim.chmod(0o700)
+        env.update(PATH=f"{local}/bin:{env['PATH']}", R1_OFFLINE="1",
+                   R1_WEBVIEW=str(args.webview.resolve()), R1_PORT=str(server_port),
+                   R1_SERVER=f"http://127.0.0.1:{server_port}", R1_CDP=f"http://127.0.0.1:{cdp_port}",
+                   MOCK_FIXTURES=str(ROOT / "fixtures"), MOCK_LOG=str(args.out / "requests.log"))
+        tunnel_command = ssh[:-1] + [
+            "-o", "ExitOnForwardFailure=yes", "-N",
+            "-L", f"{cdp_port}:127.0.0.1:9467",
+            "-R", f"{server_port}:127.0.0.1:{server_port}", args.mac,
+        ]
+        with background(["node", str(local / "tools/route1/server.mjs")], env, args.out / "server.log") as server, \
+                background(tunnel_command, env, args.out / "tunnel.log") as tunnel:
+            ready(server, env["R1_SERVER"] + "/index.html")
+            browser = json.loads(ready(tunnel, env["R1_CDP"] + "/json/version"))
+            if browser["Browser"] != "HeadlessChrome/155.0.8059.79" or "a49e2e3d4addfd84e765b52afe230bedb81096db" not in browser["WebKit-Version"]:
+                raise RuntimeError(f"unpinned browser: {browser}")
+            (args.out / "provenance.json").write_text(json.dumps({
+                "surface": args.surface, "state": args.state, "theme": args.theme,
+                "size": args.size, "browser": browser, "asset_sha256": PINS,
+                "fonts": "macOS native; R1_SF_FONTS unset", "warm_target": args.warm_target,
+                "browser_ownership": "fresh disposeOnDetach context on the shared Mac browser",
+            }, indent=2) + "\n")
+            capture_original(args, env, args.out)
 
 
 def dispatch(args):
@@ -196,13 +209,23 @@ def dispatch(args):
     retrieved = False
     try:
         run(transfer + ["--exclude=.git", "--exclude=target", str(ROOT) + "/", f"{args.mac}:{scratch}/repo/"])
-        run(transfer + [str(args.webview) + "/", f"{args.mac}:{scratch}/webview/"])
         command = ["/usr/bin/python3", f"{scratch}/repo/tools/parity/proof.py", args.surface,
                    args.state, "--worker", "--theme", args.theme, "--size", args.size,
-                   "--out", f"{scratch}/output", "--warm-target", args.warm_target,
-                   "--webview", f"{scratch}/webview"]
-        with (args.out / "worker.log").open("w") as log:
-            result = subprocess.run(ssh + [shlex.join(command)], stdout=log, stderr=subprocess.STDOUT, timeout=1800)
+                   "--out", f"{scratch}/output", "--warm-target", args.warm_target]
+        def native_run():
+            with (args.out / "worker.log").open("w") as log:
+                return subprocess.run(ssh + [shlex.join(command)], stdout=log, stderr=subprocess.STDOUT, timeout=1800)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            native = pool.submit(native_run)
+            try:
+                original_through_tunnel(args, ssh)
+            except Exception as error:
+                (args.out / "original-error.txt").write_text(str(error) + "\n")
+            run(transfer + ["--include=refs/", "--include=refs/**",
+                            "--include=original-error.txt", "--exclude=*", str(args.out) + "/",
+                            f"{args.mac}:{scratch}/output/"])
+            run(ssh + ["touch " + shlex.quote(f"{scratch}/output/original-ready")])
+            result = native.result()
         run(transfer + [f"{args.mac}:{scratch}/output/", str(args.out) + "/"])
         retrieved = True
         (args.out / "source-head.txt").write_text(head + "\n")

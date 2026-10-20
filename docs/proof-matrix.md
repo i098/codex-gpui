@@ -27,14 +27,15 @@ python3 tools/parity/proof.py settings configuration \
   The path above is an example, not a cache grant.
 - Keep SSH access through the `mac` alias, or set `--mac`.
 - Keep the pinned original webview at `/tmp/cgx/asar-x/webview`, or set `--webview` to its Linux path.
-- Permit a task-owned Mac headless shell with a temporary profile.
-  The command never attaches to normal tabs or restarts a shared browser.
+- Keep the validated shared Mac headless shell available on port 9467.
+  The command uses a fresh isolated context through an owned SSH tunnel.
+  It never starts, stops, or restarts that browser.
 - Install no dependencies for this command.
-  It uses Python 3, rsync, the existing Mac Node executable, the installed Rust toolchain, and cached Cargo dependencies.
+  It uses Python 3, Node, rsync, the installed Mac Rust toolchain, and cached Cargo dependencies.
 - Choose a new output directory outside the checkout.
 
 The browser must report `HeadlessChrome/155.0.8059.79` and WebKit commit `a49e2e3d4addfd84e765b52afe230bedb81096db`.
-The command starts its own shell with the pinned flags from `tools/route1/README.md`.
+The shared shell must use the pinned flags from `tools/route1/README.md`.
 The command checks the seven retained entry-script and style hashes before capture.
 It uses native Mac fonts with `R1_SF_FONTS` unset.
 It preserves the existing route1 and Root capture clocks and fixtures.
@@ -81,9 +82,11 @@ A capture or build failure also returns nonzero; inspect the logs if no report e
 Never treat missing evidence as a passing cell.
 
 The command creates a private Mac directory under `/tmp/cgx-proof.*`.
-It copies the source and original assets there and makes an APFS clone of the handed-off target.
-It builds while the original capture runs, then renders Root and applies the gate.
-Only its own fixture server, browser context, and headless shell stop at completion.
+It copies the native source there and makes an APFS clone of the handed-off target.
+The fixture server and CDP client run in owned Linux scratch while the browser renders on the Mac.
+The native build runs at the same time as the original capture.
+The command transfers the fresh original and its text specification, then captures Root and applies the gate on the Mac.
+Only its own fixture server, browser context, and SSH tunnel stop at completion.
 The Linux caller retrieves the proof and removes the private Mac directory.
 If retrieval fails, the command retains the Mac directory and prints its path.
 Retrieve that evidence before removing the directory.
