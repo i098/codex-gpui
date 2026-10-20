@@ -59,7 +59,7 @@ use ui::screens::sidebar::{
 };
 use ui::screens::terminal::{OpenTerminalItem, StopBackgroundTerminals, Xterm};
 use ui::screens::thread::view::{
-    Clock, EditMessage, ForkThread, GitAction, RevertTurn, ThreadView,
+    Clock, EditMessage, ForkThread, GitAction, History, RetryHistory, RevertTurn, ThreadView,
 };
 use ui::screens::{automations, mobile};
 use ui::toast::{Toast, Toaster};
@@ -342,6 +342,7 @@ pub struct Root {
     /// The queued submission `Edit message` took back into the composer, until it is sent.
     queue_edit: Option<QueueEdit>,
     thread: Option<Entity<ThreadView>>,
+    history: Option<(String, Entity<History>)>,
     diff: Option<Entity<DiffPanel>>,
     /// The file viewer of [`SidePanel::File`]; cleared with the thread.
     file: Option<Entity<FileView>>,
@@ -637,6 +638,7 @@ impl Root {
             thread_composer,
             queue_edit: None,
             thread: None,
+            history: None,
             diff: None,
             file: None,
             split: None,
@@ -899,6 +901,10 @@ impl Root {
     /// The open thread's view.
     pub fn thread(&self) -> Option<&Entity<ThreadView>> {
         self.thread.as_ref()
+    }
+
+    pub fn history(&self) -> Option<&Entity<History>> {
+        self.history.as_ref().map(|(_, view)| view)
     }
 
     /// No account: the sign-in view replaces the window.
@@ -2034,6 +2040,7 @@ impl Root {
         }
     }
 
+
     /// HC-033: a printable key (no ⌘/⌃, not Space) typed outside an editable, with no
     /// dialog, menu or popover open, goes to the route's composer and focuses it.
     /// Content ancestors can hold plain focus handles without being popovers.
@@ -2711,23 +2718,55 @@ impl Root {
     }
 
     /// `thread/read` with turns, then shows it if the route still points at it.
-    fn load_thread(&self, id: String, window: &Window, cx: &mut Context<Self>) {
+    fn load_thread(
+        &mut self,
+        id: String,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<History> {
+        if let Some((loading, view)) = &self.history
+            && loading == &id
+        {
+            return view.clone();
+        }
+        let view = cx.new(|_| History::loading());
+        self.history = Some((id.clone(), view.clone()));
+        cx.subscribe_in(&view, window, |this, _, _: &RetryHistory, window, cx| {
+            this.history = None;
+            this.sync(window, cx);
+        })
+        .detach();
         let bridge = self.bridge.clone();
+        let loading_view = view.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            let read = bridge.thread_read(&id, true).await?;
+            let result = bridge.thread_read(&id, true).await;
             this.update_in(cx, |this, window, cx| {
-                if this.state.route == Route::Thread(id) {
-                    this.show_thread(read.thread, window, cx);
+                if this.state.route != Route::Thread(id)
+                    || !this
+                        .history
+                        .as_ref()
+                        .is_some_and(|(_, current)| current == &loading_view)
+                {
+                    return;
+                }
+                match result {
+                    Ok(read) => this.show_thread(read.thread, window, cx),
+                    Err(error) => {
+                        eprintln!("codex-gpui: thread/read: {error:#}");
+                        loading_view.update(cx, |view, cx| view.fail(format!("{error:#}"), cx));
+                    }
                 }
             })
         });
         log_err(task, cx);
+        view
     }
 
     fn show_thread(&mut self, thread: Thread, window: &mut Window, cx: &mut Context<Self>) {
         if self.signed_out() {
             return;
         }
+        self.history = None;
         let running = thread
             .turns
             .iter()

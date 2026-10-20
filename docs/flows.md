@@ -31,7 +31,7 @@ The rows were not clicked again on the original through `tools/route1`: its `ser
 | 14.1 Left rail | 12 | 4 | 1 | 7 |
 | 14.2 Sidebar | 23 | 12 | 4 | 7 |
 | 14.3 Home | 21 | 10 | 3 | 8 |
-| 14.4 Thread view | 20 | 6 | 3 | 11 |
+| 14.4 Thread view | 20 | 11 | 2 | 7 |
 | 14.5 Composer | 20 | 6 | 5 | 9 |
 | 14.6 Diff view | 20 | 14 | 5 | 1 |
 | 14.7 Settings, login and onboarding | 20 | 7 | 8 | 5 |
@@ -365,9 +365,9 @@ The original recordings, masks and strict gates stay unchanged; remaining toolti
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Open `/local/:conversationId` | entry | `thread/resume`, turns render, scroll to bottom. | `thread/read` with turns (resume on the first send); parity: see `parity_thread`. | PASS (`thread_row_opens_thread`, `parity_thread`) |
-| 2 | History loading | loading | `Loading task…`. | The main panel is empty while `thread/read` runs. | NOT WIRED (`crates/ui/src/thread.rs`: no loading view; `crates/app/src/lib.rs` `sync` shows `EmptyMain`) |
-| 3 | History failure | error | `Couldn't load messages` + `Retry`. | The error is logged; the panel stays empty. | FAIL (`crates/app/src/lib.rs` `load_thread` only logs; no error view in `crates/ui/src/thread.rs`) |
-| 4 | Turn render failure | error | `This turn couldn't render`. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
+| 2 | History loading | loading | `Loading task…`. | A loading view remains visible during `thread/read`. The composer stays unmounted until the selected history loads, so hidden bindings cannot send or approve in another chat. | PASS (`thread_recovery`: native loading capture and hidden-composer action regression) |
+| 3 | History failure | error | `Couldn't load messages` + `Retry`. | The warning retains the source error. `Retry` reads the same thread again. A late response cannot replace another route. | PASS (`thread_recovery`: pointer retry and route change) |
+| 4 | Turn render failure | error | `This turn couldn't render`. | A failed turn build leaves other turns visible. `Try again` builds that turn from the latest data and retains its source error on another failure. | PASS (`thread_recovery`: render failure and pointer retry) |
 | 5 | Streaming agent message | loading | Text grows by deltas; new segments fade over 700 ms; `Working` shimmer. | New glyphs use the recorded adaptive fade. Later deltas do not restart older glyphs. Reduced motion shows the end state immediately. Shimmer belongs to S5. | PASS (`submit_enter_starts_thread`, `stream_fade`) |
 | 6 | Reasoning item | click | Toggles `Thought for {elapsed}`. | No handler. | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 7 | Command card | click | Expands output; copy buttons. | No handler. | NOT WIRED (`crates/ui/src/thread.rs`) |
@@ -380,8 +380,8 @@ The original recordings, masks and strict gates stay unchanged; remaining toolti
 | 14 | `⌘⇧A` | shortcut | Archives the chat. | `ArchiveChat`: `thread/archive`, the row leaves Recents, the route goes to Home. | PASS (`archive_chat`) |
 | 15 | `⌘⌥R` | shortcut | Rename dialog. | — | NOT WIRED (`crates/ui`: no rename dialog) |
 | 16 | Approval card | click | Approve, Allow similar, Allow all edits, Deny. | `Root::on_event` keeps each pending request by its request id and thread. The open thread shows its oldest request. Command, file-change, permission, user-input, standard MCP elicitation, and supported dynamic-tool forms use this queue. Responses retain the displayed card's identity. Explicit resolution removes requests without answering them. Turn completion removes only turn-bound requests. | PASS (`approval_queue.rs`: command/file-change queue order, withdrawal, thread isolation and turn end; non-command release gates remain open below) |
-| 17 | Stream error | error | `Reconnecting {progress}`. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
-| 18 | Usage limit | error | Usage limit banner. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
+| 17 | Stream error | error | `Reconnecting {progress}`. | Thread-bound `error` notifications show reconnect progress or a busy notice for `serverOverloaded` and HTTP 429 stream disconnects. Successful stream activity clears retry notices. | PASS (`thread_recovery`: thread isolation, progress, busy state and recovery) |
+| 18 | Usage limit | error | Usage limit banner. | `usageLimitExceeded` shows the usage-limit notice. The source error remains available in the details. Completion does not discard a terminal error. | PASS (`thread_recovery`: usage-limit and terminal-error retention) |
 | 19 | Focus ring on cards | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 20 | Resize | resize | The side panel yields width before the chat column. | `panel_width` keeps 320 px for the chat; no flow checks the 3 widths with the panel open. | FAIL (no flow; `crates/ui/src/diff.rs` `panel_width` assumes the sidebar open) |
 
@@ -406,6 +406,11 @@ The icon rasterizes during paint in the active compositor layer; the footer reco
 MCP responses use `action`, optional empty `content`, and the selected `_meta.persist`; they never use a command-approval `decision`.
 The host retains the disclosure choice only after an accepted response enters the bridge.
 Run `cargo test -p app --test computer_use_approvals`; the native replay and captures require macOS.
+
+The native recovery replay runs with `cargo test -p app --test thread_recovery -- --test-threads=1`.
+It exercises Root, ThreadView, the replayed JSON-RPC bridge and the Metal renderer on macOS.
+The original history-failure surface was captured at 1280x832 and scale 2.
+The remaining original recovery captures and appearance approval remain pending.
 
 MO-36 uses `refs/interactions/ms4.json`, recorded with the original CSS classes in an isolated route1 Chrome context.
 The recording appends synthetic markdown spans and seeks their animations; it does not measure live model segmentation.

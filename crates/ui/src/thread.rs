@@ -50,8 +50,12 @@ mod items;
 mod markdown;
 #[path = "thread/menu.rs"]
 pub(crate) mod menu;
+#[path = "thread/recovery.rs"]
+mod recovery;
 #[path = "thread/select.rs"]
 mod select;
+
+pub use recovery::{History, RetryHistory};
 
 use actions::action_row;
 pub use actions::{EditMessage, ForkThread, RevertTurn};
@@ -128,6 +132,8 @@ pub struct ThreadView {
     terminal_item: Option<String>,
     pub terminals_stopping: bool,
     turns: Vec<Turn>,
+    render_errors: RefCell<HashMap<String, String>>,
+    stream_errors: HashMap<String, bridge::types::ErrorNotification>,
     clock: Clock,
     composer: AnyView,
     embedded: bool,
@@ -580,6 +586,8 @@ impl ThreadView {
             summary_open: false,
             clip_right: false,
             turns: thread.turns,
+            render_errors: RefCell::default(),
+            stream_errors: HashMap::new(),
             clock,
             composer,
             embedded: false,
@@ -1416,9 +1424,18 @@ impl ThreadView {
                 let Ok(n) = serde_json::from_value::<TurnNotification>(params.clone()) else {
                     return;
                 };
+                if method == "turn/started"
+                    || self
+                        .stream_errors
+                        .get(&n.turn.id)
+                        .is_some_and(|e| e.will_retry)
+                {
+                    self.stream_errors.remove(&n.turn.id);
+                }
                 match self.turns.iter_mut().find(|t| t.id == n.turn.id) {
                     Some(turn) => {
                         turn.status = n.turn.status;
+                        turn.started_at = n.turn.started_at.or(turn.started_at);
                         turn.completed_at = n.turn.completed_at;
                         turn.duration_ms = n.turn.duration_ms;
                         turn.error = n.turn.error;
@@ -1498,6 +1515,13 @@ impl ThreadView {
                     }
                     None => turn.items.push(n.item),
                 }
+                if self
+                    .stream_errors
+                    .get(&n.turn_id)
+                    .is_some_and(|error| error.will_retry)
+                {
+                    self.stream_errors.remove(&n.turn_id);
+                }
             }
             "item/mcpToolCall/progress" => {
                 let Some(item_id) = params["itemId"].as_str() else {
@@ -1545,6 +1569,21 @@ impl ThreadView {
                     }) => aggregated_output.get_or_insert_default().push_str(&n.delta),
                     _ => {}
                 }
+                if self
+                    .stream_errors
+                    .get(&n.turn_id)
+                    .is_some_and(|error| error.will_retry)
+                {
+                    self.stream_errors.remove(&n.turn_id);
+                }
+            }
+            "error" => {
+                let Ok(error) =
+                    serde_json::from_value::<bridge::types::ErrorNotification>(params.clone())
+                else {
+                    return;
+                };
+                self.stream_errors.insert(error.turn_id.clone(), error);
             }
             _ => return,
         }
@@ -1909,7 +1948,36 @@ impl Render for ThreadView {
                     .filter(|&&(top, h)| far(top + offset, h, view));
                 match stand_in {
                     Some(&(_, h)) => div().h(h),
-                    None => self.turn(turn, i + 1 == n, window, &t, cx),
+                    None => {
+                        let errors = self.render_errors.borrow();
+                        if let Some(error) = errors.get(&turn.id) {
+                            self.render_failure(&turn.id, error, window, cx)
+                        } else {
+                            drop(errors);
+                            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                self.turn(turn, i + 1 == n, window, &t, cx)
+                            })) {
+                                Ok(body) => body.children(self.turn_error(turn, window, cx)),
+                                Err(error) => {
+                                    let error = error
+                                        .downcast_ref::<String>()
+                                        .cloned()
+                                        .or_else(|| {
+                                            error.downcast_ref::<&str>().map(|s| (*s).to_owned())
+                                        })
+                                        .unwrap_or_else(|| "Unknown render error".to_owned());
+                                    eprintln!(
+                                        "codex-gpui: thread {} turn {}: {error}",
+                                        self.thread_id, turn.id
+                                    );
+                                    self.render_errors
+                                        .borrow_mut()
+                                        .insert(turn.id.clone(), error.clone());
+                                    self.render_failure(&turn.id, &error, window, cx)
+                                }
+                            }
+                        }
+                    }
                 }
             })
             .collect();
