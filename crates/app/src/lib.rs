@@ -388,6 +388,7 @@ pub struct Root {
     sidebar: Entity<HomeSidebar>,
     /// Recents in sidebar order, for `⌘1`…`⌘9`, Previous/Next Chat and the command menu.
     threads: Vec<Thread>,
+    recent_chats: Vec<String>,
     new_chat_section: Option<String>,
     /// `thread/list` cursor of the page after `threads`, while the sidebar's end asks for it.
     next_cursor: Option<String>,
@@ -684,6 +685,7 @@ impl Root {
             shell,
             sidebar,
             threads: Vec::new(),
+            recent_chats: Vec::new(),
             new_chat_section: None,
             next_cursor: None,
             loading_more: false,
@@ -2136,6 +2138,7 @@ impl Root {
     /// Shows the route (loading its thread if needed), pushes history into the shell and
     /// persists the state.
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.remember_recent_chat();
         self.flush_settings(cx);
         self.settings_page = None;
         self.suggestion_load = None;

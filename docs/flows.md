@@ -1231,3 +1231,17 @@ The default hover delay and `side_offset` geometry remain unchanged.
 This API does not complete Home focus behavior or add the separate F1d overflow predicate.
 The original Home inputs and edge probes remain unchanged.
 The scoped issue is [Add an opt-in focus API to the shared tooltip](https://github.com/i098/codex-gpui/issues/186).
+
+## Shortcut navigation (SH-044, SH-058, SH-069)
+
+Control-Tab and Control-Shift-Tab open the command menu in `Recently viewed` mode.
+The picker omits the search field and number labels.
+Repeated shortcuts move the selection without changing the open chat.
+Releasing Control opens the selected chat; Escape cancels.
+The picker keeps viewed order separate from the updated order used by Command-Option-number.
+
+Mouse Back and Forward use the same route history as Command-[ and Command-].
+Control-Shift-G opens the existing Changes tab.
+`crates/app/tests/shortcut_navigation.rs` checks these paths on recorded threads.
+The [original/native picker pair](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/9a2941014013a3237d6c7389b13d9c4a3a00e15a0eba9abb/report.html) uses a 520×134 CSS-pixel crop at scale 2.
+It has zero outside-text differences and 45 differing pixels inside 147631 text pixels (0.0305%).
