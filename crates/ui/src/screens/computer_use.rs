@@ -2,8 +2,9 @@
 //! The `available` field is a platform and feature gate, not a permission grant.
 //! The app replaces confirmed state after each successful host operation.
 
-use super::{Layer, button, deco, probe, select, switch};
+use super::{Layer, button, deco, on_card, probe, select, switch};
 use crate::{composer::popover, focus, icon::icon, text};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use gpui::{
     AnyElement, App, Context, Div, FocusHandle, Global, InteractiveElement, IntoElement,
     KeyDownEvent, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window,
@@ -12,6 +13,26 @@ use gpui::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use theme::{ActiveTheme as _, Theme};
+
+fn decode_app_image(url: &str) -> Option<Arc<gpui::Image>> {
+    let (header, data) = url.strip_prefix("data:")?.split_once(',')?;
+    let mime = header.strip_suffix(";base64")?;
+    let format = gpui::ImageFormat::from_mime_type(mime)?;
+    let bytes = BASE64.decode(data).ok()?;
+    Some(Arc::new(gpui::Image::from_bytes(format, bytes)))
+}
+
+fn app_image(app: &AppApproval, window: &mut Window, cx: &mut App) -> Option<Arc<gpui::Image>> {
+    let url = app.icon_data_url.as_deref()?;
+    let key = SharedString::from(format!("computer-use-icon-{}", app.bundle_identifier));
+    let cache = window.use_keyed_state(key, cx, |_, _| (url.to_owned(), decode_app_image(url)));
+    cache.update(cx, |cache, _| {
+        if cache.0 != url {
+            *cache = (url.to_owned(), decode_app_image(url));
+        }
+        cache.1.clone()
+    })
+}
 
 #[derive(Clone, Debug, Default)]
 pub enum Load<T> {
@@ -226,10 +247,18 @@ impl ComputerUse {
                     Some(
                         div()
                             .size(px(40.))
+                            .relative()
+                            .p(px(1.))
+                            .child(on_card(
+                                12.5,
+                                shapes::Corner::Squircle,
+                                t.background_panel,
+                                Some(t.border),
+                            ))
                             .flex()
                             .items_center()
                             .justify_center()
-                            .child(icon("settings-computer-use", 24., t.text_secondary))
+                            .child(icon("settings-plugins", 38., t.text_secondary))
                             .into_any_element(),
                     ),
                     control,
@@ -254,11 +283,8 @@ impl ComputerUse {
             Load::Ready(apps) => apps
                 .iter()
                 .map(|app| {
-                    let image = match &app.icon_data_url {
-                        Some(url) => img(SharedString::from(url.clone()))
-                            .size(px(36.))
-                            .rounded(px(6.))
-                            .into_any_element(),
+                    let image = match app_image(app, window, cx) {
+                        Some(image) => img(image).size(px(36.)).rounded(px(6.)).into_any_element(),
                         None => div()
                             .size(px(36.))
                             .rounded(px(6.))
@@ -469,6 +495,7 @@ impl ComputerUse {
             div()
                 .absolute()
                 .inset_0()
+                .occlude()
                 .bg(gpui::black().opacity(0.4))
                 .flex()
                 .items_center()
@@ -558,13 +585,13 @@ impl Render for ComputerUse {
             .child(div().h(px(46.)).flex_none())
             .child(div().id("computer-use-page").flex_1().overflow_y_scroll().layer()
                 .child(probe(&self.layer))
-                .child(div().w_full().max_w(px(768.)).mx_auto().px(px(20.)).pt(px(28.)).pb(px(20.))
-                    .flex().flex_col().gap(px(24.))
-                    .child(div().flex().flex_col().gap(px(8.))
-                        .child(text("Computer use", 28., 33.6, 500., t.text))
-                        .child(text("Manage how ChatGPT uses other applications on your computer", 14., 20., 430., t.text_secondary))))
+                .child(div().pt(px(16.)).pb(px(1.))
+                    .child(div().w_full().max_w(px(768.)).mx_auto().px(px(20.))
+                        .child(div().py(px(12.)).flex().flex_col().justify_center().gap(px(4.))
+                            .child(text("Computer use", 28., 33.6, 500., t.text))
+                            .child(text("Manage how ChatGPT uses other applications on your computer", 14., 24., 430., t.text_secondary)))))
                 .child(div().w_full().max_w(px(768.)).mx_auto().p(px(20.))
-                    .flex().flex_col().gap(px(24.))
+                    .flex().flex_col().gap(px(40.))
                     .child(group("Control", control, &self.layer, &t))
                     .children(state.permission_guidance.as_ref().map(|guidance| row(guidance.clone(), None, None,
                         self.action("computer-use-permissions", "Open System Settings", ComputerUseAction::OpenPermissions, state.pending, window, cx), &t)))
@@ -597,7 +624,7 @@ fn row(
                 .flex()
                 .flex_col()
                 .gap(px(2.))
-                .child(text(title, 14., 20., 500., t.text))
+                .child(text(title, 13., 18.571_428, 500., t.text))
                 .children(detail.map(|detail| text(detail, 12., 16., 430., t.text_secondary))),
         )
         .child(control)
@@ -606,7 +633,7 @@ fn row(
 fn message(message: impl Into<SharedString>, t: &Theme) -> Div {
     div()
         .p(px(16.))
-        .child(text(message, 14., 20., 430., t.text_secondary))
+        .child(text(message, 13., 18.571_428, 430., t.text_secondary))
 }
 
 fn group(title: &'static str, rows: Vec<Div>, layer: &Layer, t: &Theme) -> Div {
@@ -614,8 +641,14 @@ fn group(title: &'static str, rows: Vec<Div>, layer: &Layer, t: &Theme) -> Div {
     div()
         .flex()
         .flex_col()
-        .gap(px(8.))
-        .child(text(title, 14., 20., 500., t.text))
+        .child(
+            div()
+                .h(px(46.))
+                .pb(px(6.))
+                .flex()
+                .items_center()
+                .child(text(title, 14., 21., 500., t.text)),
+        )
         .child(
             div()
                 .relative()
@@ -654,6 +687,20 @@ fn group(title: &'static str, rows: Vec<Div>, layer: &Layer, t: &Theme) -> Div {
 mod tests {
     use super::*;
     use gpui::{AppContext as _, BorrowAppContext as _, HeadlessAppContext, size};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn native_icons_decode_in_memory_and_reject_network_urls() {
+        let pixels = image::RgbaImage::from_pixel(2, 2, image::Rgba([255, 0, 0, 255]));
+        let mut png = std::io::Cursor::new(Vec::new());
+        pixels.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let uri = format!("data:image/png;base64,{}", BASE64.encode(png.into_inner()));
+        let icon = decode_app_image(&uri).unwrap();
+        let decoded = image::load_from_memory(&icon.bytes).unwrap().to_rgba8();
+        assert_eq!(decoded.get_pixel(1, 1), &image::Rgba([255, 0, 0, 255]));
+        assert!(decode_app_image("data:image/png;base64,invalid!").is_none());
+        assert!(decode_app_image("https://example.com/icon.png").is_none());
+    }
 
     #[test]
     fn failed_writes_keep_confirmed_settings_and_removal_dialog() {
@@ -662,6 +709,8 @@ mod tests {
             Arc::new(theme::Assets),
             gpui_platform::current_headless_renderer,
         );
+        let requests = Arc::new(AtomicUsize::new(0));
+        let sent = requests.clone();
         let app = AppApproval {
             bundle_identifier: "com.example.Fixture".into(),
             display_name: "Fixture".into(),
@@ -678,7 +727,8 @@ mod tests {
                 })),
                 approvals: Load::Ready(vec![app.clone()]),
                 sound: Some(SoundMode::ForegroundClicks),
-                dispatch: Some(Arc::new(|_, cx| {
+                dispatch: Some(Arc::new(move |_, cx| {
+                    sent.fetch_add(1, Ordering::Relaxed);
                     cx.update_global::<ComputerUseState, _>(|state, _| {
                         state.error = Some("The host rejected this change.".into());
                     });
@@ -709,8 +759,35 @@ mod tests {
             }
         };
         capture(&mut cx, "native-dark.png");
+        let click_toggle = |cx: &mut HeadlessAppContext| {
+            cx.update_window(window.into(), |_, window, cx| {
+                let position = gpui::point(px(750.), px(248.));
+                window.dispatch_event(
+                    gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
+                        button: gpui::MouseButton::Left,
+                        position,
+                        modifiers: Default::default(),
+                        click_count: 1,
+                        first_mouse: false,
+                    }),
+                    cx,
+                );
+                window.dispatch_event(
+                    gpui::PlatformInput::MouseUp(gpui::MouseUpEvent {
+                        button: gpui::MouseButton::Left,
+                        position,
+                        modifiers: Default::default(),
+                        click_count: 1,
+                    }),
+                    cx,
+                );
+            })
+            .unwrap();
+            cx.run_until_parked();
+        };
+        click_toggle(&mut cx);
+        assert_eq!(requests.load(Ordering::Relaxed), 1);
         cx.update(|cx| page.update(cx, |view, cx| {
-            view.dispatch(ComputerUseAction::SetEnabled(false), cx);
             view.dispatch(ComputerUseAction::SetSoundMode(SoundMode::Off), cx);
             view.removal = Some(app.clone());
             view.dispatch(ComputerUseAction::RemoveApproval(app.bundle_identifier.clone()), cx);
@@ -724,5 +801,11 @@ mod tests {
         }));
         cx.run_until_parked();
         capture(&mut cx, "native-error-dark.png");
+        click_toggle(&mut cx);
+        assert_eq!(
+            requests.load(Ordering::Relaxed),
+            3,
+            "the modal must block the underlying switch"
+        );
     }
 }
