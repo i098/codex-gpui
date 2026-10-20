@@ -1598,7 +1598,7 @@ impl Dialog {
                 d.child(shapes::decoration(shapes::Decoration {
                     radius: Corners::all(px(12.5)),
                     corner: shapes::Corner::Squircle,
-                    fill: Some(t.text.opacity(0.03)),
+                    fill: Some(t.primary_soft_alpha),
                     border: Some((px(1.), t.border)),
                     ..Default::default()
                 }))
@@ -1645,7 +1645,7 @@ impl Dialog {
             .child(div().id("delete-close").role(gpui::Role::Button).aria_label("Close dialog")
                 .track_focus(&self.controls[2]).absolute().top(px(16.)).right(px(16.))
                 .size(px(24.)).rounded(px(4.)).flex().items_center().justify_center()
-                .hover(|s| s.bg(t.ghost_hover)).child(icon("diff-tab-close", 16., t.text.opacity(0.8)))
+                .hover(|s| s.bg(t.ghost_hover)).child(icon("diff-tab-close", 16., t.text_default_nav.alpha(0.8)))
                 .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))))
     }
 
@@ -3271,7 +3271,12 @@ impl Render for Dialog {
                             d.bg(t.surface_elevated_secondary)
                         }
                     })
-                    .child(content),
+                    .child(if delete {
+                        crate::rounded_clip(px(25.), shapes::Corner::Squircle, content)
+                            .into_any_element()
+                    } else {
+                        content.into_any_element()
+                    }),
             )
     }
 }
