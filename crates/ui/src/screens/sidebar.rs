@@ -1307,6 +1307,7 @@ fn thread_row(
 enum ItemKey {
     Thread(String),
     Url(String),
+    File(String),
     Command(SharedString),
 }
 
@@ -1315,6 +1316,7 @@ enum ItemKey {
 #[derive(Default)]
 struct Item {
     icon: Option<&'static str>,
+    note: bool,
     label: SharedString,
     search_value: SharedString,
     updated_at: i64,
@@ -1327,6 +1329,8 @@ struct Item {
     /// Chat rows: the thread id.
     thread: Option<String>,
     url: Option<String>,
+    file: Option<String>,
+    detail: Option<SharedString>,
     /// Chat rows: the `thread/search` content match, shown under the title.
     snippet: Option<SharedString>,
     /// Chat rows: added by `thread/search` (not in `thread/list`); dropped with the query.
@@ -1377,6 +1381,8 @@ impl Item {
             ItemKey::Thread(id.clone())
         } else if let Some(url) = &self.url {
             ItemKey::Url(url.clone())
+        } else if let Some(file) = &self.file {
+            ItemKey::File(file.clone())
         } else {
             ItemKey::Command(self.label.clone())
         }
@@ -1386,8 +1392,12 @@ impl Item {
         match key {
             ItemKey::Thread(id) => self.thread.as_ref() == Some(id),
             ItemKey::Url(url) => self.url.as_ref() == Some(url),
+            ItemKey::File(file) => self.file.as_ref() == Some(file),
             ItemKey::Command(label) => {
-                self.thread.is_none() && self.url.is_none() && self.label == *label
+                self.thread.is_none()
+                    && self.url.is_none()
+                    && self.file.is_none()
+                    && self.label == *label
             }
         }
     }
@@ -1918,6 +1928,23 @@ pub struct CommandMenu {
     cloud_enabled: bool,
     cloud_searching: bool,
     cloud_error: bool,
+    file_search: Option<FileSearch>,
+}
+
+struct FileSearch {
+    session: String,
+    root: String,
+    rows: Vec<Item>,
+    recent: Vec<String>,
+    error: bool,
+    phase: FileSearchPhase,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum FileSearchPhase {
+    Idle,
+    Starting,
+    Ready,
 }
 
 /// What the command menu asks its owner to do.
@@ -1932,6 +1959,8 @@ pub enum CommandMenuEvent {
     Search(SearchRequest),
     RetryCloudSearch(SearchRequest),
     OpenUrl(String),
+    SearchFiles(String),
+    OpenFile(String),
 }
 
 #[derive(Clone)]
@@ -2546,6 +2575,7 @@ impl CommandMenu {
             cloud_enabled: false,
             cloud_searching: false,
             cloud_error: false,
+            file_search: None,
         }
     }
 
@@ -2669,6 +2699,181 @@ impl CommandMenu {
         cx.notify();
     }
 
+    pub fn files(root: &str, recent: Vec<String>, query: &str, cx: &mut Context<Self>) -> Self {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+        let mut menu = Self::with_threads(&[], &[], true, query, cx);
+        menu.file_search = Some(FileSearch {
+            session: format!(
+                "command-files-{}",
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ),
+            root: root.to_owned(),
+            rows: Vec::new(),
+            recent,
+            error: false,
+            phase: FileSearchPhase::Idle,
+        });
+        menu.refresh_files(cx);
+        menu
+    }
+
+    pub fn file_session(&self) -> Option<&str> {
+        self.file_search
+            .as_ref()
+            .map(|search| search.session.as_str())
+    }
+
+    pub fn file_root(&self) -> Option<&str> {
+        self.file_search.as_ref().map(|search| search.root.as_str())
+    }
+
+    pub fn file_session_started(&self) -> bool {
+        self.file_search
+            .as_ref()
+            .is_some_and(|search| search.phase == FileSearchPhase::Ready)
+    }
+
+    pub fn prepare_file_search(&mut self) -> Option<bool> {
+        let search = self.file_search.as_mut()?;
+        match search.phase {
+            FileSearchPhase::Idle => {
+                search.phase = FileSearchPhase::Starting;
+                Some(true)
+            }
+            FileSearchPhase::Starting => None,
+            FileSearchPhase::Ready => Some(false),
+        }
+    }
+
+    pub fn finish_file_start(
+        &mut self,
+        session: &str,
+        succeeded: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<String> {
+        let search = self.file_search.as_mut()?;
+        if search.session != session {
+            return None;
+        }
+        search.phase = if succeeded {
+            FileSearchPhase::Ready
+        } else {
+            FileSearchPhase::Idle
+        };
+        let query = self.query.trim().to_owned();
+        if !succeeded && !query.is_empty() && !query.starts_with('/') && !query.starts_with("~/") {
+            self.set_file_results(session, Some(&query), Vec::new(), true, cx);
+        }
+        Some(query)
+    }
+
+    pub fn start_file_lookup(&mut self, cx: &mut Context<Self>) {
+        self.refresh_files(cx);
+        self.searching = true;
+    }
+
+    fn refresh_files(&mut self, cx: &mut Context<Self>) {
+        let Some(search) = &mut self.file_search else {
+            return;
+        };
+        search.error = false;
+        let paths = if self.query.trim().is_empty() {
+            &search.recent[..]
+        } else {
+            &[]
+        };
+        search.rows = file_items(paths, &search.root);
+        if search.rows.is_empty() {
+            search.rows.push(Item {
+                note: true,
+                ..Item::command(
+                    (!self.query.trim().is_empty()).then_some("sidebar-cmd-spinner"),
+                    if self.query.trim().is_empty() {
+                        "Type to search for files"
+                    } else {
+                        if self.query.starts_with('/') || self.query.starts_with("~/") {
+                            "Checking file…"
+                        } else {
+                            "Searching…"
+                        }
+                    },
+                    "",
+                )
+            });
+        }
+        cx.notify();
+    }
+
+    pub fn apply_file_results(&mut self, params: &serde_json::Value, cx: &mut Context<Self>) {
+        let Some(search) = &self.file_search else {
+            return;
+        };
+        let (Some(session), Some(query)) = (params["sessionId"].as_str(), params["query"].as_str())
+        else {
+            return;
+        };
+        if search.session != session || query != self.query.trim() {
+            return;
+        }
+        let paths = params["files"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|file| {
+                let path = file["path"].as_str()?;
+                Some(if Path::new(path).is_absolute() {
+                    path.to_owned()
+                } else {
+                    Path::new(file["root"].as_str()?)
+                        .join(path)
+                        .to_string_lossy()
+                        .into_owned()
+                })
+            })
+            .collect();
+        self.set_file_results(session, Some(query), paths, false, cx);
+    }
+
+    pub fn set_file_results(
+        &mut self,
+        session: &str,
+        query: Option<&str>,
+        paths: Vec<String>,
+        error: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(search) = &mut self.file_search else {
+            return;
+        };
+        if search.session != session || query.is_some_and(|query| query != self.query.trim()) {
+            return;
+        }
+        self.searching = false;
+        search.error = error;
+        search.rows = file_items(&paths, &search.root);
+        if self.query.starts_with('/') || self.query.starts_with("~/") {
+            for row in &mut search.rows {
+                row.detail = row.file.as_ref().map(|path| path.clone().into());
+            }
+        }
+        if search.rows.is_empty() {
+            search.rows.push(Item {
+                note: true,
+                ..Item::command(
+                    None,
+                    if error {
+                        "Couldn't check file. Select to retry"
+                    } else {
+                        "No matching files"
+                    },
+                    "",
+                )
+            });
+        }
+        self.selected = self.selected.min(search.rows.len().saturating_sub(1));
+        cx.notify();
+    }
+
     pub fn set_git_available(&mut self, available: bool, cx: &mut Context<Self>) {
         let selected = self.selected_key();
         self.git_available = available;
@@ -2678,6 +2883,18 @@ impl CommandMenu {
 
     /// Keep registered groups; rank matches within each group.
     fn visible(&self) -> Vec<(&'static str, Vec<&Item>)> {
+        if let Some(search) = &self.file_search {
+            return vec![(
+                if search.rows.iter().all(|row| row.file.is_none()) {
+                    ""
+                } else if self.query.trim().is_empty() {
+                    "Opened recently"
+                } else {
+                    "Files"
+                },
+                search.rows.iter().collect(),
+            )];
+        }
         let query = self.query.trim();
         let pattern = MatchPattern::new(query);
         let quick = &self.groups[1].1;
@@ -2829,19 +3046,24 @@ impl CommandMenu {
         self.selected = 0;
         self.retained_selection = None;
         self.search_scheduled = false;
-        let chats = &mut self.groups[0].1;
-        chats.retain(|c| !c.from_search);
-        chats.iter_mut().for_each(|c| c.snippet = None);
+        let files = self.file_search.is_some();
+        if files {
+            self.refresh_files(cx);
+        } else {
+            let chats = &mut self.groups[0].1;
+            chats.retain(|c| !c.from_search);
+            chats.iter_mut().for_each(|c| c.snippet = None);
+        }
         self.search_gen += 1;
         self.searching = false;
         self.cloud_searching = false;
         self.cloud_error = false;
         let term: SharedString = self.query.trim().to_owned().into();
-        if term.chars().count() < SEARCH_MIN_CHARS {
+        if term.chars().count() < if files { 1 } else { SEARCH_MIN_CHARS } {
             return;
         }
         self.search_scheduled = true;
-        self.cloud_searching = self.cloud_enabled;
+        self.cloud_searching = self.cloud_enabled && !files;
         let generation = self.search_gen;
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SEARCH_DEBOUNCE).await;
@@ -2849,7 +3071,11 @@ impl CommandMenu {
                 if this.search_gen == generation {
                     this.search_scheduled = false;
                     this.searching = true;
-                    cx.emit(CommandMenuEvent::Search(SearchRequest { term, generation }));
+                    cx.emit(if files {
+                        CommandMenuEvent::SearchFiles(term.to_string())
+                    } else {
+                        CommandMenuEvent::Search(SearchRequest { term, generation })
+                    });
                     cx.notify();
                 }
             })
@@ -2977,17 +3203,22 @@ impl CommandMenu {
             .clamp(px(0.), (line.width - px(width - 1.)).max(px(0.)));
         self.query_line = Some(line);
         let entity = cx.entity();
+        let placeholder = if self.file_search.is_some() {
+            "Search files"
+        } else {
+            "Search chats"
+        };
         let input = if self.query.is_empty() {
-            text("Search chats", 14., 21., 430., t.text_tertiary)
+            text(placeholder, 14., 21., 430., t.text_tertiary)
         } else {
             text(value.clone(), 14., 21., 430., t.text)
         };
         div()
             .id("command-query")
             .role(gpui::Role::TextInput)
-            .aria_label("Search chats")
+            .aria_label(placeholder)
             .aria_value(value)
-            .aria_placeholder("Search chats")
+            .aria_placeholder(placeholder)
             .relative()
             .w_full()
             .h(px(21.))
@@ -3120,6 +3351,18 @@ impl CommandMenu {
 
     /// Runs the selected row.
     fn confirm(&mut self, cx: &mut Context<Self>) {
+        if let Some(search) = &self.file_search {
+            if search.error {
+                cx.emit(CommandMenuEvent::SearchFiles(self.query.trim().to_owned()));
+            } else if let Some(path) = search
+                .rows
+                .get(self.selected)
+                .and_then(|row| row.file.as_ref())
+            {
+                cx.emit(CommandMenuEvent::OpenFile(path.clone()));
+            }
+            return;
+        }
         let item = self
             .visible()
             .into_iter()
@@ -3143,6 +3386,30 @@ impl CommandMenu {
             cx.emit(event);
         }
     }
+}
+
+fn file_items(paths: &[String], root: &str) -> Vec<Item> {
+    paths
+        .iter()
+        .map(|path| {
+            let file = Path::new(path);
+            Item {
+                icon: Some("diff-jump-to-file"),
+                label: file.file_name().map_or(path.as_str().into(), |name| {
+                    name.to_string_lossy().into_owned().into()
+                }),
+                search_value: path.clone().into(),
+                file: Some(path.clone()),
+                detail: file
+                    .strip_prefix(root)
+                    .unwrap_or(file)
+                    .parent()
+                    .filter(|dir| !dir.as_os_str().is_empty())
+                    .map(|dir| dir.to_string_lossy().into_owned().into()),
+                ..Default::default()
+            }
+        })
+        .collect()
 }
 
 impl EntityInputHandler for CommandMenu {
@@ -3291,7 +3558,8 @@ impl Render for CommandMenu {
         let empty_loading = loading && visible.is_empty();
         let groups = visible.into_iter().map(|(heading, items)| {
             // The pending content search shows its spinner next to `Chats`.
-            let searching = heading == "Chats" && (self.searching || self.cloud_searching);
+            let searching = (heading == "Chats" && (self.searching || self.cloud_searching))
+                || (heading == "Files" && self.searching);
             div()
                 .flex()
                 .flex_col()
@@ -3492,17 +3760,22 @@ fn menu_row(
     t: &Theme,
     window: &Window,
 ) -> Stateful<Div> {
+    let selected = selected && !item.note;
     let surface = t.surface_elevated_secondary;
     let (bottom, row_opacity) = if selected {
         (blit(t.ghost_hover, surface), 1.)
     } else {
-        (surface, 0.75)
+        (surface, if item.note { 0.6 } else { 0.75 })
     };
     let (fg, dim) = (t.text, t.text_tertiary);
     let snippet = item.snippet.clone();
     let label = marked(
         item.label.clone(),
-        &highlight(&item.label, query, !item.is_chat()),
+        &highlight(
+            &item.label,
+            if item.note { "" } else { query },
+            !item.is_chat(),
+        ),
         14.,
         21.,
         fg,
@@ -3530,7 +3803,7 @@ fn menu_row(
             .min_w_0()
             .overflow_hidden()
             .map(|d| {
-                if item.description.is_some() {
+                if item.description.is_some() || item.detail.is_some() {
                     d.flex_none().max_w(relative(0.6))
                 } else {
                     d.flex_1()
@@ -3548,15 +3821,20 @@ fn menu_row(
         .items_center()
         .gap(px(8.))
         .child(label)
-        .when_some(item.description, |d, description| {
-            d.child(
-                text(description, 13., 130. / 7., 430., dim)
-                    .opacity(row_opacity)
-                    .flex_1()
-                    .min_w_0()
-                    .truncate(),
-            )
-        })
+        .when_some(
+            item.description
+                .map(SharedString::from)
+                .or_else(|| item.detail.clone()),
+            |d, description| {
+                d.child(
+                    text(description, 13., 130. / 7., 430., dim)
+                        .opacity(row_opacity)
+                        .flex_1()
+                        .min_w_0()
+                        .truncate(),
+                )
+            },
+        )
         .when_some(item.project.clone(), |d, project| {
             d.child(
                 div()
@@ -3618,31 +3896,32 @@ fn menu_row(
                 ..Default::default()
             }))
         })
-        .when(item.label != "Commit or push", |d| {
-            d.child(div().size(px(16.)).flex_none().map(|slot| {
-                if item.unread {
-                    // `size-5` box with a `scale-50` `icon-xs` dot: 8 px `info-solid`, centred.
-                    slot.flex()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            div()
-                                .size(px(8.))
-                                .child(shapes::decoration(shapes::Decoration {
+        .when(
+            (!item.note || item.icon.is_some()) && item.label != "Commit or push",
+            |d| {
+                d.child(div().size(px(16.)).flex_none().map(|slot| {
+                    if item.unread {
+                        // `size-5` box with a `scale-50` `icon-xs` dot: 8 px `info-solid`, centred.
+                        slot.flex()
+                            .items_center()
+                            .justify_center()
+                            .child(div().size(px(8.)).child(shapes::decoration(
+                                shapes::Decoration {
                                     radius: Corners::all(Theme::RADIUS_FULL),
                                     fill: Some(t.info_solid.opacity(row_opacity)),
                                     ..Default::default()
-                                })),
-                        )
-                } else {
-                    slot.children(item.icon.map(|name| {
-                        // `navigateForward` is the back arrow with `-scale-x-100`.
-                        icon(name, 16., fg.opacity(row_opacity))
-                            .when(item.label == "Forward", |i| i.flip_x())
-                    }))
-                }
-            }))
-        })
+                                },
+                            )))
+                    } else {
+                        slot.children(item.icon.map(|name| {
+                            // `navigateForward` is the back arrow with `-scale-x-100`.
+                            icon(name, 16., fg.opacity(row_opacity))
+                                .when(item.label == "Forward", |i| i.flip_x())
+                        }))
+                    }
+                }))
+            },
+        )
         .child(
             div()
                 .flex_1()

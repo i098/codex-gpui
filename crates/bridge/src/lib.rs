@@ -71,6 +71,7 @@ type Reply = Result<Value, RpcError>;
 /// `None` once the server has closed stdout: later requests fail instead of hanging.
 type Pending = Arc<Mutex<Option<HashMap<i64, Sender<Reply>>>>>;
 type Subscribers = Arc<Mutex<Vec<std::sync::mpsc::Sender<Event>>>>;
+type EventSubscribers = Arc<Mutex<Vec<Sender<Event>>>>;
 
 /// Where a [`Bridge`] sends the client's requests, notifications and answers.
 trait Backend: Send {
@@ -94,7 +95,7 @@ impl Backend for Lines {
 #[derive(Clone)]
 struct Sink {
     pending: Pending,
-    events: Sender<Event>,
+    events: EventSubscribers,
     subscribers: Subscribers,
 }
 
@@ -105,7 +106,7 @@ impl Sink {
         (
             Sink {
                 pending,
-                events,
+                events: Arc::new(Mutex::new(vec![events])),
                 subscribers: Arc::default(),
             },
             rx,
@@ -122,7 +123,14 @@ impl Sink {
         self.subscribers
             .lock()
             .retain(|s| s.send(event.clone()).is_ok());
-        let _ = self.events.try_send(event);
+        let mut subscribers = self.events.lock();
+        subscribers.retain(|subscriber| !subscriber.is_closed());
+        if let Some((last, others)) = subscribers.split_last() {
+            for subscriber in others {
+                let _ = subscriber.try_send(event.clone());
+            }
+            let _ = last.try_send(event);
+        }
     }
 
     fn notify(&self, method: &str, params: Value) {
@@ -136,6 +144,7 @@ impl Sink {
     fn close(&self) {
         self.pending.lock().take();
         self.subscribers.lock().clear();
+        self.events.lock().clear();
     }
 }
 
@@ -143,6 +152,8 @@ pub struct Bridge {
     backend: Mutex<Box<dyn Backend>>,
     pending: Pending,
     next_id: AtomicI64,
+    event_subscribers: EventSubscribers,
+    initialized: std::sync::OnceLock<InitializeResponse>,
     child: Option<Child>,
     acp: bool,
     automation_turns: Mutex<HashMap<String, Arc<AutomationTurn>>>,
@@ -220,14 +231,10 @@ impl Bridge {
         child: Option<Child>,
     ) -> (Bridge, Receiver<Event>) {
         let (sink, events) = Sink::new();
-        let pending = sink.pending.clone();
-        let subscribers = sink.subscribers.clone();
-        std::thread::spawn(move || read_loop(BufReader::new(read), &sink));
+        let listener = sink.clone();
+        std::thread::spawn(move || read_loop(BufReader::new(read), &listener));
         let backend = Box::new(Lines(Box::new(write)));
-        (
-            Self::new(backend, pending, child, false, subscribers),
-            events,
-        )
+        (Self::new(backend, sink, child, false), events)
     }
 
     fn acp_io(
@@ -236,31 +243,31 @@ impl Bridge {
         child: Option<Child>,
     ) -> (Bridge, Receiver<Event>) {
         let (sink, events) = Sink::new();
-        let subscribers = sink.subscribers.clone();
-        let pending = sink.pending.clone();
-        let backend = Box::new(acp::Acp::start(read, Lines(Box::new(write)), sink));
-        (
-            Self::new(backend, pending, child, true, subscribers),
-            events,
-        )
+        let backend = Box::new(acp::Acp::start(read, Lines(Box::new(write)), sink.clone()));
+        (Self::new(backend, sink, child, true), events)
     }
 
-    fn new(
-        backend: Box<dyn Backend>,
-        pending: Pending,
-        child: Option<Child>,
-        acp: bool,
-        subscribers: Subscribers,
-    ) -> Self {
+    fn new(backend: Box<dyn Backend>, sink: Sink, child: Option<Child>, acp: bool) -> Self {
         Bridge {
             backend: Mutex::new(backend),
-            pending,
+            pending: sink.pending,
+            event_subscribers: sink.events,
+            initialized: std::sync::OnceLock::new(),
             next_id: AtomicI64::new(1),
             child,
             acp,
             automation_turns: Mutex::new(HashMap::new()),
-            subscribers,
+            subscribers: sink.subscribers,
         }
+    }
+
+    pub fn subscribe_async(&self) -> Receiver<Event> {
+        let (sender, receiver) = async_channel::unbounded();
+        let mut subscribers = self.event_subscribers.lock();
+        if self.pending.lock().is_some() {
+            subscribers.push(sender);
+        }
+        receiver
     }
 
     /// Whether this connection runs an ACP agent ([`Bridge::spawn_acp`]).
@@ -335,12 +342,16 @@ impl Bridge {
 
     /// Sends `initialize` (opting into the experimental API, like the desktop app), then `initialized`.
     pub async fn initialize(&self, client_name: &str, version: &str) -> Result<InitializeResponse> {
+        if let Some(response) = self.initialized.get() {
+            return Ok(response.clone());
+        }
         let params = json!({
             "clientInfo": { "name": client_name, "title": null, "version": version },
             "capabilities": { "experimentalApi": true, "requestAttestation": false },
         });
-        let response = self.request("initialize", params).await?;
+        let response: InitializeResponse = self.request("initialize", params).await?;
         self.notify("initialized", ())?;
+        let _ = self.initialized.set(response.clone());
         Ok(response)
     }
 
@@ -457,4 +468,42 @@ fn read_loop(reader: impl BufRead, sink: &Sink) {
         }
     }
     sink.close();
+}
+
+#[cfg(test)]
+mod event_tests {
+    use super::*;
+
+    #[test]
+    fn closing_one_window_preserves_other_event_subscribers() {
+        let (input, mut producer) = std::io::pipe().unwrap();
+        let (bridge, first) = Bridge::from_io(input, std::io::sink(), None);
+        let second = bridge.subscribe_async();
+        let observer = bridge.subscribe();
+        writeln!(
+            producer,
+            "{{\"method\":\"thread/started\",\"params\":{{\"threadId\":\"one\"}}}}"
+        )
+        .unwrap();
+        let event = first.recv_blocking().unwrap();
+        assert_eq!(second.recv_blocking().unwrap(), event);
+        assert_eq!(
+            observer
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .unwrap(),
+            event
+        );
+        drop(first);
+        writeln!(producer, "{{\"method\":\"turn/completed\",\"params\":{{\"threadId\":\"one\",\"turnId\":\"turn\"}}}}").unwrap();
+        assert_eq!(
+            second.recv_blocking().unwrap(),
+            Event::Notification {
+                method: "turn/completed".into(),
+                params: json!({"threadId": "one", "turnId": "turn"}),
+            }
+        );
+        drop(producer);
+        assert!(second.recv_blocking().is_err());
+        assert!(bridge.subscribe_async().is_closed());
+    }
 }
