@@ -680,17 +680,21 @@ Enabled switches use the existing GPUI native click path for Enter and Space, wi
 The replay checks pointer focus without a ring, the blue keyboard ring, saved values, reload, and Back navigation.
 S034b still checks the recorded sign-in path; no account or authentication changes are part of this repair.
 
-Configuration implements the accepted global-scope ST-080, ST-083, and ST-084 controls.
+Configuration implements the accepted global-scope ST-080 and ST-083 through ST-086 controls.
 It reads global config and installation requirements before it enables changes.
 Managed origins and allowed-value lists limit the choices.
 The original bundle offers `On request` and `Never ask for approval`; `Untrusted` and `On failure` remain display labels for saved legacy values.
 Permission changes use `config/batchWrite` with `filePath: null` and reload the user config.
 The page keeps the saved value until the server accepts a change.
 An error keeps that value and shows a failure notice.
+ST-085 shows Allow network access only for Workspace write and writes `sandbox_workspace_write.network_access`.
+ST-086 offers Disabled, Cached, Indexed, and Live with the original descriptions and installation restrictions.
+Without an explicit search mode, Full access uses Live; other sandbox modes use Cached.
 The `settings_configuration` native fixture target covers save, reopen, managed restrictions, and failed writes.
 The final post-review native run passes all four checks.
 Appearance review compares the actual original renderer and native source-matched captures.
 An owned original app-server smoke confirms both permission values in `config.toml` and after a server restart.
+An owned original app-server smoke confirms network access and all four search modes on disk and through `config/read`.
 The scope picker, project config, and additional Configuration products are not part of this delivery.
 The page uses the original subtitle, Codex context, scrollbar gutter, and permission menu metrics.
 The Codex label identifies the fixed global scope and is not a scope selector.

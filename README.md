@@ -130,8 +130,11 @@ The multi-select emits `SelectionChanged`; the caller saves the value and can re
 Use `Composer::settings_field` for multiline text and `Toast` for existing information, error, and success messages.
 Run `cargo test -p ui --test settings_kit` for the keyboard and locked-choice check.
 
-Settings > Configuration edits global approval policy and sandbox mode through the app-server config store.
+Settings > Configuration edits global approval policy, sandbox mode, network access, and web search through the app-server config store.
 The page reads installation restrictions before it enables the controls and keeps saved values after a failed write.
+Allow network access appears only for Workspace write.
+Web search offers Disabled, Cached, Indexed, and Live with the original descriptions.
+Without an explicit web-search mode, Full access uses Live; other sandbox modes use Cached.
 Project scopes are not included.
 Run `cargo test -p app --test settings_configuration -- --test-threads=1` on macOS for the native fixture checks.
 

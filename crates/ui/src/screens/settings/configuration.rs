@@ -96,9 +96,14 @@ impl SettingsPage {
             return Some("Configuration is not available.");
         }
         let path = key.strip_prefix("config.").unwrap_or(key);
-        let origin = &self.values["origins"][path]["name"]["type"];
+        let origins = &self.values["origins"];
+        let origin = path
+            .split_once('.')
+            .map(|(table, _)| &origins[table])
+            .filter(|origin| !origin.is_null())
+            .unwrap_or(&origins[path]);
         if matches!(
-            origin.as_str(),
+            origin["name"]["type"].as_str(),
             Some(
                 "mdm"
                     | "sessionFlags"
@@ -152,6 +157,7 @@ impl SettingsPane {
             let control = self.configuration_select(key, options, t, window, cx);
             rows.push(settings_row(title, lock.or(Some(detail)), control, t));
         }
+        rows.extend(self.configuration_network(t, window, cx));
         vec![("Codex", rows)]
     }
 
@@ -275,6 +281,10 @@ pub(super) fn option_description(key: &str, value: &str) -> Option<&'static str>
         ("config.sandbox_mode", "danger-full-access") => {
             Some("Can edit files outside this workspace")
         }
+        ("config.web_search", "disabled") => Some("Don't allow web search"),
+        ("config.web_search", "cached") => Some("Use OpenAI's maintained search index"),
+        ("config.web_search", "indexed") => Some("Allow indexed external web access"),
+        ("config.web_search", "live") => Some("Allow unrestricted, current web access"),
         _ => None,
     }
 }

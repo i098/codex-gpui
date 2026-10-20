@@ -186,6 +186,95 @@ fn failed_permission_write_keeps_the_saved_value() -> Result<()> {
 }
 
 #[test]
+fn access_choices_save_and_reopen() -> Result<()> {
+    let mut config = global_config();
+    config["config"]["sandbox_mode"] = json!("workspace-write");
+    config["config"]["sandbox_workspace_write"] = json!({"network_access": false});
+    config["config"]["web_search"] = Value::Null;
+    let mut lines = script(None, |_| {})?;
+    lines.extend(exchange("config/read", config.clone()));
+    for _ in 0..4 {
+        lines.extend(exchange("config/batchWrite", json!({"status": "ok"})));
+    }
+    config["config"]["sandbox_workspace_write"]["network_access"] = json!(true);
+    config["config"]["web_search"] = json!("live");
+    lines.extend(exchange("config/read", config));
+    lines.extend(exchange(
+        "configRequirements/read",
+        json!({"requirements": null}),
+    ));
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    open_configuration(&mut fx, 1)?;
+    evidence(&mut fx, "access-configuration")?;
+    fx.click((1140., 400.))?;
+    fx.wait("network access saved", |fx| {
+        fx.read(|root, _| root.config()["sandbox_workspace_write"]["network_access"] == true)
+    })?;
+    for (key, expected) in [("space", false), ("enter", true)] {
+        fx.click((1100., 461.))?;
+        fx.keys("escape shift-tab")?;
+        fx.keys(key)?;
+        fx.input(gpui::PlatformInput::KeyUp(gpui::KeyUpEvent {
+            keystroke: gpui::Keystroke::parse(key)?,
+        }))?;
+        fx.wait("keyboard network access saved", |fx| {
+            fx.read(|root, _| {
+                root.config()["sandbox_workspace_write"]["network_access"] == expected
+            })
+        })?;
+    }
+    fx.click((1100., 461.))?;
+    evidence(&mut fx, "web-search-menu")?;
+    fx.keys("end enter")?;
+    fx.wait("live search saved", |fx| {
+        fx.read(|root, _| root.config()["web_search"] == "live")
+    })?;
+    fx.keys("cmd-[")?;
+    open_configuration(&mut fx, 2)?;
+    fx.read(|root, cx| {
+        let page = root.settings_page().unwrap().read(cx);
+        assert_eq!(page.choice("config.web_search", ""), "live");
+    });
+    evidence(&mut fx, "access-reopened")?;
+    Ok(())
+}
+
+#[test]
+fn managed_access_does_not_accept_pointer_or_keyboard_changes() -> Result<()> {
+    let mut config = global_config();
+    config["config"]["sandbox_mode"] = json!("workspace-write");
+    config["config"]["sandbox_workspace_write"] = json!({"network_access": false});
+    config["config"]["web_search"] = json!("cached");
+    for key in ["sandbox_workspace_write", "web_search"] {
+        config["origins"][key] = json!({"name": {"type": "mdm"}});
+    }
+    let mut lines = script(None, |_| {})?;
+    lines.extend(exchange("config/read", config));
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    open_configuration(&mut fx, 1)?;
+    fx.click((1140., 400.))?;
+    fx.keys("space enter")?;
+    fx.click((1100., 461.))?;
+    fx.keys("end enter")?;
+    assert!(
+        !fx.sent()?
+            .iter()
+            .any(|request| request["method"] == "config/batchWrite")
+    );
+    fx.read(|root, cx| {
+        assert_eq!(
+            root.settings_page()
+                .unwrap()
+                .read(cx)
+                .choice("config.web_search", ""),
+            "cached"
+        );
+    });
+    evidence(&mut fx, "managed-access")?;
+    Ok(())
+}
+
+#[test]
 fn proxy() {
     proxy_child();
 }
