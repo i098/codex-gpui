@@ -564,6 +564,7 @@ impl SettingsPane {
         let current = self.page.read(cx).choice(key, options[0].0).to_string();
         let label = configuration::config_label(key, &current, options);
         let open = self.open_select == Some(key);
+        let is_configuration = key.starts_with("config.");
         let hover = t.menu_item_hover;
         let configuration_menu = key.starts_with("config.");
         let (menu_font_size, menu_line_height) = if configuration_menu {
@@ -580,42 +581,45 @@ impl SettingsPane {
                     div()
                         .id(value)
                         .px(px(8.))
-                        .py(px(if configuration_menu { 5. } else { 6. }))
-                        .rounded(px(if configuration_menu { 15. } else { 12. }))
-                        .when(value == current && !configuration_menu, |d| d.bg(hover))
+                        .py(px(if is_configuration { 5. } else { 6. }))
+                        .rounded(px(12.))
+                        .when(value == current && !is_configuration, |d| d.bg(hover))
                         .when(
-                            configuration_menu && self.config_menu_index == Some(index),
+                            is_configuration && self.config_menu_index == Some(index),
                             |d| d.bg(hover),
                         )
                         .hover(move |s| s.bg(hover))
-                        .child(if configuration_menu {
-                            div()
-                                .flex_1()
-                                .min_w(px(0.))
-                                .child(text(label, menu_font_size, menu_line_height, 430., t.text))
-                                .when_some(
-                                    configuration::option_description(key, value),
-                                    |d, detail| {
-                                        d.child(
-                                            text(
-                                                detail,
-                                                menu_font_size,
-                                                menu_line_height,
-                                                430.,
-                                                t.text_secondary,
-                                            )
-                                            .mt(px(4.))
-                                            .w_full()
-                                            .whitespace_normal(),
-                                        )
-                                    },
+                        .when(is_configuration, |d| d.relative())
+                        .when(is_configuration && value == current, |d| d.pr(px(33.)))
+                        .child(text(
+                            label,
+                            if is_configuration { 13. } else { 14. },
+                            if is_configuration { 18.571_428 } else { 20. },
+                            430.,
+                            t.text,
+                        ))
+                        .when_some(
+                            configuration::option_description(key, value),
+                            |d, detail| {
+                                d.flex_col().items_start().child(
+                                    text(detail, 13., 18.571_428, 430., t.text_secondary)
+                                        .pt(px(4.))
+                                        .w_full()
+                                        .whitespace_normal(),
                                 )
-                        } else {
-                            text(label, menu_font_size, menu_line_height, 430., t.text)
-                        })
-                        .when(configuration_menu, |d| d.flex().items_center().gap(px(6.)))
-                        .when(configuration_menu && value == current, |d| {
-                            d.child(icon("menu-check", 16., t.text))
+                            },
+                        )
+                        .when(is_configuration && value == current, |d| {
+                            d.child(
+                                div()
+                                    .absolute()
+                                    .top_0()
+                                    .bottom_0()
+                                    .right(px(8.))
+                                    .flex()
+                                    .items_center()
+                                    .child(icon("menu-check", 17., t.text_secondary)),
+                            )
                         })
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.page.update(cx, |p, cx| p.set(key, json!(value), cx));
@@ -629,10 +633,7 @@ impl SettingsPane {
                 div().absolute().top_0().right_0().child(
                     anchored()
                         .anchor(Anchor::TopRight)
-                        .offset(point(
-                            px(0.),
-                            px(if configuration_menu { 30. } else { 32. }),
-                        ))
+                        .offset(point(px(0.), px(if is_configuration { 30. } else { 32. })))
                         .child(
                             div()
                                 .id("select-menu")
@@ -641,7 +642,7 @@ impl SettingsPane {
                                 }))
                                 .child(popover(
                                     t,
-                                    if configuration_menu { 360. } else { 280. },
+                                    if is_configuration { 360. } else { 280. },
                                     |d| d.children(rows),
                                 )),
                         ),
@@ -1265,7 +1266,26 @@ impl Render for SettingsPane {
                         .pb(px(6.))
                         .flex()
                         .items_center()
-                        .child(text(title, 14., 21., 500., t.text)),
+                        .when(section == "Configuration", |d| {
+                            d.child(
+                                div()
+                                    .h(px(28.))
+                                    .px(px(13.))
+                                    .relative()
+                                    .flex()
+                                    .items_center()
+                                    .child(on_card(
+                                        12.5,
+                                        Squircle,
+                                        t.primary_soft_alpha,
+                                        Some(t.border),
+                                    ))
+                                    .child(text(title, 13., 18., 500., t.text)),
+                            )
+                        })
+                        .when(section != "Configuration", |d| {
+                            d.child(text(title, 14., 21., 500., t.text))
+                        }),
                 )
                 .child(
                     div()
@@ -1338,16 +1358,13 @@ impl Render for SettingsPane {
                                         .justify_center()
                                         .child(text(section, 28., 33.6, 500., t.text))
                                         .when(section == "Configuration", |d| {
-                                            d.child(
-                                                text(
-                                                    "Choose how ChatGPT works on your tasks",
-                                                    14.,
-                                                    24.,
-                                                    430.,
-                                                    t.text_secondary,
-                                                )
-                                                .mt(px(4.)),
-                                            )
+                                            d.gap(px(4.)).child(text(
+                                                "Choose how ChatGPT works on your tasks",
+                                                14.,
+                                                24.,
+                                                430.,
+                                                t.text_secondary,
+                                            ))
                                         }),
                                 ),
                             ),

@@ -696,6 +696,8 @@ Original/native appearance approval remains open.
 An owned original app-server smoke confirms both permission values in `config.toml` and after a server restart.
 An owned original app-server smoke confirms network access and all four search modes on disk and through `config/read`.
 The scope picker, project config, and additional Configuration products are not part of this delivery.
+The page uses the original subtitle, Codex context, scrollbar gutter, and permission menu metrics.
+The Codex label identifies the fixed global scope and is not a scope selector.
 
 
 | # | Item | Kind | Original | Port | Status |

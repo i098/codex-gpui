@@ -74,6 +74,9 @@ fn permission_choices_save_and_reopen() -> Result<()> {
     let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
     open_configuration(&mut fx, 1)?;
     evidence(&mut fx, "configuration")?;
+    fx.click((1100., 351.))?;
+    evidence(&mut fx, "sandbox-baseline-menu")?;
+    fx.keys("escape")?;
     fx.click((1100., 290.))?;
     evidence(&mut fx, "approval-menu")?;
     fx.keys("enter")?;
