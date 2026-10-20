@@ -229,7 +229,9 @@ impl SettingsPage {
         if path.starts_with("config.") {
             if !self.configuration_loaded
                 || self.config_lock(path).is_some()
-                || value.as_str().is_some_and(|value| !self.config_option_allowed(path, value))
+                || value
+                    .as_str()
+                    .is_some_and(|value| !self.config_option_allowed(path, value))
                 || self.pending_config.contains(&path)
             {
                 return;
@@ -543,32 +545,40 @@ impl SettingsPane {
         let open = self.open_select == Some(key);
         let hover = t.menu_item_hover;
         let menu = open.then(|| {
-            let rows = options.iter().enumerate()
+            let rows = options
+                .iter()
+                .enumerate()
                 .filter(|(_, (value, _))| self.page.read(cx).config_option_allowed(key, value))
                 .map(|(index, &(value, label))| {
-                div()
-                    .id(value)
-                    .px(px(8.))
-                    .py(px(6.))
-                    .rounded(px(12.))
-                    .when(value == current, |d| d.bg(hover))
-                    .when(key.starts_with("config.") && self.config_menu_index == index, |d| d.bg(hover))
-                    .hover(move |s| s.bg(hover))
-                    .child(text(label, 14., 20., 430., t.text))
-                    .when_some(configuration::option_description(key, value), |d, detail| {
-                        d.flex_col().items_start().child(
-                            text(detail, 14., 20., 400., t.text_secondary)
-                                .w_full()
-                                .whitespace_normal(),
+                    div()
+                        .id(value)
+                        .px(px(8.))
+                        .py(px(6.))
+                        .rounded(px(12.))
+                        .when(value == current, |d| d.bg(hover))
+                        .when(
+                            key.starts_with("config.") && self.config_menu_index == index,
+                            |d| d.bg(hover),
                         )
-                    })
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.page.update(cx, |p, cx| p.set(key, json!(value), cx));
-                        this.open_select = None;
-                        this.menu_hovered = false;
-                        cx.notify();
-                    }))
-            });
+                        .hover(move |s| s.bg(hover))
+                        .child(text(label, 14., 20., 430., t.text))
+                        .when_some(
+                            configuration::option_description(key, value),
+                            |d, detail| {
+                                d.flex_col().items_start().child(
+                                    text(detail, 14., 20., 400., t.text_secondary)
+                                        .w_full()
+                                        .whitespace_normal(),
+                                )
+                            },
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.page.update(cx, |p, cx| p.set(key, json!(value), cx));
+                            this.open_select = None;
+                            this.menu_hovered = false;
+                            cx.notify();
+                        }))
+                });
             // Below the trigger, or above it when the window's bottom edge is in the way.
             deferred(
                 div().absolute().top_0().right_0().child(
@@ -590,9 +600,10 @@ impl SettingsPane {
             .id(key)
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.open_select = (!open).then_some(key);
-                this.config_menu_index = options.iter().position(|(value, _)| {
-                    this.page.read(cx).config_option_allowed(key, value)
-                }).unwrap_or(0);
+                this.config_menu_index = options
+                    .iter()
+                    .position(|(value, _)| this.page.read(cx).config_option_allowed(key, value))
+                    .unwrap_or(0);
                 cx.notify();
             }))
             .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
