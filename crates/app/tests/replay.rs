@@ -425,6 +425,10 @@ fn check_state(fx: &mut Fx, state: &Value) -> Result<()> {
                 Route::Settings => "settings".to_owned(),
                 Route::Scheduled => "scheduled".to_owned(),
                 Route::Automation(id) => format!("scheduled?automationId={id}"),
+                Route::AutomationManagement(Some(id)) => {
+                    format!("scheduled?view=manage&automationId={id}")
+                }
+                Route::AutomationManagement(None) => "scheduled?view=manage".to_owned(),
                 Route::Mobile => "mobile".to_owned(),
                 Route::Archive => "archive".to_owned(),
             }

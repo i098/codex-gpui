@@ -23,7 +23,7 @@ async function configuration({ click, waitFor }) {
   await waitFor(`document.body.innerText.includes("Configure permissions, web access, and agent responses for new chats") || document.body.innerText.includes("Choose how ChatGPT works on your tasks")`);
 }
 
-async function automationHistory({ page, click, waitFor }) {
+async function automationHistory({ page, click, waitFor, settle }) {
   await page.evaluate(`(() => {
     const root = document.getElementById("root");
     const container = root[Object.keys(root).find(key => key.startsWith("__reactContainer"))];
@@ -44,6 +44,7 @@ async function automationHistory({ page, click, waitFor }) {
     throw new Error("Missing original memory router");
   })()`);
   await waitFor(`document.querySelector('[aria-label="Previous run actions"]')`);
+  await settle(1000);
   await click("Previous run actions");
   await waitFor(`document.querySelector('[role="menu"]')`);
   if (state === "history-confirm") {
@@ -107,7 +108,7 @@ async function captureCustomState(prepare) {
     await waitFor(`document.querySelectorAll('nav [data-thread-title]').length >= 3 && !document.body.innerText.includes('Loading model')`);
     await settle(1000);
     if (await page.evaluate(`document.body.innerText.includes('Continue with current model')`)) await click("Continue with current model");
-    await prepare({page, click, waitFor});
+    await prepare({page, click, waitFor, settle});
     await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: Math.round(w * 0.6), y: 6 });
     await settle(1500);
     await page.evaluate(`(() => {

@@ -7,6 +7,7 @@ use app::host::LocalHost;
 use common::automation::run_store;
 use common::*;
 use gpui::Focusable as _;
+use image::GenericImageView as _;
 use serde_json::json;
 use std::{fs, sync::Arc};
 use ui::screens::automations::OpenAutomation;
@@ -237,5 +238,32 @@ fn management_keeps_latest_run_separate_from_history() -> Result<()> {
     }
     fx.keys("escape")?;
     assert!(fx.read(|root, _| root.dialog().is_none()));
+    Ok(())
+}
+
+#[test]
+fn archive_confirmation_shows_focus_only_for_keyboard_input() -> Result<()> {
+    native_panic_exit();
+    let (mut fx, _db) = common::automation::management("dark", (1280., 832.))?;
+    fx.click((1236., 279.140625))?;
+    fx.click((1167., 339.85546875))?;
+    let focus_pixels = |image: &image::RgbaImage| {
+        image::imageops::crop_imm(
+            image,
+            image.width() / 2 - 420,
+            image.height() / 2 - 137,
+            840,
+            274,
+        )
+        .pixels()
+        .filter(|(_, _, pixel)| pixel.0[..3] == [0x3a, 0x83, 0xf7])
+        .count()
+    };
+    assert_eq!(focus_pixels(&fx.shot()?), 0, "pointer input shows no ring");
+    fx.keys("tab")?;
+    assert!(
+        focus_pixels(&fx.shot()?) > 0,
+        "keyboard input shows the ring"
+    );
     Ok(())
 }

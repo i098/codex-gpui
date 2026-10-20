@@ -137,6 +137,7 @@ The management view separates the latest run from previous runs and keeps the ta
 Its rows show the recorded chat title, folder, status, and age.
 Opening the management view marks its latest run as read without marking older runs.
 Archive requires confirmation and skips running or already archived chats.
+The confirmation shows focus rings for keyboard input, not pointer input.
 The app keeps failed rows and reloads the run store after each action.
 New reloads replace older reloads.
 Local read and archive writes exclude account-owned tasks and never remove worktrees.
