@@ -274,6 +274,13 @@ pub fn model_label(name: &str) -> String {
     }
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum FieldStyle {
+    Settings,
+    Form,
+    Inline,
+}
+
 /// One `model/list` entry as the picker shows it.
 #[derive(Clone)]
 struct ModelOption {
@@ -521,6 +528,7 @@ pub struct Composer {
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
+    field_style: FieldStyle,
 }
 
 impl Composer {
@@ -588,6 +596,7 @@ impl Composer {
             on_approval: None,
             on_model: None,
             plain_field: None,
+            field_style: FieldStyle::Settings,
         }
     }
 
@@ -601,6 +610,23 @@ impl Composer {
         editor.plain_field = Some(multiline);
         editor.set_text(value, cx);
         editor
+    }
+
+    pub fn form_field(
+        placeholder: &'static str,
+        value: &str,
+        multiline: bool,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut field = Self::settings_field(placeholder, value, multiline, cx);
+        field.field_style = FieldStyle::Form;
+        field
+    }
+
+    pub fn inline_field(placeholder: &'static str, value: &str, cx: &mut Context<Self>) -> Self {
+        let mut field = Self::settings_field(placeholder, value, false, cx);
+        field.field_style = FieldStyle::Inline;
+        field
     }
 
     pub fn field_text(&self) -> &str {
@@ -1620,6 +1646,44 @@ impl Render for Composer {
             .on_action(cx.listener(Self::previous_command))
             .relative();
         if self.plain_field.is_some() {
+            if self.field_style != FieldStyle::Settings {
+                let multiline = self.plain_field == Some(true);
+                let inline = self.field_style == FieldStyle::Inline;
+                let input = self
+                    .editor(cx)
+                    .w_full()
+                    .min_w_0()
+                    .px(px(if inline {
+                        0.
+                    } else if multiline {
+                        18.
+                    } else {
+                        20.
+                    }))
+                    .pb_0()
+                    .min_h(px(20.))
+                    .when(inline, |d| d.h(px(20.)).overflow_hidden())
+                    .when(!inline && !multiline, |d| d.relative().top(px(0.5)))
+                    .font_weight(gpui::FontWeight(400.));
+                let field = card
+                    .w_full()
+                    .when(!inline, |d| {
+                        d.p(px(1.)).child(shapes::decoration(shapes::Decoration {
+                            radius: Corners::all(px(20.)),
+                            corner: shapes::Corner::Squircle,
+                            border: Some((px(1.), t.border)),
+                            ..Default::default()
+                        }))
+                    })
+                    .when(multiline, |d| d.min_h(px(122.)).py(px(17.)))
+                    .when(!multiline, |d| {
+                        d.h(px(if inline { 40. } else { 48. }))
+                            .flex()
+                            .items_center()
+                    })
+                    .child(input);
+                return div().w_full().child(field);
+            }
             return div().w_full().child(
                 card.border_1()
                     .border_color(t.border)

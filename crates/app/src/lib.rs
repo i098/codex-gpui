@@ -852,6 +852,7 @@ impl Root {
                         .expect("close preference");
                 this.skills = skills;
                 this.models = models;
+                this.refresh_automation_editor_options(None, cx);
                 this.ready = true;
                 this.select_route(cx);
                 this.sync(window, cx);
@@ -1023,6 +1024,7 @@ impl Root {
             .filter(|project| !project.missing)
             .filter_map(|project| Some((project.label.clone(), project.root.as_ref()?.to_string())))
             .collect();
+        self.refresh_automation_editor_options(Some(&projects), cx);
         let composer = self.home.read(cx).composer.clone();
         composer.update(cx, |composer, _| composer.set_slash_projects(choices));
         self.sidebar
@@ -1815,6 +1817,7 @@ impl Root {
     fn set_threads(&mut self, threads: &[Thread], cx: &mut Context<Self>) {
         self.threads = threads.to_vec();
         self.sidebar.update(cx, |s, cx| s.set_threads(threads, cx));
+        self.refresh_automation_editor_options(None, cx);
     }
 
     fn set_next_cursor(&mut self, cursor: Option<String>, cx: &mut Context<Self>) {
@@ -2350,6 +2353,16 @@ impl Root {
             return;
         }
         let editor = cx.new(|cx| automations::editor::Editor::new(item.as_ref(), cx));
+        editor.update(cx, |editor, cx| {
+            editor.set_options(
+                &self.models,
+                &self.threads,
+                None,
+                &self.config,
+                &self.cwd,
+                cx,
+            );
+        });
         cx.subscribe_in(
             &editor,
             window,
@@ -2360,14 +2373,18 @@ impl Root {
                     cx.notify();
                 }
                 automations::editor::Outcome::Save(draft) => {
-                    let mut body =
-                        json!({"name": draft.name, "prompt": draft.prompt, "rrule": draft.rrule});
+                    let mut body = draft.execution.clone();
+                    body["name"] = json!(draft.name);
+                    body["prompt"] = json!(draft.prompt);
+                    body["rrule"] = json!(draft.rrule);
                     let endpoint = if let Some(id) = &id {
                         body["id"] = json!(id);
                         body["status"] = item.as_ref().unwrap()["status"].clone();
                         "automation-update"
                     } else {
-                        body["cwds"] = json!([this.cwd]);
+                        if body.get("cwds").is_none() {
+                            body["cwds"] = json!([this.cwd]);
+                        }
                         "automation-create"
                     };
                     let host = this.host.clone();
@@ -2428,7 +2445,27 @@ impl Root {
         .detach();
         window.focus(&editor.focus_handle(cx), cx);
         self.automation_editor = Some(editor);
+        self.load_projects(cx);
         cx.notify();
+    }
+
+    fn refresh_automation_editor_options(
+        &mut self,
+        projects: Option<&[ui::screens::sidebar::Project]>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(editor) = &self.automation_editor {
+            editor.update(cx, |editor, cx| {
+                editor.set_options(
+                    &self.models,
+                    &self.threads,
+                    projects,
+                    &self.config,
+                    &self.cwd,
+                    cx,
+                );
+            });
+        }
     }
 
     pub fn automation_editor(&self) -> Option<&Entity<automations::editor::Editor>> {

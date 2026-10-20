@@ -823,18 +823,30 @@ impl gpui::Element for Editor {
         let t = cx.theme().clone();
         let lines = shape(
             self.0.read(cx),
-            t.text,
+            if self.0.read(cx).field_style == FieldStyle::Inline {
+                t.text_secondary
+            } else {
+                t.text
+            },
             t.text_tertiary,
             chip_color(&t),
             Some(bounds.size.width),
             window,
         );
+        let mut text_bounds = bounds;
+        if self.0.read(cx).field_style == FieldStyle::Inline
+            && let Some(line) = lines.first()
+        {
+            let offset = (bounds.size.width - line.unwrapped_layout.width).max(px(0.));
+            text_bounds.origin.x += offset;
+            text_bounds.size.width -= offset;
+        }
         // The editor spans the card minus its 12 px side padding.
         let width = f32::from(bounds.size.width) + 24.;
         let collapse = |w: f32| (w <= SM_WIDTH, w <= XS_WIDTH);
         let changed = self.0.update(cx, |c, _| {
             c.lines = lines;
-            c.bounds = Some(bounds);
+            c.bounds = Some(text_bounds);
             collapse(std::mem::replace(&mut c.footer_width, width)) != collapse(width)
         });
         if changed {
@@ -853,6 +865,7 @@ impl gpui::Element for Editor {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let bounds = self.0.read(cx).bounds.unwrap_or(bounds);
         let focus = self.0.read(cx).focus_handle.clone();
         window.handle_input(&focus, ElementInputHandler::new(bounds, self.0.clone()), cx);
         let selection_color = cx.theme().text_selection;

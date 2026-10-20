@@ -645,18 +645,28 @@ impl LocalHost {
             .is_some(),
             "invalid automation recurrence or no future runs"
         );
-        let cwds: Vec<String> = serde_json::from_value(params["cwds"].clone())?;
+        let cwds: Vec<String> = if params["kind"] == "heartbeat" {
+            Vec::new()
+        } else {
+            serde_json::from_value(params["cwds"].clone())?
+        };
         ensure!(
-            !cwds.is_empty() && cwds.iter().all(|cwd| Path::new(cwd).is_absolute()),
+            params["kind"] == "heartbeat"
+                || !cwds.is_empty() && cwds.iter().all(|cwd| Path::new(cwd).is_absolute()),
             "task requires an absolute local project path"
         );
         let id = device_id();
         let now = chrono::Utc::now().timestamp_millis();
-        let raw = json!({
+        let mut raw = json!({
             "version": 1, "id": id, "name": name, "prompt": prompt, "rrule": rrule,
             "status": "ACTIVE", "cwds": cwds, "created_at": now, "updated_at": now,
             "execution_environment": "local"
         });
+        if params.get("projectId").is_some() {
+            raw["target"] = json!({"type": "projectless"});
+        }
+        let mut raw: toml::Table = toml::from_str(&toml::to_string(&raw)?)?;
+        patch_automation(&mut raw, params, None)?;
         let contents = toml::to_string(&raw)?;
         self.write_automation(&id, &contents)?;
         Ok(json!({"item": definition(&id, &contents)?}))
@@ -752,6 +762,7 @@ impl LocalHost {
         }
         let original = fs::read_to_string(&path).map_err(read_error)?;
         let mut item = definition(id, &original)?;
+        let mut raw: toml::Table = toml::from_str(&original)?;
         ensure!(item["status"] != "DELETED", "{missing}");
         for (key, value) in params
             .as_object()
@@ -760,30 +771,14 @@ impl LocalHost {
             if matches!(key.as_str(), "id" | "status" | "hostId") {
                 continue;
             }
-            if matches!(key.as_str(), "name" | "prompt" | "rrule") {
-                let text = value
-                    .as_str()
-                    .map(str::trim)
-                    .filter(|text| !text.is_empty())
-                    .with_context(|| format!("missing automation {key}"))?;
-                item[key] = json!(text);
+            if AUTOMATION_EDIT_FIELDS.iter().any(|(name, _)| *name == key) || key == "projectId" {
                 continue;
             }
-            let stored = if key == "projectId" {
-                &item["target"]["projectId"]
-            } else {
-                &item[key]
-            };
-            // Original `ugi` sends a legacy task's first cwd as `projectId`.
-            let legacy_cwd = key == "projectId"
-                && item["target"].is_null()
-                && item["cwds"].get(0) == Some(value)
-                && value != "~";
-            ensure!(
-                stored == value || legacy_cwd,
-                "automation update cannot change {key}"
-            );
+            ensure!(item[key] == *value, "automation update cannot change {key}");
         }
+        patch_automation(&mut raw, params, Some(&item))?;
+        let previous = item;
+        item = definition(id, &toml::to_string(&raw)?)?;
         let last: Option<i64> = if let Some(transaction) = &transaction {
             transaction
                 .query_row(
@@ -832,7 +827,37 @@ impl LocalHost {
             (Some(next), Some(nominal))
         };
         if let Some(transaction) = &transaction {
-            transaction.execute(
+            let mut updates = vec![
+                "status=excluded.status".to_owned(),
+                "next_run_at=excluded.next_run_at".to_owned(),
+                "next_run_nominal_at=excluded.next_run_nominal_at".to_owned(),
+                "updated_at=excluded.updated_at".to_owned(),
+                "rrule=excluded.rrule".to_owned(),
+                "name=excluded.name".to_owned(),
+                "prompt=excluded.prompt".to_owned(),
+            ];
+            for (field, column) in [
+                ("cwds", "cwds"),
+                ("target", "target_type"),
+                ("target", "project_id"),
+                ("model", "model"),
+                ("reasoningEffort", "reasoning_effort"),
+                ("kind", "kind"),
+                ("targetThreadId", "target_thread_id"),
+                ("executionEnvironment", "execution_environment"),
+                (
+                    "localEnvironmentConfigPath",
+                    "local_environment_config_path",
+                ),
+                ("pluginTemplateId", "plugin_template_id"),
+                ("notificationPolicy", "notification_policy"),
+                ("autoArchive", "auto_archive"),
+            ] {
+                if previous[field] != item[field] {
+                    updates.push(format!("{column}=excluded.{column}"));
+                }
+            }
+            let sql = format!(
                 "INSERT INTO automations
              (id, name, prompt, status, next_run_at, next_run_nominal_at, last_run_at, cwds,
               target_type, project_id, rrule, model, reasoning_effort, created_at, updated_at,
@@ -840,9 +865,11 @@ impl LocalHost {
               plugin_template_id, notification_policy, auto_archive)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
                      ?16, ?17, ?18, ?19, ?20, ?21, ?22)
-             ON CONFLICT(id) DO UPDATE SET status=excluded.status, next_run_at=excluded.next_run_at,
-              next_run_nominal_at=excluded.next_run_nominal_at, updated_at=excluded.updated_at,
-              rrule=excluded.rrule, name=excluded.name, prompt=excluded.prompt",
+             ON CONFLICT(id) DO UPDATE SET {}",
+                updates.join(", ")
+            );
+            transaction.execute(
+                &sql,
                 params![
                     id,
                     item["name"].as_str(),
@@ -870,12 +897,8 @@ impl LocalHost {
                 ],
             )?;
         }
-        let mut raw: toml::Table = toml::from_str(&original)?;
         raw.insert("status".into(), status.into());
         raw.insert("updated_at".into(), now.into());
-        for key in ["name", "prompt", "rrule"] {
-            raw.insert(key.into(), item[key].as_str().unwrap().into());
-        }
         self.write_automation(id, &toml::to_string(&raw)?)?;
         if let Some(transaction) = transaction
             && let Err(error) = transaction.commit()
@@ -1686,6 +1709,117 @@ fn take_flag(headers: &mut Headers, name: &str) -> bool {
 fn set_header(headers: &mut Headers, name: &str, value: impl Into<String>) {
     take_header(headers, name);
     headers.push((name.to_owned(), value.into()));
+}
+
+const AUTOMATION_EDIT_FIELDS: &[(&str, &str)] = &[
+    ("name", "name"),
+    ("prompt", "prompt"),
+    ("rrule", "rrule"),
+    ("kind", "kind"),
+    ("targetThreadId", "target_thread_id"),
+    ("cwds", "cwds"),
+    ("model", "model"),
+    ("reasoningEffort", "reasoning_effort"),
+    ("notificationPolicy", "notification_policy"),
+    ("autoArchive", "auto_archive"),
+    ("executionEnvironment", "execution_environment"),
+    (
+        "localEnvironmentConfigPath",
+        "local_environment_config_path",
+    ),
+];
+
+fn patch_automation(raw: &mut toml::Table, params: &Value, previous: Option<&Value>) -> Result<()> {
+    for &(field, stored) in AUTOMATION_EDIT_FIELDS {
+        let Some(value) = params.get(field) else {
+            continue;
+        };
+        if previous.is_some_and(|item| item[field] == *value) {
+            continue;
+        }
+        if value.is_null() {
+            raw.remove(stored);
+            continue;
+        }
+        let value = if matches!(field, "name" | "prompt" | "rrule") {
+            let text = value
+                .as_str()
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .with_context(|| format!("missing automation {field}"))?;
+            ensure!(
+                field != "name" || text.chars().count() <= 250,
+                "automation name is too long"
+            );
+            ensure!(
+                field != "prompt" || text.chars().count() <= 100_000,
+                "automation prompt is too long"
+            );
+            toml::Value::String(text.to_owned())
+        } else {
+            toml::Value::try_from(value)?
+        };
+        if field == "cwds" && raw.get(stored) != Some(&value) {
+            let paths = value.as_array().context("invalid automation cwds")?;
+            ensure!(
+                !paths.is_empty()
+                    && paths.iter().all(|path| path
+                        .as_str()
+                        .is_some_and(|path| Path::new(path).is_absolute())),
+                "task requires an absolute local project path"
+            );
+        }
+        raw.insert(stored.to_owned(), value);
+    }
+    if let Some(project) = params.get("projectId")
+        && (previous.is_none_or(|item| item["target"]["projectId"] != *project)
+            || params.get("cwds").is_some())
+    {
+        let legacy = raw.get("target").is_none()
+            && params.get("cwds").is_none()
+            && project.as_str().is_some_and(|project| {
+                raw.get("cwds")
+                    .and_then(toml::Value::as_array)
+                    .and_then(|paths| paths.first())
+                    .and_then(toml::Value::as_str)
+                    == Some(project)
+            });
+        if !legacy {
+            let target = if project.is_null() {
+                json!({"type": "projectless"})
+            } else {
+                let project = project
+                    .as_str()
+                    .filter(|id| !id.trim().is_empty())
+                    .context("invalid automation projectId")?;
+                json!({"type": "project", "project_id": project})
+            };
+            raw.insert("target".into(), toml::Value::try_from(target)?);
+        }
+    }
+    let kind = raw
+        .get("kind")
+        .and_then(toml::Value::as_str)
+        .unwrap_or("cron");
+    if previous.is_none_or(|item| item["kind"].as_str() != Some(kind)) {
+        if kind == "heartbeat" {
+            for field in [
+                "cwds",
+                "target",
+                "auto_archive",
+                "execution_environment",
+                "local_environment_config_path",
+                "plugin_template_id",
+                "model",
+                "reasoning_effort",
+            ] {
+                raw.remove(field);
+            }
+        } else {
+            raw.remove("target_thread_id");
+        }
+    }
+    Ok(())
 }
 
 fn definition(id: &str, contents: &str) -> Result<Value> {

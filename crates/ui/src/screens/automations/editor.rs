@@ -4,14 +4,18 @@ use crate::{
     text,
     tooltip::{Side, tooltip},
 };
+use bridge::types::{Model, Thread};
 use gpui::{
     App, AppContext as _, Context, Div, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Render, Role,
-    ScrollAnchor, ScrollHandle, Stateful, StatefulInteractiveElement, Styled, Window, div,
-    prelude::FluentBuilder as _, px,
+    ScrollAnchor, ScrollHandle, SharedString, Stateful, StatefulInteractiveElement, Styled, Window,
+    div, prelude::FluentBuilder as _, px,
 };
 use serde_json::Value;
 use theme::{ActiveTheme as _, Theme};
+
+mod execution;
+use execution::Execution;
 
 const MODES: &[&str] = &[
     "Interval", "Daily", "Weekdays", "Weekly", "Monthly", "Custom",
@@ -36,12 +40,26 @@ const INTERVAL: usize = 3;
 const MONTH_DAYS: usize = 4;
 const MONTH: usize = 5;
 const MINUTE: usize = 6;
+const TRIGGER: usize = 15;
+const ADVANCED: usize = 11;
+const NOTIFICATIONS: usize = 16;
+const NEW_CHAT: usize = 17;
+const AUTO_ARCHIVE: usize = 18;
+const PROJECT: usize = 19;
+const MODEL: usize = 20;
+const EFFORT: usize = 21;
+const THREAD: usize = 22;
+static FORM_BODY_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
+    std::sync::LazyLock::new(|| textsys::letter_spacing(-0.15));
+static FORM_TITLE_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
+    std::sync::LazyLock::new(|| textsys::letter_spacing(-0.32));
 
 #[derive(Clone, Debug)]
 pub struct Draft {
     pub name: String,
     pub prompt: String,
     pub rrule: String,
+    pub execution: Value,
 }
 
 pub enum Outcome {
@@ -55,14 +73,21 @@ enum Picker {
     Frequency,
     Unit,
     Time,
+    Trigger,
+    Days,
+    Notifications,
+    Project,
+    Model,
+    Effort,
+    Thread,
 }
 
 pub struct Editor {
     fields: [Entity<Composer>; 7],
-    controls: [FocusHandle; 15],
+    controls: [FocusHandle; 23],
     scroll: ScrollHandle,
     field_anchors: [ScrollAnchor; 7],
-    control_anchors: [ScrollAnchor; 11],
+    control_anchors: [ScrollAnchor; 23],
     mode: Option<usize>,
     frequency: usize,
     minutes: bool,
@@ -74,6 +99,10 @@ pub struct Editor {
     editing: bool,
     saving: bool,
     error: Option<String>,
+    execution: Execution,
+    advanced: bool,
+    zone: String,
+    day_label: SharedString,
 }
 
 impl EventEmitter<Outcome> for Editor {}
@@ -85,26 +114,26 @@ impl Focusable for Editor {
 
 impl Editor {
     pub fn new(item: Option<&Value>, cx: &mut Context<Self>) -> Self {
+        let zone = crate::dialog::local_zone();
+        let default_time = clock_label(9, 0, &zone);
         let values = [
             item.and_then(|v| v["name"].as_str()).unwrap_or(""),
             item.and_then(|v| v["prompt"].as_str()).unwrap_or(""),
-            "09:00",
+            &default_time,
             "1",
             "1",
             "1",
             "0",
         ];
-        let placeholders = [
-            "Scheduled task title",
-            "Describe what ChatGPT should do",
-            "HH:MM",
-            "1",
-            "1, 15",
-            "1",
-            "0",
-        ];
+        let placeholders = ["Task name", "Instructions…", "Time", "1", "1, 15", "1", "0"];
         let fields = std::array::from_fn(|i| {
-            cx.new(|cx| Composer::settings_field(placeholders[i], values[i], i == PROMPT, cx))
+            cx.new(|cx| {
+                if i <= PROMPT {
+                    Composer::form_field(placeholders[i], values[i], i == PROMPT, cx)
+                } else {
+                    Composer::inline_field(placeholders[i], values[i], cx)
+                }
+            })
         });
         let scroll = ScrollHandle::new();
         let mut this = Self {
@@ -124,6 +153,10 @@ impl Editor {
             editing: item.is_some_and(|item| item["id"].is_string()),
             saving: false,
             error: None,
+            execution: Execution::new(item),
+            advanced: false,
+            zone,
+            day_label: "Monday".into(),
         };
         if let Some(rule) = this.original_rule.clone() {
             this.load_rule(&rule, cx);
@@ -142,6 +175,28 @@ impl Editor {
             .detach();
         }
         this
+    }
+
+    pub fn set_options(
+        &mut self,
+        models: &[Model],
+        threads: &[Thread],
+        projects: Option<&[crate::screens::sidebar::Project]>,
+        config: &Value,
+        cwd: &str,
+        cx: &mut Context<Self>,
+    ) {
+        self.execution
+            .set_options(models, threads, projects, config, cwd);
+        if self.menu.is_some_and(|(picker, _)| {
+            matches!(
+                picker,
+                Picker::Model | Picker::Effort | Picker::Project | Picker::Thread
+            )
+        }) {
+            self.menu = None;
+        }
+        cx.notify();
     }
 
     fn load_rule(&mut self, rule: &str, cx: &mut Context<Self>) {
@@ -174,6 +229,7 @@ impl Editor {
         let interval = parts.get("INTERVAL").copied().unwrap_or("1");
         let weekdays = parts.get("BYDAY").copied().unwrap_or("MO");
         self.weekdays = std::array::from_fn(|i| weekdays.split(',').any(|day| day == DAYS[i]));
+        self.update_day_label();
         self.raw_rule |= !["MINUTELY", "HOURLY", "DAILY", "WEEKLY", "MONTHLY", "YEARLY"]
             .contains(&frequency)
             || parts
@@ -201,8 +257,7 @@ impl Editor {
             (INTERVAL, interval.to_owned()),
             (
                 TIME,
-                format!(
-                    "{:02}:{:02}",
+                clock_label(
                     parts
                         .get("BYHOUR")
                         .and_then(|s| s.parse::<u8>().ok())
@@ -210,7 +265,8 @@ impl Editor {
                     parts
                         .get("BYMINUTE")
                         .and_then(|s| s.parse::<u8>().ok())
-                        .unwrap_or(0)
+                        .unwrap_or(0),
+                    &self.zone,
                 ),
             ),
             (
@@ -251,13 +307,23 @@ impl Editor {
     pub fn draft(&self, cx: &App) -> Option<Draft> {
         let name = self.value(NAME, cx);
         let prompt = self.value(PROMPT, cx);
-        if name.is_empty() || prompt.is_empty() {
+        if name.is_empty()
+            || name.chars().count() > 250
+            || prompt.is_empty()
+            || prompt.chars().count() > 100_000
+            || !self.execution.valid()
+        {
             return None;
         }
         Some(Draft {
             name: name.into(),
             prompt: prompt.into(),
             rrule: self.rule(cx)?,
+            execution: if self.editing {
+                self.execution.changes()
+            } else {
+                self.execution.creation()
+            },
         })
     }
 
@@ -330,9 +396,7 @@ impl Editor {
         if frequency == 0 {
             rule.push_str(&format!(";BYMINUTE={}", self.number(MINUTE, 0, 59, cx)?));
         } else {
-            let (hour, minute) = self.value(TIME, cx).split_once(':')?;
-            let hour = hour.parse::<u8>().ok().filter(|h| *h < 24)?;
-            let minute = minute.parse::<u8>().ok().filter(|m| *m < 60)?;
+            let (hour, minute) = clock_parts(self.value(TIME, cx), &self.zone)?;
             rule.push_str(&format!(";BYHOUR={hour};BYMINUTE={minute}"));
         }
         Some(rule)
@@ -367,9 +431,60 @@ impl Editor {
             Picker::Frequency => FREQUENCIES,
             Picker::Unit => &["hours", "minutes"],
             Picker::Time => TIMES,
+            Picker::Trigger => &["Schedule", "Date and time"],
+            Picker::Days => DAY_LABELS,
+            Picker::Notifications => &["All runs", "Failed runs only"],
+            _ => &[],
         }
     }
+
+    fn option_count(&self, picker: Picker) -> usize {
+        match picker {
+            Picker::Model => self.execution.model_count(),
+            Picker::Effort => self.execution.effort_count(),
+            Picker::Project => self.execution.project_count(),
+            Picker::Thread => self.execution.thread_count(),
+            _ => Self::options(picker).len(),
+        }
+    }
+
+    fn option_label(&self, picker: Picker, index: usize) -> SharedString {
+        match picker {
+            Picker::Model => self.execution.model_label(index),
+            Picker::Effort => self.execution.effort_label(index),
+            Picker::Project => self.execution.project_label(index),
+            Picker::Notifications => self.execution.notification_label(index).into(),
+            Picker::Thread => self.execution.thread_label(index),
+            _ => Self::options(picker)[index].into(),
+        }
+    }
+
+    fn option_enabled(&self, picker: Picker, index: usize) -> bool {
+        !matches!((picker, index), (Picker::Trigger, 1) | (Picker::Thread, 0))
+    }
+
+    fn update_day_label(&mut self) {
+        let selected: Vec<_> = self
+            .weekdays
+            .iter()
+            .enumerate()
+            .filter_map(|(i, selected)| selected.then_some(i))
+            .collect();
+        self.day_label = match selected.as_slice() {
+            [] => "Select days".into(),
+            [day] => DAY_LABELS[*day].into(),
+            _ => selected
+                .iter()
+                .map(|day| &DAY_LABELS[*day][..3])
+                .collect::<Vec<_>>()
+                .join(", ")
+                .into(),
+        };
+    }
     fn choose(&mut self, picker: Picker, index: usize, cx: &mut Context<Self>) {
+        if !self.option_enabled(picker, index) {
+            return;
+        }
         match picker {
             Picker::Schedule => {
                 self.mode = Some(index);
@@ -378,11 +493,40 @@ impl Editor {
             Picker::Frequency => self.frequency = index,
             Picker::Unit => self.minutes = index == 1,
             Picker::Time => {
-                self.fields[TIME].update(cx, |field, cx| field.set_text(CLOCKS[index], cx))
+                let (hour, minute) = clock_parts(CLOCKS[index], &self.zone).unwrap();
+                let value = clock_label(hour, minute, &self.zone);
+                self.fields[TIME].update(cx, |field, cx| field.set_text(&value, cx));
             }
+            Picker::Trigger => {
+                if self.mode.is_some() {
+                    self.menu = None;
+                    cx.notify();
+                    return;
+                }
+                self.mode = Some(1);
+            }
+            Picker::Days => {
+                self.weekdays[index] = !self.weekdays[index];
+                self.update_day_label();
+            }
+            Picker::Notifications => self.execution.select_notification(index),
+            Picker::Project => self.execution.select_project(index),
+            Picker::Model => self.execution.select_model(index),
+            Picker::Effort => self.execution.select_effort(index),
+            Picker::Thread => self.execution.select_thread(index),
         }
-        self.schedule_dirty = true;
-        self.menu = None;
+        self.schedule_dirty |= matches!(
+            picker,
+            Picker::Schedule
+                | Picker::Frequency
+                | Picker::Unit
+                | Picker::Time
+                | Picker::Days
+                | Picker::Trigger
+        );
+        if picker != Picker::Days {
+            self.menu = None;
+        }
         self.error = None;
         cx.notify();
     }
@@ -394,7 +538,7 @@ impl Editor {
             return;
         }
         if let Some((picker, index)) = self.menu {
-            let count = Self::options(picker).len();
+            let count = self.option_count(picker);
             match key.key.as_str() {
                 "up" => self.menu = Some((picker, (index + count - 1) % count)),
                 "down" => self.menu = Some((picker, (index + 1) % count)),
@@ -431,6 +575,7 @@ impl Editor {
                         self.controls[..self.control_anchors.len()]
                             .iter()
                             .position(|control| control == next)
+                            .filter(|index| !matches!(*index, 12..=14))
                             .map(|i| &self.control_anchors[i])
                     });
                 if let Some(anchor) = anchor {
@@ -469,52 +614,322 @@ impl Editor {
         let mut handles = vec![
             self.fields[NAME].focus_handle(cx),
             self.fields[PROMPT].focus_handle(cx),
+            self.controls[TRIGGER].clone(),
             self.controls[0].clone(),
         ];
         if self.mode == Some(5) && !self.raw_rule {
             handles.push(self.controls[1].clone());
         }
-        handles.extend(
-            self.visible_fields()
-                .iter()
-                .map(|i| self.fields[*i].focus_handle(cx)),
-        );
+        let days =
+            self.mode == Some(3) || self.mode == Some(5) && self.frequency == 2 && !self.raw_rule;
+        for index in self.visible_fields() {
+            if index == TIME && days {
+                handles.push(self.controls[4].clone());
+            }
+            handles.push(self.fields[index].focus_handle(cx));
+        }
         if self.mode == Some(0) {
             handles.push(self.controls[2].clone());
-        }
-        if self.mode == Some(3) || self.mode == Some(5) && self.frequency == 2 && !self.raw_rule {
-            handles.extend(self.controls[4..11].iter().cloned());
         }
         if self.visible_fields().contains(&TIME) {
             handles.push(self.controls[3].clone());
         }
-        handles.extend([
-            self.controls[13].clone(),
-            self.controls[14].clone(),
-            self.controls[12].clone(),
-        ]);
+        handles.push(self.controls[ADVANCED].clone());
+        if self.advanced {
+            handles.push(self.controls[NOTIFICATIONS].clone());
+            handles.push(self.controls[NEW_CHAT].clone());
+            if self.execution.new_chat() {
+                handles.extend([
+                    self.controls[AUTO_ARCHIVE].clone(),
+                    self.controls[PROJECT].clone(),
+                    self.controls[MODEL].clone(),
+                    self.controls[EFFORT].clone(),
+                ]);
+            } else {
+                handles.push(self.controls[THREAD].clone());
+            }
+        }
+        if !self.editing {
+            handles.push(self.controls[13].clone());
+        }
+        handles.extend([self.controls[14].clone(), self.controls[12].clone()]);
         handles
     }
 
-    fn field(&self, index: usize, label: &'static str, t: &Theme, cx: &App) -> Stateful<Div> {
+    fn row(label: &'static str, control: impl IntoElement, t: &Theme, divided: bool) -> Div {
         div()
-            .id(("automation-field-row", index))
+            .relative()
+            .h(px(48.))
+            .px(px(20.))
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(px(12.))
+            .when(divided, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .top(px(-1.))
+                        .left(px(16.))
+                        .right(px(16.))
+                        .h(px(1.))
+                        .bg(t.border),
+                )
+            })
+            .child(text(label, 14., 20., 400., t.text))
+            .child(control)
+    }
+
+    fn input(&self, index: usize, label: &'static str, cx: &App) -> Stateful<Div> {
+        div()
+            .id(("automation-field", index))
             .anchor_scroll(Some(self.field_anchors[index].clone()))
+            .role(Role::TextInput)
+            .aria_label(label)
+            .aria_value(self.value(index, cx).to_owned())
+            .track_focus(&self.fields[index].focus_handle(cx))
+            .w_full()
+            .child(self.fields[index].clone())
+    }
+
+    fn field(&self, index: usize, label: &'static str, t: &Theme, cx: &App) -> Div {
+        Self::row(
+            label,
+            div()
+                .w(px(160.))
+                .flex_none()
+                .child(self.input(index, label, cx)),
+            t,
+            true,
+        )
+    }
+
+    fn popup(&self, picker: Picker, t: &Theme, cx: &Context<Self>) -> Stateful<Div> {
+        let selected = self.menu.map_or(0, |(_, index)| index);
+        div()
+            .id("automation-editor-picker-menu")
+            .role(Role::Menu)
+            .w(px(if picker == Picker::Trigger {
+                320.
+            } else {
+                240.
+            }))
+            .max_h(px(360.))
+            .overflow_y_scroll()
+            .rounded(px(10.))
+            .py(px(4.))
+            .bg(t.menu_background)
+            .border_1()
+            .border_color(t.border)
+            .children((0..self.option_count(picker)).map(|index| {
+                let label = self.option_label(picker, index);
+                let enabled = self.option_enabled(picker, index);
+                div()
+                    .id(("automation-editor-option", index))
+                    .role(Role::MenuItem)
+                    .aria_label(label.clone())
+                    .aria_disabled(!enabled)
+                    .min_h(px(32.))
+                    .px(px(12.))
+                    .py(px(6.))
+                    .flex()
+                    .flex_col()
+                    .justify_center()
+                    .bg(if selected == index {
+                        t.list_hover
+                    } else {
+                        gpui::transparent_black()
+                    })
+                    .hover(|s| s.bg(t.list_hover))
+                    .opacity(if enabled { 1. } else { 0.5 })
+                    .child(text(label, 14., 20., 400., t.text))
+                    .when(picker == Picker::Days, |d| {
+                        d.aria_toggled(if self.weekdays[index] {
+                            gpui::Toggled::True
+                        } else {
+                            gpui::Toggled::False
+                        })
+                    })
+                    .when(picker == Picker::Trigger && index == 1, |d| {
+                        d.child(
+                            text(
+                                "Turn off Run on this computer to use this schedule",
+                                12.,
+                                16.,
+                                400.,
+                                t.text_secondary,
+                            )
+                            .whitespace_normal(),
+                        )
+                    })
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.choose(picker, index, cx);
+                        cx.stop_propagation();
+                    }))
+            }))
+    }
+
+    fn toggle_control(&mut self, control: usize, cx: &mut Context<Self>) {
+        if self.saving {
+            return;
+        }
+        match control {
+            ADVANCED => self.advanced = !self.advanced,
+            NEW_CHAT => self.execution.toggle_new_chat(),
+            AUTO_ARCHIVE => self.execution.toggle_archive(),
+            _ => return,
+        }
+        self.menu = None;
+        cx.notify();
+    }
+
+    fn toggle(
+        &self,
+        control: usize,
+        label: &'static str,
+        on: bool,
+        t: &Theme,
+        cx: &Context<Self>,
+    ) -> Stateful<Div> {
+        crate::screens::settings::switch(
+            if control == NEW_CHAT {
+                "automation-new-chat"
+            } else {
+                "automation-auto-archive"
+            },
+            on,
+            false,
+            t,
+        )
+        .anchor_scroll(Some(self.control_anchors[control].clone()))
+        .role(Role::Button)
+        .aria_label(label)
+        .aria_toggled(if on {
+            gpui::Toggled::True
+        } else {
+            gpui::Toggled::False
+        })
+        .track_focus(&self.controls[control])
+        .focus_visible(|s| s.border_2().border_color(gpui::rgb(0x3a83f7)))
+        .on_click(cx.listener(move |this, _, _, cx| this.toggle_control(control, cx)))
+        .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                this.toggle_control(control, cx);
+                cx.stop_propagation();
+            }
+        }))
+    }
+
+    fn advanced(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        let card = |row: Div| {
+            row.px(px(21.))
+                .py(px(1.))
+                .child(shapes::decoration(shapes::Decoration {
+                    radius: gpui::Corners::all(px(20.)),
+                    corner: shapes::Corner::Squircle,
+                    border: Some((px(1.), t.border)),
+                    ..Default::default()
+                }))
+        };
+        div()
             .flex()
             .flex_col()
-            .gap(px(6.))
-            .child(text(label, 13., 20., 500., t.text_secondary))
-            .child(
-                div()
-                    .id(("automation-field", index))
-                    .role(Role::TextInput)
-                    .aria_label(label)
-                    .aria_value(self.value(index, cx).to_owned())
-                    .rounded(px(8.))
-                    .track_focus(&self.fields[index].focus_handle(cx))
-                    .focus_visible(|d| d.border_2().border_color(gpui::rgb(0x3a83f7)))
-                    .child(self.fields[index].clone()),
-            )
+            .gap(px(12.))
+            .pt(px(12.))
+            .child(card(Self::row(
+                "Notifications",
+                self.picker(
+                    Picker::Notifications,
+                    "Notifications",
+                    self.execution.notification_value(),
+                    NOTIFICATIONS,
+                    t,
+                    cx,
+                ),
+                t,
+                false,
+            )))
+            .child(card(Self::row(
+                "Start each run in new chat",
+                self.toggle(
+                    NEW_CHAT,
+                    "Start each run in new chat",
+                    self.execution.new_chat(),
+                    t,
+                    cx,
+                ),
+                t,
+                false,
+            )))
+            .when(self.execution.new_chat(), |d| {
+                d.child(card(Self::row(
+                    "Archive successful runs",
+                    self.toggle(
+                        AUTO_ARCHIVE,
+                        "Archive successful runs",
+                        self.execution.values["autoArchive"] == true,
+                        t,
+                        cx,
+                    ),
+                    t,
+                    false,
+                )))
+                .child(card(Self::row(
+                    "Project",
+                    self.picker(
+                        Picker::Project,
+                        "Project",
+                        self.execution.project_value().as_ref(),
+                        PROJECT,
+                        t,
+                        cx,
+                    ),
+                    t,
+                    false,
+                )))
+                .child(card(Self::row(
+                    "Model",
+                    self.picker(
+                        Picker::Model,
+                        "Model",
+                        self.execution.model_value().as_ref(),
+                        MODEL,
+                        t,
+                        cx,
+                    ),
+                    t,
+                    false,
+                )))
+                .child(card(Self::row(
+                    "Effort",
+                    self.picker(
+                        Picker::Effort,
+                        "Effort",
+                        self.execution.effort_value().as_ref(),
+                        EFFORT,
+                        t,
+                        cx,
+                    ),
+                    t,
+                    false,
+                )))
+            })
+            .when(!self.execution.new_chat(), |d| {
+                d.child(card(Self::row(
+                    "Runs in",
+                    self.picker(
+                        Picker::Thread,
+                        "Runs in",
+                        self.execution.thread_value().as_ref(),
+                        THREAD,
+                        t,
+                        cx,
+                    ),
+                    t,
+                    false,
+                )))
+            })
     }
 
     fn picker(
@@ -526,160 +941,233 @@ impl Editor {
         t: &Theme,
         cx: &Context<Self>,
     ) -> Stateful<Div> {
-        let selected = Self::options(picker)
-            .iter()
-            .position(|v| *v == value)
+        let selected = (0..self.option_count(picker))
+            .position(|index| self.option_label(picker, index).as_ref() == value)
             .unwrap_or(0);
+        let color = if picker == Picker::Trigger {
+            t.text_tertiary
+        } else {
+            t.text_secondary
+        };
         div()
             .id(("automation-picker", control))
             .anchor_scroll(Some(self.control_anchors[control].clone()))
+            .relative()
             .role(Role::Button)
             .aria_label(label)
+            .aria_expanded(self.menu.is_some_and(|(open, _)| open == picker))
             .track_focus(&self.controls[control])
-            .h(px(36.))
-            .px(px(10.))
-            .border_1()
-            .border_color(t.border)
-            .rounded(px(8.))
+            .h(px(40.))
+            .when(picker == Picker::Time, |d| d.w(px(20.)).flex_none())
+            .rounded(px(10.))
             .focus_visible(|s| s.border_2().border_color(gpui::rgb(0x3a83f7)))
             .flex()
             .items_center()
-            .justify_between()
-            .gap(px(10.))
+            .justify_end()
+            .gap(px(if picker == Picker::Trigger { 6. } else { 8. }))
             .hover(|s| s.bg(t.ghost_hover))
-            .child(text(value.to_owned(), 13., 20., 430., t.text))
-            .child(icon("chevron-down", 16., t.text_secondary))
+            .when(!value.is_empty(), |d| {
+                d.child(text(value.to_owned(), 14., 20., 400., color))
+            })
+            .when(picker == Picker::Trigger, |d| {
+                d.child(icon("automation-scheduled", 16., color))
+            })
+            .child(icon(
+                if picker == Picker::Trigger {
+                    "chevron-down-medium"
+                } else {
+                    "automation-chevron-down"
+                },
+                if picker == Picker::Trigger { 16. } else { 20. },
+                color,
+            ))
             .on_click(cx.listener(move |this, _, window, cx| {
                 if !this.saving {
                     this.controls[control].focus(window, cx);
                     this.menu = Some((picker, selected));
                     cx.notify();
+                    cx.stop_propagation();
                 }
             }))
-            .on_key_down(cx.listener(move |this, e: &KeyDownEvent, _, cx| {
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
                 if !this.saving
                     && this.menu.is_none()
-                    && matches!(e.keystroke.key.as_str(), "enter" | "space" | "down")
+                    && matches!(event.keystroke.key.as_str(), "enter" | "space" | "down")
                 {
                     this.menu = Some((picker, selected));
                     cx.notify();
                     cx.stop_propagation();
                 }
             }))
+            .when(self.menu.is_some_and(|(open, _)| open == picker), |d| {
+                d.child(
+                    gpui::deferred(
+                        div().absolute().right_0().top(px(44.)).child(
+                            gpui::anchored()
+                                .anchor(gpui::Anchor::TopRight)
+                                .snap_to_window_with_margin(px(8.))
+                                .child(self.popup(picker, t, cx)),
+                        ),
+                    )
+                    .with_priority(3),
+                )
+            })
     }
 
-    fn schedule(&self, t: &Theme, cx: &Context<Self>) -> Div {
+    fn schedule(&self, t: &Theme, window: &Window, cx: &Context<Self>) -> Div {
         let mut content = div()
+            .relative()
+            .p(px(1.))
+            .child(shapes::decoration(shapes::Decoration {
+                radius: gpui::Corners::all(px(20.)),
+                corner: shapes::Corner::Squircle,
+                fill: Some(t.surface_elevated_secondary.opacity(0.96)),
+                border: Some((px(1.), t.border_strong)),
+                ..Default::default()
+            }))
             .flex()
             .flex_col()
-            .gap(px(10.))
-            .child(text("Choose a schedule", 13., 20., 500., t.text_secondary))
-            .child(self.picker(
-                Picker::Schedule,
-                "Repeat",
-                self.mode.map_or("Choose a schedule", |i| MODES[i]),
-                0,
+            .child(
+                Self::row(
+                    "Trigger",
+                    self.picker(Picker::Trigger, "Trigger", "Schedule", TRIGGER, t, cx),
+                    t,
+                    false,
+                )
+                .id("automation-trigger-row")
+                .on_click(cx.listener(|this, _, window, cx| {
+                    if !this.saving {
+                        this.controls[TRIGGER].focus(window, cx);
+                        this.menu = Some((Picker::Trigger, 0));
+                        cx.notify();
+                    }
+                })),
+            )
+            .child(Self::row(
+                "Frequency",
+                self.picker(
+                    Picker::Schedule,
+                    "Repeat schedule",
+                    self.mode.map_or("Choose", |index| MODES[index]),
+                    0,
+                    t,
+                    cx,
+                ),
                 t,
-                cx,
+                true,
             ));
         if self.raw_rule {
-            content = content.child(
-                text(
-                    self.original_rule.clone().unwrap_or_default(),
-                    13.,
-                    20.,
-                    430.,
-                    t.text_secondary,
-                )
-                .whitespace_normal(),
+            return content.child(
+                div().px(px(20.)).py(px(12.)).child(
+                    text(
+                        self.original_rule.clone().unwrap_or_default(),
+                        13.,
+                        20.,
+                        400.,
+                        t.text_secondary,
+                    )
+                    .whitespace_normal(),
+                ),
             );
         }
-        if self.mode == Some(5) && !self.raw_rule {
-            content = content.child(self.picker(
-                Picker::Frequency,
-                "Repeat frequency",
-                FREQUENCIES[self.frequency],
-                1,
+        if self.mode == Some(5) {
+            content = content.child(Self::row(
+                "Repeat",
+                self.picker(
+                    Picker::Frequency,
+                    "Repeat frequency",
+                    FREQUENCIES[self.frequency],
+                    1,
+                    t,
+                    cx,
+                ),
                 t,
-                cx,
+                true,
             ));
         }
+        let days = self.mode == Some(3) || self.mode == Some(5) && self.frequency == 2;
         for index in self.visible_fields() {
-            let label = match index {
-                TIME => "Time (local, HH:MM)",
-                INTERVAL => "Every",
-                MONTH_DAYS => "On days (1-31)",
-                MONTH => "Month (1-12)",
-                MINUTE => "Minute past the hour",
-                _ => "Schedule rule",
-            };
-            content = content.child(self.field(index, label, t, cx));
+            if index == TIME {
+                let value = self.value(TIME, cx);
+                let mut font = gpui::font(crate::SANS);
+                font.features = FORM_BODY_FEATURES.clone();
+                let time_width = window
+                    .text_system()
+                    .shape_line(
+                        value.to_owned().into(),
+                        px(14.),
+                        &[gpui::TextRun {
+                            len: value.len(),
+                            font,
+                            color: t.text_secondary,
+                            background_color: None,
+                            underline: None,
+                            strikethrough: None,
+                        }],
+                        None,
+                    )
+                    .width
+                    .max(px(48.))
+                    .min(px(180.));
+                let time_width = px(f32::from(time_width).ceil());
+                if days {
+                    content = content.child(Self::row(
+                        "On",
+                        self.picker(
+                            Picker::Days,
+                            "Days of the week",
+                            self.day_label.as_ref(),
+                            4,
+                            t,
+                            cx,
+                        ),
+                        t,
+                        true,
+                    ));
+                }
+                content = content.child(Self::row(
+                    "Time",
+                    div()
+                        .w(time_width + px(28.))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(
+                            div()
+                                .w(time_width)
+                                .flex_none()
+                                .child(self.input(TIME, "Time", cx)),
+                        )
+                        .child(self.picker(Picker::Time, "Time presets", "", 3, t, cx)),
+                    t,
+                    true,
+                ));
+            } else {
+                let label = match index {
+                    INTERVAL => "Every",
+                    MONTH_DAYS => "On",
+                    MONTH => "Month",
+                    MINUTE => "Minute",
+                    _ => "Schedule",
+                };
+                content = content.child(self.field(index, label, t, cx));
+            }
         }
         if self.mode == Some(0) {
-            content = content.child(self.picker(
-                Picker::Unit,
-                "Interval unit",
-                if self.minutes { "minutes" } else { "hours" },
-                2,
+            content = content.child(Self::row(
+                "Unit",
+                self.picker(
+                    Picker::Unit,
+                    "Interval unit",
+                    if self.minutes { "minutes" } else { "hours" },
+                    2,
+                    t,
+                    cx,
+                ),
                 t,
-                cx,
+                true,
             ));
-        }
-        if self.mode == Some(3) || self.mode == Some(5) && self.frequency == 2 && !self.raw_rule {
-            content = content.child(
-                div()
-                    .id("automation-weekdays")
-                    .role(Role::Group)
-                    .aria_label("Days of the week")
-                    .flex()
-                    .gap(px(4.))
-                    .children(DAYS.iter().enumerate().map(|(i, day)| {
-                        div()
-                            .id(("automation-weekday", i))
-                            .anchor_scroll(Some(self.control_anchors[4 + i].clone()))
-                            .role(Role::Button)
-                            .aria_label(DAY_LABELS[i])
-                            .aria_toggled(if self.weekdays[i] {
-                                gpui::Toggled::True
-                            } else {
-                                gpui::Toggled::False
-                            })
-                            .track_focus(&self.controls[4 + i])
-                            .size(px(34.))
-                            .rounded(px(8.))
-                            .bg(if self.weekdays[i] {
-                                t.text_alpha_10
-                            } else {
-                                gpui::transparent_black()
-                            })
-                            .focus_visible(|s| s.border_2().border_color(gpui::rgb(0x3a83f7)))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(text(*day, 12., 20., 430., t.text))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if !this.saving {
-                                    this.weekdays[i] = !this.weekdays[i];
-                                    this.schedule_dirty = true;
-                                    cx.notify();
-                                }
-                            }))
-                            .on_key_down(cx.listener(move |this, e: &KeyDownEvent, _, cx| {
-                                if !this.saving
-                                    && matches!(e.keystroke.key.as_str(), "enter" | "space")
-                                {
-                                    this.weekdays[i] = !this.weekdays[i];
-                                    this.schedule_dirty = true;
-                                    cx.notify();
-                                    cx.stop_propagation();
-                                }
-                            }))
-                    })),
-            );
-        }
-        if self.visible_fields().contains(&TIME) {
-            content =
-                content.child(self.picker(Picker::Time, "Time presets", "Time presets", 3, t, cx));
         }
         content
     }
@@ -696,24 +1184,79 @@ impl Editor {
             .role(Role::Button)
             .aria_label(label)
             .track_focus(&self.controls[control])
-            .h(px(32.))
-            .px(px(12.))
-            .rounded(px(8.))
+            .h(px(if control == ADVANCED {
+                28.
+            } else if control == 12 {
+                32.
+            } else {
+                36.
+            }))
+            .px(px(if control == ADVANCED {
+                8.
+            } else if control == 12 {
+                0.
+            } else {
+                16.
+            }))
+            .rounded(px(if control == 12 || control == ADVANCED {
+                10.
+            } else {
+                9999.
+            }))
+            .when(control == 12, |d| d.w(px(32.)))
+            .when(control == 14, |d| {
+                d.px(px(17.)).child(shapes::decoration(shapes::Decoration {
+                    radius: gpui::Corners::all(px(9999.)),
+                    fill: Some(t.text),
+                    border: Some((px(1.), t.border)),
+                    ..Default::default()
+                }))
+            })
             .focus_visible(|s| s.border_2().border_color(gpui::rgb(0x3a83f7)))
             .flex()
             .items_center()
             .justify_center()
-            .child(text(label, 13., 20., 500., t.text))
+            .gap(px(if control == ADVANCED { 8. } else { 6. }))
+            .when(control != 12, |d| {
+                d.child(
+                    text(
+                        label,
+                        14.,
+                        20.,
+                        if control == 14 { 500. } else { 400. },
+                        if control == 14 {
+                            t.surface_elevated_secondary
+                        } else {
+                            t.text_secondary
+                        },
+                    )
+                    .when(control == ADVANCED, |d| d.w(px(58.87)).flex_none()),
+                )
+            })
+            .when(control == 12, |d| {
+                d.child(icon("close", 20., t.text_tertiary))
+            })
+            .when(control == ADVANCED, |d| {
+                d.aria_expanded(self.advanced).child(icon(
+                    "automation-chevron-down",
+                    20.,
+                    t.text_secondary,
+                ))
+            })
             .on_click(cx.listener(move |this, _, window, cx| {
-                if control == 14 {
+                if control == ADVANCED {
+                    this.toggle_control(control, cx);
+                } else if control == 14 {
                     this.submit(window, cx);
                 } else if !this.saving {
                     cx.emit(Outcome::Dismiss);
                 }
             }))
-            .on_key_down(cx.listener(move |this, e: &KeyDownEvent, window, cx| {
-                if matches!(e.keystroke.key.as_str(), "enter" | "space") {
-                    if control == 14 {
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    if control == ADVANCED {
+                        this.toggle_control(control, cx);
+                    } else if control == 14 {
                         this.submit(window, cx);
                     } else if !this.saving {
                         cx.emit(Outcome::Dismiss);
@@ -724,91 +1267,170 @@ impl Editor {
     }
 }
 
+fn clock_label(hour: u8, minute: u8, zone: &str) -> String {
+    if hour >= 24 || minute >= 60 {
+        return format!("{hour}:{minute:02}");
+    }
+    format!(
+        "{}:{minute:02} {} {zone}",
+        if hour.is_multiple_of(12) {
+            12
+        } else {
+            hour % 12
+        },
+        if hour < 12 { "AM" } else { "PM" }
+    )
+}
+
+fn clock_parts(value: &str, zone: &str) -> Option<(u8, u8)> {
+    let mut parts = value.split_whitespace();
+    let (hour, minute) = parts.next()?.split_once(':')?;
+    if minute.len() != 2 {
+        return None;
+    }
+    let mut hour = hour.parse::<u8>().ok()?;
+    let minute = minute.parse::<u8>().ok().filter(|value| *value < 60)?;
+    if let Some(period) = parts.next() {
+        if !(1..=12).contains(&hour) || !matches!(period, "AM" | "PM" | "am" | "pm") {
+            return None;
+        }
+        hour = hour % 12
+            + if period.eq_ignore_ascii_case("pm") {
+                12
+            } else {
+                0
+            };
+        if let Some(label) = parts.next()
+            && label != zone
+        {
+            return None;
+        }
+    }
+    (hour < 24 && parts.next().is_none()).then_some((hour, minute))
+}
+
 impl Render for Editor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
         let valid = !self.saving
             && !self.value(NAME, cx).is_empty()
+            && self.value(NAME, cx).chars().count() <= 250
             && !self.value(PROMPT, cx).is_empty()
+            && self.value(PROMPT, cx).chars().count() <= 100_000
+            && self.execution.valid()
             && self.rule(cx).is_some();
         let reason = if self.value(NAME, cx).is_empty() {
             "Enter a name"
         } else if self.value(PROMPT, cx).is_empty() {
             "Enter a prompt"
-        } else if self.mode.is_none() {
-            "Choose a schedule"
+        } else if !self.execution.valid() {
+            "Select a chat"
         } else {
             "Enter valid schedule fields"
+        };
+        let title = if self.editing {
+            "Edit task"
+        } else {
+            "Schedule a task"
         };
         let mut form = div()
             .id("automation-editor-form")
             .role(Role::Dialog)
-            .aria_label(if self.editing {
-                "Edit scheduled task"
-            } else {
-                "Create scheduled task"
-            })
+            .aria_label(title)
             .relative()
-            .w(px(640.).min(window.viewport_size().width * 0.92))
-            .max_h(window.viewport_size().height * 0.9)
-            .p(px(24.))
-            .rounded(px(20.))
-            .bg(t.surface_elevated_secondary)
-            .border_1()
-            .border_color(t.border)
+            .w(px(680.).min(window.viewport_size().width * 0.92))
+            .max_h(window.viewport_size().height * 0.85)
+            .p(px(20.))
             .flex()
             .flex_col()
-            .gap(px(16.))
+            .child(shapes::decoration(shapes::Decoration {
+                radius: gpui::Corners::all(px(30.)),
+                fill: Some(t.surface_elevated_secondary),
+                shadows: vec![
+                    shapes::Shadow {
+                        color: t.border,
+                        offset: gpui::point(px(0.), px(0.)),
+                        blur: px(0.),
+                        spread: px(0.5),
+                        inset: false,
+                    },
+                    shapes::Shadow {
+                        color: gpui::black().opacity(0.1),
+                        offset: gpui::point(px(0.), px(8.)),
+                        blur: px(10.),
+                        spread: px(-6.),
+                        inset: false,
+                    },
+                    shapes::Shadow {
+                        color: gpui::black().opacity(0.1),
+                        offset: gpui::point(px(0.), px(20.)),
+                        blur: px(25.),
+                        spread: px(-5.),
+                        inset: false,
+                    },
+                ],
+                ..Default::default()
+            }))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_key_down(cx.listener(Self::key))
             .on_action(cx.listener(|this, _: &Dismiss, _, cx| this.dismiss(cx)))
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                let key = &event.keystroke;
-                if key.key == "enter" && (key.modifiers.platform || key.modifiers.control) {
+                if event.keystroke.key == "enter"
+                    && (event.keystroke.modifiers.platform || event.keystroke.modifiers.control)
+                {
                     this.submit(window, cx);
                     cx.stop_propagation();
                 }
             }))
             .child(
                 div()
-                    .flex()
-                    .justify_between()
-                    .items_center()
-                    .child(text(
-                        if self.editing {
-                            "Edit scheduled task"
-                        } else {
-                            "Create scheduled task"
-                        },
-                        16.,
-                        24.,
-                        590.,
-                        t.text,
-                    ))
-                    .child(self.button(12, "Close", t, cx)),
+                    .relative()
+                    .h(px(26.))
+                    .mb(px(20.))
+                    .child(
+                        text(title, 16., 26., 590., t.text)
+                            .font_features(FORM_TITLE_FEATURES.clone()),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .right(px(-6.))
+                            .top(px(-4.))
+                            .child(self.button(12, "Close dialog", t, cx)),
+                    ),
             )
             .child(
                 div()
                     .id("automation-editor-fields")
+                    .font_features(FORM_BODY_FEATURES.clone())
                     .min_h_0()
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll)
                     .flex()
                     .flex_col()
                     .gap(px(16.))
-                    .child(self.field(NAME, "Name", t, cx))
-                    .child(self.field(PROMPT, "Prompt", t, cx))
-                    .child(self.schedule(t, cx)),
+                    .child(self.input(NAME, "Name", cx))
+                    .child(self.input(PROMPT, "Prompt", cx))
+                    .child(self.schedule(t, window, cx))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .items_start()
+                            .child(self.button(ADVANCED, "Advanced", t, cx))
+                            .when(self.advanced, |d| d.child(self.advanced(t, cx).w_full())),
+                    ),
             )
             .when_some(self.error.as_ref(), |d, error| {
-                d.child(text(error.clone(), 13., 20., 430., t.text_error).whitespace_normal())
+                d.child(text(error.clone(), 13., 20., 400., t.text_error).whitespace_normal())
             })
             .child(
                 div()
                     .flex()
                     .justify_end()
-                    .gap(px(8.))
-                    .child(self.button(13, "Cancel", t, cx))
+                    .gap(px(12.))
+                    .pt(px(20.))
+                    .when(!self.editing, |d| d.child(self.button(13, "Cancel", t, cx)))
                     .child(tooltip(
                         self.button(
                             14,
@@ -822,7 +1444,6 @@ impl Render for Editor {
                             t,
                             cx,
                         )
-                        .bg(t.text_alpha_10)
                         .aria_disabled(!valid)
                         .opacity(if valid { 1. } else { 0.4 }),
                         if valid { "Save scheduled task" } else { reason },
@@ -830,60 +1451,15 @@ impl Render for Editor {
                         Side::Top,
                     )),
             );
-        if let Some((picker, selected)) = self.menu {
-            form = form.child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .occlude()
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _, cx| {
-                            this.menu = None;
-                            cx.notify();
-                            cx.stop_propagation();
-                        }),
-                    )
-                    .child(
-                        div()
-                            .id("automation-editor-picker-menu")
-                            .absolute()
-                            .right(px(24.))
-                            .bottom(px(64.))
-                            .w(px(220.))
-                            .rounded(px(10.))
-                            .py(px(4.))
-                            .bg(t.menu_background)
-                            .border_1()
-                            .border_color(t.border)
-                            .role(Role::Menu)
-                            .children(Self::options(picker).iter().enumerate().map(
-                                |(i, label)| {
-                                    div()
-                                        .id(("automation-editor-option", i))
-                                        .role(Role::MenuItem)
-                                        .aria_label(*label)
-                                        .h(px(30.))
-                                        .px(px(12.))
-                                        .flex()
-                                        .items_center()
-                                        .bg(if selected == i {
-                                            t.list_hover
-                                        } else {
-                                            gpui::transparent_black()
-                                        })
-                                        .hover(|s| s.bg(t.list_hover))
-                                        .child(text(*label, 13., 20., 430., t.text))
-                                        .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                                            cx.stop_propagation()
-                                        })
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.choose(picker, i, cx)
-                                        }))
-                                },
-                            )),
-                    ),
-            );
+        if self.menu.is_some() {
+            form = form.child(div().absolute().inset_0().occlude().on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.menu = None;
+                    cx.notify();
+                    cx.stop_propagation();
+                }),
+            ));
         }
         if self.saving {
             form = form.child(div().absolute().inset_0().occlude());
@@ -892,16 +1468,23 @@ impl Render for Editor {
             .absolute()
             .inset_0()
             .occlude()
-            .bg(t.dialog_backdrop)
             .flex()
-            .items_center()
+            .items_start()
             .justify_center()
+            .pt(window.viewport_size().height * 0.1)
+            .child(shapes::backdrop_blur(
+                px(1.),
+                shapes::Fill::Color,
+                false,
+                shapes::Decoration {
+                    fill: Some(gpui::black().opacity(0.5)),
+                    ..Default::default()
+                },
+            ))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
-                    if !this.saving {
-                        cx.emit(Outcome::Dismiss);
-                    }
+                    this.dismiss(cx);
                 }),
             )
             .child(form)
