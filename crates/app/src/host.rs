@@ -925,30 +925,6 @@ impl LocalHost {
             json!({"items": items, "unreadRunCounts": {"total": runs.len(), "automationIds": ids, "unreadRuns": runs}}),
         )
     }
-
-    fn update_global_state(&self, update: impl FnOnce(&mut Value) -> Result<bool>) -> Result<()> {
-        fs::create_dir_all(&self.home)?;
-        let lock = fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(self.home.join(".codex-global-state.lock"))?;
-        lock.lock()?;
-        let path = self.home.join(".codex-global-state.json");
-        let mut state: Value = match fs::read(&path) {
-            Ok(contents) => serde_json::from_slice(&contents)?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => json!({}),
-            Err(error) => return Err(error).context("read global state before updating it"),
-        };
-        ensure!(state.is_object(), "global state must be an object");
-        if update(&mut state)? {
-            let mut file = tempfile::NamedTempFile::new_in(&self.home)?;
-            serde_json::to_writer_pretty(&mut file, &state)?;
-            file.as_file().sync_all()?;
-            file.persist(path)?;
-        }
-        Ok(())
-    }
 }
 
 impl Host for LocalHost {
