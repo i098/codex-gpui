@@ -39,6 +39,10 @@ The command checks the seven retained entry-script and style hashes before captu
 It uses native Mac fonts with `R1_SF_FONTS` unset.
 It preserves the existing route1 and Root capture clocks and fixtures.
 
+The fixture adapter selects the retained `thread/resume` request by thread, rollout path, and history mode.
+It reuses the recorded desktop context and returns the unchanged original response through route1.
+It rejects an unknown thread instead of opening a real app-server session.
+
 ## State adapters
 
 | Surface | State | Original path | Native path |
@@ -53,7 +57,8 @@ Add matching original and Root state adapters before running another census cell
 Do not substitute a static screen or a prior native screenshot for a Root frame.
 
 Both themes support the normal census sizes, `1280x832` and `1440x900`.
-Rest states also accept `767x832` and `600x832`.
+Home rest also accepts `767x832` and `600x832`.
+Terminal and Configuration reject narrow sizes until their navigation adapters support them.
 Each frame uses the same CSS size and native device scale 2.
 The narrow sizes have no separate waiver for a failing gate.
 
@@ -84,6 +89,8 @@ It copies the source and original assets there and makes an APFS clone of the ha
 It builds while the original capture runs, then renders Root and applies the gate.
 Only its own fixture server and browser context stop at completion.
 The Linux caller retrieves the proof and removes the private Mac directory.
+If retrieval fails, the command retains the Mac directory and prints its path.
+Retrieve that evidence before removing the directory.
 The command does not modify the handed-off target, tracked references, or normal profiles.
 
 ## Report regression check
@@ -96,3 +103,6 @@ CARGO_TARGET_DIR=<handed-off-Linux-target> \
 This test checks difference-region bounds and text/geometry counts.
 It does not claim Linux rendering parity.
 The ignored `capture_cell` test runs only through the Mac command above.
+
+
+Run the retained-request check with `node tools/parity/fixture-server.mjs --self-test`.

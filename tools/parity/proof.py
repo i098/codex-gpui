@@ -53,8 +53,8 @@ def arguments():
             raise ValueError()
     except ValueError:
         parser.error("size must be 1280x832, 1440x900, 767x832, or 600x832")
-    if args.state != "rest" and args.width < 1000:
-        parser.error("the census reserves narrow sizes for rest states")
+    if args.width < 1000 and args.surface != "home":
+        parser.error("only Home has a narrow-size navigation adapter")
     return args
 
 
@@ -122,7 +122,7 @@ def worker(args):
         "fonts": "macOS native; R1_SF_FONTS unset", "warm_target": args.warm_target,
     }, indent=2) + "\n")
     with (output / "server.log").open("w") as log:
-        server = subprocess.Popen(["node", "tools/route1/server.mjs"], cwd=ROOT, env=env,
+        server = subprocess.Popen(["node", "tools/parity/fixture-server.mjs"], cwd=ROOT, env=env,
                                   stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
         try:
             for _ in range(100):
@@ -162,27 +162,34 @@ def dispatch(args):
     if args.out.exists():
         raise RuntimeError(f"output already exists: {args.out}")
     pin_assets(args.webview)
-    ssh = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", args.mac]
+    head = run(["git", "rev-parse", "HEAD"], cwd=ROOT, stdout=subprocess.PIPE).stdout.strip()
+    ssh = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15",
+           "-o", "ControlMaster=no", "-o", "ControlPath=none", args.mac]
+    transfer = ["rsync", "-a", "-e", shlex.join(ssh[:-1])]
     scratch = run(ssh + ["mktemp -d /tmp/cgx-proof.XXXXXXXX"], stdout=subprocess.PIPE).stdout.strip()
     if not scratch.startswith("/tmp/cgx-proof.") or not scratch.replace("/tmp/cgx-proof.", "").isalnum():
         raise RuntimeError(f"unexpected remote scratch path: {scratch!r}")
     args.out.mkdir(parents=True)
+    retrieved = False
     try:
-        run(["rsync", "-a", "--exclude=.git", "--exclude=target", str(ROOT) + "/", f"{args.mac}:{scratch}/repo/"])
-        run(["rsync", "-a", str(args.webview) + "/", f"{args.mac}:{scratch}/webview/"])
+        run(transfer + ["--exclude=.git", "--exclude=target", str(ROOT) + "/", f"{args.mac}:{scratch}/repo/"])
+        run(transfer + [str(args.webview) + "/", f"{args.mac}:{scratch}/webview/"])
         command = ["/usr/bin/python3", f"{scratch}/repo/tools/parity/proof.py", args.surface,
                    args.state, "--worker", "--theme", args.theme, "--size", args.size,
                    "--out", f"{scratch}/output", "--warm-target", args.warm_target,
                    "--webview", f"{scratch}/webview", "--cdp", args.cdp]
         with (args.out / "worker.log").open("w") as log:
             result = subprocess.run(ssh + [shlex.join(command)], stdout=log, stderr=subprocess.STDOUT, timeout=1800)
-        run(["rsync", "-a", f"{args.mac}:{scratch}/output/", str(args.out) + "/"])
-        head = run(["git", "rev-parse", "HEAD"], cwd=ROOT, stdout=subprocess.PIPE).stdout.strip()
+        run(transfer + [f"{args.mac}:{scratch}/output/", str(args.out) + "/"])
+        retrieved = True
         (args.out / "source-head.txt").write_text(head + "\n")
         print(f"{'PASS' if result.returncode == 0 else 'FAIL'} {args.out}/differences.md")
         return result.returncode
     finally:
-        run(ssh + ["rm -rf -- " + shlex.quote(scratch)])
+        if retrieved:
+            run(ssh + ["rm -rf -- " + shlex.quote(scratch)])
+        else:
+            print(f"Retrieval did not complete; retained Mac scratch: {args.mac}:{scratch}", file=sys.stderr)
 
 
 if __name__ == "__main__":

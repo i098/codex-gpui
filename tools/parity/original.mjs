@@ -73,7 +73,7 @@ async function configuration() {
     await click("Settings");
     await waitFor(`document.body.innerText.includes('Default permissions')`);
     await click("Configuration");
-    await waitFor(`document.querySelector('h1')?.innerText === 'Configuration' || [...document.querySelectorAll('h2')].some(e=>e.innerText==='Configuration')`);
+    await waitFor(`document.body.innerText.includes('Configure permissions, web access, and agent responses for new chats')`);
     await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: Math.round(w * 0.6), y: 6 });
     await settle(1500);
     await page.evaluate(`(() => {
