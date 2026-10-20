@@ -474,6 +474,41 @@ impl Composer {
         }
     }
 
+    fn scroll_field_to_caret(&mut self) -> bool {
+        if !self.field_autoscroll {
+            return false;
+        }
+        let (Some(scroll), Some(bounds), Some(caret)) = (
+            &self.field_scroll,
+            self.bounds,
+            self.point_for_index(self.cursor()),
+        ) else {
+            return false;
+        };
+        let viewport = scroll.bounds();
+        if viewport.size.height <= px(0.) {
+            return false;
+        }
+        let top = bounds.origin.y + caret.y;
+        let bottom = top + self.editor_line_height();
+        let end = viewport.origin.y + viewport.size.height;
+        let adjustment = if top < viewport.origin.y {
+            viewport.origin.y - top
+        } else if bottom > end {
+            end - bottom
+        } else {
+            px(0.)
+        };
+        self.field_autoscroll = false;
+        if adjustment == px(0.) {
+            return false;
+        }
+        let mut offset = scroll.offset();
+        offset.y += adjustment;
+        scroll.set_offset(offset);
+        true
+    }
+
     /// Byte offset where each shaped line starts (lines are split at `\n`).
     pub(super) fn line_starts(&self) -> impl Iterator<Item = (usize, Pixels, &WrappedLine)> {
         let mut start = 0;
@@ -888,7 +923,8 @@ impl gpui::Element for Editor {
         let changed = self.0.update(cx, |c, _| {
             c.lines = lines;
             c.bounds = Some(bounds);
-            collapse(std::mem::replace(&mut c.footer_width, width)) != collapse(width)
+            let scrolled = c.scroll_field_to_caret();
+            scrolled || collapse(std::mem::replace(&mut c.footer_width, width)) != collapse(width)
         });
         if changed {
             let entity = self.0.clone();

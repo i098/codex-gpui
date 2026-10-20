@@ -7,6 +7,7 @@ pub mod computer_use_requests;
 mod features;
 pub mod host;
 pub mod host_settings;
+mod personalization;
 pub mod qa;
 mod search;
 mod section_actions;
@@ -46,6 +47,7 @@ use ui::screens::diff::panel::{
     with_side_tabs,
 };
 use ui::screens::home::{HomeMain, OpenFolder};
+use ui::screens::settings::personalization::WritingPreference;
 use ui::screens::settings::{self, AppServer, Login, SettingChanged, workspace};
 use ui::screens::sidebar::{
     ArchiveThread, ArchivedChats, CommandMenu, CommandMenuEvent, HomeSidebar, LoadMore, OpenThread,
@@ -435,6 +437,7 @@ pub struct Root {
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
     settings_page: Option<Entity<settings::SettingsPage>>,
+    writing_dialog_preference: Option<Arc<WritingPreference>>,
     pending_settings_leave: Option<SettingsLeave>,
     workspace: Entity<workspace::Workspace>,
     /// `⌘K` command menu over the window.
@@ -723,6 +726,7 @@ impl Root {
             mobile_page: None,
             settings_section: None,
             settings_page: None,
+            writing_dialog_preference: None,
             pending_settings_leave: None,
             workspace: cx.new(workspace::Workspace::new),
             command_menu: None,
@@ -869,7 +873,7 @@ impl Root {
             this.update_in(cx, |this, window, cx| {
                 this.account_email = account.as_ref().and_then(chatgpt_email);
                 this.chatgpt_account = account.as_ref().is_some_and(|account| {
-                    matches!(account.account, Some(Account::Chatgpt { .. }))
+                    matches!(account.account.as_ref(), Some(Account::Chatgpt { .. }))
                 });
                 if account.is_some_and(|a| a.account.is_none() && a.requires_openai_auth) {
                     this.show_login(config.config["forced_login_method"].clone(), cx);
@@ -2719,7 +2723,31 @@ impl Root {
         {
             thread.update(cx, |view, cx| view.close_summary(cx));
         }
+        let previous_focus = window.focused(cx);
         cx.subscribe_in(&dialog, window, move |this, dialog, outcome, window, cx| {
+            match outcome {
+                DialogOutcome::WritingConnect(id) => {
+                    this.connect_writing_source(dialog.clone(), id, window, cx);
+                    return;
+                }
+                DialogOutcome::WritingRetry => {
+                    if dialog.read(cx).writing_authorizations().is_some() {
+                        this.authorize_writing(dialog.clone(), window, cx);
+                    } else {
+                        this.load_writing_apps(dialog.clone(), cx);
+                    }
+                    return;
+                }
+                DialogOutcome::WritingSample => {
+                    this.start_writing_sample(dialog.clone(), window, cx);
+                    return;
+                }
+                _ => {}
+            }
+            if let DialogOutcome::DeleteMemories = outcome {
+                this.delete_memories(dialog.clone(), window, cx);
+                return;
+            }
             if let DialogOutcome::ScheduleTask { prompt, rrule } = outcome {
                 this.create_task(prompt.clone(), rrule.clone(), window, cx);
                 return;
@@ -2763,6 +2791,7 @@ impl Root {
             }
             dialog.read(cx).release_artwork(window);
             this.dialog = None;
+            this.writing_dialog_preference = None;
             let focus = if std::mem::take(&mut this.dialog_to_composer) {
                 this.composer(cx).focus_handle(cx)
             } else {
@@ -2771,6 +2800,9 @@ impl Root {
             match outcome {
                 DialogOutcome::Dismiss => {
                     this.pending_settings_leave = None;
+                    if dialog.read(cx).writing_authorizations().is_some() {
+                        this.refresh_writing(cx);
+                    }
                     if git_dialog {
                         this.commit_cwd = None;
                         window.focus(&this.composer(cx).focus_handle(cx), cx);
@@ -2780,11 +2812,18 @@ impl Root {
                         }) {
                             window.focus(&focus, cx);
                         }
+                    } else if dialog.read(cx).kind() == DialogKind::DeleteMemories {
+                        if let Some(focus) = &previous_focus {
+                            window.focus(focus, cx);
+                        }
                     } else {
                         window.focus(&focus, cx);
                     }
                 }
                 DialogOutcome::LogOut => this.logout(window, cx),
+                DialogOutcome::WritingManage => {
+                    this.open_settings_section("Personalization", window, cx)
+                }
                 DialogOutcome::RevertChanges { .. } => window.focus(&this.focus, cx),
                 DialogOutcome::DiscardInstructions => this.finish_instructions_leave(window, cx),
                 DialogOutcome::DismissAnnouncement(model)
@@ -2845,7 +2884,11 @@ impl Root {
                 }
                 DialogOutcome::ScheduleTask { .. }
                 | DialogOutcome::CheckoutBranch { .. }
-                | DialogOutcome::CommitBeforeCheckout => unreachable!(),
+                | DialogOutcome::CommitBeforeCheckout
+                | DialogOutcome::DeleteMemories
+                | DialogOutcome::WritingConnect(_)
+                | DialogOutcome::WritingRetry
+                | DialogOutcome::WritingSample => unreachable!(),
             }
             cx.notify();
         })
@@ -4450,6 +4493,15 @@ impl Root {
                     page.update(cx, |page, cx| page.select_section(label, cx));
                 }
             }
+            settings::personalization::Event::LoadMemory => self.refresh_memory(cx),
+            settings::personalization::Event::Memory(change) => self.change_memory(*change, cx),
+            settings::personalization::Event::DeleteMemory => {
+                self.open_dialog(DialogKind::DeleteMemories, window, cx);
+            }
+            settings::personalization::Event::LoadWriting => self.refresh_writing(cx),
+            settings::personalization::Event::Writing(enabled) => {
+                self.change_writing(*enabled, window, cx)
+            }
         }
     }
 
@@ -4943,6 +4995,9 @@ impl Root {
                     && let Some(menu) = &this.command_menu
                 {
                     menu.update(cx, |menu, cx| menu.enable_cloud_search(cx));
+                }
+                if this.settings_page.is_some() {
+                    this.refresh_writing(cx);
                 }
             })
         });

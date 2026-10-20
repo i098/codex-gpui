@@ -1,11 +1,60 @@
-use crate::{SANS, composer::Composer, focus, icon::icon, text};
+use crate::{
+    SANS,
+    composer::{Composer, popover},
+    focus,
+    icon::icon,
+    text,
+};
 use gpui::{
-    App, AppContext as _, Context, Div, Entity, EventEmitter, Focusable as _, Hsla,
+    AnyElement, App, AppContext as _, Context, Div, Entity, EventEmitter, Focusable as _, Hsla,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, Stateful,
     StatefulInteractiveElement as _, Styled as _, Window, div, prelude::FluentBuilder as _, px,
 };
 use serde_json::Value;
+use std::sync::Arc;
 use theme::ActiveTheme as _;
+
+#[derive(Clone, Debug)]
+pub struct MemorySettings {
+    pub available: bool,
+    pub feature_enabled: bool,
+    pub generate: bool,
+    pub use_memories: bool,
+    pub disable_on_external_context: bool,
+    pub file_path: Option<String>,
+}
+
+impl MemorySettings {
+    pub fn enabled(&self) -> bool {
+        self.feature_enabled && self.generate && self.use_memories
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MemoryChange {
+    Enabled(bool),
+    ToolAssisted(bool),
+}
+
+pub struct WritingPlugin {
+    pub id: String,
+}
+
+pub struct WritingPreference {
+    pub account_id: String,
+    pub user_id: String,
+    pub enabled: bool,
+    pub installed: bool,
+    pub can_install: bool,
+    pub plugin: Option<WritingPlugin>,
+}
+
+enum WritingState {
+    Loading,
+    Hidden,
+    Failed,
+    Ready(Arc<WritingPreference>),
+}
 
 #[derive(Clone)]
 pub enum Event {
@@ -13,6 +62,11 @@ pub enum Event {
     Save(String),
     Leave,
     Section(&'static str),
+    LoadMemory,
+    Memory(MemoryChange),
+    DeleteMemory,
+    LoadWriting,
+    Writing(bool),
 }
 
 pub struct Personalization {
@@ -22,6 +76,14 @@ pub struct Personalization {
     load_error: bool,
     saved: String,
     editor: Option<Entity<Composer>>,
+    memory_requested: bool,
+    memory: Option<Result<MemorySettings, String>>,
+    memory_pending: Option<MemoryChange>,
+    host_menu: bool,
+    writing: WritingState,
+    writing_pending: bool,
+    writing_error: bool,
+    writing_retry: Option<bool>,
 }
 
 impl EventEmitter<Event> for Personalization {}
@@ -35,6 +97,14 @@ impl Personalization {
             load_error: false,
             saved: String::new(),
             editor: None,
+            memory_requested: false,
+            memory: None,
+            memory_pending: None,
+            host_menu: false,
+            writing: WritingState::Loading,
+            writing_pending: false,
+            writing_error: false,
+            writing_retry: None,
         }
     }
 
@@ -60,6 +130,108 @@ impl Personalization {
 
     pub fn editor_focus(&self, cx: &App) -> Option<gpui::FocusHandle> {
         self.editor.as_ref().map(|editor| editor.focus_handle(cx))
+    }
+    pub fn memory(&self) -> Option<&MemorySettings> {
+        self.memory.as_ref()?.as_ref().ok()
+    }
+
+    pub fn memory_loaded(
+        &mut self,
+        result: Result<MemorySettings, String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.memory = Some(result);
+        self.memory_pending = None;
+        cx.notify();
+    }
+
+    fn reload_memory(&mut self, cx: &mut Context<Self>) {
+        self.memory = None;
+        cx.emit(Event::LoadMemory);
+        cx.notify();
+    }
+
+    fn change_memory(&mut self, change: MemoryChange, cx: &mut Context<Self>) {
+        if self.memory_pending.is_some() {
+            return;
+        }
+        self.memory_pending = Some(change);
+        cx.emit(Event::Memory(change));
+        cx.notify();
+    }
+
+    pub fn can_retry_writing(&self) -> bool {
+        self.writing_error && !self.writing_pending
+    }
+
+    pub fn writing_preference(&self) -> Option<Arc<WritingPreference>> {
+        match &self.writing {
+            WritingState::Ready(preference) => Some(preference.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn writing_loaded(
+        &mut self,
+        result: Result<Option<WritingPreference>, String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.writing_error = result.is_err();
+        self.writing = match result {
+            Ok(Some(preference)) => WritingState::Ready(Arc::new(preference)),
+            Ok(None) => WritingState::Hidden,
+            Err(_) => WritingState::Failed,
+        };
+        self.writing_pending = false;
+        self.writing_retry = None;
+        cx.notify();
+    }
+
+    pub fn writing_changed(
+        &mut self,
+        result: Result<Option<WritingPreference>, String>,
+        error: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.writing_error = error.is_some() || result.is_err();
+        match result {
+            Ok(Some(preference)) => self.writing = WritingState::Ready(Arc::new(preference)),
+            Ok(None) => self.writing = WritingState::Hidden,
+            Err(_) => {}
+        }
+        self.writing_pending = false;
+        if !self.writing_error {
+            self.writing_retry = None;
+        }
+        cx.notify();
+    }
+
+    pub fn writing_awaiting_authorization(&mut self, cx: &mut Context<Self>) {
+        self.writing_pending = true;
+        self.writing_error = false;
+        cx.notify();
+    }
+
+    fn change_writing(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if self.writing_pending {
+            return;
+        }
+        self.writing_pending = true;
+        self.writing_error = false;
+        self.writing_retry = Some(enabled);
+        cx.emit(Event::Writing(enabled));
+        cx.notify();
+    }
+
+    fn retry_writing(&mut self, cx: &mut Context<Self>) {
+        if let Some(enabled) = self.writing_retry {
+            self.change_writing(enabled, cx);
+        } else {
+            self.writing = WritingState::Loading;
+            self.writing_error = false;
+            cx.emit(Event::LoadWriting);
+            cx.notify();
+        }
     }
 
     fn load(&mut self, cx: &mut Context<Self>) {
@@ -132,19 +304,48 @@ impl Personalization {
     }
 }
 
-fn control(
+fn preference_switch(
     label: &'static str,
+    checked: bool,
+    disabled: bool,
+    window: &mut Window,
+    cx: &mut App,
+) -> Stateful<Div> {
+    let focus = focus::handle(label, 0, window, cx);
+    focus.update(cx, |focus, _| focus.handle.tab_stop = !disabled);
+    focus::ring(
+        super::switch(label, checked, disabled, &cx.theme().clone())
+            .role(gpui::Role::Switch)
+            .aria_label(label)
+            .aria_disabled(disabled)
+            .aria_toggled(if checked {
+                gpui::Toggled::True
+            } else {
+                gpui::Toggled::False
+            }),
+        &focus,
+        theme::Theme::RADIUS_FULL,
+        px(2.),
+        cx,
+    )
+    .when(!disabled, |button| {
+        button.on_mouse_down(gpui::MouseButton::Left, super::focus_on_pointer(focus))
+    })
+}
+
+fn control(
+    (id, label): (&'static str, &'static str),
     fill: Hsla,
     color: Hsla,
     enabled: bool,
     window: &mut Window,
     cx: &mut App,
 ) -> Stateful<Div> {
-    let focus = focus::handle(label, 0, window, cx);
+    let focus = focus::handle(id, 0, window, cx);
     focus.update(cx, |focus, _| focus.handle.tab_stop = enabled);
     let handle = focus.read(cx).handle.clone();
     let button = div()
-        .id(label)
+        .id(id)
         .role(gpui::Role::Button)
         .aria_label(label)
         .track_focus(&handle)
@@ -172,8 +373,356 @@ fn control(
         .on_mouse_down(gpui::MouseButton::Left, super::focus_on_pointer(focus))
 }
 
+fn preference_group<const N: usize>(rows: [Div; N], t: &theme::Theme) -> Div {
+    let border = crate::over(t.border, t.background_panel);
+    div()
+        .relative()
+        .flex()
+        .flex_col()
+        .p(px(1.))
+        .child(super::on_card(
+            20.,
+            shapes::Corner::Squircle,
+            t.background_panel,
+            Some(t.border),
+        ))
+        .child(crate::rounded_clip(
+            px(19.),
+            shapes::Corner::Squircle,
+            div()
+                .flex()
+                .flex_col()
+                .children(rows.into_iter().enumerate().map(|(index, row)| {
+                    row.when(index + 1 < N, |row| {
+                        row.child(
+                            div()
+                                .absolute()
+                                .bottom_0()
+                                .left(px(16.))
+                                .right(px(16.))
+                                .h(px(1.))
+                                .bg(border),
+                        )
+                    })
+                })),
+        ))
+}
+
+impl Personalization {
+    fn memory_toggle(
+        &self,
+        label: &'static str,
+        checked: bool,
+        disabled: bool,
+        change: MemoryChange,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        preference_switch(label, checked, disabled, window, cx)
+            .when(!disabled, |button| {
+                button.on_click(cx.listener(move |this, _, _, cx| this.change_memory(change, cx)))
+            })
+            .into_any_element()
+    }
+
+    fn memory_host(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.theme().clone();
+        let focus = focus::handle("memory-host", 0, window, cx);
+        let menu = self.host_menu.then(|| {
+            div()
+                .absolute()
+                .top(px(32.))
+                .right_0()
+                .child(popover(&t, 160., |menu| {
+                    menu.child(
+                        text("Local", 13., 18., 430., t.text)
+                            .id("memory-host-local")
+                            .role(gpui::Role::MenuItemRadio)
+                            .aria_toggled(gpui::Toggled::True)
+                            .tab_index(0)
+                            .px(px(10.))
+                            .py(px(8.))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.host_menu = false;
+                                cx.notify();
+                            })),
+                    )
+                }))
+        });
+        focus::ring(
+            super::select(
+                "Local",
+                Some(icon("memory-computer", 16., t.text).into_any_element()),
+                false,
+                &t,
+            )
+            .id("memory-host")
+            .relative()
+            .aria_label("Memory computer")
+            .aria_expanded(self.host_menu),
+            &focus,
+            px(10.),
+            px(2.),
+            cx,
+        )
+        .on_mouse_down(gpui::MouseButton::Left, super::focus_on_pointer(focus))
+        .on_click(cx.listener(|this, _, _, cx| {
+            this.host_menu = !this.host_menu;
+            cx.notify();
+        }))
+        .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+            if this.host_menu {
+                this.host_menu = false;
+                cx.notify();
+            }
+        }))
+        .children(menu)
+        .into_any_element()
+    }
+
+    fn memory_section(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let t = cx.theme().clone();
+        let header = div()
+            .h(px(53.))
+            .pb(px(12.))
+            .flex()
+            .justify_between()
+            .items_start()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(text("Codex memory", 14., 21., 500., t.text))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .child(text(
+                                "Configure how Codex manages memory for Local. ",
+                                13.,
+                                18.,
+                                400.,
+                                t.text_secondary,
+                            ))
+                            .child(
+                                text("Learn more", 13., 18., 400., t.text_accent)
+                                    .id("memory-help")
+                                    .role(gpui::Role::Link)
+                                    .tab_index(0)
+                                    .on_click(|_, _, cx| {
+                                        cx.open_url("https://developers.openai.com/codex/memories")
+                                    }),
+                            ),
+                    ),
+            )
+            .child(self.memory_host(window, cx));
+        let flags = self.memory().map(|memory| {
+            (
+                memory.available,
+                memory.enabled(),
+                memory.feature_enabled,
+                !memory.disable_on_external_context,
+            )
+        });
+        let body = if self.memory.is_none() {
+            div()
+                .id("memory-loading")
+                .role(gpui::Role::Status)
+                .aria_label("Loading Codex memory settings")
+                .child(preference_group(
+                    std::array::from_fn::<_, 3, _>(|_| {
+                        div()
+                            .h(px(60.5714))
+                            .px(px(16.))
+                            .py(px(12.))
+                            .flex()
+                            .flex_col()
+                            .gap(px(8.))
+                            .child(
+                                div()
+                                    .w(px(160.))
+                                    .h(px(12.))
+                                    .rounded(px(4.))
+                                    .bg(t.text_alpha_10),
+                            )
+                            .child(
+                                div()
+                                    .w(px(420.))
+                                    .h(px(10.))
+                                    .rounded(px(4.))
+                                    .bg(t.text_alpha_5),
+                            )
+                    }),
+                    &t,
+                ))
+        } else if self.memory.as_ref().is_some_and(Result::is_err) {
+            div()
+                .id("memory-load-error")
+                .role(gpui::Role::Alert)
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(text(
+                    "Unable to load Codex memory settings",
+                    13.,
+                    18.,
+                    430.,
+                    t.text_secondary,
+                ))
+                .child(
+                    control(
+                        ("memory-retry", "Retry"),
+                        t.text_alpha_5,
+                        t.text,
+                        true,
+                        window,
+                        cx,
+                    )
+                    .aria_label("Retry memory")
+                    .on_click(cx.listener(|this, _, _, cx| this.reload_memory(cx))),
+                )
+        } else if let Some((true, enabled, feature, tools)) = flags {
+            let pending = self.memory_pending;
+            let busy = pending.is_some();
+            let enabled = match pending {
+                Some(MemoryChange::Enabled(value)) => value,
+                _ => enabled,
+            };
+            let tools = match pending {
+                Some(MemoryChange::ToolAssisted(value)) => value,
+                _ => tools,
+            };
+            let enable = self.memory_toggle(
+                "Enable Codex memories",
+                enabled,
+                busy,
+                MemoryChange::Enabled(!enabled),
+                window,
+                cx,
+            );
+            let tools = self.memory_toggle(
+                "Allow memories from tool-assisted chats",
+                tools,
+                busy || !feature,
+                MemoryChange::ToolAssisted(!tools),
+                window,
+                cx,
+            );
+            let delete = control(
+                ("memory-delete", "Delete"),
+                t.text_error.opacity(0.1),
+                t.text_error,
+                !busy,
+                window,
+                cx,
+            )
+            .when(!busy, |button| {
+                button.on_click(cx.listener(|_, _, _, cx| cx.emit(Event::DeleteMemory)))
+            })
+            .into_any_element();
+            div().id("memory-ready").child(preference_group([
+                super::settings_row("Enable Codex memories",
+                    Some("Create memories from chats on Local and use them to personalize future chats on Local"), enable, &t),
+                super::settings_row("Allow memories from tool-assisted chats",
+                    Some("Generate memories from chats that used MCP tools or web search"), tools, &t),
+                super::settings_row("Delete Codex memories",
+                    Some("Delete all Codex memories for Local"), delete, &t),
+            ], &t))
+        } else {
+            text(
+                "Codex memory isn't available on this computer",
+                13.,
+                18.,
+                430.,
+                t.text_secondary,
+            )
+            .id("memory-unavailable")
+        };
+        div().flex().flex_col().child(header).child(body)
+    }
+}
+
+impl Personalization {
+    fn writing_section(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
+        if matches!(self.writing, WritingState::Hidden) {
+            return None;
+        }
+        let t = cx.theme().clone();
+        let pending = self.writing_pending || matches!(self.writing, WritingState::Loading);
+        let preference = match &self.writing {
+            WritingState::Ready(preference) => Some(preference),
+            _ => None,
+        };
+        let enabled = preference.is_some_and(|preference| preference.enabled);
+        let disabled =
+            pending || !enabled && !preference.is_some_and(|preference| preference.can_install);
+        let toggle = preference_switch("Reference my writing style", enabled, disabled, window, cx)
+            .when(!disabled, |button| {
+                button.on_click(cx.listener(move |this, _, _, cx| {
+                    this.change_writing(!enabled, cx);
+                }))
+            });
+        let toggle_control = div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .when(pending, |control| {
+                control.child(
+                    div()
+                        .id("writing-pending")
+                        .role(gpui::Role::Status)
+                        .aria_label("Checking writing style setting…")
+                        .child(icon("sidebar-cmd-spinner", 16., t.text_secondary)),
+                )
+            })
+            .child(toggle)
+            .into_any_element();
+        let error = self.can_retry_writing().then(|| {
+            div()
+                .id("writing-error")
+                .role(gpui::Role::Alert)
+                .h(px(28.))
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .child(text(
+                    "Writing style couldn't be updated. Try again.",
+                    16.,
+                    24.,
+                    430.,
+                    t.text,
+                ))
+                .child(
+                    control(
+                        ("writing-retry", "Retry"),
+                        t.text_alpha_5,
+                        t.text,
+                        true,
+                        window,
+                        cx,
+                    )
+                    .aria_label("Retry updating writing style")
+                    .on_click(cx.listener(|this, _, _, cx| this.retry_writing(cx))),
+                )
+        });
+        Some(div().flex().flex_col()
+            .child(div().h(px(46.)).pb(px(6.)).flex().items_center()
+                .child(text("Writing", 16., 224. / 9., 500., t.text)))
+            .child(preference_group([super::settings_row("Reference my writing style",
+                Some("Let ChatGPT use your chats, Library files, and connected apps to write in your style"),
+                toggle_control, &t)], &t))
+            .children(error))
+    }
+}
+
 impl Render for Personalization {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !self.opened && !self.memory_requested {
+            self.memory_requested = true;
+            cx.emit(Event::LoadMemory);
+            cx.emit(Event::LoadWriting);
+        }
         let t = cx.theme().clone();
         let button_text = match t.appearance {
             theme::Appearance::Dark => gpui::rgb(0x2d2d2d).into(),
@@ -204,7 +753,7 @@ impl Render for Personalization {
                 .justify_between()
                 .child(
                     control(
-                        "Back",
+                        ("instructions-back", "Back"),
                         gpui::transparent_black(),
                         t.text,
                         !self.saving,
@@ -220,14 +769,21 @@ impl Render for Personalization {
                         .flex()
                         .gap(px(8.))
                         .child(
-                            control("Cancel", t.text_alpha_5, t.text, !self.saving, window, cx)
-                                .when(!self.saving, |d| {
-                                    d.on_click(cx.listener(|this, _, _, cx| this.discard(cx)))
-                                }),
+                            control(
+                                ("instructions-cancel", "Cancel"),
+                                t.text_alpha_5,
+                                t.text,
+                                !self.saving,
+                                window,
+                                cx,
+                            )
+                            .when(!self.saving, |d| {
+                                d.on_click(cx.listener(|this, _, _, cx| this.discard(cx)))
+                            }),
                         )
                         .child(
                             control(
-                                "Save",
+                                ("instructions-save", "Save"),
                                 t.button_primary_solid,
                                 button_text,
                                 save,
@@ -242,110 +798,144 @@ impl Render for Personalization {
         } else {
             div().h(px(46.)).flex_none()
         };
-        let content = if !self.opened {
-            let focus = focus::handle("Edit Codex custom instructions", 0, window, cx);
-            let row = focus::ring(
-                div()
-                    .id("instructions-entry")
-                    .role(gpui::Role::Button)
-                    .aria_label("Edit Codex custom instructions")
-                    .relative()
-                    .flex()
-                    .items_center()
-                    .gap(px(24.))
-                    .px(px(17.))
-                    .py(px(13.))
-                    .child(super::on_card(
-                        16.,
-                        shapes::Corner::Squircle,
-                        t.background_panel,
-                        Some(t.border),
-                    ))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap(px(2.))
-                            .child(text("Codex instructions", 13., 130. / 7., 500., t.text))
-                            .child(description),
-                    )
-                    .child(icon("chevron-right", 16., t.text)),
-                &focus,
-                px(16.),
-                px(0.),
-                cx,
-            )
-            .on_mouse_down(gpui::MouseButton::Left, super::focus_on_pointer(focus))
-            .on_click(cx.listener(|this, _, _, cx| this.load(cx)));
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(48.))
-                .child(text("Personalization", 28., 33.6, 500., t.text))
-                .child(
+        let content =
+            if !self.opened {
+                let focus = focus::handle("Edit Codex custom instructions", 0, window, cx);
+                let row = focus::ring(
                     div()
+                        .id("instructions-entry")
+                        .role(gpui::Role::Button)
+                        .aria_label("Edit Codex custom instructions")
+                        .relative()
                         .flex()
-                        .flex_col()
-                        .gap(px(16.))
-                        .child(text("Custom instructions", 14., 21., 500., t.text))
-                        .child(row),
+                        .items_center()
+                        .gap(px(24.))
+                        .px(px(17.))
+                        .py(px(13.))
+                        .child(super::on_card(
+                            20.,
+                            shapes::Corner::Squircle,
+                            t.background_panel,
+                            Some(t.border),
+                        ))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .gap(px(2.))
+                                .child(text("Codex instructions", 13., 130. / 7., 500., t.text))
+                                .child(description),
+                        )
+                        .child(icon("chevron-right", 16., t.text)),
+                    &focus,
+                    px(20.),
+                    px(0.),
+                    cx,
                 )
-        } else {
-            let mut body = div().flex().flex_col().gap(px(33.)).child(
+                .on_mouse_down(gpui::MouseButton::Left, super::focus_on_pointer(focus))
+                .on_click(cx.listener(|this, _, _, cx| this.load(cx)));
+                let memory = self.memory_section(window, cx);
+                let writing = self.writing_section(window, cx);
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(4.))
-                    .child(text("Codex instructions", 28., 33.6, 500., t.text))
-                    .child(description),
-            );
-            if self.loading {
-                body = body.child(
+                    .gap(px(33.))
+                    .child(div().h(px(36.)).flex().items_center().child(text(
+                        "Personalization",
+                        28.,
+                        33.6,
+                        500.,
+                        t.text,
+                    )))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(40.))
+                            .child(memory)
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .child(
+                                        div().h(px(46.)).pb(px(6.)).flex().items_center().child(
+                                            text("Custom instructions", 14., 21., 500., t.text),
+                                        ),
+                                    )
+                                    .child(row),
+                            )
+                            .children(writing),
+                    )
+            } else {
+                let mut body = div().flex().flex_col().gap(px(33.)).child(
                     div()
-                        .id("instructions-loading")
-                        .role(gpui::Role::Status)
                         .flex()
-                        .items_center()
-                        .gap(px(8.))
-                        .child(icon("sidebar-cmd-spinner", 16., t.text_secondary))
-                        .child(text(
-                            "Loading instructions…",
-                            14.,
-                            20.,
-                            430.,
-                            t.text_secondary,
-                        )),
+                        .flex_col()
+                        .gap(px(4.))
+                        .child(text("Codex instructions", 28., 33.6, 500., t.text))
+                        .child(description),
                 );
-            } else if self.load_error {
-                body = body.child(
-                    div()
-                        .id("instructions-load-error")
-                        .role(gpui::Role::Alert)
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .child(text(
-                            "Unable to load instructions",
-                            14.,
-                            20.,
-                            430.,
-                            t.text_secondary,
-                        ))
-                        .child(
-                            control("Retry", t.list_hover, t.text, true, window, cx)
+                if self.loading {
+                    body = body.child(
+                        div()
+                            .id("instructions-loading")
+                            .role(gpui::Role::Status)
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(icon("sidebar-cmd-spinner", 16., t.text_secondary))
+                            .child(text(
+                                "Loading instructions…",
+                                14.,
+                                20.,
+                                430.,
+                                t.text_secondary,
+                            )),
+                    );
+                } else if self.load_error {
+                    body = body.child(
+                        div()
+                            .id("instructions-load-error")
+                            .role(gpui::Role::Alert)
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(text(
+                                "Unable to load instructions",
+                                14.,
+                                20.,
+                                430.,
+                                t.text_secondary,
+                            ))
+                            .child(
+                                control(
+                                    ("instructions-retry", "Retry"),
+                                    t.list_hover,
+                                    t.text,
+                                    true,
+                                    window,
+                                    cx,
+                                )
                                 .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
-                        ),
-                );
-            } else if let Some(editor) = self.editor.clone() {
-                body = body.child(editor);
-            }
-            body
-        };
+                            ),
+                    );
+                } else if let Some(editor) = self.editor.clone() {
+                    body = body.child(editor);
+                }
+                body
+            };
         div()
             .size_full()
             .font_family(SANS)
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                if event.keystroke.key == "escape" && this.host_menu {
+                    this.host_menu = false;
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }))
             .flex()
             .flex_col()
             .child(toolbar)

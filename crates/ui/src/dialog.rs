@@ -46,6 +46,82 @@ struct ArchiveSection {
     running: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WritingCategory {
+    Email,
+    Messaging,
+    Documents,
+}
+
+impl WritingCategory {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Email => "Email",
+            Self::Messaging => "Messaging",
+            Self::Documents => "Documents",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WritingConnection {
+    Unavailable,
+    Install,
+    Connect,
+    Reconnect,
+    Disabled,
+    Connected,
+    Refresh,
+}
+
+impl WritingConnection {
+    fn action(self) -> &'static str {
+        match self {
+            Self::Unavailable => "Unavailable",
+            Self::Reconnect => "Reconnect",
+            Self::Disabled => "Enable",
+            Self::Connected => "Connected",
+            Self::Refresh => "Refresh",
+            Self::Install | Self::Connect => "Connect",
+        }
+    }
+}
+
+pub struct WritingApp {
+    pub plugin_id: &'static str,
+    pub name: SharedString,
+    pub category: WritingCategory,
+    pub connection: WritingConnection,
+    pub install_url: Option<String>,
+    pub app_ids: Vec<String>,
+}
+
+pub struct WritingAuthorization {
+    pub app_id: String,
+    pub name: String,
+    pub url: String,
+}
+
+struct WritingSetup {
+    enabled: bool,
+    apps: Option<Vec<Arc<WritingApp>>>,
+    category: Option<WritingCategory>,
+    pending_app: Option<&'static str>,
+    error: Option<String>,
+    authorization: Option<Arc<Vec<WritingAuthorization>>>,
+    authorization_index: usize,
+}
+
+#[derive(Clone)]
+enum WritingAction {
+    Category(Option<WritingCategory>),
+    Connect(&'static str),
+    Retry,
+    Manage,
+    Sample,
+    Cancel,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Kind {
     Shortcuts,
@@ -68,6 +144,8 @@ pub enum Kind {
     CreateBranch,
     BranchConflict,
     DiscardInstructions,
+    DeleteMemories,
+    WritingStyle,
 }
 
 #[derive(Clone)]
@@ -76,6 +154,7 @@ pub enum Outcome {
     FullAccess,
     LogOut,
     DiscardInstructions,
+    DeleteMemories,
     DismissAnnouncement(SharedString),
     UseAnnouncedModel {
         model: SharedString,
@@ -113,6 +192,10 @@ pub enum Outcome {
         create: bool,
     },
     CommitBeforeCheckout,
+    WritingSample,
+    WritingManage,
+    WritingRetry,
+    WritingConnect(&'static str),
 }
 
 /// The rows of the commit form: `Commit`, `Commit and push` and `Push`.
@@ -186,6 +269,7 @@ pub struct Dialog {
     announcement: Option<ModelAnnouncement>,
     commit: Option<CommitForm>,
     branch: Option<BranchForm>,
+    writing: Option<WritingSetup>,
 }
 impl EventEmitter<Outcome> for Dialog {}
 impl Focusable for Dialog {
@@ -216,7 +300,578 @@ impl Dialog {
             archive_section: None,
             commit: None,
             branch: None,
+            writing: None,
         }
+    }
+
+    pub fn writing_style(enabled: bool, cx: &mut Context<Self>) -> Self {
+        Self {
+            writing: Some(WritingSetup {
+                enabled,
+                apps: None,
+                category: None,
+                pending_app: None,
+                error: None,
+                authorization: None,
+                authorization_index: 0,
+            }),
+            ..Self::new(Kind::WritingStyle, cx)
+        }
+    }
+
+    pub fn writing_authorization(
+        apps: Arc<Vec<WritingAuthorization>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut dialog = Self::writing_style(false, cx);
+        dialog
+            .writing
+            .as_mut()
+            .expect("Writing state")
+            .authorization = Some(apps);
+        dialog
+    }
+
+    pub fn writing_authorizations(&self) -> Option<Arc<Vec<WritingAuthorization>>> {
+        self.writing.as_ref()?.authorization.clone()
+    }
+
+    pub fn writing_authorization_progress(&mut self, index: usize, cx: &mut Context<Self>) {
+        if let Some(writing) = &mut self.writing {
+            writing.authorization_index = index;
+            writing.error = None;
+        }
+        cx.notify();
+    }
+
+    pub fn writing_apps(
+        &mut self,
+        result: Result<Vec<WritingApp>, String>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(writing) = &mut self.writing else {
+            return;
+        };
+        match result {
+            Ok(apps) => {
+                let pending = writing.pending_app.and_then(|pending| {
+                    apps.iter()
+                        .find(|app| app.plugin_id == pending)
+                        .map(|app| app.connection)
+                });
+                let unavailable = writing.pending_app.is_some()
+                    && matches!(
+                        pending,
+                        None | Some(WritingConnection::Unavailable | WritingConnection::Disabled)
+                    );
+                if unavailable || pending == Some(WritingConnection::Connected) {
+                    writing.pending_app = None;
+                }
+                writing.apps = Some(apps.into_iter().map(Arc::new).collect());
+                writing.error =
+                    unavailable.then(|| "The selected Writing source is unavailable".into());
+            }
+            Err(error) => {
+                writing.error = Some(error);
+                writing.pending_app = None;
+            }
+        }
+        cx.notify();
+    }
+
+    pub fn writing_app(&self, id: &str) -> Option<Arc<WritingApp>> {
+        self.writing
+            .as_ref()?
+            .apps
+            .as_ref()?
+            .iter()
+            .find(|app| app.plugin_id == id)
+            .cloned()
+    }
+
+    pub fn writing_is_pending(&self, id: &str) -> bool {
+        self.writing
+            .as_ref()
+            .is_some_and(|writing| writing.pending_app == Some(id))
+    }
+
+    pub fn writing_connection_finished(&mut self, cx: &mut Context<Self>) {
+        if let Some(writing) = &mut self.writing {
+            writing.pending_app = None;
+        }
+        cx.notify();
+    }
+
+    pub fn writing_failed(&mut self, message: String, cx: &mut Context<Self>) {
+        self.saving = false;
+        if let Some(writing) = &mut self.writing {
+            writing.pending_app = None;
+            writing.error = Some(message);
+        }
+        cx.notify();
+    }
+
+    fn writing_action(&mut self, action: WritingAction, cx: &mut Context<Self>) {
+        if self.saving {
+            return;
+        }
+        let Some(writing) = &mut self.writing else {
+            return;
+        };
+        if writing.pending_app.is_some() && !matches!(action, WritingAction::Manage) {
+            return;
+        }
+        match action {
+            WritingAction::Category(category) => writing.category = category,
+            WritingAction::Connect(id) => {
+                writing.pending_app = Some(id);
+                writing.error = None;
+                cx.emit(Outcome::WritingConnect(id));
+            }
+            WritingAction::Retry => {
+                writing.apps = None;
+                writing.error = None;
+                cx.emit(Outcome::WritingRetry);
+            }
+            WritingAction::Manage => cx.emit(Outcome::WritingManage),
+            WritingAction::Sample => {
+                self.saving = true;
+                writing.error = None;
+                cx.emit(Outcome::WritingSample);
+            }
+            WritingAction::Cancel => cx.emit(Outcome::Dismiss),
+        }
+        cx.notify();
+    }
+
+    fn writing_control(
+        &self,
+        id: &'static str,
+        label: SharedString,
+        enabled: bool,
+        action: WritingAction,
+        cx: &Context<Self>,
+    ) -> Stateful<Div> {
+        let click = action.clone();
+        div()
+            .id(id)
+            .role(gpui::Role::Button)
+            .aria_label(label.clone())
+            .aria_disabled(!enabled)
+            .tab_index(0)
+            .h(px(36.))
+            .px(px(12.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(12.))
+            .bg(cx.theme().list_hover)
+            .text_size(px(14.))
+            .line_height(px(20.))
+            .text_color(cx.theme().text)
+            .child(label)
+            .when(!enabled, |button| button.opacity(0.4))
+            .when(enabled, |button| {
+                button
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.writing_action(click.clone(), cx)),
+                    )
+                    .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                            this.writing_action(action.clone(), cx);
+                            cx.stop_propagation();
+                        }
+                    }))
+            })
+    }
+
+    fn writing_authorization_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        let writing = self.writing.as_ref().expect("Writing authorization state");
+        let apps = writing
+            .authorization
+            .as_ref()
+            .expect("Writing authorization apps");
+        let Some(app) = apps.get(writing.authorization_index) else {
+            return div().child(text(
+                "Writing connection is unavailable",
+                14.,
+                20.,
+                430.,
+                t.text,
+            ));
+        };
+        let open = apps.clone();
+        let index = writing.authorization_index;
+        div()
+            .size_full()
+            .p(px(32.))
+            .flex()
+            .flex_col()
+            .justify_center()
+            .items_center()
+            .gap(px(24.))
+            .child(text(
+                format!("Connect {}", app.name),
+                24.,
+                32.,
+                600.,
+                t.text,
+            ))
+            .child(text(
+                "Continue signing in with your browser",
+                14.,
+                20.,
+                430.,
+                t.text_secondary,
+            ))
+            .child(
+                div()
+                    .id("writing-open-authorization")
+                    .role(gpui::Role::Button)
+                    .aria_label("Continue in browser")
+                    .tab_index(0)
+                    .h(px(40.))
+                    .px(px(20.))
+                    .rounded_full()
+                    .bg(t.button_primary_solid)
+                    .flex()
+                    .items_center()
+                    .child(text("Continue in browser", 14., 20., 500., t.text_inverse))
+                    .on_click(move |_, _, cx| cx.open_url(&open[index].url)),
+            )
+            .when(writing.error.is_some(), |view| {
+                view.child(text(
+                    "Couldn't finish Writing style setup. Try again.",
+                    14.,
+                    20.,
+                    430.,
+                    t.text,
+                ))
+                .child(self.writing_control(
+                    "writing-authorization-retry",
+                    "Retry".into(),
+                    true,
+                    WritingAction::Retry,
+                    cx,
+                ))
+            })
+            .child(
+                self.writing_control(
+                    "writing-cancel-authorization",
+                    "Cancel".into(),
+                    true,
+                    WritingAction::Cancel,
+                    cx,
+                )
+                .track_focus(&self.controls[0]),
+            )
+    }
+
+    fn writing_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        let writing = self.writing.as_ref().expect("Writing dialog state");
+        if writing.authorization.is_some() {
+            return self.writing_authorization_content(t, cx);
+        }
+        let busy = self.saving || writing.pending_app.is_some();
+        let heading = if writing.enabled {
+            "Writing style is personalized"
+        } else {
+            "Set up writing style"
+        };
+        let mut body = div()
+            .id("writing-setup-body")
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .gap(px(16.))
+            .overflow_y_scroll();
+        if let Some(category) = writing.category {
+            body = body.child(self.writing_control(
+                "writing-back",
+                "Back".into(),
+                !busy,
+                WritingAction::Category(None),
+                cx,
+            ));
+            if let Some(apps) = &writing.apps {
+                for app in apps.iter().filter(|app| app.category == category) {
+                    let enabled = !busy
+                        && !matches!(
+                            app.connection,
+                            WritingConnection::Unavailable | WritingConnection::Connected
+                        );
+                    body = body.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap(px(16.))
+                            .p(px(16.))
+                            .rounded(px(16.))
+                            .bg(t.background_panel)
+                            .child(text(app.name.clone(), 14., 20., 500., t.text))
+                            .child(self.writing_control(
+                                app.plugin_id,
+                                app.connection.action().into(),
+                                enabled,
+                                WritingAction::Connect(app.plugin_id),
+                                cx,
+                            )),
+                    );
+                }
+            }
+        } else {
+            body = body.child(text(
+                "Connect apps to improve writing (optional)",
+                14.,
+                21.,
+                600.,
+                t.text,
+            ));
+            if let Some(apps) = &writing.apps {
+                let mut rows = div().flex().flex_col();
+                for (id, category, label) in [
+                    (
+                        "writing-messaging",
+                        WritingCategory::Messaging,
+                        "Set up messaging",
+                    ),
+                    ("writing-email", WritingCategory::Email, "Set up email"),
+                    (
+                        "writing-documents",
+                        WritingCategory::Documents,
+                        "Set up documents",
+                    ),
+                ] {
+                    let connected = apps.iter().any(|app| {
+                        app.category == category && app.connection == WritingConnection::Connected
+                    });
+                    rows = rows.child(
+                        div()
+                            .relative()
+                            .h(px(60.))
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap(px(24.))
+                            .px(px(16.))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(12.))
+                                    .child(icon(id, 24., t.text))
+                                    .child(text(category.label(), 14., 21., 500., t.text)),
+                            )
+                            .when(connected, |row| {
+                                row.child(text("Connected", 13., 18., 430., t.text_secondary))
+                            })
+                            .child(
+                                self.writing_control(
+                                    id,
+                                    "Set up".into(),
+                                    !busy,
+                                    WritingAction::Category(Some(category)),
+                                    cx,
+                                )
+                                .aria_label(label)
+                                .h(px(28.))
+                                .px(px(8.))
+                                .rounded(px(12.5))
+                                .bg(gpui::transparent_black())
+                                .text_size(px(13.))
+                                .line_height(px(18.))
+                                .text_color(t.text_secondary),
+                            )
+                            .when(category != WritingCategory::Documents, |row| {
+                                row.child(
+                                    div()
+                                        .absolute()
+                                        .bottom_0()
+                                        .left(px(16.))
+                                        .right(px(16.))
+                                        .h(px(1.))
+                                        .bg(t.border),
+                                )
+                            }),
+                    );
+                }
+                body = body.child(rows);
+            }
+        }
+        if writing.apps.is_none() && writing.error.is_none() {
+            body = body.child(
+                div()
+                    .id("writing-apps-loading")
+                    .role(gpui::Role::Status)
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(icon("sidebar-cmd-spinner", 16., t.text_secondary))
+                    .child(text(
+                        "Checking connected apps…",
+                        14.,
+                        20.,
+                        430.,
+                        t.text_secondary,
+                    )),
+            );
+        }
+        if writing.error.is_some() {
+            body = body.child(
+                div()
+                    .id("writing-setup-error")
+                    .role(gpui::Role::Alert)
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(text(
+                        "Couldn't finish Writing style setup. Try again.",
+                        14.,
+                        20.,
+                        430.,
+                        t.text,
+                    ))
+                    .child(self.writing_control(
+                        "writing-setup-retry",
+                        "Retry".into(),
+                        !busy,
+                        WritingAction::Retry,
+                        cx,
+                    )),
+            );
+        }
+        div()
+            .size_full()
+            .relative()
+            .flex()
+            .flex_col()
+            .child(
+                gpui::img(if t.appearance == theme::Appearance::Dark {
+                    "ui/announcement/writing-gradient.png"
+                } else {
+                    "ui/announcement/writing-gradient-light.png"
+                })
+                .absolute()
+                .top_0()
+                .left_0()
+                .w_full()
+                .rounded_t(px(20.))
+                .h(px(217.)),
+            )
+            .child(
+                div()
+                    .relative()
+                    .flex_none()
+                    .pt(px(32.))
+                    .flex()
+                    .justify_center()
+                    .child(
+                        div()
+                            .size(px(72.))
+                            .rounded(px(20.))
+                            .border_1()
+                            .border_color(t.border)
+                            .bg(t.surface)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(icon("writing-style", 32., t.text)),
+                    ),
+            )
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(16.))
+                    .px(px(32.))
+                    .pt(px(24.))
+                    .pb(px(16.))
+                    .child(
+                        div()
+                            .flex_none()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(text(heading, 24., 28.8, 600., t.text))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .items_center()
+                                    .gap(px(1.3))
+                                    .child(text(
+                                        "ChatGPT uses your chats and Library files to write in your style.",
+                                        14.,
+                                        21.,
+                                        400.,
+                                        t.text_secondary,
+                                    ))
+                                    .child(
+                                        self.writing_control(
+                                            "writing-manage",
+                                            "Manage".into(),
+                                            !busy,
+                                            WritingAction::Manage,
+                                            cx,
+                                        )
+                                        .bg(gpui::transparent_black())
+                                        .text_color(t.text_secondary)
+                                        .px(px(0.))
+                                        .h(px(21.))
+                                        .line_height(px(21.))
+                                        .underline(),
+                                    ),
+                            ),
+                    )
+                    .child(body)
+                    .child(
+                        self.writing_control(
+                            "writing-show-me",
+                            "Show me".into(),
+                            !busy,
+                            WritingAction::Sample,
+                            cx,
+                        )
+                        .flex_none()
+                        .w_full()
+                        .h(px(44.))
+                        .rounded(px(9999.))
+                        .bg(t.button_primary_solid)
+                        .text_size(px(13.))
+                        .line_height(px(18.5714))
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(if t.appearance == theme::Appearance::Dark {
+                            gpui::rgb(0x2d2d2d).into()
+                        } else {
+                            t.text_inverse
+                        }),
+                    ),
+            )
+            .child(
+                div()
+                    .id("writing-close")
+                    .role(gpui::Role::Button)
+                    .aria_label("Close dialog")
+                    .track_focus(&self.controls[0])
+                    .absolute()
+                    .right(px(12.))
+                    .top(px(12.))
+                    .size(px(32.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icon("close", 20., t.text.opacity(0.8)))
+                    .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))),
+            )
     }
     /// `Log out?` for the signed-in account `email`.
     pub fn logout(email: Option<String>, cx: &mut Context<Self>) -> Self {
@@ -768,6 +1423,10 @@ impl Dialog {
             }
             (Kind::DiscardInstructions, 0) => "Keep editing",
             (Kind::DiscardInstructions, _) => "Discard changes",
+            (Kind::DeleteMemories, 0) => "Cancel",
+            (Kind::DeleteMemories, 1) => "Delete",
+            (Kind::DeleteMemories, _) => "Close dialog",
+            (Kind::WritingStyle, _) => "Writing style",
             (Kind::ModelAnnouncement, 0) => "Close",
             (Kind::ModelAnnouncement, 1) => "Continue with current model",
             (Kind::ModelAnnouncement, _) => {
@@ -859,6 +1518,11 @@ impl Dialog {
         cx.notify();
     }
 
+    pub fn memory_delete_finished(&mut self, cx: &mut Context<Self>) {
+        self.saving = false;
+        cx.notify();
+    }
+
     pub fn saving(&self) -> bool {
         self.saving
     }
@@ -928,6 +1592,11 @@ impl Dialog {
             (Kind::LogOut, 1) => cx.emit(Outcome::LogOut),
             (Kind::ArchiveSection, 1) => cx.emit(Outcome::ArchiveSection(self.thread.clone())),
             (Kind::DiscardInstructions, 1) => cx.emit(Outcome::DiscardInstructions),
+            (Kind::DeleteMemories, 1) => {
+                self.saving = true;
+                cx.emit(Outcome::DeleteMemories);
+                cx.notify();
+            }
             (Kind::ModelAnnouncement, 2) => {
                 let announcement = self.announcement.as_ref().expect("model announcement");
                 cx.emit(Outcome::UseAnnouncedModel {
@@ -1043,6 +1712,15 @@ impl Dialog {
             cx.stop_propagation();
             return;
         }
+        if self.kind == Kind::WritingStyle {
+            match k.key.as_str() {
+                "tab" => crate::focus::tab(e, window, cx),
+                "escape" => self.dismiss(cx),
+                "enter" | "space" if self.controls[0].is_focused(window) => self.dismiss(cx),
+                _ => {}
+            }
+            return;
+        }
         if self.repeat_open {
             match k.key.as_str() {
                 "up" => self.repeat = (self.repeat + REPEAT.len() - 1) % REPEAT.len(),
@@ -1144,6 +1822,7 @@ impl Dialog {
                     | Kind::LogOut
                     | Kind::ArchiveSection
                     | Kind::DiscardInstructions => vec![0, 1],
+                    Kind::DeleteMemories => vec![0, 1, 2],
                     Kind::ScheduleTask => vec![0, 3, 4, 5, 1, 2],
                     Kind::Branches => vec![0, 1],
                     Kind::BranchConflict => vec![1, 2],
@@ -1189,6 +1868,7 @@ impl Dialog {
                         | Kind::ModelAnnouncement
                         | Kind::RevertChanges
                         | Kind::DiscardInstructions
+                        | Kind::DeleteMemories
                 ) || (self.selected != 0 && !self.editing()) =>
             {
                 self.activate(cx);
@@ -1288,15 +1968,37 @@ impl Dialog {
                         | Kind::RevertChanges
                         | Kind::ArchiveSection
                         | Kind::DiscardInstructions
+                        | Kind::DeleteMemories
                 ) && primary
                 {
                     t.text_error
+                } else if self.kind == Kind::DeleteMemories {
+                    t.text_tertiary
                 } else if primary {
                     t.menu_background
                 } else {
                     t.text
                 },
             ))
+            .when(self.kind == Kind::DeleteMemories, |button| {
+                button
+                    .aria_disabled(self.saving)
+                    .h(px(32.))
+                    .rounded(px(12.5))
+                    .bg(if primary {
+                        t.text_error.opacity(0.1)
+                    } else {
+                        gpui::transparent_black()
+                    })
+                    .border_color(rgba(0))
+                    .focus_visible(|style| style.border_color(rgba(0x3a83f7ff)))
+                    .when(self.saving && index == 0, |button| button.opacity(0.4))
+                    .when(self.saving && index == 1, |button| {
+                        button
+                            .gap(px(4.))
+                            .child(icon("sidebar-cmd-spinner", 14., t.text_error))
+                    })
+            })
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.selected = index;
                 this.controls[index].focus(window, cx);
@@ -1614,6 +2316,50 @@ impl Dialog {
                     .gap(px(12.))
                     .child(self.button(0, "Keep editing", 120., t, cx))
                     .child(self.button(1, "Discard changes", 140., t, cx)),
+            )
+    }
+
+    fn memory_delete_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        div()
+            .size_full()
+            .relative()
+            .p(px(20.))
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .child(text("Delete all Codex memories?", 20., 28., 600., t.text))
+            .child(text(
+                "This deletes all Codex memories for Local",
+                14.,
+                21.,
+                430.,
+                t.text_tertiary,
+            ))
+            .child(
+                div()
+                    .absolute()
+                    .right(px(20.))
+                    .bottom(px(20.))
+                    .flex()
+                    .gap(px(12.))
+                    .child(self.button(0, "Cancel", 78.68, t, cx))
+                    .child(self.button(1, "Delete", 76.08, t, cx)),
+            )
+            .child(
+                div()
+                    .id("memory-delete-close")
+                    .role(gpui::Role::Button)
+                    .aria_label("Close dialog")
+                    .track_focus(&self.controls[2])
+                    .absolute()
+                    .right(px(16.))
+                    .top(px(16.))
+                    .size(px(24.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icon("close", 16., t.text_tertiary))
+                    .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))),
             )
     }
 
@@ -2962,6 +3708,8 @@ impl Render for Dialog {
             Kind::FullAccess => (520., 420.),
             Kind::LogOut => (380., 145. + if self.email.is_some() { 25. } else { 0. }),
             Kind::DiscardInstructions => (420., 180.),
+            Kind::DeleteMemories => (420., 137.),
+            Kind::WritingStyle => (480., 600.),
             Kind::ModelAnnouncement => (480., 432.),
             Kind::Commit => (420., self.commit_height()),
             Kind::Branches => (
@@ -2986,6 +3734,8 @@ impl Render for Dialog {
             Kind::FullAccess => self.full_access_content(t, cx),
             Kind::LogOut => self.logout_content(t, cx),
             Kind::DiscardInstructions => self.discard_instructions_content(t, cx),
+            Kind::DeleteMemories => self.memory_delete_content(t, cx),
+            Kind::WritingStyle => self.writing_content(t, cx),
             Kind::ModelAnnouncement => self.announcement_content(t, cx),
             Kind::Commit => self.commit_content(t, cx),
             Kind::Branches | Kind::CreateBranch | Kind::BranchConflict => {
@@ -3038,6 +3788,8 @@ impl Render for Dialog {
                         Kind::FullAccess => "Turn on Full Access?".into(),
                         Kind::LogOut => "Log out?".into(),
                         Kind::DiscardInstructions => "Discard changes?".into(),
+                        Kind::DeleteMemories => "Delete all Codex memories?".into(),
+                        Kind::WritingStyle => "Writing style".into(),
                         Kind::Commit => "Commit or push".into(),
                         Kind::Branches => "Switch branch".into(),
                         Kind::CreateBranch => "Create and checkout branch".into(),
@@ -3106,11 +3858,11 @@ impl Render for Dialog {
                     .h(px(height))
                     .rounded(px(if announcement {
                         16.
-                    } else if commit {
+                    } else if commit || self.kind == Kind::WritingStyle {
                         20.
                     } else if schedule {
                         30.
-                    } else if self.kind == Kind::LogOut {
+                    } else if matches!(self.kind, Kind::LogOut | Kind::DeleteMemories) {
                         25.
                     } else {
                         24.
@@ -3123,6 +3875,23 @@ impl Render for Dialog {
                             d.child(shapes::decoration(shapes::Decoration {
                                 radius: Corners::all(px(16.)),
                                 fill: Some(t.surface_elevated_secondary),
+                                shadows: vec![crate::composer::shadow(
+                                    rgba(0x0000001a).into(),
+                                    4.,
+                                    8.,
+                                    -2.,
+                                    false,
+                                )],
+                                ..Default::default()
+                            }))
+                        } else if self.kind == Kind::WritingStyle {
+                            d.child(shapes::decoration(shapes::Decoration {
+                                radius: Corners::all(px(20.)),
+                                fill: Some(if t.appearance == theme::Appearance::Dark {
+                                    t.surface_tertiary
+                                } else {
+                                    t.surface
+                                }),
                                 shadows: vec![crate::composer::shadow(
                                     rgba(0x0000001a).into(),
                                     4.,
@@ -3160,12 +3929,18 @@ impl Render for Dialog {
                                 shapes::Fill::Color,
                                 false,
                                 shapes::Decoration {
-                                    radius: Corners::all(px(if self.kind == Kind::LogOut {
-                                        25.
-                                    } else {
-                                        24.
-                                    })),
-                                    corner: if self.kind == Kind::LogOut {
+                                    radius: Corners::all(px(
+                                        if matches!(self.kind, Kind::LogOut | Kind::DeleteMemories)
+                                        {
+                                            25.
+                                        } else {
+                                            24.
+                                        },
+                                    )),
+                                    corner: if matches!(
+                                        self.kind,
+                                        Kind::LogOut | Kind::DeleteMemories
+                                    ) {
                                         shapes::Corner::Squircle
                                     } else {
                                         shapes::Corner::default()

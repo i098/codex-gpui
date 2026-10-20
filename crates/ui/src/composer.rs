@@ -18,7 +18,7 @@ use gpui::{
     ElementId, ElementInputHandler, Entity, EntityInputHandler, ExternalPaths, FocusHandle,
     Focusable, GlobalElementId, Hsla, InspectorElementId, InteractiveElement, IntoElement,
     KeyBinding, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
-    PathPromptOptions, Pixels, Point, Render, SharedString, Size, Stateful,
+    PathPromptOptions, Pixels, Point, Render, ScrollHandle, SharedString, Size, Stateful,
     StatefulInteractiveElement, Style, Styled, Task, TextAlign, TextRun, UTF16Selection,
     UnderlineStyle, Window, WrappedLine, actions, deferred, div, fill, point,
     prelude::FluentBuilder as _, px, relative, size,
@@ -183,6 +183,7 @@ const SM_WIDTH: f32 = 440.;
 const XS_WIDTH: f32 = 300.;
 const FONT_SIZE: Pixels = px(14.);
 const LINE_HEIGHT: Pixels = px(20.);
+const MIN_TEXTAREA_CONTENT_HEIGHT: Pixels = px(78.);
 
 /// Composer keys (inventory §7.2): Enter sends, Shift+Enter inserts a newline. Edit menu
 /// commands (`crate::Cut`, `Copy`, `Paste`, `SelectAll`) are bound by the app.
@@ -646,6 +647,9 @@ pub struct Composer {
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
     field_min_height: Pixels,
+    field_scroll: Option<ScrollHandle>,
+    field_autoscroll: bool,
+    field_resize: Option<(Pixels, Pixels)>,
 }
 
 impl Composer {
@@ -723,6 +727,9 @@ impl Composer {
             on_model: None,
             plain_field: None,
             field_min_height: px(48.),
+            field_scroll: None,
+            field_autoscroll: false,
+            field_resize: None,
         }
     }
 
@@ -734,6 +741,10 @@ impl Composer {
     ) -> Self {
         let mut editor = Self::new(placeholder, false, cx);
         editor.plain_field = Some(multiline);
+        if multiline {
+            editor.field_scroll = Some(ScrollHandle::new());
+            editor.field_min_height = MIN_TEXTAREA_CONTENT_HEIGHT;
+        }
         editor.set_text(value, cx);
         editor
     }
@@ -1923,8 +1934,12 @@ impl Render for Composer {
                 } else {
                     t.border
                 };
-                card.py(px(9.))
-                    .px(px(1.))
+                let scroll = self
+                    .field_scroll
+                    .as_ref()
+                    .expect("multiline field scroll")
+                    .clone();
+                card.px(px(1.))
                     .child(shapes::decoration(shapes::Decoration {
                         radius: Corners::all(px(10.)),
                         corner: shapes::Corner::Squircle,
@@ -1932,6 +1947,62 @@ impl Render for Composer {
                         border: Some((px(1.), border)),
                         ..Default::default()
                     }))
+                    .child(
+                        div()
+                            .id("textarea-scroll")
+                            .h(self.field_min_height + px(18.))
+                            .py(px(9.))
+                            .overflow_y_scroll()
+                            .track_scroll(&scroll)
+                            .child(self.editor(cx)),
+                    )
+                    .child(
+                        div()
+                            .id("textarea-resize")
+                            .absolute()
+                            .right_0()
+                            .bottom_0()
+                            .size(px(16.))
+                            .cursor(CursorStyle::ResizeUpDown)
+                            .child(icon("textarea-resize", 16., t.text))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                                    this.field_resize =
+                                        Some((event.position.y, this.field_min_height));
+                                    this.focus_handle.focus(window, cx);
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            ),
+                    )
+                    .when_some(self.field_resize, |card, (start, height)| {
+                        let moved = cx.entity().downgrade();
+                        let released = moved.clone();
+                        card.child(crate::drag_layer(
+                            move |_, window, cx| {
+                                let next = (height + window.mouse_position().y - start)
+                                    .max(MIN_TEXTAREA_CONTENT_HEIGHT);
+                                moved
+                                    .update(cx, |this, cx| {
+                                        if this.field_min_height != next {
+                                            this.field_min_height = next;
+                                            this.field_autoscroll = true;
+                                            cx.notify();
+                                        }
+                                    })
+                                    .ok();
+                            },
+                            move |cx| {
+                                released
+                                    .update(cx, |this, cx| {
+                                        this.field_resize = None;
+                                        cx.notify();
+                                    })
+                                    .ok();
+                            },
+                        ))
+                    })
             } else {
                 card.key_context(KEY_CONTEXT)
                     .when(self.request_parent.is_none(), |d| {
@@ -1977,19 +2048,18 @@ impl Render for Composer {
                         .aria_placeholder(self.placeholder.clone())
                         .when(!self.secret, |d| d.aria_value(self.content.clone()))
                     })
+                    .child(
+                        self.editor(cx)
+                            .when(self.request_parent.is_none(), |editor| {
+                                editor.min_h(self.field_min_height)
+                            })
+                            .when(self.request_number, |editor| editor.pr(px(30.))),
+                    )
+                    .when(self.request_number, |d| {
+                        d.child(self.request_number_stepper(&t, cx))
+                    })
             };
-            return div().w_full().child(
-                card.child(
-                    self.editor(cx)
-                        .when(self.request_parent.is_none(), |editor| {
-                            editor.min_h(self.field_min_height)
-                        })
-                        .when(self.request_number, |editor| editor.pr(px(30.))),
-                )
-                .when(self.request_number, |d| {
-                    d.child(self.request_number_stepper(&t, cx))
-                }),
-            );
+            return div().w_full().child(card);
         }
         let card = card
             .flex()
