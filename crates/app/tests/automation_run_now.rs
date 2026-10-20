@@ -39,7 +39,9 @@ fn host_with(home: &Path, log: &Path, slow: bool, env: &[(&str, &str)]) -> Resul
         .env("LOG", log)
         .env("SLOW", if slow { "1" } else { "" });
     let (bridge, _events) = Bridge::spawn(server)?;
-    Ok(LocalHost::new(home).with_bridge(Arc::new(bridge)))
+    Ok(LocalHost::new(home)
+        .with_host_settings_path(home.join("host-settings.json"))
+        .with_bridge(Arc::new(bridge)))
 }
 
 fn create(host: &LocalHost, home: &Path, prompt: &str) -> Result<String> {
@@ -325,10 +327,7 @@ fn run_now_resolves_a_project_target_to_its_first_root() -> Result<()> {
             "[target]\ntype = \"project\"\nproject_id = \"gone\"\n",
         ),
     )?;
-    host.write_automation("free", &task("free", "[target]\ntype = \"projectless\"\n"))?;
-    for id in ["lost", "free"] {
-        ensure!(run(&host, id).is_err());
-    }
+    ensure!(run(&host, "lost").is_err());
     ensure!(requests(&log)?.is_empty());
     ensure!(run(&host, "known")? == json!({"success": true}));
     ensure!(requests(&log)?[0]["params"]["cwd"] == json!(root));
@@ -686,5 +685,183 @@ fn a_run_now_records_the_last_run_and_keeps_or_recalculates_the_next_one() -> Re
     ensure!(run(&host, &fresh)? == json!({"success": true}));
     let (next, _, last) = schedule(dir.path(), &fresh)?;
     ensure!(next.is_some_and(|next| next > now) && last.is_some());
+    Ok(())
+}
+
+fn projectless_task(host: &LocalHost, home: &Path, root: &Path, prompt: &str) -> Result<()> {
+    fs::create_dir_all(home.join("sqlite"))?;
+    let db = rusqlite::Connection::open(home.join("sqlite/codex.db"))?;
+    db.execute(RUNS, [])?;
+    db.execute(AUTOMATIONS, [])?;
+    fs::write(
+        home.join("host-settings.json"),
+        json!({"projectlessWorkspaceRoot": root}).to_string(),
+    )?;
+    host.write_automation("free", &format!(
+        "version = 1\nid = \"free\"\nname = \"Free\"\nprompt = {prompt:?}\nstatus = \"ACTIVE\"\ncwds = []\ncreated_at = 1\nupdated_at = 1\n[target]\ntype = \"projectless\"\n"
+    ))
+}
+
+#[test]
+fn projectless_runs_own_distinct_directories_and_persist_thread_metadata() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let home = dir.path().join("home");
+    let root = dir.path().join("workspace");
+    let log = dir.path().join("requests.jsonl");
+    let config =
+        r#"{"sandbox_mode":"workspace-write","sandbox_workspace_write":{"network_access":true}}"#;
+    let host = host_with(&home, &log, false, &[("CONFIG", config)])?;
+    projectless_task(
+        &host,
+        &home,
+        &root,
+        "İnfo REVIEW local changes with six words",
+    )?;
+    let initial = json!({"local-projects":{"keep":{"id":"keep"}}, "projectless-thread-ids":["older"],
+        "thread-workspace-root-hints":{"older":"/old"}, "thread-projectless-output-directories":{"older":"/old/outputs"},
+        "thread-project-assignments":{"older":{"projectKind":"local","projectId":"keep"}}});
+    fs::write(home.join(".codex-global-state.json"), initial.to_string())?;
+    run(&host, "free")?;
+    run(&host, "free")?;
+    let sent = requests(&log)?;
+    let first = Path::new(sent[0]["params"]["cwd"].as_str().unwrap());
+    let second = Path::new(sent[3]["params"]["cwd"].as_str().unwrap());
+    ensure!(first.file_name().unwrap() == "i-nfo-review-local-changes-with");
+    ensure!(second.file_name().unwrap() == "i-nfo-review-local-changes-with-2");
+    ensure!(
+        first.parent() == second.parent()
+            && first.parent().unwrap().parent() == Some(root.as_path())
+    );
+    let state: Value = serde_json::from_slice(&fs::read(home.join(".codex-global-state.json"))?)?;
+    for run in sent.as_chunks::<3>().0 {
+        let cwd = Path::new(run[0]["params"]["cwd"].as_str().unwrap());
+        let thread = run[2]["params"]["threadId"].as_str().unwrap();
+        ensure!(cwd.join("outputs").is_dir() && cwd.join("work").is_dir());
+        ensure!(
+            state["projectless-thread-ids"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(thread))
+        );
+        ensure!(state["thread-workspace-root-hints"][thread] == json!(root));
+        ensure!(
+            state["thread-projectless-output-directories"][thread] == json!(cwd.join("outputs"))
+        );
+        let policy = &run[2]["params"]["sandboxPolicy"];
+        ensure!(policy["networkAccess"] == true);
+        ensure!(
+            policy["writableRoots"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(root))
+        );
+        ensure!(
+            run[0]["params"]["approvalPolicy"] == "never"
+                && run[2]["params"]["approvalsReviewer"] == "user"
+        );
+    }
+    ensure!(state["local-projects"] == initial["local-projects"]);
+    ensure!(state["thread-project-assignments"] == initial["thread-project-assignments"]);
+    ensure!(state["thread-workspace-root-hints"]["older"] == "/old");
+    ensure!(runs(&home)?.iter().all(|row| row.4.is_none()));
+    ensure!(!home.join("worktrees").exists());
+    Ok(())
+}
+
+#[test]
+fn projectless_refuses_relative_and_symlink_roots_before_starting_a_thread() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let home = dir.path().join("home");
+    let log = dir.path().join("requests.jsonl");
+    let host = host(&home, &log, false)?;
+    projectless_task(&host, &home, Path::new("relative"), "p")?;
+    ensure!(
+        run(&host, "free")
+            .unwrap_err()
+            .to_string()
+            .contains("absolute")
+    );
+    let real = dir.path().join("real");
+    let link = dir.path().join("link");
+    fs::create_dir(&real)?;
+    std::os::unix::fs::symlink(&real, &link)?;
+    fs::write(
+        home.join("host-settings.json"),
+        json!({"projectlessWorkspaceRoot": link}).to_string(),
+    )?;
+    ensure!(
+        run(&host, "free")
+            .unwrap_err()
+            .to_string()
+            .contains("real directory")
+    );
+    fs::write(
+        home.join("host-settings.json"),
+        json!({"projectlessWorkspaceRoot": real}).to_string(),
+    )?;
+    let date = real.join(chrono::Local::now().format("%Y-%m-%d").to_string());
+    let outside = dir.path().join("outside");
+    fs::create_dir(&outside)?;
+    std::os::unix::fs::symlink(&outside, &date)?;
+    ensure!(
+        run(&host, "free")
+            .unwrap_err()
+            .to_string()
+            .contains("real directory")
+    );
+    ensure!(fs::read_dir(&outside)?.next().is_none());
+    ensure!(requests(&log)?.is_empty() && runs(&home)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn projectless_start_and_turn_failures_keep_owned_files_and_truthful_run_state() -> Result<()> {
+    for fail_thread in [true, false] {
+        let dir = tempfile::tempdir()?;
+        let home = dir.path().join("home");
+        let root = dir.path().join("workspace");
+        let log = dir.path().join("requests.jsonl");
+        let host = host_with(
+            &home,
+            &log,
+            false,
+            &[("FAIL_THREAD", if fail_thread { "1" } else { "" })],
+        )?;
+        projectless_task(&host, &home, &root, "REFUSE")?;
+        let error = run(&host, "free").unwrap_err().to_string();
+        ensure!(error.contains(if fail_thread {
+            "no thread"
+        } else {
+            "model unavailable"
+        }));
+        let sent = requests(&log)?;
+        let cwd = Path::new(sent[0]["params"]["cwd"].as_str().unwrap());
+        ensure!(cwd.join("outputs").is_dir() && cwd.join("work").is_dir());
+        let rows = runs(&home)?;
+        ensure!(rows[0].1 == "ARCHIVED" && rows[0].3.as_deref() == Some("auto"));
+        ensure!(rows[0].0.starts_with("pending:") == fail_thread);
+        ensure!(home.join(".codex-global-state.json").exists() != fail_thread);
+    }
+    Ok(())
+}
+
+#[test]
+fn projectless_metadata_write_failure_starts_no_turn_and_preserves_state() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let home = dir.path().join("home");
+    let log = dir.path().join("requests.jsonl");
+    let host = host(&home, &log, false)?;
+    projectless_task(&host, &home, &dir.path().join("workspace"), "p")?;
+    fs::write(home.join(".codex-global-state.json"), b"{invalid")?;
+    ensure!(run(&host, "free").is_err());
+    let sent = requests(&log)?;
+    ensure!(sent.iter().all(|request| request["method"] != "turn/start"));
+    ensure!(fs::read(home.join(".codex-global-state.json"))? == b"{invalid");
+    ensure!(
+        Path::new(sent[0]["params"]["cwd"].as_str().unwrap())
+            .join("outputs")
+            .is_dir()
+    );
+    ensure!(runs(&home)?[0].1 == "ARCHIVED");
     Ok(())
 }
