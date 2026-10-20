@@ -123,6 +123,8 @@ impl RenderOnce for UserMessage {
             div()
                 .id(SharedString::from(format!("{}-{id}", self.id)))
                 .role(gpui::Role::Button)
+                .focusable()
+                .tab_index(0)
                 .relative()
                 .size(px(26.))
                 .flex()
@@ -394,10 +396,17 @@ fn response_html_tag(tag: pulldown_cmark::TagEnd) -> Option<&'static str> {
 #[action(namespace = thread, no_json)]
 pub struct ForkThread(pub String);
 
-/// A file change card's `Undo`: revert the thread to before that turn (its id).
+
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = thread, no_json)]
-pub struct RevertTurn(pub String);
+pub struct ChatMenuAction {
+    pub thread_id: String,
+    pub item: &'static str,
+}
+
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = thread, no_json)]
+pub struct ToggleTurnChanges(pub String);
 
 /// Copy, Read aloud, Rate response, Fork chat from here: shown under the latest turn; earlier
 /// turns (group `group`) show them on hover.

@@ -459,6 +459,60 @@ fn changes(root: &Path, params: &Value) -> Result<Value> {
     };
     Ok(body)
 }
+fn turn_patch(root: &Path, cwd: &Path, change: &bridge::types::FileUpdateChange) -> Result<String> {
+    let relative = |path: &str| -> Result<String> {
+        let path = Path::new(path);
+        let absolute = if path.is_absolute() { path.to_owned() } else { cwd.join(path) };
+        let path = absolute.strip_prefix(root).context("patch path is outside the repository")?;
+        ensure!(!path.as_os_str().is_empty()
+            && path.components().all(|part| matches!(part, Component::Normal(_))),
+            "patch path must be repository-relative");
+        path.to_str().map(str::to_owned).context("patch path must be UTF-8")
+    };
+    let path = relative(&change.path)?;
+    let target = change.kind["move_path"].as_str().map(relative).transpose()?.unwrap_or_else(|| path.clone());
+    let old = serde_json::to_string(&format!("a/{path}"))?;
+    let new = serde_json::to_string(&format!("b/{target}"))?;
+    let mut patch = format!("diff --git {old} {new}\n");
+    match change.kind["type"].as_str() {
+        Some("update") => {
+            if path != target {
+                patch.push_str(&format!("rename from {}\nrename to {}\n",
+                    serde_json::to_string(&path)?, serde_json::to_string(&target)?));
+            }
+            if !change.diff.trim().is_empty() {
+                let at = change.diff.find("@@ ").context("update has no unified diff hunks")?;
+                patch.push_str(&format!("--- {old}\n+++ {new}\n{}", &change.diff[at..]));
+            } else {
+                ensure!(path != target, "update has no changes");
+            }
+        }
+        Some(kind @ ("add" | "delete")) => {
+            let add = kind == "add";
+            patch.push_str(if add { "new file mode 100644\n" } else { "deleted file mode 100644\n" });
+            patch.push_str(&format!("--- {}\n+++ {}\n",
+                if add { "/dev/null" } else { &old }, if add { &new } else { "/dev/null" }));
+            let content = change.diff.replace("\r\n", "\n");
+            let lines: Vec<_> = content.lines().collect();
+            if !lines.is_empty() {
+                patch.push_str(&if add { format!("@@ -0,0 +1,{} @@\n", lines.len()) }
+                    else { format!("@@ -1,{} +0,0 @@\n", lines.len()) });
+                for line in lines {
+                    patch.push(if add { '+' } else { '-' });
+                    patch.push_str(line);
+                    patch.push('\n');
+                }
+                if !content.ends_with('\n') {
+                    patch.push_str("\\ No newline at end of file\n");
+                }
+            }
+        }
+        _ => bail!("unsupported file change kind"),
+    }
+    if !patch.ends_with('\n') { patch.push('\n'); }
+    ensure!(patch.len() <= 1_048_576, "turn patch is too large");
+    Ok(patch)
+}
 
 pub(super) fn fetch(endpoint: &str, params: &Value) -> Result<Value> {
     let cwd = params["cwd"].as_str().context("missing Git cwd")?;
@@ -491,6 +545,17 @@ pub(super) fn fetch(endpoint: &str, params: &Value) -> Result<Value> {
     let root = checked(run(cwd, &["rev-parse", "--show-toplevel"])?)?;
     let root = String::from_utf8(root).context("Git root must be UTF-8")?;
     let root = Path::new(root.strip_suffix('\n').unwrap_or(&root));
+    if endpoint == "apply-patch" {
+        let changes: Vec<bridge::types::FileUpdateChange> =
+            serde_json::from_value(params["changes"].clone()).context("missing turn changes")?;
+        ensure!(!changes.is_empty(), "turn has no file changes");
+        let reverse = params["revert"].as_bool().context("missing patch direction")?;
+        let mut patches = changes.iter().map(|change| turn_patch(root, Path::new(cwd), change))
+            .collect::<Result<Vec<_>>>()?;
+        if reverse { patches.reverse(); }
+        apply(root, patches.join("\n").as_bytes(), false, reverse)?;
+        return Ok(json!({"status": "success"}));
+    }
     if let Some(result) = commit_flow(endpoint, root, params) {
         return result;
     }

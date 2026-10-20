@@ -4,6 +4,40 @@ use gpui::{Image, ImageFormat};
 
 pub(super) type McpImages = RefCell<HashMap<String, Vec<(usize, Arc<Image>)>>>;
 
+pub fn conversation_markdown(thread: &Thread) -> String {
+    let title = title(thread).split_whitespace().collect::<Vec<_>>().join(" ").replace('#', "\\#");
+    let mut parts = vec![format!("# {title}")];
+    let quote = |text: &str| text.trim().lines()
+        .map(|line| if line.is_empty() { ">".into() } else { format!("> {line}") })
+        .collect::<Vec<_>>().join("\n");
+    for turn in &thread.turns {
+        for item in &turn.items {
+            if let ThreadItem::UserMessage { content, .. } = item {
+                let text = content.iter().filter_map(|input| match input {
+                    UserInput::Text { text } => Some(text.as_str()), _ => None,
+                }).collect::<Vec<_>>().join("\n");
+                if !text.trim().is_empty() { parts.push(quote(&text)); }
+            }
+        }
+        let (work, answer) = work(turn);
+        let previous: Vec<_> = activities(work, false).into_iter().filter_map(|activity| match activity {
+            Activity::Markdown(_, text) => Some(text.trim().to_owned()),
+            Activity::Group { summary, rows, .. } => Some(format!(
+                "<details><summary>{summary}</summary>\n\n{}\n\n</details>",
+                rows.iter().map(|row| format!("- {}", row.label())).collect::<Vec<_>>().join("\n")
+            )),
+            Activity::Reasoning { .. } | Activity::Running(_) => None,
+        }).collect();
+        if !previous.is_empty() {
+            parts.push(format!("<details><summary>{} previous {}</summary>\n\n{}\n</details>",
+                previous.len(), if previous.len() == 1 { "message" } else { "messages" },
+                quote(&previous.join("\n\n"))));
+        }
+        if let Some((_, answer)) = answer { parts.push(answer.trim().to_owned()); }
+    }
+    format!("{}\n", parts.join("\n\n").trim_end())
+}
+
 /// Right-aligned user message: `bg-user-message`, 22 px squircle, at most 70% wide.
 pub(super) fn user_bubble(message: &str, t: &Theme) -> Div {
     div().flex().flex_col().items_end().pb(px(30.)).child(
@@ -123,6 +157,7 @@ pub(super) fn diff_card(
     items: &[ThreadItem],
     window: &Window,
     t: &Theme,
+    (reverted, pending): (bool, bool),
 ) -> Option<Div> {
     let changes: Vec<_> = items
         .iter()
@@ -215,12 +250,18 @@ pub(super) fn diff_card(
                             .gap(px(8.))
                             .child({
                                 let turn_id = turn_id.to_owned();
-                                button("Undo", None)
+                                button(if reverted { "Reapply" } else { "Undo" }, None)
                                     .child(icon("thread-undo", 14., t.text))
                                     .id("undo-turn")
+                                    .role(gpui::Role::Button)
+                                    .aria_label(if reverted { "Reapply" } else { "Undo" })
+                                    .aria_disabled(pending)
+                                    .focusable().tab_index(0)
+                                    .focus_visible(|s| s.shadow(focus_ring()))
+                                    .when(pending, |d| d.opacity(0.5))
                                     .on_click(move |_, window, cx| {
                                         window.dispatch_action(
-                                            Box::new(RevertTurn(turn_id.clone())),
+                                            Box::new(ToggleTurnChanges(turn_id.clone())),
                                             cx,
                                         )
                                     })
@@ -246,6 +287,9 @@ pub(super) fn diff_card(
                                     ),
                                 )
                                 .id("view-changes")
+                                .role(gpui::Role::Button).aria_label("View changes")
+                                .focusable().tab_index(0)
+                                .focus_visible(|s| s.shadow(focus_ring()))
                                 .on_click(crate::dispatch::<crate::OpenChangesPanel>),
                             ),
                     ),
@@ -269,6 +313,11 @@ fn diff_counts<'a>(changes: impl Iterator<Item = &'a FileUpdateChange> + Clone) 
 pub(super) enum Activity<'a> {
     /// An agent message, by its item id and text.
     Markdown(&'a str, &'a str),
+    Reasoning {
+        key: &'a str,
+        text: String,
+        running: bool,
+    },
     /// A command still running, by its command line.
     Running(&'a str),
     Mcp(&'a ThreadItem),
@@ -322,6 +371,9 @@ impl Activity<'_> {
     pub(super) fn labels(&self, open: &HashSet<String>) -> Vec<String> {
         match self {
             Activity::Markdown(_, text) => vec![(*text).to_owned()],
+            Activity::Reasoning { running, .. } => {
+                vec![if *running { "Thinking" } else { "Thought" }.into()]
+            }
             Activity::Running(command) => vec![(*command).to_owned()],
             Activity::Mcp(item) => vec![mcp_label(item)],
             Activity::Group {
@@ -362,6 +414,17 @@ pub(super) fn activities<'a>(items: &'a [ThreadItem], running: bool) -> Vec<Acti
             ThreadItem::AgentMessage { id, text } if !text.is_empty() => {
                 flush(&mut out, &mut group);
                 out.push(Activity::Markdown(id, text));
+            }
+            ThreadItem::Reasoning { id, summary, content } => {
+                flush(&mut out, &mut group);
+                let text = if content.is_empty() { summary } else { content }.join("\n\n");
+                if !text.trim().is_empty() {
+                    out.push(Activity::Reasoning {
+                        key: id,
+                        text,
+                        running: running && items.last().and_then(item_id) == Some(id),
+                    });
+                }
             }
             _ => {}
         }
@@ -430,11 +493,7 @@ fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
                         shell: Some(Shell {
                             key: format!("shell-{id}"),
                             command: shell_command(command).to_owned(),
-                            output: aggregated_output
-                                .as_deref()
-                                .unwrap_or_default()
-                                .trim_end()
-                                .to_owned(),
+                            output: aggregated_output.clone().unwrap_or_default(),
                             footer,
                         }),
                     }
@@ -538,6 +597,12 @@ pub(super) fn activity(
         div()
             .id(group.clone())
             .group(group.clone())
+            .role(gpui::Role::Button)
+            .aria_label(key.clone())
+            .aria_expanded(is_open)
+            .focusable()
+            .tab_index(0)
+            .focus_visible(|s| s.shadow(focus_ring()))
             .flex()
             .items_center()
             .gap(px(4.))
@@ -547,6 +612,7 @@ pub(super) fn activity(
                 icon(chevron, 14., text60.opacity(if is_open { 1. } else { 0. }))
                     .group_hover(group, move |s| s.text_color(text60)),
             )
+            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(move |view, _, _, cx| {
                 if !view.expanded.remove(&key) {
                     view.expanded.insert(key.clone());
@@ -560,6 +626,21 @@ pub(super) fn activity(
             Activity::Markdown(id, text) => {
                 let segments = fades.get(id).map(Vec::as_slice).unwrap_or_default();
                 markdown(text, window, t, segments)
+            }
+            Activity::Reasoning { key, text, running } => {
+                let is_open = open.contains(key);
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(disclosure(key.to_owned(), "thread-chevron-right",
+                        label(if running { "Thinking" } else { "Thought" }.into(), text60), is_open))
+                    .when(is_open, |d| d.child(
+                        div().id(SharedString::from(format!("reasoning-{key}")))
+                            .max_h(px(140.)).overflow_y_scroll()
+                            .child(markdown(&text, window, t, &[]))
+                    ))
             }
             Activity::Running(command) => {
                 row("thread-terminal", plain(label(command.to_owned(), text60)))
@@ -795,6 +876,20 @@ fn shell_card(shell: &Shell, t: &Theme) -> Div {
     let description = t.text.opacity(0.7);
     let mono =
         |s: String, weight: f32, color: Hsla| text(s, 13., 19.5, weight, color).font_family(MONO);
+    let copy = |label: &'static str, value: String, group: &'static str| {
+        let button = div()
+            .id(SharedString::from(format!("{}-{label}", shell.key)))
+            .absolute().top_0().right(px(2.)).size(px(24.))
+            .flex().items_center().justify_center().rounded(Theme::RADIUS_MD)
+            .role(gpui::Role::Button).aria_label(label)
+            .focusable().tab_index(0)
+            .opacity(0.).group_hover(group, |s| s.opacity(1.)).focus(|s| s.opacity(1.))
+            .focus_visible(|s| s.shadow(focus_ring()))
+            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(value.clone())))
+            .child(icon("thread-copy", 16., t.text_tertiary));
+        tooltip(button, label, None, Side::Bottom)
+    };
     let footer = div()
         .h(px(27.))
         .pt(px(2.))
@@ -828,28 +923,32 @@ fn shell_card(shell: &Shell, t: &Theme) -> Div {
             )))
             .child(
                 div()
+                    .relative()
+                    .group("shell-command")
                     .pt(px(8.))
                     .pl(px(8.))
                     .pr(px(24.))
                     .flex()
                     .gap(px(8.))
                     .child(mono("$".into(), 430., t.text_tertiary))
-                    .child(mono(shell.command.clone(), 430., description)),
+                    .child(mono(shell.command.clone(), 430., description))
+                    .child(copy("Copy command", shell.command.clone(), "shell-command")),
             )
             .child(
                 div()
-                    .id(SharedString::from(format!("{}-output", shell.key)))
-                    .max_h(px(144.))
-                    .overflow_y_scroll()
-                    .child(div().p(px(8.)).child(mono(
-                        if shell.output.is_empty() {
-                            "No output".into()
-                        } else {
-                            shell.output.clone()
-                        },
-                        500.,
-                        description,
-                    ))),
+                    .relative()
+                    .group("shell-output")
+                    .child(div()
+                        .id(SharedString::from(format!("{}-output", shell.key)))
+                        .max_h(px(144.))
+                        .overflow_y_scroll()
+                        .child(div().p(px(8.)).child(mono(
+                            if shell.output.is_empty() { "No output".into() }
+                            else { shell.output.trim_end().to_owned() },
+                            500., description,
+                        )))
+                    )
+                    .child(copy("Copy output", shell.output.clone(), "shell-output")),
             )
             .child(footer),
     )

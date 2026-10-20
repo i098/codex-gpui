@@ -54,7 +54,7 @@ use ui::screens::sidebar::{
 };
 use ui::screens::terminal::{OpenTerminalItem, StopBackgroundTerminals, Xterm};
 use ui::screens::thread::view::{
-    Clock, EditMessage, ForkThread, GitAction, RevertTurn, ThreadView,
+    ChatMenuAction, Clock, EditMessage, ForkThread, GitAction, ThreadView, ToggleTurnChanges,
 };
 use ui::screens::{automations, mobile};
 use ui::toast::{Toast, Toaster};
@@ -2576,7 +2576,12 @@ impl Root {
         {
             thread.update(cx, |view, cx| view.close_summary(cx));
         }
+        let return_focus = window.focused(cx);
         cx.subscribe_in(&dialog, window, move |this, dialog, outcome, window, cx| {
+            if let DialogOutcome::DeleteThread(id) = outcome {
+                this.delete_thread(dialog.clone(), id.clone(), return_focus.clone(), window, cx);
+                return;
+            }
             if let DialogOutcome::ScheduleTask { prompt, rrule } = outcome {
                 this.create_task(prompt.clone(), rrule.clone(), window, cx);
                 return;
@@ -2630,6 +2635,9 @@ impl Root {
                     if git_dialog {
                         this.commit_cwd = None;
                         window.focus(&this.composer(cx).focus_handle(cx), cx);
+                    } else if dialog.read(cx).kind() == DialogKind::DeleteThread
+                        && let Some(focus) = &return_focus {
+                        window.focus(focus, cx);
                     } else {
                         window.focus(&focus, cx);
                     }
@@ -2693,6 +2701,7 @@ impl Root {
                     }
                 }
                 DialogOutcome::ScheduleTask { .. }
+                | DialogOutcome::DeleteThread(_)
                 | DialogOutcome::CheckoutBranch { .. }
                 | DialogOutcome::CommitBeforeCheckout => unreachable!(),
             }
@@ -3590,24 +3599,78 @@ impl Root {
         log_err(task, cx);
     }
 
-    /// A file change card's `Undo`: `thread/revert` to before `turn_id`, then shows the
-    /// reverted thread.
-    fn revert(&mut self, turn_id: String, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(view) = &self.thread else { return };
-        let id = view.read(cx).id().to_owned();
-        let resume = !self.loaded.contains(&id);
-        let bridge = self.bridge.clone();
-        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            resume_if(resume, &bridge, &this, &id, cx).await?;
-            let params = json!({ "threadId": id, "beforeTurnId": turn_id });
-            let read: ThreadReadResponse = bridge.request("thread/revert", params).await?;
-            this.update_in(cx, |this, window, cx| {
-                if this.state.route == Route::Thread(read.thread.id.clone()) {
-                    this.show_thread(read.thread, window, cx);
-                }
-            })
+    fn chat_menu_action(&mut self, action: &ChatMenuAction, window: &mut Window, cx: &mut Context<Self>) {
+        let id = &action.thread_id;
+        match action.item {
+            "rename-thread" => self.open_rename(id.clone(), false, window, cx),
+            "pin-thread" => {
+                let pinned = self.threads.iter().find(|thread| &thread.id == id)
+                    .is_some_and(|thread| thread.section.as_ref().is_some_and(|section| section.id == PINNED_SECTION_ID));
+                self.set_pinned(id.clone(), !pinned, window, cx);
+            }
+            "archive-thread" => self.archive(id.clone(), window, cx),
+            "fork-into-local" => {
+                self.toast(Toast::info("Forking chat…"), cx);
+                self.fork_from(id.clone(), 0, window, cx);
+            }
+            "delete-thread" => {
+                let dialog = cx.new(|cx| Dialog::delete_thread(id.clone(), cx));
+                self.show_dialog(dialog, window, cx);
+            }
+            "copy-working-directory" => self.copy_working_directory(id, cx),
+            "copy-deeplink" => self.copy_deeplink(id, cx),
+            "copy-conversation-markdown" => {
+                let id = id.clone();
+                let bridge = self.bridge.clone();
+                cx.spawn(async move |this, cx| {
+                    let result = bridge.thread_read(&id, true).await;
+                    this.update(cx, |this, cx| match result {
+                        Ok(read) => {
+                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                ui::screens::thread::view::conversation_markdown(&read.thread)));
+                            this.toast(Toast::info("Copied conversation as Markdown"), cx);
+                        }
+                        Err(_) => this.toast(Toast::danger("Failed to copy conversation as Markdown"), cx),
+                    }).ok();
+                }).detach();
+            }
+            _ => {}
+        }
+    }
+
+    fn toggle_turn_changes(&mut self, turn_id: &str, cx: &mut Context<Self>) {
+        let Some(view) = self.thread.clone() else { return };
+        let thread = view.read(cx);
+        let Some(turn) = thread.turns().iter().find(|turn| turn.id == turn_id) else { return };
+        let changes: Vec<_> = turn.items.iter().flat_map(|item| match item {
+            ThreadItem::FileChange { changes, .. } => changes.as_slice(),
+            _ => &[],
+        }).map(|change| json!({"path": change.path, "kind": change.kind, "diff": change.diff})).collect();
+        let revert = !thread.changes_reverted(turn_id);
+        let params = json!({"cwd": thread.cwd(), "changes": changes, "revert": revert});
+        if !view.update(cx, |view, cx| view.begin_patch(turn_id, cx)) { return; }
+        let turn_id = turn_id.to_owned();
+        let host = self.host.clone();
+        let apply = cx.background_spawn(async move {
+            host.fetch(&host::Request::post("apply-patch", Some(params)))
+                .and_then(|response| host::json_body(&response))
+                .and_then(|body| {
+                    anyhow::ensure!(body["status"] == "success", "turn patch did not succeed");
+                    Ok(())
+                })
         });
-        log_err(task, cx);
+        cx.spawn(async move |this, cx| {
+            let result = apply.await;
+            this.update(cx, |this, cx| {
+                view.update(cx, |view, cx| view.finish_patch(&turn_id, result.is_ok(), cx));
+                let toast = match result {
+                    Ok(()) => Toast::info(if revert { "Changes reverted" } else { "Changes reapplied" }),
+                    Err(error) => Toast::danger(format!("{}: {error}",
+                        if revert { "Failed to revert changes" } else { "Failed to reapply changes" })),
+                };
+                this.toast(toast, cx);
+            }).ok();
+        }).detach();
     }
 
     /// `Fork chat from here` under `turn_id`: `thread/fork`, then `thread/rollback` of the
@@ -3631,6 +3694,10 @@ impl Root {
     fn fork_chat(&mut self, later: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(view) = &self.thread else { return };
         let id = view.read(cx).id().to_owned();
+        self.fork_from(id, later, window, cx);
+    }
+
+    fn fork_from(&mut self, id: String, later: usize, window: &mut Window, cx: &mut Context<Self>) {
         let bridge = self.bridge.clone();
         let computer_use = computer_use_overrides(&self.config);
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
@@ -3701,6 +3768,31 @@ impl Root {
             started
         });
         log_err(task, cx);
+    }
+
+    fn delete_thread(&mut self, dialog: Entity<Dialog>, id: String, return_focus: Option<FocusHandle>,
+        window: &mut Window, cx: &mut Context<Self>) {
+        let bridge = self.bridge.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = bridge.request::<_, Value>("thread/delete", json!({"threadId": id})).await;
+            this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(_) => {
+                        this.dialog = None;
+                        this.loaded.remove(&id);
+                        this.threads.retain(|thread| thread.id != id);
+                        this.sidebar.update(cx, |sidebar, cx| sidebar.set_threads(&this.threads, cx));
+                        if this.state.route == Route::Thread(id) { this.new_chat(window, cx); }
+                        if let Some(focus) = return_focus { window.focus(&focus, cx); }
+                        this.toast(Toast::info("Task deleted"), cx);
+                    }
+                    Err(error) => dialog.update(cx, |dialog, cx| {
+                        dialog.deletion_result(Some(format!("Could not delete task: {error}")), cx);
+                    }),
+                }
+                cx.notify();
+            }).ok();
+        }).detach();
     }
 
     /// Opens `Rename chat` for `id`. From the composer, closing it returns focus there.
@@ -5549,11 +5641,10 @@ impl Render for Root {
             .on_action(cx.listener(|this, edit: &EditMessage, window, cx| {
                 this.edit_message(edit.clone(), window, cx)
             }))
-            .on_action(
-                cx.listener(|this, a: &RevertTurn, window, cx| {
-                    this.revert(a.0.clone(), window, cx)
-                }),
-            )
+            .on_action(cx.listener(|this, action: &ToggleTurnChanges, _, cx| {
+                this.toggle_turn_changes(&action.0, cx);
+            }))
+            .on_action(cx.listener(Self::chat_menu_action))
             .on_action(
                 cx.listener(|this, a: &GoToChat, window, cx| {
                     this.go_to_chat(Some(a.0), window, cx)

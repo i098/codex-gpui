@@ -54,7 +54,7 @@ pub(crate) mod menu;
 mod select;
 
 use actions::action_row;
-pub use actions::{EditMessage, ForkThread, RevertTurn};
+pub use actions::{ChatMenuAction, EditMessage, ForkThread, ToggleTurnChanges};
 pub enum GitAction {
     Refresh,
     OpenForm,
@@ -65,12 +65,23 @@ pub enum GitAction {
 impl gpui::EventEmitter<GitAction> for ThreadView {}
 
 use items::{activity, diff_card, disclosure, user_bubble, wrap_row};
+pub use items::conversation_markdown;
 use markdown::{markdown, tones};
 pub use select::Selection;
 use select::{Carets, block_end, frame_start, highlight};
 
 /// `--thread-content-max-width`
 const CONTENT_MAX_WIDTH: Pixels = px(768.);
+
+fn focus_ring() -> Vec<gpui::BoxShadow> {
+    vec![gpui::BoxShadow {
+        color: rgb(0x3a83f7).into(),
+        offset: gpui::point(px(0.), px(0.)),
+        blur_radius: px(0.),
+        spread_radius: px(2.),
+        inset: false,
+    }]
+}
 
 /// One turn's `Worked for` disclosure (`refs/interactions/ms6a.json`): the chevron rotates
 /// 0 -> 90 deg in 150 ms `ease-in-out`; the content clips its height, fades and slides 8 px
@@ -121,6 +132,10 @@ pub struct ThreadView {
     chat_actions: Option<gpui::FocusHandle>,
     chat_actions_trigger: Option<gpui::FocusHandle>,
     chat_actions_hovered: bool,
+    chat_actions_submenu: Option<usize>,
+    chat_actions_submenu_hovered: bool,
+    chat_actions_active: usize,
+    chat_actions_subactive: usize,
     git_repository: Option<Result<crate::dialog::CommitRepository, String>>,
     git_phase: Option<&'static str>,
     git_actions: Option<(gpui::FocusHandle, Option<usize>)>,
@@ -137,6 +152,8 @@ pub struct ThreadView {
     /// whose rows show, by the id of their first item.
     expanded: HashSet<String>,
     pending_question: Option<String>,
+    reverted: HashSet<String>,
+    patch_pending: HashSet<String>,
     scroll: ScrollHandle,
     /// The turns as last laid out, to stand in for the ones far off screen.
     laid_out: Rc<RefCell<LaidOut>>,
@@ -567,6 +584,10 @@ impl ThreadView {
             chat_actions: None,
             chat_actions_trigger: None,
             chat_actions_hovered: false,
+            chat_actions_submenu: None,
+            chat_actions_submenu_hovered: false,
+            chat_actions_active: 0,
+            chat_actions_subactive: 0,
             git_repository: None,
             git_phase: None,
             git_actions: None,
@@ -585,7 +606,13 @@ impl ThreadView {
             mcp_images: RefCell::default(),
             expanded: HashSet::new(),
             pending_question: None,
-            scroll: ScrollHandle::new(),
+            reverted: HashSet::new(),
+            patch_pending: HashSet::new(),
+            scroll: {
+                let scroll = ScrollHandle::new();
+                scroll.scroll_to_bottom();
+                scroll
+            },
             laid_out: Rc::default(),
             focus: None,
             carets: Carets::default(),
@@ -614,6 +641,24 @@ impl ThreadView {
             self.pending_question = turn_id;
             cx.notify();
         }
+    }
+
+    pub fn changes_reverted(&self, turn_id: &str) -> bool {
+        self.reverted.contains(turn_id)
+    }
+
+    pub fn begin_patch(&mut self, turn_id: &str, cx: &mut Context<Self>) -> bool {
+        let inserted = self.patch_pending.insert(turn_id.to_owned());
+        cx.notify();
+        inserted
+    }
+
+    pub fn finish_patch(&mut self, turn_id: &str, success: bool, cx: &mut Context<Self>) {
+        self.patch_pending.remove(turn_id);
+        if success && !self.reverted.remove(turn_id) {
+            self.reverted.insert(turn_id.to_owned());
+        }
+        cx.notify();
     }
 
     pub fn transcript_focused(&self, window: &Window) -> bool {
@@ -829,6 +874,8 @@ impl ThreadView {
             div()
                 .id(id)
                 .size(px(size))
+                .focusable().tab_index(0)
+                .focus_visible(|s| s.shadow(focus_ring()))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -1377,6 +1424,9 @@ impl ThreadView {
         if let Some(find) = &mut self.find {
             find.dirty = true;
         }
+        if self.scroll.max_offset().y + self.scroll.offset().y <= px(24.) {
+            self.scroll.scroll_to_bottom();
+        }
         match method.as_str() {
             "turn/started" | "turn/completed" => {
                 let Ok(n) = serde_json::from_value::<TurnNotification>(params.clone()) else {
@@ -1484,6 +1534,21 @@ impl ThreadView {
                     return;
                 };
                 progress.push(params.clone());
+            }
+            "item/reasoning/summaryTextDelta" | "item/reasoning/textDelta" => {
+                if let (Some(id), Some(delta)) = (params["itemId"].as_str(), params["delta"].as_str())
+                    && let Some(ThreadItem::Reasoning { summary, content, .. }) = self.item_mut(id)
+                {
+                    let (parts, index) = if method == "item/reasoning/summaryTextDelta" {
+                        (summary, params["summaryIndex"].as_u64().unwrap_or(0) as usize)
+                    } else {
+                        (content, params["contentIndex"].as_u64().unwrap_or(0) as usize)
+                    };
+                    if index < 1024 {
+                        parts.resize_with(parts.len().max(index + 1), String::new);
+                        parts[index].push_str(delta);
+                    }
+                }
             }
             "item/agentMessage/delta" | "item/commandExecution/outputDelta" => {
                 let Ok(n) = serde_json::from_value::<AgentMessageDeltaNotification>(params.clone())
@@ -1665,6 +1730,11 @@ impl ThreadView {
             col = col.child(div().h(px(16.))).child(
                 disclosure(format!("Worked for {}", duration(secs)), angle, window, t)
                     .id(group.clone())
+                    .role(gpui::Role::Button)
+                    .aria_label(format!("Worked for {}", duration(secs)))
+                    .aria_expanded(open)
+                    .focusable().tab_index(0)
+                    .focus_visible(|s| s.shadow(focus_ring()))
                     // `select-none` in the original: a press here leaves the text selection.
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |view, _, _, cx| {
@@ -1718,7 +1788,8 @@ impl ThreadView {
                 self.find_paint(item).as_ref(),
                 self.fades(item),
             ));
-            if let Some(card) = diff_card(&turn.id, &turn.items, window, t) {
+            if let Some(card) = diff_card(&turn.id, &turn.items, window, t,
+                (self.reverted.contains(&turn.id), self.patch_pending.contains(&turn.id))) {
                 col = col.child(div().mt(px(12.)).pb(px(8.)).child(card));
             }
             return col.child(action_row(last, &group, &turn.id, answer, t));
@@ -2050,6 +2121,7 @@ impl Render for ThreadView {
                     .size_full()
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll)
+                    .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.notify()))
                     .track_focus(&focus)
                     .on_action(cx.listener(Self::copy_selection))
                     // A press on the transcript collapses the selection to a caret, takes the
@@ -2091,6 +2163,25 @@ impl Render for ThreadView {
                     .child(div().h(px(114.))),
             )
             .child(top_fade.absolute().top_0().left_0())
+            .when(self.scroll.max_offset().y + self.scroll.offset().y > px(24.), |d| {
+                let scroll = self.scroll.clone();
+                d.child(
+                    div().absolute().bottom(px(140.)).left_0().right_0()
+                        .flex().justify_center()
+                        .child(tooltip(
+                            icon_button("scroll-to-bottom", icon("chevron-down", 16., t.text), &t)
+                                .role(gpui::Role::Button).aria_label("Scroll to bottom")
+                                .focusable().tab_index(0)
+                                .bg(t.surface_secondary)
+                                .focus_visible(|s| s.shadow(focus_ring()))
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    scroll.scroll_to_bottom();
+                                    cx.notify();
+                                })),
+                            "Scroll to bottom", None, Side::Top,
+                        )),
+                )
+            })
             .when(self.clip_right, |d| d.child(gpui::deferred(corners)))
             // A portal in the original: its shadow spills over the titlebar and the sidebar.
             .when(self.summary_open, |d| {

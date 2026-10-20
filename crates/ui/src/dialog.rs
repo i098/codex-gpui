@@ -53,6 +53,7 @@ pub enum Kind {
     FullAccess,
     LogOut,
     RevertChanges,
+    DeleteThread,
     ModelAnnouncement,
     /// `Schedule a task`: the Scheduled sidebar's `New task` create editor (AM-005).
     ScheduleTask,
@@ -73,6 +74,7 @@ pub enum Outcome {
     Dismiss,
     FullAccess,
     LogOut,
+    DeleteThread(String),
     DismissAnnouncement(SharedString),
     UseAnnouncedModel {
         model: SharedString,
@@ -221,6 +223,16 @@ impl Dialog {
             email,
             ..Self::new(Kind::LogOut, cx)
         }
+    }
+
+    pub fn delete_thread(thread: String, cx: &mut Context<Self>) -> Self {
+        Self { thread, ..Self::new(Kind::DeleteThread, cx) }
+    }
+
+    pub fn deletion_result(&mut self, error: Option<String>, cx: &mut Context<Self>) {
+        self.saving = false;
+        self.error = error;
+        cx.notify();
     }
     /// `Rename chat` for `thread`, its input prefilled with `title` and all of it selected.
     pub fn rename(thread: String, title: String, cx: &mut Context<Self>) -> Self {
@@ -763,6 +775,8 @@ impl Dialog {
                     "Archive all"
                 }
             }
+            (Kind::DeleteThread, 0) => "Cancel",
+            (Kind::DeleteThread, _) => "Delete",
             (Kind::ModelAnnouncement, 0) => "Close",
             (Kind::ModelAnnouncement, 1) => "Continue with current model",
             (Kind::ModelAnnouncement, _) => {
@@ -922,6 +936,12 @@ impl Dialog {
             (Kind::FullAccess, 1) => cx.emit(Outcome::FullAccess),
             (Kind::LogOut, 1) => cx.emit(Outcome::LogOut),
             (Kind::ArchiveSection, 1) => cx.emit(Outcome::ArchiveSection(self.thread.clone())),
+            (Kind::DeleteThread, 1) => {
+                self.saving = true;
+                self.error = None;
+                cx.emit(Outcome::DeleteThread(self.thread.clone()));
+                cx.notify();
+            }
             (Kind::ModelAnnouncement, 2) => {
                 let announcement = self.announcement.as_ref().expect("model announcement");
                 cx.emit(Outcome::UseAnnouncedModel {
@@ -1133,9 +1153,11 @@ impl Dialog {
             "escape" => self.dismiss(cx),
             "tab" => {
                 let order: Vec<usize> = match self.kind {
-                    Kind::Shortcuts | Kind::FullAccess | Kind::LogOut | Kind::ArchiveSection => {
-                        vec![0, 1]
-                    }
+                    Kind::Shortcuts
+                    | Kind::FullAccess
+                    | Kind::LogOut
+                    | Kind::ArchiveSection
+                    | Kind::DeleteThread => vec![0, 1],
                     Kind::ScheduleTask => vec![0, 3, 4, 5, 1, 2],
                     Kind::Branches => vec![0, 1],
                     Kind::BranchConflict => vec![1, 2],
@@ -1178,6 +1200,7 @@ impl Dialog {
                         | Kind::FullAccess
                         | Kind::LogOut
                         | Kind::ArchiveSection
+                        | Kind::DeleteThread
                         | Kind::ModelAnnouncement
                         | Kind::RevertChanges
                 ) || (self.selected != 0 && !self.editing()) =>
@@ -1569,6 +1592,19 @@ impl Dialog {
                 this.controls[index].focus(window, cx);
                 this.activate(cx);
             }))
+    }
+
+    fn delete_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        div().size_full().p(px(20.)).flex().flex_col().gap(px(12.))
+            .child(text("Delete task?", 18., 24., 600., t.text))
+            .child(text("This permanently deletes the task and its subagent tasks. This cannot be undone.",
+                14., 20., 430., t.text_secondary).whitespace_normal())
+            .when_some(self.error.as_ref(), |d, error| d.child(
+                text(error.clone(), 13., 18., 430., t.text_error).whitespace_normal()
+            ))
+            .child(div().flex().justify_end().gap(px(12.))
+                .child(self.logout_button(0, "Cancel", false, t, cx))
+                .child(self.logout_button(1, if self.saving { "Deleting…" } else { "Delete" }, true, t, cx)))
     }
 
     fn full_access_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
@@ -2915,6 +2951,7 @@ impl Render for Dialog {
             Kind::ArchiveSection => (420., 181.),
             Kind::FullAccess => (520., 420.),
             Kind::LogOut => (380., 145. + if self.email.is_some() { 25. } else { 0. }),
+            Kind::DeleteThread => (420., if self.error.is_some() { 226. } else { 190. }),
             Kind::ModelAnnouncement => (480., 432.),
             Kind::Commit => (420., self.commit_height()),
             Kind::Branches => (
@@ -2938,6 +2975,7 @@ impl Render for Dialog {
             Kind::ArchiveSection => self.archive_section_content(t, cx),
             Kind::FullAccess => self.full_access_content(t, cx),
             Kind::LogOut => self.logout_content(t, cx),
+            Kind::DeleteThread => self.delete_content(t, cx),
             Kind::ModelAnnouncement => self.announcement_content(t, cx),
             Kind::Commit => self.commit_content(t, cx),
             Kind::Branches | Kind::CreateBranch | Kind::BranchConflict => {
@@ -2989,6 +3027,7 @@ impl Render for Dialog {
                             .into(),
                         Kind::FullAccess => "Turn on Full Access?".into(),
                         Kind::LogOut => "Log out?".into(),
+                        Kind::DeleteThread => "Delete task?".into(),
                         Kind::Commit => "Commit or push".into(),
                         Kind::Branches => "Switch branch".into(),
                         Kind::CreateBranch => "Create and checkout branch".into(),

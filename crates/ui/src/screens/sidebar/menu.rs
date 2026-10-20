@@ -468,10 +468,7 @@ impl HomeSidebar {
         cx.notify();
     }
 
-    /// Runs item `id` and closes the menu. `Rename`, `Pin`/`Unpin` and `Archive` dispatch the
-    /// row's actions; `Mark as unread` toggles the row's dot.
-    /// ponytail: Section, Fork, Share, Copy, Open in new window and Permanently delete only
-    /// close the menu (their requests are not recorded); wire them with their slices.
+    /// Runs the selected row action and restores the menu's previous focus.
     fn activate(&mut self, id: &'static str, window: &mut Window, cx: &mut Context<Self>) {
         if !self.item_enabled(id) {
             return;
@@ -500,6 +497,9 @@ impl HomeSidebar {
                 window.dispatch_action(Box::new(PinThread(thread, pin)), cx)
             }
             "archive-thread" => window.dispatch_action(Box::new(ArchiveThread(thread)), cx),
+            "fork-into-local" | "copy-deeplink" | "copy-conversation-markdown"
+            | "copy-working-directory" | "delete-thread" => window.dispatch_action(
+                Box::new(crate::screens::thread::view::ChatMenuAction { thread_id: thread, item: id }), cx),
             "mark-thread-unread" => match self.unread.iter().position(|id| *id == thread) {
                 Some(i) => {
                     self.unread.remove(i);
