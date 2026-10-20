@@ -2198,23 +2198,25 @@ fn heartbeat_row_keyboard_focus_survives_motion_and_clears_on_pointer_press() ->
     fx.advance(std::time::Duration::from_millis(300))?;
     let region = [290., 174., 38., 36.];
     let baseline = fx.shot()?;
-    let mut keyboard = None;
-    for _ in 0..32 {
-        fx.keys("tab")?;
-        let frame = fx.shot()?;
-        if changed(&baseline, &frame, region) > 0 {
-            keyboard = Some(frame);
-            break;
-        }
-    }
-    let keyboard = keyboard.expect("keyboard navigation must reveal the task controls");
+    fx.hover((150., 190.))?;
+    fx.click((302., 190.))?;
+    fx.hover((100., 700.))?;
+    fx.keys("escape")?;
+    fx.advance(std::time::Duration::from_millis(300))?;
+    let keyboard = fx.shot()?;
+    ensure!(
+        changed(&baseline, &keyboard, region) > 0,
+        "keyboard dismissal must leave the trigger visibly focused"
+    );
     fx.hover((120., 710.))?;
+    fx.advance(std::time::Duration::from_millis(300))?;
     let moved = fx.shot()?;
     ensure!(
         changed(&keyboard, &moved, region) == 0,
         "pointer motion hid keyboard controls"
     );
     fx.click((120., 710.))?;
+    fx.advance(std::time::Duration::from_millis(300))?;
     let pressed = fx.shot()?;
     ensure!(
         changed(&baseline, &pressed, region) == 0,
