@@ -304,7 +304,14 @@ impl Toaster {
         let t = &cx.theme().clone();
         let (bg, border, fg) = match e.toast.kind {
             Kind::Info => (t.surface_elevated_secondary, t.border, t.text),
-            Kind::Danger => (danger_surface(t), t.text_error.opacity(0.4), t.text_error),
+            Kind::Danger => (
+                danger_surface(t),
+                match t.appearance {
+                    Appearance::Dark => rgba(0xfa423e66).into(),
+                    Appearance::Light => t.text_error.opacity(0.15),
+                },
+                t.text_error,
+            ),
             Kind::Success => (
                 success_surface(t),
                 t.text_success.opacity(0.2),
@@ -392,10 +399,15 @@ impl Toaster {
                             .when(e.toast.description.is_some(), |d| {
                                 d.flex_col().items_start().max_w(px(360.))
                             })
-                            .child(crate::text(e.toast.title.clone(), 14., 21., 500., fg))
+                            .child(
+                                crate::text(e.toast.title.clone(), 14., 21., 500., fg)
+                                    .flex()
+                                    .items_center()
+                                    .min_h(px(24.)),
+                            )
                             .when_some(e.toast.description.clone(), |d, description| {
                                 d.child(
-                                    crate::text(description, 13., 18.5714, 430., fg)
+                                    crate::text(description, 14., 21., 430., fg)
                                         .whitespace_normal(),
                                 )
                             }),

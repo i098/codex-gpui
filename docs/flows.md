@@ -708,7 +708,8 @@ If archive is in flight or already complete, the bridge restores the thread firs
 The per-thread archive lock also prevents a user request from racing with that restore.
 No completion path removes a worktree or starts a cleanup service.
 A missing store or run row releases only the matching completed tracker, without creating an archive row.
-A refusal or `success: false` shows the danger toast `Could not start scheduled task`, with the reason on one line.
+A refusal shows the danger toast `Could not start scheduled task`, with the host error on a separate description line.
+A `success: false` result shows the title without a description; a successful start adds no result toast.
 Event-triggered tasks (`## When this happens` prompts) have the item disabled with the tooltip `Automations triggered by events can’t be run manually`; the host refuses them too.
 The project folders or project target (its first root from `.codex-global-state.json`) run, in a new worktree for the original default environment (`create_worktree` and `set_owner_thread`, removed again when no thread starts) or in the folder for `local`; outside a Git repository the run happens in the folder.
 For a project target, the host saves `{projectKind: "local", projectId}` after `thread/start` and worktree ownership.
@@ -740,6 +741,7 @@ Not yet carried over: the desktop notification and the unread dot on the rail.
 `automation_run_now` checks projectless metadata, project assignment, saved policy, early completion, user cancellation, and archive failures against a stdio peer.
 It also checks account isolation, recoverable restore writes, and retained worktrees.
 Its native window proof also checks pending state, duplicate suppression, success navigation, failure, Back/Forward, and navigation away.
+On macOS, its native row-menu replay starts a task, then displays the real app-server refusal through the same toast component.
 
 `LocalHost` implements the original `automation-update` status change for local tasks (issue https://github.com/i098/codex-gpui/issues/226).
 It accepts `{id, status}` or the original full cron or heartbeat body; any other changed field fails.
