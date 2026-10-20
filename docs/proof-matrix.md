@@ -59,6 +59,7 @@ The automation adapters share `tools/parity/fixtures/automation-history.json`.
 They use the S037 task definition and its three recorded local threads.
 Opening the management view marks the latest run read on both sides.
 The fixture replays the recorded empty task-query reply; no real run is archived.
+The native adapters preserve the original 20-pixel unread-marker slots, control margins, and search border geometry.
 
 Both themes support the normal census sizes, `1280x832` and `1440x900`.
 Home rest also accepts `767x832` and `600x832`.
