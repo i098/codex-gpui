@@ -35,14 +35,17 @@ fn capture_cell() -> Result<()> {
     }
     fx.cx.run_until_parked();
     let native = fx.reference_shot()?;
-    let metrics = parity::diff_ref(&output.join("refs"), output, &surface, theme, &native)?;
+    let mut metrics = parity::diff_ref(&output.join("refs"), output, &surface, theme, &native)?;
+    fs::rename(output.join(&metrics.ref_png), output.join("original.png"))?;
+    fs::rename(output.join(&metrics.port_png), output.join("native.png"))?;
+    fs::rename(output.join(&metrics.diff_png), output.join("diff.png"))?;
+    metrics.ref_png = "original.png".into();
+    metrics.port_png = "native.png".into();
+    metrics.diff_png = "diff.png".into();
     fs::write(
         output.join("metrics.json"),
         serde_json::to_vec_pretty(&metrics)?,
     )?;
-    fs::copy(output.join(&metrics.ref_png), output.join("original.png"))?;
-    fs::rename(output.join(&metrics.port_png), output.join("native.png"))?;
-    fs::rename(output.join(&metrics.diff_png), output.join("diff.png"))?;
     let diff = image::open(output.join("diff.png"))?.into_rgba8();
     let mut report = format!(
         "# {surface} / {state}\n\nTheme: {theme}.\nSize: {width}x{height} CSS pixels, native 2x.\n\n\
