@@ -1402,8 +1402,7 @@ pub fn pill(id: impl Into<ElementId>, t: &Theme) -> Stateful<Div> {
         .hover(move |s| s.bg(hover))
 }
 
-/// 13/18 composer footer label. Its text blends like a transparent cc layer onto the final
-/// pill/bar pixel (the fills under it do not).
+/// A 13/18 label painted through a transparent compositing layer.
 pub fn label(s: impl Into<SharedString>, color: Hsla) -> Div {
     text(s, 13., 18., 400., color).top_layer()
 }
