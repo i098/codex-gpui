@@ -3,8 +3,13 @@
 //! transcript link menu (`thread/menu.rs`): the recorded items, order, accelerators and
 //! submenus. `Pin` reads `Unpin` on a pinned row and `Mark as unread` reads `Mark as read` on
 //! an unread one [INFERENCE: only a plain row was recorded].
+//! Custom section Options uses AppKit's native menu on macOS.
 use super::*;
 use gpui::{Anchor, FocusHandle, KeyDownEvent, Point, Role, anchored, deferred};
+
+#[cfg(target_os = "macos")]
+#[path = "menu/native.rs"]
+mod native;
 
 /// One item as the original passes it to `showContextMenu`: id, label, Electron accelerator,
 /// 16 px icon (its svg) and submenu. A separator has an empty label.
@@ -22,12 +27,19 @@ const WIDTH: f32 = 220.;
 
 pub(super) struct ThreadMenu {
     thread: String,
+    section: Option<String>,
     position: Point<Pixels>,
     /// The active top-level item; `sub` is its open submenu's active item.
     active: Option<usize>,
     sub: Option<Option<usize>>,
     focus: FocusHandle,
     return_focus: Option<FocusHandle>,
+}
+
+impl ThreadMenu {
+    pub(super) fn is_native(&self) -> bool {
+        cfg!(target_os = "macos") && self.section.is_some()
+    }
 }
 
 impl Item {
@@ -200,7 +212,150 @@ pub(super) const ITEMS: [Item; 14] = [
     },
 ];
 
+const MARK_SECTION_READ: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><path d="M11.5624 4.0338C11.7255 3.79403 12.0522 3.73111 12.2919 3.89415C12.5314 4.05717 12.5933 4.38398 12.4306 4.62364L7.539 11.818C7.30083 12.1681 6.80219 12.215 6.50286 11.9156L3.62786 9.03478C3.4231 8.82953 3.42363 8.4964 3.62884 8.29161C3.8341 8.08683 4.16722 8.08733 4.372 8.29259L6.92474 10.8512L11.5624 4.0338Z" fill="currentColor"/></svg>"#;
+
+const SECTION_ITEMS: [Item; 7] = [
+    Item {
+        id: "edit-section",
+        label: "Edit",
+        accelerator: None,
+        icon: Some(include_bytes!(
+            "../../../../../assets/icons/settings-general.svg"
+        )),
+        submenu: &[],
+    },
+    Item {
+        id: "section-chat-actions-separator",
+        label: "",
+        accelerator: None,
+        icon: None,
+        submenu: &[],
+    },
+    Item {
+        id: "mark-section-chats-read",
+        label: "Mark all as read",
+        accelerator: None,
+        icon: Some(MARK_SECTION_READ),
+        submenu: &[],
+    },
+    Item {
+        id: "archive-section-chats",
+        label: "Archive chats",
+        accelerator: None,
+        icon: Some(include_bytes!(
+            "../../../../../assets/icons/sidebar-archive.svg"
+        )),
+        submenu: &[],
+    },
+    Item {
+        id: "remove-section-separator",
+        label: "",
+        accelerator: None,
+        icon: None,
+        submenu: &[],
+    },
+    Item {
+        id: "new-section",
+        label: "New section",
+        accelerator: None,
+        icon: Some(include_bytes!(
+            "../../../../../assets/icons/automations-plus.svg"
+        )),
+        submenu: &[],
+    },
+    Item {
+        id: "remove-section",
+        label: "Remove section",
+        accelerator: None,
+        icon: Some(include_bytes!(
+            "../../../../../assets/icons/toast-close.svg"
+        )),
+        submenu: &[],
+    },
+];
+
 impl HomeSidebar {
+    pub(super) fn section_menu_open(&self, id: &str) -> bool {
+        self.menu
+            .as_ref()
+            .is_some_and(|m| m.section.as_deref() == Some(id))
+    }
+
+    fn menu_items(&self) -> &'static [Item] {
+        if self.menu.as_ref().is_some_and(|m| m.section.is_some()) {
+            &SECTION_ITEMS
+        } else {
+            &ITEMS
+        }
+    }
+
+    fn item_enabled(&self, id: &str) -> bool {
+        let Some(section) = self.menu.as_ref().and_then(|m| m.section.as_deref()) else {
+            return true;
+        };
+        match id {
+            "mark-section-chats-read" => self.section(section).is_some_and(|s| {
+                s.rows
+                    .iter()
+                    .any(|&row| self.unread.contains(&self.threads[row].0))
+            }),
+            "archive-section-chats" => self.section(section).is_some_and(|s| !s.rows.is_empty()),
+            _ => true,
+        }
+    }
+
+    pub(super) fn open_section_menu(
+        &mut self,
+        section: String,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        #[cfg(not(target_os = "macos"))]
+        {
+            self.open_menu(String::new(), position, window, cx);
+            self.menu.as_mut().unwrap().section = Some(section);
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let return_focus = window.focused(cx);
+            self.menu = Some(ThreadMenu {
+                thread: String::new(),
+                section: Some(section),
+                position,
+                active: None,
+                sub: None,
+                focus: return_focus.clone().unwrap_or_else(|| cx.focus_handle()),
+                return_focus,
+            });
+            self.native_menu_snapshot = None;
+            let enabled: [bool; SECTION_ITEMS.len()] =
+                std::array::from_fn(|i| self.item_enabled(SECTION_ITEMS[i].id));
+            let dark = cx.theme().appearance == Appearance::Dark;
+            let this = cx.weak_entity();
+            cx.stop_propagation();
+            cx.notify();
+            // AppKit runs a nested event loop; release the sidebar borrow before tracking.
+            window.defer(cx, move |window, cx| {
+                let result = native::popup(&SECTION_ITEMS, &enabled, position, dark, window);
+                this.update(cx, |this, cx| match result {
+                    Ok(result) => {
+                        this.native_menu_snapshot = Some(result.snapshot);
+                        if let Some(index) = result.selected {
+                            this.activate(SECTION_ITEMS[index].id, window, cx);
+                        } else {
+                            this.close_menu(window, cx);
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!("codex-gpui: section menu: {error:#}");
+                        this.close_menu(window, cx);
+                    }
+                })
+                .ok();
+            });
+        }
+    }
     fn label(&self, item: &Item) -> &'static str {
         let thread = self.menu.as_ref().map(|m| m.thread.as_str());
         match item.id {
@@ -216,12 +371,20 @@ impl HomeSidebar {
     /// `None` when no menu is open.
     pub fn context_menu(&self) -> Option<serde_json::Value> {
         self.menu.as_ref()?;
-        Some(ITEMS.iter().map(|item| self.entry(item)).collect())
+        Some(
+            self.menu_items()
+                .iter()
+                .map(|item| self.entry(item))
+                .collect(),
+        )
+    }
+
+    pub fn native_menu_snapshot(&self) -> Option<&serde_json::Value> {
+        self.native_menu_snapshot.as_ref()
     }
 
     fn entry(&self, item: &Item) -> serde_json::Value {
-        let mut v =
-            serde_json::json!({ "id": item.id, "label": self.label(item), "enabled": true });
+        let mut v = serde_json::json!({ "id": item.id, "label": self.label(item), "enabled": self.item_enabled(item.id) });
         if item.is_separator() {
             v["type"] = "separator".into();
         }
@@ -249,6 +412,7 @@ impl HomeSidebar {
         let focus = cx.focus_handle();
         self.menu = Some(ThreadMenu {
             thread,
+            section: None,
             position,
             active: None,
             sub: None,
@@ -271,9 +435,12 @@ impl HomeSidebar {
     }
 
     fn menu_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let items = self.menu_items();
+        let enabled: [bool; ITEMS.len()] =
+            std::array::from_fn(|i| items.get(i).is_some_and(|item| self.item_enabled(item.id)));
         let Some(menu) = &mut self.menu else { return };
         let key = event.keystroke.key.as_str();
-        let submenu = menu.active.map(|i| ITEMS[i].submenu).unwrap_or(&[]);
+        let submenu = menu.active.map(|i| items[i].submenu).unwrap_or(&[]);
         match (key, menu.sub) {
             ("escape" | "left", Some(_)) => menu.sub = None,
             ("escape", None) => {
@@ -283,15 +450,15 @@ impl HomeSidebar {
             ("enter" | "space", Some(Some(i))) => self.activate(submenu[i].id, window, cx),
             ("enter" | "space", None) => {
                 if let Some(i) = menu.active {
-                    self.activate(ITEMS[i].id, window, cx);
+                    self.activate(items[i].id, window, cx);
                 }
             }
             ("down" | "up" | "home" | "end", Some(sub)) if !submenu.is_empty() => {
                 menu.sub = Some(Some(step(key, sub, submenu.len(), |_| true)));
             }
             ("down" | "up" | "home" | "end", None) => {
-                menu.active = Some(step(key, menu.active, ITEMS.len(), |i| {
-                    !ITEMS[i].is_separator()
+                menu.active = Some(step(key, menu.active, items.len(), |i| {
+                    !items[i].is_separator() && enabled[i]
                 }));
             }
             ("tab", _) => {}
@@ -306,9 +473,25 @@ impl HomeSidebar {
     /// ponytail: Section, Fork, Share, Copy, Open in new window and Permanently delete only
     /// close the menu (their requests are not recorded); wire them with their slices.
     fn activate(&mut self, id: &'static str, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.item_enabled(id) {
+            return;
+        }
         let Some(menu) = self.close_menu(window, cx) else {
             return;
         };
+        if let Some(section) = menu.section {
+            use super::sections::{SectionAction, SectionCommand};
+            let command = match id {
+                "edit-section" => SectionCommand::Edit,
+                "mark-section-chats-read" => SectionCommand::MarkRead,
+                "archive-section-chats" => SectionCommand::Archive,
+                "new-section" => SectionCommand::New,
+                "remove-section" => SectionCommand::Remove,
+                _ => return,
+            };
+            window.dispatch_action(Box::new(SectionAction { section, command }), cx);
+            return;
+        }
         let thread = menu.thread;
         match id {
             "rename-thread" => window.dispatch_action(Box::new(RenameThread(thread)), cx),
@@ -347,6 +530,8 @@ impl HomeSidebar {
             }
             div()
                 .id((item.id, index))
+                .aria_disabled(!self.item_enabled(item.id))
+                .opacity(if self.item_enabled(item.id) { 1. } else { 0.4 })
                 .role(Role::MenuItem)
                 .aria_label(self.label(item))
                 .when(active == Some(index), |d| {
@@ -360,7 +545,7 @@ impl HomeSidebar {
                 .gap(px(6.))
                 .cursor_pointer()
                 .on_hover(cx.listener(move |this, hovered, _, cx| {
-                    if *hovered {
+                    if *hovered && this.item_enabled(item.id) {
                         on_hover(this, index, cx);
                     }
                 }))
@@ -413,12 +598,13 @@ impl HomeSidebar {
         let menu = self.menu.as_ref().expect("open thread menu");
         let popup = self
             .menu_rows(
-                &ITEMS,
+                self.menu_items(),
                 menu.active,
                 |this, index, cx| {
                     if let Some(menu) = &mut this.menu {
                         menu.active = Some(index);
-                        menu.sub = (!ITEMS[index].submenu.is_empty()).then_some(None);
+                        menu.sub = (menu.section.is_none() && !ITEMS[index].submenu.is_empty())
+                            .then_some(None);
                         cx.notify();
                     }
                 },
@@ -426,7 +612,11 @@ impl HomeSidebar {
             )
             .id("thread-row-menu")
             .role(Role::Menu)
-            .aria_label("Chat actions")
+            .aria_label(if menu.section.is_some() {
+                "Section options"
+            } else {
+                "Chat actions"
+            })
             .track_focus(&menu.focus)
             .on_key_down(cx.listener(Self::menu_key))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
