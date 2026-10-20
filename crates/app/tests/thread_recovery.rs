@@ -236,7 +236,19 @@ fn a_failed_turn_render_keeps_other_turns_and_retries_with_the_latest_data() -> 
     let mut fx = Fx::new()?;
     fx.keys("cmd-2")?;
     fx.wait_thread(SUBTRACT)?;
-    let count = fx.read(|root, cx| root.thread().unwrap().read(cx).turns().len());
+    let turn_ids = |fx: &Fx| {
+        fx.read(|root, cx| {
+            root.thread()
+                .unwrap()
+                .read(cx)
+                .turns()
+                .iter()
+                .map(|turn| turn.id.clone())
+                .collect::<Vec<_>>()
+        })
+    };
+    let mut expected_turns = turn_ids(&fx);
+    expected_turns.push("bad-render".to_owned());
     let mut broken = recorded_thread(SUBTRACT)?["turns"][0].clone();
     broken["id"] = "bad-render".into();
     broken["startedAt"] = i64::MIN.into();
@@ -254,10 +266,7 @@ fn a_failed_turn_render_keeps_other_turns_and_retries_with_the_latest_data() -> 
             .render_error("bad-render")
             .is_some()
     }));
-    assert_eq!(
-        fx.read(|root, cx| root.thread().unwrap().read(cx).turns().len()),
-        count + 1
-    );
+    assert_eq!(turn_ids(&fx), expected_turns);
     broken["startedAt"] = 1_792_040_071_i64.into();
     event(
         &mut fx,
@@ -273,9 +282,6 @@ fn a_failed_turn_render_keeps_other_turns_and_retries_with_the_latest_data() -> 
             .render_error("bad-render")
             .is_none()
     }));
-    assert_eq!(
-        fx.read(|root, cx| root.thread().unwrap().read(cx).turns().len()),
-        count + 1
-    );
+    assert_eq!(turn_ids(&fx), expected_turns);
     Ok(())
 }
