@@ -33,7 +33,7 @@ The rows were not clicked again on the original through `tools/route1`: its `ser
 | 14.3 Home | 21 | 10 | 3 | 8 |
 | 14.4 Thread view | 20 | 6 | 3 | 11 |
 | 14.5 Composer | 20 | 6 | 5 | 9 |
-| 14.6 Diff view | 20 | 13 | 6 | 1 |
+| 14.6 Diff view | 20 | 14 | 5 | 1 |
 | 14.7 Settings, login and onboarding | 20 | 7 | 8 | 5 |
 | 15.1 Automations | 16 | 2 | 2 | 12 |
 | 15.2 Background terminal | 10 | 10 | 0 | 0 |
@@ -494,7 +494,6 @@ A failed read or mutation adds a status row with Retry.
 `CGX_DIFF_EVIDENCE` selects its screenshot folder; the default is the system temporary folder under `cgx-diff-controls`.
 The proof covers header wrap, file filtering, layout changes, empty and loading states, real read failure, Retry, and line navigation.
 Final appearance approval remains pending.
-The final unavailable-file guard still needs a native run; the Mac build stopped because its disk was full.
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
@@ -510,7 +509,7 @@ The final unavailable-file guard still needs a native run; the Mac build stopped
 | 10 | Word wrap | click | Toggles wrap. | The header, Changes options, and body menu toggle the same wrap state. | PASS (`diff_controls`; `s027::diff_selection_and_hover_replay`) |
 | 11 | Mark as viewed | click | Branch diffs collapse and retain the reviewed revision. | The checkbox and saved revision handling await the separate Branch source integration. Other sources do not show the checkbox. | NOT WIRED (Branch source dependency) |
 | 12 | `⌘F` in diff | shortcut | `Search diff…`. | Focus the panel, open find, and type a query; matches highlight and update with the diff. | PASS (`s028::streamed_diff_and_find_replay`) |
-| 13 | `⌘L` | shortcut | Go to line in the file viewer. | Available files expose the line input; Enter navigates, Escape closes, and negative numbers count from the end. | PARTIAL (positive navigation verified; final unavailable-file guard awaits native validation) |
+| 13 | `⌘L` | shortcut | Go to line in the file viewer. | Available files expose the line input; Enter navigates, Escape closes, and negative numbers count from the end. Unavailable files keep the input closed. | PASS (`diff_controls`; whole-line validation regression check) |
 | 14 | Line hover | hover | No background change in the recorded Last Turn state; no `data-hovered` attribute. | No background change. | PASS (`s027::diff_selection_and_hover_replay`; corrects DT-014) |
 | 15 | No changes | empty | `No file changes yet`. | Last Turn shows `No file changes yet`; local sources show `No staged changes` or `No unstaged changes`. | PASS (`diff_controls` native frames) |
 | 16 | Not a git repo | empty | `Create a Git repository`. | Local sources show the Git error; repository creation remains separate. | PARTIAL (`crates/ui/src/diff.rs`) |
