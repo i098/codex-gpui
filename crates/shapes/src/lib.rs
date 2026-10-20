@@ -141,8 +141,10 @@ pub fn paint(
 pub enum ImageComposition {
     /// Draw each image directly over the background.
     Direct(Hsla),
-    /// Restore the images as one layer over the background.
+    /// Restore the images as one Skia saveLayer over the background.
     Group(Hsla),
+    /// Restore a transparent compositor tile over an opaque background.
+    Composited(Hsla),
 }
 
 /// `images` (premultiplied RGBA, see [`premultiply`], each drawn into its `dst` rect in

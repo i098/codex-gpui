@@ -1927,9 +1927,20 @@ pub(crate) fn raster_images(
     composition: ImageComposition,
     window: &Window,
 ) -> gpui::RenderImage {
-    let (page, group_images) = match composition {
-        ImageComposition::Direct(page) => (page, false),
-        ImageComposition::Group(page) => (page, true),
+    let (page, group_images, composite_images) = match composition {
+        ImageComposition::Direct(page) => (page, false, false),
+        ImageComposition::Group(page) => (page, true, false),
+        ImageComposition::Composited(page) => (page, false, true),
+    };
+    let page = color4f(page);
+    let background = composite_images.then(|| {
+        assert_eq!(page.a, 1., "composited image background must be opaque");
+        [page.b, page.g, page.r].map(|v| (v * 255.).round() as u32)
+    });
+    let clear = if composite_images {
+        Color4f::new(0., 0., 0., 0.)
+    } else {
+        page
     };
     let (layer, s) = (Layer::new(window, None), window.scale_factor());
     let d = Decoration {
@@ -1992,7 +2003,7 @@ pub(crate) fn raster_images(
     let sampling = SamplingOptions::new(FilterMode::Linear, MipmapMode::None);
     let mut out = vec![0; (w * h * 4) as usize];
     for (o, ts, [ox0, oy0, ox1, oy1]) in layer.tiles([x0, y0, x0 + w, y0 + h], layer.size()) {
-        let (px, row) = tile_pixels(o, ts, color4f(page), |c| {
+        let (px, row) = tile_pixels(o, ts, clear, |c| {
             contour.clip(c, ClipOp::Intersect);
             if grouped {
                 c.save_layer(&skia_safe::canvas::SaveLayerRec::default().bounds(&group));
@@ -2016,6 +2027,13 @@ pub(crate) fn raster_images(
                 let j = (((y - y0) * w + x - x0) * 4) as usize;
                 // BGRA, as GPUI's images hold it.
                 out[j..j + 4].copy_from_slice(&[px[i + 2], px[i + 1], px[i], px[i + 3]]);
+                if let Some(background) = &background {
+                    let inv = 255 - u32::from(out[j + 3]);
+                    for (channel, background) in out[j..j + 3].iter_mut().zip(background) {
+                        *channel = (u32::from(*channel) + div255(background * inv)) as u8;
+                    }
+                    out[j + 3] = 255;
+                }
             }
         }
     }
@@ -2758,6 +2776,78 @@ mod tests {
         cx.run_until_parked();
         let image = cx.capture_screenshot(window.into())?;
         assert_eq!(image.get_pixel(8, 8).0, [90, 129, 191, 255]);
+        Ok(())
+    }
+
+    #[test]
+    fn composited_image_preserves_original_clip_edges() -> anyhow::Result<()> {
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        struct ImageClip;
+        impl Render for ImageClip {
+            fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+                let pixels = image::RgbaImage::from_fn(8, 8, |x, y| {
+                    image::Rgba([
+                        (20 + x * 5) as u8,
+                        (120 + y * 4) as u8,
+                        (200 + x * 2) as u8,
+                        255,
+                    ])
+                });
+                div().size_full().relative().bg(gpui::rgb(0x2d2d2d)).child(
+                    div()
+                        .absolute()
+                        .left(px(16.))
+                        .top(px(16.))
+                        .size(px(18.))
+                        .cc_tiles()
+                        .child(
+                            canvas(
+                                |_, _, _| (),
+                                move |bounds, (), window, _| {
+                                    let image = raster_images(
+                                        &[(&pixels, bounds)],
+                                        bounds,
+                                        Corners::all(px(3.)),
+                                        Corner::Round,
+                                        ImageComposition::Composited(gpui::rgb(0x2d2d2d).into()),
+                                        window,
+                                    );
+                                    window
+                                        .paint_image(
+                                            bounds,
+                                            bounds,
+                                            Corners::default(),
+                                            Arc::new(image),
+                                            0,
+                                            false,
+                                        )
+                                        .expect("paint compositor image");
+                                },
+                            )
+                            .size_full(),
+                        ),
+                )
+            }
+        }
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(()),
+            gpui_platform::current_headless_renderer,
+        );
+        let window = cx.open_window(size(px(96.), px(64.)), |_, cx| cx.new(|_| ImageClip))?;
+        cx.run_until_parked();
+        let image = cx.capture_screenshot(window.into())?;
+        for (x, y, expected) in [
+            (35, 32, [36, 73, 102, 255]),
+            (36, 32, [28, 95, 150, 255]),
+            (33, 33, [42, 55, 65, 255]),
+            (32, 37, [22, 115, 186, 255]),
+        ] {
+            assert_eq!(image.get_pixel(x, y).0, expected, "image edge ({x}, {y})");
+        }
         Ok(())
     }
 

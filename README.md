@@ -253,7 +253,9 @@ The capture includes text, images, clipping, and opacity.
 Nested filters use the parent layer's content, not its already-filtered backdrop.
 
 `shapes::raster_images` decodes to the smallest mip that covers the rounded target before bilinear sampling.
-Callers choose direct composition or one restored image group to match the original layer.
+Callers choose direct composition, a saved image group, or a transparent compositor tile to match the original layer.
+Use `ImageComposition::Composited` with an opaque background for compositor tiles.
+Rasterize these images during paint, when the layer context is available.
 
 Wrap a sparse viewport layer's decorated subtree in `ui::recorded_bounds`.
 It collects painted bounds, including shadows, without adding an opacity layer.
