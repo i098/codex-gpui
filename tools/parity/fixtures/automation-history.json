@@ -1,0 +1,69 @@
+{
+  "taskId": "s037-weekly-status",
+  "source": "Recorded local thread snapshots mapped through Codex 26.1007.30912 Z$ fields; task definition is refs/interactions/s037.json.",
+  "inbox": {
+    "items": [
+      {
+        "id": "01a13de9-c48a-7b20-8382-db900881cb99",
+        "automationId": "s037-weekly-status",
+        "automationName": "Weekly status update",
+        "title": "Weekly status update",
+        "description": "Change the greeting in hello.py to \"Hello, Codex\".",
+        "archivedAssistantMessage": null,
+        "archivedUserMessage": null,
+        "archivedReason": null,
+        "sourceCwd": "/private/tmp/cgx-mac/proj",
+        "threadId": "01a13de9-c48a-7b20-8382-db900881cb99",
+        "readAt": null,
+        "createdAt": 1792040092000,
+        "status": "PENDING_REVIEW"
+      },
+      {
+        "id": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f",
+        "automationId": "s037-weekly-status",
+        "automationName": "Weekly status update",
+        "title": "Weekly status update",
+        "description": "Add a subtract(a, b) function to src/math.py next to add, then run python3 -c 'from src.math import subtract; print(subtract(5, 3))' to check it.",
+        "archivedAssistantMessage": null,
+        "archivedUserMessage": null,
+        "archivedReason": null,
+        "sourceCwd": "/private/tmp/cgx-mac/proj",
+        "threadId": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f",
+        "readAt": null,
+        "createdAt": 1792040071000,
+        "status": "ACCEPTED"
+      },
+      {
+        "id": "01a13de9-35ed-7c72-a36a-68eeb2f4e1ee",
+        "automationId": "s037-weekly-status",
+        "automationName": "Weekly status update",
+        "title": "Weekly status update",
+        "description": "In two sentences, what does this repository contain?",
+        "archivedAssistantMessage": null,
+        "archivedUserMessage": null,
+        "archivedReason": "user",
+        "sourceCwd": "/private/tmp/cgx-mac/proj",
+        "threadId": "01a13de9-35ed-7c72-a36a-68eeb2f4e1ee",
+        "readAt": null,
+        "createdAt": 1792040056000,
+        "status": "ARCHIVED"
+      }
+    ],
+    "unreadRunCounts": {
+      "total": 2,
+      "automationIds": [
+        "s037-weekly-status"
+      ],
+      "unreadRuns": [
+        {
+          "automationId": "s037-weekly-status",
+          "threadId": "01a13de9-c48a-7b20-8382-db900881cb99"
+        },
+        {
+          "automationId": "s037-weekly-status",
+          "threadId": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f"
+        }
+      ]
+    }
+  }
+}

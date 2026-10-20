@@ -8,13 +8,52 @@ const w = Number(width), h = Number(height);
 if (state === "rest" && ["home", "terminal"].includes(surface)) {
   await capture(surface, theme, w, h, output);
 } else if (surface === "settings" && state === "configuration") {
-  await configuration();
+  await captureCustomState(configuration);
+} else if (surface === "automations" && ["history-menu", "history-confirm"].includes(state)) {
+  await captureCustomState(automationHistory);
 } else {
   throw new Error(`No original recipe for ${surface}/${state}`);
 }
 
-// Configuration is not a state in capture.mjs. Keep its native-font capture recipe.
-async function configuration() {
+async function configuration({ click, waitFor }) {
+  await click("Open profile menu");
+  await click("Settings");
+  await waitFor(`document.body.innerText.includes("Default permissions")`);
+  await click("Configuration");
+  await waitFor(`document.body.innerText.includes("Configure permissions, web access, and agent responses for new chats") || document.body.innerText.includes("Choose how ChatGPT works on your tasks")`);
+}
+
+async function automationHistory({ page, click, waitFor, settle }) {
+  await page.evaluate(`(() => {
+    const root = document.getElementById("root");
+    const container = root[Object.keys(root).find(key => key.startsWith("__reactContainer"))];
+    const pending = [container?.stateNode?.current || container];
+    while (pending.length) {
+      const fiber = pending.pop();
+      if (!fiber) continue;
+      pending.push(fiber.child, fiber.sibling);
+      const router = fiber.memoizedProps?.router;
+      if (router?.navigate) {
+        router.navigate("/scheduled?view=manage&automationId=s037-weekly-status", {state: {
+          sidebarProductMode:"codex",
+          sidebarProductModeAccountKey:"chatgpt:00000000-0000-4000-8000-000000000000"
+        }});
+        return true;
+      }
+    }
+    throw new Error("Missing original memory router");
+  })()`);
+  await waitFor(`document.querySelector('[aria-label="Previous run actions"]')`);
+  await settle(1000);
+  await click("Previous run actions");
+  await waitFor(`document.querySelector('[role="menu"]')`);
+  if (state === "history-confirm") {
+    await click("Archive all");
+    await waitFor(`document.body.innerText.includes("Archive 2 runs?")`);
+  }
+}
+
+async function captureCustomState(prepare) {
   const page = await openPage();
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const inflight = new Set();
@@ -28,12 +67,12 @@ async function configuration() {
   });
   const waitFor = async (expression) => {
     for (const end = Date.now() + 90000; Date.now() < end; await sleep(100)) {
-      if (await page.evaluate(expression)) return;
+      if (await page.evaluate(`!!(${expression})`)) return;
     }
     throw new Error(`Timed out: ${expression}`);
   };
   const click = async (label) => {
-    const element = `[...document.querySelectorAll('button,a,[role=menuitem],[role=button]')].find(e => e.offsetParent !== null && ((e.getAttribute('aria-label') || '') === ${JSON.stringify(label)} || e.innerText?.trim().split('\\n')[0] === ${JSON.stringify(label)}))`;
+    const element = `[...document.querySelectorAll('button,a,[role=menuitem],[role=button]')].find(e => e.offsetParent !== null && !e.closest('[inert]') && ((e.getAttribute('aria-label') || '') === ${JSON.stringify(label)} || e.innerText?.trim().split('\\n')[0] === ${JSON.stringify(label)}))`;
     await waitFor(`!!(${element})`);
     const [x, y] = await page.evaluate(`(() => { const r=(${element}).getBoundingClientRect(); return [r.x+r.width/2,r.y+r.height/2]; })()`);
     await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
@@ -69,11 +108,7 @@ async function configuration() {
     await waitFor(`document.querySelectorAll('nav [data-thread-title]').length >= 3 && !document.body.innerText.includes('Loading model')`);
     await settle(1000);
     if (await page.evaluate(`document.body.innerText.includes('Continue with current model')`)) await click("Continue with current model");
-    await click("Open profile menu");
-    await click("Settings");
-    await waitFor(`document.body.innerText.includes('Default permissions')`);
-    await click("Configuration");
-    await waitFor(`document.body.innerText.includes('Configure permissions, web access, and agent responses for new chats') || document.body.innerText.includes('Choose how ChatGPT works on your tasks')`);
+    await prepare({page, click, waitFor, settle});
     await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: Math.round(w * 0.6), y: 6 });
     await settle(1500);
     await page.evaluate(`(() => {

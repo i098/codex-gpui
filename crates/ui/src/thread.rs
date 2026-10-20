@@ -92,7 +92,7 @@ pub struct Clock {
 }
 
 impl Clock {
-    fn now(&self) -> i64 {
+    pub(crate) fn now(&self) -> i64 {
         self.pinned_now.map_or_else(
             || {
                 SystemTime::now()

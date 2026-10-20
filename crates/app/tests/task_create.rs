@@ -401,6 +401,17 @@ mod editor {
             fx.read(|root, _| root.automations().is_some())
         })?;
         fx.cx.update_window(fx.window, |_, window, cx| {
+            window.dispatch_action(
+                Box::new(ui::screens::automations::OpenAutomationManagement {
+                    id: Some(id.clone()),
+                }),
+                cx,
+            );
+        })?;
+        fx.wait("managed task opens", |fx| {
+            fx.route() == app::Route::AutomationManagement(Some(id.clone()))
+        })?;
+        fx.cx.update_window(fx.window, |_, window, cx| {
             window.dispatch_action(Box::new(EditAutomation { id: id.clone() }), cx);
         })?;
         fx.advance(Duration::from_millis(20))?;
@@ -417,6 +428,7 @@ mod editor {
         ensure!(saved["items"][0]["model"] == "gpt-5.6-terra");
         ensure!(saved["items"][0]["reasoningEffort"] == "medium");
         ensure!(saved["items"][0]["rrule"] == "FREQ=DAILY;BYHOUR=9;BYMINUTE=0");
+        ensure!(fx.route() == app::Route::AutomationManagement(Some(id)));
         Ok(())
     }
 

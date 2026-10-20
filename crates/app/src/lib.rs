@@ -207,6 +207,8 @@ pub enum Route {
     Scheduled,
     /// A sidebar task row (`/scheduled?automationId=<id>`): the task's thread.
     Automation(String),
+    /// The task table and optional run detail at `/scheduled?view=manage`.
+    AutomationManagement(Option<String>),
     /// Profile menu ▸ `Set up mobile` (`/codex-mobile`).
     Mobile,
     Archive,
@@ -430,6 +432,8 @@ pub struct Root {
     /// Tasks whose `automation-run-now` request has not answered.
     running_automations: HashSet<String>,
     automation_updates: HashMap<String, Task<()>>,
+    automation_history_updates: HashSet<String>,
+    run_history_load: Option<Task<()>>,
     suggestion_load: Option<Task<()>>,
     /// The Scheduled routes' sidebar, fed the host's list when the read completes.
     scheduled: Option<Entity<automations::ScheduledSidebar>>,
@@ -687,6 +691,8 @@ impl Root {
             project_load: None,
             picking_project: false,
             automation_updates: HashMap::new(),
+            automation_history_updates: HashSet::new(),
+            run_history_load: None,
             suggestion_load: None,
             scheduled: None,
             suggestions: None,
@@ -984,6 +990,7 @@ impl Root {
         self.automation_editor = None;
         self.project_load = None;
         self.suggestion_load = None;
+        self.run_history_load = None;
         self.git_status_load = None;
         self.automation_updates.clear();
         if let Some(sidebar) = &self.scheduled {
@@ -1000,6 +1007,7 @@ impl Root {
         if self.scheduled_route() {
             self.load_automations(cx);
             self.load_suggestions(cx);
+            self.load_run_history(cx);
         }
         self.refresh_git_actions(cx);
         cx.notify();
@@ -1596,7 +1604,10 @@ impl Root {
     }
 
     fn scheduled_route(&self) -> bool {
-        matches!(self.state.route, Route::Scheduled | Route::Automation(_))
+        matches!(
+            self.state.route,
+            Route::Scheduled | Route::Automation(_) | Route::AutomationManagement(_)
+        )
     }
 
     fn load_automations(&mut self, cx: &mut Context<Self>) {
@@ -2039,6 +2050,7 @@ impl Root {
         self.flush_settings(cx);
         self.settings_page = None;
         self.suggestion_load = None;
+        self.run_history_load = None;
         let (can_back, can_forward) = (!self.back.is_empty(), !self.forward.is_empty());
         self.archive_page = None;
         self.page = match self.state.route.clone() {
@@ -2079,20 +2091,53 @@ impl Root {
                 self.suggestions = page;
                 Some(shell)
             }
-            Route::Automation(id) => {
+            Route::Automation(id) | Route::AutomationManagement(Some(id)) => {
                 // The list is the one the Scheduled page read; a cold start reads it now.
                 if self.automations.is_none() && self.automation_load.is_none() {
                     self.load_automations(cx);
                 }
                 let tasks = self.tasks();
-                let selected = tasks.iter().find(|t| t.id == id).cloned().map(|task| {
-                    let composer: AnyView = cx.new(|cx| Composer::automation(window, cx)).into();
-                    (task, composer)
-                });
-                let (shell, sidebar, page) = automations::shell(tasks, selected, utc_offset(), cx);
+                let (shell, sidebar, page) =
+                    if matches!(self.state.route, Route::AutomationManagement(_)) {
+                        let (shell, sidebar) = automations::management_shell(
+                            tasks,
+                            Some(id.clone()),
+                            utc_offset(),
+                            cx,
+                        );
+                        (shell, sidebar, None)
+                    } else {
+                        let selected = tasks.iter().find(|t| t.id == id).cloned().map(|task| {
+                            let composer: AnyView =
+                                cx.new(|cx| Composer::automation(window, cx)).into();
+                            (task, composer)
+                        });
+                        automations::shell(tasks, selected, utc_offset(), cx)
+                    };
+                if let Some(history) = sidebar.read(cx).history.clone() {
+                    if let Some(clock) = self.clock {
+                        history.update(cx, |history, _| history.set_clock(clock));
+                    }
+                    cx.subscribe_in(
+                        &history,
+                        window,
+                        |this, _, open: &OpenThread, window, cx| {
+                            this.navigate(Route::Thread(open.0.clone()), window, cx);
+                        },
+                    )
+                    .detach();
+                }
                 self.scheduled = Some(sidebar);
                 self.sync_starting(cx);
                 self.suggestions = page;
+                Some(shell)
+            }
+            Route::AutomationManagement(None) => {
+                self.load_automations(cx);
+                let (shell, sidebar) =
+                    automations::management_shell(self.tasks(), None, utc_offset(), cx);
+                self.scheduled = Some(sidebar);
+                self.suggestions = None;
                 Some(shell)
             }
             Route::Archive => {
@@ -2122,6 +2167,7 @@ impl Root {
         }
         if self.scheduled_route() {
             self.load_suggestions(cx);
+            self.load_run_history(cx);
         }
         if let Some(page) = &self.page {
             page.update(cx, |shell, _| {
@@ -2470,6 +2516,7 @@ impl Root {
                 cx,
             );
         });
+        let editing = id.is_some();
         cx.subscribe_in(
             &editor,
             window,
@@ -2524,8 +2571,15 @@ impl Root {
                                             items.push(item.clone());
                                         }
                                     }
-                                    let route =
-                                        Route::Automation(item["id"].as_str().unwrap().to_owned());
+                                    let route = if editing
+                                        && matches!(
+                                            this.state.route,
+                                            Route::AutomationManagement(_)
+                                        ) {
+                                        this.state.route.clone()
+                                    } else {
+                                        Route::Automation(item["id"].as_str().unwrap().to_owned())
+                                    };
                                     if this.state.route == route {
                                         this.sync(window, cx);
                                     } else {
@@ -2578,7 +2632,6 @@ impl Root {
     pub fn automation_editor(&self) -> Option<&Entity<automations::editor::Editor>> {
         self.automation_editor.as_ref()
     }
-
     fn show_dialog(&mut self, dialog: Entity<Dialog>, window: &mut Window, cx: &mut Context<Self>) {
         if self.dialog.is_some() || self.automation_editor.is_some() {
             return;
@@ -2643,6 +2696,12 @@ impl Root {
             } else {
                 this.focus.clone()
             };
+            let focus = if matches!(dialog.read(cx).kind(), DialogKind::ArchiveRuns { .. }) {
+                this.run_history(cx)
+                    .map_or(focus, |history| history.focus_handle(cx))
+            } else {
+                focus
+            };
             match outcome {
                 DialogOutcome::Dismiss => {
                     if git_dialog {
@@ -2654,6 +2713,13 @@ impl Root {
                 }
                 DialogOutcome::LogOut => this.logout(window, cx),
                 DialogOutcome::RevertChanges { .. } => window.focus(&this.focus, cx),
+                DialogOutcome::ArchiveRuns {
+                    automation,
+                    threads,
+                } => {
+                    window.focus(&focus, cx);
+                    this.archive_runs(automation.clone(), threads.clone(), cx);
+                }
                 DialogOutcome::DismissAnnouncement(model)
                 | DialogOutcome::UseAnnouncedModel { model, .. } => {
                     if let DialogOutcome::UseAnnouncedModel {
@@ -2748,6 +2814,7 @@ impl Root {
                         this.automation_load = None;
                         this.project_load = None;
                         this.suggestion_load = None;
+                        this.run_history_load = None;
                         this.automations = None;
                         this.scheduled = None;
                         this.suggestions = None;
@@ -4116,9 +4183,17 @@ impl Root {
                         self.sidebar.update(cx, |s, cx| s.set_unread(id, cx));
                         let host = self.host.clone();
                         let (id, turn) = (id.to_owned(), params["turn"].clone());
-                        cx.background_spawn(async move {
-                            if let Err(error) = host.finish_automation_run(&id, &turn) {
-                                eprintln!("codex-gpui: failed to finish automation run: {error:#}");
+                        let finish =
+                            cx.background_spawn(
+                                async move { host.finish_automation_run(&id, &turn) },
+                            );
+                        cx.spawn(async move |this, cx| match finish.await {
+                            Ok(true) => {
+                                this.update(cx, |this, cx| this.load_run_history(cx)).ok();
+                            }
+                            Ok(false) => {}
+                            Err(error) => {
+                                eprintln!("codex-gpui: failed to finish automation run: {error:#}")
                             }
                         })
                         .detach();
@@ -4980,6 +5055,11 @@ impl Render for Root {
                     this.navigate(Route::Automation(a.id.clone()), window, cx)
                 }),
             )
+            .on_action(cx.listener(
+                |this, action: &automations::OpenAutomationManagement, window, cx| {
+                    this.navigate(Route::AutomationManagement(action.id.clone()), window, cx)
+                },
+            ))
             .on_action(
                 cx.listener(|this, a: &automations::RunAutomationNow, window, cx| {
                     this.run_automation_now(a.id.clone(), window, cx)

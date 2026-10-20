@@ -22,7 +22,15 @@ fn capture_cell() -> Result<()> {
     let height: u32 = env::var("CGX_PROOF_HEIGHT")?.parse()?;
     let output = env::var("CGX_PROOF_OUT")?;
     let output = Path::new(&output);
-    let mut fx = Fx::with(theme, (width as f32, height as f32), None, |_| {})?;
+    let (mut fx, _store) = if surface == "automations" {
+        let (fx, store) = common::automation::management(theme, (width as f32, height as f32))?;
+        (fx, Some(store))
+    } else {
+        (
+            Fx::with(theme, (width as f32, height as f32), None, |_| {})?,
+            None,
+        )
+    };
     match (surface.as_str(), state.as_str()) {
         ("home", "rest") => ensure!(fx.route() == Route::Home),
         ("terminal", "rest") => open_terminal(&mut fx)?,
@@ -30,6 +38,18 @@ fn capture_cell() -> Result<()> {
             fx.keys("cmd-,")?;
             fx.click(fx.at("settings", "Configuration")?)?;
             ensure!(fx.route() == Route::Settings);
+        }
+        ("automations", "history-menu" | "history-confirm") => {
+            fx.click((width as f32 - 44., 279.140_63))?;
+            if state == "history-confirm" {
+                fx.click((width as f32 - 113., 339.855_47))?;
+                ensure!(
+                    fx.read(|root, cx| root.dialog().is_some_and(|dialog| {
+                        dialog.read(cx).kind() == ui::dialog::Kind::ArchiveRuns { count: 2 }
+                    })),
+                    "missing archive confirmation"
+                );
+            }
         }
         _ => anyhow::bail!("no native recipe for {surface}/{state}"),
     }

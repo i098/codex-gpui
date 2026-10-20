@@ -11,10 +11,13 @@
 use crate::Root;
 use gpui::{App, Context, Div};
 
+mod automation_history;
+
 /// Called by [`crate::init`], after the app's own bindings.
 pub(crate) fn init(_cx: &mut App) {}
 
 /// Called by `Root::render` on the root element, after the app's own actions.
 pub(crate) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
-    crate::windows::actions(root, cx)
+    let root = crate::windows::actions(root, cx);
+    automation_history::actions(root, cx)
 }
