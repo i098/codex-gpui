@@ -2800,6 +2800,8 @@ impl Root {
                     }
                     let host = host.clone();
                     let http = http.clone();
+                    // ponytail: Host reads are synchronous; stale answers and later retries are discarded.
+                    // Add cancellable reads if overlapping searches exhaust the background pool.
                     result = cx
                         .background_spawn(async move {
                             host.fetch(&http)

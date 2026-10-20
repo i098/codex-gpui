@@ -49,7 +49,8 @@ struct Item {
 pub(crate) fn results(body: Value) -> Result<Vec<CloudSearchHit>> {
     let response: Response =
         serde_json::from_value(body).context("invalid ChatGPT search response")?;
-    let mut hits = Vec::with_capacity(response.items.len().min(SEARCH_LIMIT as usize));
+    let mut hits: Vec<CloudSearchHit> =
+        Vec::with_capacity(response.items.len().min(SEARCH_LIMIT as usize));
     let base = Url::parse("https://chatgpt.com/").expect("static ChatGPT URL");
     for item in response.items.into_iter().take(SEARCH_LIMIT as usize) {
         let mut url = base.clone();
@@ -78,10 +79,11 @@ pub(crate) fn results(body: Value) -> Result<Vec<CloudSearchHit>> {
         } else {
             continue;
         };
-        if hits
-            .iter()
-            .any(|hit: &CloudSearchHit| hit.url == url.as_str())
-        {
+        let snippet = if content_match { item.snippet } else { None };
+        if let Some(hit) = hits.iter_mut().find(|hit| hit.url == url.as_str()) {
+            if hit.snippet.is_none() {
+                hit.snippet = snippet.map(clean_snippet);
+            }
             continue;
         }
         hits.push(CloudSearchHit {
@@ -89,14 +91,145 @@ pub(crate) fn results(body: Value) -> Result<Vec<CloudSearchHit>> {
             title: if item.title.trim().is_empty() {
                 "Untitled chat".into()
             } else {
-                item.title
+                trimmed(item.title)
             },
-            snippet: content_match.then_some(item.snippet).flatten(),
+            snippet: snippet.map(clean_snippet),
             updated_at: item.update_time.unwrap_or_default() as i64,
             source,
         });
     }
     Ok(hits)
+}
+
+fn trimmed(mut text: String) -> String {
+    text.truncate(text.trim_end().len());
+    let start = text.len() - text.trim_start().len();
+    text.drain(..start);
+    text
+}
+
+// The original recents module removes citation tokens and unwraps sandbox links, not general Markdown.
+fn clean_snippet(mut text: String) -> String {
+    let mut from = 0;
+    let mut clean = None;
+    while let Some(offset) = text[from..].find('\u{e200}') {
+        let start = from + offset;
+        let Some(end) = text[start..].find('\u{e201}') else {
+            break;
+        };
+        let out = clean.get_or_insert_with(|| String::with_capacity(text.len()));
+        out.push_str(&text[from..start]);
+        from = start + end + '\u{e201}'.len_utf8();
+    }
+    if let Some(mut out) = clean {
+        out.push_str(&text[from..]);
+        text = out;
+    }
+    if let Some(start) = text.rfind('\u{e200}')
+        && (text[start..].starts_with("\u{e200}filecite\u{e202}")
+            || text[start..].starts_with("\u{e200}cite\u{e202}"))
+    {
+        text.truncate(start);
+    }
+
+    let mut links = Vec::new();
+    let mut output = None;
+    let (mut at, mut from) = (0, 0);
+    let has_sandbox_target = text.contains("(sandbox:") || text.contains("(<sandbox:");
+    while has_sandbox_target && at < text.len() {
+        let character = text[at..].chars().next().unwrap();
+        let next = at + character.len_utf8();
+        match character {
+            '\\' => {
+                at = next + text[next..].chars().next().map_or(0, char::len_utf8);
+                continue;
+            }
+            '\n' | '\r' => links.clear(),
+            '[' => links.push(at),
+            ']' => {
+                if let Some(start) = links.pop() {
+                    let prefix = if text[next..].starts_with("(<sandbox:") {
+                        Some(("(<sandbox:", true))
+                    } else if text[next..].starts_with("(sandbox:") {
+                        Some(("(sandbox:", false))
+                    } else {
+                        None
+                    };
+                    if let Some((prefix, angled)) = prefix {
+                        let end = sandbox_link_end(&text, next + prefix.len(), angled);
+                        let out = output.get_or_insert_with(|| String::with_capacity(text.len()));
+                        let start_image = start > 0 && text.as_bytes()[start - 1] == b'!';
+                        out.push_str(&text[from..start - usize::from(start_image)]);
+                        out.push_str(&text[start + 1..at]);
+                        from = end;
+                        at = end;
+                        links.clear();
+                        continue;
+                    }
+                }
+            }
+            _ => {}
+        }
+        at = next;
+    }
+    if let Some(mut out) = output {
+        out.push_str(&text[from..]);
+        text = out;
+    }
+    text = trimmed(text);
+    let space = |byte: u8| matches!(byte, b' ' | b'\t');
+    if !text
+        .as_bytes()
+        .windows(2)
+        .any(|pair| space(pair[0]) && space(pair[1]))
+    {
+        return text;
+    }
+    let mut output = String::with_capacity(text.len());
+    let mut characters = text.chars().peekable();
+    while let Some(character) = characters.next() {
+        if matches!(character, ' ' | '\t')
+            && characters
+                .peek()
+                .is_some_and(|next| matches!(*next, ' ' | '\t'))
+        {
+            output.push(' ');
+            while characters
+                .peek()
+                .is_some_and(|next| matches!(*next, ' ' | '\t'))
+            {
+                characters.next();
+            }
+        } else {
+            output.push(character);
+        }
+    }
+    output
+}
+
+fn sandbox_link_end(text: &str, start: usize, angled: bool) -> usize {
+    if angled {
+        let end = text[start..]
+            .find(['>', '\n', '\r'])
+            .map_or(text.len(), |offset| start + offset);
+        let end = end + usize::from(text.as_bytes().get(end) == Some(&b'>'));
+        return end + usize::from(text.as_bytes().get(end) == Some(&b')'));
+    }
+    let (mut depth, mut escaped) = (0, false);
+    for (offset, character) in text[start..].char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match character {
+            '\\' => escaped = true,
+            '(' => depth += 1,
+            ')' if depth == 0 => return start + offset + 1,
+            ')' => depth -= 1,
+            _ => {}
+        }
+    }
+    text.len()
 }
 
 #[cfg(test)]
@@ -109,7 +242,21 @@ mod tests {
     }
 
     #[test]
-    fn keeps_one_result_per_destination_and_encodes_dot_navigation() -> Result<()> {
+    fn snippets_keep_labels_without_citations_or_sandbox_targets() {
+        assert_eq!(
+            clean_snippet(
+                " See [report](sandbox:/report.csv) \u{e200}cite\u{e202}turn1\u{e201}  now ".into()
+            ),
+            "See report now"
+        );
+        assert_eq!(
+            clean_snippet("[diagram](<sandbox:/图.png>)\u{e200}filecite\u{e202}partial".into()),
+            "diagram"
+        );
+    }
+
+    #[test]
+    fn content_matches_fill_an_existing_destination_without_changing_its_target() -> Result<()> {
         let item = json!({
             "title": "math",
             "snippet": "a matching message",
@@ -122,8 +269,12 @@ mod tests {
                 "message_id": "message#1"
             }
         });
-        let hits = results(json!({"items": [item.clone(), item]}))?;
+        let mut title_match = item.clone();
+        title_match["snippet"] = Value::Null;
+        title_match["match_kind"] = json!("title");
+        let hits = results(json!({"items": [title_match, item]}))?;
         assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].snippet.as_deref(), Some("a matching message"));
         assert_eq!(
             hits[0].url,
             "https://chatgpt.com/dots/dot%2Fid?roomId=room%26other&messageId=message%231"
