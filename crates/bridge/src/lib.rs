@@ -147,6 +147,23 @@ pub fn default_command() -> Command {
     cmd
 }
 
+/// Installs the pinned Computer Use relay and hooks for the exact app-server executable.
+pub fn setup_computer_use() -> Result<()> {
+    let codex = default_command();
+    let status = Command::new("/bin/bash")
+        .args([
+            "-c",
+            include_str!("../../../tools/lcu-setup.sh"),
+            "lcu-setup.sh",
+            "--codex",
+        ])
+        .arg(codex.get_program())
+        .status()
+        .context("starting Computer Use setup")?;
+    anyhow::ensure!(status.success(), "Computer Use setup failed: {status}");
+    Ok(())
+}
+
 /// `$CODEX_GPUI_ACP` split on whitespace (`omp acp`): an ACP agent to run instead of
 /// `codex app-server`, with [`Bridge::spawn_acp`].
 pub fn acp_command() -> Option<Command> {

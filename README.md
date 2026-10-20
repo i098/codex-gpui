@@ -16,6 +16,31 @@ The app drives the real `codex app-server` over stdio, the same JSON-RPC transpo
 
 The workspace also builds on Linux, with GPUI's no-op text system, for CI (fmt, clippy, tests).
 
+## Computer use runtime
+
+Install the pinned [LCU 0.11.6 release](https://github.com/amontlabs/lcu/releases/tag/v0.11.6) on Apple Silicon macOS:
+
+```sh
+cargo run -p app --release -- --setup-computer-use
+# Or, from the release bundle:
+"/Applications/Codex GPUI.app/Contents/MacOS/codex-gpui" --setup-computer-use
+```
+
+The setup checks the archive's pinned SHA-256 and installs under `$CODEX_HOME/computer-use/lcu` (default: `~/.codex/computer-use/lcu`).
+It keeps the signed ChatGPT app and its native helper in place.
+Set `CODEX_GPUI_LCU_APP` to select another installed ChatGPT app.
+Set `CODEX_BIN` to select the app-server executable, as for normal startup.
+Setup uses that exact executable's config writer to register the `lcu` Codex relay and trust the original Stop, Interrupt, and SubagentStop hooks.
+It preserves unrelated MCP servers, hooks, and LCU fields; the original provider policy replaces conflicting LCU fields.
+It disables an existing `cua_repl` server and installed `unified-computer-use` plugins to prevent two active providers.
+Setup updates older LCU installations and fails if the signed runtime is missing, the manifest differs, or the CLI cannot trust the hooks.
+Normal startup reads the saved configuration; Rust does not run a second MCP client or send duplicate turn cleanup.
+
+Restart the app after setup.
+Registration does not grant macOS permissions, approve applications, enable Chrome or audio, or prove native input works.
+The original runtime requests its permissions and approvals when you use it.
+This setup applies only to the Codex app-server backend, not ACP.
+
 ## ACP backend
 
 Set `CODEX_GPUI_ACP` to the command line of an [Agent Client Protocol](https://agentclientprotocol.com) agent to use that agent instead of `codex app-server`:
