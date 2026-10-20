@@ -30,6 +30,7 @@ use std::{
 };
 use theme::{ActiveTheme as _, Theme};
 
+mod configuration;
 #[path = "computer_use.rs"]
 pub mod computer_use;
 
@@ -173,6 +174,10 @@ pub struct SettingsPage {
     /// `projectlessWorkspaceRoot` default: `~/Documents/Codex`.
     projectless_root: String,
     pending_instructions: Vec<SettingChanged>,
+    configuration_loaded: bool,
+    configuration_loading: bool,
+    configuration_error: Option<String>,
+    pending_config: Vec<&'static str>,
 }
 
 impl SettingsPage {
@@ -196,10 +201,17 @@ impl SettingsPage {
             values,
             projectless_root,
             pending_instructions: Vec::new(),
+            configuration_loaded: false,
+            configuration_loading: false,
+            configuration_error: None,
+            pending_config: Vec::new(),
         }
     }
 
     fn get(&self, path: &str) -> &Value {
+        if let Some(path) = path.strip_prefix("config.") {
+            return path.split('.').fold(&self.values, |value, key| &value[key]);
+        }
         let (store, key) = path.split_once('.').unwrap_or((path, ""));
         &self.values[store][key]
     }
@@ -214,6 +226,20 @@ impl SettingsPage {
 
     /// Stores a setting and reports it to the app's config or host settings service.
     fn set(&mut self, path: &'static str, value: Value, cx: &mut Context<Self>) {
+        if path.starts_with("config.") {
+            if !self.configuration_loaded
+                || self.config_lock(path).is_some()
+                || value.as_str().is_some_and(|value| !self.config_option_allowed(path, value))
+                || self.pending_config.contains(&path)
+            {
+                return;
+            }
+            self.pending_config.push(path);
+            self.configuration_error = None;
+            cx.emit(SettingChanged { path, value });
+            cx.notify();
+            return;
+        }
         self.pending_instructions
             .retain(|change| change.path != path);
         let (store, key) = path.split_once('.').unwrap_or((path, ""));
@@ -362,6 +388,9 @@ impl SettingsNav {
                     this.page.update(cx, |p, cx| {
                         p.section = label;
                         cx.notify();
+                        if label == "Configuration" {
+                            p.load_configuration(cx);
+                        }
                     })
                 }))
             });
@@ -460,6 +489,7 @@ pub struct SettingsPane {
     open_select: Option<&'static str>,
     /// Pointer over that menu: a press there is not a click outside.
     menu_hovered: bool,
+    config_menu_index: usize,
     git_fields: Vec<(&'static str, Entity<Composer>)>,
 }
 
@@ -494,6 +524,7 @@ impl SettingsPane {
             layer: Layer::default(),
             open_select: None,
             menu_hovered: false,
+            config_menu_index: 0,
             git_fields: Vec::new(),
         }
     }
@@ -508,22 +539,25 @@ impl SettingsPane {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let current = self.page.read(cx).choice(key, options[0].0).to_string();
-        let label = options
-            .iter()
-            .find(|(value, _)| *value == current)
-            .map_or(options[0].1, |(_, label)| label);
+        let label = configuration::config_label(key, &current, options);
         let open = self.open_select == Some(key);
         let hover = t.menu_item_hover;
         let menu = open.then(|| {
-            let rows = options.iter().map(|&(value, label)| {
+            let rows = options.iter().enumerate()
+                .filter(|(_, (value, _))| self.page.read(cx).config_option_allowed(key, value))
+                .map(|(index, &(value, label))| {
                 div()
                     .id(value)
                     .px(px(8.))
                     .py(px(6.))
                     .rounded(px(12.))
                     .when(value == current, |d| d.bg(hover))
+                    .when(key.starts_with("config.") && self.config_menu_index == index, |d| d.bg(hover))
                     .hover(move |s| s.bg(hover))
                     .child(text(label, 14., 20., 430., t.text))
+                    .when_some(configuration::option_description(key, value), |d, detail| {
+                        d.flex_col().items_start().child(text(detail, 12., 18., 400., t.text_secondary))
+                    })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.page.update(cx, |p, cx| p.set(key, json!(value), cx));
                         this.open_select = None;
@@ -552,6 +586,9 @@ impl SettingsPane {
             .id(key)
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.open_select = (!open).then_some(key);
+                this.config_menu_index = options.iter().position(|(value, _)| {
+                    this.page.read(cx).config_option_allowed(key, value)
+                }).unwrap_or(0);
                 cx.notify();
             }))
             .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
@@ -1142,11 +1179,14 @@ impl Render for SettingsPane {
         if section == "Computer use" {
             return super::computer_use::render(window, cx);
         }
-        // Unimplemented sections retain their title-only surface.
+        if section == "Configuration" {
+            self.page.update(cx, |page, cx| page.load_configuration(cx));
+        }
         let groups = match section {
             "General" => self.general(&t, window, cx),
             "Appearance" => self.appearance(&t, cx),
             "Git" => self.git(&t, window, cx),
+            "Configuration" => self.configuration(&t, window, cx),
             _ => Vec::new(),
         };
         let card_border = over(t.border, t.background_panel);
@@ -1231,8 +1271,14 @@ impl Render for SettingsPane {
                                         .flex()
                                         .flex_col()
                                         .justify_center()
-                                        .child(text(section, 28., 33.6, 500., t.text)),
-                                ),
+                                        .child(text(section, 28., 33.6, 500., t.text))
+                                        .when(section == "Configuration", |d| {
+                                            d.child(description(
+                                                "Configure permissions, web access, and agent responses for new chats",
+                                                &t,
+                                            ))
+                                        }),
+                            ),
                             ),
                     )
                     .child(
@@ -1242,6 +1288,15 @@ impl Render for SettingsPane {
                                 .flex()
                                 .flex_col()
                                 .gap(px(40.))
+                                .when(section == "Configuration", |d| {
+                                    let page = self.page.read(cx);
+                                    d.when(page.configuration_loading, |d| {
+                                        d.child(text("Loading configuration…", 13., 20., 400., t.text_secondary))
+                                    })
+                                    .when_some(page.configuration_error.clone(), |d, error| {
+                                        d.child(text(error, 13., 20., 400., t.text))
+                                    })
+                                })
                                 .children(groups),
                         ),
                     ),

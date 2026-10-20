@@ -130,6 +130,11 @@ The multi-select emits `SelectionChanged`; the caller saves the value and can re
 Use `Composer::settings_field` for multiline text and `Toast` for existing information, error, and success messages.
 Run `cargo test -p ui --test settings_kit` for the keyboard and locked-choice check.
 
+Settings > Configuration edits global approval policy and sandbox mode through the app-server config store.
+The page reads installation restrictions before it enables the controls and keeps saved values after a failed write.
+Project scopes are not included.
+Run `cargo test -p app --test settings_configuration -- --test-threads=1` on macOS for the native fixture checks.
+
 Scheduled > New task accepts instructions, a daily or weekly repeat, and a local time in `HH:MM` format.
 Create saves the definition through `create-automation` to `CODEX_HOME/automations/<id>/automation.toml`.
 The app reloads the task list after a successful write and retains the draft if the write fails.
