@@ -67,9 +67,10 @@ impl Execution {
         let selected = self.values["model"].as_str();
         let visible_model =
             |model: &&Model| !model.hidden || Some(model.model.as_str()) == selected;
-        let mut visible = models.iter().filter(visible_model);
+        let visible = models.iter().filter(visible_model);
+        let mut compared = visible.clone();
         let models_changed = self.models.iter().any(|saved| {
-            visible.next().is_none_or(|model| {
+            compared.next().is_none_or(|model| {
                 saved.id != model.model
                     || saved.source_label != model.display_name
                     || saved.default_effort != model.default_reasoning_effort
@@ -79,27 +80,20 @@ impl Execution {
                         .filter_map(|effort| effort["reasoningEffort"].as_str())
                         .filter(|effort| *effort != "persistent"))
             })
-        }) || visible.next().is_some();
+        }) || compared.next().is_some();
         let preferred = config["codex_automation_model_slug"]
             .as_str()
             .unwrap_or(AUTOMATION_MODEL);
-        let default_model = models
-            .iter()
-            .filter(visible_model)
+        let default_model = visible
+            .clone()
             .find(|model| model.model == preferred)
+            .or_else(|| visible.clone().find(|model| model.is_default))
             .or_else(|| {
-                models
-                    .iter()
-                    .filter(visible_model)
-                    .find(|model| model.is_default)
-            })
-            .or_else(|| {
-                models
-                    .iter()
-                    .filter(visible_model)
+                visible
+                    .clone()
                     .find(|model| model.model == AUTOMATION_MODEL)
             })
-            .or_else(|| models.iter().find(visible_model))
+            .or_else(|| visible.clone().next())
             .map(|model| model.model.as_str());
         let default_changed = self.default_model.as_deref() != default_model;
         let projects_changed = projects.is_some_and(|projects| {
@@ -114,9 +108,7 @@ impl Execution {
                 .zip(threads)
                 .any(|((id, label), thread)| id != &thread.id || label != &title(thread));
         if models_changed {
-            self.models = models
-                .iter()
-                .filter(visible_model)
+            self.models = visible
                 .map(|model| ModelChoice {
                     id: model.model.clone(),
                     source_label: model.display_name.clone(),
