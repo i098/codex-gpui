@@ -35,6 +35,7 @@ type Click = Rc<dyn Fn(&mut Window, &mut App)>;
 pub enum Kind {
     Info,
     Danger,
+    Success,
 }
 
 /// A toast: an optional icon (`assets/icons/<name>.svg`, 16 px), one line of title and
@@ -43,6 +44,7 @@ pub struct Toast {
     kind: Kind,
     icon: Option<&'static str>,
     title: SharedString,
+    description: Option<SharedString>,
     actions: Vec<(SharedString, Click)>,
 }
 
@@ -52,6 +54,7 @@ impl Toast {
             kind: Kind::Info,
             icon: None,
             title: title.into(),
+            description: None,
             actions: Vec::new(),
         }
     }
@@ -65,8 +68,23 @@ impl Toast {
         }
     }
 
+    /// Green toast with the check icon (`toast.success`: `border-text-success/20
+    /// bg-background-success-surface text-success`).
+    pub fn success(title: impl Into<SharedString>) -> Self {
+        Self {
+            kind: Kind::Success,
+            icon: Some("toast-success"),
+            ..Self::info(title)
+        }
+    }
+
     pub fn icon(mut self, name: &'static str) -> Self {
         self.icon = Some(name);
+        self
+    }
+
+    pub fn description(mut self, description: impl Into<SharedString>) -> Self {
+        self.description = Some(description.into());
         self
     }
 
@@ -235,6 +253,14 @@ fn danger_surface(t: &Theme) -> Hsla {
     }
 }
 
+/// `bg-background-success-surface`: `--green-950` in dark, `--green-25` in light.
+fn success_surface(t: &Theme) -> Hsla {
+    match t.appearance {
+        Appearance::Dark => rgba(0x011c0bff).into(),
+        Appearance::Light => rgba(0xedfaf2ff).into(),
+    }
+}
+
 fn button(
     id: (&'static str, u64),
     label: SharedString,
@@ -279,6 +305,11 @@ impl Toaster {
         let (bg, border, fg) = match e.toast.kind {
             Kind::Info => (t.surface_elevated_secondary, t.border, t.text),
             Kind::Danger => (danger_surface(t), t.text_error.opacity(0.4), t.text_error),
+            Kind::Success => (
+                success_surface(t),
+                t.text_success.opacity(0.2),
+                t.text_success,
+            ),
         };
         let id = e.id;
         let last = e.toast.actions.len().saturating_sub(1);
@@ -355,7 +386,16 @@ impl Toaster {
                             .flex_1()
                             .items_center()
                             .min_h(px(24.))
-                            .child(crate::text(e.toast.title.clone(), 14., 21., 500., fg)),
+                            .when(e.toast.description.is_some(), |d| {
+                                d.flex_col().items_start().max_w(px(360.))
+                            })
+                            .child(crate::text(e.toast.title.clone(), 14., 21., 500., fg))
+                            .when_some(e.toast.description.clone(), |d, description| {
+                                d.child(
+                                    crate::text(description, 13., 18.5714, 430., fg)
+                                        .whitespace_normal(),
+                                )
+                            }),
                     )
                     .when_some((!actions.is_empty()).then_some(actions), |d, actions| {
                         d.child(div().flex().flex_none().gap(px(8.)).children(actions))

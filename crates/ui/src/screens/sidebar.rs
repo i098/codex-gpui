@@ -50,6 +50,8 @@ pub struct Project {
     pub id: SharedString,
     pub label: SharedString,
     pub new_chat_label: SharedString,
+    /// The project's first local root path; the cwd of a chat started in it.
+    pub root: Option<SharedString>,
     pub worktree: bool,
     pub missing: bool,
     pub expanded: bool,
@@ -242,6 +244,12 @@ impl EventEmitter<LoadMore> for HomeSidebar {}
 #[action(namespace = sidebar, no_json)]
 pub struct ArchiveThread(pub String);
 
+/// A project row's click or new-chat icon: make this root (a project's local root path) the
+/// folder new chats start in.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = sidebar, no_json)]
+pub struct SelectProject(pub String);
+
 /// A row's `Pin chat` / `Unpin chat`: `thread/section/move` of the thread (its id) into the
 /// Pinned section (`true`) or out of it (`false`).
 #[derive(Clone, PartialEq, Action)]
@@ -345,6 +353,8 @@ impl HomeSidebar {
                 let group = project.id.clone();
                 let color = theme.text_default_nav;
                 let label_width = if project.worktree { 204. } else { 240. };
+                // A deleted or moved folder cannot host a chat.
+                let selectable = project.root.clone().filter(|_| !project.missing);
                 let content = div()
                     .absolute()
                     .inset_0()
@@ -421,10 +431,23 @@ impl HomeSidebar {
                             )
                             .child(
                                 div()
+                                    .id("project-new-chat")
                                     .size(px(20.))
                                     .flex()
                                     .items_center()
                                     .justify_center()
+                                    .role(gpui::Role::Button)
+                                    .aria_label(project.new_chat_label.clone())
+                                    .when_some(selectable.clone(), |button, root| {
+                                        button.cursor_pointer().on_click(move |_, window, cx| {
+                                            cx.stop_propagation();
+                                            window.dispatch_action(
+                                                Box::new(SelectProject(root.to_string())),
+                                                cx,
+                                            );
+                                            window.dispatch_action(Box::new(crate::NewChat), cx);
+                                        })
+                                    })
                                     .opacity(if project.missing { 0.4 } else { 1. })
                                     .child(icon("new-chat", 14., theme.text_tertiary)),
                             ),
@@ -439,6 +462,11 @@ impl HomeSidebar {
                     .role(gpui::Role::ListItem)
                     .aria_label(project.label.clone())
                     .child(content)
+                    .when_some(selectable, |row, root| {
+                        row.cursor_pointer().on_click(move |_, window, cx| {
+                            window.dispatch_action(Box::new(SelectProject(root.to_string())), cx)
+                        })
+                    })
                     .when(project.missing, |row| {
                         row.child(tooltip(
                             div()
@@ -1620,6 +1648,7 @@ pub struct CommandMenu {
     focus: FocusHandle,
     /// A thread is open: its commands show (`Search files`, `Mark as unread`, ...).
     thread_open: bool,
+    git_available: bool,
     /// Bumped on every query change; a debounced search only fires for the latest.
     search_gen: usize,
     /// `thread/search` in flight: the spinner next to `Chats`.
@@ -2225,9 +2254,21 @@ impl CommandMenu {
             selected: 0,
             focus: cx.focus_handle(),
             thread_open,
+            git_available: false,
             search_gen: 0,
             searching: false,
         }
+    }
+
+    pub fn set_git_available(&mut self, available: bool, cx: &mut Context<Self>) {
+        self.git_available = available;
+        let count = self
+            .visible()
+            .iter()
+            .map(|(_, rows)| rows.len())
+            .sum::<usize>();
+        self.selected = self.selected.min(count.saturating_sub(1));
+        cx.notify();
     }
 
     /// Keep registered groups; rank matches within each group.
@@ -2251,6 +2292,7 @@ impl CommandMenu {
                 let mut ranked = suggested
                     .chain(items.iter())
                     .filter(|item| self.thread_open || !item.thread_only)
+                    .filter(|item| item.label != "Commit or push" || self.git_available)
                     .filter_map(|item| {
                         let rank = if query.is_empty() {
                             Some((0, 0))
@@ -3115,29 +3157,31 @@ fn menu_row(
                 ..Default::default()
             }))
         })
-        .child(div().size(px(16.)).flex_none().map(|slot| {
-            if item.unread {
-                // `size-5` box with a `scale-50` `icon-xs` dot: 8 px `info-solid`, centred.
-                slot.flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        div()
-                            .size(px(8.))
-                            .child(shapes::decoration(shapes::Decoration {
-                                radius: Corners::all(Theme::RADIUS_FULL),
-                                fill: Some(t.info_solid.opacity(row_opacity)),
-                                ..Default::default()
-                            })),
-                    )
-            } else {
-                slot.children(item.icon.map(|name| {
-                    // `navigateForward` is the back arrow with `-scale-x-100`.
-                    icon(name, 16., fg.opacity(row_opacity))
-                        .when(item.label == "Forward", |i| i.flip_x())
-                }))
-            }
-        }))
+        .when(item.label != "Commit or push", |d| {
+            d.child(div().size(px(16.)).flex_none().map(|slot| {
+                if item.unread {
+                    // `size-5` box with a `scale-50` `icon-xs` dot: 8 px `info-solid`, centred.
+                    slot.flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            div()
+                                .size(px(8.))
+                                .child(shapes::decoration(shapes::Decoration {
+                                    radius: Corners::all(Theme::RADIUS_FULL),
+                                    fill: Some(t.info_solid.opacity(row_opacity)),
+                                    ..Default::default()
+                                })),
+                        )
+                } else {
+                    slot.children(item.icon.map(|name| {
+                        // `navigateForward` is the back arrow with `-scale-x-100`.
+                        icon(name, 16., fg.opacity(row_opacity))
+                            .when(item.label == "Forward", |i| i.flip_x())
+                    }))
+                }
+            }))
+        })
         .child(
             div()
                 .flex_1()

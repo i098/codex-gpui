@@ -1,0 +1,451 @@
+{
+  "name": "f3c",
+  "variant": "model-upgrade:gpt-6.1-sol",
+  "viewport": {
+    "w": 1280,
+    "h": 832,
+    "dpr": 2
+  },
+  "source": {
+    "renderer": "original Codex 26.1007.30912, owned Mac headless raw CDP",
+    "model": "gpt-6.1-sol",
+    "primary": "primary.json",
+    "secondary": "stock-secondary-proof.tar.gz",
+    "secondaryActualStoredUpdate": "secondary-store-inspection.json",
+    "escape": "original-dismissal.json",
+    "fastModeCovered": false,
+    "actualReload": "stock-secondary-reload.json",
+    "close": "stock-close-proof.tar.gz",
+    "outside": "stock-outside-proof.tar.gz",
+    "primarySuccess": "real-primary-proof.tar.gz",
+    "primaryConfirmed": "real-primary-confirmed.json",
+    "isolatedBackendContract": "real-model-contract.jsonl"
+  },
+  "fixtureState": {
+    "seen-model-upgrade-list": []
+  },
+  "announcement": {
+    "model": "gpt-6.1-sol",
+    "reasoningEffort": "low",
+    "title": "Introducing GPT-6.1 Sol",
+    "message": "Maximize usage with GPT-6.1 Sol. Try it on complex work for near-Astra performance at a lower cost.",
+    "bbox": {
+      "x": 400,
+      "y": 200,
+      "w": 480,
+      "h": 432
+    },
+    "buttons": [
+      {
+        "tag": "button",
+        "text": "",
+        "aria": "Close",
+        "role": null,
+        "bbox": {
+          "x": 846,
+          "y": 214,
+          "w": 20,
+          "h": 20
+        },
+        "style": {
+          "background": "rgba(0, 0, 0, 0)",
+          "color": "rgb(255, 255, 255)",
+          "font": "430 16px / 24px -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+          "lineHeight": "24px",
+          "fontWeight": "430",
+          "outline": "rgb(153, 200, 255) none 1px",
+          "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(58, 131, 247) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+          "borderRadius": "4px"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "Continue with current model",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 434.34375,
+          "y": 556,
+          "w": 226.484375,
+          "h": 36
+        },
+        "style": {
+          "background": "oklab(0.999994 0.0000455678 0.0000200868 / 0.05)",
+          "color": "rgb(255, 255, 255)",
+          "font": "430 14px / 18px -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+          "lineHeight": "18px",
+          "fontWeight": "430",
+          "outline": "rgb(255, 255, 255) none 3px",
+          "boxShadow": "none",
+          "borderRadius": "9999px"
+        }
+      },
+      {
+        "tag": "button",
+        "text": "Try GPT-6.1 Sol now",
+        "aria": null,
+        "role": null,
+        "bbox": {
+          "x": 672.828125,
+          "y": 556,
+          "w": 172.8203125,
+          "h": 36
+        },
+        "style": {
+          "background": "rgb(255, 255, 255)",
+          "color": "rgb(45, 45, 45)",
+          "font": "430 14px / 18px -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+          "lineHeight": "18px",
+          "fontWeight": "430",
+          "outline": "rgb(45, 45, 45) none 3px",
+          "boxShadow": "none",
+          "borderRadius": "9999px"
+        }
+      }
+    ],
+    "artwork": {
+      "source": "gradient-e8375b62d61e.png",
+      "path": "assets/ui/announcement/gradient.png",
+      "sha256": "a174756ae93dd17fc156f8934839e28fee2b8df4a086119104a4371eb593bd4e"
+    }
+  },
+  "steps": [
+    {
+      "type": "key",
+      "key": "Tab",
+      "portKey": "tab",
+      "waitMs": 500
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "portKey": "tab",
+      "waitMs": 500
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "portKey": "tab",
+      "waitMs": 500
+    },
+    {
+      "type": "key",
+      "key": "Tab",
+      "modifiers": 8,
+      "portKey": "shift-tab",
+      "waitMs": 500
+    },
+    {
+      "type": "click",
+      "target": {
+        "label": "Continue with current model",
+        "bbox": {
+          "x": 434.34375,
+          "y": 556,
+          "w": 226.484375,
+          "h": 36
+        },
+        "x": 547.5859375,
+        "y": 574
+      },
+      "waitMs": 500
+    }
+  ],
+  "result": {
+    "dom": [
+      {
+        "selector": "[role=\"dialog\"]",
+        "state": "rest",
+        "bbox": {
+          "x": 400,
+          "y": 200,
+          "w": 480,
+          "h": 432
+        },
+        "computed": {
+          "backgroundColor": "rgb(45, 45, 45)"
+        }
+      }
+    ],
+    "state": {
+      "route": "home",
+      "composerFocused": false,
+      "commandMenu": false
+    },
+    "requests": [],
+    "requestsExact": true
+  },
+  "branches": {
+    "secondary": {
+      "focus": [
+        "Close",
+        "Continue with current model",
+        "Try GPT-6.1 Sol now",
+        "Close",
+        "Try GPT-6.1 Sol now"
+      ],
+      "steps": [
+        {
+          "type": "key",
+          "key": "Tab"
+        },
+        {
+          "type": "key",
+          "key": "Tab"
+        },
+        {
+          "type": "key",
+          "key": "Tab"
+        },
+        {
+          "type": "key",
+          "key": "Tab",
+          "modifiers": 8
+        },
+        {
+          "type": "click",
+          "target": {
+            "label": "Continue with current model",
+            "bbox": {
+              "x": 434.34375,
+              "y": 556,
+              "w": 226.484375,
+              "h": 36
+            },
+            "x": 547.5859375,
+            "y": 574
+          }
+        }
+      ],
+      "dialogAfter": null,
+      "stored": {
+        "key": "seen-model-upgrade-list",
+        "value": [
+          "gpt-6.1-sol"
+        ]
+      },
+      "actualReload": true,
+      "restartDialogCount": 0,
+      "restartAtomSync": [
+        {
+          "t": 2664.7999999523163,
+          "once": [
+            "gpt-6.1-sol"
+          ],
+          "nestedPacket": false
+        },
+        {
+          "t": 21099.099999904633,
+          "once": [
+            "gpt-6.1-sol"
+          ],
+          "nestedPacket": true
+        }
+      ]
+    },
+    "primaryReadOnly": {
+      "steps": [
+        {
+          "type": "click",
+          "target": {
+            "label": "Try GPT-6.1 Sol now",
+            "bbox": {
+              "x": 672.828125,
+              "y": 556,
+              "w": 172.8203125,
+              "h": 36
+            },
+            "x": 759.23828125,
+            "y": 574
+          }
+        }
+      ],
+      "requests": [
+        {
+          "t": 243568.59999990463,
+          "path": "/__r1/send",
+          "type": "mcp-request",
+          "method": "config/batchWrite",
+          "params": {
+            "edits": [
+              {
+                "keyPath": "model",
+                "value": "gpt-6.1-sol",
+                "mergeStrategy": "upsert"
+              },
+              {
+                "keyPath": "model_reasoning_effort",
+                "value": "low",
+                "mergeStrategy": "upsert"
+              }
+            ],
+            "filePath": null,
+            "expectedVersion": null,
+            "reloadUserConfig": true
+          }
+        }
+      ],
+      "responses": [
+        {
+          "t": 243615.59999990463,
+          "method": "config/batchWrite",
+          "error": {
+            "code": -32000,
+            "message": "route1: config/batchWrite is not allowed"
+          },
+          "resultKeys": []
+        }
+      ],
+      "stored": {
+        "key": "seen-model-upgrade-list",
+        "value": [
+          "gpt-6.1-sol"
+        ]
+      },
+      "dialogAfter": null,
+      "toast": "Couldn’t update model settings"
+    },
+    "escape": {
+      "steps": [
+        {
+          "type": "key",
+          "key": "Escape",
+          "portKey": "escape"
+        }
+      ],
+      "dialogAfter": [],
+      "onceUpdates": [
+        {
+          "path": "/__r1/send",
+          "type": "persisted-atom-update",
+          "key": "seen-model-upgrade-list",
+          "value": [
+            "gpt-6.1-sol"
+          ]
+        }
+      ]
+    },
+    "close": {
+      "steps": [
+        {
+          "type": "click",
+          "target": {
+            "label": "Close",
+            "bbox": {
+              "x": 846,
+              "y": 214,
+              "w": 20,
+              "h": 20
+            },
+            "x": 856,
+            "y": 224
+          }
+        }
+      ],
+      "dialogAfter": null,
+      "absentButton": null,
+      "stored": {
+        "seen-model-upgrade-list": [
+          "gpt-6.1-sol"
+        ]
+      }
+    },
+    "outside": {
+      "steps": [
+        {
+          "type": "click",
+          "at": {
+            "x": 1100,
+            "y": 100
+          }
+        }
+      ],
+      "dialogAfter": null,
+      "absentButton": null,
+      "stored": {
+        "seen-model-upgrade-list": [
+          "gpt-6.1-sol"
+        ]
+      }
+    },
+    "primarySuccess": {
+      "steps": [
+        {
+          "type": "click",
+          "target": {
+            "label": "Try GPT-6.1 Sol now",
+            "bbox": {
+              "x": 672.828125,
+              "y": 556,
+              "w": 172.8203125,
+              "h": 36
+            },
+            "x": 759.23828125,
+            "y": 574
+          }
+        }
+      ],
+      "requests": [
+        {
+          "t": 30561.599999904633,
+          "path": "/__r1/send",
+          "type": "mcp-request",
+          "method": "config/batchWrite",
+          "params": {
+            "edits": [
+              {
+                "keyPath": "model",
+                "value": "gpt-6.1-sol",
+                "mergeStrategy": "upsert"
+              },
+              {
+                "keyPath": "model_reasoning_effort",
+                "value": "low",
+                "mergeStrategy": "upsert"
+              }
+            ],
+            "filePath": null,
+            "expectedVersion": null,
+            "reloadUserConfig": true
+          }
+        }
+      ],
+      "wireResponse": {
+        "id": 41,
+        "result": {
+          "status": "ok",
+          "version": "sha256:519d6733e4c4e210a4dd7815aae9b5cb00fbc04504728bc617c7ca66f215a2a3",
+          "filePath": "/private/tmp/cgx-mac/f3c-announcement/real-config/config.toml",
+          "overriddenMetadata": null
+        }
+      },
+      "dialogCount": 0,
+      "modelButtons": [
+        {
+          "text": "GPT-6.1 Sol\nLight\nNone\nMinimal\nLight\nMedium\nHigh\nExtra High\nMax\nUltra\nPersistent",
+          "aria": null
+        }
+      ],
+      "stored": {
+        "seen-model-upgrade-list": [
+          "gpt-6.1-sol"
+        ]
+      },
+      "isolatedAccountPresent": false,
+      "modelGenerationRequested": false
+    }
+  },
+  "coverage": {
+    "originalVariant": "GPT-6.1 Sol model-upgrade announcement",
+    "fastModeCovered": false,
+    "recordedBranches": [
+      "secondary",
+      "primarySuccess",
+      "primaryReadOnly",
+      "escape",
+      "close",
+      "outside",
+      "storedFlagRendererReload"
+    ]
+  }
+}

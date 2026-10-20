@@ -213,6 +213,7 @@ impl Composer {
     pub(super) fn save_paste(&mut self, content: Content, cx: &mut Context<Self>) {
         self.pending_attachments += 1;
         self.attachment_error = None;
+        let generation = self.attachment_generation;
         let (error_message, save): (_, Task<Result<Attachment>>) = match content {
             Content::Text(text) => (
                 "Large pasted text could not be attached",
@@ -234,6 +235,9 @@ impl Composer {
         cx.spawn(async move |this, cx| {
             let result = save.await;
             let _ = this.update(cx, |this, cx| {
+                if generation != this.attachment_generation {
+                    return;
+                }
                 this.pending_attachments -= 1;
                 match result {
                     Ok(attachment) => this.attachments.push(attachment),
@@ -250,6 +254,7 @@ impl Composer {
     }
 
     pub(super) fn add_files(&mut self, cx: &mut Context<Self>) {
+        let generation = self.attachment_generation;
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -259,6 +264,9 @@ impl Composer {
         cx.spawn(async move |this, cx| {
             if let Ok(Ok(Some(paths))) = paths.await {
                 this.update(cx, |this, cx| {
+                    if generation != this.attachment_generation {
+                        return;
+                    }
                     this.attachments
                         .extend(paths.into_iter().map(Attachment::file));
                     cx.notify();

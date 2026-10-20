@@ -36,7 +36,9 @@ use theme::{ActiveTheme as _, Appearance, Theme};
 use crate::icon::icon;
 use crate::motion::{self, HoverFade};
 use crate::screens::sidebar::title;
+use crate::tooltip::{Side, tooltip};
 use crate::{MONO, SANS, composer::shadow, icon_button, layout_color, over, text};
+use gpui::{Anchor, Edges, anchored, deferred};
 
 #[path = "thread/actions.rs"]
 mod actions;
@@ -53,6 +55,15 @@ mod select;
 
 use actions::action_row;
 pub use actions::{EditMessage, ForkThread, RevertTurn};
+pub enum GitAction {
+    Refresh,
+    OpenForm,
+    CreateBranch,
+    SwitchBranch,
+}
+
+impl gpui::EventEmitter<GitAction> for ThreadView {}
+
 use items::{activity, diff_card, disclosure, user_bubble, wrap_row};
 use markdown::{markdown, tones};
 pub use select::Selection;
@@ -110,6 +121,10 @@ pub struct ThreadView {
     chat_actions: Option<gpui::FocusHandle>,
     chat_actions_trigger: Option<gpui::FocusHandle>,
     chat_actions_hovered: bool,
+    git_repository: Option<Result<crate::dialog::CommitRepository, String>>,
+    git_phase: Option<&'static str>,
+    git_actions: Option<(gpui::FocusHandle, Option<usize>)>,
+    git_trigger: Option<gpui::FocusHandle>,
     turns: Vec<Turn>,
     clock: Clock,
     composer: AnyView,
@@ -245,6 +260,302 @@ fn find_ranges(text: &str, query: &str, limit: usize) -> (Vec<Range<usize>>, usi
 }
 
 impl ThreadView {
+    pub fn set_git_repository(
+        &mut self,
+        repository: Option<Result<crate::dialog::CommitRepository, String>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.git_repository = repository;
+        cx.notify();
+    }
+
+    pub fn set_git_phase(&mut self, phase: Option<&'static str>, cx: &mut Context<Self>) {
+        self.git_phase = phase;
+        cx.notify();
+    }
+
+    pub fn git_action_rows(&self) -> [(&'static str, Option<&'static str>); 4] {
+        let (commit, push) = match &self.git_repository {
+            None => (Some("Loading diff…"), Some("Loading push status…")),
+            Some(Err(_)) => (
+                Some("Commit is unavailable right now"),
+                Some("Push is unavailable right now"),
+            ),
+            Some(Ok(repo)) => (
+                (repo.all.files == 0).then_some("No changes to commit"),
+                if repo.branch.is_none() {
+                    Some("Branch information unavailable")
+                } else {
+                    (repo.ahead == 0).then_some("No new commits to push")
+                },
+            ),
+        };
+        let (create, switch) = match &self.git_repository {
+            Some(Ok(repo)) => (
+                (repo.branch.is_some() || !repo.has_commits)
+                    .then_some("Create branch requires a detached HEAD"),
+                None,
+            ),
+            _ => (
+                Some("Branch information unavailable"),
+                Some("Branch information unavailable"),
+            ),
+        };
+        [
+            ("Commit", self.git_phase.or(commit)),
+            ("Push", self.git_phase.or(push)),
+            ("Create branch", self.git_phase.or(create)),
+            ("Switch branch", self.git_phase.or(switch)),
+        ]
+    }
+
+    pub fn git_command_available(&self) -> bool {
+        self.git_action_rows()
+            .iter()
+            .take(2)
+            .any(|(_, reason)| reason.is_none())
+    }
+
+    pub fn git_actions_open(&self) -> bool {
+        self.git_actions.is_some()
+    }
+
+    pub fn close_summary(&mut self, cx: &mut Context<Self>) {
+        self.summary_open = false;
+        self.git_actions = None;
+        cx.notify();
+    }
+
+    fn close_git_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.git_actions = None;
+        if let Some(trigger) = &self.git_trigger {
+            trigger.focus(window, cx);
+        }
+        cx.notify();
+    }
+
+    fn open_git_actions(&mut self, keyboard: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let focus = cx.focus_handle();
+        focus.focus(window, cx);
+        let active = keyboard
+            .then(|| {
+                self.git_action_rows()
+                    .iter()
+                    .position(|(_, reason)| reason.is_none())
+            })
+            .flatten();
+        self.git_actions = Some((focus, active));
+        cx.emit(GitAction::Refresh);
+        cx.notify();
+    }
+
+    fn select_git_action(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .git_action_rows()
+            .get(index)
+            .is_none_or(|(_, reason)| reason.is_some())
+        {
+            return;
+        }
+        self.close_git_actions(window, cx);
+        cx.emit(match index {
+            2 => GitAction::CreateBranch,
+            3 => GitAction::SwitchBranch,
+            _ => GitAction::OpenForm,
+        });
+    }
+
+    pub(super) fn git_control(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let trigger = self
+            .git_trigger
+            .get_or_insert_with(|| cx.focus_handle())
+            .clone();
+        let t = cx.theme();
+        let hovered_text = t.text;
+        tooltip(
+            div()
+                .id("git-actions")
+                .group("git-actions-trigger")
+                .relative()
+                .size(px(24.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(10.))
+                .role(gpui::Role::Button)
+                .aria_label("Git actions")
+                .aria_expanded(self.git_actions.is_some())
+                .track_focus(&trigger)
+                .opacity(if self.git_actions.is_some() { 1. } else { 0. })
+                .group_hover("summary-changes", |style| style.opacity(1.))
+                .focus(|style| style.opacity(1.))
+                .tab_index(0)
+                .focus_visible(|style| {
+                    style.shadow(vec![gpui::BoxShadow {
+                        color: rgb(0x3a83f7).into(),
+                        offset: gpui::point(px(0.), px(0.)),
+                        blur_radius: px(0.),
+                        spread_radius: px(2.),
+                        inset: true,
+                    }])
+                })
+                .cursor_pointer()
+                .child(
+                    icon(
+                        if self.git_phase.is_some() {
+                            "sidebar-cmd-spinner"
+                        } else {
+                            "settings-git"
+                        },
+                        16.,
+                        t.text_tertiary,
+                    )
+                    .group_hover("git-actions-trigger", move |style| {
+                        style.text_color(hovered_text)
+                    }),
+                )
+                .on_click(cx.listener(|view, _, window, cx| {
+                    cx.stop_propagation();
+                    if view.git_actions.is_some() {
+                        view.close_git_actions(window, cx);
+                    } else {
+                        view.open_git_actions(false, window, cx);
+                    }
+                }))
+                .on_key_down(cx.listener(|view, event: &gpui::KeyDownEvent, window, cx| {
+                    if matches!(event.keystroke.key.as_str(), "enter" | "space" | "down") {
+                        view.open_git_actions(true, window, cx);
+                        cx.stop_propagation();
+                    }
+                })),
+            "Git actions",
+            None,
+            Side::Bottom,
+        )
+    }
+
+    pub(super) fn git_popup(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
+        let t = cx.theme();
+        let (_, active) = self.git_actions.as_ref().unwrap();
+        let menu_width = self.git_phase.map_or(112.03125, |phase| {
+            (f32::from(width(window, phase, 13., 430., None)) + 24.).max(112.03125)
+        });
+        let content = crate::composer::popover(t, menu_width, |mut menu| {
+            if let Some(phase) = self.git_phase {
+                return menu.child(
+                    text(phase, 13., 18.5714, 430., t.text.opacity(0.4))
+                        .px(px(8.))
+                        .py(px(5.))
+                        .id("git-workflow-phase")
+                        .role(gpui::Role::MenuItem)
+                        .aria_label(phase)
+                        .aria_disabled(true),
+                );
+            }
+            for (index, (label, reason)) in self.git_action_rows().into_iter().enumerate() {
+                let row = div()
+                    .id(("git-action", index))
+                    .h(px(28.5625))
+                    .px(px(8.))
+                    .rounded(px(15.))
+                    .flex()
+                    .items_center()
+                    .role(gpui::Role::MenuItem)
+                    .aria_label(label)
+                    .aria_disabled(reason.is_some())
+                    .when(*active == Some(index) && reason.is_none(), |d| {
+                        d.bg(t.menu_item_hover)
+                    })
+                    .child(text(
+                        label,
+                        13.,
+                        18.5714,
+                        430.,
+                        if reason.is_some() {
+                            t.text.opacity(0.4)
+                        } else {
+                            t.text
+                        },
+                    ))
+                    .when(reason.is_none(), |d| {
+                        d.on_hover(cx.listener(move |view, hovered: &bool, _, cx| {
+                            if *hovered && let Some((_, active)) = &mut view.git_actions {
+                                *active = Some(index);
+                                cx.notify();
+                            }
+                        }))
+                    })
+                    .on_click(cx.listener(move |view, _, window, cx| {
+                        view.select_git_action(index, window, cx);
+                    }));
+                menu = if let Some(reason) = reason {
+                    menu.child(tooltip(row, reason, None, Side::Bottom))
+                } else {
+                    menu.child(row)
+                };
+            }
+            menu
+        });
+        let menu = div()
+            .id("git-actions-menu")
+            .role(gpui::Role::Menu)
+            .aria_label("Git actions")
+            .occlude()
+            .track_focus(&self.git_actions.as_ref().unwrap().0)
+            .on_mouse_down_out(cx.listener(|view, _, window, cx| {
+                view.close_git_actions(window, cx);
+            }))
+            .on_key_down(cx.listener(|view, event: &gpui::KeyDownEvent, window, cx| {
+                let key = event.keystroke.key.as_str();
+                match key {
+                    "escape" => view.close_git_actions(window, cx),
+                    "enter" | "space" => {
+                        if let Some(index) =
+                            view.git_actions.as_ref().and_then(|(_, active)| *active)
+                        {
+                            view.select_git_action(index, window, cx);
+                        }
+                    }
+                    "up" | "down" | "home" | "end" => {
+                        let forward = matches!(key, "down" | "home");
+                        let rows = view.git_action_rows();
+                        if let Some((_, active)) = &mut view.git_actions {
+                            let start = if matches!(key, "home" | "end") {
+                                None
+                            } else {
+                                *active
+                            };
+                            for offset in 1..=rows.len() {
+                                let next = if forward {
+                                    (start.unwrap_or(rows.len() - 1) + offset) % rows.len()
+                                } else {
+                                    (start.unwrap_or(0) + rows.len() - offset) % rows.len()
+                                };
+                                if rows[next].1.is_none() {
+                                    *active = Some(next);
+                                    break;
+                                }
+                            }
+                        }
+                        cx.notify();
+                    }
+                    "tab" => {}
+                    _ => return,
+                }
+                cx.stop_propagation();
+            }))
+            .child(content);
+        deferred(
+            div().absolute().top(px(9.)).right(px(317.)).child(
+                anchored()
+                    .anchor(Anchor::TopRight)
+                    .snap_to_window_with_margin(Edges::all(px(6.)))
+                    .child(menu),
+            ),
+        )
+        .with_priority(3)
+    }
+
     /// `composer` is docked under the transcript.
     pub fn new(thread: Thread, clock: Clock, composer: AnyView) -> Self {
         Self {
@@ -252,6 +563,10 @@ impl ThreadView {
             chat_actions: None,
             chat_actions_trigger: None,
             chat_actions_hovered: false,
+            git_repository: None,
+            git_phase: None,
+            git_actions: None,
+            git_trigger: None,
             thread_id: thread.id,
             cwd: thread.cwd,
             summary_open: false,
@@ -283,6 +598,12 @@ impl ThreadView {
 
     pub fn turns(&self) -> &[Turn] {
         &self.turns
+    }
+
+    pub fn transcript_focused(&self, window: &Window) -> bool {
+        self.focus
+            .as_ref()
+            .is_some_and(|focus| focus.is_focused(window))
     }
 
     /// The selected answer text (TH-127), as Chrome's `Selection.toString` joins it.
@@ -713,7 +1034,7 @@ impl ThreadView {
     }
 
     /// `Toggle summary` panel: project changes and background processes.
-    fn summary(&self, window: &Window, t: &Theme) -> Div {
+    fn summary(&mut self, window: &Window, t: &Theme, cx: &mut Context<Self>) -> Div {
         let project = self.cwd.rsplit('/').next().unwrap_or(&self.cwd).to_owned();
         // `sticky` headers: their background (and their `before:` 8 px above) paints again in
         // the panel's rounded `overflow: hidden` clip, over the panel's corner.
@@ -782,7 +1103,18 @@ impl ThreadView {
             .turns
             .iter()
             .flat_map(|t| &t.items)
-            .any(|i| matches!(i, ThreadItem::FileChange { .. }));
+            .any(|i| matches!(i, ThreadItem::FileChange { .. }))
+            || self
+                .git_repository
+                .as_ref()
+                .is_some_and(|status| status.is_ok());
+        let git_row_active = self.git_actions.is_some()
+            || self
+                .git_trigger
+                .as_ref()
+                .is_some_and(|focus| focus.contains_focused(window, cx));
+        let row_hover = t.ghost_hover;
+        let git_control = self.git_control(cx);
         let terminals = self.background_terminals();
         let mut sections = vec![
             div()
@@ -802,6 +1134,20 @@ impl ThreadView {
                 .when(has_changes, |d| {
                     d.child(
                         row("thread-summary-changes", "Changes".into(), 32., 0)
+                            .relative()
+                            .group("summary-changes")
+                            .mx(px(12.))
+                            .px(px(8.))
+                            .rounded(Theme::RADIUS_SM)
+                            .when(git_row_active, |d| d.bg(row_hover))
+                            .hover(move |style| style.bg(row_hover))
+                            .child(
+                                div()
+                                    .absolute()
+                                    .right(px(2.))
+                                    .top(px(2.))
+                                    .child(git_control),
+                            )
                             .on_click(crate::dispatch::<crate::OpenChangesPanel>),
                     )
                 }),
@@ -1517,7 +1863,10 @@ impl Render for ThreadView {
             .when(self.clip_right, |d| d.child(gpui::deferred(corners)))
             // A portal in the original: its shadow spills over the titlebar and the sidebar.
             .when(self.summary_open, |d| {
-                d.child(gpui::deferred(self.summary(window, &t)))
+                d.child(gpui::deferred(self.summary(window, &t, cx)))
+            })
+            .when(self.summary_open && self.git_actions.is_some(), |d| {
+                d.child(self.git_popup(window, cx))
             })
             // The `z-20` composer band is its own cc layer; its rect (and tile grid) starts at
             // the light composer shadow's ink, 84 px above the band (80 px blur + 8 spread - 4

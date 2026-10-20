@@ -2,8 +2,8 @@
 resolver = "3"
 members = ["crates/*"]
 # Vendored gpui (Blink pixel snapping) and gpui_apple (Skia glyph blend); used through
-# [patch], not members.
-exclude = ["crates/textsys/gpui", "crates/textsys/gpui_apple"]
+# [patch], not members. Vendored rrule 0.14.0 (original recurrence limits) is a path dependency.
+exclude = ["crates/textsys/gpui", "crates/textsys/gpui_apple", "vendor/rrule"]
 
 [workspace.package]
 edition = "2024"
