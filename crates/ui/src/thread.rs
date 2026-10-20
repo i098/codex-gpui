@@ -2194,27 +2194,36 @@ impl Render for ThreadView {
                                 .flex()
                                 .justify_center()
                                 .child(tooltip(
-                                    icon_button(
-                                        "scroll-to-bottom",
-                                        icon("thread-scroll-bottom", 20., t.text),
-                                        &t,
-                                    )
-                                    .role(gpui::Role::Button)
-                                    .aria_label("Scroll to bottom")
-                                    .focusable()
-                                    .tab_index(0)
-                                    .size(px(32.))
-                                    .rounded(Theme::RADIUS_FULL)
-                                    .border_1()
-                                    .border_color(t.border)
-                                    .bg(t.surface)
-                                    .focus_visible(|s| s.shadow(focus_ring()))
-                                    .on_click(cx.listener(
-                                        move |_, _, _, cx| {
+                                    div()
+                                        .id("scroll-to-bottom")
+                                        .flex_none()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                                            cx.stop_propagation()
+                                        })
+                                        .child(motion::ButtonVisual {
+                                            glyph: icon("thread-scroll-bottom", 20., t.text),
+                                            radius: Theme::RADIUS_FULL,
+                                            hover: t.surface.opacity(0.),
+                                            foreground: t.text,
+                                            selected: false,
+                                        })
+                                        .role(gpui::Role::Button)
+                                        .aria_label("Scroll to bottom")
+                                        .focusable()
+                                        .tab_index(0)
+                                        .size(px(32.))
+                                        .rounded(Theme::RADIUS_FULL)
+                                        .border_1()
+                                        .border_color(t.border)
+                                        .bg(t.surface)
+                                        .focus_visible(|s| s.shadow(focus_ring()))
+                                        .on_click(cx.listener(move |_, _, _, cx| {
                                             scroll.scroll_to_bottom();
                                             cx.notify();
-                                        },
-                                    )),
+                                        })),
                                     "Scroll to bottom",
                                     None,
                                     Side::Top,

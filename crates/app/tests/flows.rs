@@ -1896,6 +1896,17 @@ fn thread_controls_reasoning_and_scroll() -> Result<String> {
     let bottom = fx.shot()?;
     fx.scroll((800., 170.), 10000.)?;
     thread_control_shot(&mut fx, "scroll-to-bottom")?;
+    let resting_scroll = fx.shot()?;
+    fx.hover((808., 242.))?;
+    fx.advance(std::time::Duration::from_millis(150))?;
+    let hovered_scroll = fx.shot()?;
+    ensure!(
+        changed(&resting_scroll, &hovered_scroll, [798., 232., 20., 20.]) == 0,
+        "Scroll control hover changed its fixed foreground or fill"
+    );
+    thread_control_shot(&mut fx, "scroll-to-bottom-hover")?;
+    fx.hover((640., 22.))?;
+    fx.advance(std::time::Duration::from_millis(200))?;
     fx.click((808., 242.))?;
     fx.hover((640., 22.))?;
     let returned = fx.shot()?;
