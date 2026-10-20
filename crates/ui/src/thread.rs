@@ -125,6 +125,8 @@ pub struct ThreadView {
     git_phase: Option<&'static str>,
     git_actions: Option<(gpui::FocusHandle, Option<usize>)>,
     git_trigger: Option<gpui::FocusHandle>,
+    terminal_item: Option<String>,
+    pub terminals_stopping: bool,
     turns: Vec<Turn>,
     clock: Clock,
     composer: AnyView,
@@ -567,6 +569,8 @@ impl ThreadView {
             git_phase: None,
             git_actions: None,
             git_trigger: None,
+            terminal_item: None,
+            terminals_stopping: false,
             thread_id: thread.id,
             cwd: thread.cwd,
             summary_open: false,
@@ -1011,21 +1015,23 @@ impl ThreadView {
         false
     }
 
-    /// Commands still running after their turn ended (background terminals), oldest first:
-    /// `(command as the user typed it, output so far)`.
-    pub fn background_terminals(&self) -> Vec<(String, &str)> {
+    pub fn background_terminal_items(&self) -> impl Iterator<Item = &ThreadItem> {
         self.turns
             .iter()
-            .filter(|t| t.status != TurnStatus::InProgress)
-            .flat_map(|t| &t.items)
-            .filter_map(|i| match i {
+            .filter(|turn| turn.status != TurnStatus::InProgress)
+            .flat_map(|turn| &turn.items)
+            .filter(|item| matches!(item, ThreadItem::CommandExecution { status, .. } if status == "inProgress"))
+    }
+
+    pub fn background_terminals(&self) -> Vec<(String, &str)> {
+        self.background_terminal_items()
+            .filter_map(|item| match item {
                 ThreadItem::CommandExecution {
                     command,
-                    status,
                     aggregated_output,
                     ..
-                } if status == "inProgress" => Some((
-                    shell_command(command),
+                } => Some((
+                    shell_command(command).to_owned(),
                     aggregated_output.as_deref().unwrap_or_default(),
                 )),
                 _ => None,
@@ -1033,8 +1039,39 @@ impl ThreadView {
             .collect()
     }
 
+    pub fn terminal(&self) -> Option<(&str, &str, &str)> {
+        let item = match &self.terminal_item {
+            Some(id) => self
+                .turns
+                .iter()
+                .flat_map(|turn| &turn.items)
+                .find(|item| item_id(item) == Some(id)),
+            None => self.background_terminal_items().next(),
+        }?;
+        match item {
+            ThreadItem::CommandExecution {
+                id,
+                command,
+                aggregated_output,
+                ..
+            } => Some((
+                id,
+                shell_command(command),
+                aggregated_output.as_deref().unwrap_or_default(),
+            )),
+            _ => None,
+        }
+    }
+
+    pub fn select_terminal(&mut self, id: Option<&str>, cx: &mut Context<Self>) {
+        self.terminal_item = id
+            .map(str::to_owned)
+            .or_else(|| self.terminal().map(|(id, ..)| id.to_owned()));
+        cx.notify();
+    }
+
     /// `Toggle summary` panel: project changes and background processes.
-    fn summary(&mut self, window: &Window, t: &Theme, cx: &mut Context<Self>) -> Div {
+    fn summary(&mut self, window: &mut Window, t: &Theme, cx: &mut Context<Self>) -> Div {
         let project = self.cwd.rsplit('/').next().unwrap_or(&self.cwd).to_owned();
         // `sticky` headers: their background (and their `before:` 8 px above) paints again in
         // the panel's rounded `overflow: hidden` clip, over the panel's corner.
@@ -1069,7 +1106,7 @@ impl ThreadView {
         // `trailing`: the row's hover-only actions keep their space. A label that overflows its
         // viewport gets the marquee's mask (`_overflowingViewport`: 0.571429em left fade over
         // the track's padding, 1.14286em right fade), a masked box in its own layer.
-        let row = |name: &'static str, label: String, trailing: f32, ix: usize| {
+        let row = |name: &'static str, label: String, trailing: f32, ix: usize, window: &Window| {
             let clip = 260. - 30. - trailing;
             let overflows = f32::from(width(window, &label, 13., 430., None)) > clip;
             let pad = 13. * 0.571429;
@@ -1115,7 +1152,7 @@ impl ThreadView {
                 .is_some_and(|focus| focus.contains_focused(window, cx));
         let row_hover = t.ghost_hover;
         let git_control = self.git_control(cx);
-        let terminals = self.background_terminals();
+        let has_terminals = self.background_terminal_items().next().is_some();
         let mut sections = vec![
             div()
                 .flex()
@@ -1133,7 +1170,7 @@ impl ThreadView {
                 )
                 .when(has_changes, |d| {
                     d.child(
-                        row("thread-summary-changes", "Changes".into(), 32., 0)
+                        row("thread-summary-changes", "Changes".into(), 32., 0, window)
                             .relative()
                             .group("summary-changes")
                             .mx(px(12.))
@@ -1152,17 +1189,113 @@ impl ThreadView {
                     )
                 }),
         ];
-        if !terminals.is_empty() {
+        if has_terminals {
             sections.push(
                 div()
                     .flex()
                     .flex_col()
                     .gap(px(2.))
                     .child(header("Background processes".into()))
-                    .children(terminals.into_iter().enumerate().map(|(ix, (command, _))| {
-                        row("thread-summary-terminal", command, 22., ix)
-                            .on_click(crate::dispatch::<crate::OpenBackgroundTerminal>)
-                    })),
+                    .children(self.background_terminal_items().enumerate().filter_map(
+                        |(ix, item)| {
+                            let ThreadItem::CommandExecution { id, command, .. } = item else {
+                                return None;
+                            };
+                            let id = id.clone();
+                            let key_id = id.clone();
+                            let focus =
+                                crate::focus::handle(("background-process", ix), 0, window, cx);
+                            let stop_focus = crate::focus::handle(
+                                ("stop-background-terminals", ix),
+                                0,
+                                window,
+                                cx,
+                            );
+                            let stop = div()
+                                .id(("stop-background-terminals", ix))
+                                .size(px(24.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .tab_index(0)
+                                .aria_label("Stop all background terminals")
+                                .opacity(if self.terminals_stopping { 0.4 } else { 0. })
+                                .group_hover("background-process", |style| style.opacity(1.))
+                                .focus(|style| style.opacity(1.))
+                                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                                    cx.stop_propagation()
+                                })
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(
+                                        Box::new(crate::screens::terminal::StopBackgroundTerminals),
+                                        cx,
+                                    );
+                                    cx.stop_propagation();
+                                })
+                                .on_key_down(|event, window, cx| {
+                                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                        window.dispatch_action(
+                                            Box::new(
+                                                crate::screens::terminal::StopBackgroundTerminals,
+                                            ),
+                                            cx,
+                                        );
+                                        cx.stop_propagation();
+                                    }
+                                })
+                                .child(div().size(px(8.8)).rounded(px(1.)).bg(t.text_tertiary));
+                            let control = row(
+                                "thread-summary-terminal",
+                                shell_command(command).to_owned(),
+                                22.,
+                                ix,
+                                window,
+                            )
+                            .relative()
+                            .group("background-process")
+                            .tab_index(0)
+                            .on_click(move |_, window, cx| {
+                                window.dispatch_action(
+                                    Box::new(crate::screens::terminal::OpenTerminalItem(
+                                        id.clone(),
+                                    )),
+                                    cx,
+                                )
+                            })
+                            .on_key_down(move |event, window, cx| {
+                                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                    window.dispatch_action(
+                                        Box::new(crate::screens::terminal::OpenTerminalItem(
+                                            key_id.clone(),
+                                        )),
+                                        cx,
+                                    );
+                                    cx.stop_propagation();
+                                }
+                            })
+                            .child(
+                                div().absolute().right(px(12.)).top(px(2.)).child(tooltip(
+                                    crate::focus::ring(
+                                        stop,
+                                        &stop_focus,
+                                        Theme::RADIUS_SM,
+                                        px(0.),
+                                        cx,
+                                    ),
+                                    "Stop all background terminals",
+                                    None,
+                                    Side::Bottom,
+                                )),
+                            );
+                            Some(crate::focus::ring(
+                                control,
+                                &focus,
+                                Theme::RADIUS_SM,
+                                px(0.),
+                                cx,
+                            ))
+                        },
+                    )),
             );
         }
         let n = sections.len();
@@ -1258,7 +1391,7 @@ impl ThreadView {
                 }
             }
             "item/started" | "item/completed" => {
-                let Ok(n) = serde_json::from_value::<ItemNotification>(params.clone()) else {
+                let Ok(mut n) = serde_json::from_value::<ItemNotification>(params.clone()) else {
                     return;
                 };
                 let Some(turn) = self.turns.iter_mut().find(|t| t.id == n.turn_id) else {
@@ -1278,6 +1411,21 @@ impl ThreadView {
                             && before != after
                         {
                             self.stream_fades.remove(id);
+                        }
+                        if let (
+                            ThreadItem::CommandExecution {
+                                aggregated_output: before,
+                                ..
+                            },
+                            ThreadItem::CommandExecution {
+                                aggregated_output: after,
+                                ..
+                            },
+                        ) = (&mut *item, &mut n.item)
+                            && after.is_none()
+                        {
+                            // A completion without a final snapshot must retain streamed output.
+                            *after = before.take();
                         }
                         *item = n.item;
                     }
@@ -1940,15 +2088,14 @@ fn work(turn: &Turn) -> (&[ThreadItem], Option<(&str, &str)>) {
 }
 
 /// The command inside the `<shell> -lc "<command>"` wrapper the server reports.
-fn shell_command(command: &str) -> String {
+fn shell_command(command: &str) -> &str {
     let Some((_, inner)) = command.split_once(" -lc ") else {
-        return command.to_owned();
+        return command;
     };
     ['"', '\'']
         .iter()
         .find_map(|&q| inner.strip_prefix(q)?.strip_suffix(q))
         .unwrap_or(inner)
-        .to_owned()
 }
 
 /// `17s`, `2m 5s`
@@ -2156,6 +2303,53 @@ fn far(top: Pixels, h: Pixels, view: Pixels) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn command_completion_keeps_streamed_output_and_failure(cx: &mut gpui::TestAppContext) {
+        let thread: Thread = serde_json::from_value(serde_json::json!({
+            "id": "retention", "preview": "", "modelProvider": "test",
+            "cwd": "/tmp/terminal-retention", "createdAt": 0, "updatedAt": 0,
+            "status": {"type": "idle"},
+            "turns": [{"id": "turn", "items": [], "status": "completed"}]
+        }))
+        .unwrap();
+        let composer = cx.new(|_| gpui::EmptyView).into();
+        let view = cx.new(|_| {
+            ThreadView::new(
+                thread,
+                Clock {
+                    utc_offset: 0,
+                    pinned_now: Some(0),
+                    elapsed_since: None,
+                },
+                composer,
+            )
+        });
+        let mut item = serde_json::json!({
+            "type": "commandExecution", "id": "command", "command": "check",
+            "cwd": "/tmp/terminal-retention", "status": "inProgress"
+        });
+        view.update(cx, |view, cx| {
+            let notification = |method: &str, params| Event::Notification { method: method.into(), params };
+            view.apply(&notification("item/started", serde_json::json!({
+                "threadId": "retention", "turnId": "turn", "item": item,
+            })), cx);
+            view.apply(&notification("item/commandExecution/outputDelta", serde_json::json!({
+                "threadId": "retention", "turnId": "turn", "itemId": "command", "delta": "actual output\n",
+            })), cx);
+            item["status"] = "failed".into();
+            item["exitCode"] = 17.into();
+            view.apply(&notification("item/completed", serde_json::json!({
+                "threadId": "retention", "turnId": "turn", "item": item,
+            })), cx);
+        });
+        view.read_with(cx, |view, _| {
+            assert!(view.background_terminals().is_empty());
+            assert!(matches!(&view.turns[0].items[0],
+                ThreadItem::CommandExecution { status, exit_code: Some(17), aggregated_output: Some(output), .. }
+                    if status == "failed" && output == "actual output\n"));
+        });
+    }
 
     #[test]
     fn clock_keeps_live_fixed_and_elapsed_time() {

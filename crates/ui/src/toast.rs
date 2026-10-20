@@ -431,7 +431,7 @@ impl Render for Toaster {
             .flex()
             .justify_center();
         if self.toasts.is_empty() {
-            return region.size_0();
+            return gpui::deferred(region.size_0()).with_priority(5);
         }
         let (border, surface) = (cx.theme().border, cx.theme().surface_elevated_secondary);
         let shown: Vec<&Entry> = self.toasts.iter().rev().take(VISIBLE).collect();
@@ -486,6 +486,6 @@ impl Render for Toaster {
             .absolute()
             .size_0()
         });
-        region.child(stack).children(tracker)
+        gpui::deferred(region.child(stack).children(tracker)).with_priority(5)
     }
 }

@@ -44,7 +44,7 @@ use ui::screens::sidebar::{
     PINNED_SECTION_ID, PinThread, RenameThread, SEARCH_LIMIT, SearchHit, SelectProject,
     title as thread_title,
 };
-use ui::screens::terminal::Xterm;
+use ui::screens::terminal::{OpenTerminalItem, StopBackgroundTerminals, Xterm};
 use ui::screens::thread::view::{
     Clock, EditMessage, ForkThread, GitAction, RevertTurn, ThreadView,
 };
@@ -2131,7 +2131,7 @@ impl Root {
         match side {
             SidePanel::Changes => Some(("diff-tab-changes", "Changes".into())),
             SidePanel::Terminal => {
-                let (command, _) = view.read(cx).background_terminals().into_iter().next()?;
+                let (_, command, _) = view.read(cx).terminal()?;
                 Some(("thread-terminal", command.into()))
             }
             SidePanel::File => {
@@ -3141,6 +3141,41 @@ impl Root {
                 })?;
             }
             result
+        });
+        log_err(task, cx);
+    }
+
+    fn stop_background_terminals(&mut self, cx: &mut Context<Self>) {
+        let Some(thread) = self.thread.clone() else {
+            return;
+        };
+        let view = thread.read(cx);
+        if view.terminals_stopping || view.background_terminal_items().next().is_none() {
+            return;
+        }
+        let id = view.id().to_owned();
+        thread.update(cx, |thread, cx| {
+            thread.terminals_stopping = true;
+            cx.notify();
+        });
+        let bridge = self.bridge.clone();
+        let task = cx.spawn(async move |this, cx| -> Result<()> {
+            let result: Result<Value> = bridge
+                .request(
+                    "thread/backgroundTerminals/clean",
+                    json!({ "threadId": id }),
+                )
+                .await;
+            this.update(cx, |this, cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.terminals_stopping = false;
+                    cx.notify();
+                });
+                if result.is_err() {
+                    this.toast(Toast::danger("Unable to stop background terminals"), cx);
+                }
+            })?;
+            result.map(drop)
         });
         log_err(task, cx);
     }
@@ -4699,6 +4734,19 @@ impl Render for Root {
             .on_action(cx.listener(Self::open_file))
             .on_action(cx.listener(|this, _: &OpenBackgroundTerminal, window, cx| {
                 this.set_side(SidePanel::Terminal, window, cx)
+            }))
+            .on_action(cx.listener(|this, action: &OpenTerminalItem, window, cx| {
+                if let Some(thread) = &this.thread {
+                    thread.update(cx, |thread, cx| thread.select_terminal(Some(&action.0), cx));
+                }
+                if this.side == Some(SidePanel::Terminal) {
+                    this.sync(window, cx);
+                } else {
+                    this.set_side(SidePanel::Terminal, window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &StopBackgroundTerminals, _, cx| {
+                this.stop_background_terminals(cx);
             }))
             .on_action(cx.listener(|this, a: &ActivateSideTab, window, cx| {
                 if let Some(side) = this.tabs.get(a.0).copied() {
