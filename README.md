@@ -109,6 +109,12 @@ Branch prefix saves on blur or Enter; multiline instructions save after three id
 The focused `cargo test -p app --test git_settings -- --test-threads=1` native replay verifies saved values after reopening Git settings.
 This page does not implement Git operations or active pull request watchers, and it does not complete other settings pages.
 
+`ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.
+The multi-select emits `SelectionChanged`; the caller saves the value and can restore it with `set_checked` if saving fails.
+`ui::confirmation::Confirmation` emits one confirm or cancel result and returns focus to the previous control.
+Use `Composer::settings_field` for multiline text and `Toast` for existing information, error, and success messages.
+Run `cargo test -p ui --test settings_kit` for the keyboard and locked-choice check.
+
 Scheduled > New task accepts instructions, a daily or weekly repeat, and a local time in `HH:MM` format.
 Create saves the definition through `create-automation` to `CODEX_HOME/automations/<id>/automation.toml`.
 The app reloads the task list after a successful write and retains the draft if the write fails.

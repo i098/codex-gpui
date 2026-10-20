@@ -19,12 +19,14 @@ use theme::{ActiveTheme as _, Theme};
 use tooltip::{Side, tooltip};
 
 pub mod composer;
+pub mod confirmation;
 pub mod dialog;
 pub mod fixture;
 pub mod focus;
 pub mod icon;
 pub mod motion;
 pub mod screens;
+pub mod settings_kit;
 pub mod toast;
 pub mod tooltip;
 
