@@ -572,7 +572,8 @@ pub(super) fn activity(
                     duration_ms,
                     progress,
                     metadata,
-                } = item else {
+                } = item
+                else {
                     unreachable!();
                 };
                 let key = format!("mcp-{id}");
@@ -582,13 +583,22 @@ pub(super) fn activity(
                 } else {
                     text60
                 };
-                let mut content = div().w_full().flex().flex_col().gap(px(8.)).child(
-                    disclosure(key, "settings-computer-use", label(mcp_label(item), color), is_open),
-                );
+                let mut content = div()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(disclosure(
+                        key,
+                        "settings-computer-use",
+                        label(mcp_label(item), color),
+                        is_open,
+                    ));
                 if is_open {
                     for update in progress {
                         if let Some(message) = update["message"].as_str() {
-                            content = content.child(text(message.to_owned(), 14., 21., 430., text60));
+                            content =
+                                content.child(text(message.to_owned(), 14., 21., 430., text60));
                         }
                     }
                     if let Some(result) = result {
@@ -599,18 +609,36 @@ pub(super) fn activity(
                                 } else if block["type"] == "image" {
                                     let mut images = images.borrow_mut();
                                     let decoded = images.entry(id.clone()).or_insert_with(|| {
-                                        blocks.iter().enumerate().filter_map(|(index, block)| {
-                                            let format = ImageFormat::from_mime_type(block["mimeType"].as_str()?)?;
-                                            let data = base64::engine::general_purpose::STANDARD
-                                                .decode(block["data"].as_str()?).ok()?;
-                                            Some((index, Arc::new(Image::from_bytes(format, data))))
-                                        }).collect()
+                                        blocks
+                                            .iter()
+                                            .enumerate()
+                                            .filter_map(|(index, block)| {
+                                                let format = ImageFormat::from_mime_type(
+                                                    block["mimeType"].as_str()?,
+                                                )?;
+                                                let data =
+                                                    base64::engine::general_purpose::STANDARD
+                                                        .decode(block["data"].as_str()?)
+                                                        .ok()?;
+                                                Some((
+                                                    index,
+                                                    Arc::new(Image::from_bytes(format, data)),
+                                                ))
+                                            })
+                                            .collect()
                                     });
-                                    if let Some((_, image)) = decoded.iter().find(|(at, _)| *at == index) {
-                                        content = content.child(gpui::img(image.clone()).max_w_full());
+                                    if let Some((_, image)) =
+                                        decoded.iter().find(|(at, _)| *at == index)
+                                    {
+                                        content =
+                                            content.child(gpui::img(image.clone()).max_w_full());
                                     } else {
                                         content = content.child(text(
-                                            "Could not display tool image", 14., 21., 430., t.text,
+                                            "Could not display tool image",
+                                            14.,
+                                            21.,
+                                            430.,
+                                            t.text,
                                         ));
                                     }
                                 }
@@ -618,20 +646,28 @@ pub(super) fn activity(
                         }
                         if let Some(structured) = result.get("structuredContent") {
                             content = content.child(markdown(
-                                &format!("```json\n{structured:#}\n```"), window, t, &[],
+                                &format!("```json\n{structured:#}\n```"),
+                                window,
+                                t,
+                                &[],
                             ));
                         }
                     }
                     if let Some(error) = error {
                         content = content.child(markdown(
-                            error["message"].as_str().unwrap_or("Tool call failed"), window, t, &[],
+                            error["message"].as_str().unwrap_or("Tool call failed"),
+                            window,
+                            t,
+                            &[],
                         ));
                     }
                     let raw_key = format!("mcp-raw-{id}");
                     let raw_open = open.contains(&raw_key);
                     content = content.child(disclosure(
-                        raw_key, "thread-read",
-                        label("Show raw tool call output".into(), text60), raw_open,
+                        raw_key,
+                        "thread-read",
+                        label("Show raw tool call output".into(), text60),
+                        raw_open,
                     ));
                     if raw_open {
                         let raw = serde_json::json!({
@@ -640,7 +676,10 @@ pub(super) fn activity(
                             "metadata": metadata,
                         });
                         content = content.child(markdown(
-                            &format!("```json\n{raw:#}\n```"), window, t, &[],
+                            &format!("```json\n{raw:#}\n```"),
+                            window,
+                            t,
+                            &[],
                         ));
                     }
                 }
@@ -703,7 +742,13 @@ pub(super) fn activity(
 }
 
 fn mcp_label(item: &ThreadItem) -> String {
-    let ThreadItem::McpToolCall { server, tool, arguments, .. } = item else {
+    let ThreadItem::McpToolCall {
+        server,
+        tool,
+        arguments,
+        ..
+    } = item
+    else {
         unreachable!();
     };
     if tool == "js"

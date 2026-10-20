@@ -1449,9 +1449,7 @@ impl ThreadView {
                                 ..
                             },
                             ThreadItem::McpToolCall {
-                                progress,
-                                metadata,
-                                ..
+                                progress, metadata, ..
                             },
                         ) = (&mut *item, &mut n.item)
                         {

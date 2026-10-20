@@ -13,8 +13,17 @@ fn computer_use_results_retain_content_and_unknown_metadata() {
         "status": "completed", "arguments": {"title": "Write scratch marker", "code": "1+1"},
         "result": result, "durationMs": 24,
         "_meta": {"surface": "computer"}, "futureField": {"retain": true}
-    })).unwrap();
-    let ThreadItem::McpToolCall { arguments, result: actual, error, duration_ms, metadata, .. } = item else {
+    }))
+    .unwrap();
+    let ThreadItem::McpToolCall {
+        arguments,
+        result: actual,
+        error,
+        duration_ms,
+        metadata,
+        ..
+    } = item
+    else {
         panic!("MCP tool call was discarded");
     };
     assert_eq!(arguments["title"], "Write scratch marker");
@@ -30,8 +39,16 @@ fn reset_failure_is_not_projected_as_a_success() {
     let item: ThreadItem = serde_json::from_value(json!({
         "type": "mcpToolCall", "id": "reset-a", "server": "lcu", "tool": "js_reset",
         "status": "failed", "error": {"message": "Reset failed", "code": "provider_unavailable"}
-    })).unwrap();
-    let ThreadItem::McpToolCall { tool, status, result, error, .. } = item else {
+    }))
+    .unwrap();
+    let ThreadItem::McpToolCall {
+        tool,
+        status,
+        result,
+        error,
+        ..
+    } = item
+    else {
         panic!("reset item was discarded");
     };
     assert_eq!(tool, "js_reset");
@@ -51,41 +68,89 @@ fn progress_survives_completion_without_crossing_turns() -> anyhow::Result<()> {
     fx.click(fx.at("home", "Add a subtract")?)?;
     fx.wait_thread(SUBTRACT)?;
     let turn_id = fx.read(|root, cx| {
-        root.thread().unwrap().read(cx).turns().last().unwrap().id.clone()
+        root.thread()
+            .unwrap()
+            .read(cx)
+            .turns()
+            .last()
+            .unwrap()
+            .id
+            .clone()
     });
     let notify = |fx: &mut Fx, method: &str, params: serde_json::Value| {
-        fx.cx.update(|cx| fx.root.update(cx, |root, cx| {
-            root.on_event(bridge::Event::Notification { method: method.into(), params }, cx);
-        }));
+        fx.cx.update(|cx| {
+            fx.root.update(cx, |root, cx| {
+                root.on_event(
+                    bridge::Event::Notification {
+                        method: method.into(),
+                        params,
+                    },
+                    cx,
+                );
+            })
+        });
     };
-    let item = |status: &str| json!({
-        "type": "mcpToolCall", "id": "call-a", "server": "lcu", "tool": "js",
-        "arguments": {"title": "Write scratch marker"}, "status": status
-    });
+    let item = |status: &str| {
+        json!({
+            "type": "mcpToolCall", "id": "call-a", "server": "lcu", "tool": "js",
+            "arguments": {"title": "Write scratch marker"}, "status": status
+        })
+    };
     let mut started = item("inProgress");
     started["_meta"] = json!({"surface": "computer"});
-    notify(&mut fx, "item/started", json!({"threadId": SUBTRACT, "turnId": turn_id, "item": started}));
-    notify(&mut fx, "item/mcpToolCall/progress", json!({
-        "threadId": SUBTRACT, "turnId": "another-turn", "itemId": "call-a", "message": "Wrong turn"
-    }));
-    notify(&mut fx, "item/mcpToolCall/progress", json!({
-        "threadId": SUBTRACT, "turnId": turn_id, "itemId": "call-a", "message": "Writing marker",
-        "_meta": {"sequence": 1}
-    }));
+    notify(
+        &mut fx,
+        "item/started",
+        json!({"threadId": SUBTRACT, "turnId": turn_id, "item": started}),
+    );
+    notify(
+        &mut fx,
+        "item/mcpToolCall/progress",
+        json!({
+            "threadId": SUBTRACT, "turnId": "another-turn", "itemId": "call-a", "message": "Wrong turn"
+        }),
+    );
+    notify(
+        &mut fx,
+        "item/mcpToolCall/progress",
+        json!({
+            "threadId": SUBTRACT, "turnId": turn_id, "itemId": "call-a", "message": "Writing marker",
+            "_meta": {"sequence": 1}
+        }),
+    );
     let mut completed = item("completed");
     completed["result"] = json!({"content": [{"type": "text", "text": "Marker saved"}]});
-    notify(&mut fx, "item/completed", json!({"threadId": SUBTRACT, "turnId": turn_id, "item": completed}));
+    notify(
+        &mut fx,
+        "item/completed",
+        json!({"threadId": SUBTRACT, "turnId": turn_id, "item": completed}),
+    );
     fx.read(|root, cx| {
         let view = root.thread().unwrap().read(cx);
         let items = &view.turns().last().unwrap().items;
-        let item = items.iter().find(|item| matches!(item, ThreadItem::McpToolCall { id, .. } if id == "call-a")).unwrap();
-        let ThreadItem::McpToolCall { progress, metadata, result, status, .. } = item else { unreachable!() };
+        let item = items
+            .iter()
+            .find(|item| matches!(item, ThreadItem::McpToolCall { id, .. } if id == "call-a"))
+            .unwrap();
+        let ThreadItem::McpToolCall {
+            progress,
+            metadata,
+            result,
+            status,
+            ..
+        } = item
+        else {
+            unreachable!()
+        };
         assert_eq!(status, "completed");
         assert_eq!(progress.len(), 1);
         assert_eq!(progress[0]["message"], "Writing marker");
         assert_eq!(progress[0]["_meta"]["sequence"], 1);
         assert_eq!(metadata["_meta"]["surface"], "computer");
-        assert_eq!(result.as_ref().unwrap()["content"][0]["text"], "Marker saved");
+        assert_eq!(
+            result.as_ref().unwrap()["content"][0]["text"],
+            "Marker saved"
+        );
     });
     Ok(())
 }
@@ -129,19 +194,46 @@ fn stop_sends_one_interrupt_per_running_turn() -> anyhow::Result<()> {
     turn(&mut fx, "cu-stop", "inProgress");
     stop(&mut fx)?;
     fx.wait("the first interrupt", |fx| {
-        fx.sent().unwrap().iter().filter(|request| request["method"] == "turn/interrupt").count() == 1
+        fx.sent()
+            .unwrap()
+            .iter()
+            .filter(|request| request["method"] == "turn/interrupt")
+            .count()
+            == 1
     })?;
     stop(&mut fx)?;
     let requests = fx.sent()?;
-    assert_eq!(requests.iter().filter(|request| request["method"] == "turn/interrupt").count(), 1);
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request["method"] == "turn/interrupt")
+            .count(),
+        1
+    );
     turn(&mut fx, "cu-stop", "interrupted");
     turn(&mut fx, "cu-next", "inProgress");
     stop(&mut fx)?;
     fx.wait("the next turn interrupt", |fx| {
-        fx.sent().unwrap().iter().filter(|request| request["method"] == "turn/interrupt").count() == 2
+        fx.sent()
+            .unwrap()
+            .iter()
+            .filter(|request| request["method"] == "turn/interrupt")
+            .count()
+            == 2
     })?;
     let requests = fx.sent()?;
-    assert!(!requests.iter().any(|request| request["method"] == "mcpServer/tool/call"));
-    assert_eq!(requests.iter().filter(|request| request["method"] == "turn/interrupt").map(|request| request["params"]["turnId"].as_str().unwrap()).collect::<Vec<_>>(), vec!["cu-stop", "cu-next"]);
+    assert!(
+        !requests
+            .iter()
+            .any(|request| request["method"] == "mcpServer/tool/call")
+    );
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request["method"] == "turn/interrupt")
+            .map(|request| request["params"]["turnId"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["cu-stop", "cu-next"]
+    );
     Ok(())
 }
