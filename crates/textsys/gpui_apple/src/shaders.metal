@@ -659,8 +659,9 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
   // the sprite's (viz drawing a clipped layer's content over the layer). For a color outside
   // [0, 1] the fragment picks the float pipeline's blends: 4 = raster pipeline highp srcover
   // (for modes 0 and 2), 6 = highp blit into a composited layer (for mode 3).
+  // 8 scales compositor opacity with integer truncation.
   Hsla hsla = sprite.color;
-  uint skia_mode = uint(clamp(floor(hsla.h / 2.0), 0.0, 7.0));
+  uint skia_mode = uint(clamp(floor(hsla.h / 2.0), 0.0, 8.0));
   hsla.h -= 2.0 * skia_mode;
   float4 color = hsla_to_rgba(hsla);
   return MonochromeSpriteVertexOutput{
@@ -677,6 +678,10 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
 // premultiplied color mode 4 blends.
 uint4 skia_blit(uint mode, uint m, uint4 src, uint ca, uint4 d, float4 fsrc) {
   uint scale = m + 1;
+  if (mode == 8) {
+    // Compositor opacity uses SkAlphaMulQ; zero coverage is the identity.
+    return (d * (256 - m)) >> 8;
+  }
   if (mode == 5) {
     // Raster pipeline `scale_u8` (NEON `div255` rounds exactly).
     uint4 s = d * m;
@@ -811,9 +816,9 @@ fragment SpriteLayerTargets monochrome_sprite_fragment(
   // Reads the targets by framebuffer fetch; blending is off for this pipeline.
   uint m = uint(round(sample.a * 255.0));
   uint mode = input.skia_mode, layers = input.layers;
-  bool scales = mode == 7 || mode == 5;
+  bool scales = mode == 7 || mode == 5 || mode == 8;
   if ((m == 0 && !scales) || (scales && layers == 0)) {
-    // Every blit at coverage 0 leaves the pixel as it is; modes 5 and 7 need a layer.
+    // Every ordinary blit at coverage 0 leaves the pixel unchanged; mask modes need a layer.
     discard_fragment();
   }
   uint4 c = uint4(round(saturate(input.color) * 255.0));

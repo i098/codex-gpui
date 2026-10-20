@@ -160,17 +160,19 @@ fn header_wrap_retry_and_line_navigation_use_native_input() -> Result<()> {
         )
     });
     fs::write(repo.path().join("a.txt"), "changed\n")?;
-    fx.click((735., 68.))?;
-    choose(&mut fx, "Refresh")?;
+    fx.resize(1440., 900.)?;
+    fx.click((1280., 68.))?;
     loaded(&mut fx)?;
+    fx.resize(1280., 832.)?;
     fs::rename(
         repo.path().join(".git/index"),
         repo.path().join(".git/index-owned-proof"),
     )?;
     fs::write(repo.path().join(".git/index"), "owned proof invalid index")?;
-    fx.click((735., 68.))?;
-    choose(&mut fx, "Refresh")?;
+    fx.resize(1440., 900.)?;
+    fx.click((1280., 68.))?;
     loaded(&mut fx)?;
+    fx.resize(1280., 832.)?;
     ensure!(
         fx.read(|root, cx| root
             .diff_panel()

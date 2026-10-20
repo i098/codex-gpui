@@ -1109,10 +1109,9 @@ impl Host for LocalHost {
             "automation-update" => self.update_automation(&params)?,
             "automation-run-now" => self.automation_run_now(&params)?,
             "inbox-items" => self.inbox(&params)?,
-            "git-changes" | "git-stage" | "git-unstage" | "git-revert" | "git-commit-status"
-            | "git-commit-diff" | "git-commit" | "git-push" | "git-checkout" => {
-                git::fetch(endpoint, &params)?
-            }
+            "git-changes" | "git-stage" | "git-unstage" | "git-revert" | "git-init-repo"
+            | "git-commit-status" | "git-commit-diff" | "git-commit" | "git-push"
+            | "git-checkout" => git::fetch(endpoint, &params)?,
             "create-worktree" => self.create_worktree(&params)?,
             "set-worktree-owner-thread" => {
                 let worktree = params["worktree"].as_str().context("missing worktree")?;

@@ -116,30 +116,57 @@ pub struct FileDiff {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DiffSource {
     LastTurn,
+    Uncommitted,
     Unstaged,
     Staged,
+    Branch,
+    Commits,
 }
 
 impl DiffSource {
     fn label(self) -> &'static str {
         match self {
             Self::LastTurn => "Last Turn",
+            Self::Uncommitted => "Uncommitted",
             Self::Unstaged => "Unstaged",
             Self::Staged => "Staged",
+            Self::Branch => "Branch",
+            Self::Commits => "Committed",
         }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::LastTurn => "last-turn",
+            Self::Uncommitted => "uncommitted",
+            Self::Unstaged => "unstaged",
+            Self::Staged => "staged",
+            Self::Branch => "branch",
+            Self::Commits => "commits",
+        }
+    }
+
+    fn mutable(self) -> bool {
+        matches!(self, Self::Uncommitted | Self::Unstaged | Self::Staged)
     }
 }
 
+#[derive(Clone)]
 pub enum DiffRequest {
     Refresh,
     Stage(String),
     Unstage(String),
     Revert(RevertChanges),
+    Changes {
+        action: &'static str,
+        files: Vec<RevertChanges>,
+    },
+    CreateRepository,
     /// Open this absolute path in the configured editor.
     Open(String),
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize)]
 pub struct RevertChanges {
     pub path: String,
     pub source: &'static str,
@@ -152,6 +179,24 @@ pub struct RepositoryChanges {
     pub root: String,
     pub unstaged: Vec<RepositoryFile>,
     pub staged: Vec<RepositoryFile>,
+    #[serde(default)]
+    pub review: Vec<RepositoryFile>,
+    #[serde(default)]
+    pub branches: Vec<String>,
+    #[serde(default)]
+    pub commits: Vec<RepositoryCommit>,
+    #[serde(default)]
+    pub base_branch: Option<String>,
+    #[serde(default)]
+    pub commit: Option<String>,
+    #[serde(default)]
+    pub not_repository: bool,
+}
+
+#[derive(serde::Deserialize)]
+pub struct RepositoryCommit {
+    pub id: String,
+    pub label: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -187,6 +232,8 @@ pub struct DiffPanel {
     filter_focus: Option<FocusHandle>,
     scroll: ScrollHandle,
     standalone: bool,
+    base_branch: Option<String>,
+    commit: Option<String>,
 }
 
 impl DiffPanel {
@@ -280,6 +327,8 @@ impl DiffPanel {
             filter_focus: None,
             scroll: ScrollHandle::new(),
             standalone: false,
+            base_branch: None,
+            commit: None,
         }
     }
 
@@ -289,6 +338,101 @@ impl DiffPanel {
 
     pub fn repository_error(&self) -> Option<&str> {
         self.error.as_deref()
+    }
+
+    pub fn review_params(&self) -> serde_json::Value {
+        serde_json::json!({"reviewSource": self.source.key(), "baseBranch": self.base_branch, "commit": self.commit})
+    }
+
+    fn actionable_files(&self) -> &[RepositoryFile] {
+        self.repository.as_ref().map_or(&[], |repository| {
+            if self.source == DiffSource::Staged {
+                &repository.staged
+            } else {
+                &repository.unstaged
+            }
+        })
+    }
+
+    fn request_changes(
+        &self,
+        action: &'static str,
+        file: Option<(usize, usize)>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.pending
+            || self.error.is_some()
+            || !self.source.mutable()
+            || (action == "revert" && self.source != DiffSource::Unstaged)
+        {
+            return;
+        }
+        let files = self
+            .actionable_files()
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| file.is_none_or(|(selected, _)| selected == *i))
+            .map(|(_, f)| RevertChanges {
+                path: f.path.clone(),
+                source: if self.source == DiffSource::Staged {
+                    "staged"
+                } else {
+                    "unstaged"
+                },
+                diff: f.diff.clone(),
+                hunk: file.map(|(_, h)| h),
+            })
+            .collect::<Vec<_>>();
+        if !files.is_empty() {
+            cx.emit(DiffRequest::Changes { action, files });
+        }
+    }
+    fn operation_button(
+        &self,
+        label: &'static str,
+        file: Option<(usize, usize)>,
+        cx: &Context<Self>,
+    ) -> Stateful<Div> {
+        let action = if label.starts_with("Unstage") {
+            "unstage"
+        } else if label.starts_with("Revert") {
+            "revert"
+        } else {
+            "stage"
+        };
+        let id = match file {
+            Some((i, h)) => format!("{action}-hunk-{i}-{h}"),
+            None => format!("{action}-all"),
+        };
+        let enabled = !self.pending && self.error.is_none();
+        div()
+            .id(SharedString::from(id))
+            .role(gpui::Role::Button)
+            .aria_label(file.map_or_else(
+                || label.to_owned(),
+                |(_, h)| format!("{label} hunk {}", h + 1),
+            ))
+            .aria_disabled(!enabled)
+            .focusable()
+            .tab_index(0)
+            .focus_visible(|s| s.border_2().border_color(rgb(0x3a83f7)))
+            .cursor_pointer()
+            .px(px(8.))
+            .h(px(28.))
+            .rounded(px(14.))
+            .bg(cx.theme().list_hover)
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    this.request_changes(action, file, cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.request_changes(action, file, cx);
+                cx.stop_propagation();
+            }))
+            .child(text(label, 12., 20., 430., cx.theme().text))
     }
 
     pub fn begin_repository_request(&mut self, cx: &mut Context<Self>) {
@@ -305,6 +449,8 @@ impl DiffPanel {
         self.pending = false;
         match result {
             Ok(repository) => {
+                self.base_branch = repository.base_branch.clone().or(self.base_branch.take());
+                self.commit = repository.commit.clone().or(self.commit.take());
                 self.repository = Some(repository);
                 self.error = None;
             }
@@ -319,17 +465,17 @@ impl DiffPanel {
     }
 
     fn request_revert(&self, file: usize, hunk: Option<usize>, cx: &mut Context<Self>) {
-        if self.pending || self.error.is_some() || self.source == DiffSource::LastTurn {
+        if self.pending || self.error.is_some() || !self.source.mutable() {
             return;
         }
-        let Some(repository) = &self.repository else {
+        let files = self.actionable_files();
+        let Some(shown) = self.files.get(file) else {
             return;
         };
-        let files = match self.source {
-            DiffSource::Staged => &repository.staged,
-            _ => &repository.unstaged,
+        let path = format!("{}{}", shown.dir, shown.name);
+        let Some(file) = files.iter().find(|f| f.path == path) else {
+            return;
         };
-        let Some(file) = files.get(file) else { return };
         cx.emit(DiffRequest::Revert(RevertChanges {
             path: file.path.clone(),
             source: if self.source == DiffSource::Staged {
@@ -368,7 +514,8 @@ impl DiffPanel {
             .map(|repository| {
                 match self.source {
                     DiffSource::Staged => &repository.staged,
-                    _ => &repository.unstaged,
+                    DiffSource::Unstaged => &repository.unstaged,
+                    _ => &repository.review,
                 }
                 .iter()
                 .map(|file| FileDiff::patch(&file.path, &file.diff))
@@ -456,7 +603,13 @@ impl DiffPanel {
         self.files = files;
         self.selection = None;
         self.selecting = false;
-        self.menu = None;
+        if self
+            .menu
+            .as_ref()
+            .is_some_and(|m| matches!(m.kind, menu::Kind::Header | menu::Kind::Body))
+        {
+            self.menu = None;
+        }
         self.search_changed();
     }
 
@@ -703,6 +856,10 @@ impl DiffPanel {
         let added = self.files.iter().map(|f| f.added).sum();
         let removed = self.files.iter().map(|f| f.removed).sum();
         let tool = |name| round_icon(name, 28., t);
+        let source_open = self
+            .menu
+            .as_ref()
+            .is_some_and(|menu| matches!(menu.kind, menu::Kind::Source | menu::Kind::Commits));
         // A button with its own `backdrop-filter: blur(24px)`, nested in the capsule's.
         let lens = || {
             shapes::backdrop_blur(
@@ -741,6 +898,7 @@ impl DiffPanel {
                             .id("diff-source")
                             .role(gpui::Role::Button)
                             .aria_label("Changes source")
+                            .aria_expanded(source_open)
                             .focusable()
                             .cursor_pointer()
                             .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
@@ -893,7 +1051,13 @@ impl Render for DiffPanel {
             } else {
                 px(0.)
             };
-        let boundary = self.boundary(&t, cx);
+        let not_repository = self.source != DiffSource::LastTurn
+            && self.repository.as_ref().is_some_and(|r| r.not_repository);
+        let boundary = if not_repository {
+            None
+        } else {
+            self.boundary(&t, cx)
+        };
         let status = self.repository_status(&t, cx);
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
         let line_index = Cell::new(0);
@@ -938,49 +1102,74 @@ impl Render for DiffPanel {
                         )
                     } else if file.open {
                         d.children(file.hunks.iter().enumerate().map(|(index, h)| {
-                            let controls = self.source != DiffSource::LastTurn
-                                && h.lines.iter().any(|l| l.kind != Kind::Context);
+                            let controls =
+                                matches!(self.source, DiffSource::Unstaged | DiffSource::Staged)
+                                    && h.lines.iter().any(|l| l.kind != Kind::Context);
                             div()
                                 .when(controls, |d| {
                                     d.child(
-                                        div().flex().justify_end().px(px(12.)).py(px(4.)).child(
-                                            div()
-                                                .id(SharedString::from(format!(
-                                                    "revert-hunk-{i}-{index}"
-                                                )))
-                                                .role(gpui::Role::Button)
-                                                .aria_label(format!("Revert hunk {}", index + 1))
-                                                .aria_disabled(self.pending || self.error.is_some())
-                                                .focusable()
-                                                .tab_index(0)
-                                                .focus_visible(|s| {
-                                                    s.border_2().border_color(rgb(0x3a83f7))
-                                                })
-                                                .cursor_pointer()
-                                                .px(px(8.))
-                                                .h(px(24.))
-                                                .rounded(px(12.))
-                                                .bg(t.list_hover)
-                                                .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                                                    cx.stop_propagation()
-                                                })
-                                                .on_key_down(cx.listener(
-                                                    move |this, event: &KeyDownEvent, _, cx| {
-                                                        if matches!(
-                                                            event.keystroke.key.as_str(),
-                                                            "enter" | "space"
-                                                        ) {
-                                                            this.request_revert(i, Some(index), cx);
-                                                            cx.stop_propagation();
-                                                        }
-                                                    },
-                                                ))
-                                                .on_click(cx.listener(move |this, _, _, cx| {
-                                                    this.request_revert(i, Some(index), cx);
-                                                    cx.stop_propagation();
-                                                }))
-                                                .child(text("Revert", 12., 20., 430., t.text)),
-                                        ),
+                                        div()
+                                            .flex()
+                                            .justify_end()
+                                            .gap(px(8.))
+                                            .px(px(12.))
+                                            .py(px(4.))
+                                            .child(self.operation_button(
+                                                if self.source == DiffSource::Staged {
+                                                    "Unstage"
+                                                } else {
+                                                    "Stage"
+                                                },
+                                                Some((i, index)),
+                                                cx,
+                                            ))
+                                            .child(
+                                                div()
+                                                    .id(SharedString::from(format!(
+                                                        "revert-hunk-{i}-{index}"
+                                                    )))
+                                                    .role(gpui::Role::Button)
+                                                    .aria_label(format!(
+                                                        "Revert hunk {}",
+                                                        index + 1
+                                                    ))
+                                                    .aria_disabled(
+                                                        self.pending || self.error.is_some(),
+                                                    )
+                                                    .focusable()
+                                                    .tab_index(0)
+                                                    .focus_visible(|s| {
+                                                        s.border_2().border_color(rgb(0x3a83f7))
+                                                    })
+                                                    .cursor_pointer()
+                                                    .px(px(8.))
+                                                    .h(px(24.))
+                                                    .rounded(px(12.))
+                                                    .bg(t.list_hover)
+                                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                                        cx.stop_propagation()
+                                                    })
+                                                    .on_key_down(cx.listener(
+                                                        move |this, event: &KeyDownEvent, _, cx| {
+                                                            if matches!(
+                                                                event.keystroke.key.as_str(),
+                                                                "enter" | "space"
+                                                            ) {
+                                                                this.request_revert(
+                                                                    i,
+                                                                    Some(index),
+                                                                    cx,
+                                                                );
+                                                                cx.stop_propagation();
+                                                            }
+                                                        },
+                                                    ))
+                                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                                        this.request_revert(i, Some(index), cx);
+                                                        cx.stop_propagation();
+                                                    }))
+                                                    .child(text("Revert", 12., 20., 430., t.text)),
+                                            ),
                                     )
                                 })
                                 .child(hunk(
@@ -1104,6 +1293,46 @@ impl Render for DiffPanel {
                     }),
             )
             .children(status)
+            .when(not_repository, |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap(px(12.))
+                        .m(px(24.))
+                        .child(text("Create a Git repository", 16., 24., 500., t.text))
+                        .child(
+                            div()
+                                .id("create-git-repository")
+                                .role(gpui::Role::Button)
+                                .aria_label("Create git repository")
+                                .aria_disabled(self.pending)
+                                .focusable()
+                                .tab_index(0)
+                                .cursor_pointer()
+                                .focus_visible(|s| s.border_2().border_color(rgb(0x3a83f7)))
+                                .px(px(12.))
+                                .py(px(6.))
+                                .rounded(px(16.))
+                                .bg(t.list_hover)
+                                .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                                    if !this.pending
+                                        && matches!(event.keystroke.key.as_str(), "enter" | "space")
+                                    {
+                                        cx.emit(DiffRequest::CreateRepository);
+                                        cx.stop_propagation();
+                                    }
+                                }))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    if !this.pending {
+                                        cx.emit(DiffRequest::CreateRepository);
+                                    }
+                                }))
+                                .child(text("Create git repository", 13., 20., 430., t.text)),
+                        ),
+                )
+            })
             .child(
                 div()
                     .flex_1()
@@ -1125,6 +1354,33 @@ impl Render for DiffPanel {
                             .into_any_element()
                     }))
                     .children(tree),
+            )
+            .when(
+                self.source.mutable() && !self.actionable_files().is_empty(),
+                |d| {
+                    d.child(
+                        div()
+                            .absolute()
+                            .bottom(px(20.))
+                            .left(px(20.))
+                            .right(px(20.))
+                            .flex()
+                            .justify_center()
+                            .gap(px(8.))
+                            .when(self.source == DiffSource::Unstaged, |d| {
+                                d.child(self.operation_button("Revert all", None, cx))
+                            })
+                            .child(self.operation_button(
+                                if self.source == DiffSource::Staged {
+                                    "Unstage all"
+                                } else {
+                                    "Stage all"
+                                },
+                                None,
+                                cx,
+                            )),
+                    )
+                },
             )
             .when(self.query.is_some(), |d| d.child(self.find_bar(cx)))
             .when(self.menu.is_some(), |d| {
@@ -2003,30 +2259,36 @@ fn file_header(
                 .items_center()
                 .gap(px(4.))
                 .child(stats(file.added, file.removed, 14., t).mx(px(4.)))
-                .when(panel.source != DiffSource::LastTurn, |d| {
-                    d.child(
-                        small("thread-undo")
-                            .id(("revert-file", i))
-                            .role(gpui::Role::Button)
-                            .aria_label("Revert file")
-                            .aria_disabled(panel.pending || panel.error.is_some())
-                            .focusable()
-                            .tab_index(0)
-                            .focus_visible(|s| s.border_2().border_color(rgb(0x3a83f7)))
-                            .cursor_pointer()
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
-                                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                .when(
+                    matches!(panel.source, DiffSource::Unstaged | DiffSource::Staged),
+                    |d| {
+                        d.child(
+                            small("thread-undo")
+                                .id(("revert-file", i))
+                                .role(gpui::Role::Button)
+                                .aria_label("Revert file")
+                                .aria_disabled(panel.pending || panel.error.is_some())
+                                .focusable()
+                                .tab_index(0)
+                                .focus_visible(|s| s.border_2().border_color(rgb(0x3a83f7)))
+                                .cursor_pointer()
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .on_key_down(cx.listener(
+                                    move |this, event: &KeyDownEvent, _, cx| {
+                                        if matches!(event.keystroke.key.as_str(), "enter" | "space")
+                                        {
+                                            this.request_revert(i, None, cx);
+                                            cx.stop_propagation();
+                                        }
+                                    },
+                                ))
+                                .on_click(cx.listener(move |this, _, _, cx| {
                                     this.request_revert(i, None, cx);
                                     cx.stop_propagation();
-                                }
-                            }))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.request_revert(i, None, cx);
-                                cx.stop_propagation();
-                            })),
-                    )
-                })
+                                })),
+                        )
+                    },
+                )
                 .child(
                     small("diff-open-in")
                         .id(("diff-open-editor", i))
