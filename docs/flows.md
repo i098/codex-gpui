@@ -1051,7 +1051,7 @@ The retained original also routes `⌥⇧⌘C` through the working-directory han
 Home leaves the clipboard unchanged.
 The command group ordering and search rules remain unchanged.
 The command menu uses an independent popup layer and the original scrolling tile grid.
-Dialogs retain the original corner geometry and input line height.
+Dialogs retain the original corner geometry and input glyph bounds.
 Mini, side-chat, and control-window products remain inactive.
 
 Run `cargo test -p app --test chat_commands -- --test-threads=1` on macOS for the command scenarios.

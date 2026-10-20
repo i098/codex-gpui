@@ -2167,7 +2167,6 @@ impl Dialog {
     /// `Close dialog` 24 px at the top right.
     fn rename_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
         let focused = self.selected == 0;
-        let line_height = 130. / 7.;
         div()
             .p(px(20.))
             .flex()
@@ -2220,39 +2219,16 @@ impl Dialog {
                         )),
                         ..Default::default()
                     }))
-                    .child(
-                        if self.kind == Kind::Rename {
-                            div().w_full().overflow_hidden().flex().justify_end().child(
-                                text(
-                                    if self.query.is_empty() {
-                                        "Add a title…".into()
-                                    } else {
-                                        self.query.clone()
-                                    },
-                                    13.,
-                                    15.,
-                                    430.,
-                                    if self.query.is_empty() {
-                                        t.text_tertiary
-                                    } else {
-                                        t.text
-                                    },
-                                )
-                                .min_w_full()
-                                .flex_shrink_0()
-                                .when(self.select_all && !self.query.is_empty(), |d| {
-                                    d.text_bg(t.text_selection)
-                                }),
-                            )
-                        } else {
+                    .child(if self.kind == Kind::Rename {
+                        div().w_full().overflow_hidden().flex().justify_end().child(
                             text(
                                 if self.query.is_empty() {
-                                    "Section name".into()
+                                    "Add a title…".into()
                                 } else {
                                     self.query.clone()
                                 },
                                 13.,
-                                18.5714,
+                                15.,
                                 430.,
                                 if self.query.is_empty() {
                                     t.text_tertiary
@@ -2260,11 +2236,32 @@ impl Dialog {
                                     t.text
                                 },
                             )
+                            .min_w_full()
+                            .flex_shrink_0()
                             .when(self.select_all && !self.query.is_empty(), |d| {
-                                d.bg(t.text_selection)
-                            })
-                        },
-                    )
+                                d.text_bg(t.text_selection)
+                            }),
+                        )
+                    } else {
+                        text(
+                            if self.query.is_empty() {
+                                "Section name".into()
+                            } else {
+                                self.query.clone()
+                            },
+                            13.,
+                            18.5714,
+                            430.,
+                            if self.query.is_empty() {
+                                t.text_tertiary
+                            } else {
+                                t.text
+                            },
+                        )
+                        .when(self.select_all && !self.query.is_empty(), |d| {
+                            d.bg(t.text_selection)
+                        })
+                    })
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.selected = 0;
                         this.controls[0].focus(window, cx);
