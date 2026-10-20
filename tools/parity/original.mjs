@@ -5,9 +5,13 @@ import { openPage } from "../route1/chrome.mjs";
 
 const [surface, state, theme, width, height, output] = process.argv.slice(2);
 const w = Number(width), h = Number(height);
+const configurationStates = new Set([
+  "configuration", "configuration-bottom", "configuration-scope-menu",
+  "configuration-web-menu", "configuration-effort-menu",
+]);
 if (state === "rest" && ["home", "terminal"].includes(surface)) {
   await capture(surface, theme, w, h, output);
-} else if (surface === "settings" && state === "configuration") {
+} else if (surface === "settings" && configurationStates.has(state)) {
   await configuration();
 } else {
   throw new Error(`No original recipe for ${surface}/${state}`);
@@ -74,6 +78,17 @@ async function configuration() {
     await waitFor(`document.body.innerText.includes('Default permissions')`);
     await click("Configuration");
     await waitFor(`document.body.innerText.includes('Configure permissions, web access, and agent responses for new chats') || document.body.innerText.includes('Choose how ChatGPT works on your tasks')`);
+    if (process.env.R1_CONFIGURATION_SCENARIO) {
+      await waitFor(`document.body.innerText.includes('User config') && document.body.innerText.includes('Allow network access')`);
+    }
+    if (state === "configuration-bottom" || state === "configuration-effort-menu") {
+      await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 1100, y: 700 });
+      await page.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: 1100, y: 700, deltaX: 0, deltaY: 2000 });
+      await sleep(600);
+    }
+    if (state === "configuration-scope-menu") await click("User config");
+    if (state === "configuration-web-menu") await click("Web search");
+    if (state === "configuration-effort-menu") await click("5 selected");
     await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: Math.round(w * 0.6), y: 6 });
     await settle(1500);
     await page.evaluate(`(() => {

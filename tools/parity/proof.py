@@ -19,7 +19,13 @@ import tempfile
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
-CELLS = {("home", "rest"), ("terminal", "rest"), ("settings", "configuration")}
+CONFIGURATION_STATES = {
+    "configuration", "configuration-bottom", "configuration-scope-menu",
+    "configuration-web-menu", "configuration-effort-menu",
+}
+CELLS = {("home", "rest"), ("terminal", "rest")} | {
+    ("settings", state) for state in CONFIGURATION_STATES
+}
 PINS = {
     "index.html": "fbdbdbc3d10bc13ebb49e6175673c77fafbcbcdec90a7f7e147ad91950145a0b",
     "assets/index-44a69cb8b3cd.js": "bd10e3c9056f5dc7f6a9ce750d6cfb6a99343e20e9a206bef6d61d4b70df6dea",
@@ -45,6 +51,8 @@ def arguments():
     parser.add_argument("--mac", default="mac")
     parser.add_argument("--warm-target", required=True, help="explicitly handed-off Mac Cargo target")
     parser.add_argument("--webview", type=Path, default=Path("/tmp/cgx/asar-x/webview"))
+    parser.add_argument("--config-reply", type=Path,
+                        help="owned global config/read reply for matched no-Work Configuration")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if (args.surface, args.state) not in CELLS:
@@ -57,6 +65,19 @@ def arguments():
         parser.error("size must be 1280x832, 1440x900, 767x832, or 600x832")
     if args.width < 1000 and args.surface != "home":
         parser.error("only Home has a narrow-size navigation adapter")
+    if args.surface == "settings" and args.state != "configuration" and not args.config_reply:
+        parser.error("Configuration detail states require --config-reply")
+    if args.config_reply:
+        if args.surface != "settings" or (args.width, args.height) != (1280, 832):
+            parser.error("--config-reply supports Configuration at 1280x832")
+        args.config_reply = args.config_reply.resolve()
+        configuration = json.loads(args.config_reply.read_text())["result"]
+        if configuration["config"]["sandbox_mode"] != "workspace-write":
+            parser.error("--config-reply requires workspace-write")
+        if not isinstance(configuration["config"]["sandbox_workspace_write"]["network_access"], bool):
+            parser.error("--config-reply requires a boolean network_access")
+        if not any(layer["name"]["type"] == "user" for layer in configuration["layers"]):
+            parser.error("--config-reply requires the owned user configuration layer")
     return args
 
 
@@ -65,6 +86,62 @@ def pin_assets(webview):
         actual = hashlib.sha256((webview / name).read_bytes()).hexdigest()
         if actual != expected:
             raise RuntimeError(f"original asset pin mismatch: {name}: {actual}")
+
+def configuration_fixture(local, reply_path):
+    configuration = json.loads(reply_path.read_text())["result"]
+    exchanges = []
+    for include_layers in (False, True):
+        result = dict(configuration)
+        if not include_layers:
+            result.pop("layers", None)
+        for params in ({"includeLayers": include_layers},
+                       {"includeLayers": include_layers, "cwd": None}):
+            exchanges.append(("config/read", params, {"result": result}))
+    exchanges.extend([
+        ("configRequirements/read", None, {"result": {"requirements": None}}),
+        ("fs/readFile", None, {"error": {
+            "code": -32603, "message": "No such file or directory (os error 2)"}}),
+    ])
+    records = []
+    for request_id, (method, params, reply) in enumerate(exchanges, 900000):
+        records.extend([
+            {"dir": "send", "msg": {"id": request_id, "method": method, "params": params}},
+            {"dir": "recv", "msg": {"id": request_id, **reply}},
+        ])
+    fixtures = local / "fixtures"
+    fixtures.mkdir()
+    (fixtures / "sessions").symlink_to(ROOT / "fixtures/sessions", target_is_directory=True)
+    (fixtures / "readback.jsonl").write_text(
+        "".join(json.dumps(record) + "\n" for record in records)
+        + (ROOT / "fixtures/readback.jsonl").read_text())
+    oracle_path = local / "tools/route1/oracle.json"
+    oracle = json.loads(oracle_path.read_text())
+    shared = oracle["shared statsig_evaluations"]
+    payload = json.loads(shared["payload"])
+    original_shared = payload["feature_gates"]["1315865107"]["value"]
+    payload["feature_gates"]["1315865107"]["value"] = False
+    shared["payload"] = json.dumps(payload)
+    bootstrap_keys = [key for key in oracle
+                      if key.startswith("svc httpFetch.fetch ") and "/wham/statsig/bootstrap" in key]
+    if len(bootstrap_keys) != 1:
+        raise RuntimeError("expected one recorded Statsig bootstrap response")
+    response = oracle[bootstrap_keys[0]]["value"]["response"]["__response"]
+    body = json.loads(response["body"])
+    payload = json.loads(body["statsigPayload"])
+    original_bootstrap = payload["feature_gates"]["1315865107"]["value"]
+    payload["feature_gates"]["1315865107"]["value"] = False
+    body["statsigPayload"] = json.dumps(payload)
+    response["body"] = json.dumps(body)
+    oracle_path.write_text(json.dumps(oracle))
+    return {
+        "config_reply_sha256": hashlib.sha256(reply_path.read_bytes()).hexdigest(),
+        "scenario": "global Configuration without Work",
+        "feature_gate": "1315865107",
+        "recorded_gate_values": [original_shared, original_bootstrap],
+        "fixture_gate_values": [False, False],
+        "account_and_access_fields_changed": False,
+    }
+
 
 
 def build(env, output):
@@ -149,6 +226,8 @@ def worker(args):
     env.update(CGX_PROOF_SURFACE=args.surface, CGX_PROOF_STATE=args.state,
                CGX_PROOF_THEME=args.theme, CGX_PROOF_WIDTH=str(args.width),
                CGX_PROOF_HEIGHT=str(args.height), CGX_PROOF_OUT=str(output))
+    if args.config_reply:
+        env["CGX_PROOF_CONFIG_REPLY"] = str(args.config_reply)
     with (output / "native.log").open("w") as native_log:
         result = subprocess.run([binary, "--ignored", "--exact", "capture_cell", "--nocapture"],
                                 cwd=ROOT, env=env, stdout=native_log,
@@ -163,7 +242,12 @@ def original_through_tunnel(args, ssh):
     with tempfile.TemporaryDirectory(prefix="route1-", dir=args.out) as temporary:
         local = Path(temporary)
         shutil.copytree(ROOT / "tools/route1", local / "tools/route1")
-        (local / "fixtures").symlink_to(ROOT / "fixtures", target_is_directory=True)
+        if args.config_reply:
+            scenario = configuration_fixture(local, args.config_reply)
+            env["R1_CONFIGURATION_SCENARIO"] = "1"
+        else:
+            scenario = None
+            (local / "fixtures").symlink_to(ROOT / "fixtures", target_is_directory=True)
         (local / "tools/capture").symlink_to(ROOT / "tools/capture", target_is_directory=True)
         (local / "bin").mkdir()
         shim = local / "bin/ssh"
@@ -172,7 +256,7 @@ def original_through_tunnel(args, ssh):
         env.update(PATH=f"{local}/bin:{env['PATH']}", R1_OFFLINE="1",
                    R1_WEBVIEW=str(args.webview.resolve()), R1_PORT=str(server_port),
                    R1_SERVER=f"http://127.0.0.1:{server_port}", R1_CDP=f"http://127.0.0.1:{cdp_port}",
-                   MOCK_FIXTURES=str(ROOT / "fixtures"), MOCK_LOG=str(args.out / "requests.log"))
+                   MOCK_FIXTURES=str(local / "fixtures"), MOCK_LOG=str(args.out / "requests.log"))
         tunnel_command = ssh[:-1] + [
             "-o", "ExitOnForwardFailure=yes", "-N",
             "-L", f"{cdp_port}:127.0.0.1:9467",
@@ -189,6 +273,7 @@ def original_through_tunnel(args, ssh):
                 "size": args.size, "browser": browser, "asset_sha256": PINS,
                 "fonts": "macOS native; R1_SF_FONTS unset", "warm_target": args.warm_target,
                 "browser_ownership": "fresh disposeOnDetach context on the shared Mac browser",
+                "configuration_scenario": scenario,
             }, indent=2) + "\n")
             capture_original(args, env, args.out)
 
@@ -212,6 +297,11 @@ def dispatch(args):
         command = ["/usr/bin/python3", f"{scratch}/repo/tools/parity/proof.py", args.surface,
                    args.state, "--worker", "--theme", args.theme, "--size", args.size,
                    "--out", f"{scratch}/output", "--warm-target", args.warm_target]
+        if args.config_reply:
+            remote_reply = f"{scratch}/output/config-reply.json"
+            run(ssh + ["mkdir -p " + shlex.quote(f"{scratch}/output")])
+            run(transfer + [str(args.config_reply), f"{args.mac}:{remote_reply}"])
+            command.extend(["--config-reply", remote_reply])
         def native_run():
             with (args.out / "worker.log").open("w") as log:
                 return subprocess.run(ssh + [shlex.join(command)], stdout=log, stderr=subprocess.STDOUT, timeout=1800)

@@ -22,14 +22,38 @@ fn capture_cell() -> Result<()> {
     let height: u32 = env::var("CGX_PROOF_HEIGHT")?.parse()?;
     let output = env::var("CGX_PROOF_OUT")?;
     let output = Path::new(&output);
-    let mut fx = Fx::with(theme, (width as f32, height as f32), None, |_| {})?;
+    let configuration = env::var_os("CGX_PROOF_CONFIG_REPLY")
+        .map(|path| -> Result<Value> {
+            let reply: Value = serde_json::from_slice(&fs::read(path)?)?;
+            ensure!(reply["result"].is_object(), "missing config/read result");
+            Ok(reply["result"].clone())
+        })
+        .transpose()?;
+    let mut fx = if let Some(configuration) = &configuration {
+        let mut lines = common::script(None, |_| {})?;
+        lines.extend(common::exchange("config/read", configuration.clone()));
+        lines.extend(common::exchange(
+            "configRequirements/read",
+            serde_json::json!({"requirements": null}),
+        ));
+        Fx::captured(theme, (width as f32, height as f32), lines)?
+    } else {
+        Fx::with(theme, (width as f32, height as f32), None, |_| {})?
+    };
     match (surface.as_str(), state.as_str()) {
         ("home", "rest") => ensure!(fx.route() == Route::Home),
         ("terminal", "rest") => open_terminal(&mut fx)?,
-        ("settings", "configuration") => {
-            fx.keys("cmd-,")?;
-            fx.click(fx.at("settings", "Configuration")?)?;
-            ensure!(fx.route() == Route::Settings);
+        ("settings", state)
+            if matches!(
+                state,
+                "configuration"
+                    | "configuration-bottom"
+                    | "configuration-scope-menu"
+                    | "configuration-web-menu"
+                    | "configuration-effort-menu"
+            ) =>
+        {
+            open_configuration(&mut fx, state, configuration.as_ref())?
         }
         _ => anyhow::bail!("no native recipe for {surface}/{state}"),
     }
@@ -80,6 +104,47 @@ fn capture_cell() -> Result<()> {
     }
     fs::write(output.join("differences.md"), report)?;
     ensure!(metrics.pass, "strict pixel gate failed; see differences.md");
+    Ok(())
+}
+
+fn open_configuration(fx: &mut Fx, state: &str, configuration: Option<&Value>) -> Result<()> {
+    fx.keys("cmd-,")?;
+    fx.click(fx.at("settings", "Configuration")?)?;
+    ensure!(fx.route() == Route::Settings);
+    if let Some(configuration) = configuration {
+        fx.wait("global Configuration ready", |fx| {
+            fx.read(|root, cx| {
+                root.settings_page().is_some_and(|page| {
+                    let page = page.read(cx);
+                    page.dependencies_ready() && page.config_lock("config.web_search").is_none()
+                })
+            })
+        })?;
+        ensure!(
+            fx.read(|root, _| root.config()["sandbox_mode"] == "workspace-write"),
+            "global Configuration is not workspace-write"
+        );
+        ensure!(
+            fx.read(|root, _| {
+                root.config()["sandbox_workspace_write"]["network_access"]
+                    == configuration["config"]["sandbox_workspace_write"]["network_access"]
+                    && root.config()["web_search"] == configuration["config"]["web_search"]
+            }),
+            "native Configuration differs from the supplied reply"
+        );
+    }
+    if matches!(state, "configuration-bottom" | "configuration-effort-menu") {
+        fx.click((1200., 740.))?;
+        fx.scroll((1200., 740.), -2000.)?;
+        fx.advance(ui::motion::BASIC)?;
+    }
+    match state {
+        "configuration-scope-menu" => fx.click((500., 278.))?,
+        "configuration-web-menu" => fx.click((1100., 519.))?,
+        "configuration-effort-menu" => fx.click((1100., 476.))?,
+        _ => {}
+    }
+    fx.advance(ui::motion::BASIC)?;
     Ok(())
 }
 

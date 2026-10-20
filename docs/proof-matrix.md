@@ -47,6 +47,10 @@ It preserves the existing route1 and Root capture clocks and fixtures.
 | `home` | `rest` | Existing route1 Home capture | `common::Fx` startup |
 | `terminal` | `rest` | Existing route1 recorded command replay | The same recorded events and input sequence as `flows::open_terminal` |
 | `settings` | `configuration` | Profile menu, Settings, Configuration | Settings shortcut, Configuration navigation item |
+| `settings` | `configuration-bottom` | Scroll the controlled page to its bottom | The same page scroll |
+| `settings` | `configuration-scope-menu` | Open User config | Open the same scope menu |
+| `settings` | `configuration-web-menu` | Open Web search | Open the same search menu |
+| `settings` | `configuration-effort-menu` | Scroll down and open reasoning efforts | The same scroll and effort menu |
 
 These are the initial executable adapters, not all 175 census surfaces.
 An unknown surface or state fails before a capture starts.
@@ -58,6 +62,29 @@ Home rest also accepts `767x832` and `600x832`.
 Terminal and Configuration reject narrow sizes until their navigation adapters support them.
 Each frame uses the same CSS size and native device scale 2.
 The narrow sizes have no separate waiver for a failing gate.
+
+### Controlled global Configuration
+
+Pass `--config-reply "$CONFIG_REPLY"` to use one owned `config/read` response on both sides.
+The response must contain `result.config`, `result.origins`, and a user entry in `result.layers`.
+Use Workspace write and a boolean network-access value.
+These controlled captures require `1280x832`; other cells keep their existing size support.
+The four detail states require this argument.
+
+The tool copies the response into disposable fixture data and the native replay.
+It disables Work gate `1315865107` in both copied Statsig payloads to match the native capability.
+It does not change account or access data.
+Provenance records the response hash and both original gate values.
+
+Use the network-off response for the top, bottom, and scope-menu canonical states.
+Use the network-on response for the web-menu and effort-menu canonical states.
+Set `CONFIG_REPLY`, `WARM_TARGET`, and `OUT` to owned input, granted cache, and new output paths.
+
+```sh
+python3 tools/parity/proof.py settings configuration-web-menu \
+  --config-reply "$CONFIG_REPLY" --warm-target "$WARM_TARGET" --out "$OUT"
+```
+
 
 ## Results and failure behavior
 
@@ -78,6 +105,8 @@ The report counts both classes per region and does not guess a source-code cause
 
 The gate permits zero differing pixels outside text and at most 0.5% inside text.
 A failing gate returns nonzero after it writes the images and report.
+An appearance board still requires zero reported differences in both classes, including text.
+The retained parity gate does not replace that stricter approval condition.
 A capture or build failure also returns nonzero; inspect the logs if no report exists.
 Never treat missing evidence as a passing cell.
 
@@ -102,6 +131,12 @@ CARGO_TARGET_DIR=<handed-off-Linux-target> \
 This test checks difference-region bounds and text/geometry counts.
 It does not claim Linux rendering parity.
 The ignored `capture_cell` test runs only through the Mac command above.
+
+Run the controlled-fixture regression without a browser or compiler:
+
+```sh
+python3 tools/parity/test_configuration_fixture.py
+```
 
 ## Recorded smoke result
 
