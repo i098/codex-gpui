@@ -1617,21 +1617,19 @@ fn clips(window: &Window, layer: Layer) -> Vec<Contour> {
     })
 }
 
-/// Skia's `SK_ColorBLACK` paint (8-bit color at the folded alpha `a`): it takes
-/// `SkARGB32_Black_Blitter`.
+/// Skia's `SK_ColorBLACK` paint at its own 8-bit alpha.
+/// It takes `SkARGB32_Black_Blitter`.
 fn is_black(color: Hsla, a: u8) -> bool {
     let c = color4f(color);
     a == 255 && [c.r, c.g, c.b] == [0.; 3]
 }
 
 fn paint_op(op: Op, color: Hsla, layer: Layer, window: &mut Window, cx: &App) {
-    // GPUI folds an `opacity` into a lone sprite's color, as cc folds it into the paint: Skia
-    // picks its blitter by that alpha.
-    let a = alpha_byte(color.a * window.element_opacity());
+    // Element opacity is restored by GPUI's enclosing layer, not folded into this paint.
+    let a = alpha_byte(color.a);
     if matches!(op, Op::ClipLayer { .. }) || op.restored(a) {
         // ponytail: restored layers ignore the ancestors' AA clips.
-        let mut col = color4f(color);
-        col.a *= window.element_opacity();
+        let col = color4f(color);
         let sprites = cached(format!("{op:?}{:?}{col:?}", layer.key()), || {
             restore_sprites(&op, col, layer)
         });
@@ -1674,6 +1672,9 @@ pub(crate) fn paint(
     window: &mut Window,
     cx: &App,
 ) {
+    if window.element_opacity() <= 0. {
+        return;
+    }
     let layer = Layer::new(window, composited);
     let s = window.scale_factor();
     for (op, color) in ops(d, layer.local(bounds, s), s).1 {
@@ -2113,6 +2114,9 @@ pub(crate) fn paint_icon(
     window: &mut Window,
     cx: &App,
 ) -> bool {
+    if window.element_opacity() <= 0. {
+        return true;
+    }
     let icon = ICONS.with_borrow_mut(|icons| {
         icons
             .entry(key.to_string())
@@ -2195,7 +2199,7 @@ pub(crate) fn paint_icon(
         // ponytail: the svg's `opacity` (a layer in Chromium) is folded into the paint alpha.
         let a = if p.color.is_some() { 1. } else { rgba.a } * p.opacity * p.layer;
         let color = Rgba { a, ..c };
-        let a = alpha_byte(a * window.element_opacity());
+        let a = alpha_byte(a);
         let black = is_black(color.into(), a);
         let sprites = sprites(
             format!(

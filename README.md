@@ -237,6 +237,9 @@ Stock GPUI cannot match Chromium's pixels, so the copies change three things:
 - Skia blends: glyph and sprite blending as Skia's 8-bit raster does it, and `SkPaint::setAlphaf` alpha rounded to a byte.
 - Layer compositing: opacity layers and composited layers (`will-change`, scrollers) that blend as Chromium's `saveLayerAlpha` does.
 
+Monochrome glyphs and SVGs keep their paint alpha.
+Element opacity is applied once when the enclosing layer is restored.
+
 `shapes` links Skia binaries built with Chromium's `SkUserConfig.h` legacy defines.
 `.cargo/config.toml` points `SKIA_BINARIES_URL` to these binaries.
 
