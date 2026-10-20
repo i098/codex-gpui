@@ -332,6 +332,7 @@ fn native_forms_send_typed_answers_and_cancel_without_accepting() -> Result<()> 
     );
     fx.focus_composer()?;
     fx.keys("tab tab")?;
+    capture(&mut fx, "secret-input-empty")?;
     fx.type_text("fixture-secret")?;
     fx.cx.update(|cx| {
         cx.write_to_clipboard(gpui::ClipboardItem::new_string("clipboard-marker".into()))

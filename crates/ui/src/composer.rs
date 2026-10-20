@@ -1910,7 +1910,7 @@ impl Render for Composer {
                             } else if self.request_compact {
                                 8.
                             } else {
-                                13.
+                                8.44921875
                             }))
                             .child(shapes::decoration(shapes::Decoration {
                                 radius: Corners::all(px(if self.request_compact && !self.secret {
@@ -1919,6 +1919,8 @@ impl Render for Composer {
                                     12.5
                                 })),
                                 corner: shapes::Corner::Squircle,
+                                fill: (self.request_compact && !self.secret)
+                                    .then_some(t.surface_elevated_secondary.opacity(0.96)),
                                 border: Some((px(1.), t.border_strong)),
                                 ..Default::default()
                             }))

@@ -383,6 +383,8 @@ Enter retains draft submission for command and file-change approvals.
 The reference frames use the pinned original renderer on macOS, with native fonts, at 1280x832 and scale 2.
 The native request replay covers numeric bounds, pointer steps, and keyboard stepping after a pointer step.
 Plain input fields keep a stable keyboard context across request and focus changes.
+The unavailable-recorder reference uses the original's text-only field state; no microphone permission is requested.
+Secret appearance uses an empty field; entered secrets remain masked and protected from copying.
 The appearance packet remains held until the remaining visible differences are resolved.
 
 Native Computer Use app approvals use this queue and retain the original request, thread, and turn IDs.

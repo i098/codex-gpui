@@ -766,8 +766,20 @@ impl Composer {
         let close = crate::icon_button(
             "request-close",
             icon(
-                "close",
-                if mcp { 20. } else { 16. },
+                if mcp {
+                    "close"
+                } else if user_input {
+                    "request-close-small"
+                } else {
+                    "diff-tab-close"
+                },
+                if mcp {
+                    20.
+                } else if user_input {
+                    16.
+                } else {
+                    14.
+                },
                 if mcp {
                     t.text_secondary
                 } else {
@@ -973,7 +985,19 @@ impl Composer {
                         }))
                         .py(px(6.))
                         .rounded(px(if form.picker() { 999. } else { 8. }))
-                        .when(!boolean, |d| d.border_1().border_color(t.border))
+                        .when(!boolean && !form.picker(), |d| {
+                            d.border_1().border_color(t.border)
+                        })
+                        .when(form.picker(), |d| {
+                            d.px(px(13.))
+                                .py(px(7.))
+                                .child(shapes::decoration(shapes::Decoration {
+                                    radius: Corners::all(px(9999.)),
+                                    fill: checked.then_some(t.button_secondary),
+                                    border: Some((px(1.), t.border)),
+                                    ..Default::default()
+                                }))
+                        })
                         .relative()
                         .when(boolean, |d| {
                             d.child(shapes::decoration(shapes::Decoration {
@@ -983,7 +1007,7 @@ impl Composer {
                                 ..Default::default()
                             }))
                         })
-                        .when(checked, |d| d.bg(t.button_secondary))
+                        .when(checked && !form.picker(), |d| d.bg(t.button_secondary))
                         .focusable()
                         .tab_index(0)
                         .role(gpui::Role::Button)
@@ -1000,9 +1024,26 @@ impl Composer {
                                     d.child(
                                         div()
                                             .size(px(if boolean { 20. } else { 16. }))
-                                            .border_1()
-                                            .border_color(t.border)
-                                            .when(checked, |d| d.bg(t.text))
+                                            .when(!boolean, |d| {
+                                                d.border_1()
+                                                    .border_color(t.border)
+                                                    .when(checked, |d| d.bg(t.text))
+                                            })
+                                            .when(boolean, |d| {
+                                                d.relative().p(px(1.)).child(shapes::decoration(
+                                                    shapes::Decoration {
+                                                        radius: Corners::all(px(5.)),
+                                                        corner: shapes::Corner::Squircle,
+                                                        fill: Some(if checked {
+                                                            t.text
+                                                        } else {
+                                                            t.text_alpha_5
+                                                        }),
+                                                        border: Some((px(1.), t.border)),
+                                                        ..Default::default()
+                                                    },
+                                                ))
+                                            })
                                             .rounded(px(if boolean || multiple {
                                                 4.
                                             } else {
@@ -1035,7 +1076,7 @@ impl Composer {
                                         .child(text(
                                             label.clone(),
                                             13.,
-                                            20.,
+                                            if boolean { 18.5703125 } else { 20. },
                                             if boolean { 500. } else { 430. },
                                             t.text,
                                         ))
@@ -1196,19 +1237,26 @@ impl Composer {
             }))
             .flex()
             .flex_col()
-            .child(header)
-            .child(body)
-            .when_some(self.request_draft.error.clone(), |d, error| {
-                d.child(
-                    div()
-                        .id("request-error")
-                        .role(gpui::Role::Alert)
-                        .px(px(16.))
-                        .pb(px(8.))
-                        .child(text(error, 13., 18., 400., t.text_error)),
-                )
-            })
-            .child(footer)
+            .child(crate::rounded_clip(
+                px(24.),
+                shapes::Corner::Squircle,
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(header)
+                    .child(body)
+                    .when_some(self.request_draft.error.clone(), |d, error| {
+                        d.child(
+                            div()
+                                .id("request-error")
+                                .role(gpui::Role::Alert)
+                                .px(px(16.))
+                                .pb(px(8.))
+                                .child(text(error, 13., 18., 400., t.text_error)),
+                        )
+                    })
+                    .child(footer),
+            ))
     }
 
     pub(super) fn request_button(
@@ -1321,8 +1369,16 @@ impl Composer {
             .child(text(
                 label,
                 13.,
-                if mcp { 18.570_313 } else { 18. },
-                if form_submit { 500. } else { 430. },
+                if mcp || user_input || picker {
+                    18.5703125
+                } else {
+                    18.
+                },
+                if form_submit || user_input || (picker && primary) {
+                    500.
+                } else {
+                    430.
+                },
                 foreground,
             ))
             .when(
@@ -1420,7 +1476,7 @@ impl Composer {
             .cursor_pointer()
             .hover(|s| s.bg(t.button_primary_solid_hover))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(icon("chevron-down", 14., foreground))
+            .child(icon("chevron-down", 14., foreground).opacity(0.5))
             .track_focus(&self.permissions_focus)
             .role(gpui::Role::Button)
             .aria_label("More approval options")
@@ -1442,7 +1498,7 @@ impl Composer {
             }));
         div()
             .relative()
-            .p(px(17.))
+            .p(px(1.))
             .flex()
             .flex_col()
             .child(shapes::decoration(shapes::Decoration {
@@ -1452,102 +1508,121 @@ impl Composer {
                 border: Some((px(1.), t.border)),
                 ..Default::default()
             }))
-            .child(
+            .child(crate::rounded_clip(
+                px(24.),
+                shapes::Corner::Squircle,
                 div()
+                    .p(px(16.))
                     .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .child(icon("hand", 16., t.text_secondary))
-                    .child(text(
-                        if internet {
-                            "Internet access"
-                        } else {
-                            "Permissions"
-                        },
-                        13.,
-                        20.,
-                        430.,
-                        t.text_secondary,
-                    )),
-            )
-            .child(
-                div()
-                    .mt(px(8.))
-                    .child(text(approval.title.clone(), 14., 20., 500., t.text)),
-            )
-            .when_some(approval.reason.clone(), |d, reason| {
-                d.child(
-                    div()
-                        .mt(px(2.))
-                        .child(text(reason, 13., 19.5, 430., t.text_secondary)),
-                )
-            })
-            .child(
-                div()
-                    .mt(px(20.))
-                    .flex()
-                    .justify_end()
-                    .gap(px(8.))
-                    .child(self.request_button(
-                        "request-deny",
-                        "Deny".into(),
-                        ApprovalDecision::Decline,
-                        false,
-                        t,
-                        cx,
-                    ))
+                    .flex_col()
                     .child(
                         div()
-                            .relative()
                             .flex()
-                            .child(shapes::decoration(shapes::Decoration {
-                                radius: Corners::all(px(9999.)),
-                                fill: Some(t.button_primary_solid),
-                                ..Default::default()
-                            }))
+                            .items_center()
+                            .gap(px(8.))
+                            .child(icon("hand", 18., t.text.opacity(0.65)))
+                            .child(text(
+                                if internet {
+                                    "Internet access"
+                                } else {
+                                    "Permissions"
+                                },
+                                13.,
+                                20.,
+                                400.,
+                                t.text.opacity(0.65),
+                            )),
+                    )
+                    .child(div().mt(px(8.)).child(text(
+                        approval.title.clone(),
+                        14.,
+                        20.,
+                        500.,
+                        t.text,
+                    )))
+                    .when_some(approval.reason.clone(), |d, reason| {
+                        d.child(div().mt(px(2.)).child(text(
+                            reason,
+                            13.,
+                            19.5,
+                            430.,
+                            t.text_tertiary,
+                        )))
+                    })
+                    .child(
+                        div()
+                            .mt(px(20.))
+                            .flex()
+                            .justify_end()
+                            .gap(px(8.))
+                            .child(self.request_button(
+                                "request-deny",
+                                "Deny".into(),
+                                ApprovalDecision::Decline,
+                                false,
+                                t,
+                                cx,
+                            ))
                             .child(
-                                self.request_button(
-                                    "request-allow",
-                                    "Allow once".into(),
-                                    ApprovalDecision::Accept,
-                                    true,
-                                    t,
-                                    cx,
-                                )
-                                .when_some(
-                                    self.request_draft.accept_focus.as_ref(),
-                                    |d, focus| {
-                                        d.track_focus(focus).when(focus.is_focused(window), |d| {
-                                            d.child(
-                                                div()
-                                                    .absolute()
-                                                    .left(px(1.))
-                                                    .right_0()
-                                                    .top(px(1.))
-                                                    .bottom(px(1.))
-                                                    .child(shapes::decoration(
-                                                        shapes::Decoration {
-                                                            radius: Corners {
-                                                                top_left: px(13.),
-                                                                bottom_left: px(13.),
-                                                                top_right: px(0.),
-                                                                bottom_right: px(0.),
-                                                            },
-                                                            border: Some((
-                                                                px(2.),
-                                                                gpui::rgb(0x3a83f7).into(),
-                                                            )),
-                                                            ..Default::default()
-                                                        },
-                                                    )),
-                                            )
-                                        })
-                                    },
-                                ),
-                            )
-                            .child(arrow),
+                                div()
+                                    .relative()
+                                    .flex()
+                                    .child(shapes::decoration(shapes::Decoration {
+                                        radius: Corners::all(px(9999.)),
+                                        fill: Some(t.button_primary_solid),
+                                        ..Default::default()
+                                    }))
+                                    .child(
+                                        self.request_button(
+                                            "request-allow",
+                                            "Allow once".into(),
+                                            ApprovalDecision::Accept,
+                                            true,
+                                            t,
+                                            cx,
+                                        )
+                                        .when_some(
+                                            self.request_draft.accept_focus.as_ref(),
+                                            |d, focus| {
+                                                d.track_focus(focus).when(
+                                                    focus.is_focused(window),
+                                                    |d| {
+                                                        d.child(
+                                                            div()
+                                                                .absolute()
+                                                                .left(px(1.))
+                                                                .right_0()
+                                                                .top(px(1.))
+                                                                .bottom(px(1.))
+                                                                .child(shapes::decoration(
+                                                                    shapes::Decoration {
+                                                                        radius: Corners {
+                                                                            top_left: px(13.),
+                                                                            bottom_left: px(13.),
+                                                                            top_right: px(0.),
+                                                                            bottom_right: px(0.),
+                                                                        },
+                                                                        shadows: vec![shadow(
+                                                                            gpui::rgb(0x3a83f7)
+                                                                                .into(),
+                                                                            0.,
+                                                                            0.,
+                                                                            2.,
+                                                                            true,
+                                                                        )],
+                                                                        ..Default::default()
+                                                                    },
+                                                                )),
+                                                        )
+                                                    },
+                                                )
+                                            },
+                                        ),
+                                    )
+                                    .child(arrow),
+                            ),
                     ),
-            )
+            ))
             .when(self.menu == Some(Menu::Permissions), |d| {
                 d.child(
                     popover(t, 220., |d| {

@@ -585,7 +585,10 @@ impl Composer {
             // `overflow-y: auto` contents), then composited onto the card.
             .child(
                 div()
-                    .when(self.content.is_empty(), |d| d.opacity(0.5))
+                    .when(
+                        self.content.is_empty() && (!self.request_compact || self.secret),
+                        |d| d.opacity(0.5),
+                    )
                     .layer()
                     .child(Editor(cx.entity())),
             )
