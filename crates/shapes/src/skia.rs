@@ -1676,8 +1676,6 @@ pub(crate) fn paint(
 ) {
     let layer = Layer::new(window, composited);
     let s = window.scale_factor();
-    // Backdrop blurs read the window-space ops; the raster is in layer space.
-    crate::backdrop::record(&ops(d, bounds, s).1, window);
     for (op, color) in ops(d, layer.local(bounds, s), s).1 {
         paint_op(op, color, layer, window, cx);
     }

@@ -240,6 +240,10 @@ Stock GPUI cannot match Chromium's pixels, so the copies change three things:
 `shapes` links Skia binaries built with Chromium's `SkUserConfig.h` legacy defines.
 `.cargo/config.toml` points `SKIA_BINARIES_URL` to these binaries.
 
+On macOS, popup backdrops capture the current frame's scene before the popup.
+The capture includes text, images, clipping, and opacity.
+Nested filters use the parent layer's content, not its already-filtered backdrop.
+
 ## Parity method
 
 The references come from the original renderer itself.

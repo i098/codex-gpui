@@ -16,13 +16,14 @@ use crate::{
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
     RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration,
-    TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowInsets, WindowOptions, WindowParams,
-    WindowTextSystem, WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
+    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, SceneCapture, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
+    SystemWindowTab, SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task,
+    TextInputConfiguration, TextInputStateChange, TextRenderingMode, TextStyle,
+    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
+    WindowInsets, WindowOptions, WindowParams, WindowTextSystem, WindowVisibility, point,
+    prelude::*, px, rems, size, transparent_black,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -1231,6 +1232,10 @@ pub struct Window {
     is_resizable: bool,
     is_minimizable: bool,
     sprite_atlas: Arc<dyn PlatformAtlas>,
+    scene_capture: Option<SceneCapture>,
+    scene_capture_error_reported: bool,
+    scene_capture_scratch: Scene,
+    scene_epoch: u64,
     text_system: Arc<WindowTextSystem>,
     text_rendering_mode: Rc<Cell<TextRenderingMode>>,
     rem_size: Pixels,
@@ -1270,7 +1275,6 @@ pub struct Window {
     pub(crate) next_tooltip_id: TooltipId,
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     pub(crate) next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
-    draw_count: u64,
     pub(crate) dirty_views: FxHashSet<EntityId>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     pub(crate) focus_lost_listeners: SubscriberSet<(), AnyObserver>,
@@ -2149,6 +2153,10 @@ impl Window {
             is_resizable,
             is_minimizable,
             sprite_atlas,
+            scene_capture: None,
+            scene_capture_error_reported: false,
+            scene_capture_scratch: Scene::default(),
+            scene_epoch: 0,
             text_system,
             text_rendering_mode: cx.text_rendering_mode.clone(),
             rem_size: px(16.),
@@ -2172,7 +2180,6 @@ impl Window {
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame_callbacks,
-            draw_count: 0,
             next_hitbox_id: HitboxId(0),
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
@@ -2892,6 +2899,51 @@ impl Window {
         self.platform_window.insets()
     }
 
+    /// Marks the current draw and its painted scene prefix.
+    pub fn scene_checkpoint(&self) -> (u64, usize) {
+        (self.scene_epoch, self.next_frame.scene.len())
+    }
+
+    /// Captures the current frame, or a transparent layer painted since `checkpoint`.
+    /// Bounds use device pixels; returned pixels are premultiplied RGBA.
+    /// Returns an error for a stale checkpoint or an unsupported renderer.
+    pub fn capture_scene_prefix(
+        &mut self,
+        bounds: Bounds<DevicePixels>,
+        checkpoint: Option<(u64, usize)>,
+    ) -> Result<Vec<[u8; 4]>> {
+        self.invalidator.debug_assert_paint();
+        let result = (|| {
+            if self.scene_capture.is_none() {
+                self.scene_capture = Some(self.sprite_atlas.clone().create_scene_capture()?);
+            }
+            let size = self.viewport_size.to_device_pixels(self.scale_factor());
+            let opaque = checkpoint.is_none()
+                && self.platform_window.background_appearance() == WindowBackgroundAppearance::Opaque;
+            let scene = if let Some((epoch, start)) = checkpoint {
+                anyhow::ensure!(
+                    epoch == self.scene_epoch && start <= self.next_frame.scene.len(),
+                    "stale scene checkpoint"
+                );
+                self.scene_capture_scratch.clear();
+                self.scene_capture_scratch.replay(start..self.next_frame.scene.len(), &self.next_frame.scene);
+                self.scene_capture_scratch.finish();
+                &self.scene_capture_scratch
+            } else {
+                self.next_frame.scene.finish();
+                &self.next_frame.scene
+            };
+            self.scene_capture.as_mut().unwrap()(scene, size, bounds, opaque)
+        })();
+        if let Err(error) = &result
+            && !self.scene_capture_error_reported
+        {
+            log::error!("cannot capture popup backdrop: {error:#}");
+            self.scene_capture_error_reported = true;
+        }
+        result
+    }
+
     /// Renders the current frame's scene to a texture and returns the pixel data as an RGBA image.
     /// This does not present the frame to screen - useful for visual testing where we want
     /// to capture what would be rendered without displaying it or requiring the window to be visible.
@@ -3450,7 +3502,7 @@ impl Window {
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
-        self.draw_count += 1;
+        self.scene_epoch = self.scene_epoch.wrapping_add(1);
         // Drain every draw in profiler builds so a previous frame's
         // first-invalidation timestamp can't be attributed to this one.
         #[cfg(feature = "profiler")]
@@ -4282,12 +4334,6 @@ impl Window {
         self.composited_layer = previous_layer;
         self.saved_layer = previous_saved;
         result
-    }
-
-    /// How many times this window started a draw: state kept for one frame is stale once it
-    /// changes.
-    pub fn draw_count(&self) -> u64 {
-        self.draw_count
     }
 
     /// The window bounds of the innermost `Styled::layer` element being painted, where
@@ -5299,6 +5345,33 @@ impl Window {
             content_mask,
             image_buffer,
         });
+    }
+
+    /// Whether an image is referenced by the current or previous scene.
+    pub fn is_image_in_use(&self, image: &RenderImage) -> bool {
+        (0..image.frame_count()).any(|frame_index| {
+            let key = RenderImageParams {
+                image_id: image.id,
+                frame_index,
+            };
+            match self
+                .sprite_atlas
+                .get_or_insert_with(key.into(), &mut || Ok(None))
+            {
+                Err(_) => true,
+                Ok(None) => false,
+                Ok(Some(tile)) => self
+                    .next_frame
+                    .scene
+                    .polychrome_sprites
+                    .iter()
+                    .chain(&self.rendered_frame.scene.polychrome_sprites)
+                    .any(|sprite| {
+                        sprite.tile.texture_id == tile.texture_id
+                            && sprite.tile.tile_id == tile.tile_id
+                    }),
+            }
+        })
     }
 
     /// Removes an image from the sprite atlas.
