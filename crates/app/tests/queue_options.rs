@@ -436,8 +436,10 @@ fn open_in_side_chat_runs_the_queued_message_in_its_own_conversation() -> Result
     assert!(!fx.composer_focused()?);
 
     // Each conversation takes only its own thread's events.
-    let answer =
-        json!([{"type": "agentMessage", "id": "side-answer", "text": "It returns a - b."}]);
+    let answer = json!([
+        {"type": "userMessage", "id": "side-user", "content": second["input"]},
+        {"type": "agentMessage", "id": "side-answer", "text": "It returns a - b."},
+    ]);
     notify(
         &mut fx,
         "turn/started",
