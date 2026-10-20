@@ -67,6 +67,9 @@ pub enum Kind {
     Branches,
     CreateBranch,
     BranchConflict,
+    ArchiveRuns {
+        count: usize,
+    },
 }
 #[derive(Clone)]
 pub enum Outcome {
@@ -110,6 +113,10 @@ pub enum Outcome {
         create: bool,
     },
     CommitBeforeCheckout,
+    ArchiveRuns {
+        automation: String,
+        threads: Vec<String>,
+    },
 }
 
 /// The rows of the commit form: `Commit`, `Commit and push` and `Push`.
@@ -172,6 +179,7 @@ pub struct Dialog {
     scroll: ScrollHandle,
     /// `Rename`: the thread id.
     thread: String,
+    archive_threads: Vec<String>,
     /// `LogOut`: the signed-in ChatGPT account's email, from `account/read`.
     email: Option<String>,
     schedule_time: String,
@@ -203,6 +211,7 @@ impl Dialog {
             do_not_ask_again: false,
             scroll: ScrollHandle::new(),
             thread: String::new(),
+            archive_threads: Vec::new(),
             email: None,
             schedule_time: "09:00".into(),
             repeat: 0,
@@ -220,6 +229,16 @@ impl Dialog {
         Self {
             email,
             ..Self::new(Kind::LogOut, cx)
+        }
+    }
+    pub fn archive_runs(automation: String, threads: Vec<String>, cx: &mut Context<Self>) -> Self {
+        Self {
+            thread: automation,
+            kind: Kind::ArchiveRuns {
+                count: threads.len(),
+            },
+            archive_threads: threads,
+            ..Self::new(Kind::ArchiveRuns { count: 0 }, cx)
         }
     }
     /// `Rename chat` for `thread`, its input prefilled with `title` and all of it selected.
@@ -763,6 +782,9 @@ impl Dialog {
                     "Archive all"
                 }
             }
+            (Kind::ArchiveRuns { .. }, 0) => "Cancel",
+            (Kind::ArchiveRuns { count: 1 }, _) => "Archive",
+            (Kind::ArchiveRuns { .. }, _) => "Archive all",
             (Kind::ModelAnnouncement, 0) => "Close",
             (Kind::ModelAnnouncement, 1) => "Continue with current model",
             (Kind::ModelAnnouncement, _) => {
@@ -922,6 +944,10 @@ impl Dialog {
             (Kind::FullAccess, 1) => cx.emit(Outcome::FullAccess),
             (Kind::LogOut, 1) => cx.emit(Outcome::LogOut),
             (Kind::ArchiveSection, 1) => cx.emit(Outcome::ArchiveSection(self.thread.clone())),
+            (Kind::ArchiveRuns { .. }, 1) => cx.emit(Outcome::ArchiveRuns {
+                automation: self.thread.clone(),
+                threads: self.archive_threads.clone(),
+            }),
             (Kind::ModelAnnouncement, 2) => {
                 let announcement = self.announcement.as_ref().expect("model announcement");
                 cx.emit(Outcome::UseAnnouncedModel {
@@ -1133,9 +1159,11 @@ impl Dialog {
             "escape" => self.dismiss(cx),
             "tab" => {
                 let order: Vec<usize> = match self.kind {
-                    Kind::Shortcuts | Kind::FullAccess | Kind::LogOut | Kind::ArchiveSection => {
-                        vec![0, 1]
-                    }
+                    Kind::Shortcuts
+                    | Kind::FullAccess
+                    | Kind::LogOut
+                    | Kind::ArchiveSection
+                    | Kind::ArchiveRuns { .. } => vec![0, 1],
                     Kind::ScheduleTask => vec![0, 3, 4, 5, 1, 2],
                     Kind::Branches => vec![0, 1],
                     Kind::BranchConflict => vec![1, 2],
@@ -1178,6 +1206,7 @@ impl Dialog {
                         | Kind::FullAccess
                         | Kind::LogOut
                         | Kind::ArchiveSection
+                        | Kind::ArchiveRuns { .. }
                         | Kind::ModelAnnouncement
                         | Kind::RevertChanges
                 ) || (self.selected != 0 && !self.editing()) =>
@@ -1230,7 +1259,10 @@ impl Dialog {
             .when(
                 matches!(
                     self.kind,
-                    Kind::FullAccess | Kind::RevertChanges | Kind::ArchiveSection
+                    Kind::FullAccess
+                        | Kind::RevertChanges
+                        | Kind::ArchiveSection
+                        | Kind::ArchiveRuns { .. }
                 ),
                 |d| {
                     d.h(px(36.)).rounded(px(18.)).bg(if primary {
@@ -1272,7 +1304,10 @@ impl Dialog {
                 430.,
                 if matches!(
                     self.kind,
-                    Kind::FullAccess | Kind::RevertChanges | Kind::ArchiveSection
+                    Kind::FullAccess
+                        | Kind::RevertChanges
+                        | Kind::ArchiveSection
+                        | Kind::ArchiveRuns { .. }
                 ) && primary
                 {
                     t.text_error
@@ -1609,6 +1644,52 @@ impl Dialog {
             .child(div().absolute().bottom(px(20.)).right(px(20.)).flex().gap(px(12.))
                 .child(self.button(0, "Cancel", 88., t, cx))
                 .child(self.button(1, "Confirm", 115., t, cx)))
+    }
+
+    fn archive_title(&self) -> String {
+        match self.kind {
+            Kind::ArchiveRuns { count: 1 } => "Archive this run?".into(),
+            Kind::ArchiveRuns { count } => format!("Archive {count} runs?"),
+            _ => unreachable!(),
+        }
+    }
+
+    fn archive_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        let single = self.kind == Kind::ArchiveRuns { count: 1 };
+        div()
+            .p(px(20.))
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .child(text(self.archive_title(), 20., 28., 600., t.text))
+            .child(
+                text(
+                    if single {
+                        "You can find this run’s chat later in archived chats"
+                    } else {
+                        "You can find these runs’ chats later in archived chats"
+                    },
+                    14.,
+                    20.,
+                    400.,
+                    t.text_secondary,
+                )
+                .whitespace_normal(),
+            )
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap(px(12.))
+                    .child(self.button(0, "Cancel", 80., t, cx))
+                    .child(self.button(
+                        1,
+                        if single { "Archive" } else { "Archive all" },
+                        108.,
+                        t,
+                        cx,
+                    )),
+            )
     }
 
     fn close_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
@@ -2915,6 +2996,7 @@ impl Render for Dialog {
             Kind::ArchiveSection => (420., 181.),
             Kind::FullAccess => (520., 420.),
             Kind::LogOut => (380., 145. + if self.email.is_some() { 25. } else { 0. }),
+            Kind::ArchiveRuns { .. } => (420., 172.),
             Kind::ModelAnnouncement => (480., 432.),
             Kind::Commit => (420., self.commit_height()),
             Kind::Branches => (
@@ -2938,6 +3020,7 @@ impl Render for Dialog {
             Kind::ArchiveSection => self.archive_section_content(t, cx),
             Kind::FullAccess => self.full_access_content(t, cx),
             Kind::LogOut => self.logout_content(t, cx),
+            Kind::ArchiveRuns { .. } => self.archive_content(t, cx),
             Kind::ModelAnnouncement => self.announcement_content(t, cx),
             Kind::Commit => self.commit_content(t, cx),
             Kind::Branches | Kind::CreateBranch | Kind::BranchConflict => {
@@ -2989,6 +3072,7 @@ impl Render for Dialog {
                             .into(),
                         Kind::FullAccess => "Turn on Full Access?".into(),
                         Kind::LogOut => "Log out?".into(),
+                        Kind::ArchiveRuns { .. } => self.archive_title().into(),
                         Kind::Commit => "Commit or push".into(),
                         Kind::Branches => "Switch branch".into(),
                         Kind::CreateBranch => "Create and checkout branch".into(),

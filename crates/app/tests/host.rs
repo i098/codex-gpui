@@ -210,6 +210,132 @@ fn inbox_preserves_order_filtering_counts_and_account_isolation() -> Result<()> 
 }
 
 #[test]
+fn read_actions_preserve_other_accounts_and_running_unread_state() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let db = database(home.path())?;
+    let host = LocalHost::new(home.path());
+    let bulk = Request::post(
+        "inbox-automation-runs-mark-all-read",
+        Some(json!({"readAt": 1234})),
+    );
+    assert_eq!(json_body(&host.fetch(&bulk)?)?["count"], 3);
+    let reads = || -> Result<Vec<(String, Option<i64>)>> {
+        Ok(db
+            .prepare("SELECT thread_id, read_at FROM automation_runs ORDER BY thread_id")?
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?)
+    };
+    assert_eq!(
+        reads()?,
+        vec![
+            ("accepted".into(), Some(1234)),
+            ("archived".into(), Some(1234)),
+            ("private-run".into(), None),
+            ("review".into(), Some(1234)),
+            ("running".into(), None),
+        ]
+    );
+    assert_eq!(json_body(&host.fetch(&bulk)?)?["count"], 0);
+    host.fetch(&Request::post(
+        "inbox-item-set-read-state",
+        Some(json!({"id": "review", "isRead": false})),
+    ))?;
+    assert_eq!(
+        json_body(&host.fetch(&Request::post("inbox-items", None))?)?["unreadRunCounts"]["total"],
+        1
+    );
+    assert_eq!(
+        json_body(&host.fetch(&Request::post(
+            "inbox-item-set-read-state",
+            Some(json!({"id": "private-run", "isRead": true}))
+        ))?)?["success"],
+        false
+    );
+    assert_eq!(reads()?[2].1, None);
+    Ok(())
+}
+
+#[test]
+fn archive_run_preserves_messages_reason_and_other_account_rows() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let db = database(home.path())?;
+    let host = LocalHost::new(home.path());
+    let archive = |id, reason, message| {
+        Request::post(
+            "automation-run-archive",
+            Some(json!({
+                "threadId": id, "archivedReason": reason, "archivedAssistantMessage": message,
+            })),
+        )
+    };
+    assert_eq!(
+        json_body(&host.fetch(&archive("review", "user", Some("Retained answer")))?)?["success"],
+        true
+    );
+    host.fetch(&archive("review", "auto", None))?;
+    let row: (String, String, String) = db.query_row(
+        "SELECT status, archived_reason, archived_assistant_message FROM automation_runs WHERE thread_id = 'review'",
+        [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+    assert_eq!(
+        row,
+        ("ARCHIVED".into(), "user".into(), "Retained answer".into())
+    );
+    assert_eq!(
+        json_body(&host.fetch(&archive("private-run", "user", Some("Overwrite")))?)?["success"],
+        false
+    );
+    assert_eq!(
+        db.query_row(
+            "SELECT status FROM automation_runs WHERE thread_id = 'private-run'",
+            [],
+            |r| r.get::<_, String>(0)
+        )?,
+        "PENDING_REVIEW"
+    );
+    assert_eq!(
+        json_body(&host.fetch(&Request::post("inbox-items", None))?)?["unreadRunCounts"]["total"],
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn refused_run_mutations_leave_stored_results_unchanged() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let db = database(home.path())?;
+    let host = LocalHost::new(home.path());
+    db.execute_batch("CREATE TRIGGER refuse_update BEFORE UPDATE ON automation_runs BEGIN SELECT RAISE(ABORT, 'owned refusal'); END;")?;
+    for request in [
+        Request::post(
+            "inbox-item-set-read-state",
+            Some(json!({"id":"review","isRead":true})),
+        ),
+        Request::post(
+            "inbox-automation-runs-mark-all-read",
+            Some(json!({"readAt":1234})),
+        ),
+        Request::post(
+            "automation-run-archive",
+            Some(json!({"threadId":"review","archivedReason":"user"})),
+        ),
+    ] {
+        assert!(
+            host.fetch(&request)
+                .unwrap_err()
+                .to_string()
+                .contains("owned refusal")
+        );
+    }
+    let row: (String, Option<i64>, Option<String>) = db.query_row(
+        "SELECT status, read_at, archived_reason FROM automation_runs WHERE thread_id = 'review'",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )?;
+    assert_eq!(row, ("PENDING_REVIEW".into(), None, None));
+    Ok(())
+}
+
+#[test]
 fn local_definitions_use_matching_schedule_metadata_not_another_accounts_cache() -> Result<()> {
     let home = tempfile::tempdir()?;
     let _db = database(home.path())?;

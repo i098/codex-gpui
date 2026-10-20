@@ -146,6 +146,12 @@ The app opens that thread after a successful start, unless you navigate away whi
 Run `cargo test -p app --test task_create -- --test-threads=1` on macOS for the native creation and reload proof.
 Run `cargo test -p app --test automation_run_now` for the `Run now` requests over a stdio app-server stub.
 
+Previous runs offers `Mark all as read` and `Archive all` for the selected task.
+Archive requires confirmation and skips running or already archived chats.
+The app keeps failed rows and reloads the run store after each action.
+Local read and archive writes exclude account-owned tasks and never remove worktrees.
+Run `cargo test -p app --test automation_history -- --test-threads=1` on macOS for confirmation, cancellation, read failure, and partial archive proof.
+
 ## Release bundle
 
 ```sh
