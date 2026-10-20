@@ -399,6 +399,10 @@ fn startup_chat_failure_keeps_home_available_and_retry_restores_chats() -> Resul
     assert!(fx.read(|r, cx| r.sidebar().read(cx).load_failed()));
     sidebar_shot(&mut fx, "chats-error")?;
     fx.advance(Duration::from_secs(1))?;
+    assert!(
+        fx.read(|r, cx| r.sidebar().read(cx).load_failed()),
+        "Section loading must not clear the failed chat list"
+    );
     assert_eq!(
         fx.sent()?
             .iter()

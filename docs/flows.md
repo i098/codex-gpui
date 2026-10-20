@@ -284,6 +284,7 @@ Thread-to-Home navigation keeps the Home composer focus set by `Root::new_chat`.
 Activity uses the existing Sidebar unread and running states, Root navigation, and paging path.
 Its recent groups cover seven local calendar days, ordered by each thread's update time.
 Loaded chat rows remain available during background refreshes and after a background read fails.
+Section loading preserves the main chat list's loading or failure state, so Retry remains available.
 The options menu changes Priority, Pinned, and Scheduled visibility.
 Mark all as read changes the existing unread state; Clear read chats removes read items from the activity snapshot.
 Archive requires confirmation and uses Root's existing per-thread archive path.
