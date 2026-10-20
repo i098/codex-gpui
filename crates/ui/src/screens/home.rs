@@ -100,7 +100,7 @@ fn chip(
                     .items_center()
                     .px(px(8.))
                     .gap(px(6.))
-                    .child(icon(glyph, 16., fg).when(id == "choose-project", |icon| icon.runtime()))
+                    .child(icon(glyph, 16., fg).runtime())
                     .child(label(s, fg)),
             )),
     )
@@ -124,7 +124,19 @@ fn utility_bar(project: Option<SharedString>, t: &Theme, window: &mut Window, cx
     let project_focus = focus::handle("choose-project", 0, window, cx);
     let work_focus = focus::handle("work-in", 0, window, cx);
     let scroll = window
-        .use_keyed_state("home-utility-scroll", cx, |_, _| ScrollHandle::new())
+        .use_keyed_state("home-utility-scroll", cx, |window, cx| {
+            for (index, focus) in [&project_focus, &work_focus].into_iter().enumerate() {
+                let handle = focus.read(cx).handle.clone();
+                cx.on_focus(&handle, window, move |_, window, cx| {
+                    cx.defer_in(window, move |scroll: &mut ScrollHandle, _, cx| {
+                        scroll.scroll_to_item(index);
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }
+            ScrollHandle::new()
+        })
         .read(cx)
         .clone();
     let finished = cx
