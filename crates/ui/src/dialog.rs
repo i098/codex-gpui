@@ -468,6 +468,7 @@ impl Dialog {
             .bg(cx.theme().list_hover)
             .text_size(px(14.))
             .line_height(px(20.))
+            .font_weight(gpui::FontWeight(430.))
             .text_color(cx.theme().text)
             .child(label)
             .when(!enabled, |button| button.opacity(0.4))
@@ -694,7 +695,10 @@ impl Dialog {
                                         .left(px(16.))
                                         .right(px(16.))
                                         .h(px(1.))
-                                        .bg(t.border),
+                                        .child(shapes::decoration(shapes::Decoration {
+                                            fill: Some(t.border),
+                                            ..Default::default()
+                                        })),
                                 )
                             }),
                     );
@@ -773,10 +777,20 @@ impl Dialog {
                     .child(
                         div()
                             .size(px(72.))
-                            .rounded(px(20.))
-                            .border_1()
-                            .border_color(t.border)
-                            .bg(t.surface)
+                            .relative()
+                            .child(shapes::decoration(shapes::Decoration {
+                                radius: Corners::all(px(20.)),
+                                fill: Some(t.surface),
+                                border: Some((px(1.), t.border)),
+                                shadows: vec![crate::composer::shadow(
+                                    t.shadow_sm,
+                                    1.,
+                                    2.,
+                                    -1.,
+                                    false,
+                                )],
+                                ..Default::default()
+                            }))
                             .flex()
                             .items_center()
                             .justify_center()
@@ -812,7 +826,7 @@ impl Dialog {
                                         "ChatGPT uses your chats and Library files to write in your style.",
                                         14.,
                                         21.,
-                                        400.,
+                                        430.,
                                         t.text_secondary,
                                     ))
                                     .child(
@@ -3867,9 +3881,10 @@ impl Render for Dialog {
                     } else {
                         24.
                     }))
-                    .when(!commit && self.kind != Kind::LogOut, |d| {
-                        d.overflow_hidden()
-                    })
+                    .when(
+                        !commit && !matches!(self.kind, Kind::LogOut | Kind::WritingStyle),
+                        |d| d.overflow_hidden(),
+                    )
                     .map(|d| {
                         if announcement {
                             d.child(shapes::decoration(shapes::Decoration {
@@ -3966,7 +3981,13 @@ impl Render for Dialog {
                             d.bg(t.surface_elevated_secondary)
                         }
                     })
-                    .child(content),
+                    .map(|d| {
+                        if self.kind == Kind::WritingStyle {
+                            d.child(crate::rounded_clip(px(20.), shapes::Corner::Round, content))
+                        } else {
+                            d.child(content)
+                        }
+                    }),
             )
     }
 }
