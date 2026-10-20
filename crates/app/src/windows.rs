@@ -534,6 +534,7 @@ pub(crate) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             height: this.state.height,
             sidebar_open: this.state.sidebar_open,
             sidebar_width: this.state.sidebar_width,
+            zoom: this.state.zoom,
             route: this.route().clone(),
             theme: this.state.theme,
             confirm_before_close: this.state.confirm_before_close,
