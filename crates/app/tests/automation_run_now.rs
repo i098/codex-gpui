@@ -20,12 +20,23 @@ while IFS= read -r line; do
     *'"model/list"'*) printf '{"id":%s,"result":{"data":%s}}\n' "$id" "$MODELS" ;;
     *'"config/read"'*) printf '{"id":%s,"result":{"config":%s}}\n' "$id" "$CONFIG" ;;
     *'"configRequirements/read"'*) [ -z "$FAIL_REQUIREMENTS" ] || { printf '{"id":%s,"error":{"code":-32000,"message":"requirements unavailable"}}\n' "$id"; continue; }; printf '{"id":%s,"result":{"requirements":%s}}\n' "$id" "$REQUIREMENTS" ;;
+    *'"thread/read"'*)
+      if [ -n "$FAIL_READ" ]; then printf '{"id":%s,"error":{"code":-32000,"message":"missing fixture thread"}}\n' "$id"; continue; fi
+      if [ -n "$ACTIVE_RACE" ]; then printf '{"method":"item/started","params":{"threadId":"heartbeat-thread","turnId":"racing-turn"}}\n'; fi
+      printf '{"id":%s,"result":{"thread":%s}}\n' "$id" "${THREAD:-null}" ;;
+    *'"thread/resume"'*)
+      if [ -n "$FAIL_RESUME" ]; then printf '{"id":%s,"error":{"code":-32000,"message":"resume refused"}}\n' "$id"; continue; fi
+      printf '{"id":%s,"result":{"thread":%s}}\n' "$id" "${THREAD:-null}" ;;
     *'"thread/start"'*)
       [ -z "$FAIL_THREAD" ] || { printf '{"id":%s,"error":{"code":-32000,"message":"no thread"}}\n' "$id"; continue; }
       [ -z "$STATE_AFTER_THREAD" ] || printf '%s' "$STATE_AFTER_THREAD" > "$STATE"
       [ -z "$BLOCK_STATE" ] || { mv "$STATE" "$STATE.saved"; mkdir "$STATE"; }
       printf '{"id":%s,"result":{"thread":{"id":"%s"}}}\n' "$id" "${THREAD_ID:-thread-$id}" ;;
     *'"turn/start"'*REFUSE*) printf '{"id":%s,"error":{"code":-32000,"message":"model unavailable"}}\n' "$id" ;;
+    *'"turn/start"'*automation_heartbeat_run_now*)
+      [ -z "$SLOW" ] || sleep 2
+      printf '{"method":"turn/started","params":{"threadId":"heartbeat-thread","turn":{"id":"heartbeat-turn","status":"inProgress","items":[]}}}\n'
+      printf '{"id":%s,"result":{"turn":{"id":"heartbeat-turn"}}}\n' "$id" ;;
     *'"turn/start"'*)
       [ -z "$SLOW" ] || sleep 2
       if [ -n "$HOLD_TURN" ]; then
@@ -1026,6 +1037,83 @@ fn projectless_runs_own_distinct_directories_and_persist_thread_metadata() -> Re
     Ok(())
 }
 
+fn heartbeat_definition(host: &LocalHost, prompt: &str) -> Result<()> {
+    host.write_automation("heartbeat", &format!(
+        "version = 1\nid = \"heartbeat\"\nname = \"Monitor\"\nprompt = {prompt:?}\nstatus = \"ACTIVE\"\nkind = \"heartbeat\"\ntarget_thread_id = \"heartbeat-thread\"\nrrule = \"FREQ=MINUTELY;INTERVAL=30\"\ncreated_at = 1\nupdated_at = 1\n"
+    ))
+}
+
+fn heartbeat_params() -> Value {
+    json!({"id": "heartbeat", "collaborationMode": {"mode": "plan", "settings": {
+        "model": "gpt-6.1-sol", "reasoning_effort": "low", "developer_instructions": "Keep the user's instructions",
+    }}, "permissions": {
+        "approvalPolicy": "on-request", "approvalsReviewer": "user",
+        "sandboxPolicy": {"type": "readOnly", "networkAccess": false},
+    }})
+}
+
+fn heartbeat_run(host: &LocalHost, params: Value) -> Result<Value> {
+    json_body(&host.fetch(&Request::post("automation-run-now", Some(params)))?)
+}
+
+#[test]
+fn heartbeat_reuses_its_thread_with_renderer_mode_permissions_and_interval_state() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    fs::create_dir_all(dir.path().join("sqlite"))?;
+    let db = rusqlite::Connection::open(dir.path().join("sqlite/codex.db"))?;
+    db.execute_batch(AUTOMATIONS)?;
+    db.execute_batch(RUNS)?;
+    let thread = json!({"id": "heartbeat-thread", "cwd": dir.path(), "path": "/fixture/session.jsonl", "status": {"type": "idle"}});
+    let log = dir.path().join("requests.jsonl");
+    let host = host_with(dir.path(), &log, false, &[("THREAD", &thread.to_string())])?;
+    heartbeat_definition(&host, "Check the fixture job")?;
+    let before = chrono::Utc::now().timestamp_millis();
+    ensure!(heartbeat_run(&host, heartbeat_params())? == json!({"success": true}));
+    let sent = all_requests(&log)?;
+    ensure!(
+        sent.iter()
+            .map(|r| r["method"].as_str().unwrap())
+            .collect::<Vec<_>>()
+            == ["thread/read", "model/list", "thread/resume", "turn/start"]
+    );
+    ensure!(
+        sent[2]["params"]
+            == json!({"threadId": "heartbeat-thread", "cwd": dir.path(), "path": "/fixture/session.jsonl"})
+    );
+    let turn = &sent[3]["params"];
+    ensure!(
+        turn["threadId"] == "heartbeat-thread"
+            && turn["model"].is_null()
+            && turn["effort"].is_null()
+    );
+    ensure!(turn["collaborationMode"]["mode"] == "plan");
+    ensure!(turn["collaborationMode"]["settings"]["model"] == "gpt-6.1-sol");
+    ensure!(turn["collaborationMode"]["settings"]["reasoning_effort"] == "low");
+    let instructions = turn["collaborationMode"]["settings"]["developer_instructions"]
+        .as_str()
+        .unwrap();
+    ensure!(instructions.starts_with("Keep the user's instructions\n\n## Heartbeats"));
+    ensure!(instructions.contains("DONT_NOTIFY") && instructions.contains("automation_update"));
+    ensure!(turn["approvalPolicy"] == "on-request" && turn["sandboxPolicy"]["type"] == "readOnly");
+    let text = turn["input"][0]["text"].as_str().unwrap();
+    ensure!(text.starts_with(
+        "<heartbeat>\n  <automation_id>heartbeat</automation_id>\n  <current_time_iso>"
+    ));
+    ensure!(
+        text.ends_with("<instructions>\nCheck the fixture job\n  </instructions>\n</heartbeat>\n")
+    );
+    let (last, next, nominal): (i64, i64, i64) = db.query_row(
+        "SELECT last_run_at, next_run_at, next_run_nominal_at FROM automations WHERE id='heartbeat'",
+        [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+    )?;
+    ensure!(last >= before && nominal == last + 30 * 60_000 && next == nominal);
+    ensure!(
+        runs(dir.path())?.is_empty(),
+        "a heartbeat must not open a cron run row"
+    );
+    Ok(())
+}
+
 #[test]
 fn projectless_refuses_relative_and_symlink_roots_before_starting_a_thread() -> Result<()> {
     let dir = tempfile::tempdir()?;
@@ -1099,6 +1187,69 @@ fn projectless_start_and_turn_failures_keep_owned_files_and_truthful_run_state()
         ensure!(rows[0].1 == "ARCHIVED" && rows[0].3.as_deref() == Some("auto"));
         ensure!(rows[0].0.starts_with("pending:") == fail_thread);
         ensure!(home.join(".codex-global-state.json").exists() != fail_thread);
+    }
+    Ok(())
+}
+
+#[test]
+fn heartbeat_refuses_missing_busy_loading_and_failed_threads_without_a_replacement() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let idle = json!({"id": "heartbeat-thread", "cwd": dir.path(), "status": {"type": "idle"}});
+    let busy = json!({"id": "heartbeat-thread", "cwd": dir.path(), "status": {"type": "active", "activeFlags": ["waitingOnApproval"]}});
+    let cases = [
+        (
+            "missing",
+            json!(null),
+            "Heartbeat thread not found.",
+            Vec::new(),
+        ),
+        ("busy", busy, "busy right now", Vec::new()),
+        ("loading", idle.clone(), "mode is still loading", Vec::new()),
+        (
+            "resume",
+            idle.clone(),
+            "resume refused",
+            vec![("FAIL_RESUME", "1")],
+        ),
+        (
+            "requirements",
+            idle.clone(),
+            "requirements unavailable",
+            vec![("FAIL_REQUIREMENTS", "1")],
+        ),
+        ("turn", idle, "model unavailable", Vec::new()),
+    ];
+    for (case, thread, error, mut env) in cases {
+        let home = dir.path().join(case);
+        fs::create_dir_all(&home)?;
+        let log = home.join("requests.jsonl");
+        let thread = thread.to_string();
+        env.push(("THREAD", &thread));
+        let host = host_with(&home, &log, false, &env)?;
+        heartbeat_definition(&host, if case == "turn" { "REFUSE" } else { "Check" })?;
+        let mut params = heartbeat_params();
+        if case == "loading" {
+            params["collaborationMode"] = Value::Null;
+        }
+        if case == "requirements" {
+            params["permissions"] = Value::Null;
+        }
+        let actual = heartbeat_run(&host, params).unwrap_err().to_string();
+        ensure!(actual.contains(error), "{case}: {actual}");
+        let sent = all_requests(&log)?;
+        ensure!(!sent.iter().any(|r| matches!(
+            r["method"].as_str(),
+            Some("thread/start" | "thread/name/set")
+        )));
+        if matches!(case, "missing" | "busy" | "loading") {
+            ensure!(
+                !sent
+                    .iter()
+                    .any(|r| r["method"] == "thread/resume" || r["method"] == "turn/start")
+            );
+        } else if case == "requirements" {
+            ensure!(!sent.iter().any(|r| r["method"] == "turn/start"));
+        }
     }
     Ok(())
 }
@@ -1663,6 +1814,416 @@ fn projectless_autoarchive_keeps_its_workspace_and_thread_metadata() -> Result<(
             .filter(|request| request["method"] == "thread/archive")
             .count()
             == 1
+    );
+    Ok(())
+}
+
+#[test]
+fn heartbeat_checks_active_history_and_preserves_saved_thread_approval_policy() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let thread = json!({"id": "heartbeat-thread", "cwd": dir.path(), "status": {"type": "active", "activeFlags": []},
+        "turns": [{"id": "previous", "status": "completed"}]}).to_string();
+    let log = dir.path().join("requests.jsonl");
+    let config = r#"{"sandbox_mode":"read-only","approval_policy":"untrusted"}"#;
+    let host = host_with(
+        dir.path(),
+        &log,
+        false,
+        &[("THREAD", &thread), ("CONFIG", config)],
+    )?;
+    heartbeat_definition(&host, "Check")?;
+    let mut params = heartbeat_params();
+    params["permissions"] = Value::Null;
+    heartbeat_run(&host, params)?;
+    let sent = all_requests(&log)?;
+    let turn = &sent.last().unwrap()["params"];
+    ensure!(turn["approvalPolicy"] == "untrusted" && turn["sandboxPolicy"]["type"] == "readOnly");
+    let reads: Vec<_> = sent
+        .iter()
+        .filter(|r| r["method"] == "thread/read")
+        .collect();
+    ensure!(
+        reads
+            .iter()
+            .map(|r| r["params"]["includeTurns"].as_bool().unwrap())
+            .collect::<Vec<_>>()
+            == [false, true, false]
+    );
+    let racing_home = dir.path().join("race");
+    fs::create_dir(&racing_home)?;
+    let racing_log = racing_home.join("requests.jsonl");
+    let racing = host_with(
+        &racing_home,
+        &racing_log,
+        false,
+        &[("THREAD", &thread), ("ACTIVE_RACE", "1")],
+    )?;
+    heartbeat_definition(&racing, "Check")?;
+    ensure!(
+        heartbeat_run(&racing, heartbeat_params())
+            .unwrap_err()
+            .to_string()
+            .contains("busy right now")
+    );
+    ensure!(
+        !all_requests(&racing_log)?
+            .iter()
+            .any(|r| r["method"] == "turn/start")
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn proxy() {
+    common::proxy_child();
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn heartbeat_row_run_navigates_only_on_success_at_the_original_location() -> Result<()> {
+    use app::{GoToRecentChat, Route};
+    use common::{Fx, RAIL_SCHEDULED, exchange, recorded_thread, script};
+    use ui::screens::{automations::RunAutomationNow, settings::AppServer};
+    use ui::{GoBack, GoForward, NewChat};
+    for outcome in ["success", "failure", "navigated-away"] {
+        let home = tempfile::tempdir()?;
+        let project = home.path().join("project");
+        fs::create_dir(&project)?;
+        let mut thread = recorded_thread(common::GREETING)?;
+        thread["id"] = json!("heartbeat-thread");
+        thread["cwd"] = json!(project);
+        thread["model"] = json!("gpt-6.1-sol");
+        thread["reasoningEffort"] = json!("low");
+        thread["status"] = json!({"type": "idle"});
+        let mut lines = script(None, |line| {
+            if line["msg"]["result"]["data"].as_array().is_some_and(|d| {
+                d.iter().any(|m| {
+                    m.get("model").is_some() && m.get("supportedReasoningEfforts").is_some()
+                })
+            }) {
+                line["msg"]["result"]["data"] = json!([{
+                    "id": "gpt-6.1-sol", "model": "gpt-6.1-sol", "displayName": "GPT-6.1 Sol", "description": "",
+                    "hidden": false, "defaultReasoningEffort": "low", "supportedReasoningEfforts": [{"reasoningEffort": "low"}, {"reasoningEffort": "high"}], "isDefault": true
+                }]);
+            }
+            if let Some(data) = line["msg"]["result"]["data"].as_array_mut() {
+                for entry in data {
+                    if entry["id"] == common::GREETING {
+                        entry["id"] = json!("heartbeat-thread");
+                    }
+                }
+            }
+        })?;
+        let mut add = |method: &str, params: Value, result: Value| {
+            let mut pair = exchange(method, result);
+            pair[0]["msg"]["params"] = params;
+            lines.extend(pair);
+        };
+        add(
+            "thread/read",
+            json!({"threadId": "heartbeat-thread", "includeTurns": true}),
+            json!({"thread": thread}),
+        );
+        for _ in 0..2 {
+            add(
+                "thread/read",
+                json!({"threadId": "heartbeat-thread", "includeTurns": false}),
+                json!({"thread": thread}),
+            );
+        }
+        add(
+            "config/read",
+            json!({"cwd": project, "includeLayers": false}),
+            json!({"config": {"sandbox_mode": "read-only", "approval_policy": "untrusted", "model": "gpt-6.1-sol", "model_reasoning_effort": "high"}}),
+        );
+        add(
+            "configRequirements/read",
+            json!({}),
+            json!({"requirements": null}),
+        );
+        add(
+            "model/list",
+            json!({"includeHidden": true, "cursor": null, "limit": 100}),
+            json!({"data": []}),
+        );
+        add(
+            "thread/resume",
+            json!({"threadId": "heartbeat-thread", "cwd": project, "path": null}),
+            json!({"thread": thread}),
+        );
+        let turn = json!({"id": "heartbeat-turn", "status": "inProgress", "items": []});
+        let mut started = exchange("turn/start", json!({"turn": turn}));
+        if outcome == "failure" {
+            started[1]["msg"].as_object_mut().unwrap().remove("result");
+            started[1]["msg"]["error"] = json!({"code": -32000, "message": "model unavailable"});
+        }
+        lines.extend(started);
+        if outcome != "failure" {
+            lines.push(json!({"dir": "recv", "msg": {"method": "turn/started", "params": {"threadId": "heartbeat-thread", "turn": turn}}}));
+        }
+        thread["turns"].as_array_mut().unwrap().push(turn);
+        let mut loaded = exchange("thread/read", json!({"thread": thread}));
+        loaded[0]["msg"]["params"] = json!({"threadId": "heartbeat-thread", "includeTurns": true});
+        lines.extend(loaded);
+        let mut reverted = thread.clone();
+        reverted["turns"] = json!([]);
+        lines.extend(exchange("thread/revert", json!({"thread": reverted})));
+        let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+        let bridge = fx.cx.update(|cx| cx.global::<AppServer>().0.clone());
+        let host = LocalHost::new(home.path()).with_bridge(bridge);
+        heartbeat_definition(&host, "Check the fixture job")?;
+        fx.cx.update(|cx| {
+            fx.root
+                .update(cx, |root, cx| root.set_host(Arc::new(host), cx))
+        });
+        fx.action(Box::new(GoToRecentChat(0)))?;
+        fx.wait_thread("heartbeat-thread")?;
+        let composer = fx.composer();
+        ensure!(fx.read(|_, cx| {
+            composer.read(cx).run_settings().0["settings"]["reasoning_effort"] == "low"
+        }));
+        fx.cx
+            .update(|cx| composer.update(cx, |c, cx| c.confirm_full_access(cx)));
+        fx.click(RAIL_SCHEDULED)?;
+        fx.wait("heartbeat row", |fx| {
+            fx.read(|r, _| {
+                r.automations()
+                    .is_some_and(|a| a.as_ref().is_ok_and(|a| a["items"][0]["id"] == "heartbeat"))
+            })
+        })?;
+        fx.hover((150., 190.))?;
+        fx.click((302., 190.))?;
+        fx.cx.update_window(fx.window, |_, window, cx| {
+            for at in [
+                gpui::point(gpui::px(250.), gpui::px(228.)),
+                gpui::point(gpui::px(640.), gpui::px(780.)),
+            ] {
+                for event in [
+                    gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent {
+                        position: at,
+                        pressed_button: None,
+                        modifiers: gpui::Modifiers::default(),
+                    }),
+                    gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
+                        button: gpui::MouseButton::Left,
+                        position: at,
+                        modifiers: gpui::Modifiers::default(),
+                        click_count: 1,
+                        first_mouse: false,
+                    }),
+                    gpui::PlatformInput::MouseUp(gpui::MouseUpEvent {
+                        button: gpui::MouseButton::Left,
+                        position: at,
+                        modifiers: gpui::Modifiers::default(),
+                        click_count: 1,
+                    }),
+                ] {
+                    window.dispatch_event(event, cx);
+                }
+            }
+            window.dispatch_action(
+                Box::new(RunAutomationNow {
+                    id: "heartbeat".into(),
+                }),
+                cx,
+            );
+        })?;
+        let starting = |fx: &Fx| {
+            fx.read(|r, cx| {
+                r.scheduled_sidebar()
+                    .is_some_and(|s| s.read(cx).is_starting("heartbeat"))
+            })
+        };
+        ensure!(
+            starting(&fx),
+            "the heartbeat row must show its pending state"
+        );
+        if let Ok(out) = std::env::var("CGX_HEARTBEAT_SHOTS") {
+            fs::create_dir_all(&out)?;
+            fx.cx
+                .capture_screenshot(fx.window)?
+                .save(format!("{out}/{outcome}-pending.png"))?;
+        }
+        if outcome == "navigated-away" {
+            fx.cx.update_window(fx.window, |_, window, cx| {
+                window.dispatch_action(Box::new(NewChat), cx)
+            })?;
+        }
+        fx.wait("heartbeat answer", |fx| !starting(fx))?;
+        let sent = fx.sent()?;
+        let turns: Vec<_> = sent
+            .iter()
+            .filter(|r| r["method"] == "turn/start")
+            .collect();
+        ensure!(
+            turns.len() == 1,
+            "duplicate Run now must not start another heartbeat"
+        );
+        ensure!(
+            !sent
+                .iter()
+                .any(|r| r["method"] == "thread/start" || r["method"] == "thread/name/set")
+        );
+        ensure!(turns[0]["params"]["threadId"] == "heartbeat-thread");
+        ensure!(turns[0]["params"]["collaborationMode"]["settings"]["model"] == "gpt-6.1-sol");
+        ensure!(
+            turns[0]["params"]["approvalPolicy"] == "never"
+                && turns[0]["params"]["sandboxPolicy"]["type"] == "dangerFullAccess"
+        );
+        match outcome {
+            "success" => {
+                fx.wait_thread("heartbeat-thread")?;
+                fx.wait("running heartbeat", |fx| {
+                    fx.read(|r, cx| {
+                        r.thread().is_some_and(|v| {
+                            v.read(cx).turns().iter().any(|t| {
+                                t.id == "heartbeat-turn"
+                                    && t.status == bridge::types::TurnStatus::InProgress
+                            })
+                        })
+                    })
+                })?;
+                ensure!(fx.composer_focused()?);
+                fx.cx.update(|cx| {
+                    composer.update(cx, |c, cx| {
+                        c.restore_run_settings(
+                            &json!({"settings": {"model": "gpt-6.1-sol", "reasoning_effort": "high"}}),
+                            ui::composer::Permission::Ask,
+                            cx,
+                        )
+                    })
+                });
+                fx.action(Box::new(ui::screens::thread::view::RevertTurn(
+                    "heartbeat-turn".into(),
+                )))?;
+                fx.wait("undo reload", |fx| {
+                    fx.read(|r, cx| {
+                        r.thread()
+                            .is_some_and(|view| view.read(cx).turns().is_empty())
+                    })
+                })?;
+                ensure!(fx.read(|_, cx| {
+                    let composer = composer.read(cx);
+                    composer.permission() == ui::composer::Permission::Ask
+                        && composer.run_settings().0["settings"]["reasoning_effort"] == "high"
+                }));
+                fx.action(Box::new(GoBack))?;
+                ensure!(fx.route() == Route::Scheduled);
+                fx.action(Box::new(GoForward))?;
+                fx.wait_thread("heartbeat-thread")?;
+            }
+            "failure" => {
+                ensure!(fx.route() == Route::Scheduled);
+                ensure!(fx.read(|r, cx| {
+                    r.toasts(cx).iter().any(|t| {
+                        t.contains("Could not start scheduled task")
+                            && t.contains("model unavailable")
+                    })
+                }));
+            }
+            _ => ensure!(
+                fx.route() == Route::Home,
+                "a finished run must not take navigation back"
+            ),
+        }
+        if let Ok(out) = std::env::var("CGX_HEARTBEAT_SHOTS") {
+            fx.shot()?.save(format!("{out}/{outcome}-finished.png"))?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn heartbeat_completion_releases_only_its_matching_turn_without_a_cron_row() -> Result<()> {
+    for database in [false, true] {
+        let home = tempfile::tempdir()?;
+        if database {
+            fs::create_dir(home.path().join("sqlite"))?;
+            rusqlite::Connection::open(home.path().join("sqlite/codex.db"))?
+                .execute_batch(&format!("{AUTOMATIONS};{RUNS};"))?;
+        }
+        let log = home.path().join("requests.jsonl");
+        let thread =
+            json!({"id": "heartbeat-thread", "cwd": home.path(), "status": {"type": "idle"}});
+        let mut server = Command::new("sh");
+        server
+            .arg("-c")
+            .arg(SERVER)
+            .env("LOG", &log)
+            .env("THREAD", thread.to_string());
+        let (bridge, _events) = Bridge::spawn(server)?;
+        let bridge = Arc::new(bridge);
+        let host = LocalHost::new(home.path()).with_bridge(bridge.clone());
+        heartbeat_definition(&host, "Check")?;
+        heartbeat_run(&host, heartbeat_params())?;
+        let tracked = bridge.automation_turn("heartbeat-thread").unwrap();
+        ensure!(!tracked.auto_archive);
+        ensure!(!host.finish_run(
+            "heartbeat-thread",
+            &json!({"id": "other", "status": "completed"})
+        )?);
+        ensure!(bridge.automation_turn("heartbeat-thread").is_some());
+        ensure!(!host.finish_run(
+            "heartbeat-thread",
+            &json!({"id": "heartbeat-turn", "status": "completed"})
+        )?);
+        ensure!(bridge.automation_turn("heartbeat-thread").is_none());
+        ensure!(
+            !all_requests(&log)?
+                .iter()
+                .any(|r| r["method"] == "thread/archive")
+        );
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn heartbeat_row_keyboard_focus_survives_motion_and_clears_on_pointer_press() -> Result<()> {
+    use common::{Fx, RAIL_SCHEDULED, changed};
+    let home = tempfile::tempdir()?;
+    let host = LocalHost::new(home.path());
+    heartbeat_definition(&host, "Check")?;
+    let mut fx = Fx::new()?;
+    fx.cx.update(|cx| {
+        fx.root
+            .update(cx, |root, cx| root.set_host(Arc::new(host), cx))
+    });
+    fx.click(RAIL_SCHEDULED)?;
+    fx.wait("heartbeat row", |fx| {
+        fx.read(|r, _| {
+            r.automations()
+                .is_some_and(|a| a.as_ref().is_ok_and(|a| a["items"][0]["id"] == "heartbeat"))
+        })
+    })?;
+    fx.hover((100., 700.))?;
+    fx.advance(std::time::Duration::from_millis(300))?;
+    let region = [290., 174., 38., 36.];
+    let baseline = fx.shot()?;
+    fx.hover((150., 190.))?;
+    fx.click((302., 190.))?;
+    fx.hover((100., 700.))?;
+    fx.keys("escape")?;
+    fx.advance(std::time::Duration::from_millis(300))?;
+    let keyboard = fx.shot()?;
+    ensure!(
+        changed(&baseline, &keyboard, region) > 0,
+        "keyboard dismissal must leave the trigger visibly focused"
+    );
+    fx.hover((120., 710.))?;
+    fx.advance(std::time::Duration::from_millis(300))?;
+    let moved = fx.shot()?;
+    ensure!(
+        changed(&keyboard, &moved, region) == 0,
+        "pointer motion hid keyboard controls"
+    );
+    fx.click((120., 710.))?;
+    fx.advance(std::time::Duration::from_millis(300))?;
+    let pressed = fx.shot()?;
+    ensure!(
+        changed(&baseline, &pressed, region) == 0,
+        "pointer focus retained the controls"
     );
     Ok(())
 }

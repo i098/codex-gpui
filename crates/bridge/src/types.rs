@@ -34,6 +34,7 @@ pub struct Thread {
     pub preview: String,
     pub name: Option<String>,
     pub model: Option<String>,
+    pub reasoning_effort: Option<String>,
     pub model_provider: String,
     pub cwd: String,
     pub created_at: i64,

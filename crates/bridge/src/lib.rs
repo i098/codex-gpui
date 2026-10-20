@@ -70,6 +70,7 @@ impl std::error::Error for RpcError {}
 type Reply = Result<Value, RpcError>;
 /// `None` once the server has closed stdout: later requests fail instead of hanging.
 type Pending = Arc<Mutex<Option<HashMap<i64, Sender<Reply>>>>>;
+type Subscribers = Arc<Mutex<Vec<std::sync::mpsc::Sender<Event>>>>;
 
 /// Where a [`Bridge`] sends the client's requests, notifications and answers.
 trait Backend: Send {
@@ -94,13 +95,21 @@ impl Backend for Lines {
 struct Sink {
     pending: Pending,
     events: Sender<Event>,
+    subscribers: Subscribers,
 }
 
 impl Sink {
     fn new() -> (Sink, Receiver<Event>) {
         let (events, rx) = async_channel::unbounded();
         let pending = Arc::new(Mutex::new(Some(HashMap::new())));
-        (Sink { pending, events }, rx)
+        (
+            Sink {
+                pending,
+                events,
+                subscribers: Arc::default(),
+            },
+            rx,
+        )
     }
 
     fn reply(&self, id: i64, reply: Reply) {
@@ -110,6 +119,9 @@ impl Sink {
     }
 
     fn event(&self, event: Event) {
+        self.subscribers
+            .lock()
+            .retain(|s| s.send(event.clone()).is_ok());
         let _ = self.events.try_send(event);
     }
 
@@ -123,6 +135,7 @@ impl Sink {
     /// Dropping the waiters wakes them with "closed"; later requests fail at once.
     fn close(&self) {
         self.pending.lock().take();
+        self.subscribers.lock().clear();
     }
 }
 
@@ -133,6 +146,7 @@ pub struct Bridge {
     child: Option<Child>,
     acp: bool,
     automation_turns: Mutex<HashMap<String, Arc<AutomationTurn>>>,
+    subscribers: Subscribers,
 }
 
 /// `$CODEX_BIN`, else the binary bundled in ChatGPT.app, else `codex` on `PATH`; runs `app-server`.
@@ -207,9 +221,13 @@ impl Bridge {
     ) -> (Bridge, Receiver<Event>) {
         let (sink, events) = Sink::new();
         let pending = sink.pending.clone();
+        let subscribers = sink.subscribers.clone();
         std::thread::spawn(move || read_loop(BufReader::new(read), &sink));
         let backend = Box::new(Lines(Box::new(write)));
-        (Self::new(backend, pending, child, false), events)
+        (
+            Self::new(backend, pending, child, false, subscribers),
+            events,
+        )
     }
 
     fn acp_io(
@@ -218,12 +236,22 @@ impl Bridge {
         child: Option<Child>,
     ) -> (Bridge, Receiver<Event>) {
         let (sink, events) = Sink::new();
+        let subscribers = sink.subscribers.clone();
         let pending = sink.pending.clone();
         let backend = Box::new(acp::Acp::start(read, Lines(Box::new(write)), sink));
-        (Self::new(backend, pending, child, true), events)
+        (
+            Self::new(backend, pending, child, true, subscribers),
+            events,
+        )
     }
 
-    fn new(backend: Box<dyn Backend>, pending: Pending, child: Option<Child>, acp: bool) -> Self {
+    fn new(
+        backend: Box<dyn Backend>,
+        pending: Pending,
+        child: Option<Child>,
+        acp: bool,
+        subscribers: Subscribers,
+    ) -> Self {
         Bridge {
             backend: Mutex::new(backend),
             pending,
@@ -231,12 +259,20 @@ impl Bridge {
             child,
             acp,
             automation_turns: Mutex::new(HashMap::new()),
+            subscribers,
         }
     }
 
     /// Whether this connection runs an ACP agent ([`Bridge::spawn_acp`]).
     pub fn is_acp(&self) -> bool {
         self.acp
+    }
+
+    /// Observes events without taking them from the renderer's event stream.
+    pub fn subscribe(&self) -> std::sync::mpsc::Receiver<Event> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.subscribers.lock().push(tx);
+        rx
     }
 
     pub async fn request<P: Serialize, R: DeserializeOwned>(

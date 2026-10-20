@@ -1252,9 +1252,8 @@ pub struct Window {
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) element_opacity: f32,
-    /// The Chromium layers enclosing the element being painted, outermost first: (id, alpha,
-    /// whether non-text sprites blend through it too).
-    element_layers: Vec<(u8, u8, bool)>,
+    /// The enclosing Chromium layers, outermost first: (id, alpha).
+    element_layers: Vec<(u8, u8)>,
     /// The bounds of the innermost `Styled::layer` element being painted, and whether they
     /// set its cc tile size (`Styled::cc_tiles`).
     composited_layer: Option<(Bounds<Pixels>, bool)>,
@@ -4291,10 +4290,8 @@ impl Window {
         result
     }
 
-    /// Paints `f` at `opacity`. Like Chromium, text inside an opacity below 1 or a composited
-    /// `layer` (a `Styled::layer` element's bounds and style) is blitted into that
-    /// transparent layer, which is then blended onto what is below it; other primitives fold
-    /// the opacity into their color (see `sprite_color_and_layers`).
+    /// Paints `f` at `opacity`. Monochrome sprites keep their paint color and blend
+    /// through the enclosing layers; other primitives fold opacity into their color.
     pub(crate) fn with_element_opacity<R>(
         &mut self,
         opacity: Option<f32>,
@@ -4326,7 +4323,7 @@ impl Window {
             .then(|| std::mem::take(&mut self.element_layers));
         // Skia's `SkPaint::setAlphaf`: rounded to a byte.
         let alpha = (opacity.clamp(0., 1.) * 255.).round() as u8;
-        let result = self.push_layer(alpha, alpha == 255, f);
+        let result = self.push_layer(alpha, f);
         if let Some(outer) = outer {
             self.element_layers = outer;
         }
@@ -4352,48 +4349,39 @@ impl Window {
     /// Paints `f` into a Chromium `saveLayerAlpha(alpha)` that every monochrome sprite (svgs
     /// and masks too) blends through; the element opacity is unchanged.
     pub fn with_skia_layer<R>(&mut self, alpha: u8, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.push_layer(alpha, true, f)
+        self.push_layer(alpha, f)
     }
 
-    fn push_layer<R>(&mut self, alpha: u8, all: bool, f: impl FnOnce(&mut Self) -> R) -> R {
+    fn push_layer<R>(&mut self, alpha: u8, f: impl FnOnce(&mut Self) -> R) -> R {
         // Ids only tell overlapping layers apart within a frame.
         self.next_layer_id = self.next_layer_id % 255 + 1;
-        self.element_layers.push((self.next_layer_id, alpha, all));
+        self.element_layers.push((self.next_layer_id, alpha));
         let result = f(self);
         self.element_layers.pop();
         result
     }
 
-    /// A monochrome sprite's color and `MonochromeSprite::layers` for the current element. Text
-    /// keeps its color and blends through every layer at the layer's alpha. Chromium folds an
-    /// opacity into a lone non-text draw (cc `PlaybackFoldingIterator`), so svgs and masks take
-    /// the opacity in their color and blend through the opaque (composited) layers only.
-    /// ponytail: several non-text draws under one opacity are folded each, not layered.
+    /// A monochrome sprite's unchanged paint color and enclosing layer alphas.
     /// None under an opacity of 0: Chromium paints nothing there, and a sprite outside the
     /// layers would reset the layer state of the pixels it covers (a hidden hover fill would
     /// detach the text painted over it from its composited layer).
-    fn sprite_color_and_layers(&self, color: Hsla, text: bool) -> Option<(Hsla, u32)> {
+    fn sprite_color_and_layers(&self, color: Hsla) -> Option<(Hsla, u32)> {
         if self.element_opacity <= 0. {
             return None;
         }
-        let folded = color.opacity(self.element_opacity);
-        let mut layers = self
-            .element_layers
-            .iter()
-            .filter(|&&(_, _, all)| text || all);
+        let mut layers = self.element_layers.iter();
         Some(match layers.next() {
-            Some(&(id, alpha, _)) => {
+            Some(&(id, alpha)) => {
                 // ponytail: two layers; deeper ones multiply their alpha into the second.
-                let inner = layers.next().map_or(0, |&(id, alpha, _)| {
-                    let alpha = layers.fold(u32::from(alpha), |a, &(_, b, _)| {
+                let inner = layers.next().map_or(0, |&(id, alpha)| {
+                    let alpha = layers.fold(u32::from(alpha), |a, &(_, b)| {
                         (a * u32::from(b) + 127) / 255
                     });
                     u32::from(id) << 8 | alpha
                 });
-                let color = if text { color } else { folded };
                 (color, u32::from(id) << 8 | u32::from(alpha) | inner << 16)
             }
-            _ => (folded, 0),
+            _ => (color, 0),
         })
     }
 
@@ -5052,7 +5040,7 @@ impl Window {
                     transformation: TransformationMatrix::unit(),
                 });
             } else {
-                let Some((color, layers)) = self.sprite_color_and_layers(color, true) else {
+                let Some((color, layers)) = self.sprite_color_and_layers(color) else {
                     return Ok(());
                 };
                 self.next_frame.scene.insert_primitive(MonochromeSprite {
@@ -5202,7 +5190,7 @@ impl Window {
             .map_origin(|value| ScaledPixels(round_half_up(value.0)))
             .map_size(|size| size.ceil());
 
-        let Some((color, layers)) = self.sprite_color_and_layers(color, false) else {
+        let Some((color, layers)) = self.sprite_color_and_layers(color) else {
             return Ok(());
         };
         self.next_frame.scene.insert_primitive(MonochromeSprite {

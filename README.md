@@ -126,7 +126,8 @@ An assignment write failure stops the run; legacy folder tasks do not change pro
 Projectless tasks use an owned folder under `~/Documents/Codex/<local-date>/<prompt-name>/`, with separate `work` and `outputs` folders.
 The `projectlessWorkspaceRoot` host setting overrides the root.
 The host saves projectless thread IDs, workspace-root hints, and output paths in `.codex-global-state.json`.
-Heartbeat tasks fail with the reason in the `Could not start scheduled task` toast.
+Heartbeat tasks resume their existing thread with its selected model and permissions.
+The app opens that thread after a successful start, unless you navigate away while the run starts.
 Run `cargo test -p app --test task_create -- --test-threads=1` on macOS for the native creation and reload proof.
 The New task options menu also opens the full manual editor or a new chat with the original task setup prompt.
 The manual editor saves Name, multiline Prompt, Interval, Daily, Weekdays, Weekly, Monthly, and Custom schedules.
@@ -252,6 +253,13 @@ Stock GPUI cannot match Chromium's pixels, so the copies change three things:
 - Blink snapping: layout in Blink `LayoutUnit`s (1/64 device px), device-pixel rounding half up, and text at fractional x positions.
 - Skia blends: glyph and sprite blending as Skia's 8-bit raster does it, and `SkPaint::setAlphaf` alpha rounded to a byte.
 - Layer compositing: opacity layers and composited layers (`will-change`, scrollers) that blend as Chromium's `saveLayerAlpha` does.
+
+Monochrome glyphs and SVGs keep their paint alpha.
+Element opacity is applied once when the enclosing layer is restored.
+
+Home composer permission and model labels paint directly into their parent.
+Docked composers retain the composited label path. The animated effort label keeps its filter layer.
+An extra layer changes glyph edge bytes even when its opacity is one.
 
 `shapes` links Skia binaries built with Chromium's `SkUserConfig.h` legacy defines.
 `.cargo/config.toml` points `SKIA_BINARIES_URL` to these binaries.

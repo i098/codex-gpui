@@ -22,7 +22,7 @@ use gpui::{
     UnderlineStyle, Window, WrappedLine, actions, deferred, div, fill, point,
     prelude::FluentBuilder as _, px, relative, size,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::{ops::Range, path::PathBuf, rc::Rc, time::Duration};
 use theme::{ActiveTheme as _, Appearance, Theme};
 
@@ -1400,6 +1400,35 @@ impl Composer {
         self.permission
     }
 
+    pub fn run_settings(&self) -> (Value, Permission) {
+        (
+            json!({"mode": "default", "settings": {
+                "model": self.current_model().map_or("", |m| m.id.as_str()),
+                "reasoning_effort": self.effort, "developer_instructions": null,
+            }}),
+            self.permission,
+        )
+    }
+
+    pub fn restore_run_settings(
+        &mut self,
+        mode: &Value,
+        permission: Permission,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(model) = mode["settings"]["model"].as_str() {
+            self.set_model_and_effort(
+                model,
+                mode["settings"]["reasoning_effort"]
+                    .as_str()
+                    .unwrap_or("medium"),
+                cx,
+            );
+        }
+        self.permission = permission;
+        cx.notify();
+    }
+
     pub fn confirm_full_access(&mut self, cx: &mut Context<Self>) {
         self.permission = Permission::FullAccess;
         cx.notify();
@@ -1430,8 +1459,7 @@ pub fn pill(id: impl Into<ElementId>, t: &Theme) -> Stateful<Div> {
         .hover(move |s| s.bg(hover))
 }
 
-/// 13/18 composer footer label. Its text blends like a transparent cc layer onto the final
-/// pill/bar pixel (the fills under it do not).
+/// A 13/18 label painted through a transparent compositing layer.
 pub fn label(s: impl Into<SharedString>, color: Hsla) -> Div {
     text(s, 13., 18., 400., color).top_layer()
 }
