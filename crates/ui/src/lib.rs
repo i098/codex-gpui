@@ -698,7 +698,8 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
                 .child(tooltip(
                     icon_button(
                         "search",
-                        icon::icon("search", 16., t.text_tertiary).own_layer(Some(overlap)),
+                        icon::icon("search", 16., t.text_tertiary)
+                            .when(account_access, |icon| icon.own_layer(Some(overlap))),
                         t,
                     )
                     .tab_index(0)
@@ -906,7 +907,6 @@ impl Shell {
                                     radius: Corners::all(Theme::RADIUS_FULL),
                                     corner: shapes::Corner::Round,
                                     fill: Some(gpui::rgb(0xff7419).into()),
-                                    border: Some((px(1.), gpui::transparent_black())),
                                     ..Default::default()
                                 }))
                                 .child(text("U", 12., 16., 400., gpui::white()))

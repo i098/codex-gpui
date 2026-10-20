@@ -357,6 +357,8 @@ It also checks that missing optional account metadata preserves the draft, keeps
 The native host reads the original account fields without a new sign-in flow.
 The unavailable Send control paints its background and arrow as one50% layer.
 The fallback hero uses the original30% group opacity, and navigation uses the original85% text color.
+Search uses the viewport layer when optional account metadata is unavailable.
+The fallback avatar matches the original borderless circle.
 The Login glyphs, header spacing, and dark palette follow the captured original view.
 Login paints in the original viewport compositor layer so its rounded button edges blend correctly.
 
