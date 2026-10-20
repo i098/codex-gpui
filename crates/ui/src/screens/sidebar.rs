@@ -944,7 +944,7 @@ impl HomeSidebar {
                     .rounded(radius)
                     .cursor_pointer()
                     .hover(move |s| s.bg(hover))
-                    .child(text(label, 14., 21., 400., color)),
+                    .child(text(label, 14., 21., 400., color).top_layer()),
                 &handle,
                 radius,
                 px(2.),

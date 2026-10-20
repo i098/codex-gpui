@@ -842,8 +842,9 @@ A header click hides the section; reopening keeps its expanded list.
 Default Recents retains infinite paging and has no paging button.
 The recorded input check verifies all five clicks, unchanged Recents, and no app-server requests.
 The dark paging label uses the original generated theme alpha, `0.498`; the light label stays unchanged.
-The strict `Show more` image check still fails at 19.300% text difference and zero outside-text differences.
-Its references, text rectangles, and limits remain unchanged.
+Each paging label gets an independent transparent layer; the default sidebar drawing stays unchanged.
+Both paging-label image checks pass with zero differing pixels in every recorded More/Less state.
+The references, text rectangles, and limits remain unchanged.
 Section creation and new storage remain outside RS-066.
 
 ## S025: Command-query caret and selection
