@@ -5,35 +5,71 @@ use gpui::{Image, ImageFormat};
 pub(super) type McpImages = RefCell<HashMap<String, Vec<(usize, Arc<Image>)>>>;
 
 pub fn conversation_markdown(thread: &Thread) -> String {
-    let title = title(thread).split_whitespace().collect::<Vec<_>>().join(" ").replace('#', "\\#");
+    let title = title(thread)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace('#', "\\#");
     let mut parts = vec![format!("# {title}")];
-    let quote = |text: &str| text.trim().lines()
-        .map(|line| if line.is_empty() { ">".into() } else { format!("> {line}") })
-        .collect::<Vec<_>>().join("\n");
+    let quote = |text: &str| {
+        text.trim()
+            .lines()
+            .map(|line| {
+                if line.is_empty() {
+                    ">".into()
+                } else {
+                    format!("> {line}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
     for turn in &thread.turns {
         for item in &turn.items {
             if let ThreadItem::UserMessage { content, .. } = item {
-                let text = content.iter().filter_map(|input| match input {
-                    UserInput::Text { text } => Some(text.as_str()), _ => None,
-                }).collect::<Vec<_>>().join("\n");
-                if !text.trim().is_empty() { parts.push(quote(&text)); }
+                let text = content
+                    .iter()
+                    .filter_map(|input| match input {
+                        UserInput::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if !text.trim().is_empty() {
+                    parts.push(quote(&text));
+                }
             }
         }
         let (work, answer) = work(turn);
-        let previous: Vec<_> = activities(work, false).into_iter().filter_map(|activity| match activity {
-            Activity::Markdown(_, text) => Some(text.trim().to_owned()),
-            Activity::Group { summary, rows, .. } => Some(format!(
-                "<details><summary>{summary}</summary>\n\n{}\n\n</details>",
-                rows.iter().map(|row| format!("- {}", row.label())).collect::<Vec<_>>().join("\n")
-            )),
-            Activity::Reasoning { .. } | Activity::Running(_) => None,
-        }).collect();
+        let previous: Vec<_> = activities(work, false)
+            .into_iter()
+            .filter_map(|activity| match activity {
+                Activity::Markdown(_, text) => Some(text.trim().to_owned()),
+                Activity::Group { summary, rows, .. } => Some(format!(
+                    "<details><summary>{summary}</summary>\n\n{}\n\n</details>",
+                    rows.iter()
+                        .map(|row| format!("- {}", row.label()))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )),
+                Activity::Reasoning { .. } | Activity::Running(_) => None,
+            })
+            .collect();
         if !previous.is_empty() {
-            parts.push(format!("<details><summary>{} previous {}</summary>\n\n{}\n</details>",
-                previous.len(), if previous.len() == 1 { "message" } else { "messages" },
-                quote(&previous.join("\n\n"))));
+            parts.push(format!(
+                "<details><summary>{} previous {}</summary>\n\n{}\n</details>",
+                previous.len(),
+                if previous.len() == 1 {
+                    "message"
+                } else {
+                    "messages"
+                },
+                quote(&previous.join("\n\n"))
+            ));
         }
-        if let Some((_, answer)) = answer { parts.push(answer.trim().to_owned()); }
+        if let Some((_, answer)) = answer {
+            parts.push(answer.trim().to_owned());
+        }
     }
     format!("{}\n", parts.join("\n\n").trim_end())
 }
@@ -256,7 +292,8 @@ pub(super) fn diff_card(
                                     .role(gpui::Role::Button)
                                     .aria_label(if reverted { "Reapply" } else { "Undo" })
                                     .aria_disabled(pending)
-                                    .focusable().tab_index(0)
+                                    .focusable()
+                                    .tab_index(0)
                                     .focus_visible(|s| s.shadow(focus_ring()))
                                     .when(pending, |d| d.opacity(0.5))
                                     .on_click(move |_, window, cx| {
@@ -287,8 +324,10 @@ pub(super) fn diff_card(
                                     ),
                                 )
                                 .id("view-changes")
-                                .role(gpui::Role::Button).aria_label("View changes")
-                                .focusable().tab_index(0)
+                                .role(gpui::Role::Button)
+                                .aria_label("View changes")
+                                .focusable()
+                                .tab_index(0)
                                 .focus_visible(|s| s.shadow(focus_ring()))
                                 .on_click(crate::dispatch::<crate::OpenChangesPanel>),
                             ),
@@ -415,7 +454,11 @@ pub(super) fn activities<'a>(items: &'a [ThreadItem], running: bool) -> Vec<Acti
                 flush(&mut out, &mut group);
                 out.push(Activity::Markdown(id, text));
             }
-            ThreadItem::Reasoning { id, summary, content } => {
+            ThreadItem::Reasoning {
+                id,
+                summary,
+                content,
+            } => {
                 flush(&mut out, &mut group);
                 let text = if content.is_empty() { summary } else { content }.join("\n\n");
                 if !text.trim().is_empty() {
@@ -582,7 +625,8 @@ pub(super) fn activity(
     };
     // A row that opens `key`: its label whitens on hover, its 14 px chevron shows on hover and
     // points down while open.
-    let disclosure = |key: String, icon_name: &'static str, (label, w): (Div, Pixels), is_open| {
+    let disclosure = |key: String, icon_name: &'static str, caption: String, is_open| {
+        let (label, w) = label(caption.clone(), text60);
         let group = SharedString::from(format!("activity-group-{key}"));
         // Group hover recolours text only on a stateful element: the run colour is fixed at
         // layout, before this frame's group hitbox exists.
@@ -598,7 +642,7 @@ pub(super) fn activity(
             .id(group.clone())
             .group(group.clone())
             .role(gpui::Role::Button)
-            .aria_label(key.clone())
+            .aria_label(caption)
             .aria_expanded(is_open)
             .focusable()
             .tab_index(0)
@@ -634,13 +678,21 @@ pub(super) fn activity(
                     .flex()
                     .flex_col()
                     .gap(px(8.))
-                    .child(disclosure(key.to_owned(), "thread-chevron-right",
-                        label(if running { "Thinking" } else { "Thought" }.into(), text60), is_open))
-                    .when(is_open, |d| d.child(
-                        div().id(SharedString::from(format!("reasoning-{key}")))
-                            .max_h(px(140.)).overflow_y_scroll()
-                            .child(markdown(&text, window, t, &[]))
+                    .child(disclosure(
+                        key.to_owned(),
+                        "thread-chevron-right",
+                        if running { "Thinking" } else { "Thought" }.into(),
+                        is_open,
                     ))
+                    .when(is_open, |d| {
+                        d.child(
+                            div()
+                                .id(SharedString::from(format!("reasoning-{key}")))
+                                .max_h(px(140.))
+                                .overflow_y_scroll()
+                                .child(markdown(&text, window, t, &[])),
+                        )
+                    })
             }
             Activity::Running(command) => {
                 row("thread-terminal", plain(label(command.to_owned(), text60)))
@@ -759,7 +811,7 @@ pub(super) fn activity(
                 rows,
             } => {
                 let is_open = open.contains(key);
-                let header = disclosure(key.to_owned(), icon_name, label(summary, text60), is_open);
+                let header = disclosure(key.to_owned(), icon_name, summary, is_open);
                 let mut col = div()
                     .flex()
                     .flex_col()
@@ -776,7 +828,7 @@ pub(super) fn activity(
                                 .flex()
                                 .flex_col()
                                 .items_start()
-                                .child(disclosure(key, r.icon, label(r.verb, text60), is_open))
+                                .child(disclosure(key, r.icon, r.verb, is_open))
                                 .when(is_open, |d| d.child(shell_card(&shell, t)));
                         }
                         let mut words = div()
@@ -876,18 +928,32 @@ fn shell_card(shell: &Shell, t: &Theme) -> Div {
     let description = t.text.opacity(0.7);
     let mono =
         |s: String, weight: f32, color: Hsla| text(s, 13., 19.5, weight, color).font_family(MONO);
-    let copy = |label: &'static str, value: String, group: &'static str| {
+    let command_group = SharedString::from(format!("{}-command", shell.key));
+    let output_group = SharedString::from(format!("{}-output-group", shell.key));
+    let copy = |label: &'static str, value: String, group: SharedString| {
         let button = div()
             .id(SharedString::from(format!("{}-{label}", shell.key)))
-            .absolute().top_0().right(px(2.)).size(px(24.))
-            .flex().items_center().justify_center().rounded(Theme::RADIUS_MD)
-            .role(gpui::Role::Button).aria_label(label)
-            .focusable().tab_index(0)
-            .opacity(0.).group_hover(group, |s| s.opacity(1.)).focus(|s| s.opacity(1.))
+            .absolute()
+            .top(px(if label == "Copy command" { 8. } else { 0. }))
+            .right(px(if label == "Copy command" { 8. } else { 10. }))
+            .size(px(24.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(Theme::RADIUS_MD)
+            .role(gpui::Role::Button)
+            .aria_label(label)
+            .focusable()
+            .tab_index(0)
+            .opacity(0.)
+            .group_hover(group, |s| s.opacity(1.))
+            .focus(|s| s.opacity(1.))
             .focus_visible(|s| s.shadow(focus_ring()))
             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(value.clone())))
-            .child(icon("thread-copy", 16., t.text_tertiary));
+            .on_click(move |_, _, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(value.clone()))
+            })
+            .child(icon("thread-copy", 14., t.text_tertiary));
         tooltip(button, label, None, Side::Bottom)
     };
     let footer = div()
@@ -924,7 +990,7 @@ fn shell_card(shell: &Shell, t: &Theme) -> Div {
             .child(
                 div()
                     .relative()
-                    .group("shell-command")
+                    .group(command_group.clone())
                     .pt(px(8.))
                     .pl(px(8.))
                     .pr(px(24.))
@@ -932,23 +998,28 @@ fn shell_card(shell: &Shell, t: &Theme) -> Div {
                     .gap(px(8.))
                     .child(mono("$".into(), 430., t.text_tertiary))
                     .child(mono(shell.command.clone(), 430., description))
-                    .child(copy("Copy command", shell.command.clone(), "shell-command")),
+                    .child(copy("Copy command", shell.command.clone(), command_group)),
             )
             .child(
                 div()
                     .relative()
-                    .group("shell-output")
-                    .child(div()
-                        .id(SharedString::from(format!("{}-output", shell.key)))
-                        .max_h(px(144.))
-                        .overflow_y_scroll()
-                        .child(div().p(px(8.)).child(mono(
-                            if shell.output.is_empty() { "No output".into() }
-                            else { shell.output.trim_end().to_owned() },
-                            500., description,
-                        )))
+                    .group(output_group.clone())
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("{}-output", shell.key)))
+                            .max_h(px(144.))
+                            .overflow_y_scroll()
+                            .child(div().p(px(8.)).child(mono(
+                                if shell.output.is_empty() {
+                                    "No output".into()
+                                } else {
+                                    shell.output.trim_end().to_owned()
+                                },
+                                500.,
+                                description,
+                            ))),
                     )
-                    .child(copy("Copy output", shell.output.clone(), "shell-output")),
+                    .child(copy("Copy output", shell.output.clone(), output_group)),
             )
             .child(footer),
     )

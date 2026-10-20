@@ -657,11 +657,18 @@ impl LocalHost {
         );
         let start = &params["startingState"];
         ensure!(
-            start.is_null() || (start["type"] == "branch" && start["remoteRef"].is_null()),
+            start.is_null()
+                || start["type"] == "working-tree"
+                || (start["type"] == "branch" && start["remoteRef"].is_null()),
             "unsupported worktree starting state"
         );
         let environment = params["localEnvironmentConfigPath"].as_str().map(Path::new);
-        let worktree = git::create_worktree(&root, cwd, start["branchName"].as_str(), environment)?
+        let starting_state = if start["type"] == "working-tree" {
+            git::WorktreeStart::WorkingTree
+        } else {
+            git::WorktreeStart::Branch(start["branchName"].as_str())
+        };
+        let worktree = git::create_worktree(&root, cwd, starting_state, environment)?
             .context("Not a git repository")?;
         Ok(json!({"worktreeGitRoot": worktree.git_root,
             "worktreeWorkspaceRoot": worktree.workspace_root, "setupError": null}))

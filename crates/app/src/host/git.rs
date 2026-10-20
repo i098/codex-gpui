@@ -460,28 +460,53 @@ fn changes(root: &Path, params: &Value) -> Result<Value> {
     Ok(body)
 }
 fn turn_patch(root: &Path, cwd: &Path, change: &bridge::types::FileUpdateChange) -> Result<String> {
+    let canonical_cwd = fs::canonicalize(cwd).context("patch working directory")?;
     let relative = |path: &str| -> Result<String> {
         let path = Path::new(path);
-        let absolute = if path.is_absolute() { path.to_owned() } else { cwd.join(path) };
-        let path = absolute.strip_prefix(root).context("patch path is outside the repository")?;
-        ensure!(!path.as_os_str().is_empty()
-            && path.components().all(|part| matches!(part, Component::Normal(_))),
-            "patch path must be repository-relative");
-        path.to_str().map(str::to_owned).context("patch path must be UTF-8")
+        let absolute = if path.is_absolute() {
+            path.strip_prefix(cwd)
+                .map(|path| canonical_cwd.join(path))
+                .unwrap_or_else(|_| path.to_owned())
+        } else {
+            canonical_cwd.join(path)
+        };
+        let path = absolute
+            .strip_prefix(root)
+            .context("patch path is outside the repository")?;
+        ensure!(
+            !path.as_os_str().is_empty()
+                && path
+                    .components()
+                    .all(|part| matches!(part, Component::Normal(_))),
+            "patch path must be repository-relative"
+        );
+        path.to_str()
+            .map(str::to_owned)
+            .context("patch path must be UTF-8")
     };
     let path = relative(&change.path)?;
-    let target = change.kind["move_path"].as_str().map(relative).transpose()?.unwrap_or_else(|| path.clone());
+    let target = change.kind["move_path"]
+        .as_str()
+        .map(relative)
+        .transpose()?
+        .unwrap_or_else(|| path.clone());
     let old = serde_json::to_string(&format!("a/{path}"))?;
     let new = serde_json::to_string(&format!("b/{target}"))?;
     let mut patch = format!("diff --git {old} {new}\n");
     match change.kind["type"].as_str() {
         Some("update") => {
             if path != target {
-                patch.push_str(&format!("rename from {}\nrename to {}\n",
-                    serde_json::to_string(&path)?, serde_json::to_string(&target)?));
+                patch.push_str(&format!(
+                    "rename from {}\nrename to {}\n",
+                    serde_json::to_string(&path)?,
+                    serde_json::to_string(&target)?
+                ));
             }
             if !change.diff.trim().is_empty() {
-                let at = change.diff.find("@@ ").context("update has no unified diff hunks")?;
+                let at = change
+                    .diff
+                    .find("@@ ")
+                    .context("update has no unified diff hunks")?;
                 patch.push_str(&format!("--- {old}\n+++ {new}\n{}", &change.diff[at..]));
             } else {
                 ensure!(path != target, "update has no changes");
@@ -489,14 +514,24 @@ fn turn_patch(root: &Path, cwd: &Path, change: &bridge::types::FileUpdateChange)
         }
         Some(kind @ ("add" | "delete")) => {
             let add = kind == "add";
-            patch.push_str(if add { "new file mode 100644\n" } else { "deleted file mode 100644\n" });
-            patch.push_str(&format!("--- {}\n+++ {}\n",
-                if add { "/dev/null" } else { &old }, if add { &new } else { "/dev/null" }));
+            patch.push_str(if add {
+                "new file mode 100644\n"
+            } else {
+                "deleted file mode 100644\n"
+            });
+            patch.push_str(&format!(
+                "--- {}\n+++ {}\n",
+                if add { "/dev/null" } else { &old },
+                if add { &new } else { "/dev/null" }
+            ));
             let content = change.diff.replace("\r\n", "\n");
             let lines: Vec<_> = content.lines().collect();
             if !lines.is_empty() {
-                patch.push_str(&if add { format!("@@ -0,0 +1,{} @@\n", lines.len()) }
-                    else { format!("@@ -1,{} +0,0 @@\n", lines.len()) });
+                patch.push_str(&if add {
+                    format!("@@ -0,0 +1,{} @@\n", lines.len())
+                } else {
+                    format!("@@ -1,{} +0,0 @@\n", lines.len())
+                });
                 for line in lines {
                     patch.push(if add { '+' } else { '-' });
                     patch.push_str(line);
@@ -509,7 +544,9 @@ fn turn_patch(root: &Path, cwd: &Path, change: &bridge::types::FileUpdateChange)
         }
         _ => bail!("unsupported file change kind"),
     }
-    if !patch.ends_with('\n') { patch.push('\n'); }
+    if !patch.ends_with('\n') {
+        patch.push('\n');
+    }
     ensure!(patch.len() <= 1_048_576, "turn patch is too large");
     Ok(patch)
 }
@@ -549,10 +586,16 @@ pub(super) fn fetch(endpoint: &str, params: &Value) -> Result<Value> {
         let changes: Vec<bridge::types::FileUpdateChange> =
             serde_json::from_value(params["changes"].clone()).context("missing turn changes")?;
         ensure!(!changes.is_empty(), "turn has no file changes");
-        let reverse = params["revert"].as_bool().context("missing patch direction")?;
-        let mut patches = changes.iter().map(|change| turn_patch(root, Path::new(cwd), change))
+        let reverse = params["revert"]
+            .as_bool()
+            .context("missing patch direction")?;
+        let mut patches = changes
+            .iter()
+            .map(|change| turn_patch(root, Path::new(cwd), change))
             .collect::<Result<Vec<_>>>()?;
-        if reverse { patches.reverse(); }
+        if reverse {
+            patches.reverse();
+        }
         apply(root, patches.join("\n").as_bytes(), false, reverse)?;
         return Ok(json!({"status": "success"}));
     }
@@ -1073,6 +1116,54 @@ impl Scripts {
     }
 }
 
+pub(super) enum WorktreeStart<'a> {
+    Branch(Option<&'a str>),
+    WorkingTree,
+}
+
+fn working_tree_patch(source: &Path, head: &str) -> Result<String> {
+    let mut patch = String::from_utf8(checked(run(
+        source,
+        &[
+            "diff",
+            "--binary",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-color",
+            head,
+            "--",
+        ],
+    )?)?)?;
+    let untracked = checked(run(
+        source,
+        &["ls-files", "--others", "--exclude-standard", "-z"],
+    )?)?;
+    for path in std::str::from_utf8(&untracked)?
+        .split('\0')
+        .filter(|path| !path.is_empty())
+    {
+        let diff = run(
+            source,
+            &[
+                "diff",
+                "--no-index",
+                "--binary",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--",
+                "/dev/null",
+                path,
+            ],
+        )?;
+        ensure!(
+            diff.status.success() || diff.status.code() == Some(1),
+            "could not capture untracked file {path}"
+        );
+        patch.push_str(std::str::from_utf8(&diff.stdout)?);
+    }
+    Ok(patch)
+}
+
 /// Creates the worktree an automation runs in under `worktrees_root` (original git worker
 /// `create-worktree`, `D2`). `Ok(None)` when `cwd` is in no Git repository: the original
 /// then runs in `cwd` itself. `starting_ref` `None` is the automation's start (`Ol`): the
@@ -1081,7 +1172,7 @@ impl Scripts {
 pub(super) fn create_worktree(
     worktrees_root: &Path,
     cwd: &Path,
-    starting_ref: Option<&str>,
+    starting_state: WorktreeStart<'_>,
     local_env_path: Option<&Path>,
 ) -> Result<Option<Worktree>> {
     let Some(source) = answer(cwd, &["rev-parse", "--show-toplevel"])? else {
@@ -1090,6 +1181,15 @@ pub(super) fn create_worktree(
     let source = PathBuf::from(source);
     let prefix = answer(cwd, &["rev-parse", "--show-prefix"])?.unwrap_or_default();
     let default = default_branch(&source)?;
+    let (starting_ref, snapshot) = match starting_state {
+        WorktreeStart::Branch(reference) => (reference, None),
+        WorktreeStart::WorkingTree => {
+            let head =
+                answer(&source, &["rev-parse", "HEAD"])?.context("repository has no commit")?;
+            let patch = working_tree_patch(&source, &head)?;
+            (Some("HEAD"), Some((head, patch)))
+        }
+    };
     let name = starting_ref
         .map(str::to_owned)
         .or_else(|| default.clone())
@@ -1116,7 +1216,10 @@ pub(super) fn create_worktree(
         git_root,
         workspace_root,
     };
-    let start = match starting_commit(&source, &name)
+    let start = match snapshot
+        .as_ref()
+        .map(|(head, _)| Ok(head.clone()))
+        .unwrap_or_else(|| starting_commit(&source, &name))
         .and_then(|start| add_worktree(&source, &worktree.git_root, &start).map(|()| start))
     {
         Ok(start) => start,
@@ -1125,15 +1228,22 @@ pub(super) fn create_worktree(
             return Err(error);
         }
     };
-    let prepared = prepare(
-        &source,
-        cwd,
-        &worktree,
-        &name,
-        &start,
-        default.as_deref(),
-        local_env_path,
-    );
+    let prepared = (|| {
+        if let Some((_, patch)) = &snapshot
+            && !patch.is_empty()
+        {
+            apply(&worktree.git_root, patch, false, false)?;
+        }
+        prepare(
+            &source,
+            cwd,
+            &worktree,
+            &name,
+            &start,
+            default.as_deref(),
+            local_env_path,
+        )
+    })();
     if let Err(error) = prepared {
         return Err(match remove_unstarted_worktree(worktrees_root, &worktree) {
             Ok(()) => error,
@@ -1990,6 +2100,98 @@ mod tests {
     use super::*;
 
     #[test]
+    fn worktree_fork_copies_working_files_without_changing_the_source() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let source = directory.path().join("source");
+        fs::create_dir(&source)?;
+        checked(run(&source, &["init", "-q"])?)?;
+        fs::write(source.join("a.txt"), "base\n")?;
+        fs::write(source.join("binary"), [0, 1, 2])?;
+        checked(run(&source, &["add", "."])?)?;
+        checked(run(
+            &source,
+            &[
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "commit",
+                "-qm",
+                "base",
+            ],
+        )?)?;
+        fs::write(source.join("a.txt"), "staged\n")?;
+        checked(run(&source, &["add", "a.txt"])?)?;
+        fs::write(source.join("a.txt"), "working\n")?;
+        fs::write(source.join("binary"), [0, 3, 4])?;
+        fs::write(source.join("untracked"), "keep me")?;
+        std::os::unix::fs::symlink("a.txt", source.join("link"))?;
+        let worktree = create_worktree(
+            &directory.path().join("worktrees"),
+            &source,
+            WorktreeStart::WorkingTree,
+            None,
+        )?
+        .context("worktree")?;
+        assert_eq!(
+            fs::read_to_string(worktree.git_root.join("a.txt"))?,
+            "working\n"
+        );
+        assert_eq!(fs::read(worktree.git_root.join("binary"))?, [0, 3, 4]);
+        assert_eq!(
+            fs::read_to_string(worktree.git_root.join("untracked"))?,
+            "keep me"
+        );
+        assert_eq!(
+            fs::read_link(worktree.git_root.join("link"))?,
+            Path::new("a.txt")
+        );
+        assert_eq!(fs::read_to_string(source.join("a.txt"))?, "working\n");
+        assert_eq!(checked(run(&source, &["show", ":a.txt"])?)?, b"staged\n");
+        Ok(())
+    }
+
+    #[test]
+    fn turn_patch_round_trip_preserves_files_and_rejects_conflicts() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let root = directory.path().canonicalize()?;
+        checked(
+            Command::new("git")
+                .args(["init", "-q"])
+                .arg(&root)
+                .output()?,
+        )?;
+        fs::write(root.join("before.txt"), "old\n")?;
+        fs::write(root.join("gone.txt"), "removed\n")?;
+        let changes = json!([
+            {"path":"before.txt","kind":{"type":"update","move_path":"after.txt"},"diff":"@@ -1 +1 @@\n-old\n+new\n"},
+            {"path":"created.txt","kind":{"type":"add"},"diff":"created without newline"},
+            {"path":"gone.txt","kind":{"type":"delete"},"diff":"removed\n"}
+        ]);
+        let mut params = json!({"cwd":root,"changes":changes,"revert":false});
+        fetch("apply-patch", &params)?;
+        assert_eq!(fs::read_to_string(root.join("after.txt"))?, "new\n");
+        assert_eq!(
+            fs::read_to_string(root.join("created.txt"))?,
+            "created without newline"
+        );
+        assert!(!root.join("before.txt").exists() && !root.join("gone.txt").exists());
+        params["revert"] = true.into();
+        fetch("apply-patch", &params)?;
+        assert_eq!(fs::read_to_string(root.join("before.txt"))?, "old\n");
+        assert_eq!(fs::read_to_string(root.join("gone.txt"))?, "removed\n");
+        assert!(!root.join("after.txt").exists() && !root.join("created.txt").exists());
+        fs::write(root.join("before.txt"), "user edit\n")?;
+        params["revert"] = false.into();
+        assert!(fetch("apply-patch", &params).is_err());
+        assert_eq!(fs::read_to_string(root.join("before.txt"))?, "user edit\n");
+        assert_eq!(fs::read_to_string(root.join("gone.txt"))?, "removed\n");
+        params["changes"][0]["path"] = "../outside.txt".into();
+        assert!(fetch("apply-patch", &params).is_err());
+        Ok(())
+    }
+
+    #[test]
     fn unstarted_removal_refuses_foreign_and_owned_worktrees() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let source = dir.path().join("repo");
@@ -2011,7 +2213,8 @@ mod tests {
         ];
         checked(run(&source, &commit)?)?;
         let root = dir.path().join("worktrees");
-        let worktree = create_worktree(&root, &source, None, None)?.context("repository")?;
+        let worktree = create_worktree(&root, &source, WorktreeStart::Branch(None), None)?
+            .context("repository")?;
         let elsewhere = dir.path().join("elsewhere");
         fs::create_dir(&elsewhere)?;
         assert!(remove_unstarted_worktree(&elsewhere, &worktree).is_err());

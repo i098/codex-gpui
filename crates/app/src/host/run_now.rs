@@ -822,7 +822,7 @@ impl LocalHost {
                     git::create_worktree(
                         &self.home.join("worktrees"),
                         std::path::Path::new(cwd),
-                        None,
+                        git::WorktreeStart::Branch(None),
                         local_environment.as_deref(),
                     )?
                 } else {

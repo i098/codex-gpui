@@ -124,13 +124,22 @@ pub(super) const ITEMS: [Item; 14] = [
         label: "Fork",
         accelerator: None,
         icon: Some(FORK),
-        submenu: &[Item {
-            id: "fork-into-local",
-            label: "Fork chat",
-            accelerator: None,
-            icon: Some(FORK_INTO_LOCAL),
-            submenu: &[],
-        }],
+        submenu: &[
+            Item {
+                id: "fork-into-local",
+                label: "Fork chat",
+                accelerator: None,
+                icon: Some(FORK_INTO_LOCAL),
+                submenu: &[],
+            },
+            Item {
+                id: "fork-into-worktree",
+                label: "Fork chat in new worktree",
+                accelerator: None,
+                icon: Some(FORK),
+                submenu: &[],
+            },
+        ],
     },
     Item {
         id: "copy-separator",
@@ -473,6 +482,18 @@ impl HomeSidebar {
         if !self.item_enabled(id) {
             return;
         }
+        if let Some(index) = self
+            .menu_items()
+            .iter()
+            .position(|item| item.id == id && !item.submenu.is_empty())
+        {
+            if let Some(menu) = &mut self.menu {
+                menu.active = Some(index);
+                menu.sub = Some(Some(0));
+                cx.notify();
+            }
+            return;
+        }
         let Some(menu) = self.close_menu(window, cx) else {
             return;
         };
@@ -497,9 +518,18 @@ impl HomeSidebar {
                 window.dispatch_action(Box::new(PinThread(thread, pin)), cx)
             }
             "archive-thread" => window.dispatch_action(Box::new(ArchiveThread(thread)), cx),
-            "fork-into-local" | "copy-deeplink" | "copy-conversation-markdown"
-            | "copy-working-directory" | "delete-thread" => window.dispatch_action(
-                Box::new(crate::screens::thread::view::ChatMenuAction { thread_id: thread, item: id }), cx),
+            "fork-into-local"
+            | "fork-into-worktree"
+            | "copy-deeplink"
+            | "copy-conversation-markdown"
+            | "copy-working-directory"
+            | "delete-thread" => window.dispatch_action(
+                Box::new(crate::screens::thread::view::ChatMenuAction {
+                    thread_id: thread,
+                    item: id,
+                }),
+                cx,
+            ),
             "mark-thread-unread" => match self.unread.iter().position(|id| *id == thread) {
                 Some(i) => {
                     self.unread.remove(i);

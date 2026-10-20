@@ -120,6 +120,11 @@ const FLOWS: &[(&str, Flow)] = &[
     ("fork_chat", fork_chat),
     ("earlier_turn_actions_hover", earlier_turn_actions_hover),
     ("undo_reverts_turn", undo_reverts_turn),
+    ("thread_controls_row_actions", thread_controls_row_actions),
+    (
+        "thread_controls_reasoning_and_scroll",
+        thread_controls_reasoning_and_scroll,
+    ),
     ("approval_round_trip", approval_round_trip),
     ("archive_chat", archive_chat),
     ("recent_chat_keys", recent_chat_keys),
@@ -1183,23 +1188,93 @@ fn earlier_turn_actions_hover() -> Result<String> {
     Ok(format!("{n} px"))
 }
 
-/// The card's `Undo`: `thread/resume`, then `thread/revert` before the turn; the view shows
-/// the reverted thread.
 fn undo_reverts_turn() -> Result<String> {
-    let thread = recorded_thread(SUBTRACT)?;
-    let mut reverted = thread.clone();
-    reverted["turns"] = json!([]);
+    use app::host::LocalHost;
+    use std::{fs, process::Command, sync::Arc};
+    let directory = tempfile::tempdir()?;
+    let root = directory.path();
+    let status = Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(root)
+        .status()?;
+    ensure!(status.success(), "could not create the patch fixture");
+    fs::create_dir(root.join("src"))?;
+    let original = "def add(a, b):\n    return a + b\n";
+    let edited = "def add(a, b):\n    return a + b\n\n\ndef subtract(a, b):\n    return a - b\n";
+    fs::write(root.join("src/math.py"), edited)?;
     let mut lines = script(None, |_| {})?;
-    lines.extend(exchange("thread/resume", json!({ "thread": thread })));
-    lines.extend(exchange("thread/revert", json!({ "thread": reverted })));
+    for line in &mut lines {
+        if let Some(thread) = line.pointer_mut("/msg/result/thread") {
+            thread["cwd"] = root.to_string_lossy().into_owned().into();
+            if let Some(turns) = thread["turns"].as_array_mut() {
+                for turn in turns {
+                    for item in turn["items"].as_array_mut().unwrap() {
+                        if item["type"] == "fileChange" {
+                            item["changes"][0]["path"] = root
+                                .join("src/math.py")
+                                .to_string_lossy()
+                                .into_owned()
+                                .into();
+                        }
+                    }
+                }
+            }
+        }
+    }
     let mut fx = Fx::scripted(lines)?;
+    let host = Arc::new(LocalHost::new(root.join(".proof-profile")));
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(host, cx));
     open_subtract(&mut fx)?;
-    fx.click(fx.at("thread", "Undo")?)?;
-    fx.wait("thread/revert", |fx| {
-        fx.read(|r, cx| r.thread().is_some_and(|v| v.read(cx).turns().is_empty()))
+    let undo = fx.at("thread", "Undo")?;
+    let count = fx.read(|root, cx| root.thread().unwrap().read(cx).turns().len());
+    fx.click(undo)?;
+    fx.wait("turn patch undo", |_| {
+        fs::read_to_string(root.join("src/math.py")).ok().as_deref() == Some(original)
     })?;
-    ensure!(fx.route() == Route::Thread(SUBTRACT.into()));
-    Ok(String::new())
+    fx.wait("undo result", |fx| {
+        fx.read(|root, cx| {
+            root.toasts(cx)
+                .iter()
+                .any(|text| text == "Changes reverted")
+        })
+    })?;
+    ensure!(
+        fx.read(|root, cx| root.thread().unwrap().read(cx).turns().len()) == count,
+        "Undo removed conversation history"
+    );
+    thread_control_shot(&mut fx, "reapply")?;
+    fx.click(undo)?;
+    fx.wait("turn patch reapply", |_| {
+        fs::read_to_string(root.join("src/math.py")).ok().as_deref() == Some(edited)
+    })?;
+    fx.wait("reapply result", |fx| {
+        fx.read(|root, cx| {
+            root.toasts(cx)
+                .iter()
+                .any(|text| text == "Changes reapplied")
+        })
+    })?;
+    fs::write(root.join("src/math.py"), "user changes\n")?;
+    fx.click(undo)?;
+    fx.wait("patch conflict", |fx| {
+        fx.read(|root, cx| {
+            root.toasts(cx)
+                .iter()
+                .any(|text| text.starts_with("Failed to revert changes"))
+        })
+    })?;
+    ensure!(
+        fs::read_to_string(root.join("src/math.py"))? == "user changes\n",
+        "conflict overwrote a user edit"
+    );
+    ensure!(
+        !fx.sent()?
+            .iter()
+            .any(|request| request["method"] == "thread/revert"),
+        "file undo changed thread history"
+    );
+    Ok("real Git Undo/Reapply; conflict preserves user edits and transcript".into())
 }
 
 /// Center of the approval card's `Allow once` pill (`button_primary_solid`, white in dark):
@@ -1533,4 +1608,256 @@ fn resize_live() -> Result<String> {
     resize(&mut fx, 1280.);
     ensure!(!fx.sidebar_open(), "the closed sidebar came back");
     Ok(String::new())
+}
+
+fn thread_control_shot(fx: &mut Fx, name: &str) -> Result<()> {
+    if let Some(directory) = std::env::var_os("CGX_THREAD_CONTROLS_SHOTS") {
+        let directory = std::path::PathBuf::from(directory);
+        std::fs::create_dir_all(&directory)?;
+        fx.shot()?.save(directory.join(format!("{name}.png")))?;
+    }
+    Ok(())
+}
+
+fn pick_thread_menu(fx: &mut Fx, label: &str, parent: &str, sub: Option<&str>) -> Result<()> {
+    fx.right_click(fx.at("home", label)?)?;
+    let items = fx
+        .read(|root, cx| root.sidebar().read(cx).context_menu())
+        .context("row menu")?;
+    let rows = items.as_array().context("row menu items")?;
+    let selectable: Vec<_> = rows
+        .iter()
+        .filter(|row| row["type"] != "separator")
+        .collect();
+    let index = selectable
+        .iter()
+        .position(|row| row["id"] == parent)
+        .context("menu target")?;
+    fx.keys("home")?;
+    for _ in 0..index {
+        fx.keys("down")?;
+    }
+    if let Some(sub) = sub {
+        fx.keys("right")?;
+        let index = selectable[index]["submenu"]
+            .as_array()
+            .context("submenu")?
+            .iter()
+            .position(|row| row["id"] == sub)
+            .context("submenu target")?;
+        for _ in 0..index {
+            fx.keys("down")?;
+        }
+    }
+    thread_control_shot(fx, parent)?;
+    fx.keys("enter")
+}
+
+fn thread_controls_row_actions() -> Result<String> {
+    const FORK: &str = "thread-controls-fork";
+    let mut lines = script(None, |_| {})?;
+    for line in &mut lines {
+        if let Some(threads) = line
+            .pointer_mut("/msg/result/data")
+            .and_then(Value::as_array_mut)
+        {
+            for thread in threads {
+                if thread["id"] == SUBTRACT {
+                    thread["cwd"] = "/fixture/subtract".into();
+                }
+                if thread["id"] == GREETING {
+                    thread["cwd"] = "/fixture/greeting".into();
+                }
+            }
+        }
+    }
+    let mut fork = recorded_thread(SUBTRACT)?;
+    fork["id"] = FORK.into();
+    lines.extend(exchange("thread/fork", json!({"thread": fork})));
+    let mut header_fork = recorded_thread(SUBTRACT)?;
+    header_fork["id"] = "thread-controls-header-fork".into();
+    lines.extend(exchange("thread/fork", json!({"thread": header_fork})));
+    let mut failed_delete = exchange("thread/delete", json!({}));
+    failed_delete[1]["msg"]
+        .as_object_mut()
+        .unwrap()
+        .remove("result");
+    failed_delete[1]["msg"]["error"] = json!({"code": -32000, "message": "fixture refusal"});
+    lines.extend(failed_delete);
+    lines.extend(exchange("thread/delete", json!({})));
+    let mut fx = Fx::scripted(lines)?;
+    fx.keys("cmd-1")?;
+    fx.wait_thread(GREETING)?;
+    pick_thread_menu(
+        &mut fx,
+        "Add a subtract",
+        "copy-actions",
+        Some("copy-deeplink"),
+    )?;
+    ensure!(
+        fx.cx
+            .update(|cx| cx.read_from_clipboard().and_then(|item| item.text()))
+            == Some(format!("codex://threads/{SUBTRACT}")),
+        "row Copy used the active chat"
+    );
+    pick_thread_menu(
+        &mut fx,
+        "Add a subtract",
+        "copy-actions",
+        Some("copy-working-directory"),
+    )?;
+    ensure!(
+        fx.cx
+            .update(|cx| cx.read_from_clipboard().and_then(|item| item.text()))
+            .as_deref()
+            == Some("/fixture/subtract"),
+        "row Copy did not copy its working directory"
+    );
+    pick_thread_menu(
+        &mut fx,
+        "Add a subtract",
+        "copy-actions",
+        Some("copy-conversation-markdown"),
+    )?;
+    fx.wait("row Markdown copy", |fx| {
+        fx.read(|root, cx| {
+            root.toasts(cx)
+                .iter()
+                .any(|text| text == "Copied conversation as Markdown")
+        })
+    })?;
+    let copied = fx
+        .cx
+        .update(|cx| cx.read_from_clipboard().and_then(|item| item.text()))
+        .context("Markdown clipboard")?;
+    ensure!(
+        copied.starts_with("# Add a subtract")
+            && copied.contains("> Add a subtract")
+            && copied.contains("subtract(a, b)")
+            && !copied.contains(GREETING_PROMPT),
+        "row copied another conversation: {copied}"
+    );
+    ensure!(
+        fx.route() == Route::Thread(GREETING.into()),
+        "Copy changed the open chat"
+    );
+    pick_thread_menu(&mut fx, "Add a subtract", "fork", Some("fork-into-local"))?;
+    fx.wait_thread(FORK)?;
+    ensure!(
+        fx.read(|root, _| root.recents().first().map(String::as_str) == Some(FORK)),
+        "fork is not in Recents"
+    );
+    let fork_request = fx
+        .sent()?
+        .into_iter()
+        .find(|request| request["method"] == "thread/fork")
+        .context("fork request")?;
+    ensure!(
+        fork_request["params"]["threadId"] == SUBTRACT,
+        "Fork used the open chat instead of its row"
+    );
+    let header: Value = serde_json::from_str(include_str!("../../../refs/interactions/s016.json"))?;
+    let bbox = &header["steps"][1]["target"]["bbox"];
+    fx.click((
+        bbox["x"].as_f64().unwrap() as f32 + 14.,
+        bbox["y"].as_f64().unwrap() as f32 + 14.,
+    ))?;
+    fx.keys("home down down down right")?;
+    thread_control_shot(&mut fx, "header-fork")?;
+    fx.keys("enter")?;
+    fx.wait_thread("thread-controls-header-fork")?;
+    pick_thread_menu(&mut fx, "Change the greeting", "delete-thread", None)?;
+    ensure!(
+        fx.read(|root, cx| root
+            .dialog()
+            .is_some_and(|dialog| dialog.read(cx).focused_control() == "Cancel")),
+        "Delete must start on Cancel"
+    );
+    thread_control_shot(&mut fx, "delete-confirmation")?;
+    fx.keys("enter")?;
+    ensure!(
+        !fx.sent()?
+            .iter()
+            .any(|request| request["method"] == "thread/delete"),
+        "Cancel deleted the chat"
+    );
+    pick_thread_menu(&mut fx, "Change the greeting", "delete-thread", None)?;
+    fx.keys("tab enter")?;
+    fx.wait("delete refusal", |fx| {
+        fx.read(|root, cx| {
+            root.dialog()
+                .is_some_and(|dialog| !dialog.read(cx).saving())
+        })
+    })?;
+    ensure!(
+        fx.read(|root, _| root.recents().contains(&GREETING.to_owned())),
+        "failed deletion removed the chat"
+    );
+    thread_control_shot(&mut fx, "delete-error")?;
+    fx.keys("enter")?;
+    fx.wait("delete success", |fx| {
+        fx.read(|root, _| !root.recents().contains(&GREETING.to_owned()))
+    })?;
+    ensure!(
+        fx.read(|root, _| root.dialog().is_none()),
+        "successful deletion left its dialog open"
+    );
+    Ok("row Copy uses its target; row/header Fork; Cancel, refusal, retry and deletion".into())
+}
+
+fn thread_controls_reasoning_and_scroll() -> Result<String> {
+    let mut fx = Fx::with("dark", (1280., 832.), None, |line| {
+        if let Some(thread) = line.pointer_mut("/msg/result/thread")
+            && thread["id"] == SUBTRACT
+            && let Some(turn) = thread["turns"]
+                .as_array_mut()
+                .and_then(|turns| turns.first_mut())
+        {
+            turn["items"].as_array_mut().unwrap().insert(
+                1,
+                json!({
+                    "type":"reasoning", "id":"controls-reasoning", "summary":[],
+                    "content":["Check the subtraction before replying."]
+                }),
+            );
+        }
+    })?;
+    open_subtract(&mut fx)?;
+    let worked = fx.at("thread", "Worked for")?;
+    fx.click(worked)?;
+    fx.advance(std::time::Duration::from_millis(400))?;
+    let thought = (worked.0, worked.1 + 42.);
+    fx.hover(thought)?;
+    let folded = fx.shot()?;
+    fx.click(thought)?;
+    thread_control_shot(&mut fx, "reasoning-open")?;
+    ensure!(
+        changed(&folded, &fx.shot()?, [441., worked.1 + 30., 736., 180.]) > 500,
+        "reasoning did not disclose its content"
+    );
+    fx.keys("space")?;
+    fx.hover((640., 22.))?;
+    let closed = fx.shot()?;
+    fx.click(thought)?;
+    ensure!(
+        changed(&closed, &fx.shot()?, [441., worked.1 + 30., 736., 180.]) > 500,
+        "keyboard did not close the reasoning card"
+    );
+    fx.resize(1280., 400.)?;
+    fx.scroll((800., 170.), -10000.)?;
+    fx.hover((640., 22.))?;
+    let bottom = fx.shot()?;
+    fx.scroll((800., 170.), 10000.)?;
+    thread_control_shot(&mut fx, "scroll-to-bottom")?;
+    fx.click((808., 242.))?;
+    fx.hover((640., 22.))?;
+    let returned = fx.shot()?;
+    ensure!(
+        changed(&bottom, &returned, [340., 44., 936., 210.]) == 0,
+        "Scroll to bottom did not return to the newest turn"
+    );
+    Ok(
+        "reasoning mouse and keyboard disclosure; scroll-to-bottom returns to the newest turn"
+            .into(),
+    )
 }

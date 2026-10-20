@@ -2636,7 +2636,8 @@ impl Root {
                         this.commit_cwd = None;
                         window.focus(&this.composer(cx).focus_handle(cx), cx);
                     } else if dialog.read(cx).kind() == DialogKind::DeleteThread
-                        && let Some(focus) = &return_focus {
+                        && let Some(focus) = &return_focus
+                    {
                         window.focus(focus, cx);
                     } else {
                         window.focus(&focus, cx);
@@ -3625,19 +3626,51 @@ impl Root {
         log_err(task, cx);
     }
 
-    fn chat_menu_action(&mut self, action: &ChatMenuAction, window: &mut Window, cx: &mut Context<Self>) {
+    fn chat_menu_action(
+        &mut self,
+        action: &ChatMenuAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let id = &action.thread_id;
         match action.item {
             "rename-thread" => self.open_rename(id.clone(), false, window, cx),
             "pin-thread" => {
-                let pinned = self.threads.iter().find(|thread| &thread.id == id)
-                    .is_some_and(|thread| thread.section.as_ref().is_some_and(|section| section.id == PINNED_SECTION_ID));
+                let pinned = self
+                    .threads
+                    .iter()
+                    .find(|thread| &thread.id == id)
+                    .is_some_and(|thread| {
+                        thread
+                            .section
+                            .as_ref()
+                            .is_some_and(|section| section.id == PINNED_SECTION_ID)
+                    });
                 self.set_pinned(id.clone(), !pinned, window, cx);
             }
             "archive-thread" => self.archive(id.clone(), window, cx),
-            "fork-into-local" => {
+            "fork-into-local" | "fork-into-worktree" => {
+                let destination = if action.item == "fork-into-worktree" {
+                    self.thread
+                        .as_ref()
+                        .map(|thread| thread.read(cx))
+                        .filter(|thread| thread.id() == id)
+                        .map(|thread| thread.cwd().to_owned())
+                        .or_else(|| {
+                            self.threads
+                                .iter()
+                                .find(|thread| &thread.id == id)
+                                .map(|thread| thread.cwd.clone())
+                        })
+                } else {
+                    None
+                };
+                if action.item == "fork-into-worktree" && destination.is_none() {
+                    self.toast(Toast::danger("Fork requires a working directory"), cx);
+                    return;
+                }
                 self.toast(Toast::info("Forking chat…"), cx);
-                self.fork_from(id.clone(), 0, window, cx);
+                self.fork_from(id.clone(), 0, destination, window, cx);
             }
             "delete-thread" => {
                 let dialog = cx.new(|cx| Dialog::delete_thread(id.clone(), cx));
@@ -3653,28 +3686,44 @@ impl Root {
                     this.update(cx, |this, cx| match result {
                         Ok(read) => {
                             cx.write_to_clipboard(gpui::ClipboardItem::new_string(
-                                ui::screens::thread::view::conversation_markdown(&read.thread)));
+                                ui::screens::thread::view::conversation_markdown(&read.thread),
+                            ));
                             this.toast(Toast::info("Copied conversation as Markdown"), cx);
                         }
-                        Err(_) => this.toast(Toast::danger("Failed to copy conversation as Markdown"), cx),
-                    }).ok();
-                }).detach();
+                        Err(_) => {
+                            this.toast(Toast::danger("Failed to copy conversation as Markdown"), cx)
+                        }
+                    })
+                    .ok();
+                })
+                .detach();
             }
             _ => {}
         }
     }
 
     fn toggle_turn_changes(&mut self, turn_id: &str, cx: &mut Context<Self>) {
-        let Some(view) = self.thread.clone() else { return };
+        let Some(view) = self.thread.clone() else {
+            return;
+        };
         let thread = view.read(cx);
-        let Some(turn) = thread.turns().iter().find(|turn| turn.id == turn_id) else { return };
-        let changes: Vec<_> = turn.items.iter().flat_map(|item| match item {
-            ThreadItem::FileChange { changes, .. } => changes.as_slice(),
-            _ => &[],
-        }).map(|change| json!({"path": change.path, "kind": change.kind, "diff": change.diff})).collect();
+        let Some(turn) = thread.turns().iter().find(|turn| turn.id == turn_id) else {
+            return;
+        };
+        let changes: Vec<_> = turn
+            .items
+            .iter()
+            .flat_map(|item| match item {
+                ThreadItem::FileChange { changes, .. } => changes.as_slice(),
+                _ => &[],
+            })
+            .map(|change| json!({"path": change.path, "kind": change.kind, "diff": change.diff}))
+            .collect();
         let revert = !thread.changes_reverted(turn_id);
         let params = json!({"cwd": thread.cwd(), "changes": changes, "revert": revert});
-        if !view.update(cx, |view, cx| view.begin_patch(turn_id, cx)) { return; }
+        if !view.update(cx, |view, cx| view.begin_patch(turn_id, cx)) {
+            return;
+        }
         let turn_id = turn_id.to_owned();
         let host = self.host.clone();
         let apply = cx.background_spawn(async move {
@@ -3688,15 +3737,29 @@ impl Root {
         cx.spawn(async move |this, cx| {
             let result = apply.await;
             this.update(cx, |this, cx| {
-                view.update(cx, |view, cx| view.finish_patch(&turn_id, result.is_ok(), cx));
+                view.update(cx, |view, cx| {
+                    view.finish_patch(&turn_id, result.is_ok(), cx)
+                });
                 let toast = match result {
-                    Ok(()) => Toast::info(if revert { "Changes reverted" } else { "Changes reapplied" }),
-                    Err(error) => Toast::danger(format!("{}: {error}",
-                        if revert { "Failed to revert changes" } else { "Failed to reapply changes" })),
+                    Ok(()) => Toast::info(if revert {
+                        "Changes reverted"
+                    } else {
+                        "Changes reapplied"
+                    }),
+                    Err(error) => Toast::danger(format!(
+                        "{}: {error}",
+                        if revert {
+                            "Failed to revert changes"
+                        } else {
+                            "Failed to reapply changes"
+                        }
+                    )),
                 };
                 this.toast(toast, cx);
-            }).ok();
-        }).detach();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// `Fork chat from here` under `turn_id`: `thread/fork`, then `thread/rollback` of the
@@ -3720,23 +3783,52 @@ impl Root {
     fn fork_chat(&mut self, later: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(view) = &self.thread else { return };
         let id = view.read(cx).id().to_owned();
-        self.fork_from(id, later, window, cx);
+        self.fork_from(id, later, None, window, cx);
     }
 
-    fn fork_from(&mut self, id: String, later: usize, window: &mut Window, cx: &mut Context<Self>) {
+    fn fork_from(
+        &mut self,
+        id: String,
+        later: usize,
+        destination: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let bridge = self.bridge.clone();
+        let host = self.host.clone();
         let computer_use = computer_use_overrides(&self.config);
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let forked = async {
-                let mut params = json!({ "threadId": id });
+                let worktree = if let Some(cwd) = destination {
+                    let host = host.clone();
+                    Some(cx.background_spawn(async move {
+                        host.fetch(&host::Request::post("create-worktree",
+                            Some(json!({"cwd":cwd,"startingState":{"type":"working-tree"}}))))
+                            .and_then(|response| host::json_body(&response))
+                    }).await?)
+                } else { None };
+                let mut params = json!({"threadId": id});
+                if let Some(worktree) = &worktree {
+                    params["cwd"] = worktree["worktreeWorkspaceRoot"].as_str().context("worktree workspace root")?.into();
+                }
                 if let Some(config) = computer_use {
                     params["config"] = config;
                 }
                 // Both answer `{ thread }`, like `thread/read`.
-                let mut read: ThreadReadResponse = bridge.request("thread/fork", params).await?;
+                let mut read: ThreadReadResponse = bridge
+                    .request("thread/fork", params)
+                    .await?;
                 if later > 0 {
                     let params = json!({ "threadId": read.thread.id, "numTurns": later });
                     read = bridge.request("thread/rollback", params).await?;
+                }
+                if let Some(worktree) = worktree {
+                    let thread_id = read.thread.id.clone();
+                    cx.background_spawn(async move {
+                        host.fetch(&host::Request::post("set-worktree-owner-thread",
+                            Some(json!({"worktree":worktree["worktreeGitRoot"],"conversationId":thread_id}))))
+                            .and_then(|response| host::json_body(&response))
+                    }).await?;
                 }
                 Ok::<_, anyhow::Error>(read)
             }
@@ -3796,29 +3888,45 @@ impl Root {
         log_err(task, cx);
     }
 
-    fn delete_thread(&mut self, dialog: Entity<Dialog>, id: String, return_focus: Option<FocusHandle>,
-        window: &mut Window, cx: &mut Context<Self>) {
+    fn delete_thread(
+        &mut self,
+        dialog: Entity<Dialog>,
+        id: String,
+        return_focus: Option<FocusHandle>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let bridge = self.bridge.clone();
         cx.spawn_in(window, async move |this, cx| {
-            let result = bridge.request::<_, Value>("thread/delete", json!({"threadId": id})).await;
+            let result = bridge
+                .request::<_, Value>("thread/delete", json!({"threadId": id}))
+                .await;
             this.update_in(cx, |this, window, cx| {
                 match result {
                     Ok(_) => {
                         this.dialog = None;
                         this.loaded.remove(&id);
                         this.threads.retain(|thread| thread.id != id);
-                        this.sidebar.update(cx, |sidebar, cx| sidebar.set_threads(&this.threads, cx));
-                        if this.state.route == Route::Thread(id) { this.new_chat(window, cx); }
-                        if let Some(focus) = return_focus { window.focus(&focus, cx); }
+                        this.sidebar
+                            .update(cx, |sidebar, cx| sidebar.set_threads(&this.threads, cx));
+                        if this.state.route == Route::Thread(id) {
+                            this.new_chat(window, cx);
+                        }
+                        if let Some(focus) = return_focus {
+                            window.focus(&focus, cx);
+                        }
                         this.toast(Toast::info("Task deleted"), cx);
                     }
-                    Err(error) => dialog.update(cx, |dialog, cx| {
-                        dialog.deletion_result(Some(format!("Could not delete task: {error}")), cx);
-                    }),
+                    Err(error) => {
+                        dialog.update(cx, |dialog, cx| dialog.finish_deletion(cx));
+                        this.toast(Toast::danger(format!("Failed to delete task: {error}")), cx);
+                    }
                 }
                 cx.notify();
-            }).ok();
-        }).detach();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Opens `Rename chat` for `id`. From the composer, closing it returns focus there.

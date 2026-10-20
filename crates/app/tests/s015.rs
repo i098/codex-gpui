@@ -185,6 +185,27 @@ fn command_row_expands_the_shell_card() -> Result<()> {
     );
     // The card is not an activity row: the labels are unchanged.
     ensure!(labels(&fx).contains(&RAN.to_owned()), "{:?}", labels(&fx));
+    let [x, y, w, _] = rect(&card["bbox"]);
+    let clipboard = |fx: &mut Fx| {
+        fx.cx
+            .update(|cx| cx.read_from_clipboard().and_then(|item| item.text()))
+    };
+    fx.click((x + w - 22., y + 47.))?;
+    ensure!(
+        clipboard(&mut fx).as_deref()
+            == Some("python3 -c 'from src.math import subtract; print(subtract(5, 3))'"),
+        "Copy command did not copy the raw command"
+    );
+    fx.click((x + w - 24., y + 66.5))?;
+    ensure!(
+        clipboard(&mut fx).as_deref() == Some("2\n"),
+        "Copy output lost the raw output newline"
+    );
+    if let Some(directory) = std::env::var_os("CGX_THREAD_CONTROLS_SHOTS") {
+        fs::create_dir_all(&directory)?;
+        fx.shot()?
+            .save(std::path::PathBuf::from(directory).join("command-output-copy.png"))?;
+    }
 
     // Click again: the card folds, the transcript is as before.
     assert_eq!(steps[6]["type"], "click");

@@ -396,7 +396,6 @@ fn response_html_tag(tag: pulldown_cmark::TagEnd) -> Option<&'static str> {
 #[action(namespace = thread, no_json)]
 pub struct ForkThread(pub String);
 
-
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = thread, no_json)]
 pub struct ChatMenuAction {

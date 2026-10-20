@@ -64,8 +64,8 @@ pub enum GitAction {
 
 impl gpui::EventEmitter<GitAction> for ThreadView {}
 
-use items::{activity, diff_card, disclosure, user_bubble, wrap_row};
 pub use items::conversation_markdown;
+use items::{activity, diff_card, disclosure, user_bubble, wrap_row};
 use markdown::{markdown, tones};
 pub use select::Selection;
 use select::{Carets, block_end, frame_start, highlight};
@@ -134,7 +134,7 @@ pub struct ThreadView {
     chat_actions_hovered: bool,
     chat_actions_submenu: Option<usize>,
     chat_actions_submenu_hovered: bool,
-    chat_actions_active: usize,
+    chat_actions_active: Option<usize>,
     chat_actions_subactive: usize,
     git_repository: Option<Result<crate::dialog::CommitRepository, String>>,
     git_phase: Option<&'static str>,
@@ -586,7 +586,7 @@ impl ThreadView {
             chat_actions_hovered: false,
             chat_actions_submenu: None,
             chat_actions_submenu_hovered: false,
-            chat_actions_active: 0,
+            chat_actions_active: None,
             chat_actions_subactive: 0,
             git_repository: None,
             git_phase: None,
@@ -874,7 +874,8 @@ impl ThreadView {
             div()
                 .id(id)
                 .size(px(size))
-                .focusable().tab_index(0)
+                .focusable()
+                .tab_index(0)
                 .focus_visible(|s| s.shadow(focus_ring()))
                 .flex()
                 .items_center()
@@ -1536,13 +1537,22 @@ impl ThreadView {
                 progress.push(params.clone());
             }
             "item/reasoning/summaryTextDelta" | "item/reasoning/textDelta" => {
-                if let (Some(id), Some(delta)) = (params["itemId"].as_str(), params["delta"].as_str())
-                    && let Some(ThreadItem::Reasoning { summary, content, .. }) = self.item_mut(id)
+                if let (Some(id), Some(delta)) =
+                    (params["itemId"].as_str(), params["delta"].as_str())
+                    && let Some(ThreadItem::Reasoning {
+                        summary, content, ..
+                    }) = self.item_mut(id)
                 {
                     let (parts, index) = if method == "item/reasoning/summaryTextDelta" {
-                        (summary, params["summaryIndex"].as_u64().unwrap_or(0) as usize)
+                        (
+                            summary,
+                            params["summaryIndex"].as_u64().unwrap_or(0) as usize,
+                        )
                     } else {
-                        (content, params["contentIndex"].as_u64().unwrap_or(0) as usize)
+                        (
+                            content,
+                            params["contentIndex"].as_u64().unwrap_or(0) as usize,
+                        )
                     };
                     if index < 1024 {
                         parts.resize_with(parts.len().max(index + 1), String::new);
@@ -1733,7 +1743,8 @@ impl ThreadView {
                     .role(gpui::Role::Button)
                     .aria_label(format!("Worked for {}", duration(secs)))
                     .aria_expanded(open)
-                    .focusable().tab_index(0)
+                    .focusable()
+                    .tab_index(0)
                     .focus_visible(|s| s.shadow(focus_ring()))
                     // `select-none` in the original: a press here leaves the text selection.
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -1788,8 +1799,16 @@ impl ThreadView {
                 self.find_paint(item).as_ref(),
                 self.fades(item),
             ));
-            if let Some(card) = diff_card(&turn.id, &turn.items, window, t,
-                (self.reverted.contains(&turn.id), self.patch_pending.contains(&turn.id))) {
+            if let Some(card) = diff_card(
+                &turn.id,
+                &turn.items,
+                window,
+                t,
+                (
+                    self.reverted.contains(&turn.id),
+                    self.patch_pending.contains(&turn.id),
+                ),
+            ) {
                 col = col.child(div().mt(px(12.)).pb(px(8.)).child(card));
             }
             return col.child(action_row(last, &group, &turn.id, answer, t));
@@ -2163,25 +2182,43 @@ impl Render for ThreadView {
                     .child(div().h(px(114.))),
             )
             .child(top_fade.absolute().top_0().left_0())
-            .when(self.scroll.max_offset().y + self.scroll.offset().y > px(24.), |d| {
-                let scroll = self.scroll.clone();
-                d.child(
-                    div().absolute().bottom(px(140.)).left_0().right_0()
-                        .flex().justify_center()
-                        .child(tooltip(
-                            icon_button("scroll-to-bottom", icon("chevron-down", 16., t.text), &t)
-                                .role(gpui::Role::Button).aria_label("Scroll to bottom")
-                                .focusable().tab_index(0)
+            .when(
+                self.scroll.max_offset().y + self.scroll.offset().y > px(24.),
+                |d| {
+                    let scroll = self.scroll.clone();
+                    d.child(
+                        div()
+                            .absolute()
+                            .bottom(px(140.))
+                            .left_0()
+                            .right_0()
+                            .flex()
+                            .justify_center()
+                            .child(tooltip(
+                                icon_button(
+                                    "scroll-to-bottom",
+                                    icon("chevron-down", 16., t.text),
+                                    &t,
+                                )
+                                .role(gpui::Role::Button)
+                                .aria_label("Scroll to bottom")
+                                .focusable()
+                                .tab_index(0)
                                 .bg(t.surface_secondary)
                                 .focus_visible(|s| s.shadow(focus_ring()))
-                                .on_click(cx.listener(move |_, _, _, cx| {
-                                    scroll.scroll_to_bottom();
-                                    cx.notify();
-                                })),
-                            "Scroll to bottom", None, Side::Top,
-                        )),
-                )
-            })
+                                .on_click(cx.listener(
+                                    move |_, _, _, cx| {
+                                        scroll.scroll_to_bottom();
+                                        cx.notify();
+                                    },
+                                )),
+                                "Scroll to bottom",
+                                None,
+                                Side::Top,
+                            )),
+                    )
+                },
+            )
             .when(self.clip_right, |d| d.child(gpui::deferred(corners)))
             // A portal in the original: its shadow spills over the titlebar and the sidebar.
             .when(self.summary_open, |d| {

@@ -20,6 +20,11 @@ const COPY_ITEMS: [(&str, &str); 3] = [
     ("copy-working-directory", "Copy working directory"),
 ];
 
+const FORK_ITEMS: [(&str, &str); 2] = [
+    ("fork-into-local", "Fork chat"),
+    ("fork-into-worktree", "Fork chat in new worktree"),
+];
+
 impl ThreadView {
     pub fn header_title(&self) -> SharedString {
         if self.title.is_empty() {
@@ -61,24 +66,49 @@ impl ThreadView {
         self.dispatch_chat_action(item, window, cx);
     }
 
-    fn dispatch_chat_action(&mut self, item: &'static str, window: &mut Window, cx: &mut Context<Self>) {
+    fn dispatch_chat_action(
+        &mut self,
+        item: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.close_chat_actions(window, cx);
-        window.dispatch_action(Box::new(ChatMenuAction { thread_id: self.thread_id.clone(), item }), cx);
+        window.dispatch_action(
+            Box::new(ChatMenuAction {
+                thread_id: self.thread_id.clone(),
+                item,
+            }),
+            cx,
+        );
     }
 
-    fn chat_actions_key(&mut self, event: &gpui::KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn chat_actions_key(
+        &mut self,
+        event: &gpui::KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let key = event.keystroke.key.as_str();
-        let count = if self.chat_actions_submenu == Some(5) { 3 } else { 1 };
+        let count = if self.chat_actions_submenu == Some(5) {
+            COPY_ITEMS.len()
+        } else {
+            FORK_ITEMS.len()
+        };
         if self.chat_actions_submenu.is_some() {
             match key {
                 "escape" | "left" => self.chat_actions_submenu = None,
                 "down" => self.chat_actions_subactive = (self.chat_actions_subactive + 1) % count,
-                "up" => self.chat_actions_subactive = (self.chat_actions_subactive + count - 1) % count,
+                "up" => {
+                    self.chat_actions_subactive = (self.chat_actions_subactive + count - 1) % count
+                }
                 "home" => self.chat_actions_subactive = 0,
                 "end" => self.chat_actions_subactive = count - 1,
                 "enter" | "space" => {
-                    let item = if self.chat_actions_submenu == Some(3) { "fork-into-local" }
-                    else { COPY_ITEMS[self.chat_actions_subactive].0 };
+                    let item = if self.chat_actions_submenu == Some(3) {
+                        FORK_ITEMS[self.chat_actions_subactive].0
+                    } else {
+                        COPY_ITEMS[self.chat_actions_subactive].0
+                    };
                     self.dispatch_chat_action(item, window, cx);
                 }
                 _ => return,
@@ -86,11 +116,25 @@ impl ThreadView {
         } else {
             match key {
                 "escape" => self.close_chat_actions(window, cx),
-                "down" => self.chat_actions_active = (self.chat_actions_active + 1) % ACTIONS.len(),
-                "up" => self.chat_actions_active = (self.chat_actions_active + ACTIONS.len() - 1) % ACTIONS.len(),
-                "home" => self.chat_actions_active = 0,
-                "end" => self.chat_actions_active = ACTIONS.len() - 1,
-                "enter" | "space" | "right" => self.select_chat_action(self.chat_actions_active, window, cx),
+                "down" => {
+                    self.chat_actions_active = Some(
+                        self.chat_actions_active
+                            .map_or(0, |i| (i + 1) % ACTIONS.len()),
+                    )
+                }
+                "up" => {
+                    self.chat_actions_active =
+                        Some(self.chat_actions_active.map_or(ACTIONS.len() - 1, |i| {
+                            (i + ACTIONS.len() - 1) % ACTIONS.len()
+                        }))
+                }
+                "home" => self.chat_actions_active = Some(0),
+                "end" => self.chat_actions_active = Some(ACTIONS.len() - 1),
+                "enter" | "space" | "right" => {
+                    if let Some(index) = self.chat_actions_active {
+                        self.select_chat_action(index, window, cx);
+                    }
+                }
                 _ => return,
             }
         }
@@ -119,7 +163,7 @@ impl ThreadView {
                         .aria_label(label)
                         .on_hover(cx.listener(move |view, hovered: &bool, _, cx| {
                             if *hovered {
-                                view.chat_actions_active = index;
+                                view.chat_actions_active = Some(index);
                                 view.chat_actions_submenu = matches!(index, 3 | 5).then_some(index);
                                 view.chat_actions_subactive = 0;
                                 cx.notify();
@@ -135,7 +179,7 @@ impl ThreadView {
                         .items_center()
                         .gap(px(6.))
                         .hover(move |s| s.bg(hover))
-                        .when(self.chat_actions_active == index, |d| d.bg(hover))
+                        .when(self.chat_actions_active == Some(index), |d| d.bg(hover))
                         .child(
                             div()
                                 .relative()
@@ -170,27 +214,45 @@ impl ThreadView {
             .child(content);
         let submenu = self.chat_actions_submenu.map(|parent| {
             let items: &[(&'static str, &'static str)] = if parent == 3 {
-                &[("fork-into-local", "Fork chat")]
-            } else { &COPY_ITEMS };
+                &FORK_ITEMS
+            } else {
+                &COPY_ITEMS
+            };
             let separator_count = if parent == 3 { 1 } else { 2 };
-            crate::composer::popover(t, 220., |d| d.children(
-                items.iter().enumerate().map(|(index, &(item, label))| {
-                    div().id(("header-subaction", index))
-                        .h(px(28.5625)).px(px(8.)).rounded(px(12.))
-                        .flex().items_center()
-                        .role(gpui::Role::MenuItem).aria_label(label)
+            crate::composer::popover(t, 220., |d| {
+                d.children(items.iter().enumerate().map(|(index, &(item, label))| {
+                    div()
+                        .id(("header-subaction", index))
+                        .h(px(28.5625))
+                        .px(px(8.))
+                        .rounded(px(12.))
+                        .flex()
+                        .items_center()
+                        .role(gpui::Role::MenuItem)
+                        .aria_label(label)
                         .when(self.chat_actions_subactive == index, |d| d.bg(hover))
                         .on_hover(cx.listener(move |view, hovered: &bool, _, cx| {
-                            if *hovered { view.chat_actions_subactive = index; cx.notify(); }
+                            if *hovered {
+                                view.chat_actions_subactive = index;
+                                cx.notify();
+                            }
                         }))
-                        .on_click(cx.listener(move |view, _, window, cx| view.dispatch_chat_action(item, window, cx)))
+                        .on_click(cx.listener(move |view, _, window, cx| {
+                            view.dispatch_chat_action(item, window, cx)
+                        }))
                         .child(text(label, 13., 18.5714, 430., t.text))
-                })
-            ))
+                }))
+            })
             .id("chat-actions-submenu")
             .role(gpui::Role::Menu)
-            .on_hover(cx.listener(|view, hovered: &bool, _, _| view.chat_actions_submenu_hovered = *hovered))
-            .absolute().left(px(-220.)).top(px(6. + parent as f32 * 28.5625 + separator_count as f32 * 9.))
+            .on_hover(cx.listener(|view, hovered: &bool, _, _| {
+                view.chat_actions_submenu_hovered = *hovered
+            }))
+            .absolute()
+            .left(px(-220.))
+            .top(px(6.
+                + parent as f32 * 28.5625
+                + separator_count as f32 * 9.))
         });
         deferred(
             div().absolute().top(px(30.)).left_0().child(
@@ -278,8 +340,10 @@ impl ThreadView {
                             icon("thread-chat-actions", 16., t.text_tertiary),
                             t,
                         )
-                        .role(gpui::Role::Button).aria_label("Chat actions")
-                        .tab_index(0).focus_visible(|s| s.shadow(focus_ring()))
+                        .role(gpui::Role::Button)
+                        .aria_label("Chat actions")
+                        .tab_index(0)
+                        .focus_visible(|s| s.shadow(focus_ring()))
                         .when(self.chat_actions.is_some(), |d| d.bg(t.ghost_hover))
                         .when_some(self.chat_actions_trigger.as_ref(), |d, focus| {
                             d.track_focus(focus)
@@ -296,7 +360,7 @@ impl ThreadView {
                                 let focus = cx.focus_handle();
                                 focus.focus(window, cx);
                                 view.chat_actions = Some(focus);
-                                view.chat_actions_active = 0;
+                                view.chat_actions_active = None;
                                 view.chat_actions_submenu = None;
                                 cx.notify();
                             }

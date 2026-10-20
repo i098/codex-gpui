@@ -234,12 +234,14 @@ impl Dialog {
     }
 
     pub fn delete_thread(thread: String, cx: &mut Context<Self>) -> Self {
-        Self { thread, ..Self::new(Kind::DeleteThread, cx) }
+        Self {
+            thread,
+            ..Self::new(Kind::DeleteThread, cx)
+        }
     }
 
-    pub fn deletion_result(&mut self, error: Option<String>, cx: &mut Context<Self>) {
+    pub fn finish_deletion(&mut self, cx: &mut Context<Self>) {
         self.saving = false;
-        self.error = error;
         cx.notify();
     }
     /// `Rename chat` for `thread`, its input prefilled with `title` and all of it selected.
@@ -788,7 +790,8 @@ impl Dialog {
                 }
             }
             (Kind::DeleteThread, 0) => "Cancel",
-            (Kind::DeleteThread, _) => "Delete",
+            (Kind::DeleteThread, 1) => "Delete",
+            (Kind::DeleteThread, _) => "Close dialog",
             (Kind::ModelAnnouncement, 0) => "Close",
             (Kind::ModelAnnouncement, 1) => "Continue with current model",
             (Kind::ModelAnnouncement, _) => {
@@ -1171,8 +1174,8 @@ impl Dialog {
                     Kind::Shortcuts
                     | Kind::FullAccess
                     | Kind::LogOut
-                    | Kind::ArchiveSection
-                    | Kind::DeleteThread => vec![0, 1],
+                    | Kind::ArchiveSection => vec![0, 1],
+                    Kind::DeleteThread => vec![0, 1, 2],
                     Kind::ClearAllUnreads => vec![2, 0, 1, 3],
                     Kind::ScheduleTask => vec![0, 3, 4, 5, 1, 2],
                     Kind::Branches => vec![0, 1],
@@ -1585,16 +1588,39 @@ impl Dialog {
                     ..Default::default()
                 }))
             })
-            .when(self.selected == index, |d| {
-                d.child(div().absolute().inset(px(-2.)).child(shapes::decoration(
-                    shapes::Decoration {
-                        radius: Corners::all(px(14.5)),
+            .when(self.kind == Kind::DeleteThread, |d| {
+                d.focus_visible(|s| {
+                    s.shadow(vec![gpui::BoxShadow {
+                        color: rgba(0x3a83f7ff).into(),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(0.),
+                        spread_radius: px(2.),
+                        inset: false,
+                    }])
+                })
+                .when(!danger, |d| {
+                    d.child(shapes::decoration(shapes::Decoration {
+                        radius: Corners::all(px(12.5)),
                         corner: shapes::Corner::Squircle,
-                        border: Some((px(2.), rgba(0x3a83f7ff).into())),
+                        fill: Some(t.ghost_hover),
+                        border: Some((px(1.), t.border)),
                         ..Default::default()
-                    },
-                )))
+                    }))
+                })
             })
+            .when(
+                self.selected == index && self.kind != Kind::DeleteThread,
+                |d| {
+                    d.child(div().absolute().inset(px(-2.)).child(shapes::decoration(
+                        shapes::Decoration {
+                            radius: Corners::all(px(14.5)),
+                            corner: shapes::Corner::Squircle,
+                            border: Some((px(2.), rgba(0x3a83f7ff).into())),
+                            ..Default::default()
+                        },
+                    )))
+                },
+            )
             .hover(|s| s.opacity(0.85))
             .child(text(
                 label,
@@ -1603,6 +1629,8 @@ impl Dialog {
                 430.,
                 if danger {
                     t.text_error
+                } else if self.kind == Kind::DeleteThread {
+                    t.text
                 } else {
                     t.text_tertiary
                 },
@@ -1615,16 +1643,18 @@ impl Dialog {
     }
 
     fn delete_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
-        div().size_full().p(px(20.)).flex().flex_col().gap(px(12.))
-            .child(text("Delete task?", 18., 24., 600., t.text))
+        div().relative().size_full().p(px(20.)).flex().flex_col().gap(px(4.))
+            .child(text("Delete task?", 20., 28., 600., t.text))
             .child(text("This permanently deletes the task and its subagent tasks. This cannot be undone.",
-                14., 20., 430., t.text_secondary).whitespace_normal())
-            .when_some(self.error.as_ref(), |d, error| d.child(
-                text(error.clone(), 13., 18., 430., t.text_error).whitespace_normal()
-            ))
-            .child(div().flex().justify_end().gap(px(12.))
-                .child(self.logout_button(0, "Cancel", false, t, cx))
-                .child(self.logout_button(1, if self.saving { "Deleting…" } else { "Delete" }, true, t, cx)))
+                14., 21., 430., t.text_secondary).whitespace_normal())
+            .child(div().mt(px(8.)).flex().justify_end().gap(px(12.))
+                .child(self.logout_button(0, "Cancel", t, cx))
+                .child(self.logout_button(1, if self.saving { "Deleting…" } else { "Delete" }, t, cx)))
+            .child(div().id("delete-close").role(gpui::Role::Button).aria_label("Close dialog")
+                .track_focus(&self.controls[2]).absolute().top(px(16.)).right(px(16.))
+                .size(px(24.)).rounded(px(4.)).flex().items_center().justify_center()
+                .hover(|s| s.bg(t.ghost_hover)).child(icon("close", 16., t.text.opacity(0.8)))
+                .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))))
     }
 
     fn full_access_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
@@ -2999,7 +3029,7 @@ impl Render for Dialog {
             Kind::ArchiveSection => (420., 181.),
             Kind::FullAccess => (520., 420.),
             Kind::LogOut => (380., 145. + if self.email.is_some() { 25. } else { 0. }),
-            Kind::DeleteThread => (420., if self.error.is_some() { 226. } else { 190. }),
+            Kind::DeleteThread => (420., 158.),
             Kind::ModelAnnouncement => (480., 432.),
             Kind::Commit => (420., self.commit_height()),
             Kind::Branches => (
@@ -3151,7 +3181,10 @@ impl Render for Dialog {
                         20.
                     } else if schedule {
                         30.
-                    } else if matches!(self.kind, Kind::LogOut | Kind::ClearAllUnreads) {
+                    } else if matches!(
+                        self.kind,
+                        Kind::LogOut | Kind::ClearAllUnreads | Kind::DeleteThread
+                    ) {
                         25.
                     } else {
                         24.
@@ -3202,8 +3235,12 @@ impl Render for Dialog {
                                 false,
                                 shapes::Decoration {
                                     radius: Corners::all(px(
-                                        if matches!(self.kind, Kind::LogOut | Kind::ClearAllUnreads)
-                                        {
+                                        if matches!(
+                                            self.kind,
+                                            Kind::LogOut
+                                                | Kind::ClearAllUnreads
+                                                | Kind::DeleteThread
+                                        ) {
                                             25.
                                         } else {
                                             24.
@@ -3211,7 +3248,7 @@ impl Render for Dialog {
                                     )),
                                     corner: if matches!(
                                         self.kind,
-                                        Kind::LogOut | Kind::ClearAllUnreads
+                                        Kind::LogOut | Kind::ClearAllUnreads | Kind::DeleteThread
                                     ) {
                                         shapes::Corner::Squircle
                                     } else {
