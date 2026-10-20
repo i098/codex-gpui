@@ -41,6 +41,7 @@ use url::Url;
 
 mod automation_schedule;
 mod git;
+mod projectless;
 mod run_now;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -407,6 +408,7 @@ pub struct LocalHost {
     /// process holds the same connection.
     bridge: Option<Arc<Bridge>>,
     opener: PathBuf,
+    host_settings_path: PathBuf,
 }
 
 impl LocalHost {
@@ -415,11 +417,18 @@ impl LocalHost {
             home: home.into(),
             bridge: None,
             opener: "/usr/bin/open".into(),
+            host_settings_path: PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
+                .join("Library/Application Support/codex-gpui/host-settings.json"),
         }
     }
 
     pub fn with_bridge(mut self, bridge: Arc<Bridge>) -> Self {
         self.bridge = Some(bridge);
+        self
+    }
+
+    pub fn with_host_settings_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.host_settings_path = path.into();
         self
     }
 
@@ -442,6 +451,7 @@ impl LocalHost {
 
     fn update_global_state(&self, update: impl FnOnce(&mut Value) -> Result<bool>) -> Result<()> {
         fs::create_dir_all(&self.home)?;
+        // ponytail: native-writer lock only; coordinate with the original app for cross-app isolation.
         let lock = fs::OpenOptions::new()
             .create(true)
             .truncate(false)

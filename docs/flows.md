@@ -650,15 +650,25 @@ A missing store or run row releases only the matching completed tracker, without
 A refusal or `success: false` shows the danger toast `Could not start scheduled task`, with the reason on one line.
 Event-triggered tasks (`## When this happens` prompts) have the item disabled with the tooltip `Automations triggered by events can’t be run manually`; the host refuses them too.
 The project folders or project target (its first root from `.codex-global-state.json`) run, in a new worktree for the original default environment (`create_worktree` and `set_owner_thread`, removed again when no thread starts) or in the folder for `local`; outside a Git repository the run happens in the folder.
-For a project target, the host saves `{projectKind: "local", projectId}` in `thread-project-assignments` after `thread/start` and worktree ownership, before it moves the pending run row or starts the turn.
+For a project target, the host saves `{projectKind: "local", projectId}` after `thread/start` and worktree ownership.
+It saves the assignment before it moves the pending run row or starts the turn.
 This follows the original `Vl` and `U0.setAssignment`; it preserves existing projectless membership and unrelated global state.
 All native project-state writers use the same locked, atomic `.codex-global-state.json` update.
 An assignment failure archives the pending row and sends no turn; the started thread keeps its worktree.
 Legacy folder targets do not receive a project assignment, even when a saved project contains the folder.
-Projectless and heartbeat tasks are refused: the host has no workspace-directory creation or renderer thread state.
+Projectless tasks use the original `nl`/`Ct` allocation under `projectlessWorkspaceRoot`, or `~/Documents/Codex` when that setting is absent.
+Each run gets a local-date folder and a unique prompt-derived folder with `work` and `outputs` subfolders.
+The host rejects relative roots and symlinks at the root or local-date folder.
+It saves `projectless-thread-ids`, `thread-workspace-root-hints`, and `thread-projectless-output-directories` through the shared atomic global-state writer.
+The thread receives the original projectless output instructions and permissions; projectless runs do not create Git worktrees.
+A failed start retains the owned folder and archives the pending run; a failed turn retains the thread metadata and archives its run.
+Successful projectless runs use the same automatic archive completion path and retain their saved folders and metadata.
+The host reads config requirements before it creates a projectless workspace, as in the original `Ll`.
+A failed metadata write retains the started thread and its folder without starting a turn.
+Heartbeat tasks still require renderer thread state.
 Not yet carried over: the desktop notification and the unread dot on the rail.
-`automation_run_now` checks project assignment persistence, the real host's saved policy, early completion, user cancellation and archive failures against a stdio peer.
-It also checks account isolation, recoverable restore writes and retained worktrees.
+`automation_run_now` checks projectless metadata, project assignment, saved policy, early completion, user cancellation, and archive failures against a stdio peer.
+It also checks account isolation, recoverable restore writes, and retained worktrees.
 The native row-menu replay needs macOS.
 
 `LocalHost` implements the original `automation-update` status change for local tasks (issue https://github.com/i098/codex-gpui/issues/226).
