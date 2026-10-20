@@ -6,6 +6,10 @@
 //!
 //! The backdrop comes from the current frame's scene prefix, including text, images and
 //! every primitive painted before this box. The same sprite atlas supplies the capture.
+//!
+//! An isolated popup keeps its translucent content separate from the filtered backdrop.
+//! Its shadow bounds set the raster origin and tile size; its paths use box-local coordinates.
+//! Already-composited images paint outside the content layer.
 
 use crate::{
     Decoration, Fill,
@@ -42,6 +46,7 @@ struct Surface {
     // Initialized on the first nested box; `backdrop` then holds the blurred parent backdrop.
     layer: Option<Pixmap>,
     checkpoint: (u64, usize),
+    raster: Option<(u8, Bounds<Pixels>, [i32; 4])>,
 }
 
 #[derive(Default)]
@@ -55,6 +60,28 @@ thread_local! {
     /// Composed images by their inputs.
     /// ponytail: cleared wholesale when full; an LRU only if animation ever thrashes it.
     static IMAGES: RefCell<HashMap<String, Arc<RenderImage>>> = Default::default();
+}
+
+pub(crate) fn compositor_rect(window: &Window) -> Option<[i32; 4]> {
+    let (bounds, _) = window.composited_layer()?;
+    let owner = window.composited_layer_id()?;
+    let key = (
+        window.window_handle().window_id(),
+        window.scene_checkpoint().0,
+    );
+    FRAME.with_borrow(|frame| {
+        if frame.key != Some(key) {
+            return None;
+        }
+        frame
+            .surfaces
+            .iter()
+            .rev()
+            .filter_map(|surface| surface.raster)
+            .find_map(|(id, layer_bounds, rect)| {
+                (id == owner && layer_bounds == bounds).then_some(rect)
+            })
+    })
 }
 
 /// `crate::backdrop_blur` on macOS.
@@ -121,7 +148,7 @@ pub(crate) fn paint(
                 return;
             }
         };
-        let (image, out) = if let Some(index) = parent {
+        let (image, out, content) = if let Some(index) = parent {
             let surface = &mut frame.surfaces[index];
             if surface.layer.is_none() {
                 blur_backdrop(&mut surface.backdrop, &surface.filtered);
@@ -140,20 +167,39 @@ pub(crate) fn paint(
             layer.px.hash(&mut hasher);
             let key = format!("nested{out:?}{}", hasher.finish());
             let image = cached_image(key, window, || compose_layer(&surface.backdrop, layer, out));
-            (image, out)
+            (image, out, None)
         } else {
             let backdrop = Pixmap { r: out, px: pixels };
             let mut hasher = DefaultHasher::new();
             backdrop.px.hash(&mut hasher);
-            let key = format!("{filtered:?}{out:?}{}", hasher.finish());
-            let image = cached_image(key, window, || compose(&filtered, &backdrop));
+            let composited = window.composited_layer().is_some() && !filtered.ops.is_empty();
+            let surface_key = format!("surface{filtered:?}{out:?}");
+            let key = format!("{composited}{surface_key}{}", hasher.finish());
+            let image = cached_image(key, window, || {
+                if composited {
+                    compose_backdrop(&filtered, &backdrop)
+                } else {
+                    compose(&filtered, &backdrop)
+                }
+            });
+            let content = composited
+                .then(|| cached_image(surface_key, window, || surface_image(&filtered, out)));
+            let raster = if composited {
+                window
+                    .composited_layer_id()
+                    .zip(window.composited_layer())
+                    .map(|(owner, (bounds, _))| (owner, bounds, layer_rect(&filtered)))
+            } else {
+                None
+            };
             frame.surfaces.push(Surface {
                 filtered,
                 backdrop,
                 layer: None,
                 checkpoint,
+                raster,
             });
-            (image, out)
+            (image, out, content)
         };
         let at = Bounds::new(
             point(px(out[0] as f32 / s), px(out[1] as f32 / s)),
@@ -162,9 +208,22 @@ pub(crate) fn paint(
                 px((out[3] - out[1]) as f32 / s),
             ),
         );
-        window
-            .paint_image(at, at, Corners::default(), image, 0, false)
-            .ok();
+        if let Some(content) = content {
+            window
+                .with_unlayered_paint(|window| {
+                    window.paint_image(at, at, Corners::default(), image, 0, false)
+                })
+                .ok();
+            window
+                .paint_image(at, at, Corners::default(), content, 0, false)
+                .ok();
+        } else {
+            window
+                .with_unlayered_paint(|window| {
+                    window.paint_image(at, at, Corners::default(), image, 0, false)
+                })
+                .ok();
+        }
         let index = parent.unwrap_or(frame.surfaces.len() - 1);
         frame.surfaces[index].checkpoint = window.scene_checkpoint();
     });
@@ -356,18 +415,28 @@ fn draw_layer(target: &mut Pixmap, f: &Filtered) {
     if f.ops.is_empty() {
         return;
     }
+    let layer = raster_layer(f, target.r, [0., 0.]);
+    for (d, s) in target.px.iter_mut().zip(&layer.px) {
+        *d = over(*s, *d);
+    }
+}
+
+fn raster_layer(f: &Filtered, area: [i32; 4], origin: [f32; 2]) -> Pixmap {
     // Chromium rasters the box's composited layer: Skia's dither matrix and the shadow's mask
     // blur (cut at the device edge) start at its origin.
     let r = layer_rect(f);
-    let mut layer = Pixmap::new(target.r);
+    let mut layer = Pixmap::new(area);
     layer.blit(
-        intersect(r, target.r),
+        intersect(r, area),
         Color::TRANSPARENT,
         [r[0], r[1]],
         Some((r[2] - r[0], r[3] - r[1])),
         ColorSpace::new_srgb(),
         |c| {
+            let [x, y] = origin;
+            c.translate((x, y));
             for &(op, color) in &f.ops {
+                let op = op.moved([-x, -y]);
                 c.save();
                 match (op, f.gradient) {
                     // A `background-image`: Blink clips to the shape and draws the image rect;
@@ -397,9 +466,7 @@ fn draw_layer(target: &mut Pixmap, f: &Filtered) {
             }
         },
     );
-    for (d, s) in target.px.iter_mut().zip(&layer.px) {
-        *d = over(*s, *d);
-    }
+    layer
 }
 
 /// The box's composited layer, device px: its rect and its shadows' ink overflow (Blink's
@@ -425,6 +492,16 @@ fn layer_rect(f: &Filtered) -> [i32; 4] {
 fn compose(filtered: &Filtered, before: &Pixmap) -> RenderImage {
     let mut target = before.clone();
     filter(&mut target, filtered);
+    changed_image(&target, before)
+}
+
+fn compose_backdrop(filtered: &Filtered, before: &Pixmap) -> RenderImage {
+    let mut target = before.clone();
+    blur_backdrop(&mut target, filtered);
+    changed_image(&target, before)
+}
+
+fn changed_image(target: &Pixmap, before: &Pixmap) -> RenderImage {
     let [x0, y0, x1, y1] = target.r;
     let mut image = RgbaImage::new((x1 - x0) as u32, (y1 - y0) as u32);
     for (pixel, (&after, &before)) in image.pixels_mut().zip(target.px.iter().zip(&before.px)) {
@@ -432,6 +509,28 @@ fn compose(filtered: &Filtered, before: &Pixmap) -> RenderImage {
             *pixel = image::Rgba([after[2], after[1], after[0], 255]);
         }
     }
+    RenderImage::new(vec![Frame::new(image)])
+}
+
+fn surface_image(filtered: &Filtered, area: [i32; 4]) -> RenderImage {
+    let [x, y, ..] = filtered.contour.rr.r;
+    let mut layer = raster_layer(filtered, area, [x, y]);
+    for pixel in &mut layer.px {
+        let alpha = u32::from(pixel[3]);
+        for channel in &mut pixel[..3] {
+            *channel = (u32::from(*channel) * 255 + alpha / 2)
+                .checked_div(alpha)
+                .unwrap_or(0)
+                .min(255) as u8;
+        }
+        pixel.swap(0, 2);
+    }
+    let image = RgbaImage::from_raw(
+        (area[2] - area[0]) as u32,
+        (area[3] - area[1]) as u32,
+        layer.px.into_flattened(),
+    )
+    .expect("surface image size");
     RenderImage::new(vec![Frame::new(image)])
 }
 

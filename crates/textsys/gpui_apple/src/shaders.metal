@@ -912,14 +912,6 @@ fragment SpriteLayerTargets polychrome_sprite_layer_fragment(
   if (coverage == 0.0 || sample.a == 0.0) {
     discard_fragment();
   }
-  if (sprite.skia != 0 && sprite.opacity == 1.0 && !sprite.grayscale) {
-    uint4 src = uint4(round(sample * 255.0));
-    return composite_sprite(2, uint(round(coverage * 255.0)), src, sample, sprite.layers,
-                            target, outer, inner, backdrop, ids);
-  }
-  if (sprite.skia != 0) {
-    sample.rgb /= max(sample.a, 1e-6);
-  }
   if (sprite.grayscale) {
     sample.rgb = float3(dot(sample.rgb, float3(0.2126, 0.7152, 0.0722)));
   }

@@ -2170,6 +2170,7 @@ fn measured(
 /// 510 device px; a tile owns its far edge pixel). `origin` is the image's top-left in css px
 /// relative to that layer (for the thread view: the main panel's top-left). Stops are
 /// `(color, position 0..=1)`; `to_top` flips the direction. `size` is in css px.
+/// The baked image uses a separate layer so later paints do not use it as their layer destination.
 pub fn skia_gradient(
     stops: &[(Hsla, f32)],
     under: Hsla,
@@ -2207,6 +2208,7 @@ pub fn skia_gradient(
     gpui::img(image)
         .w(px(size.0))
         .h(px(size.1))
+        .top_layer()
         .object_fit(gpui::ObjectFit::Fill)
 }
 

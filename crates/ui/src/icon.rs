@@ -212,8 +212,11 @@ impl Element for Icon {
                         origin: point(px(x / scale), px(y / scale)),
                         size: size(px(w / scale), px(h / scale)),
                     };
+                    // Fitted images contain the page blend, not an unblended layer source.
                     window
-                        .paint_image(device, device, Corners::default(), image, 0, false)
+                        .with_unlayered_paint(|window| {
+                            window.paint_image(device, device, Corners::default(), image, 0, false)
+                        })
                         .ok();
                     return;
                 }

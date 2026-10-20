@@ -1257,6 +1257,7 @@ pub struct Window {
     /// The bounds of the innermost `Styled::layer` element being painted, and whether they
     /// set its cc tile size (`Styled::cc_tiles`).
     composited_layer: Option<(Bounds<Pixels>, bool)>,
+    composited_layer_id: Option<u8>,
     /// The bounds of the innermost `Styled::saved_layer` element being painted.
     saved_layer: Option<Bounds<Pixels>>,
     next_layer_id: u8,
@@ -2171,6 +2172,7 @@ impl Window {
             element_opacity: 1.0,
             element_layers: Vec::new(),
             composited_layer: None,
+            composited_layer_id: None,
             saved_layer: None,
             next_layer_id: 0,
             requested_autoscroll: None,
@@ -2918,16 +2920,14 @@ impl Window {
             }
             let size = self.viewport_size.to_device_pixels(self.scale_factor());
             let opaque = checkpoint.is_none()
-                && self.platform_window.background_appearance()
-                    == WindowBackgroundAppearance::Opaque;
+                && self.platform_window.background_appearance() == WindowBackgroundAppearance::Opaque;
             let scene = if let Some((epoch, start)) = checkpoint {
                 anyhow::ensure!(
                     epoch == self.scene_epoch && start <= self.next_frame.scene.len(),
                     "stale scene checkpoint"
                 );
                 self.scene_capture_scratch.clear();
-                self.scene_capture_scratch
-                    .replay(start..self.next_frame.scene.len(), &self.next_frame.scene);
+                self.scene_capture_scratch.replay(start..self.next_frame.scene.len(), &self.next_frame.scene);
                 self.scene_capture_scratch.finish();
                 &self.scene_capture_scratch
             } else {
@@ -4307,7 +4307,11 @@ impl Window {
             return f(self);
         }
         let previous_opacity = self.element_opacity;
-        let (previous_layer, previous_saved) = (self.composited_layer, self.saved_layer);
+        let (previous_layer, previous_saved, previous_layer_id) = (
+            self.composited_layer,
+            self.saved_layer,
+            self.composited_layer_id,
+        );
         self.element_opacity = previous_opacity * opacity;
         match layer {
             Some((b, s)) if s.saved_layer => self.saved_layer = Some(b),
@@ -4325,13 +4329,19 @@ impl Window {
             .then(|| std::mem::take(&mut self.element_layers));
         // Skia's `SkPaint::setAlphaf`: rounded to a byte.
         let alpha = (opacity.clamp(0., 1.) * 255.).round() as u8;
-        let result = self.push_layer(alpha, f);
+        let result = self.push_layer(alpha, |window| {
+            if layer.is_some_and(|(_, style)| !style.saved_layer) {
+                window.composited_layer_id = window.element_layers.last().map(|&(id, _)| id);
+            }
+            f(window)
+        });
         if let Some(outer) = outer {
             self.element_layers = outer;
         }
         self.element_opacity = previous_opacity;
         self.composited_layer = previous_layer;
         self.saved_layer = previous_saved;
+        self.composited_layer_id = previous_layer_id;
         result
     }
 
@@ -4340,6 +4350,11 @@ impl Window {
     /// and whether they are Chromium's layer rect, whose size sets the tile size.
     pub fn composited_layer(&self) -> Option<(Bounds<Pixels>, bool)> {
         self.composited_layer
+    }
+
+    /// The innermost composited layer's identifier in the current frame.
+    pub fn composited_layer_id(&self) -> Option<u8> {
+        self.composited_layer_id
     }
 
     /// The window bounds of the innermost `Styled::saved_layer` element being painted: Skia
@@ -4352,6 +4367,14 @@ impl Window {
     /// and masks too) blends through; the element opacity is unchanged.
     pub fn with_skia_layer<R>(&mut self, alpha: u8, f: impl FnOnce(&mut Self) -> R) -> R {
         self.push_layer(alpha, f)
+    }
+
+    /// Paints directly on the compositor target, outside the active sprite layers.
+    pub fn with_unlayered_paint<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let layers = std::mem::take(&mut self.element_layers);
+        let result = f(self);
+        self.element_layers = layers;
+        result
     }
 
     fn push_layer<R>(&mut self, alpha: u8, f: impl FnOnce(&mut Self) -> R) -> R {
@@ -5099,9 +5122,9 @@ impl Window {
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
         #[cfg(target_vendor = "apple")]
-        let Some(layers) = self.sprite_layers() else {
+        if self.element_opacity() <= 0. {
             return Ok(());
-        };
+        }
 
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
@@ -5134,14 +5157,12 @@ impl Window {
             };
             let content_mask = self.snapped_content_mask();
             let opacity = self.element_opacity();
-            #[cfg(target_vendor = "apple")]
-            let opacity = if layers == 0 { opacity } else { 1. };
 
             self.next_frame.scene.insert_primitive(PolychromeSprite {
                 order: 0,
                 skia: 1,
                 #[cfg(target_vendor = "apple")]
-                layers,
+                layers: 0,
                 grayscale: false.into(),
                 bounds,
                 corner_radii: Default::default(),
