@@ -200,6 +200,50 @@ impl Render for ArchivedChats {
     }
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SavedSections {
+    sections: Vec<SavedSection>,
+    collapsed_section_ids: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SavedSection {
+    id: String,
+    name: String,
+    item_keys: Vec<String>,
+}
+
+struct CustomSection {
+    id: SharedString,
+    title: SharedString,
+    paging_id: SharedString,
+    thread_ids: Vec<String>,
+    rows: Vec<usize>,
+    expanded: bool,
+    collapsed: bool,
+}
+
+impl CustomSection {
+    fn shown(&self) -> usize {
+        if self.collapsed {
+            0
+        } else if self.expanded || self.rows.len() == PAGE + 1 {
+            self.rows.len()
+        } else {
+            self.rows.len().min(PAGE)
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ThreadGroup {
+    Pinned,
+    Recents,
+    Custom(usize),
+}
+
 pub struct HomeSidebar {
     /// `(thread id, row label)` in `thread/list` order.
     threads: Vec<(String, SharedString)>,
@@ -211,6 +255,8 @@ pub struct HomeSidebar {
     /// `Projects`, `Recents` collapsed by a click on their header.
     collapsed: [bool; 3],
     pinned: HashSet<String>,
+    sections: Vec<CustomSection>,
+    grouped_rows: HashSet<usize>,
     /// Threads whose rows carry the unread dot; any lights the header's bell.
     pub unread: Vec<String>,
     /// Threads with an active turn (`thread/status/changed`), by the clock reading when their
@@ -287,6 +333,8 @@ impl HomeSidebar {
             selected: selected.map(str::to_owned),
             collapsed: [false; 3],
             pinned: pinned_ids(threads),
+            sections: Vec::new(),
+            grouped_rows: HashSet::new(),
             unread: Vec::new(),
             running: threads
                 .iter()
@@ -556,6 +604,7 @@ impl HomeSidebar {
                 self.set_running(&thread.id, true, cx);
             }
         }
+        self.reindex_sections();
         cx.notify();
     }
 
@@ -574,6 +623,7 @@ impl HomeSidebar {
             (label, _) => label,
         };
         self.threads.insert(0, (thread.id.clone(), label));
+        self.reindex_sections();
         self.set_running(&thread.id, thread.status == ThreadStatus::Active, cx);
         cx.notify();
     }
@@ -635,6 +685,76 @@ impl HomeSidebar {
         self.recents().count().min(self.limit)
     }
 
+    /// Loads recorded local-thread sections before final Recents without adding storage.
+    pub fn set_sections(
+        &mut self,
+        value: &serde_json::Value,
+        cx: &mut Context<Self>,
+    ) -> serde_json::Result<()> {
+        let saved: SavedSections = serde::Deserialize::deserialize(value)?;
+        self.sections = saved
+            .sections
+            .into_iter()
+            .map(|section| {
+                let collapsed = saved.collapsed_section_ids.contains(&section.id);
+                CustomSection {
+                    id: format!("custom:{}", section.id).into(),
+                    title: section.name.into(),
+                    paging_id: format!("custom-paging:{}", section.id).into(),
+                    thread_ids: section
+                        .item_keys
+                        .into_iter()
+                        .filter_map(|mut key| {
+                            const PREFIX: &str = "codex:thread:local:";
+                            if !key.starts_with(PREFIX) {
+                                return None;
+                            }
+                            drop(key.drain(..PREFIX.len()));
+                            Some(key)
+                        })
+                        .collect(),
+                    rows: Vec::new(),
+                    expanded: false,
+                    collapsed,
+                }
+            })
+            .collect();
+        self.reindex_sections();
+        cx.notify();
+        Ok(())
+    }
+
+    pub fn section_shown(&self, key: &str) -> Option<usize> {
+        self.sections
+            .iter()
+            .find(|s| s.id.as_ref() == key)
+            .map(CustomSection::shown)
+    }
+
+    fn reindex_sections(&mut self) {
+        self.grouped_rows.clear();
+        if self.sections.is_empty() {
+            return;
+        }
+        let positions: HashMap<_, _> = self
+            .threads
+            .iter()
+            .enumerate()
+            .map(|(index, (id, _))| (id.as_str(), index))
+            .collect();
+        for section in &mut self.sections {
+            section.rows.clear();
+            for id in &section.thread_ids {
+                if let Some(&index) = positions.get(id.as_str()) {
+                    self.grouped_rows.insert(index);
+                    if !self.pinned.contains(id) {
+                        section.rows.push(index);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn projects_collapsed(&self) -> bool {
         self.collapsed[0]
     }
@@ -642,7 +762,11 @@ impl HomeSidebar {
     fn recents(&self) -> impl Iterator<Item = &(String, SharedString)> {
         self.threads
             .iter()
-            .filter(|(id, _)| !self.pinned.contains(id))
+            .enumerate()
+            .filter(|(index, (id, _))| {
+                !self.pinned.contains(id) && !self.grouped_rows.contains(index)
+            })
+            .map(|(_, thread)| thread)
     }
 
     /// The end sentinel came into view: `PAGE` more rows when they are loaded, else the next
@@ -659,20 +783,38 @@ impl HomeSidebar {
         }
     }
 
-    fn rows(&self, pinned: bool, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let loaded = self.recents().count();
-        let rows = self
-            .threads
-            .iter()
-            .filter(|(id, _)| self.pinned.contains(id) == pinned)
-            .take(if pinned { usize::MAX } else { self.limit });
+    fn rows(&self, group: ThreadGroup, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let recents = matches!(group, ThreadGroup::Recents);
+        let custom = match group {
+            ThreadGroup::Custom(index) => Some(&self.sections[index]),
+            _ => None,
+        };
+        let loaded = if recents { self.recents().count() } else { 0 };
+        let count = custom.map_or(self.threads.len(), |s| s.rows.len());
+        let limit = match group {
+            ThreadGroup::Pinned => usize::MAX,
+            ThreadGroup::Recents => self.limit,
+            ThreadGroup::Custom(index) => self.sections[index].shown(),
+        };
+        let rows = (0..count)
+            .map(|index| custom.map_or(index, |s| s.rows[index]))
+            .filter(|index| match group {
+                ThreadGroup::Pinned => self.pinned.contains(&self.threads[*index].0),
+                ThreadGroup::Recents => {
+                    !self.pinned.contains(&self.threads[*index].0)
+                        && !self.grouped_rows.contains(index)
+                }
+                ThreadGroup::Custom(_) => true,
+            })
+            .take(limit)
+            .map(|index| &self.threads[index]);
         let now = cx.background_executor().now();
         if !self.running.is_empty() {
             window.request_animation_frame();
         }
         // The original's end sentinel (`IntersectionObserver` on the list's last item): while
         // it is inside the scroller's clip, the list pages.
-        let sentinel = (!pinned
+        let sentinel = (recents
             && !self.loading
             && !self.page_error
             && (loaded > self.limit || self.has_more))
@@ -730,7 +872,7 @@ impl HomeSidebar {
                     self.selected.as_ref() == Some(id),
                     end,
                     cx,
-                    (focused, pinned),
+                    (focused, self.pinned.contains(id)),
                     [&row_focus, &pin_focus, &archive_focus],
                 )
                 .on_click(cx.listener(move |_, _, _, cx| cx.emit(OpenThread(open.clone()))))
@@ -742,14 +884,14 @@ impl HomeSidebar {
                 )
             }))
             .children(sentinel)
-            .when(!pinned && self.loading, |d| {
+            .when(recents && self.loading, |d| {
                 d.child(div().h(px(24.)).flex().justify_center().child(icon(
                     "sidebar-cmd-spinner",
                     16.,
                     cx.theme().text_tertiary,
                 )))
             })
-            .when(!pinned && self.page_error, |d| {
+            .when(recents && self.page_error, |d| {
                 d.child(
                     div()
                         .id("retry-more-chats")
@@ -768,6 +910,54 @@ impl HomeSidebar {
             })
             .into_any_element()
     }
+
+    fn custom_body(&self, index: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let section = &self.sections[index];
+        let rows = self.rows(ThreadGroup::Custom(index), window, cx);
+        let mut body = div().flex().flex_col().child(rows);
+        if section.rows.len() > PAGE && (section.expanded || section.rows.len() > PAGE + 1) {
+            let label = if section.expanded {
+                "Show less"
+            } else {
+                "Show more"
+            };
+            let handle = focus::handle(section.paging_id.clone(), 0, window, cx);
+            let color = Hsla {
+                a: if cx.theme().appearance == Appearance::Dark {
+                    0.498
+                } else {
+                    0.5
+                },
+                ..cx.theme().text_tertiary
+            };
+            let hover = cx.theme().ghost_hover;
+            let radius = px(9.375);
+            let button = focus::ring(
+                div()
+                    .id(section.paging_id.clone())
+                    .role(gpui::Role::Button)
+                    .aria_label(label)
+                    .h(px(24.))
+                    .px(px(8.))
+                    .flex()
+                    .items_center()
+                    .rounded(radius)
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(hover))
+                    .child(text(label, 14., 21., 400., color).top_layer()),
+                &handle,
+                radius,
+                px(2.),
+                cx,
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.sections[index].expanded ^= true;
+                cx.notify();
+            }));
+            body = body.child(div().py(px(4.)).flex().child(button));
+        }
+        body.into_any_element()
+    }
 }
 
 /// The Home sidebar with Recents from the fixture `thread/list`; `selected_thread` is the id of
@@ -780,21 +970,25 @@ pub fn home_sidebar(cx: &mut App, selected_thread: Option<&str>) -> AnyView {
 
 impl Render for HomeSidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let recents =
-            if !self.has_more && self.threads.iter().all(|(id, _)| self.pinned.contains(id)) {
-                sidebar_empty("No chats", cx).into_any_element()
-            } else {
-                self.rows(false, window, cx)
-            };
-        let pinned = (!self.pinned.is_empty()).then(|| self.rows(true, window, cx));
+        let recents = if !self.has_more && self.recents().next().is_none() {
+            sidebar_empty("No chats", cx).into_any_element()
+        } else {
+            self.rows(ThreadGroup::Recents, window, cx)
+        };
+        let pinned = (!self.pinned.is_empty()).then(|| self.rows(ThreadGroup::Pinned, window, cx));
         // A header click collapses or expands its section (`group/nav-section`).
         let section = |i: usize,
-                       title: &'static str,
+                       title: SharedString,
                        body: AnyElement,
                        window: &mut Window,
                        cx: &mut Context<Self>| {
-            let collapsed = self.collapsed[i];
-            let header_focus = focus::handle(title, -1, window, cx);
+            let (collapsed, key) = if i < self.collapsed.len() {
+                (self.collapsed[i], title.clone())
+            } else {
+                let custom = &self.sections[i - self.collapsed.len()];
+                (custom.collapsed, custom.id.clone())
+            };
+            let header_focus = focus::handle(key.clone(), -1, window, cx);
             div()
                 .tab_group()
                 .px(px(8.))
@@ -802,13 +996,19 @@ impl Render for HomeSidebar {
                 .flex_col()
                 .child(
                     div()
-                        .group(title)
+                        .group(key.clone())
                         .relative()
                         .h(px(30.))
                         .flex()
                         .items_center()
                         .pl(px(8.))
-                        .child(text(title, 14., 21., 500., cx.theme().text_tertiary))
+                        .child(text(
+                            title.clone(),
+                            14.,
+                            21.,
+                            500.,
+                            cx.theme().text_tertiary,
+                        ))
                         .child(
                             svg()
                                 .path("icons/chevron-down.svg")
@@ -817,7 +1017,7 @@ impl Render for HomeSidebar {
                                 .ml(px(4.))
                                 .text_color(cx.theme().text_tertiary)
                                 .opacity(if collapsed { 1. } else { 0. })
-                                .group_hover(title, |s| s.opacity(1.))
+                                .group_hover(key.clone(), |s| s.opacity(1.))
                                 .with_transformation(Transformation::rotate(radians(
                                     if collapsed {
                                         -std::f32::consts::FRAC_PI_2
@@ -829,7 +1029,7 @@ impl Render for HomeSidebar {
                         .child(
                             focus::ring(
                                 div()
-                                    .id(title)
+                                    .id(key.clone())
                                     .role(gpui::Role::Button)
                                     .aria_label(title)
                                     .aria_expanded(!collapsed)
@@ -845,7 +1045,11 @@ impl Render for HomeSidebar {
                             )
                             .on_click(cx.listener(
                                 move |this, _, _, cx| {
-                                    this.collapsed[i] ^= true;
+                                    if i < this.collapsed.len() {
+                                        this.collapsed[i] ^= true;
+                                    } else {
+                                        this.sections[i - this.collapsed.len()].collapsed ^= true;
+                                    }
                                     cx.notify();
                                 },
                             )),
@@ -858,9 +1062,9 @@ impl Render for HomeSidebar {
         } else {
             self.project_rows(cx)
         };
-        let projects = section(0, "Projects", project_rows, window, cx);
-        let recents = section(1, "Recents", recents, window, cx);
-        let pinned = pinned.map(|rows| section(2, "Pinned", rows, window, cx));
+        let projects = section(0, "Projects".into(), project_rows, window, cx);
+        let recents = section(1, "Recents".into(), recents, window, cx);
+        let pinned = pinned.map(|rows| section(2, "Pinned".into(), rows, window, cx));
         div()
             .size_full()
             .flex()
@@ -883,6 +1087,16 @@ impl Render for HomeSidebar {
                     .pb(px(16.))
                     .children(pinned)
                     .child(projects)
+                    .children((0..self.sections.len()).map(|index| {
+                        let body = self.custom_body(index, window, cx);
+                        section(
+                            self.collapsed.len() + index,
+                            self.sections[index].title.clone(),
+                            body,
+                            window,
+                            cx,
+                        )
+                    }))
                     .child(recents),
             )
             .children(self.menu.as_ref().map(|_| self.menu_overlay(window, cx)))
