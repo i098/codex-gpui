@@ -150,6 +150,34 @@ Cells give `outside count / text percent`; the owned empty `CODEX_HOME` excludes
 | 19 | `⌘⌥1`…`⌘⌥6` | shortcut | Go to recent chat N (`recentThread1..6`: the chats by last update, newest first). | `GoToRecentChat`: the Nth Recents thread by `updatedAt`; past the end does nothing. | PASS (`recent_chat_keys`) |
 | 20 | `⌘+`, `⌘-`, `⌘0` | shortcut | Zoom in, zoom out, actual size. | — | NOT WIRED (`crates/ui/src/lib.rs`: no UI scale) |
 
+F1d covers SH-020 and SH-135 with `refs/interactions/f1d.json` and `cargo test -p app --test f1d`.
+The original Mac recording proves a native 1280×832 viewport at scale 2.
+Shift-Tab from the Home rail button reveals `Skip to content`.
+Enter or a click moves focus to the main content.
+The next Tab reaches `Choose project`.
+The shared focus handles retain the main container outside the normal Tab stops.
+Command titles open their full-label tooltip after 2000 ms only when the measured title exceeds its viewport.
+The tooltip wraps within 320 px and closes when the pointer leaves.
+Fitting command titles and the profile avatar have no tooltip.
+The original sidebar hover card also opens for fitting titles, so F1d does not replace that card.
+Functional acceptance runs `skip_link_keyboard_and_pointer_paths_reach_same_content` and `full_label_tooltip_requires_overflow` in `f1d`.
+The shared `keyboard_tooltip_ownership_and_dismissal_follow_focus` check remains in `f1a`, with its stronger native paint and blur coverage.
+These checks pass on the real headless Root and native tooltip surface.
+Keyboard and pointer activation reach the same main region and the same next content control without changing the route or sending app-server requests.
+Every original visual assertion remains in the separate recorded replay.
+The initial 15-input shared replay, F1a/F1b/F1c checks, and all 36 strict parity cases passed with unchanged metrics.
+The extended record also checks the already-recorded project tooltip, its shortcut, and its bounds after both skip-link activation methods.
+`Tooltip::focus_handle` reuses the control's native focus handle and the shared provider.
+Keyboard focus opens immediately; blur and Escape close the tooltip without moving focus.
+The lifecycle check rejects pointer-focus opening, delayed reopening after Escape, and multiple visible tooltip owners.
+F1d retains the original `(455.5, 695)` probes at steps 3 and 7.
+Functional readiness is reported independently from the remaining Home visual parity.
+The original Home-mask, border-box, and keyboard-tooltip caller differences remain recorded; their checks are not removed or relaxed.
+The combined native check on `96995c3` passes S033 and both functional F1d paths with all 880 source hashes verified.
+The shared guard allows main-content ancestors and the exact Thread transcript focus while keeping popup input separate.
+This includes blank-Home typing, Thread insertion and caret edits, and popup isolation.
+This result does not clear the separate appearance gate or the retained Home visual failures.
+
 ### Account logout (RS-036, SH-088)
 
 The command menu, profile menu, and Codex ▸ Log Out open the same confirmation dialog.

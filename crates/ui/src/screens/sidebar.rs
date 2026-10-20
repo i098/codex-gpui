@@ -3048,21 +3048,53 @@ fn menu_row(
         dim,
     )
     .opacity(row_opacity);
+    let mut font = window.text_style().font();
+    font.weight = FontWeight(430.);
+    let run = TextRun {
+        len: item.label.len(),
+        font,
+        color: fg,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    let label_width = window
+        .text_system()
+        .shape_line(item.label.clone(), px(14.), &[run], None)
+        .width;
+    let label = tooltip(
+        div()
+            .id(("command-label", ordinal))
+            .relative()
+            .min_w_0()
+            .overflow_hidden()
+            .map(|d| {
+                if item.description.is_some() {
+                    d.flex_none().max_w(relative(0.6))
+                } else {
+                    d.flex_1()
+                }
+            })
+            .child(label.truncate()),
+        item.label.clone(),
+        None,
+        Side::Top,
+    )
+    .when_overflows(label_width)
+    .delay(Duration::from_secs(2));
     let line = div()
         .flex()
         .items_center()
         .gap(px(8.))
-        .map(|d| match item.description {
-            Some(description) => d
-                .child(label.flex_none().max_w(relative(0.6)).truncate())
-                .child(
-                    text(description, 13., 130. / 7., 430., dim)
-                        .opacity(row_opacity)
-                        .flex_1()
-                        .min_w_0()
-                        .truncate(),
-                ),
-            None => d.child(label.flex_1().min_w_0().truncate()),
+        .child(label)
+        .when_some(item.description, |d, description| {
+            d.child(
+                text(description, 13., 130. / 7., 430., dim)
+                    .opacity(row_opacity)
+                    .flex_1()
+                    .min_w_0()
+                    .truncate(),
+            )
         })
         .when_some(item.project.clone(), |d, project| {
             d.child(

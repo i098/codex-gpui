@@ -874,12 +874,13 @@ impl Shell {
     /// (`background-clip: padding-box`) paint with the page in `render`: with the sidebar open
     /// the left edge is square and the right corners are rounded by its `clip-path`; with it
     /// closed it is a plain 12 px rounded box. `left` is its edge, `open` its shape.
-    fn main_panel(&self, left: Pixels, open: bool) -> Div {
+    fn main_panel(&self, left: Pixels, open: bool, focus: &gpui::FocusHandle) -> Div {
         let r = Theme::RADIUS_XL_BASE;
         let panel = div()
             .tab_group()
             .tab_index(3)
             .tab_stop(false)
+            .track_focus(focus)
             .absolute()
             .top(Theme::TITLEBAR_HEIGHT)
             .right(PAGE_INSET)
@@ -1035,6 +1036,58 @@ impl Shell {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
+        let main_focus = focus::handle("main-content", -1, window, cx);
+        let main_focus = main_focus.read(cx).handle.clone().tab_stop(false);
+        let skip_focus = focus::handle("skip-to-content", -1, window, cx);
+        let skip_link = focus::ring(
+            div()
+                .id("skip-to-content")
+                .role(gpui::Role::Link)
+                .aria_label("Skip to content")
+                .absolute()
+                .left(px(88.))
+                .top(px(8.))
+                .size(px(1.))
+                .overflow_hidden()
+                .opacity(0.)
+                .focus(|mut s| {
+                    s.overflow.x = Some(gpui::Overflow::Visible);
+                    s.overflow.y = Some(gpui::Overflow::Visible);
+                    // Include the original 1 px border in the padding; the decoration paints it.
+                    s.w_auto().h_auto().px(px(17.)).py(px(7.)).opacity(1.)
+                })
+                .child(shapes::decoration(shapes::Decoration {
+                    radius: Corners::all(RADIUS_BUTTON_XL),
+                    corner: shapes::Corner::Squircle,
+                    fill: Some(t.button_primary_solid),
+                    border: Some((px(1.), t.border)),
+                    ..Default::default()
+                }))
+                .child(text(
+                    "Skip to content",
+                    14.,
+                    18.,
+                    430.,
+                    t.surface_elevated_secondary,
+                )),
+            &skip_focus,
+            RADIUS_BUTTON_XL,
+            px(2.),
+            cx,
+        )
+        .on_click({
+            let main_focus = main_focus.clone();
+            move |_, window, cx| main_focus.focus(window, cx)
+        })
+        .on_key_down({
+            let main_focus = main_focus.clone();
+            move |event, window, cx| {
+                if event.keystroke.key == "enter" {
+                    main_focus.focus(window, cx);
+                    cx.stop_propagation();
+                }
+            }
+        });
         // Chromium paints the page (everything over the body background) into one composited
         // layer: its tile holds `_PageSurfaceLayout`'s translucent color, the page surface's
         // drop shadow (`--shadow-card`) and 0.5 px ring (`--elevation-stroke-subtle`) blend onto
@@ -1289,7 +1342,7 @@ impl Render for Shell {
             .bg(under)
             .child(page)
             .when(progress > 0., |d| d.child(self.sidebar_panel(&t, progress)))
-            .child(self.main_panel(main_left, open))
+            .child(self.main_panel(main_left, open, &main_focus))
             .when(composited || self.main_backgrounds > 0, |d| {
                 d.child(corners)
             })
@@ -1341,6 +1394,7 @@ impl Render for Shell {
             })
             .child(self.rail(&t, window, cx))
             .child(self.titlebar(&t, window, cx))
+            .child(skip_link)
             .when(self.profile_menu, |d| d.child(self.profile_menu(&t, cx)))
     }
 }
