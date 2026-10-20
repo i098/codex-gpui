@@ -702,6 +702,7 @@ Open config.toml preserves an existing file and creates an empty file only when 
 Output detail and Reasoning summary use the existing global config write path, including the original null/default values.
 Available reasoning efforts keeps the baseline choices and exposes optional levels only when the model catalog supports them.
 It persists the enabled levels in host settings and updates the composer choices.
+The menus keep the original muted header and half-opacity disabled-row styles.
 Workspace Dependencies reads installed bundle state and provides diagnostics, reset/install, and cancellation.
 Installation checks the manifest platform, archive paths, and SHA-256 before it replaces the bundle; a failed replacement restores the previous bundle.
 

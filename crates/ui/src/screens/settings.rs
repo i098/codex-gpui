@@ -630,7 +630,7 @@ impl SettingsPane {
                         )
                         .hover(move |s| s.bg(hover))
                         .when(is_configuration, |d| d.relative())
-                        .when(is_configuration && value == current, |d| d.pr(px(33.)))
+                        .when(is_configuration && value == current, |d| d.pr(px(30.)))
                         .child(text(
                             label,
                             if is_configuration { 13. } else { 14. },
@@ -658,7 +658,7 @@ impl SettingsPane {
                                     .right(px(8.))
                                     .flex()
                                     .items_center()
-                                    .child(icon("menu-check", 17., t.text_secondary)),
+                                    .child(icon("settings-menu-check", 16., t.text).opacity(0.75)),
                             )
                         })
                         .on_click(cx.listener(move |this, _, _, cx| {

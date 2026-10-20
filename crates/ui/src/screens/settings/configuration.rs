@@ -316,7 +316,7 @@ impl SettingsPane {
                         .flex()
                         .items_center()
                         .justify_between()
-                        .opacity(0.4)
+                        .opacity(0.5)
                         .child(text(
                             crate::composer::effort_label(effort),
                             13.,
@@ -324,7 +324,7 @@ impl SettingsPane {
                             430.,
                             t.text,
                         ))
-                        .child(icon("menu-check", 17., t.text_secondary))
+                        .child(icon("menu-check", 16., t.text).runtime())
                         .into_any_element(),
                 );
             }
@@ -351,8 +351,8 @@ impl SettingsPane {
                         430.,
                         t.text,
                     ))
-                    .child(div().size(px(17.)).when(enabled, |d| {
-                        d.child(icon("menu-check", 17., t.text_secondary))
+                    .child(div().size(px(16.)).when(enabled, |d| {
+                        d.child(icon("menu-check", 16., t.text).runtime())
                     }))
                     .when(!pending, |d| {
                         d.on_click(cx.listener(move |this, _, _, cx| {
@@ -692,7 +692,7 @@ impl SettingsPane {
                                         13.,
                                         18.571_428,
                                         430.,
-                                        t.text_secondary,
+                                        t.text_tertiary,
                                     )))
                                     .child(
                                         div()
@@ -710,7 +710,10 @@ impl SettingsPane {
                                                 430.,
                                                 t.text,
                                             ))
-                                            .child(icon("menu-check", 17., t.text_secondary))
+                                            .child(
+                                                icon("settings-menu-check", 16., t.text)
+                                                    .opacity(0.75),
+                                            )
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.open_select = None;
                                                 this.menu_hovered = false;
