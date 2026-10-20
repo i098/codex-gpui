@@ -28,43 +28,19 @@ pub struct AutomationTurn {
     archive: Mutex<Archive>,
 }
 
-pub struct AutomationCompletion<'a> {
-    turn: &'a AutomationTurn,
-    committed: bool,
-}
-
-impl AutomationCompletion<'_> {
-    pub fn commit(mut self) {
-        self.committed = true;
-    }
-}
-
-impl Drop for AutomationCompletion<'_> {
-    fn drop(&mut self) {
-        if !self.committed {
-            self.turn.completed.store(false, Ordering::SeqCst);
-        }
-    }
-}
-
 impl AutomationTurn {
     pub async fn matches_turn(&self, turn_id: &str) -> bool {
         let _ = self.started.recv().await;
-        self.id.get().is_some_and(|id| id == turn_id)
+        !self.completed.load(Ordering::SeqCst) && self.id.get().is_some_and(|id| id == turn_id)
     }
 
-    pub fn claim(&self) -> Option<AutomationCompletion<'_>> {
-        self.completed
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .ok()
-            .map(|_| AutomationCompletion {
-                turn: self,
-                committed: false,
-            })
+    pub fn mark_completed(&self) -> bool {
+        !self.completed.swap(true, Ordering::SeqCst)
     }
 
-    pub async fn archived(&self) -> bool {
-        self.archive.lock().await.archived
+    pub async fn needs_restore(&self) -> bool {
+        let archive = self.archive.lock().await;
+        archive.archived || archive.restored.is_some()
     }
 }
 
@@ -75,6 +51,8 @@ impl Bridge {
         muted: bool,
         auto_archive: bool,
     ) -> Result<Value> {
+        self.observe_automation_request("turn/start", &params)
+            .await?;
         let thread = params["threadId"].as_str().unwrap_or_default().to_owned();
         let (started, ready) = async_channel::bounded(1);
         let turn = Arc::new(AutomationTurn {
@@ -126,10 +104,10 @@ impl Bridge {
         turn: &AutomationTurn,
         archived: impl FnOnce() -> Result<()>,
         restored: impl Fn() -> Result<()> + Send + Sync + 'static,
-    ) -> Result<bool> {
+    ) -> Result<()> {
         let mut archive = turn.archive.lock().await;
         if turn.cancelled.load(Ordering::SeqCst) {
-            return Ok(false);
+            return Ok(());
         }
         self.request_inner::<_, Value>("thread/archive", json!({"threadId": thread}))
             .await?;
@@ -144,7 +122,7 @@ impl Bridge {
             self.restore_automation_archive(thread, &mut archive)
                 .await?;
         }
-        Ok(archive.archived)
+        Ok(())
     }
 
     pub(crate) async fn observe_automation_request(
@@ -183,10 +161,11 @@ impl Bridge {
         if archive.archived {
             self.request_inner::<_, Value>("thread/unarchive", json!({"threadId": thread}))
                 .await?;
-            if let Some(restored) = &archive.restored {
-                restored()?;
-            }
             archive.archived = false;
+        }
+        if let Some(restored) = &archive.restored {
+            restored()?;
+            archive.restored = None;
         }
         Ok(())
     }

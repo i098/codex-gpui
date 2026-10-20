@@ -571,14 +571,6 @@ impl LocalHost {
         if status == "PENDING_REVIEW" && tracked.is_none() {
             return Ok(false);
         }
-        let claim = if let Some(tracked) = &tracked {
-            let Some(claim) = tracked.claim() else {
-                return Ok(false);
-            };
-            Some(claim)
-        } else {
-            None
-        };
         let tasks = self.automations()?;
         let task = tasks["items"]
             .as_array()
@@ -597,11 +589,8 @@ impl LocalHost {
              updated_at = ?3 WHERE thread_id = ?4 AND status IN ('IN_PROGRESS', 'PENDING_REVIEW')",
             params![muted, completed, now, thread_id],
         )? > 0;
-        if let Some(claim) = claim {
-            claim.commit();
-        }
         if let (Some(bridge), Some(tracked)) = (&self.bridge, tracked) {
-            if !changed {
+            if !changed || !tracked.mark_completed() {
                 return Ok(false);
             }
             let heartbeat = tasks["items"]
@@ -614,43 +603,50 @@ impl LocalHost {
                 pollster::block_on(bridge.archive_automation_turn(
                     thread_id,
                     &tracked,
-                    || {
-                        ensure!(db.execute(
-                            "UPDATE automation_runs SET status = 'ARCHIVED', updated_at = ?,
-                             archived_reason = COALESCE(archived_reason, 'auto')
-                             WHERE thread_id = ? AND status = 'PENDING_REVIEW'",
-                            params![chrono::Utc::now().timestamp_millis(), thread_id],
-                        )? > 0, "Automation run changed during archive");
-                        Ok(())
-                    },
+                    || Self::mark_run_archived(&db, thread_id),
                     {
                         let thread_id = thread_id.to_owned();
-                        move || {
-                            let host = LocalHost::new(home.clone());
-                            let Some(db) = host.database(OpenFlags::SQLITE_OPEN_READ_WRITE)? else {
-                                bail!("Automation database disappeared during archive restore");
-                            };
-                            let now = chrono::Utc::now().timestamp_millis();
-                            db.execute(
-                                "UPDATE automation_runs SET status = 'ACCEPTED', read_at = COALESCE(read_at, ?),
-                                 updated_at = ?, archived_reason = NULL WHERE thread_id = ? AND status = 'ARCHIVED'",
-                                params![now, now, thread_id],
-                            )?;
-                            Ok(())
-                        }
+                        move || Self::restore_run_row(&home, &thread_id)
                     },
                 ))
             } else {
-                Ok(false)
+                Ok(())
             };
             if let Err(error) = archived {
                 eprintln!("codex-gpui: failed to archive automation run: {error:#}");
             }
-            if !pollster::block_on(tracked.archived()) {
+            if !pollster::block_on(tracked.needs_restore()) {
                 bridge.release_automation_turn(thread_id, &tracked);
             }
         }
         Ok(changed)
+    }
+
+    fn mark_run_archived(db: &rusqlite::Connection, thread_id: &str) -> Result<()> {
+        ensure!(
+            db.execute(
+                "UPDATE automation_runs SET status = 'ARCHIVED', updated_at = ?,
+             archived_reason = COALESCE(archived_reason, 'auto')
+             WHERE thread_id = ? AND status = 'PENDING_REVIEW'",
+                params![chrono::Utc::now().timestamp_millis(), thread_id],
+            )? > 0,
+            "Automation run changed during archive"
+        );
+        Ok(())
+    }
+
+    fn restore_run_row(home: &std::path::Path, thread_id: &str) -> Result<()> {
+        let db = rusqlite::Connection::open_with_flags(
+            home.join("sqlite/codex.db"),
+            OpenFlags::SQLITE_OPEN_READ_WRITE,
+        )?;
+        let now = chrono::Utc::now().timestamp_millis();
+        db.execute(
+            "UPDATE automation_runs SET status = 'ACCEPTED', read_at = COALESCE(read_at, ?),
+             updated_at = ?, archived_reason = NULL WHERE thread_id = ? AND status = 'ARCHIVED'",
+            params![now, now, thread_id],
+        )?;
+        Ok(())
     }
 
     /// The original's `automation-run-now` for a task: one app-server thread per task folder, in

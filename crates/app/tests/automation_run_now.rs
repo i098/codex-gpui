@@ -1107,3 +1107,32 @@ fn autoarchive_finishes_a_run_that_already_has_an_inbox_result() -> Result<()> {
     ensure!(!run.finish()?);
     Ok(())
 }
+
+#[test]
+fn autoarchive_retries_the_restore_write_without_repeating_the_server_unarchive() -> Result<()> {
+    let run = ArchiveRun::start(true, false, &[])?;
+    ensure!(run.finish()?);
+    let db = run.db()?;
+    db.execute_batch(
+        "CREATE TRIGGER fail_restore BEFORE UPDATE ON automation_runs
+        WHEN NEW.status = 'ACCEPTED' BEGIN SELECT RAISE(ABORT, 'restore write failed'); END;",
+    )?;
+    let user = || {
+        run.bridge
+            .request::<_, Value>("thread/queue/add", json!({"threadId": run.thread}))
+    };
+    ensure!(
+        pollster::block_on(user())
+            .unwrap_err()
+            .to_string()
+            .contains("restore write failed")
+    );
+    ensure!(run.row()?.1 == "ARCHIVED");
+    ensure!(run.archive_requests()? == ["thread/archive", "thread/unarchive"]);
+    db.execute_batch("DROP TRIGGER fail_restore;")?;
+    pollster::block_on(user())?;
+    ensure!(run.row()?.1 == "ACCEPTED");
+    ensure!(run.archive_requests()? == ["thread/archive", "thread/unarchive"]);
+    ensure!(run.cwd.join("a.txt").is_file());
+    Ok(())
+}
