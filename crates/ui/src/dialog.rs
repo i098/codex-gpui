@@ -45,6 +45,7 @@ pub enum Kind {
     Shortcuts,
     CloseWindow,
     FullAccess,
+    LogOut,
     RevertChanges,
     ModelAnnouncement,
     /// `Schedule a task`: the Scheduled sidebar's `New task` create editor (AM-005).
@@ -64,6 +65,7 @@ pub enum Kind {
 pub enum Outcome {
     Dismiss,
     FullAccess,
+    LogOut,
     DismissAnnouncement(SharedString),
     UseAnnouncedModel {
         model: SharedString,
@@ -162,6 +164,8 @@ pub struct Dialog {
     scroll: ScrollHandle,
     /// `Rename`: the thread id.
     thread: String,
+    /// `LogOut`: the signed-in ChatGPT account's email, from `account/read`.
+    email: Option<String>,
     schedule_time: String,
     repeat: usize,
     repeat_open: bool,
@@ -190,6 +194,7 @@ impl Dialog {
             do_not_ask_again: false,
             scroll: ScrollHandle::new(),
             thread: String::new(),
+            email: None,
             schedule_time: "09:00".into(),
             repeat: 0,
             repeat_open: false,
@@ -198,6 +203,13 @@ impl Dialog {
             announcement: None,
             commit: None,
             branch: None,
+        }
+    }
+    /// `Log out?` for the signed-in account `email`.
+    pub fn logout(email: Option<String>, cx: &mut Context<Self>) -> Self {
+        Self {
+            email,
+            ..Self::new(Kind::LogOut, cx)
         }
     }
     /// `Rename chat` for `thread`, its input prefilled with `title` and all of it selected.
@@ -640,6 +652,8 @@ impl Dialog {
             (Kind::FullAccess, _) => "Confirm",
             (Kind::DeleteTask, 0) => "Cancel",
             (Kind::DeleteTask, _) => "Delete scheduled task",
+            (Kind::LogOut, 0) => "Cancel",
+            (Kind::LogOut, _) => "Log out",
             (Kind::ModelAnnouncement, 0) => "Close",
             (Kind::ModelAnnouncement, 1) => "Continue with current model",
             (Kind::ModelAnnouncement, _) => {
@@ -793,8 +807,6 @@ impl Dialog {
                     cx.notify();
                 }
             }
-            (Kind::ScheduleTask, 0 | 4) => {}
-            (Kind::FullAccess, 1) => cx.emit(Outcome::FullAccess),
             (Kind::DeleteTask, 1) => {
                 self.saving = true;
                 cx.emit(Outcome::DeleteTask {
@@ -802,6 +814,9 @@ impl Dialog {
                 });
                 cx.notify();
             }
+            (Kind::ScheduleTask, 0 | 4) => {}
+            (Kind::FullAccess, 1) => cx.emit(Outcome::FullAccess),
+            (Kind::LogOut, 1) => cx.emit(Outcome::LogOut),
             (Kind::ModelAnnouncement, 2) => {
                 let announcement = self.announcement.as_ref().expect("model announcement");
                 cx.emit(Outcome::UseAnnouncedModel {
@@ -999,7 +1014,9 @@ impl Dialog {
             "escape" => self.dismiss(cx),
             "tab" => {
                 let order: Vec<usize> = match self.kind {
-                    Kind::Shortcuts | Kind::FullAccess | Kind::DeleteTask => vec![0, 1],
+                    Kind::Shortcuts | Kind::FullAccess | Kind::LogOut | Kind::DeleteTask => {
+                        vec![0, 1]
+                    }
                     Kind::ScheduleTask => vec![0, 3, 4, 5, 1, 2],
                     Kind::Branches => vec![0, 1],
                     Kind::BranchConflict => vec![1, 2],
@@ -1034,10 +1051,11 @@ impl Dialog {
             "enter" if self.multiline() => self.insert("\n", cx),
             "enter" | "space"
                 if matches!(
+                        | Kind::DeleteTask
                     self.kind,
                     Kind::CloseWindow
                         | Kind::FullAccess
-                        | Kind::DeleteTask
+                        | Kind::LogOut
                         | Kind::ModelAnnouncement
                         | Kind::RevertChanges
                 ) || (self.selected != 0 && !self.editing()) =>
@@ -1293,6 +1311,127 @@ impl Dialog {
                             )),
                     ),
             )
+    }
+
+    /// The original `Log out?` dialog (`refs/interactions/logout.json`, 1280×832, scale 1): a
+    /// 380 px card centered in the window, 20 px padding, 12 px between the title, the body and
+    /// the button row, 32 px buttons sized to their text plus 16 px each side, 12 px apart,
+    /// 20 px from the right and bottom edges, and a 24 px close button 16 px from the corner.
+    /// The `Signed in as <email>` line sits 4 px under the title and adds 25 px.
+    fn logout_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        div()
+            .relative()
+            .p(px(20.))
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .child(text("Log out?", 20., 28., 600., t.text))
+                    .children(self.email.as_ref().map(|email| {
+                        div().w(px(340.)).overflow_hidden().child(text(
+                            format!("Signed in as {email}"),
+                            14.,
+                            21.,
+                            430.,
+                            t.text_tertiary,
+                        ))
+                    })),
+            )
+            .child(text(
+                "You’ll need to sign in again to keep using ChatGPT",
+                14.,
+                21.,
+                430.,
+                t.text,
+            ))
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap(px(12.))
+                    .child(self.logout_button(0, "Cancel", t, cx))
+                    .child(self.logout_button(1, "Log out", t, cx)),
+            )
+            .child(
+                div()
+                    .id("logout-close")
+                    .role(gpui::Role::Button)
+                    .aria_label("Close dialog")
+                    .absolute()
+                    .right(px(16.))
+                    .top(px(16.))
+                    .size(px(24.))
+                    .rounded(px(4.))
+                    .hover(|s| s.bg(t.ghost_hover))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icon("close", 16., t.text.opacity(0.8)))
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(Outcome::Dismiss))),
+            )
+    }
+
+    /// `Cancel` is the ghost button and `Log out` the danger button: 32 px high, `px-4` and a
+    /// 1 px transparent border, radius 12.5, the 2 px ring outside the box when focused.
+    fn logout_button(
+        &self,
+        index: usize,
+        label: &'static str,
+        t: &Theme,
+        cx: &Context<Self>,
+    ) -> Stateful<Div> {
+        let danger = index == 1;
+        div()
+            .id(("dialog-button", index))
+            .role(gpui::Role::Button)
+            .aria_label(label)
+            .track_focus(&self.controls[index])
+            .h(px(32.))
+            // `px-4` plus the original's 1 px transparent border, so the painted box is the border box.
+            .px(px(17.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .relative()
+            .when(danger, |d| {
+                d.child(shapes::decoration(shapes::Decoration {
+                    radius: Corners::all(px(12.5)),
+                    corner: shapes::Corner::Squircle,
+                    fill: Some(t.text_error.opacity(0.1)),
+                    ..Default::default()
+                }))
+            })
+            .when(self.selected == index, |d| {
+                d.child(div().absolute().inset(px(-2.)).child(shapes::decoration(
+                    shapes::Decoration {
+                        radius: Corners::all(px(14.5)),
+                        corner: shapes::Corner::Squircle,
+                        border: Some((px(2.), rgba(0x3a83f7ff).into())),
+                        ..Default::default()
+                    },
+                )))
+            })
+            .hover(|s| s.opacity(0.85))
+            .child(text(
+                label,
+                14.,
+                18.,
+                430.,
+                if danger {
+                    t.text_error
+                } else {
+                    t.text_tertiary
+                },
+            ))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.selected = index;
+                this.controls[index].focus(window, cx);
+                this.activate(cx);
+            }))
     }
 
     fn full_access_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
@@ -2642,6 +2781,7 @@ impl Render for Dialog {
             Kind::ScheduleTask => (680., 422.),
             Kind::Rename => (420., 185.),
             Kind::FullAccess => (520., 420.),
+            Kind::LogOut => (380., 145. + if self.email.is_some() { 25. } else { 0. }),
             Kind::ModelAnnouncement => (480., 432.),
             Kind::Commit => (420., self.commit_height()),
             Kind::Branches => (
@@ -2664,6 +2804,7 @@ impl Render for Dialog {
             Kind::ScheduleTask => self.schedule_content(t, cx),
             Kind::Rename => self.rename_content(t, cx),
             Kind::FullAccess => self.full_access_content(t, cx),
+            Kind::LogOut => self.logout_content(t, cx),
             Kind::ModelAnnouncement => self.announcement_content(t, cx),
             Kind::Commit => self.commit_content(t, cx),
             Kind::Branches | Kind::CreateBranch | Kind::BranchConflict => {
@@ -2706,6 +2847,7 @@ impl Render for Dialog {
                         Kind::ScheduleTask => "Schedule a task".into(),
                         Kind::Rename => "Rename chat".into(),
                         Kind::FullAccess => "Turn on Full Access?".into(),
+                        Kind::LogOut => "Log out?".into(),
                         Kind::Commit => "Commit or push".into(),
                         Kind::Branches => "Switch branch".into(),
                         Kind::CreateBranch => "Create and checkout branch".into(),
@@ -2778,10 +2920,14 @@ impl Render for Dialog {
                         20.
                     } else if schedule {
                         30.
+                    } else if self.kind == Kind::LogOut {
+                        25.
                     } else {
                         24.
                     }))
-                    .when(!commit, |d| d.overflow_hidden())
+                    .when(!commit && self.kind != Kind::LogOut, |d| {
+                        d.overflow_hidden()
+                    })
                     .map(|d| {
                         if announcement {
                             d.child(shapes::decoration(shapes::Decoration {
@@ -2824,7 +2970,16 @@ impl Render for Dialog {
                                 shapes::Fill::Color,
                                 false,
                                 shapes::Decoration {
-                                    radius: Corners::all(px(24.)),
+                                    radius: Corners::all(px(if self.kind == Kind::LogOut {
+                                        25.
+                                    } else {
+                                        24.
+                                    })),
+                                    corner: if self.kind == Kind::LogOut {
+                                        shapes::Corner::Squircle
+                                    } else {
+                                        shapes::Corner::default()
+                                    },
                                     fill: Some(gpui::Hsla {
                                         a: 0.9,
                                         ..t.menu_background

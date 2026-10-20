@@ -1,9 +1,13 @@
 //! Slash completion keeps keyboard focus in the editor and preserves text outside the command token.
-//! Fast, Archive, New chat, and Usage use existing app handlers.
-//! S058/S059 own the other command bodies and submenus; these entries remain visible but inactive.
+//! Fast, Archive, New chat, Usage, Compact, Rename, and Pin chat use existing app handlers.
+//! Model, Reasoning, Fork chat, and Work in a project open a submenu. It replaces the token with
+//! `/id ` and filters on the text typed after it; Backspace over the space returns to the list,
+//! Escape closes it, and only a pick removes the token and its query and acts.
+//! The other commands stay visible but inactive.
 //! The same list state serves the `@` mention trigger (`super::mention`).
 //! `cargo test -p app --test s021` replays the original menu, keys, colors, focus, and requests.
 use super::*;
+use crate::screens::sidebar::SelectProject;
 
 #[derive(Clone, Copy)]
 pub enum SlashCommand {
@@ -11,6 +15,10 @@ pub enum SlashCommand {
     Archive,
     NewChat,
     Usage,
+    Compact,
+    Rename,
+    Pin,
+    Fork,
 }
 
 impl gpui::EventEmitter<SlashCommand> for Composer {}
@@ -209,6 +217,9 @@ pub(super) struct Slash {
     pub(super) selected: usize,
     pub(super) matches: Vec<usize>,
     pub(super) skills: Vec<Skill>,
+    pub(super) sub: Option<Sub>,
+    /// Home's projects for `/project`: label and root path.
+    pub(super) projects: Vec<(SharedString, String)>,
     scroll: gpui::ScrollHandle,
     pub(super) search: mention::Search,
 }
@@ -220,6 +231,7 @@ impl Slash {
         self.add_mouse_open = false;
         self.dismissed = None;
         self.matches.clear();
+        self.sub = None;
     }
 }
 
@@ -229,6 +241,29 @@ fn matches_query(text: &str, query: &str) -> bool {
             .as_bytes()
             .windows(query.len())
             .any(|part| part.eq_ignore_ascii_case(query.as_bytes()))
+}
+
+/// One submenu row. `action` runs when it is picked.
+pub(super) struct SubItem {
+    title: String,
+    description: String,
+    icon: &'static str,
+    action: SubAction,
+}
+
+#[derive(Clone)]
+enum SubAction {
+    Model(usize),
+    Effort(String),
+    Fork,
+    Project(String),
+}
+
+/// The open submenu of command `id`. `items` are all its rows; `Slash::matches` indexes the
+/// rows that the typed query keeps.
+pub(super) struct Sub {
+    id: &'static str,
+    items: Vec<SubItem>,
 }
 
 impl Composer {
@@ -279,6 +314,21 @@ impl Composer {
             return;
         }
         let cursor = self.cursor();
+        if let Some(id) = self.slash.sub.as_ref().map(|sub| sub.id) {
+            let start = self.slash.range.start;
+            let open = self.content[..cursor].get(start..).is_some_and(|text| {
+                text.strip_prefix('/')
+                    .and_then(|text| text.strip_prefix(id))
+                    .is_some_and(|text| text.starts_with(' '))
+                    && !text.contains('\n')
+            });
+            if open {
+                self.slash.range.end = cursor;
+                self.refresh_sub(cx);
+                return;
+            }
+            self.slash.sub = None;
+        }
         let before = &self.content[..cursor];
         self.slash.add = self.slash.add.filter(|&start| {
             self.slash.open
@@ -327,7 +377,9 @@ impl Composer {
                     "archive" | "review-mode" | "compact" | "fork" | "init" | "new" | "pin"
                     | "rename" | "share" | "side" => self.docked,
                     "project" => !self.docked,
-                    "fast" | "model" | "plan-mode" | "ultrafast" => self.current_model().is_some(),
+                    "fast" | "model" | "plan-mode" | "reasoning" | "ultrafast" => {
+                        self.current_model().is_some()
+                    }
                     _ => true,
                 };
                 if available
@@ -355,6 +407,7 @@ impl Composer {
         self.slash.open = false;
         self.slash.dismissed = self.slash.add.is_none().then_some(self.slash.range.start);
         self.slash.add = None;
+        self.slash.sub = None;
         self.end_search(cx);
         cx.notify();
     }
@@ -370,7 +423,7 @@ impl Composer {
             } else {
                 (self.slash.selected + count - 1) % count
             };
-            let heading = usize::from(self.slash.matches[self.slash.selected] >= COMMANDS.len());
+            let heading = usize::from(self.is_skill(self.slash.matches[self.slash.selected]));
             self.slash
                 .scroll
                 .scroll_to_item(self.slash.selected + heading);
@@ -410,6 +463,10 @@ impl Composer {
     }
 
     fn slash_label(&self, index: usize) -> (&str, &str, &str) {
+        if let Some(sub) = &self.slash.sub {
+            let item = &sub.items[index];
+            return (&item.title, &item.description, item.icon);
+        }
         if let Some(command) = COMMANDS.get(index) {
             let description = if command.id == "reasoning" {
                 effort_label(&self.effort)
@@ -451,6 +508,10 @@ impl Composer {
             self.activate_mention(index, cx);
             return;
         }
+        if self.slash.sub.is_some() {
+            self.pick_sub(index, window, cx);
+            return;
+        }
         let Some(command) = COMMANDS.get(index) else {
             return;
         };
@@ -459,18 +520,151 @@ impl Composer {
             "archive" => SlashCommand::Archive,
             "new" => SlashCommand::NewChat,
             "usage" => SlashCommand::Usage,
+            "compact" => SlashCommand::Compact,
+            "rename" => SlashCommand::Rename,
+            "pin" => SlashCommand::Pin,
+            "model" | "reasoning" | "fork" | "project" => {
+                self.open_sub(command.id, cx);
+                return;
+            }
             _ => return,
         };
+        self.finish_command(window, cx);
+        if matches!(action, SlashCommand::Fast) {
+            self.fast = true;
+        }
+        cx.emit(action);
+        cx.notify();
+    }
+
+    /// Removes the command token (and a submenu's query) and returns focus to the editor.
+    fn finish_command(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.splice(self.slash.range.clone(), "");
         self.selected_range = self.slash.range.start..self.slash.range.start;
         self.marked_range = None;
         self.slash.open = false;
         self.slash.dismissed = None;
-        if matches!(action, SlashCommand::Fast) {
-            self.fast = true;
-        }
+        self.slash.sub = None;
         self.focus_handle.focus(window, cx);
-        cx.emit(action);
+    }
+
+    fn is_skill(&self, index: usize) -> bool {
+        self.slash.sub.is_none() && index >= COMMANDS.len()
+    }
+
+    /// The projects `/project` offers on Home: label and root path.
+    pub fn set_slash_projects(&mut self, projects: Vec<(SharedString, String)>) {
+        self.slash.projects = projects;
+    }
+
+    fn sub_items(&self, id: &str) -> Vec<SubItem> {
+        let current = |is_current: bool| if is_current { "Current" } else { "" };
+        match id {
+            "model" => self
+                .models
+                .iter()
+                .enumerate()
+                .map(|(index, model)| SubItem {
+                    title: model.label.to_string(),
+                    description: current(index == self.model).into(),
+                    icon: "composer-model",
+                    action: SubAction::Model(index),
+                })
+                .collect(),
+            "reasoning" => self
+                .current_model()
+                .into_iter()
+                .flat_map(|model| &model.efforts)
+                .map(|effort| SubItem {
+                    title: effort_label(effort).into(),
+                    description: current(*effort == self.effort).into(),
+                    icon: "settings-personalization",
+                    action: SubAction::Effort(effort.clone()),
+                })
+                .collect(),
+            "fork" => vec![SubItem {
+                title: "Fork chat".into(),
+                description: "Fork this chat in the current workspace".into(),
+                icon: "thread-fork",
+                action: SubAction::Fork,
+            }],
+            _ => self
+                .slash
+                .projects
+                .iter()
+                .map(|(label, root)| SubItem {
+                    title: label.to_string(),
+                    description: root.clone(),
+                    icon: "folder",
+                    action: SubAction::Project(root.clone()),
+                })
+                .collect(),
+        }
+    }
+
+    /// Enter on a submenu command: the token becomes `/id `, the caret follows it, and the
+    /// text typed next filters the rows. The rest of the draft stays as it is.
+    fn open_sub(&mut self, id: &'static str, cx: &mut Context<Self>) {
+        let start = self.slash.range.start;
+        let token = format!("/{id} ");
+        self.splice(self.slash.range.clone(), &token);
+        let end = start + token.len();
+        self.selected_range = end..end;
+        self.selection_reversed = false;
+        self.marked_range = None;
+        self.slash.range = start..end;
+        self.slash.sub = Some(Sub {
+            id,
+            items: self.sub_items(id),
+        });
+        self.refresh_sub(cx);
+    }
+
+    fn refresh_sub(&mut self, cx: &mut Context<Self>) {
+        let Some(sub) = &self.slash.sub else {
+            return;
+        };
+        let query = self.content[self.slash.range.start + 2 + sub.id.len()..self.slash.range.end]
+            .to_lowercase();
+        self.slash.matches = sub
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| matches_query(&item.title, &query))
+            .map(|(index, _)| index)
+            .collect();
+        self.slash.open = true;
+        self.slash.selected = 0;
+        self.slash.scroll.set_offset(point(px(0.), px(0.)));
+        self.menu = None;
+        cx.notify();
+    }
+
+    fn pick_sub(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(action) = self
+            .slash
+            .sub
+            .as_ref()
+            .and_then(|sub| sub.items.get(index))
+            .map(|item| item.action.clone())
+        else {
+            return;
+        };
+        self.finish_command(window, cx);
+        match action {
+            SubAction::Model(model) => {
+                self.select_model(model);
+                self.picked(cx);
+            }
+            SubAction::Effort(effort) => {
+                self.effort = effort;
+                self.picked(cx);
+            }
+            SubAction::Fork => cx.emit(SlashCommand::Fork),
+            SubAction::Project(root) => {
+                window.dispatch_action(Box::new(SelectProject(root)), cx);
+            }
+        }
         cx.notify();
     }
 
@@ -521,11 +715,7 @@ impl Composer {
     }
 
     pub(super) fn slash_menu(&self, t: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        let has_skills = self
-            .slash
-            .matches
-            .iter()
-            .any(|&index| index >= COMMANDS.len());
+        let has_skills = self.slash.matches.iter().any(|&index| self.is_skill(index));
         let height = self.slash.matches.len() as f32 * 28.5625 + if has_skills { 30. } else { 0. };
         let mut list = div()
             .id("slash-list")
@@ -540,7 +730,7 @@ impl Composer {
         } else {
             let mut skills_heading = false;
             for (selected, &index) in self.slash.matches.iter().enumerate() {
-                if index >= COMMANDS.len() && !skills_heading {
+                if self.is_skill(index) && !skills_heading {
                     list = list.child(
                         text("Skills", 12., 20., 500., t.text.opacity(0.5))
                             .px(px(8.))
@@ -558,9 +748,19 @@ impl Composer {
             }
             if self.slash.matches.is_empty() {
                 list = list.child(
-                    text("No commands", 13., 18.5714, 400., t.text.opacity(0.5))
-                        .px(px(8.))
-                        .py(px(5.)),
+                    text(
+                        if self.slash.sub.is_some() {
+                            "No results"
+                        } else {
+                            "No commands"
+                        },
+                        13.,
+                        18.5714,
+                        400.,
+                        t.text.opacity(0.5),
+                    )
+                    .px(px(8.))
+                    .py(px(5.)),
                 );
             }
         }
