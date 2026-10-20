@@ -370,6 +370,71 @@ impl IntoElement for RoundedClip {
     }
 }
 
+/// Tracks decoration bounds for an existing compositor layer without adding a layer.
+pub fn recorded_bounds(child: impl IntoElement) -> impl IntoElement {
+    RecordedBounds(child.into_any_element())
+}
+
+struct RecordedBounds(AnyElement);
+
+impl gpui::Element for RecordedBounds {
+    type RequestLayoutState = ();
+    type PrepaintState = Option<[i32; 4]>;
+
+    fn id(&self) -> Option<gpui::ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (gpui::LayoutId, ()) {
+        (self.0.request_layout(window, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self::PrepaintState {
+        shapes::recorded_bounds(|| {
+            self.0.prepaint(window, cx);
+        })
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        recorded: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        shapes::with_recorded_bounds(*recorded, || self.0.paint(window, cx));
+    }
+}
+
+impl IntoElement for RecordedBounds {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
 /// A 28 px secondary ghost button with a 150 ms hover fill and icon color transition.
 /// `glyph` is a [`icon::icon`] (Chromium-exact) or a plain [`icon`] svg.
 pub fn icon_button(

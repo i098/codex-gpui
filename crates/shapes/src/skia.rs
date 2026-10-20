@@ -1,8 +1,8 @@
 //! Chromium's own raster at runtime (macOS). Each decoration layer and icon path is drawn with
 //! the Skia build chrome-headless-shell uses (skia-safe linked against the archive from
-//! tools/shapes/skia.sh) through the same calls Blink makes, once per cc raster tile (512 px
-//! bitmaps at a 510 px stride, tile `k` owning layer px `510k+1 ..= 510k+510`). The tiles are
-//! read back as per-pixel coverage (white on black) and blitter (opaque red on white: the
+//! tools/shapes/skia.sh) through the same calls Blink makes, once per cc raster tile.
+//! Default 512 px tiles use a 510 px stride; sparse grids start at their recorded bounds.
+//! The tiles are read back as per-pixel coverage (white on black) and blitter (opaque red on white: the
 //! green channel tells `blitAntiH` from `blitAntiH2`), and painted as GPUI monochrome sprites
 //! whose hue carries the blend mode to the patched shader (crates/textsys/gpui_apple).
 
@@ -824,7 +824,7 @@ struct Probe {
 /// page.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Layer {
-    /// Layer origin in the window; the tile grid starts here.
+    /// Coordinate origin in the window; sparse recordings may use local box geometry.
     pub(crate) origin: [i32; 2],
     /// Window size (bounds the root layer's tiles).
     pub(crate) window: [i32; 2],
@@ -833,6 +833,8 @@ pub(crate) struct Layer {
     pub(crate) composited: bool,
     /// The device origin (layer px) of the enclosing [`with_layer`].
     pub(crate) device: Option<[i32; 2]>,
+    /// Sparse recording's tiling rect, in these coordinates.
+    recorded: Option<[i32; 4]>,
 }
 
 impl Layer {
@@ -862,13 +864,19 @@ impl Layer {
             })
             .map(|[x, y]| [x - origin[0], y - origin[1]]);
         let window = [dev(vp.width), dev(vp.height)];
+        let recorded = RECORDED_BOUNDS
+            .get()
+            .map(|r| recording_rect(r, origin, [window[0] - origin[0], window[1] - origin[1]]));
         Self {
             origin,
             window,
-            // ponytail: a layer of unknown rect (not `cc_tiles`) keeps the default tiles.
-            tile: size.map_or([TILE; 2], cc_tile),
+            tile: recorded.map_or_else(
+                || size.map_or([TILE; 2], cc_tile),
+                |r| recorded_tile([r[2] - r[0], r[3] - r[1]]),
+            ),
             composited: composited.is_some(),
             device,
+            recorded,
         }
     }
 
@@ -877,6 +885,27 @@ impl Layer {
     pub(crate) fn local(&self, b: Bounds<Pixels>, s: f32) -> Bounds<Pixels> {
         let o = point(px(self.origin[0] as f32 / s), px(self.origin[1] as f32 / s));
         Bounds::new(b.origin - o, b.size)
+    }
+
+    fn for_bounds(mut self, bounds: Bounds<Pixels>, scale: f32) -> Self {
+        if self.recorded.is_some() {
+            let origin = [
+                (f32::from(bounds.left()) * scale).round() as i32,
+                (f32::from(bounds.top()) * scale).round() as i32,
+            ];
+            let offset = [origin[0] - self.origin[0], origin[1] - self.origin[1]];
+            self.origin = origin;
+            self.recorded = self.recorded.map(|r| {
+                [
+                    r[0] - offset[0],
+                    r[1] - offset[1],
+                    r[2] - offset[0],
+                    r[3] - offset[1],
+                ]
+            });
+            self.device = self.device.map(|p| [p[0] - offset[0], p[1] - offset[1]]);
+        }
+        self
     }
 
     /// The layer's size: the window past its origin.
@@ -890,6 +919,9 @@ impl Layer {
     /// The layer px a raster covers: the root layer ends at the window; a composited layer (a
     /// scroller's contents) runs on past it, so its tiles there keep their full height.
     fn clamp(&self) -> [i32; 2] {
+        if let Some(r) = self.recorded {
+            return [r[2], r[3]];
+        }
         let size = self.size();
         if self.origin == [0, 0] {
             size
@@ -898,16 +930,63 @@ impl Layer {
         }
     }
 
+    fn clip_bounds(&self, [x0, y0, x1, y1]: [i32; 4]) -> [i32; 4] {
+        let min = self.recorded.map_or([0, 0], |r| [r[0], r[1]]);
+        let max = self.clamp();
+        [
+            x0.max(min[0]),
+            y0.max(min[1]),
+            x1.min(max[0]),
+            y1.min(max[1]),
+        ]
+    }
+
+    pub(crate) fn tiles(
+        &self,
+        [x0, y0, x1, y1]: [i32; 4],
+        extent: [i32; 2],
+    ) -> impl Iterator<Item = ([i32; 2], (i32, i32), [i32; 4])> {
+        let offset = self.recorded.map_or([0, 0], |r| [r[0], r[1]]);
+        let max = self.recorded.map_or(extent, |r| [r[2], r[3]]);
+        let raster_size = self.recorded.map(|_| (self.tile[0], self.tile[1]));
+        tiles(
+            [
+                x0 - offset[0],
+                y0 - offset[1],
+                x1 - offset[0],
+                y1 - offset[1],
+            ],
+            [max[0] - offset[0], max[1] - offset[1]],
+            self.tile,
+        )
+        .map(move |(o, size, r)| {
+            (
+                [o[0] + offset[0], o[1] + offset[1]],
+                raster_size.unwrap_or(size),
+                [
+                    r[0] + offset[0],
+                    r[1] + offset[1],
+                    r[2] + offset[0],
+                    r[3] + offset[1],
+                ],
+            )
+        })
+    }
+
     /// What a raster in this layer depends on besides its layer-space ops: not the origin, so
     /// a scroller's contents keep their sprites while they scroll.
-    fn key(&self) -> ([i32; 2], [i32; 2], bool, Option<[i32; 2]>) {
-        (self.tile, self.clamp(), self.composited, self.device)
+    fn key(&self) -> impl std::fmt::Debug {
+        (
+            self.tile,
+            self.clamp(),
+            self.composited,
+            self.device,
+            self.recorded,
+        )
     }
 }
 
-/// cc `TileSizeCalculator` for CPU raster at device scale 2 (512 px default tiles, 1024 px
-/// max untiled layer): a layer thin in one axis gets long tiles along the other, a small
-/// layer one tile, each clamped to the layer rounded up to 64 px.
+/// Existing explicit compositor rectangles keep their tile sizing.
 fn cc_tile([w, h]: [i32; 2]) -> [i32; 2] {
     const UNTILED: i32 = 2 * TILE;
     let mut d = [TILE; 2];
@@ -922,6 +1001,26 @@ fn cc_tile([w, h]: [i32; 2]) -> [i32; 2] {
     }
     let fit = |v: i32, d: i32| ((v.max(1) + 63) / 64 * 64).min(d);
     [fit(w, d[0]), fit(h, d[1])]
+}
+
+/// Sparse recordings use the pinned macOS 512 px untiled limit.
+fn recorded_tile(size: [i32; 2]) -> [i32; 2] {
+    size.map(|v| ((v.max(1) + 63) / 64 * 64).min(TILE))
+}
+
+fn recording_rect(r: [i32; 4], origin: [i32; 2], size: [i32; 2]) -> [i32; 4] {
+    let r = [
+        r[0] - origin[0],
+        r[1] - origin[1],
+        r[2] - origin[0],
+        r[3] - origin[1],
+    ];
+    [
+        r[0].div_euclid(128) * 128,
+        r[1].div_euclid(128) * 128,
+        if r[2] + 128 > size[0] { size[0] } else { r[2] },
+        if r[3] + 128 > size[1] { size[1] } else { r[3] },
+    ]
 }
 
 /// Chromium's cc tiles of size `tile` over `[x0, y0, x1, y1]` (layer px) of a layer of `size`:
@@ -972,9 +1071,7 @@ fn raster(
     clips: &[Contour],
     draw: &dyn Fn(&Canvas, Color4f),
 ) -> ([i32; 4], Vec<Blits>) {
-    let size = layer.clamp();
-    let (x0, y0) = (x0.max(0), y0.max(0));
-    let (x1, y1) = (x1.min(size[0]), y1.min(size[1]));
+    let [x0, y0, x1, y1] = layer.clip_bounds([x0, y0, x1, y1]);
     if x0 >= x1 || y0 >= y1 {
         return ([0; 4], Vec::new());
     }
@@ -1037,7 +1134,7 @@ fn raster(
             );
         })
     };
-    for (o, ts, [ox0, oy0, ox1, oy1]) in tiles([x0, y0, x1, y1], size, layer.tile) {
+    for (o, ts, [ox0, oy0, ox1, oy1]) in layer.tiles([x0, y0, x1, y1], layer.clamp()) {
         // A `with_layer` draws on a device of the layer's bounds within the tile, whose origin
         // moves the float geometry of curves.
         let lo = layer.device.map_or(o, |d| [o[0].max(d[0]), o[1].max(d[1])]);
@@ -1190,11 +1287,8 @@ pub(crate) fn surface_pixels(
 /// edge. Skia's AA clip only turns into a plain rect when it starts at its device's top row
 /// (`SkAAClip::isRect` compares a row offset with the bounds).
 fn restore_sprites(op: &Op, col: Color4f, layer: Layer) -> Vec<Sprite> {
-    let size = layer.clamp();
     // `op` is in layer space.
-    let [x0, y0, x1, y1] = op.bbox();
-    let (x0, y0) = (x0.max(0), y0.max(0));
-    let (x1, y1) = (x1.min(size[0]), y1.min(size[1]));
+    let [x0, y0, x1, y1] = layer.clip_bounds(op.bbox());
     if x0 >= x1 || y0 >= y1 {
         return Vec::new();
     }
@@ -1211,7 +1305,7 @@ fn restore_sprites(op: &Op, col: Color4f, layer: Layer) -> Vec<Sprite> {
     let mut groups: Vec<([u8; 4], bool)> = Vec::new();
     let mut index = HashMap::new();
     let mut px = vec![(usize::MAX, 0u8); (w * h) as usize];
-    for (o, ts, [ox0, oy0, ox1, oy1]) in tiles([x0, y0, x1, y1], size, layer.tile) {
+    for (o, ts, [ox0, oy0, ox1, oy1]) in layer.tiles([x0, y0, x1, y1], layer.clamp()) {
         // The restore's clip coverage, and whether Skia made it a plain rect.
         let mut rect = false;
         let clip = tile_pixels(o, ts, black, |c| {
@@ -1551,6 +1645,76 @@ thread_local! {
     static CLIPS: RefCell<Vec<(Contour, Option<[i32; 2]>)>> = const { RefCell::new(Vec::new()) };
     /// The device origin of the innermost [`with_layer`], window device px.
     static DEVICE: Cell<Option<[i32; 2]>> = const { Cell::new(None) };
+    static COLLECTED_BOUNDS: Cell<(bool, Option<[i32; 4]>)> = const { Cell::new((false, None)) };
+    static RECORDED_BOUNDS: Cell<Option<[i32; 4]>> = const { Cell::new(None) };
+}
+
+fn extend_recorded_bounds(bounds: [i32; 4]) {
+    let (active, previous) = COLLECTED_BOUNDS.get();
+    if active {
+        let bounds = previous.map_or(bounds, |p| {
+            [
+                p[0].min(bounds[0]),
+                p[1].min(bounds[1]),
+                p[2].max(bounds[2]),
+                p[3].max(bounds[3]),
+            ]
+        });
+        COLLECTED_BOUNDS.set((true, Some(bounds)));
+    }
+}
+
+pub(crate) fn recorded_bounds(prepaint: impl FnOnce()) -> Option<[i32; 4]> {
+    let previous = COLLECTED_BOUNDS.replace((true, None));
+    prepaint();
+    let bounds = COLLECTED_BOUNDS.replace(previous).1;
+    if let Some(bounds) = bounds {
+        extend_recorded_bounds(bounds);
+    }
+    bounds
+}
+
+pub(crate) fn with_recorded_bounds<R>(bounds: Option<[i32; 4]>, paint: impl FnOnce() -> R) -> R {
+    let previous = RECORDED_BOUNDS.replace(bounds);
+    let result = paint();
+    RECORDED_BOUNDS.set(previous);
+    result
+}
+
+pub(crate) fn record_decoration(d: &Decoration, bounds: Bounds<Pixels>, window: &Window) {
+    if !COLLECTED_BOUNDS.get().0 {
+        return;
+    }
+    let scale = window.scale_factor();
+    let dev = |v: Pixels| f32::from(v) * scale;
+    let base = [
+        dev(bounds.left()).round(),
+        dev(bounds.top()).round(),
+        dev(bounds.right()).round(),
+        dev(bounds.bottom()).round(),
+    ];
+    let mut rect = base;
+    for shadow in &d.shadows {
+        if shadow.inset || alpha_byte(shadow.color.a) == 0 {
+            continue;
+        }
+        let extent = (dev(shadow.blur) * 1.5).ceil() + dev(shadow.spread);
+        let (x, y) = (dev(shadow.offset.x), dev(shadow.offset.y));
+        rect[0] = rect[0].min(base[0] + x - extent);
+        rect[1] = rect[1].min(base[1] + y - extent);
+        rect[2] = rect[2].max(base[2] + x + extent);
+        rect[3] = rect[3].max(base[3] + y + extent);
+    }
+    let clip = window.content_mask().bounds;
+    let rect = [
+        rect[0].floor().max(dev(clip.left()).floor()) as i32,
+        rect[1].floor().max(dev(clip.top()).floor()) as i32,
+        rect[2].ceil().min(dev(clip.right()).ceil()) as i32,
+        rect[3].ceil().min(dev(clip.bottom()).ceil()) as i32,
+    ];
+    if rect[0] < rect[2] && rect[1] < rect[3] {
+        extend_recorded_bounds(rect);
+    }
 }
 
 /// `crate::with_rounded_clip` on macOS.
@@ -1675,8 +1839,8 @@ pub(crate) fn paint(
     if window.element_opacity() <= 0. {
         return;
     }
-    let layer = Layer::new(window, composited);
     let s = window.scale_factor();
+    let layer = Layer::new(window, composited).for_bounds(bounds, s);
     for (op, color) in ops(d, layer.local(bounds, s), s).1 {
         paint_op(op, color, layer, window, cx);
     }
@@ -1770,7 +1934,7 @@ pub(crate) fn raster_images(
     let grouped = group_images && draws.len() > 1;
     let sampling = SamplingOptions::new(FilterMode::Linear, MipmapMode::None);
     let mut out = vec![0; (w * h * 4) as usize];
-    for (o, ts, [ox0, oy0, ox1, oy1]) in tiles([x0, y0, x0 + w, y0 + h], layer.size(), layer.tile) {
+    for (o, ts, [ox0, oy0, ox1, oy1]) in layer.tiles([x0, y0, x0 + w, y0 + h], layer.size()) {
         let (px, row) = tile_pixels(o, ts, color4f(page), |c| {
             contour.clip(c, ClipOp::Intersect);
             if grouped {
@@ -2297,6 +2461,109 @@ mod tests {
         cx.run_until_parked();
         let image = cx.capture_screenshot(window.into())?;
         assert_eq!(image.get_pixel(8, 8).0, [90, 129, 191, 255]);
+        Ok(())
+    }
+
+    #[test]
+    fn recorded_tiles_keep_local_origins_and_window_edges() {
+        assert_eq!(recorded_tile([65, 513]), [128, 512]);
+        assert_eq!(
+            recording_rect([2001, 1501, 2530, 1650], [0, 0], [2560, 1664]),
+            [1920, 1408, 2560, 1664]
+        );
+        let recorded = recording_rect([877, 68, 1683, 266], [0, 0], [2560, 1664]);
+        let layer = Layer {
+            origin: [0, 0],
+            window: [2560, 1664],
+            tile: recorded_tile([recorded[2] - recorded[0], recorded[3] - recorded[1]]),
+            composited: false,
+            device: None,
+            recorded: Some(recorded),
+        }
+        .for_bounds(
+            Bounds::new(
+                point(px(456. + 37. / 64.), px(48.)),
+                size(px(366.84375), px(63.)),
+            ),
+            2.,
+        );
+        let tiles: Vec<_> = layer
+            .tiles(layer.clip_bounds([-38, -30, 772, 172]), layer.clamp())
+            .map(|(origin, size, _)| {
+                (
+                    [origin[0] + layer.origin[0], origin[1] + layer.origin[1]],
+                    size,
+                )
+            })
+            .collect();
+        assert_eq!(tiles, vec![([768, 0], (512, 320)), ([1278, 0], (512, 320))]);
+    }
+
+    #[test]
+    fn sparse_recording_preserves_original_squircle_edges() -> anyhow::Result<()> {
+        use gpui::{AppContext, IntoElement, ParentElement, Render, Styled};
+
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        struct Recording;
+        impl Render for Recording {
+            fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+                let decoration = Decoration {
+                    radius: gpui::Corners::all(px(15.)),
+                    corner: Corner::Squircle,
+                    fill: Some(gpui::rgba(0x280b0aff).into()),
+                    border: Some((px(1.), gpui::rgba(0xfa423e66).into())),
+                    shadows: vec![crate::Shadow {
+                        color: gpui::black().opacity(0.1),
+                        offset: point(px(0.), px(4.)),
+                        blur: px(12.),
+                        spread: px(0.),
+                        inset: false,
+                    }],
+                    ..Default::default()
+                };
+                gpui::div().size_full().bg(gpui::rgb(0x181818)).child(
+                    gpui::div().size_full().top_layer().child(
+                        gpui::canvas(
+                            move |bounds, window, _| {
+                                let recorded = recorded_bounds(|| {
+                                    record_decoration(&decoration, bounds, window);
+                                });
+                                (decoration, recorded)
+                            },
+                            |bounds, (decoration, recorded), window, cx| {
+                                with_recorded_bounds(recorded, || {
+                                    paint(&decoration, None, bounds, window, cx);
+                                });
+                            },
+                        )
+                        .absolute()
+                        .left(px(456. + 37. / 64.))
+                        .top(px(48.))
+                        .w(px(366.84375))
+                        .h(px(63.)),
+                    ),
+                )
+            }
+        }
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(()),
+            gpui_platform::current_headless_renderer,
+        );
+        let window = cx.open_window(size(px(1280.), px(832.)), |_, cx| cx.new(|_| Recording))?;
+        cx.run_until_parked();
+        let image = cx.capture_screenshot(window.into())?;
+        for (x, y, expected) in [
+            (922, 102, [102, 27, 24, 255]),
+            (1638, 100, [49, 26, 25, 255]),
+            (918, 211, [119, 31, 28, 255]),
+            (1643, 211, [67, 27, 26, 255]),
+        ] {
+            assert_eq!(image.get_pixel(x, y).0, expected, "corner ({x}, {y})");
+        }
         Ok(())
     }
 
