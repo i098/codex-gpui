@@ -29,6 +29,8 @@ const MODES: [&str; 5] = [
     "full-access",
 ];
 
+const CRON_INSTRUCTIONS: &str = include_str!("automation_instructions.txt");
+
 /// What `Al` returns for a run: the turn's approvals and sandbox.
 #[derive(Debug, PartialEq)]
 pub(super) struct Permissions {
@@ -862,9 +864,10 @@ impl LocalHost {
                     let mut params = json!({"cwd": run_cwd, "model": model, "approvalPolicy": first.approval_policy,
                         "approvalsReviewer": first.reviewer, "sandbox": first.sandbox_mode(),
                         "threadSource": "automation"});
-                    if let Some(workspace) = &projectless {
-                        params["developerInstructions"] = json!(workspace.instructions());
-                    }
+                    params["developerInstructions"] = match &projectless {
+                        Some(workspace) => format!("{CRON_INSTRUCTIONS}\n\n{}", workspace.instructions()).into(),
+                        None => CRON_INSTRUCTIONS.into(),
+                    };
                     if let Some(config) = &app_tool_config {
                         params["config"] = config.clone();
                         params["dynamicTools"] = json!([]);
