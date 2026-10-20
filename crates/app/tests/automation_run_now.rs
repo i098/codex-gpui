@@ -28,15 +28,18 @@ while IFS= read -r line; do
     *'"turn/start"'*REFUSE*) printf '{"id":%s,"error":{"code":-32000,"message":"model unavailable"}}\n' "$id" ;;
     *'"turn/start"'*)
       [ -z "$SLOW" ] || sleep 2
-      if [ -n "$TURN_SIGNAL" ]; then
+      if [ -n "$HOLD_TURN" ]; then
         thread=$(printf '%s' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
         printf '{"method":"turn/completed","params":{"threadId":"%s","turn":{"id":"turn-%s","status":"completed"}}}\n' "$thread" "$id"
-        touch "$TURN_SIGNAL"
-        while [ ! -e "$TURN_RELEASE" ]; do sleep 0.01; done
+        while [ ! -e "$TURN_RELEASE" ]; do [ -d "${TURN_RELEASE%/*}" ] || exit; sleep 0.01; done
       fi
       printf '{"id":%s,"result":{"turn":{"id":"turn-%s"}}}\n' "$id" "$id" ;;
     *'"thread/archive"'*)
-      [ -z "$ARCHIVE_SIGNAL" ] || { touch "$ARCHIVE_SIGNAL"; while [ ! -e "$ARCHIVE_RELEASE" ]; do sleep 0.01; done; }
+      if [ -n "$HOLD_ARCHIVE" ]; then
+        thread=$(printf '%s' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+        printf '{"method":"thread/archived","params":{"threadId":"%s"}}\n' "$thread"
+        while [ ! -e "$ARCHIVE_RELEASE" ]; do [ -d "${ARCHIVE_RELEASE%/*}" ] || exit; sleep 0.01; done
+      fi
       [ -z "$ARCHIVE_FAIL" ] || { printf '{"id":%s,"error":{"code":-32000,"message":"archive refused"}}\n' "$id"; continue; }
       printf '{"id":%s,"result":{}}\n' "$id" ;;
     *'"thread/unarchive"'*)
@@ -948,6 +951,7 @@ struct ArchiveRun {
     cwd: std::path::PathBuf,
     host: Arc<LocalHost>,
     bridge: Arc<Bridge>,
+    events: async_channel::Receiver<bridge::Event>,
     thread: String,
     turn: Value,
 }
@@ -967,7 +971,7 @@ impl ArchiveRun {
             .arg(SERVER)
             .env("LOG", &log)
             .envs(env.iter().copied());
-        let (bridge, _) = Bridge::spawn(server)?;
+        let (bridge, events) = Bridge::spawn(server)?;
         let bridge = Arc::new(bridge);
         let host = Arc::new(LocalHost::new(&home).with_bridge(bridge.clone()));
         let policy = if muted {
@@ -990,6 +994,7 @@ impl ArchiveRun {
             cwd,
             host,
             bridge,
+            events,
             thread,
             turn,
         })
@@ -1161,35 +1166,26 @@ fn autoarchive_retries_a_failed_completion_write_and_undoes_a_failed_archive_wri
     Ok(())
 }
 
-fn wait_for_file(path: &Path) -> Result<()> {
-    let start = std::time::Instant::now();
-    while !path.exists() {
-        ensure!(
-            start.elapsed() < std::time::Duration::from_secs(5),
-            "peer did not reach {path:?}"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    Ok(())
-}
-
 #[test]
 fn autoarchive_restores_an_inflight_archive_before_sending_the_user_request() -> Result<()> {
     let sync = tempfile::tempdir()?;
-    let signal = sync.path().join("archiving");
     let release = sync.path().join("release");
     let run = ArchiveRun::start(
         true,
         false,
         &[
-            ("ARCHIVE_SIGNAL", signal.to_str().unwrap()),
+            ("HOLD_ARCHIVE", "1"),
             ("ARCHIVE_RELEASE", release.to_str().unwrap()),
         ],
     )?;
     let host = run.host.clone();
     let (thread, turn) = (run.thread.clone(), run.turn.clone());
     let finishing = std::thread::spawn(move || host.finish_run(&thread, &turn));
-    wait_for_file(&signal)?;
+    let bridge::Event::Notification { method, params } = pollster::block_on(run.events.recv())?
+    else {
+        anyhow::bail!("expected archive notification");
+    };
+    ensure!(method == "thread/archived" && params["threadId"] == run.thread);
     let mut user = std::pin::pin!(
         run.bridge
             .request::<_, Value>("thread/queue/add", json!({"threadId": run.thread}))
@@ -1258,7 +1254,6 @@ fn autoarchive_waits_for_the_start_reply_when_completion_arrives_first() -> Resu
     fs::create_dir_all(home.join("sqlite"))?;
     let db = rusqlite::Connection::open(home.join("sqlite/codex.db"))?;
     db.execute_batch(&format!("{AUTOMATIONS};{RUNS};"))?;
-    let signal = directory.path().join("starting");
     let release = directory.path().join("release");
     let log = directory.path().join("requests.jsonl");
     let mut server = Command::new("sh");
@@ -1266,7 +1261,7 @@ fn autoarchive_waits_for_the_start_reply_when_completion_arrives_first() -> Resu
         .arg("-c")
         .arg(SERVER)
         .env("LOG", &log)
-        .env("TURN_SIGNAL", &signal)
+        .env("HOLD_TURN", "1")
         .env("TURN_RELEASE", &release);
     let (bridge, events) = Bridge::spawn(server)?;
     let bridge = Arc::new(bridge);
@@ -1279,7 +1274,6 @@ fn autoarchive_waits_for_the_start_reply_when_completion_arrives_first() -> Resu
     )?;
     let starter = host.clone();
     let starting = std::thread::spawn(move || run(&starter, &id));
-    wait_for_file(&signal)?;
     let bridge::Event::Notification { method, params } = pollster::block_on(events.recv())? else {
         anyhow::bail!("expected completion");
     };
