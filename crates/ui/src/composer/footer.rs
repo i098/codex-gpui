@@ -259,6 +259,11 @@ impl Composer {
             .role(gpui::Role::Button)
             .aria_label(self.send_label())
             .aria_disabled(waiting_for_model)
+            .opacity(if !self.pending_attachments.is_empty() && !stopping {
+                0.5
+            } else {
+                1.
+            })
             .tab_index(0)
             .rounded(Theme::RADIUS_FULL)
             .focus_visible(move |style| {

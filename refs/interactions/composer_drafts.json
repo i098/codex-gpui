@@ -1,0 +1,67 @@
+{
+  "name": "composer-per-thread-drafts",
+  "source": {
+    "application": "Codex 26.1007.30912 original renderer",
+    "transport": "Owned route1 fixture on loopback; raw CDP disposable context on shared Chrome :9522",
+    "input": "Sidebar click handlers and the browser insertText editing command; no editor state replacement",
+    "settle": "Wait for the selected thread id and its own composer portal, then one animation frame"
+  },
+  "viewport": { "w": 1280, "h": 832, "dpr": 2, "theme": "dark" },
+  "steps": [
+    { "type": "open", "threadId": "01a13de9-c48a-7b20-8382-db900881cb99" },
+    { "type": "replaceText", "text": "Draft A - owned composer proof" },
+    { "type": "open", "threadId": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f" },
+    { "type": "observe", "text": "\n" },
+    { "type": "replaceText", "text": "Draft B - separate text" },
+    { "type": "open", "threadId": "01a13de9-c48a-7b20-8382-db900881cb99" }
+  ],
+  "result": {
+    "initialB": "\n",
+    "returnedA": "Draft A - owned composer proof",
+    "currentThread": "01a13de9-c48a-7b20-8382-db900881cb99",
+    "editors": [
+      { "id": "01a13de9-c48a-7b20-8382-db900881cb99", "text": "Draft A - owned composer proof", "visible": true },
+      { "id": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f", "text": "Draft B - separate text", "visible": false }
+    ]
+  },
+  "localAttachments": {
+    "threadId": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f",
+    "fixture": "Reuse the original recorded response for the same thread; map attachment filesystem requests to an owned directory.",
+    "draft": "Owned boundary draft",
+    "clipboard": { "text": "owned paste proof\n", "repeat": 300 },
+    "pending": {
+      "subtitle": "Adding pasted text…",
+      "sendOpacity": 0.5,
+      "disabledAttribute": false,
+      "ariaDisabled": null,
+      "tooltip": null,
+      "dialogAfterEnter": null,
+      "card": { "width": 224, "height": 52.5, "radius": 10, "iconSize": 24 },
+      "title": { "fontSize": 14, "lineHeight": 21, "fontWeight": 500 },
+      "subtitleStyle": { "fontSize": 13, "lineHeight": 19.5, "fontWeight": 430 }
+    },
+    "failure": {
+      "cause": "ENOTDIR from a real owned filesystem operation",
+      "toast": "Large pasted text could not be attached",
+      "draft": "Owned boundary draft",
+      "pendingCardRemoved": true
+    },
+    "successAfterPendingEnter": {
+      "submissionPreparationAttempted": true,
+      "requestMethods": ["thread/attachment/list", "fs/createDirectory", "thread/attachment/list", "thread/attachment/list", "fs/writeFile", "fs/writeFile", "config/read"],
+      "toast": "Error submitting message",
+      "fixtureLimit": "Submission preparation reached a missing effective setting. No turn/start reached the backend."
+    }
+  },
+  "responsive": [
+    { "width": 1280, "editorX": 452.5, "editorWidth": 712, "footerRows": [48, 28] },
+    { "width": 767, "editorX": 369, "editorWidth": 366, "footerRows": [48, 28] },
+    { "width": 600, "editorX": 80, "editorWidth": 488, "footerRows": [48, 28] }
+  ],
+  "limits": [
+    "The original empty editor reports one newline; the native editor reports an empty string.",
+    "Reading a globally visible rich editor before the target thread composer mounts can return the previous draft.",
+    "The initial A/B recording leaves A's model control loading. Later captures reuse the recorded B resume response.",
+    "No real turn, remote upload, microphone activation or normal-account write was performed."
+  ]
+}

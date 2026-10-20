@@ -33,7 +33,7 @@ use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::{fs, path::PathBuf, sync::Arc, time::Duration};
 use theme::Theme;
-use ui::composer::{Approval, Composer, Permission, QueueAction, Submission};
+use ui::composer::{Approval, AttachmentError, Composer, Permission, QueueAction, Submission};
 use ui::dialog::{
     CommitRepository, CommitStep, Dialog, Kind as DialogKind, Outcome as DialogOutcome, Selection,
 };
@@ -400,8 +400,9 @@ pub struct Root {
     home: Entity<HomeMain>,
     /// Docked under every open thread.
     thread_composer: Entity<Composer>,
-    /// The queued submission `Edit message` took back into the composer, until it is sent.
-    queue_edit: Option<QueueEdit>,
+    thread_composers: HashMap<String, Entity<Composer>>,
+    /// Queued submissions taken back into each thread's draft until they are sent.
+    queue_edits: HashMap<String, QueueEdit>,
     thread: Option<Entity<ThreadView>>,
     diff: Option<Entity<DiffPanel>>,
     /// The file viewer of [`SidePanel::File`]; cleared with the thread.
@@ -545,71 +546,8 @@ impl Root {
             });
             composer
         });
-        let thread_composer = cx.new(|cx| {
-            let mut composer = Composer::thread(window, cx);
-            composer.on_model(on_model(this.clone()));
-            let send = this.clone();
-            composer.on_submit(move |s, window, cx| {
-                send.update(cx, |this, cx| this.send(s.clone(), window, cx))
-                    .ok();
-            });
-            composer.on_approval(move |id, thread, response, _, cx| {
-                // Deferred: answering refreshes this composer's card.
-                let this = this.clone();
-                cx.defer(move |cx| {
-                    this.update(cx, |this, cx| this.answer(id, &thread, response, cx))
-                        .ok();
-                });
-            });
-            composer
-        });
-        cx.subscribe_in(
-            &thread_composer,
-            window,
-            |this, _, action: &QueueAction, window, cx| {
-                this.queue_action(action, window, cx);
-            },
-        )
-        .detach();
-        for composer in [&home_composer, &thread_composer] {
-            cx.subscribe_in(composer, window, |this, _, command: &ui::composer::SlashCommand, window, cx| {
-                match command {
-                    ui::composer::SlashCommand::Fast => {
-                        this.write_config("config/batchWrite", json!({
-                            "edits": [{"keyPath": "service_tier", "value": "priority", "mergeStrategy": "upsert"}],
-                            "filePath": null, "expectedVersion": null, "reloadUserConfig": true,
-                        }), cx, |config| config["service_tier"] = "priority".into());
-                    }
-                    ui::composer::SlashCommand::Archive => {
-                        if let Route::Thread(id) = this.state.route.clone() {
-                            this.archive(id, window, cx);
-                        }
-                    }
-                    ui::composer::SlashCommand::NewChat => this.new_chat(window, cx),
-                    ui::composer::SlashCommand::Usage => {
-                        if let Some(section) = settings::section("Usage & billing") {
-                            this.open_settings_section(section, window, cx);
-                        }
-                    }
-                    ui::composer::SlashCommand::Compact => this.compact(window, cx),
-                    ui::composer::SlashCommand::Fork => this.fork_chat(0, window, cx),
-                    ui::composer::SlashCommand::Rename => {
-                        if let Route::Thread(id) = this.state.route.clone() {
-                            this.open_rename(id, true, window, cx);
-                        }
-                    }
-                    ui::composer::SlashCommand::Pin => {
-                        if let Route::Thread(id) = this.state.route.clone() {
-                            let pinned = this.threads.iter().any(|t| {
-                                t.id == id
-                                    && t.section.as_ref().is_some_and(|s| s.id == PINNED_SECTION_ID)
-                            });
-                            this.set_pinned(id, !pinned, window, cx);
-                        }
-                    }
-                }
-            }).detach();
-        }
+        let thread_composer = Self::new_thread_composer(window, cx);
+        Self::subscribe_composer(&home_composer, window, cx);
         let sidebar = cx.new(|_| HomeSidebar::new(&[], None));
         cx.subscribe_in(
             &sidebar,
@@ -694,7 +632,8 @@ impl Root {
                 project: state.project_root.as_deref().map(project_name),
             }),
             thread_composer,
-            queue_edit: None,
+            thread_composers: HashMap::new(),
+            queue_edits: HashMap::new(),
             thread: None,
             diff: None,
             file: None,
@@ -776,6 +715,84 @@ impl Root {
         root.load_projects(cx);
         windows::bind_root(window, cx);
         root
+    }
+
+    fn new_thread_composer(window: &mut Window, cx: &mut Context<Self>) -> Entity<Composer> {
+        let root = cx.weak_entity();
+        let composer = cx.new(|cx| {
+            let mut composer = Composer::thread(window, cx);
+            let this = root.clone();
+            composer.on_model(move |model, effort, cx| {
+                this.update(cx, |this, cx| this.write_model(model, effort, cx))
+                    .ok();
+            });
+            composer.on_approval(move |id, thread, response, _, cx| {
+                let this = root.clone();
+                cx.defer(move |cx| {
+                    this.update(cx, |this, cx| this.answer(id, &thread, response, cx))
+                        .ok();
+                });
+            });
+            composer
+        });
+        cx.subscribe_in(
+            &composer,
+            window,
+            |this, _, action: &QueueAction, window, cx| {
+                this.queue_action(action, window, cx);
+            },
+        )
+        .detach();
+        Self::subscribe_composer(&composer, window, cx);
+        composer
+    }
+
+    fn subscribe_composer(
+        composer: &Entity<Composer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.subscribe(composer, |this, _, error: &AttachmentError, cx| {
+            this.toast(Toast::danger(error.0), cx);
+        })
+        .detach();
+        cx.subscribe_in(composer, window, |this, _, command: &ui::composer::SlashCommand, window, cx| {
+            match command {
+                ui::composer::SlashCommand::Fast => {
+                    this.write_config("config/batchWrite", json!({
+                        "edits": [{"keyPath": "service_tier", "value": "priority", "mergeStrategy": "upsert"}],
+                        "filePath": null, "expectedVersion": null, "reloadUserConfig": true,
+                    }), cx, |config| config["service_tier"] = "priority".into());
+                }
+                ui::composer::SlashCommand::Archive => {
+                    if let Route::Thread(id) = this.state.route.clone() {
+                        this.archive(id, window, cx);
+                    }
+                }
+                ui::composer::SlashCommand::NewChat => this.new_chat(window, cx),
+                ui::composer::SlashCommand::Usage => {
+                    if let Some(section) = settings::section("Usage & billing") {
+                        this.open_settings_section(section, window, cx);
+                    }
+                }
+                ui::composer::SlashCommand::Compact => this.compact(window, cx),
+                ui::composer::SlashCommand::Fork => this.fork_chat(0, window, cx),
+                ui::composer::SlashCommand::Rename => {
+                    if let Route::Thread(id) = this.state.route.clone() {
+                        this.open_rename(id, true, window, cx);
+                    }
+                }
+                ui::composer::SlashCommand::Pin => {
+                    if let Route::Thread(id) = this.state.route.clone() {
+                        let pinned = this.threads.iter().any(|t| {
+                            t.id == id
+                                && t.section.as_ref().is_some_and(|s| s.id == PINNED_SECTION_ID)
+                        });
+                        this.set_pinned(id, !pinned, window, cx);
+                    }
+                }
+            }
+        }).detach();
     }
 
     /// Uses `clock` for thread timestamps. Set it before opening a thread.
@@ -886,11 +903,7 @@ impl Root {
                     });
                 let models: Vec<Model> =
                     catalog.data.into_iter().map(|entry| entry.model).collect();
-                let composers = [
-                    this.home.read(cx).composer.clone(),
-                    this.thread_composer.clone(),
-                ];
-                for composer in composers {
+                for composer in this.composers(cx) {
                     composer.update(cx, |c, cx| {
                         c.set_models(&models, &config.config, cx);
                         c.set_slash_skills(&skills, cx);
@@ -942,8 +955,9 @@ impl Root {
             && self.approvals.is_empty()
             && self.automation_load.is_none()
             && self.state.confirm_before_close != ConfirmBeforeClose::Always
-            && self.home.read(cx).composer.read(cx).restart_ready()
-            && self.thread_composer.read(cx).restart_ready()
+            && self
+                .composers(cx)
+                .all(|composer| composer.read(cx).restart_ready())
             && self
                 .login
                 .as_ref()
@@ -1012,6 +1026,20 @@ impl Root {
             Route::Thread(_) => self.thread_composer.clone(),
             _ => self.home.read(cx).composer.clone(),
         }
+    }
+
+    fn composers<'a>(&'a self, cx: &App) -> impl Iterator<Item = Entity<Composer>> + use<'a> {
+        [
+            self.home.read(cx).composer.clone(),
+            self.thread_composer.clone(),
+        ]
+        .into_iter()
+        .chain(
+            self.thread_composers
+                .values()
+                .filter(|composer| *composer != &self.thread_composer)
+                .cloned(),
+        )
     }
 
     /// Recents thread ids in sidebar order.
@@ -2754,12 +2782,11 @@ impl Root {
                         this.thread_run_settings.clear();
                         this.state.route = Route::Home;
                         this.toaster = cx.new(|_| Toaster::new());
-                        for composer in [
-                            this.home.read(cx).composer.clone(),
-                            this.thread_composer.clone(),
-                        ] {
+                        for composer in this.composers(cx) {
                             composer.update(cx, |composer, cx| composer.clear_session(cx));
                         }
+                        this.thread_composers.clear();
+                        this.queue_edits.clear();
                         this.sync(window, cx);
                     }
                     Err(error) => {
@@ -2995,9 +3022,33 @@ impl Root {
             .turns
             .iter()
             .any(|turn| turn.status == TurnStatus::InProgress);
-        // The composer is shared; load the selected thread's own queue after navigation.
+        self.thread_composer = if let Some(composer) = self.thread_composers.get(&thread.id) {
+            composer.clone()
+        } else {
+            let composer = if self.thread_composers.is_empty() {
+                self.thread_composer.clone()
+            } else {
+                Self::new_thread_composer(window, cx)
+            };
+            let root = cx.weak_entity();
+            let id = thread.id.clone();
+            composer.update(cx, |composer, cx| {
+                composer.set_models(&self.models, &self.config, cx);
+                composer.set_slash_skills(&self.skills, cx);
+                composer.on_submit(move |submission, window, cx| {
+                    root.update(cx, |root, cx| {
+                        root.send(id.clone(), submission.clone(), window, cx)
+                    })
+                    .ok();
+                });
+            });
+            self.thread_composers
+                .insert(thread.id.clone(), composer.clone());
+            composer
+        };
         self.thread_composer.update(cx, |c, cx| {
             c.set_running(running, cx);
+            c.set_queue_mode(self.config["desktop"]["followUpQueueMode"] == "queue", cx);
             c.set_queued(Vec::new(), cx);
             c.set_queue_pending(self.queue_pending, cx);
             c.set_search_roots(vec![thread.cwd.clone()], cx);
@@ -3075,6 +3126,7 @@ impl Root {
     fn start_thread(&mut self, s: Submission, window: &mut Window, cx: &mut Context<Self>) {
         self.qa_work_started = true;
         let bridge = self.bridge.clone();
+        let composer = self.home.read(cx).composer.clone();
         let cwd = self
             .state
             .project_root
@@ -3097,9 +3149,9 @@ impl Root {
                 Err(error) => {
                     // The draft, its attachments and the chosen project stay as they were.
                     this.update(cx, |this, cx| {
-                        let composer = this.home.read(cx).composer.clone();
-                        composer.update(cx, |c, cx| c.restore_submission(&s.text, cx));
-                        this.toast(Toast::danger("Error starting chat"), cx);
+                        if composer.update(cx, |c, cx| c.restore_submission(&s, cx)) {
+                            this.toast(Toast::danger("Error starting chat"), cx);
+                        }
                     })?;
                     return Err(error);
                 }
@@ -3145,7 +3197,15 @@ impl Root {
                 }
                 this.show_thread(thread, window, cx);
             })?;
-            turn_start(&bridge, &id, &s, user_input(&s)).await
+            let result = turn_start(&bridge, &id, &s, user_input(&s)).await;
+            this.update(cx, |this, cx| {
+                if result.is_ok() {
+                    composer.update(cx, |c, cx| c.finish_submission(s.submission_id, cx));
+                } else if composer.update(cx, |c, cx| c.restore_submission(&s, cx)) {
+                    this.toast(Toast::danger("Error starting chat"), cx);
+                }
+            })?;
+            result
         });
         log_err(task, cx);
     }
@@ -3156,55 +3216,84 @@ impl Root {
     /// `Steer` sends it into the turn (`turn/steer`). A queued draft taken back by `Edit
     /// message` returns to its place in the queue. A refusal shows `Error submitting
     /// message` and puts the draft back.
-    fn send(&mut self, s: Submission, window: &mut Window, cx: &mut Context<Self>) {
+    fn send(&mut self, id: String, s: Submission, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(composer) = self.thread_composers.get(&id).cloned() else {
+            return;
+        };
         self.qa_work_started = true;
-        let Some(view) = &self.thread else { return };
-        let view = view.read(cx);
-        let id = view.id().to_owned();
         let resume = !self.loaded.contains(&id);
         let bridge = self.bridge.clone();
-        let running = view
-            .turns()
-            .iter()
-            .rev()
-            .find(|turn| turn.status == TurnStatus::InProgress)
-            .map(|turn| turn.id.clone());
+        let running = self
+            .thread
+            .as_ref()
+            .filter(|view| view.read(cx).id() == id)
+            .map(|view| {
+                view.read(cx)
+                    .turns()
+                    .iter()
+                    .rev()
+                    .find(|turn| turn.status == TurnStatus::InProgress)
+                    .map(|turn| turn.id.clone())
+            });
         let queue = self.config["desktop"]["followUpQueueMode"] == "queue";
-        let edit = self.queue_edit.take().filter(|edit| edit.thread_id == id);
+        let edit = self.queue_edits.remove(&id);
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            resume_if(resume, &bridge, &this, &id, cx).await?;
-            let mut input = user_input(&s);
-            input.extend(edit.iter().flat_map(|edit| edit.extra.clone()));
-            let Some(turn_id) = running else {
-                return turn_start(&bridge, &id, &s, input).await;
-            };
-            let (method, params) = if queue {
-                let params = json!({
-                    "threadId": id, "input": input, "clientUserMessageId": uuid_v4(),
-                });
-                ("thread/queue/add", params)
-            } else {
-                let params = json!({ "threadId": id, "input": input, "expectedTurnId": turn_id });
-                ("turn/steer", params)
-            };
-            let result = bridge.request::<_, Value>(method, params).await;
-            if queue
-                && let (Ok(added), Some(edit)) = (&result, &edit)
-                && let Some(added) = added["queuedSubmission"]["id"].as_str()
-                && let Err(error) = restore_place(&bridge, &id, added, edit).await
-            {
-                eprintln!("codex-gpui: thread/queue/reorder: {error:#}");
-            }
-            this.update(cx, |this, cx| match &result {
-                Ok(_) if queue => this.list_queue(id, cx),
-                Ok(_) => {}
-                Err(_) => {
-                    this.queue_edit = edit;
-                    this.thread_composer.update(cx, |c, cx| {
-                        c.restore_text(&s.text, cx);
-                        c.drop_files(&s.attachments, cx);
+            let mut queued = false;
+            let result = async {
+                let running = match running {
+                    Some(running) => running,
+                    None => bridge
+                        .thread_read(&id, true)
+                        .await?
+                        .thread
+                        .turns
+                        .into_iter()
+                        .rev()
+                        .find(|turn| turn.status == TurnStatus::InProgress)
+                        .map(|turn| turn.id),
+                };
+                resume_if(resume, &bridge, &this, &id, cx).await?;
+                let mut input = user_input(&s);
+                input.extend(edit.iter().flat_map(|edit| edit.extra.clone()));
+                let Some(turn_id) = running.as_ref() else {
+                    return turn_start(&bridge, &id, &s, input).await;
+                };
+                queued = queue;
+                let (method, params) = if queue {
+                    let params = json!({
+                        "threadId": id, "input": input, "clientUserMessageId": uuid_v4(),
                     });
-                    this.toast(Toast::danger("Error submitting message"), cx);
+                    ("thread/queue/add", params)
+                } else {
+                    let params =
+                        json!({ "threadId": id, "input": input, "expectedTurnId": turn_id });
+                    ("turn/steer", params)
+                };
+                let result = bridge.request::<_, Value>(method, params).await;
+                if queue
+                    && let (Ok(added), Some(edit)) = (&result, &edit)
+                    && let Some(added) = added["queuedSubmission"]["id"].as_str()
+                    && let Err(error) = restore_place(&bridge, &id, added, edit).await
+                {
+                    eprintln!("codex-gpui: thread/queue/reorder: {error:#}");
+                }
+                result.map(drop)
+            }
+            .await;
+            this.update(cx, |this, cx| match &result {
+                Ok(_) => {
+                    composer.update(cx, |c, cx| c.finish_submission(s.submission_id, cx));
+                    if queued {
+                        this.list_queue(id, cx);
+                    }
+                }
+                Err(_) => {
+                    if composer.update(cx, |c, cx| c.restore_submission(&s, cx)) {
+                        if let Some(edit) = edit {
+                            this.remember_queue_edit(id, edit);
+                        }
+                        this.toast(Toast::danger("Error submitting message"), cx);
+                    }
                 }
             })?;
             result.map(drop)
@@ -3392,6 +3481,13 @@ impl Root {
         log_err(task, cx);
     }
 
+    fn remember_queue_edit(&mut self, thread_id: String, mut edit: QueueEdit) {
+        if let Some(previous) = self.queue_edits.remove(&thread_id) {
+            edit.extra.extend(previous.extra);
+        }
+        self.queue_edits.insert(thread_id, edit);
+    }
+
     /// `Edit message` on a queued row: `thread/queue/delete` takes the submission out of the
     /// queue, then its text and images go back to the composer. Sending the draft queues it
     /// again where it was ([`restore_place`]). A submission already gone only refreshes the
@@ -3427,12 +3523,14 @@ impl Root {
             this.update_in(cx, |this, window, cx| {
                 match &result {
                     Ok(taken) if taken["deleted"] == true => {
-                        this.queue_edit = Some(QueueEdit {
-                            thread_id: thread_id.clone(),
-                            previous,
-                            next,
-                            extra,
-                        });
+                        this.remember_queue_edit(
+                            thread_id.clone(),
+                            QueueEdit {
+                                previous,
+                                next,
+                                extra,
+                            },
+                        );
                         this.thread_composer
                             .update(cx, |c, cx| c.load_queued(&text, &images, window, cx));
                     }
@@ -4116,11 +4214,7 @@ impl Root {
                 .await;
             this.update(cx, |this, cx| {
                 if done.is_ok() {
-                    let composers = [
-                        this.home.read(cx).composer.clone(),
-                        this.thread_composer.clone(),
-                    ];
-                    for composer in composers {
+                    for composer in this.composers(cx) {
                         composer.update(cx, |composer, cx| {
                             composer.set_model_and_effort(&model, &effort, cx);
                         });
@@ -4551,8 +4645,7 @@ impl Root {
                     if !completed && let Some(menu) = &self.command_menu {
                         menu.update(cx, |menu, cx| menu.apply_file_results(&params, cx));
                     }
-                    let home = self.home.read(cx).composer.clone();
-                    for composer in [home, self.thread_composer.clone()] {
+                    for composer in self.composers(cx) {
                         composer.update(cx, |c, cx| c.apply_file_search(completed, &params, cx));
                     }
                 }
@@ -4776,7 +4869,6 @@ fn split_input(input: &[Value]) -> (String, Vec<PathBuf>, Vec<Value>) {
 /// A queued draft taken back by `Edit message`: where it stood in the queue, and the input
 /// the composer cannot show.
 struct QueueEdit {
-    thread_id: String,
     previous: Option<String>,
     next: Option<String>,
     extra: Vec<Value>,

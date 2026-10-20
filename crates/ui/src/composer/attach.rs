@@ -3,7 +3,7 @@ use crate::screens::settings::AppServer;
 use anyhow::{Context as _, Result, anyhow};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use bridge::Bridge;
-use gpui::{StyledImage as _, Task};
+use gpui::{AppContext as _, StyledImage as _, Task};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -27,10 +27,17 @@ pub(super) enum Content {
 pub(super) struct Attachment {
     pub path: PathBuf,
     content: Content,
+    preview: Option<SharedString>,
     /// Written under `$CODEX_HOME/attachments`: pasted text through the app-server's `fs/*`
     /// like the original ([`save_text`]), a pasted image by this process ([`persist`]). Both
     /// go with the chip. A picked or dropped file stays where the user keeps it.
     persisted: bool,
+}
+
+pub(super) struct Pending {
+    id: usize,
+    preview: Option<SharedString>,
+    save: Task<()>,
 }
 
 impl Attachment {
@@ -39,6 +46,7 @@ impl Attachment {
             path,
             content: Content::File,
             persisted: false,
+            preview: None,
         }
     }
 
@@ -53,6 +61,7 @@ impl Attachment {
                 path,
                 content: Content::Image(Arc::new(gpui::Image::from_bytes(format, bytes))),
                 persisted: false,
+                preview: None,
             },
             None => Self::file(path),
         }
@@ -147,6 +156,7 @@ async fn save_text(bridge: Arc<Bridge>, text: String) -> Result<Attachment> {
         path,
         content: Content::Text(text),
         persisted: true,
+        preview: None,
     })
 }
 
@@ -206,13 +216,26 @@ fn persist(image: Arc<gpui::Image>) -> io::Result<Attachment> {
         path,
         content: Content::Image(image),
         persisted: true,
+        preview: None,
     })
 }
 
 impl Composer {
     pub(super) fn save_paste(&mut self, content: Content, cx: &mut Context<Self>) {
-        self.pending_attachments += 1;
-        self.attachment_error = None;
+        let id = self.next_pending_attachment;
+        self.next_pending_attachment = id.wrapping_add(1);
+        let preview = if let Content::Text(text) = &content {
+            let mut preview: String = text
+                .trim()
+                .chars()
+                .take(79)
+                .map(|ch| if ch.is_whitespace() { ' ' } else { ch })
+                .collect();
+            preview.push('…');
+            Some(preview.into())
+        } else {
+            None
+        };
         let generation = self.attachment_generation;
         let (error_message, save): (_, Task<Result<Attachment>>) = match content {
             Content::Text(text) => (
@@ -232,24 +255,47 @@ impl Composer {
             ),
             Content::File => unreachable!("only clipboard contents are persisted"),
         };
-        cx.spawn(async move |this, cx| {
+        let save = cx.spawn(async move |this, cx| {
             let result = save.await;
             let _ = this.update(cx, |this, cx| {
                 if generation != this.attachment_generation {
                     return;
                 }
-                this.pending_attachments -= 1;
+                let Some(index) = this
+                    .pending_attachments
+                    .iter()
+                    .position(|pending| pending.id == id)
+                else {
+                    return;
+                };
+                let pending = this.pending_attachments.remove(index);
+                pending.save.detach();
                 match result {
-                    Ok(attachment) => this.attachments.push(attachment),
+                    Ok(mut attachment) => {
+                        attachment.preview = pending.preview;
+                        this.attachments.push(attachment);
+                    }
                     Err(error) => {
                         eprintln!("codex-gpui: {error_message}: {error}");
-                        this.attachment_error = Some(error_message);
+                        this.pending_submit = None;
+                        cx.emit(AttachmentError(error_message));
                     }
                 }
                 cx.notify();
+                if this.pending_attachments.is_empty()
+                    && let Some(window) = this.pending_submit.take()
+                {
+                    let composer = cx.entity();
+                    cx.defer(move |cx| {
+                        let _ = cx.update_window(window, |_, window, cx| {
+                            composer
+                                .update(cx, |composer, cx| composer.submit(&Submit, window, cx));
+                        });
+                    });
+                }
             });
-        })
-        .detach();
+        });
+        self.pending_attachments.push(Pending { id, preview, save });
         cx.notify();
     }
 
@@ -286,16 +332,28 @@ impl Composer {
         cx.notify();
     }
 
-    pub(super) fn attachments_row(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
+    pub(super) fn attachments_row(&self, t: &Theme, cx: &mut Context<Self>) -> Stateful<Div> {
+        let populated = !self.attachments.is_empty()
+            || self
+                .pending_attachments
+                .iter()
+                .any(|pending| pending.preview.is_some());
         div()
+            .id("composer-attachments")
+            .w_full()
+            .min_w_0()
+            .overflow_x_scroll()
             .pt(px(8.))
             .px(px(8.))
             .pb(px(6.))
             .flex()
-            .flex_wrap()
             .gap(px(6.))
-            .when(!self.attachments.is_empty(), |d| {
-                d.pt(px(12.)).px(px(12.)).gap(px(12.)).items_end()
+            .when(populated, |d| {
+                d.pt(px(12.))
+                    .pb(px(10.))
+                    .px(px(12.))
+                    .gap(px(12.))
+                    .items_end()
             })
             .children(
                 self.attachments
@@ -310,14 +368,15 @@ impl Composer {
                     )
                     .map(|(i, attachment)| {
                         match &attachment.content {
-                            Content::Text(content) => {
-                                return self.text_attachment(i, content, t, cx);
+                            Content::Text(_) => {
+                                return self.text_attachment(i, t, cx);
                             }
                             Content::Image(image) => {
                                 return div()
                                     .relative()
                                     .size(px(122.))
                                     .rounded(px(8.))
+                                    .flex_none()
                                     .overflow_hidden()
                                     .child(
                                         gpui::img(image.clone())
@@ -335,6 +394,7 @@ impl Composer {
                             .map(|n| n.to_string_lossy().into_owned())
                             .unwrap_or_default();
                         div()
+                            .flex_none()
                             .h(px(28.))
                             .pl(px(8.))
                             .pr(px(2.))
@@ -346,22 +406,73 @@ impl Composer {
                             .child(label(name, t.text))
                             .child(
                                 pill(("remove-attachment", i), t)
+                                    .role(gpui::Role::Button)
+                                    .aria_label("Remove attachment")
+                                    .tab_index(0)
+                                    .focus_visible(menu::trigger_focus)
                                     .size(px(22.))
                                     .justify_center()
                                     .child(icon("close", 12., t.text_tertiary))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                    .on_click(cx.listener(move |this, _, window, cx| {
                                         this.attachments.remove(i);
+                                        this.focus_handle.focus(window, cx);
                                         cx.notify();
                                     })),
                             )
                             .into_any_element()
                     }),
             )
+            .children(self.pending_attachments.iter().filter_map(|pending| {
+                let preview = pending.preview.clone()?;
+                let id = pending.id;
+                let remove = Self::paste_close_button(
+                    ("remove-pending-attachment", id),
+                    "Remove pasted text attachment",
+                    t,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.pending_attachments.retain(|pending| pending.id != id);
+                    this.pending_submit = None;
+                    this.focus_handle.focus(window, cx);
+                    cx.notify();
+                }));
+                Some(
+                    Self::pasted_text_card(
+                        preview,
+                        text("Adding pasted text…", 13., 19.5, 430., t.text_secondary)
+                            .into_any_element(),
+                        t,
+                    )
+                    .child(remove),
+                )
+            }))
     }
 
     fn remove_paste_button(&self, i: usize, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let label = if matches!(self.attachments[i].content, Content::Text(_)) {
+            "Remove pasted text attachment"
+        } else {
+            "Remove attachment"
+        };
+        Self::paste_close_button(("remove-attachment", i), label, t).on_click(cx.listener(
+            move |this, _, window, cx| {
+                this.remove_paste(i, cx);
+                this.focus_handle.focus(window, cx);
+            },
+        ))
+    }
+
+    fn paste_close_button(
+        id: impl Into<ElementId>,
+        label: &'static str,
+        t: &Theme,
+    ) -> Stateful<Div> {
         div()
-            .id(("remove-attachment", i))
+            .id(id)
+            .role(gpui::Role::Button)
+            .aria_label(label)
+            .tab_index(0)
+            .focus_visible(menu::trigger_focus)
             .absolute()
             .top(px(4.))
             .right(px(4.))
@@ -372,9 +483,6 @@ impl Composer {
             .items_center()
             .justify_center()
             .child(icon("close", 10., t.surface))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.remove_paste(i, cx);
-            }))
     }
 
     fn remove_paste(&mut self, i: usize, cx: &mut Context<Self>) -> Content {
@@ -409,31 +517,51 @@ impl Composer {
         attachment.content
     }
 
-    fn text_attachment(
-        &self,
-        i: usize,
-        content: &str,
-        t: &Theme,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let preview: String = content.trim().chars().take(79).collect();
+    fn text_attachment(&self, i: usize, t: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let preview = self.attachments[i]
+            .preview
+            .clone()
+            .expect("text attachment preview");
+        let restore = div()
+            .id(("restore-paste", i))
+            .child(text(
+                "Show in text field ›",
+                13.,
+                19.5,
+                430.,
+                t.text_secondary,
+            ))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if let Content::Text(text) = this.remove_paste(i, cx) {
+                    this.insert(&text, window, cx);
+                    window.focus(&this.focus_handle, cx);
+                }
+            }));
+        Self::pasted_text_card(preview, restore.into_any_element(), t)
+            .child(self.remove_paste_button(i, t, cx))
+            .into_any_element()
+    }
+
+    fn pasted_text_card(preview: SharedString, subtitle: AnyElement, t: &Theme) -> Div {
+        let fill = if t.appearance == Appearance::Dark {
+            gpui::rgba(0x2d2d2df5).into()
+        } else {
+            t.surface
+        };
         div()
             .w(px(224.))
-            .h(px(53.))
+            .h(px(52.5))
+            .flex_none()
             .relative()
             .flex()
             .items_center()
             .gap(px(10.))
             .pl(px(6.))
             .pr(px(24.))
-            .rounded(px(8.))
-            .bg(if t.appearance == Appearance::Dark {
-                gpui::rgba(0x2d2d2df5).into()
-            } else {
-                t.surface
-            })
-            .border(px(0.5))
-            .border_color(t.text_alpha_5)
+            .child(shapes::decoration(shapes::Decoration {
+                border: Some((px(0.5), t.text_alpha_5)),
+                ..deco(10., fill, vec![])
+            }))
             .child(
                 div()
                     .size(px(40.))
@@ -443,7 +571,7 @@ impl Composer {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(label("≡", t.text_secondary)),
+                    .child(icon("pasted-text", 24., t.text_secondary)),
             )
             .child(
                 div()
@@ -452,23 +580,11 @@ impl Composer {
                     .flex()
                     .flex_col()
                     .child(
-                        label(format!("{preview}…"), t.text)
+                        text(preview, 14., 21., 500., t.text)
                             .overflow_hidden()
                             .text_ellipsis(),
                     )
-                    .child(
-                        div()
-                            .id(("restore-paste", i))
-                            .child(label("Show in text field ›", t.text_secondary))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                if let Content::Text(text) = this.remove_paste(i, cx) {
-                                    this.insert(&text, window, cx);
-                                    window.focus(&this.focus_handle, cx);
-                                }
-                            })),
-                    ),
+                    .child(subtitle),
             )
-            .child(self.remove_paste_button(i, t, cx))
-            .into_any_element()
     }
 }

@@ -14,17 +14,17 @@ use bridge::types::{
     PermissionsApprovalRequest, QueuedSubmission,
 };
 use gpui::{
-    AnyElement, App, AvailableSpace, Bounds, ClipboardItem, Context, Corners, CursorStyle, Div,
-    ElementId, ElementInputHandler, Entity, EntityInputHandler, ExternalPaths, FocusHandle,
-    Focusable, GlobalElementId, Hsla, InspectorElementId, InteractiveElement, IntoElement,
-    KeyBinding, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
-    PathPromptOptions, Pixels, Point, Render, SharedString, Size, Stateful,
+    AnyElement, AnyWindowHandle, App, AvailableSpace, Bounds, ClipboardItem, Context, Corners,
+    CursorStyle, Div, ElementId, ElementInputHandler, Entity, EntityInputHandler, ExternalPaths,
+    FocusHandle, Focusable, GlobalElementId, Hsla, InspectorElementId, InteractiveElement,
+    IntoElement, KeyBinding, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement, PathPromptOptions, Pixels, Point, Render, SharedString, Size, Stateful,
     StatefulInteractiveElement, Style, Styled, Task, TextAlign, TextRun, UTF16Selection,
     UnderlineStyle, Window, WrappedLine, actions, deferred, div, fill, point,
     prelude::FluentBuilder as _, px, relative, size,
 };
 use serde_json::{Value, json};
-use std::{ops::Range, path::PathBuf, rc::Rc, time::Duration};
+use std::{collections::HashMap, ops::Range, path::PathBuf, rc::Rc, time::Duration};
 use theme::{ActiveTheme as _, Appearance, Theme};
 
 actions!(
@@ -369,6 +369,8 @@ impl Permission {
 /// What the composer sends: the app turns it into `thread/start` + `turn/start`.
 #[derive(Clone, Debug)]
 pub struct Submission {
+    /// The source composer's request key; never sent to the app-server.
+    pub submission_id: usize,
     pub text: String,
     pub attachments: Vec<PathBuf>,
     pub model: String,
@@ -561,6 +563,11 @@ pub enum QueueAction {
 
 impl gpui::EventEmitter<QueueAction> for Composer {}
 
+/// A local attachment could not be saved.
+pub struct AttachmentError(pub &'static str);
+
+impl gpui::EventEmitter<AttachmentError> for Composer {}
+
 /// One row of the queue tray: the app-server's submission and the text it shows.
 pub struct QueuedMessage {
     pub submission: QueuedSubmission,
@@ -592,12 +599,12 @@ pub struct Composer {
     lines: Vec<WrappedLine>,
     bounds: Option<Bounds<Pixels>>,
     attachments: Vec<attach::Attachment>,
-    /// The attachments of the last submission, until the next one: [`Self::restore_submission`]
-    /// puts them back when starting the chat failed.
-    submitted: Vec<attach::Attachment>,
-    pending_attachments: usize,
+    submitted_attachments: HashMap<usize, Vec<attach::Attachment>>,
+    next_submission_id: usize,
+    pending_attachments: Vec<attach::Pending>,
+    next_pending_attachment: usize,
+    pending_submit: Option<AnyWindowHandle>,
     attachment_generation: u64,
-    attachment_error: Option<&'static str>,
     /// A file drag is over the composer's drop target (`data-composer-drag-active`).
     drag_active: bool,
     models: Vec<ModelOption>,
@@ -679,10 +686,12 @@ impl Composer {
             lines: Vec::new(),
             bounds: None,
             attachments: Vec::new(),
-            submitted: Vec::new(),
-            pending_attachments: 0,
+            submitted_attachments: HashMap::new(),
+            next_submission_id: 0,
+            pending_attachments: Vec::new(),
+            next_pending_attachment: 0,
+            pending_submit: None,
             attachment_generation: 0,
-            attachment_error: None,
             drag_active: false,
             models: Vec::new(),
             model: 0,
@@ -848,7 +857,8 @@ impl Composer {
     pub fn restart_ready(&self) -> bool {
         self.content.is_empty()
             && self.attachments.is_empty()
-            && self.pending_attachments == 0
+            && self.submitted_attachments.is_empty()
+            && self.pending_attachments.is_empty()
             && self.marked_range.is_none()
             && !self.running
             && self.approval.is_none()
@@ -1143,8 +1153,9 @@ impl Composer {
     pub fn clear_session(&mut self, cx: &mut Context<Self>) {
         self.attachment_generation = self.attachment_generation.wrapping_add(1);
         self.attachments.clear();
-        self.pending_attachments = 0;
-        self.attachment_error = None;
+        self.submitted_attachments.clear();
+        self.pending_attachments.clear();
+        self.pending_submit = None;
         self.context_menu = None;
         self.menu = None;
         self.set_text("", cx);
@@ -1164,11 +1175,21 @@ impl Composer {
 
     /// Puts a failed submission back: its text and its attachments, ahead of what was typed
     /// since (the draft stays whole when starting the chat was refused).
-    pub fn restore_submission(&mut self, text: &str, cx: &mut Context<Self>) {
-        let mut restored = std::mem::take(&mut self.submitted);
+    pub fn restore_submission(&mut self, submission: &Submission, cx: &mut Context<Self>) -> bool {
+        let Some(mut restored) = self.submitted_attachments.remove(&submission.submission_id)
+        else {
+            return false;
+        };
         restored.append(&mut self.attachments);
         self.attachments = restored;
-        self.restore_text(text, cx);
+        self.restore_text(&submission.text, cx);
+        true
+    }
+
+    pub fn finish_submission(&mut self, submission_id: usize, cx: &mut Context<Self>) {
+        if self.submitted_attachments.remove(&submission_id).is_some() {
+            cx.notify();
+        }
     }
 
     /// Open the model picker (`Select effort`), as `⌘⇧M`-style commands and the menu do.
@@ -1233,22 +1254,37 @@ impl Composer {
             self.activate_slash(window, cx);
             return;
         }
-        if self.edit_pending
-            || (!self.running && self.current_model().is_none())
-            || self.pending_attachments > 0
-            || (self.content.trim().is_empty() && self.attachments.is_empty())
-        {
+        if self.edit_pending || (!self.running && self.current_model().is_none()) {
             return;
         }
+        if !self.pending_attachments.is_empty() {
+            self.pending_submit = Some(window.window_handle());
+            return;
+        }
+        self.pending_submit = None;
+        if self.content.trim().is_empty() && self.attachments.is_empty() {
+            return;
+        }
+        let submission_id = self.next_submission_id;
+        self.next_submission_id = submission_id.wrapping_add(1);
         let submission = Submission {
+            submission_id,
             text: if self.mentions.is_empty() && self.on_cancel_edit.is_none() {
                 std::mem::take(&mut self.content)
             } else {
                 self.prompt()
             },
             attachments: {
-                self.submitted = std::mem::take(&mut self.attachments);
-                self.submitted.iter().map(|a| a.path.clone()).collect()
+                let attachments = std::mem::take(&mut self.attachments);
+                let paths = attachments
+                    .iter()
+                    .map(|attachment| attachment.path.clone())
+                    .collect();
+                if self.on_cancel_edit.is_none() {
+                    self.submitted_attachments
+                        .insert(submission_id, attachments);
+                }
+                paths
             },
             model: self
                 .current_model()
@@ -1972,9 +2008,6 @@ impl Render for Composer {
                     .flex_col()
                     .when(self.docked, |d| d.layer())
                     .when(!editing, |d| d.child(self.attachments_row(&t, cx)))
-                    .when_some(self.attachment_error, |d, error| {
-                        d.child(label(error, t.text))
-                    })
                     .child(
                         self.editor(cx)
                             .when(editing, |d| d.pt(px(12.)).pb_0().min_h(px(52.))),

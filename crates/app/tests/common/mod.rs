@@ -778,6 +778,16 @@ pub fn proxy_child() {
 }
 
 fn serve_proxy(script: &Path, log: &Path) -> Result<()> {
+    let mut header = String::new();
+    io::BufReader::new(fs::File::open(script)?).read_line(&mut header)?;
+    let hold = serde_json::from_str::<Value>(&header)
+        .ok()
+        .and_then(|header| {
+            Some((
+                header["hold"]["method"].as_str()?.to_owned(),
+                PathBuf::from(header["hold"]["release"].as_str()?),
+            ))
+        });
     let (bridge, events) = Bridge::replay(script)?;
     let bridge = Arc::new(bridge);
     let out = Arc::new(Mutex::new(io::stdout()));
@@ -814,8 +824,17 @@ fn serve_proxy(script: &Path, log: &Path) -> Result<()> {
                 let method = method.to_owned();
                 match id {
                     Some(id) => {
+                        let release = hold
+                            .as_ref()
+                            .filter(|(held, _)| held == &method)
+                            .map(|(_, path)| path.clone());
                         let (bridge, out, id) = (bridge.clone(), out.clone(), id.clone());
                         thread::spawn(move || {
+                            if let Some(release) = release {
+                                while !release.exists() {
+                                    thread::sleep(Duration::from_millis(5));
+                                }
+                            }
                             let reply = match block_on(bridge.request::<_, Value>(&method, params))
                             {
                                 Ok(result) => json!({ "id": id, "result": result }),

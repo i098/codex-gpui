@@ -20,10 +20,10 @@ Stop and fix the cause if a new report appears.
 - **FAIL (why)**: the port behaves differently, or no flow can reach the row yet (the reason tells which).
 - **NOT WIRED (owner)**: the port has no handler for the row; the owner file must add it.
 
-The "Original" column gives the behavior from the inventory.
-The rows were not clicked again on the original through `tools/route1`: its `server.mjs` starts a live `codex app-server` with `CODEX_HOME=/tmp/cgx-mac/home`, and this lane must not touch that directory.
+The Original column uses the inventory unless a later original recording corrects it.
+The initial round used read-only fixtures; later sections identify their owned original captures and limits.
 
-## Totals
+## Historical totals (round 5)
 
 | Screen | Rows | PASS | FAIL | NOT WIRED |
 |---|---|---|---|---|
@@ -421,24 +421,43 @@ The headless S010 replay has no AppKit view; it checks the missing-handle path w
 | 2 | Type text | focus | Editor grows to a max height, then scrolls. | Lines add; height growth not measured. | FAIL (no flow checks the max height) |
 | 3 | Enter | shortcut | Sends; `⌘ + Enter` modes per setting. | Enter sends; no `Send shortcut` setting. | PASS (`submit_enter_starts_thread`) |
 | 4 | Shift+Enter | shortcut | New line. | New line in the Home and thread composers. | PASS (`shift_enter_newline`) |
-| 5 | `@` | shortcut | Mention list. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
+| 5 | `@` | shortcut | Mention list. | Opens the local file mention list, searches the workspace and inserts the selected mention. | PASS (`s019::mention_list_replay`) |
 | 6 | `/` | shortcut | Slash command menu. | Matches the recorded menu, filtering, selected row, editor focus, arrows, Escape, Enter, and Tab. | PASS (`s021::slash_menu_keyboard_replay`) |
 | 6a | `/` then Enter on `Compact`, `Rename`, `Pin chat`, `Fork chat`, `Model`, `Reasoning`, `Work in a project` | shortcut | Runs the chat action (CP-058 to CP-063, CP-068, CP-069). | `Compact`: `thread/compact/start` (resumes the chat first), toast `Compact is disabled while a chat is in progress` while a turn runs, `Failed to compact chat` on error. `Rename`: the `Rename chat` dialog; closing it focuses the composer. `Pin chat`: `thread/section/move`, toggles. `Fork chat`, `Model`, `Reasoning`, `Work in a project`: Enter turns the token into `/id ` and opens a submenu filtered by the text after it; Backspace over the space returns to the list, Escape leaves the text, a pick removes token and query, keeps the rest of the draft, and acts (`thread/fork` in the same workspace with `Failed to fork chat` on error, `config/batchWrite`, the existing-project selection for new chats). Not wired: `Fork chat in new worktree`, the submenu's `Search` input row, the usage text on `Compact`, and the other commands. | PASS (`slash_commands`) |
-| 7 | Paste large text | click | `Pasted text.txt` chip. | Paste inserts the text. | NOT WIRED (`crates/ui/src/composer.rs` `paste`) |
-| 8 | Drag file over composer | hover | `Drop to attach`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
-| 9 | Attachment chip remove | click | Removes the attachment. | Handler exists (`remove-attachment`). | FAIL (no flow: attachments come only from the system file picker, which the headless window does not answer) |
+| 7 | Paste large text | click | `Pasted text.txt` chip. | Saves large text through `fs/*`, shows its card, and restores its text on request; pasted images retain their bytes. | PASS (`s017::clipboard_attachments_match_the_original`) |
+| 8 | Drag file over composer | hover | `Drop to attach`. | Shows the overlay and attaches dropped paths. File drops switch GPUI to mouse input, including directly after typing. | PASS (`s017b`, `thread_drafts`) |
+| 9 | Attachment chip remove | click | Removes the attachment. | Ready and pending Remove controls restore editor focus. A removed file is absent from the next send and remains on disk. | PASS (`thread_drafts`) |
 | 10 | Model picker | click | `Select model`, `Select effort`, Fast. | Opens; a model or effort choice writes `model` and `model_reasoning_effort` with `config/batchWrite` (the original's `writeModel`); parity: see `parity_composer`. | PASS (`model_picker_popover`, `effort_pick_writes_config`, `parity_composer`) |
 | 11 | Permissions dropdown | click | Ask / Approve for me / Full access / Custom. | Opens. | PASS (`permissions_popover`) |
 | 12 | Submit while running | click | Stop; with text Queue or Steer. | Stop interrupts the active turn. Queue adds a server-owned submission; Steer sends input into the active turn. | PASS (`s023`, `s023b`) |
 | 13 | Stop | click | `turn/interrupt`. | Sends the active thread and turn IDs; completion removes Stop. Errors show `Failed to stop chat`. | PASS (`s023::stop_interrupts_only_the_active_turn`) |
 | 14 | Queued message row | click | Steer, Edit, Delete, Retry. | Steer sends the selected submission once. Delete removes it; Cmd+Z restores its text, identity, order, and chat location. The `…` menu (`Queued message actions`) holds `Edit message` and `Turn off queueing` / `Turn on queueing`. `Edit message` sends `thread/queue/delete`, then moves the exact text and local images back to the composer (a draft already there stays below it; remote images, audio, skills and mentions wait in the app and go out with the next send). Sending queues it again (`thread/queue/add`) and `thread/queue/reorder` puts it before the row that followed it, else after the one before it. If the server already took the submission, only the tray refreshes. The queueing item writes `desktop.followUpQueueMode`, so the next submit queues or steers; a refused write toasts `Couldn’t save your changes. Try again` and keeps the label of the behavior that applies. `Open in side chat` is not in the menu: the original shows it only where a side chat can open, and the port has none (`New side chat`, `/side` and `⌥⌘S` have no handler). Retry and side chats remain outside this slice. | PARTIAL (CP-113/114 pass in `s023b`; CP-115 Edit and queueing pass in `queue_options`; `Open in side chat` and Retry remain open) |
-| 15 | Submit blocked | error | `Unable to send message`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
-| 16 | Upload in progress | loading | `Files uploading…`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
-| 17 | Upload failure | error | `Unable to upload file`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
-| 18 | Button hover | hover | Ghost hover; tooltip after a delay. | Hover fill. The `+` tooltip includes the `@` hint and matches its original bounds. | PARTIAL (`+`: `s018::add_tooltip_replay`; other composer tooltips remain absent) |
-| 19 | Focus ring | focus ring | Send button ring. | — | NOT WIRED (`crates/ui/src/composer.rs`: no `focus_visible` ring) |
-| 20 | Resize | resize | Below 40rem the editor and footer stack. | Only the 475 px compact footer. | FAIL (`crates/ui/src/composer.rs`) |
+| 15 | Submit blocked | error | The recorded local pending paste waits without a dialog; other preflight blocks can use `Unable to send message`. | Enter retains one submission until local persistence finishes. Failure cancels it; successful persistence sends to the original thread even after navigation. | PASS (`thread_drafts`, local attachment contract) |
+| 16 | Upload in progress | loading | Local pasted text shows `Adding pasted text…` and dims Send to 50%; `Files uploading…` belongs to other upload paths. | A removable pending card remains visible during filesystem work. No local upload tooltip is invented. | PASS (`thread_drafts`, recorded local filesystem wait) |
+| 17 | Upload failure | error | Local persistence failure shows `Large pasted text could not be attached`; remote copies use `Unable to upload file`. | The shared danger toast reports the failure, removes the pending card and preserves the draft. | PASS (`thread_drafts`, local attachment contract) |
+| 18 | Button hover | hover | Ghost hover and the Add tooltip. The recorded local pending Send has no tooltip. | Add retains its recorded delayed tooltip. Pending Send remains dim without adding another tooltip. | PASS (`s018`, `thread_drafts`) |
+| 19 | Focus ring | focus ring | Send button ring. | The existing Send ring matches the recorded Tab sequence. Removing attachments returns focus to the editor. | PASS (`s024`, `thread_drafts`) |
+| 20 | Resize | resize | The primary editor stays above the footer at 1280, 767 and 600 px. The `<40rem` branch is for floating quick chat. | Primary footer layout follows its container width. The shared 767 px sidebar breakpoint correction has a separate owner. | PARTIAL (container layout proved; shared sidebar integration pending) |
 | 21 | `+` Add menu | click | Opens the mention list without inserting `@`; Escape keeps the draft. | Reuses the S019 query state; keys skip disabled actions, and a second click closes the list. | PASS (`s018::add_menu_replay`) |
+
+CP-022 now has an original local recording in `refs/interactions/composer_drafts.json`.
+The recorder waits for the target thread id and its own composer portal, then one animation frame.
+Thread B starts empty; returning to A restores its draft while B keeps its separate draft.
+The native `thread_drafts` check preserves text, undo history and a dropped attachment across A/B/A navigation.
+It then removes a chip by click, sends without that path, and verifies that the user's file remains.
+The drop regression starts with keyboard input and no intervening mouse move.
+GPUI previously kept keyboard input mode for an OS file drop, so drop hit testing rejected it.
+The local pending capture holds an owned `fs/createDirectory` request and then releases a real `ENOTDIR` failure.
+The success capture finishes the two filesystem writes and observes submission preparation after pending Enter.
+The native check covers deferred send, failure, pending cancellation, source-thread identity and restored editor focus.
+The capture reuses the original recorded response for the same Subtract thread; it does not invent a response for another thread.
+No remote uploader or unobserved preflight dialog was added.
+Each submission keeps its own attachment recovery state until that request completes.
+Overlapping refusals cannot replace one request's files with another request's files.
+Queued edit metadata stays with its thread, including hidden skill input and queue position.
+Both ownership regressions fail on the pre-fix source and pass after the correction.
+TH-002/004 history loading and retry belong to the separate thread-recovery implementation.
+
 
 S018 records CP-039 and CP-040 in `refs/interactions/s018.json`.
 Its Add replay checks local actions, selection, query text, focus, Escape, reopen, and the second trigger click.
