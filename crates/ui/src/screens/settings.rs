@@ -446,7 +446,8 @@ impl SettingsNav {
                         16.,
                         if selected { t.icon_primary } else { t.text },
                     ))
-                    .child(text(label, 14., 21., 400., t.text)),
+                    // The original fade mask isolates the text in its own composited layer.
+                    .child(text(label, 14., 21., 400., t.text).layer()),
             )
             .when(label == EXTERNAL, |d| {
                 d.child(icon("arrow-up-right", 16., t.text_secondary).opacity(0.5))
