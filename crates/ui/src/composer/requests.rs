@@ -75,6 +75,7 @@ impl Approval {
                             id,
                             thread: params["threadId"].as_str()?.to_owned(),
                         }),
+                        computer_use: None,
                         form: Some(Form {
                             method: method.to_owned(),
                             params: params.clone(),
@@ -160,6 +161,7 @@ impl Approval {
                 id,
                 thread: params["threadId"].as_str()?.to_owned(),
             }),
+            computer_use: None,
             form: Some(Form {
                 method: method.to_owned(),
                 params: params.clone(),
@@ -1036,7 +1038,7 @@ impl Composer {
             .child(footer)
     }
 
-    fn request_button(
+    pub(super) fn request_button(
         &self,
         id: &'static str,
         label: SharedString,
@@ -1059,6 +1061,10 @@ impl Composer {
                             .trim()
                             .is_empty()
                 });
+        let native = self
+            .approval
+            .as_ref()
+            .is_some_and(|approval| approval.computer_use.is_some());
         let permission = self
             .approval
             .as_ref()
@@ -1076,9 +1082,10 @@ impl Composer {
                 .is_some_and(|form| form.method == "mcpServer/elicitation/request");
         div()
             .id(id)
+            .relative()
             .h(px(28.))
-            .px(px(10.))
-            .rounded(px(999.))
+            .px(px(if native { 8. } else { 10. }))
+            .when(!native, |d| d.rounded(px(999.)))
             .role(gpui::Role::Button)
             .aria_label(label.clone())
             .aria_disabled(!enabled)
@@ -1086,48 +1093,95 @@ impl Composer {
             .flex()
             .items_center()
             .justify_center()
-            .gap(px(6.))
+            .gap(px(if native { 4. } else { 6. }))
             .focus_visible(|s| s.border_2().border_color(gpui::rgb(0x3a83f7)))
-            .when(!primary && (permission || user_input), |d| {
+            .when(!primary && (permission || user_input) && !native, |d| {
                 d.border_1().border_color(t.border)
             })
-            .when(primary, |d| d.bg(t.button_primary_solid))
+            .when(primary && !native, |d| d.bg(t.button_primary_solid))
+            .when(native, |d| {
+                d.px(px(9.))
+                    .py(px(1.))
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: Corners::all(px(9999.)),
+                        fill: Some(if primary {
+                            t.button_primary_solid
+                        } else {
+                            t.text.opacity(0.03)
+                        }),
+                        border: Some((px(1.), t.border)),
+                        ..Default::default()
+                    }))
+            })
             .child(text(
                 label,
                 13.,
-                20.,
+                if native { 18. } else { 20. },
                 430.,
                 if primary {
-                    t.text_inverse
-                } else if permission || user_input {
+                    if native {
+                        t.surface_elevated_secondary
+                    } else {
+                        t.text_inverse
+                    }
+                } else if permission || user_input || native {
                     t.text
                 } else {
                     t.text_secondary
                 },
             ))
-            .when(permission, |d| {
-                d.child(
-                    div()
-                        .px(px(4.))
-                        .rounded(px(4.))
-                        .bg(t.text_alpha_5)
-                        .child(text(
-                            if decision == ApprovalDecision::Decline {
-                                "Esc"
-                            } else {
-                                "↵"
-                            },
-                            10.,
-                            16.,
-                            500.,
-                            if primary {
-                                t.text_inverse
-                            } else {
-                                t.text_secondary
-                            },
-                        )),
-                )
-            })
+            .when(
+                permission
+                    || (native
+                        && self.footer_width >= 448.
+                        && decision != ApprovalDecision::AcceptForSession),
+                |d| {
+                    let color = if native {
+                        if primary {
+                            t.surface_elevated_secondary
+                        } else {
+                            t.text
+                        }
+                    } else if primary {
+                        t.text_inverse
+                    } else {
+                        t.text_secondary
+                    };
+                    d.child(
+                        div()
+                            .relative()
+                            .when(native, |d| d.top(px(0.5)))
+                            .px(px(if native { 6. } else { 4. }))
+                            .when(native, |d| d.min_w(px(16.)))
+                            .when(!native, |d| d.rounded(px(4.)).bg(t.text_alpha_5))
+                            .when(native, |d| {
+                                d.child(shapes::decoration(shapes::Decoration {
+                                    radius: Corners::all(px(10.)),
+                                    corner: shapes::Corner::Squircle,
+                                    fill: Some(if !primary {
+                                        t.text_alpha_10
+                                    } else {
+                                        color.opacity(1. - (1. - 0.1))
+                                    }),
+                                    ..Default::default()
+                                }))
+                            })
+                            .child(text(
+                                if decision == ApprovalDecision::Decline {
+                                    "Esc"
+                                } else if native {
+                                    "⏎"
+                                } else {
+                                    "↵"
+                                },
+                                if native { 12. } else { 10. },
+                                16.,
+                                if native { 430. } else { 500. },
+                                color,
+                            )),
+                    )
+                },
+            )
             .when(form_submit, |d| {
                 d.child(
                     div()

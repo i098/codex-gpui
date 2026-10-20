@@ -403,6 +403,7 @@ pub struct Approval {
     scoped_label: SharedString,
     permissions: Option<Value>,
     form: Option<requests::Form>,
+    computer_use: Option<computer_use::ComputerUseApproval>,
     identity: Rc<RequestIdentity>,
 }
 
@@ -415,6 +416,7 @@ impl Approval {
             scoped_label: "Allow similar commands".into(),
             permissions: None,
             form: None,
+            computer_use: None,
             identity: Rc::new(RequestIdentity {
                 id,
                 thread: req.thread_id.clone(),
@@ -436,6 +438,7 @@ impl Approval {
             scoped_label: "Allow all edits".into(),
             permissions: None,
             form: None,
+            computer_use: None,
             identity: Rc::new(RequestIdentity {
                 id,
                 thread: req.thread_id.clone(),
@@ -472,6 +475,7 @@ impl Approval {
             scoped_label: "Allow for this session".into(),
             permissions: Some(req.permissions.clone()),
             form: None,
+            computer_use: None,
             identity: Rc::new(RequestIdentity {
                 id,
                 thread: req.thread_id.clone(),
@@ -480,6 +484,21 @@ impl Approval {
     }
 
     fn response(&self, decision: ApprovalDecision) -> Value {
+        if let Some(request) = &self.computer_use {
+            use computer_use::ComputerUseChoice;
+            let choice = match decision {
+                ApprovalDecision::Accept if request.allow_session => {
+                    ComputerUseChoice::Conversation
+                }
+                ApprovalDecision::Accept => ComputerUseChoice::Once,
+                ApprovalDecision::AcceptForSession => ComputerUseChoice::Always,
+                ApprovalDecision::Decline => ComputerUseChoice::Decline,
+                ApprovalDecision::Cancel => ComputerUseChoice::Cancel,
+            };
+            return request
+                .response(choice)
+                .unwrap_or_else(|| serde_json::json!({"action": "cancel"}));
+        }
         let Some(permissions) = &self.permissions else {
             return serde_json::json!({ "decision": decision });
         };
@@ -600,6 +619,7 @@ pub struct Composer {
     footer_width: f32,
     menu_trigger_hovered: bool,
     approval: Option<Approval>,
+    computer_use_icon: computer_use::IconCache,
     request_draft: RequestDraft,
     request_drafts: Vec<(Rc<RequestIdentity>, RequestDraft)>,
     request_focus_pending: bool,
@@ -679,6 +699,7 @@ impl Composer {
             footer_width: f32::INFINITY,
             menu_trigger_hovered: false,
             approval: None,
+            computer_use_icon: Default::default(),
             request_draft: RequestDraft::default(),
             request_drafts: Vec::new(),
             request_focus_pending: false,
@@ -813,6 +834,12 @@ impl Composer {
     /// The approval card's request, while one shows.
     pub fn approval(&self) -> Option<&Approval> {
         self.approval.as_ref()
+    }
+
+    pub(crate) fn is_computer_use_request(&self) -> bool {
+        self.approval
+            .as_ref()
+            .is_some_and(|approval| approval.computer_use.is_some())
     }
 
     pub fn restart_ready(&self) -> bool {
@@ -1788,7 +1815,9 @@ impl Render for Composer {
             self.focus_request_field(window, cx);
         }
         if let Some(approval) = self.approval.as_ref()
-            && (approval.form.is_some() || approval.permissions.is_some())
+            && (approval.form.is_some()
+                || approval.permissions.is_some()
+                || approval.computer_use.is_some())
         {
             let context = match (
                 approval.form.is_some(),
@@ -1806,7 +1835,9 @@ impl Render for Composer {
                     .track_focus(&self.focus_handle)
                     .on_action(self.request_listener(cx, Self::enter))
                     .on_action(self.request_listener(cx, Self::dismiss))
-                    .child(if approval.form.is_some() {
+                    .child(if approval.computer_use.is_some() {
+                        self.computer_use_card(approval, &t, cx)
+                    } else if approval.form.is_some() {
                         self.request_card(approval, &t, cx)
                     } else {
                         self.permission_request_card(approval, &t, cx)

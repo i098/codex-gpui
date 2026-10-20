@@ -1,3 +1,12 @@
+#[cfg(target_os = "macos")]
+mod common;
+
+#[cfg(target_os = "macos")]
+#[test]
+fn proxy() {
+    common::proxy_child();
+}
+
 use app::computer_use_requests::approval;
 use serde_json::{Value, json};
 use ui::composer::computer_use::ComputerUseChoice;
@@ -71,4 +80,120 @@ fn keeps_schema_fields_out_of_native_empty_form_approval() {
     params["requestedSchema"]["required"] = json!([]);
     params["_meta"]["connector_id"] = json!("another-connector");
     assert!(approval(&params).is_none());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn native_cards_answer_the_bound_request_and_remember_disclosure() -> anyhow::Result<()> {
+    use anyhow::ensure;
+    use bridge::Event;
+    use common::{EXPLAIN, Fx, SUBTRACT, script};
+    use gpui::Focusable as _;
+
+    let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
+    fx.click(fx.at("home", "Add a subtract")?)?;
+    fx.wait_thread(SUBTRACT)?;
+    let root = fx.root.clone();
+    let show = |fx: &mut Fx, id: &str, thread: &str, high: bool| {
+        let mut params = request();
+        params["threadId"] = json!(thread);
+        params["turnId"] = Value::Null;
+        params["_meta"]["persist"] = json!(["session", "always"]);
+        params["_meta"]["riskLevel"] = json!(if high { "high" } else { "low" });
+        params["_meta"]["subtitle"] = if high {
+            json!("The app can contain private data.")
+        } else {
+            Value::Null
+        };
+        fx.cx.update(|cx| {
+            root.update(cx, |root, cx| {
+                root.on_event(
+                    Event::Request {
+                        id: json!(id),
+                        method: "mcpServer/elicitation/request".into(),
+                        params,
+                    },
+                    cx,
+                )
+            })
+        });
+        fx.cx.run_until_parked();
+    };
+    let capture = |fx: &mut Fx, name: &str| -> anyhow::Result<()> {
+        if let Some(dir) = std::env::var_os("CGX_COMPUTER_USE_EVIDENCE") {
+            std::fs::create_dir_all(&dir)?;
+            fx.reference_shot()?
+                .save(std::path::Path::new(&dir).join(name))?;
+        }
+        Ok(())
+    };
+    show(&mut fx, "other-thread", EXPLAIN, false);
+    show(&mut fx, "native-app-approval", SUBTRACT, false);
+    capture(&mut fx, "native-dark-low.png")?;
+    let composer = fx.composer();
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        composer.focus_handle(cx).focus(window, cx)
+    })?;
+    fx.keys("enter")?;
+    fx.wait("native session answer", |fx| fx.sent().unwrap().contains(&json!({
+        "reply": "native-app-approval", "result": {"action": "accept", "content": {}, "_meta": {"persist": "session"}}
+    })))?;
+    ensure!(
+        fx.read(|_, cx| cx
+            .global::<app::host_settings::Settings>()
+            .read_all()
+            .get("has-approved-computer-use-app")
+            == Some(&json!(true))),
+        "acceptance did not retain the disclosure choice"
+    );
+    show(&mut fx, "native-high", SUBTRACT, true);
+    capture(&mut fx, "native-dark-high.png")?;
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        composer.focus_handle(cx).focus(window, cx)
+    })?;
+    fx.keys("tab enter")?;
+    fx.wait("native always answer", |fx| fx.sent().unwrap().contains(&json!({
+        "reply": "native-high", "result": {"action": "accept", "content": {}, "_meta": {"persist": "always"}}
+    })))?;
+    show(&mut fx, "native-deny", SUBTRACT, false);
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        composer.focus_handle(cx).focus(window, cx)
+    })?;
+    fx.keys("escape")?;
+    fx.wait("native denial", |fx| {
+        fx.sent().unwrap().contains(&json!({
+            "reply": "native-deny", "result": {"action": "decline"}
+        }))
+    })?;
+    show(&mut fx, "withdrawn-native", SUBTRACT, false);
+    fx.cx.update(|cx| {
+        root.update(cx, |root, cx| {
+            root.on_event(
+                Event::Notification {
+                    method: "serverRequest/resolved".into(),
+                    params: json!({"threadId": SUBTRACT, "requestId": "withdrawn-native"}),
+                },
+                cx,
+            )
+        })
+    });
+    fx.cx.run_until_parked();
+    ensure!(
+        fx.read(|_, cx| composer.read(cx).approval().is_none()),
+        "the withdrawn native request stayed visible"
+    );
+    let responses: Vec<_> = fx
+        .sent()?
+        .into_iter()
+        .filter(|message| message.get("reply").is_some())
+        .collect();
+    ensure!(
+        responses.len() == 3
+            && responses
+                .iter()
+                .all(|message| message["reply"] != "other-thread"
+                    && message["reply"] != "withdrawn-native"),
+        "native cards answered another request: {responses:?}"
+    );
+    Ok(())
 }

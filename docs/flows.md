@@ -380,6 +380,14 @@ MCP elicitations and nonblocking questions remain pending until explicit resolut
 The original reference frames use the extracted Codex renderer at 1280x832 and scale 2.
 The revised native replay and appearance approval remain pending.
 
+Native Computer Use app approvals use this queue and retain the original request, thread, and turn IDs.
+The card shows the app name, elevated risk, and first-use disclosure.
+`Allow this conversation` selects the offered session scope, or permits one use when that scope is absent.
+`Always allow` appears only when the server offers that scope.
+MCP responses use `action`, optional empty `content`, and the selected `_meta.persist`; they never use a command-approval `decision`.
+The host retains the disclosure choice only after an accepted response enters the bridge.
+Run `cargo test -p app --test computer_use_approvals`; the native replay and captures require macOS.
+
 MO-36 uses `refs/interactions/ms4.json`, recorded with the original CSS classes in an isolated route1 Chrome context.
 The recording appends synthetic markdown spans and seeks their animations; it does not measure live model segmentation.
 Run `tools/mac.sh -l ms4 'cargo test -p app --test stream_fade'` for native glyph-alpha checks.

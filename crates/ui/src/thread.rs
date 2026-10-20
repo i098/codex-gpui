@@ -2002,6 +2002,9 @@ impl Render for ThreadView {
             .clone()
             .downcast::<crate::composer::Composer>()
             .ok();
+        let native_approval = composer
+            .as_ref()
+            .is_some_and(|composer| composer.read(cx).is_computer_use_request());
         let page = div()
             .size_full()
             .relative()
@@ -2078,6 +2081,7 @@ impl Render for ThreadView {
                     // transcript press.
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .layer()
+                    .when(native_approval, |d| d.cc_tiles())
                     .child(
                         div()
                             .relative()

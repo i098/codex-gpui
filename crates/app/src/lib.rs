@@ -4028,8 +4028,12 @@ impl Root {
             return;
         }
         let pending = self.approvals.remove(i);
+        let native_accept =
+            computer_use_requests::accepted(&pending.method, &pending.params, &response);
         if let Err(err) = self.bridge.respond(pending.id, response) {
             eprintln!("codex-gpui: approval: {err:#}");
+        } else if native_accept {
+            computer_use_requests::remember_acceptance(cx);
         }
         self.show_approval(cx);
     }
@@ -4045,6 +4049,11 @@ impl Root {
             "item/permissions/requestApproval" => {
                 let request = serde_json::from_value::<PermissionsApprovalRequest>(params).ok()?;
                 return Some(Approval::permissions(pending.id.clone(), &request));
+            }
+            "mcpServer/elicitation/request" => {
+                return self
+                    .computer_use_approval(pending, cx)
+                    .or_else(|| Approval::form(pending.id.clone(), &pending.method, &params));
             }
             "item/fileChange/requestApproval" => {}
             _ => return Approval::form(pending.id.clone(), &pending.method, &params),
@@ -4088,7 +4097,10 @@ impl Root {
             .and_then(|p| p.params["turnId"].as_str())
             .map(str::to_owned);
         if let Some(thread) = &self.thread {
-            thread.update(cx, |thread, cx| thread.set_pending_question(question, cx));
+            thread.update(cx, |thread, cx| {
+                thread.set_pending_question(question, cx);
+                cx.notify();
+            });
         }
         let card = pending.and_then(|p| self.approval_card(p, cx));
         self.thread_composer.update(cx, |composer, cx| {
