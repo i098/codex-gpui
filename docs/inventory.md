@@ -174,7 +174,7 @@ Chunks: local-conversation-page-a83a1af2c24b.js, local-conversation-thread-c8c5e
 ### 6.1 Component outline
 
 - `LocalConversationPage` → thread layout with chat column and optional side panel tabs (`Changes`, `Files`, `Browser`, `Terminal`, `Side chat`; `thread.sidePanel.*`) and bottom panel (`⌘J`).
-- Chat titlebar (`Chat toolbar`): chat title (fallback `Chat`), tab strip `Task tabs`, `New tab`, open-tab count.
+- Chat titlebar (`Chat toolbar`): chat title (fallback `Chat`), tab strip `Task tabs`, `New tab`, open-tab count. The thread titlebar remains visible when the sidebar collapses, including at 600 px.
 - Header row TH-026 copies the working directory, not the conversation rollout file.
   The pinned original's `Gda` handler uses `cwd` and prefers a hosted thread's loaded `latestWorktree.workspaceRoot`.
   `copyConversationPath` is a separate menu command and shortcut.

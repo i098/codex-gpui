@@ -1727,25 +1727,25 @@ impl Render for SplitScreen {
         // (`--app-shell-page-inline-end-inset`) from the window's.
         let left = (!self.tabs.is_empty())
             .then(|| window.viewport_size().width - px(4.) - panel_width(window, cx));
-        // ponytail: like refs/thread, the header only follows the open-sidebar titlebar layout.
-        let open = self.shell.read(cx).sidebar_open;
-        let sidebar_width = self.shell.read(cx).sidebar_width;
+        let header_left = if self.shell.read(cx).sidebar_open {
+            self.shell.read(cx).sidebar_width
+        } else {
+            TITLEBAR_LAYER_X
+        };
         div()
             .size_full()
             .relative()
             .font_family(SANS)
             .on_key_down(crate::focus::tab)
             .child(self.shell.clone())
-            .when(open, |d| {
-                d.child(
-                    self.thread
-                        .update(cx, |view, cx| view.titlebar_header(cx))
-                        .left(sidebar_width)
-                        .when_some(left, |h, left| h.w(left - sidebar_width)),
-                )
-            })
+            .child(
+                self.thread
+                    .update(cx, |view, cx| view.titlebar_header(cx))
+                    .left(header_left)
+                    .when_some(left, |h, left| h.w(left - header_left)),
+            )
             // Without a panel the shell's `New tab` group follows the header behind a divider.
-            .when(open && left.is_none(), |d| {
+            .when(left.is_none(), |d| {
                 let t = cx.theme();
                 d.child(
                     div()
