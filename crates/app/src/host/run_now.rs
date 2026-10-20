@@ -12,7 +12,7 @@
 use super::LocalHost;
 use super::{automation_schedule, git};
 use anyhow::{Context as _, Result, bail, ensure};
-use rusqlite::{OpenFlags, params};
+use rusqlite::{OpenFlags, OptionalExtension as _, params};
 use serde_json::{Value, json};
 use std::{fs, process::Command};
 
@@ -542,45 +542,115 @@ impl LocalHost {
         );
     }
 
-    /// The original's turn-completed update (`oa`): an `IN_PROGRESS` run becomes
-    /// `PENDING_REVIEW`. For `failed_runs_only` it is read when the turn completed and unread
-    /// when it did not; otherwise its read state stays. `false` for a thread that is no open run.
-    pub fn finish_run(&self, thread_id: &str, completed: bool) -> Result<bool> {
+    /// Finish the initial automation turn before the notification policy reads the run.
+    pub fn finish_run(&self, thread_id: &str, turn: &Value) -> Result<bool> {
         let Some(db) = self.database(OpenFlags::SQLITE_OPEN_READ_WRITE)? else {
             return Ok(false);
         };
-        let automation: Option<String> = db
+        let run: Option<(String, String)> = db
             .query_row(
-                "SELECT automation_id FROM automation_runs WHERE thread_id = ? AND status = 'IN_PROGRESS'",
+                "SELECT r.automation_id, r.status FROM automation_runs r JOIN automations a ON a.id = r.automation_id
+                 WHERE r.thread_id = ? AND r.status IN ('IN_PROGRESS', 'PENDING_REVIEW')
+                 AND a.account_id IS NULL AND a.user_id IS NULL AND a.installation_id IS NULL",
                 [thread_id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
-            .ok();
-        let Some(automation) = automation else {
+            .optional()?;
+        let Some((automation, status)) = run else {
             return Ok(false);
         };
-        let muted = self.automations()?["items"]
+        let tracked = self
+            .bridge
+            .as_ref()
+            .and_then(|bridge| bridge.automation_turn(thread_id));
+        if let Some(tracked) = &tracked
+            && !pollster::block_on(tracked.matches_turn(turn["id"].as_str().unwrap_or_default()))
+        {
+            return Ok(false);
+        }
+        if status == "PENDING_REVIEW" && tracked.is_none() {
+            return Ok(false);
+        }
+        let claim = if let Some(tracked) = &tracked {
+            let Some(claim) = tracked.claim() else {
+                return Ok(false);
+            };
+            Some(claim)
+        } else {
+            None
+        };
+        let tasks = self.automations()?;
+        let task = tasks["items"]
             .as_array()
             .into_iter()
             .flatten()
-            .any(|a| {
-                a["id"] == automation.as_str() && a["notificationPolicy"] == "failed_runs_only"
-            });
+            .find(|task| task["id"] == automation);
+        let muted = tracked.as_ref().map_or_else(
+            || task.is_some_and(|task| task["notificationPolicy"] == "failed_runs_only"),
+            |tracked| tracked.muted,
+        );
+        let completed = turn["status"] == "completed";
         let now = chrono::Utc::now().timestamp_millis();
-        let changed = if muted {
-            db.execute(
-                "UPDATE automation_runs SET status = 'PENDING_REVIEW', read_at = ?, updated_at = ?
-                 WHERE thread_id = ? AND status = 'IN_PROGRESS'",
-                params![completed.then_some(now), now, thread_id],
-            )?
-        } else {
-            db.execute(
-                "UPDATE automation_runs SET status = 'PENDING_REVIEW', updated_at = ?
-                 WHERE thread_id = ? AND status = 'IN_PROGRESS'",
-                params![now, thread_id],
-            )?
-        };
-        Ok(changed > 0)
+        let changed = db.execute(
+            "UPDATE automation_runs SET status = 'PENDING_REVIEW',
+             read_at = CASE WHEN ?1 THEN CASE WHEN ?2 THEN COALESCE(read_at, ?3) ELSE NULL END ELSE read_at END,
+             updated_at = ?3 WHERE thread_id = ?4 AND status IN ('IN_PROGRESS', 'PENDING_REVIEW')",
+            params![muted, completed, now, thread_id],
+        )? > 0;
+        if let Some(claim) = claim {
+            claim.commit();
+        }
+        if let (Some(bridge), Some(tracked)) = (&self.bridge, tracked) {
+            if !changed {
+                return Ok(false);
+            }
+            let heartbeat = tasks["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|task| task["kind"] == "heartbeat" && task["targetThreadId"] == thread_id);
+            let archived = if completed && tracked.auto_archive && !heartbeat {
+                let home = self.home.clone();
+                pollster::block_on(bridge.archive_automation_turn(
+                    thread_id,
+                    &tracked,
+                    || {
+                        ensure!(db.execute(
+                            "UPDATE automation_runs SET status = 'ARCHIVED', updated_at = ?,
+                             archived_reason = COALESCE(archived_reason, 'auto')
+                             WHERE thread_id = ? AND status = 'PENDING_REVIEW'",
+                            params![chrono::Utc::now().timestamp_millis(), thread_id],
+                        )? > 0, "Automation run changed during archive");
+                        Ok(())
+                    },
+                    {
+                        let thread_id = thread_id.to_owned();
+                        move || {
+                            let host = LocalHost::new(home.clone());
+                            let Some(db) = host.database(OpenFlags::SQLITE_OPEN_READ_WRITE)? else {
+                                bail!("Automation database disappeared during archive restore");
+                            };
+                            let now = chrono::Utc::now().timestamp_millis();
+                            db.execute(
+                                "UPDATE automation_runs SET status = 'ACCEPTED', read_at = COALESCE(read_at, ?),
+                                 updated_at = ?, archived_reason = NULL WHERE thread_id = ? AND status = 'ARCHIVED'",
+                                params![now, now, thread_id],
+                            )?;
+                            Ok(())
+                        }
+                    },
+                ))
+            } else {
+                Ok(false)
+            };
+            if let Err(error) = archived {
+                eprintln!("codex-gpui: failed to archive automation run: {error:#}");
+            }
+            if !pollster::block_on(tracked.archived()) {
+                bridge.release_automation_turn(thread_id, &tracked);
+            }
+        }
+        Ok(changed)
     }
 
     /// The original's `automation-run-now` for a task: one app-server thread per task folder, in
@@ -761,12 +831,13 @@ impl LocalHost {
                             )
                             .await;
                         bridge
-                            .request::<_, Value>(
-                                "turn/start",
+                            .start_automation_turn(
                                 json!({"threadId": thread_id, "cwd": run_cwd, "model": model, "effort": effort,
                                     "approvalPolicy": turn.approval_policy, "approvalsReviewer": turn.reviewer,
                                     "sandboxPolicy": turn.sandbox_policy,
                                     "input": [{ "type": "text", "text": text, "text_elements": [] }]}),
+                                item["notificationPolicy"] == "failed_runs_only",
+                                item["kind"] == "cron" && item["autoArchive"] == true,
                             )
                             .await
                     })

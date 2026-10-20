@@ -608,12 +608,21 @@ Before each thread the host reads the user's saved config (`config/read` for the
 The sandbox and approvals follow the original's agent-mode rules (`Al`): the saved `sandbox_mode` and `approval_policy`, or `auto`; an unattended run sets `never` when the requirements allow it, and the turn's sandbox adds the folder, `$CODEX_HOME/automations/<id>` and the git roots.
 The mode the user last picked is read from `agent-mode-by-host-id` in the global state [INFERENCE: the persisted-atom table is assumed].
 When the original database exists, a `pending:` row in `automation_runs` opens before the thread, takes the thread id, and is archived (`auto`) if the thread or turn fails to start.
-`turn/completed` for the thread then sets the run to `PENDING_REVIEW` (`finish_automation_run`); a `failed_runs_only` task is read when the turn completed and unread otherwise.
+`turn/completed` finishes the matching initial turn through `finish_automation_run(threadId, turn)`.
+The bridge keeps the run's initial `notificationPolicy` and `autoArchive` values until completion.
+A `failed_runs_only` success keeps its existing read time or becomes read; failure and interruption clear the read time.
+A successful cron run with `autoArchive` sends `thread/archive` unless a heartbeat targets the thread.
+Only an accepted archive request changes the row to `ARCHIVED` with reason `auto`.
+An archive refusal keeps `PENDING_REVIEW` and the completed run's read state.
+User start, steer, add-message and queue requests cancel automatic archive before they reach the server.
+If archive is in flight or already complete, the bridge restores the thread first and sets the run to `ACCEPTED`.
+The per-thread archive lock also prevents a user request from racing with that restore.
+No completion path removes a worktree or starts a cleanup service.
 A refusal or `success: false` shows the danger toast `Could not start scheduled task`, with the reason on one line.
 Event-triggered tasks (`## When this happens` prompts) have the item disabled with the tooltip `Automations triggered by events can’t be run manually`; the host refuses them too.
 The project folders or project target (its first root from `.codex-global-state.json`) run, in a new worktree for the original default environment (`create_worktree` and `set_owner_thread`, removed again when no thread starts) or in the folder for `local`; outside a Git repository the run happens in the folder.
 Projectless and heartbeat tasks are refused: the host has no workspace-directory creation or renderer thread state.
-Not yet carried over: the project assignment of the new thread, `autoArchive`, the desktop notification, the unread dot on the rail, `lastRunAt` and next-run updates.
+Not yet carried over: the project assignment of the new thread, the desktop notification and the unread dot on the rail.
 `automation_run_now` checks the requests the app-server receives and the refusals; the live `Root` flow needs macOS.
 
 `LocalHost` implements the original `automation-update` status change for local tasks (issue https://github.com/i098/codex-gpui/issues/226).

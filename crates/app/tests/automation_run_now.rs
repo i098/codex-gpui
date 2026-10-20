@@ -19,7 +19,22 @@ while IFS= read -r line; do
     *'"configRequirements/read"'*) printf '{"id":%s,"result":{"requirements":%s}}\n' "$id" "$REQUIREMENTS" ;;
     *'"thread/start"'*) [ -z "$FAIL_THREAD" ] || { printf '{"id":%s,"error":{"code":-32000,"message":"no thread"}}\n' "$id"; continue; }; printf '{"id":%s,"result":{"thread":{"id":"thread-%s"}}}\n' "$id" "$id" ;;
     *'"turn/start"'*REFUSE*) printf '{"id":%s,"error":{"code":-32000,"message":"model unavailable"}}\n' "$id" ;;
-    *'"turn/start"'*) [ -z "$SLOW" ] || sleep 2; printf '{"id":%s,"result":{}}\n' "$id" ;;
+    *'"turn/start"'*)
+      [ -z "$SLOW" ] || sleep 2
+      if [ -n "$TURN_SIGNAL" ]; then
+        thread=$(printf '%s' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+        printf '{"method":"turn/completed","params":{"threadId":"%s","turn":{"id":"turn-%s","status":"completed"}}}\n' "$thread" "$id"
+        touch "$TURN_SIGNAL"
+        while [ ! -e "$TURN_RELEASE" ]; do sleep 0.01; done
+      fi
+      printf '{"id":%s,"result":{"turn":{"id":"turn-%s"}}}\n' "$id" "$id" ;;
+    *'"thread/archive"'*)
+      [ -z "$ARCHIVE_SIGNAL" ] || { touch "$ARCHIVE_SIGNAL"; while [ ! -e "$ARCHIVE_RELEASE" ]; do sleep 0.01; done; }
+      [ -z "$ARCHIVE_FAIL" ] || { printf '{"id":%s,"error":{"code":-32000,"message":"archive refused"}}\n' "$id"; continue; }
+      printf '{"id":%s,"result":{}}\n' "$id" ;;
+    *'"thread/unarchive"'*)
+      [ ! -e "$RESTORE_FAIL_FILE" ] || { printf '{"id":%s,"error":{"code":-32000,"message":"restore refused"}}\n' "$id"; continue; }
+      printf '{"id":%s,"result":{}}\n' "$id" ;;
     *) printf '{"id":%s,"result":{}}\n' "$id" ;;
   esac
 done
@@ -74,6 +89,16 @@ fn requests(log: &Path) -> Result<Vec<Value>> {
         )
     });
     Ok(sent)
+}
+
+fn completion(log: &Path, thread: &str, status: &str) -> Result<Value> {
+    let request = all_requests(log)?
+        .into_iter()
+        .find(|request| {
+            request["method"] == "turn/start" && request["params"]["threadId"] == thread
+        })
+        .ok_or_else(|| anyhow::anyhow!("missing initial turn"))?;
+    Ok(json!({"id": format!("turn-{}", request["id"]), "status": status}))
 }
 
 #[test]
@@ -240,11 +265,12 @@ fn run_now_opens_moves_finishes_and_archives_the_run_row() -> Result<()> {
         "the pending row took the thread id: {rows:?}"
     );
     ensure!(rows[0].1 == "IN_PROGRESS" && rows[0].4.as_deref() == dir.path().to_str());
-    ensure!(!host.finish_run("unknown-thread", true)?);
-    ensure!(host.finish_run(thread, true)?);
+    let completed = completion(&log, thread, "completed")?;
+    ensure!(!host.finish_run("unknown-thread", &completed)?);
+    ensure!(host.finish_run(thread, &completed)?);
     ensure!(runs(dir.path())?[0].1 == "PENDING_REVIEW" && runs(dir.path())?[0].2.is_none());
     ensure!(
-        !host.finish_run(thread, true)?,
+        !host.finish_run(thread, &completed)?,
         "a finished run does not finish twice"
     );
 
@@ -281,7 +307,8 @@ fn a_muted_task_reads_its_completed_run_and_keeps_a_failed_one_unread() -> Resul
     run(&host, "muted")?;
     let threads: Vec<String> = runs(dir.path())?.into_iter().map(|r| r.0).collect();
     ensure!(threads.len() == 2);
-    ensure!(host.finish_run(&threads[0], true)? && host.finish_run(&threads[1], false)?);
+    ensure!(host.finish_run(&threads[0], &completion(&log, &threads[0], "completed")?)?);
+    ensure!(host.finish_run(&threads[1], &completion(&log, &threads[1], "failed")?)?);
     let rows = runs(dir.path())?;
     ensure!(
         rows[0].1 == "PENDING_REVIEW" && rows[0].2.is_some(),
@@ -607,7 +634,7 @@ fn the_default_path_has_config_permissions_run_rows_and_keeps_its_worktree() -> 
         rows[0].4.as_deref() == repo.to_str(),
         "the row names the source folder, not the worktree"
     );
-    ensure!(host.finish_run(thread, true)?);
+    ensure!(host.finish_run(thread, &completion(&log, thread, "completed")?)?);
     ensure!(runs(&home)?[0].1 == "PENDING_REVIEW");
     ensure!(
         Path::new(cwd).join("a.txt").is_file(),
@@ -686,5 +713,397 @@ fn a_run_now_records_the_last_run_and_keeps_or_recalculates_the_next_one() -> Re
     ensure!(run(&host, &fresh)? == json!({"success": true}));
     let (next, _, last) = schedule(dir.path(), &fresh)?;
     ensure!(next.is_some_and(|next| next > now) && last.is_some());
+    Ok(())
+}
+
+struct ArchiveRun {
+    _directory: tempfile::TempDir,
+    home: std::path::PathBuf,
+    log: std::path::PathBuf,
+    cwd: std::path::PathBuf,
+    host: Arc<LocalHost>,
+    bridge: Arc<Bridge>,
+    thread: String,
+    turn: Value,
+}
+
+impl ArchiveRun {
+    fn start(auto_archive: bool, muted: bool, env: &[(&str, &str)]) -> Result<Self> {
+        let directory = tempfile::tempdir()?;
+        let home = directory.path().join("home");
+        fs::create_dir_all(home.join("sqlite"))?;
+        let db = rusqlite::Connection::open(home.join("sqlite/codex.db"))?;
+        db.execute_batch(&format!("{AUTOMATIONS};{RUNS};"))?;
+        let repo = repository(directory.path())?;
+        let log = directory.path().join("requests.jsonl");
+        let mut server = Command::new("sh");
+        server
+            .arg("-c")
+            .arg(SERVER)
+            .env("LOG", &log)
+            .envs(env.iter().copied());
+        let (bridge, _) = Bridge::spawn(server)?;
+        let bridge = Arc::new(bridge);
+        let host = Arc::new(LocalHost::new(&home).with_bridge(bridge.clone()));
+        let policy = if muted {
+            "notification_policy = \"failed_runs_only\"\n"
+        } else {
+            ""
+        };
+        host.write_automation("archive", &format!(
+            "version = 1\nid = \"archive\"\nname = \"Review\"\nprompt = \"Review changes\"\nstatus = \"ACTIVE\"\ncwds = [{repo:?}]\ncreated_at = 1\nupdated_at = 1\nauto_archive = {auto_archive}\n{policy}"
+        ))?;
+        run(&host, "archive")?;
+        let sent = requests(&log)?;
+        let thread = sent[2]["params"]["threadId"].as_str().unwrap().to_owned();
+        let cwd = sent[2]["params"]["cwd"].as_str().unwrap().into();
+        let turn = completion(&log, &thread, "completed")?;
+        Ok(Self {
+            _directory: directory,
+            home,
+            log,
+            cwd,
+            host,
+            bridge,
+            thread,
+            turn,
+        })
+    }
+
+    fn db(&self) -> Result<rusqlite::Connection> {
+        Ok(rusqlite::Connection::open(
+            self.home.join("sqlite/codex.db"),
+        )?)
+    }
+
+    fn row(&self) -> Result<Run> {
+        Ok(runs(&self.home)?.remove(0))
+    }
+
+    fn finish(&self) -> Result<bool> {
+        self.host.finish_automation_run(&self.thread, &self.turn)
+    }
+
+    fn archive_requests(&self) -> Result<Vec<String>> {
+        Ok(all_requests(&self.log)?
+            .into_iter()
+            .filter_map(|request| {
+                let method = request["method"].as_str()?;
+                matches!(method, "thread/archive" | "thread/unarchive").then(|| method.to_owned())
+            })
+            .collect())
+    }
+}
+
+#[test]
+fn autoarchive_uses_the_initial_policy_and_restores_before_user_work() -> Result<()> {
+    for muted in [false, true] {
+        let run = ArchiveRun::start(true, muted, &[])?;
+        fs::write(run.cwd.join("work.txt"), "automation work")?;
+        let read_at = muted.then_some(17);
+        run.db()?
+            .execute("UPDATE automation_runs SET read_at = ?", [read_at])?;
+        let definition = run.home.join("automations/archive/automation.toml");
+        let mut edited = fs::read_to_string(&definition)?
+            .replace("auto_archive = true", "auto_archive = false")
+            .replace("notification_policy = \"failed_runs_only\"\n", "");
+        if !muted {
+            edited.push_str("notification_policy = \"failed_runs_only\"\n");
+        }
+        fs::write(&definition, edited)?;
+        ensure!(run.finish()?);
+        let row = run.row()?;
+        ensure!(row.1 == "ARCHIVED" && row.2 == read_at && row.3.as_deref() == Some("auto"));
+        ensure!(
+            !run.finish()?,
+            "a repeated completion must not archive twice"
+        );
+        pollster::block_on(run.bridge.request::<_, Value>(
+            "turn/start",
+            json!({
+                "threadId": run.thread, "input": [{"type": "text", "text": "Continue"}]
+            }),
+        ))?;
+        let row = run.row()?;
+        ensure!(row.1 == "ACCEPTED" && row.2.is_some() && row.3.is_none());
+        if muted {
+            ensure!(row.2 == Some(17));
+        }
+        ensure!(run.archive_requests()? == ["thread/archive", "thread/unarchive"]);
+        ensure!(fs::read_to_string(run.cwd.join("work.txt"))? == "automation work");
+        ensure!(run.cwd.join("a.txt").is_file(), "the worktree stays");
+    }
+    Ok(())
+}
+
+#[test]
+fn autoarchive_keeps_failed_interrupted_disabled_and_heartbeat_runs_for_review() -> Result<()> {
+    for (auto_archive, status, heartbeat) in [
+        (true, "failed", false),
+        (true, "interrupted", false),
+        (false, "completed", false),
+        (true, "completed", true),
+    ] {
+        let mut run = ArchiveRun::start(auto_archive, true, &[])?;
+        run.db()?
+            .execute("UPDATE automation_runs SET read_at = 17", [])?;
+        run.turn["status"] = json!(status);
+        if heartbeat {
+            run.host.write_automation("heartbeat", &format!(
+                "version = 1\nid = \"heartbeat\"\nname = \"Heartbeat\"\nprompt = \"Check\"\nstatus = \"PAUSED\"\nkind = \"heartbeat\"\ntarget_thread_id = {:?}\ncreated_at = 1\nupdated_at = 1\n",
+                run.thread
+            ))?;
+        }
+        ensure!(run.finish()?);
+        let row = run.row()?;
+        ensure!(row.1 == "PENDING_REVIEW" && row.3.is_none(), "{row:?}");
+        ensure!(
+            row.2
+                == if status == "completed" {
+                    Some(17)
+                } else {
+                    None
+                }
+        );
+        ensure!(run.archive_requests()?.is_empty());
+        ensure!(run.cwd.join("a.txt").is_file());
+    }
+    Ok(())
+}
+
+#[test]
+fn autoarchive_cancels_for_every_user_request_and_rejects_other_turn_completions() -> Result<()> {
+    for method in [
+        "turn/start",
+        "turn/steer",
+        "turn/addUserMessage",
+        "thread/queue/add",
+        "thread/queue/start",
+    ] {
+        let run = ArchiveRun::start(true, false, &[])?;
+        pollster::block_on(
+            run.bridge
+                .request::<_, Value>(method, json!({"threadId": run.thread})),
+        )?;
+        ensure!(!run.host.finish_run(
+            &run.thread,
+            &json!({"id": "another-turn", "status": "completed"})
+        )?);
+        ensure!(run.row()?.1 == "IN_PROGRESS");
+        ensure!(run.finish()?);
+        ensure!(run.row()?.1 == "PENDING_REVIEW");
+        ensure!(run.archive_requests()?.is_empty(), "{method}");
+    }
+    Ok(())
+}
+
+#[test]
+fn autoarchive_refusal_keeps_the_review_row_and_notification_policy() -> Result<()> {
+    let run = ArchiveRun::start(true, true, &[("ARCHIVE_FAIL", "1")])?;
+    ensure!(run.finish()?);
+    let row = run.row()?;
+    ensure!(row.1 == "PENDING_REVIEW" && row.2.is_some() && row.3.is_none());
+    ensure!(run.archive_requests()? == ["thread/archive"]);
+    ensure!(run.cwd.join("a.txt").is_file());
+    Ok(())
+}
+
+#[test]
+fn autoarchive_retries_a_failed_completion_write_and_undoes_a_failed_archive_write() -> Result<()> {
+    let run = ArchiveRun::start(true, true, &[])?;
+    let db = run.db()?;
+    db.execute_batch(
+        "CREATE TRIGGER fail_finish BEFORE UPDATE ON automation_runs
+        WHEN NEW.status = 'PENDING_REVIEW' BEGIN SELECT RAISE(ABORT, 'finish failed'); END;",
+    )?;
+    ensure!(
+        run.finish()
+            .unwrap_err()
+            .to_string()
+            .contains("finish failed")
+    );
+    ensure!(run.row()?.1 == "IN_PROGRESS" && run.archive_requests()?.is_empty());
+    db.execute_batch(
+        "DROP TRIGGER fail_finish;
+        CREATE TRIGGER fail_archive BEFORE UPDATE ON automation_runs
+        WHEN NEW.status = 'ARCHIVED' BEGIN SELECT RAISE(ABORT, 'archive write failed'); END;",
+    )?;
+    ensure!(run.finish()?);
+    let row = run.row()?;
+    ensure!(row.1 == "PENDING_REVIEW" && row.2.is_some() && row.3.is_none());
+    ensure!(run.archive_requests()? == ["thread/archive", "thread/unarchive"]);
+    ensure!(run.cwd.join("a.txt").is_file());
+    Ok(())
+}
+
+fn wait_for_file(path: &Path) -> Result<()> {
+    let start = std::time::Instant::now();
+    while !path.exists() {
+        ensure!(
+            start.elapsed() < std::time::Duration::from_secs(5),
+            "peer did not reach {path:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    Ok(())
+}
+
+#[test]
+fn autoarchive_restores_an_inflight_archive_before_sending_the_user_request() -> Result<()> {
+    let sync = tempfile::tempdir()?;
+    let signal = sync.path().join("archiving");
+    let release = sync.path().join("release");
+    let run = ArchiveRun::start(
+        true,
+        false,
+        &[
+            ("ARCHIVE_SIGNAL", signal.to_str().unwrap()),
+            ("ARCHIVE_RELEASE", release.to_str().unwrap()),
+        ],
+    )?;
+    let host = run.host.clone();
+    let (thread, turn) = (run.thread.clone(), run.turn.clone());
+    let finishing = std::thread::spawn(move || host.finish_run(&thread, &turn));
+    wait_for_file(&signal)?;
+    let mut user = std::pin::pin!(
+        run.bridge
+            .request::<_, Value>("thread/queue/add", json!({"threadId": run.thread}))
+    );
+    ensure!(
+        user.as_mut()
+            .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
+            .is_pending()
+    );
+    fs::write(&release, "")?;
+    ensure!(finishing.join().unwrap()?);
+    pollster::block_on(user)?;
+    ensure!(run.row()?.1 == "ACCEPTED");
+    ensure!(run.archive_requests()? == ["thread/archive", "thread/unarchive"]);
+    let methods: Vec<_> = all_requests(&run.log)?
+        .into_iter()
+        .filter_map(|request| request["method"].as_str().map(str::to_owned))
+        .collect();
+    ensure!(methods.ends_with(&[
+        "thread/archive".into(),
+        "thread/unarchive".into(),
+        "thread/queue/add".into()
+    ]));
+    ensure!(run.cwd.join("a.txt").is_file());
+    Ok(())
+}
+
+#[test]
+fn autoarchive_restore_failure_blocks_user_work_until_restore_succeeds() -> Result<()> {
+    let sync = tempfile::tempdir()?;
+    let fail = sync.path().join("fail");
+    fs::write(&fail, "")?;
+    let run = ArchiveRun::start(
+        true,
+        false,
+        &[("RESTORE_FAIL_FILE", fail.to_str().unwrap())],
+    )?;
+    ensure!(run.finish()?);
+    let user = || {
+        run.bridge
+            .request::<_, Value>("thread/queue/add", json!({"threadId": run.thread}))
+    };
+    ensure!(
+        pollster::block_on(user())
+            .unwrap_err()
+            .to_string()
+            .contains("restore refused")
+    );
+    ensure!(run.row()?.1 == "ARCHIVED");
+    ensure!(
+        !all_requests(&run.log)?
+            .iter()
+            .any(|request| request["method"] == "thread/queue/add")
+    );
+    fs::remove_file(&fail)?;
+    pollster::block_on(user())?;
+    ensure!(run.row()?.1 == "ACCEPTED");
+    ensure!(run.cwd.join("a.txt").is_file());
+    Ok(())
+}
+
+#[test]
+fn autoarchive_waits_for_the_start_reply_when_completion_arrives_first() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let home = directory.path().join("home");
+    fs::create_dir_all(home.join("sqlite"))?;
+    let db = rusqlite::Connection::open(home.join("sqlite/codex.db"))?;
+    db.execute_batch(&format!("{AUTOMATIONS};{RUNS};"))?;
+    let signal = directory.path().join("starting");
+    let release = directory.path().join("release");
+    let log = directory.path().join("requests.jsonl");
+    let mut server = Command::new("sh");
+    server
+        .arg("-c")
+        .arg(SERVER)
+        .env("LOG", &log)
+        .env("TURN_SIGNAL", &signal)
+        .env("TURN_RELEASE", &release);
+    let (bridge, events) = Bridge::spawn(server)?;
+    let bridge = Arc::new(bridge);
+    let host = Arc::new(LocalHost::new(&home).with_bridge(bridge.clone()));
+    let id = create(&host, &home, "Review")?;
+    let definition = home.join("automations").join(&id).join("automation.toml");
+    fs::write(
+        &definition,
+        format!("{}auto_archive = true\n", fs::read_to_string(&definition)?),
+    )?;
+    let starter = host.clone();
+    let starting = std::thread::spawn(move || run(&starter, &id));
+    wait_for_file(&signal)?;
+    let bridge::Event::Notification { method, params } = pollster::block_on(events.recv())? else {
+        anyhow::bail!("expected completion");
+    };
+    ensure!(method == "turn/completed");
+    let thread = params["threadId"].as_str().unwrap();
+    let tracked = bridge.automation_turn(thread).unwrap();
+    let mut ready = std::pin::pin!(tracked.matches_turn(params["turn"]["id"].as_str().unwrap()));
+    ensure!(
+        ready
+            .as_mut()
+            .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
+            .is_pending()
+    );
+    let finisher = host.clone();
+    let completion = params.clone();
+    let finishing = std::thread::spawn(move || {
+        finisher.finish_automation_run(
+            completion["threadId"].as_str().unwrap(),
+            &completion["turn"],
+        )
+    });
+    fs::write(&release, "")?;
+    ensure!(starting.join().unwrap()? == json!({"success": true}));
+    ensure!(finishing.join().unwrap()?);
+    ensure!(runs(&home)?[0].1 == "ARCHIVED");
+    Ok(())
+}
+
+#[test]
+fn autoarchive_does_not_finish_an_account_owned_run() -> Result<()> {
+    let run = ArchiveRun::start(true, false, &[])?;
+    run.db()?
+        .execute("UPDATE automations SET account_id = 'another-account'", [])?;
+    ensure!(!run.finish()?);
+    ensure!(run.row()?.1 == "IN_PROGRESS");
+    ensure!(run.archive_requests()?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn autoarchive_finishes_a_run_that_already_has_an_inbox_result() -> Result<()> {
+    let run = ArchiveRun::start(true, true, &[])?;
+    run.db()?.execute(
+        "UPDATE automation_runs SET status = 'PENDING_REVIEW', inbox_title = 'Result'",
+        [],
+    )?;
+    ensure!(run.finish()?);
+    let row = run.row()?;
+    ensure!(row.1 == "ARCHIVED" && row.2.is_some());
+    ensure!(!run.finish()?);
     Ok(())
 }
