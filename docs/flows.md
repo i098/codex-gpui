@@ -689,7 +689,7 @@ The page keeps the saved value until the server accepts a change.
 An error keeps that value and shows a failure notice.
 The `settings_configuration` native fixture target covers save, reopen, managed restrictions, and failed writes.
 The final post-review native run passes all four checks.
-Original/native appearance approval remains open.
+Appearance review compares the actual original renderer and native source-matched captures.
 An owned original app-server smoke confirms both permission values in `config.toml` and after a server restart.
 The scope picker, project config, and additional Configuration products are not part of this delivery.
 The page uses the original subtitle, Codex context, scrollbar gutter, and permission menu metrics.
