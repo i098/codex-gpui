@@ -753,6 +753,12 @@ impl LocalHost {
                     // The original only logs a failure to record the owner.
                     let _ = git::set_owner_thread(&worktree.git_root, &thread_id);
                 }
+                if item["target"]["type"] == "project" {
+                    self.set_thread_project_assignment(
+                        &thread_id,
+                        item["target"]["projectId"].as_str().unwrap_or_default(),
+                    )?;
+                }
                 // From here the row follows the thread, so a failure archives that row.
                 let _ = self.name_run(id, &pending, &thread_id, name, source_cwd);
                 (|| {

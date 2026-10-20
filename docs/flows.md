@@ -612,6 +612,12 @@ When the original database exists, a `pending:` row in `automation_runs` opens b
 A refusal or `success: false` shows the danger toast `Could not start scheduled task`, with the reason on one line.
 Event-triggered tasks (`## When this happens` prompts) have the item disabled with the tooltip `Automations triggered by events can’t be run manually`; the host refuses them too.
 The project folders or project target (its first root from `.codex-global-state.json`) run, in a new worktree for the original default environment (`create_worktree` and `set_owner_thread`, removed again when no thread starts) or in the folder for `local`; outside a Git repository the run happens in the folder.
+For a project target, the host saves `{projectKind: "local", projectId}` after `thread/start` and worktree ownership.
+It saves the assignment before it moves the pending run row or starts the turn.
+This follows the original `Vl` and `U0.setAssignment`; it preserves existing projectless membership and unrelated global state.
+All native project-state writers use the same locked, atomic `.codex-global-state.json` update.
+An assignment failure archives the pending row and sends no turn; the started thread keeps its worktree.
+Legacy folder targets do not receive a project assignment, even when a saved project contains the folder.
 Projectless tasks use the original `nl`/`Ct` allocation under `projectlessWorkspaceRoot`, or `~/Documents/Codex` when that setting is absent.
 Each run gets a local-date folder and a unique prompt-derived folder with `work` and `outputs` subfolders.
 The host rejects relative roots and symlinks at the root or local-date folder.
@@ -619,7 +625,7 @@ It saves `projectless-thread-ids`, `thread-workspace-root-hints`, and `thread-pr
 The thread receives the original projectless output instructions and permissions; projectless runs do not create Git worktrees.
 A failed start retains the owned folder and archives the pending run; a failed turn retains the thread metadata and archives its run.
 Heartbeat tasks still require renderer thread state.
-Not yet carried over: the project assignment of the new thread, `autoArchive`, the desktop notification, and the unread dot on the rail.
+Not yet carried over: `autoArchive`, the desktop notification, and the unread dot on the rail.
 `automation_run_now` checks the requests the app-server receives and the refusals; the live `Root` flow needs macOS.
 
 `LocalHost` implements the original `automation-update` status change for local tasks (issue https://github.com/i098/codex-gpui/issues/226).
