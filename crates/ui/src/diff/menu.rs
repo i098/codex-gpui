@@ -454,7 +454,7 @@ impl DiffPanel {
                             label.to_owned(),
                             13.,
                             if opaque { ROW - 10. } else { 20. },
-                            400.,
+                            if opaque { 430. } else { 400. },
                             if enabled { t.text } else { t.text_tertiary },
                         )
                         .flex_1(),

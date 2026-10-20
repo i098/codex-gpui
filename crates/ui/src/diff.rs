@@ -1293,54 +1293,46 @@ impl Render for DiffPanel {
                     }),
             )
             .children(status)
-            .when(
-                not_repository,
-                |d| {
-                    d.child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .gap(px(12.))
-                            .m(px(24.))
-                            .child(text("Create a Git repository", 16., 24., 500., t.text))
-                            .child(
-                                div()
-                                    .id("create-git-repository")
-                                    .role(gpui::Role::Button)
-                                    .aria_label("Create git repository")
-                                    .aria_disabled(self.pending)
-                                    .focusable()
-                                    .tab_index(0)
-                                    .cursor_pointer()
-                                    .focus_visible(|s| s.border_2().border_color(rgb(0x3a83f7)))
-                                    .px(px(12.))
-                                    .py(px(6.))
-                                    .rounded(px(16.))
-                                    .bg(t.list_hover)
-                                    .on_key_down(cx.listener(
-                                        |this, event: &KeyDownEvent, _, cx| {
-                                            if !this.pending
-                                                && matches!(
-                                                    event.keystroke.key.as_str(),
-                                                    "enter" | "space"
-                                                )
-                                            {
-                                                cx.emit(DiffRequest::CreateRepository);
-                                                cx.stop_propagation();
-                                            }
-                                        },
-                                    ))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        if !this.pending {
-                                            cx.emit(DiffRequest::CreateRepository);
-                                        }
-                                    }))
-                                    .child(text("Create git repository", 13., 20., 430., t.text)),
-                            ),
-                    )
-                },
-            )
+            .when(not_repository, |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap(px(12.))
+                        .m(px(24.))
+                        .child(text("Create a Git repository", 16., 24., 500., t.text))
+                        .child(
+                            div()
+                                .id("create-git-repository")
+                                .role(gpui::Role::Button)
+                                .aria_label("Create git repository")
+                                .aria_disabled(self.pending)
+                                .focusable()
+                                .tab_index(0)
+                                .cursor_pointer()
+                                .focus_visible(|s| s.border_2().border_color(rgb(0x3a83f7)))
+                                .px(px(12.))
+                                .py(px(6.))
+                                .rounded(px(16.))
+                                .bg(t.list_hover)
+                                .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                                    if !this.pending
+                                        && matches!(event.keystroke.key.as_str(), "enter" | "space")
+                                    {
+                                        cx.emit(DiffRequest::CreateRepository);
+                                        cx.stop_propagation();
+                                    }
+                                }))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    if !this.pending {
+                                        cx.emit(DiffRequest::CreateRepository);
+                                    }
+                                }))
+                                .child(text("Create git repository", 13., 20., 430., t.text)),
+                        ),
+                )
+            })
             .child(
                 div()
                     .flex_1()
