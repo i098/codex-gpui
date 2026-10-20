@@ -1132,7 +1132,15 @@ impl Shell {
                     focus::ring(
                         icon_button(
                             "toggle-sidebar",
-                            icon::icon("sidebar", 16., t.text_tertiary),
+                            icon::icon(
+                                if self.sidebar_open {
+                                    "sidebar"
+                                } else {
+                                    "sidebar-collapsed"
+                                },
+                                16.,
+                                t.text_tertiary,
+                            ),
                             t,
                         ),
                         &sidebar_focus,

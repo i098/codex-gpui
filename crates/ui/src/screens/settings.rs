@@ -1854,6 +1854,7 @@ impl Render for Login {
             .pb(px(24.))
             .font_family(SANS)
             .bg(t.surface)
+            .layer()
             .child(
                 div()
                     .w(px(340.))

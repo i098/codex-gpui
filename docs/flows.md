@@ -358,11 +358,13 @@ The native host reads the original account fields without a new sign-in flow.
 The unavailable Send control paints its background and arrow as one50% layer.
 The fallback hero uses the original30% group opacity, and navigation uses the original85% text color.
 The Login glyphs, header spacing, and dark palette follow the captured original view.
+Login paints in the original viewport compositor layer so its rounded button edges blend correctly.
 
 The recorded default sidebar stays visible at 725 px and hides at 724 px.
 Utility labels collapse at a 475 px content width; the permission label collapses at a 480 px footer content width.
 The macOS overlay-scrollbar layout reserves no horizontal gutter.
 At 600 px the utility, permission and model labels remain visible; at 767 px the utility and permission labels collapse.
+The collapsed sidebar uses the original short-divider icon rather than the open-sidebar icon.
 The native checks cover the 600, 767 and 1280 px layouts, the folder action, and the saved closed-sidebar state.
 
 The native-folder substitute in rows 4 and 7 stays unchanged.
