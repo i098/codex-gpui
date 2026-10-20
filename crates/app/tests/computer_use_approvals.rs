@@ -58,7 +58,7 @@ fn grants_only_offered_native_scopes() {
     );
 
     let mut params = params;
-    params["_meta"]["persist"] = json!("always");
+    params["_meta"]["persist"] = json!(["always"]);
     let card = approval(&params).unwrap();
     assert_eq!(card.response(ComputerUseChoice::Conversation), None);
     assert_eq!(
@@ -67,6 +67,10 @@ fn grants_only_offered_native_scopes() {
             "action": "accept", "content": {}, "_meta": {"persist": "always"}
         }))
     );
+    params["_meta"]["persist"] = json!("always");
+    let card = approval(&params).unwrap();
+    assert_eq!(card.response(ComputerUseChoice::Conversation), None);
+    assert_eq!(card.response(ComputerUseChoice::Always), None);
 }
 
 #[test]
@@ -79,6 +83,8 @@ fn keeps_schema_fields_out_of_native_empty_form_approval() {
     assert!(approval(&params).is_none());
     params["requestedSchema"]["required"] = json!([]);
     params["_meta"]["connector_id"] = json!("another-connector");
+    assert!(approval(&params).is_none());
+    params["_meta"]["connector_id"] = json!("computer-use-extra");
     assert!(approval(&params).is_none());
 }
 
@@ -155,6 +161,32 @@ fn native_cards_answer_the_bound_request_and_remember_disclosure() -> anyhow::Re
     fx.wait("native always answer", |fx| fx.sent().unwrap().contains(&json!({
         "reply": "native-high", "result": {"action": "accept", "content": {}, "_meta": {"persist": "always"}}
     })))?;
+    let mut params = request();
+    params["threadId"] = json!(SUBTRACT);
+    params["turnId"] = Value::Null;
+    params["_meta"]["persist"] = json!(["always"]);
+    fx.cx.update(|cx| {
+        root.update(cx, |root, cx| {
+            root.on_event(
+                Event::Request {
+                    id: json!("native-once"),
+                    method: "mcpServer/elicitation/request".into(),
+                    params,
+                },
+                cx,
+            )
+        })
+    });
+    fx.cx.run_until_parked();
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        composer.focus_handle(cx).focus(window, cx)
+    })?;
+    fx.keys("enter")?;
+    fx.wait("native one-use answer", |fx| {
+        fx.sent().unwrap().contains(&json!({
+            "reply": "native-once", "result": {"action": "accept", "content": {}}
+        }))
+    })?;
     show(&mut fx, "native-deny", SUBTRACT, false);
     fx.cx.update_window(fx.window, |_, window, cx| {
         composer.focus_handle(cx).focus(window, cx)
@@ -188,7 +220,7 @@ fn native_cards_answer_the_bound_request_and_remember_disclosure() -> anyhow::Re
         .filter(|message| message.get("reply").is_some())
         .collect();
     ensure!(
-        responses.len() == 3
+        responses.len() == 4
             && responses
                 .iter()
                 .all(|message| message["reply"] != "other-thread"

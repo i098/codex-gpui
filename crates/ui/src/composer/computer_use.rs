@@ -222,7 +222,12 @@ impl Composer {
             .child(
                 self.request_button(
                     "computer-use-allow",
-                    "Allow this conversation".into(),
+                    if request.allow_session {
+                        "Allow this conversation"
+                    } else {
+                        "Allow once"
+                    }
+                    .into(),
                     ApprovalDecision::Accept,
                     true,
                     t,

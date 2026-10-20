@@ -5,16 +5,6 @@ use ui::composer::computer_use::ComputerUseApproval;
 fn native_app(params: &Value) -> Option<&str> {
     let meta = &params["_meta"];
     let schema = &params["requestedSchema"];
-    let connector = meta["connector_id"].as_str()?;
-    let mut connector = connector
-        .split(|c: char| !c.is_ascii_alphanumeric())
-        .filter(|part| !part.is_empty());
-    let native = connector
-        .next()
-        .is_some_and(|part| part.eq_ignore_ascii_case("computer"))
-        && connector
-            .next()
-            .is_some_and(|part| part.eq_ignore_ascii_case("use"));
     if params["mode"] != "form"
         || params["message"].as_str()?.trim().is_empty()
         || schema["type"] != "object"
@@ -23,7 +13,7 @@ fn native_app(params: &Value) -> Option<&str> {
             .get("required")
             .is_some_and(|required| required.as_array().is_none_or(|fields| !fields.is_empty()))
         || meta["codex_approval_kind"] != "mcp_tool_call"
-        || !native
+        || meta["connector_id"] != "computer-use"
     {
         return None;
     }
@@ -45,10 +35,9 @@ pub fn approval(params: &Value) -> Option<ComputerUseApproval> {
         .filter(|name| !name.is_empty())
         .unwrap_or(app);
     let offered = |scope: &str| {
-        meta["persist"] == scope
-            || meta["persist"]
-                .as_array()
-                .is_some_and(|scopes| scopes.iter().any(|value| value == scope))
+        meta["persist"]
+            .as_array()
+            .is_some_and(|scopes| scopes.iter().any(|value| value == scope))
     };
     Some(ComputerUseApproval {
         app: app.to_owned(),

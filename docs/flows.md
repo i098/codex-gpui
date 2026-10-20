@@ -382,8 +382,8 @@ The revised native replay and appearance approval remain pending.
 
 Native Computer Use app approvals use this queue and retain the original request, thread, and turn IDs.
 The card shows the app name, elevated risk, and first-use disclosure.
-`Allow this conversation` selects the offered session scope, or permits one use when that scope is absent.
-`Always allow` appears only when the server offers that scope.
+`Allow this conversation` selects the offered session scope; without that scope, `Allow once` permits one use.
+`Always allow` appears only when the server offers that scope in the persistence array.
 MCP responses use `action`, optional empty `content`, and the selected `_meta.persist`; they never use a command-approval `decision`.
 The host retains the disclosure choice only after an accepted response enters the bridge.
 Run `cargo test -p app --test computer_use_approvals`; the native replay and captures require macOS.
