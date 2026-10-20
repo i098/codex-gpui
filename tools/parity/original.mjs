@@ -66,7 +66,7 @@ async function captureCustomState(prepare) {
   });
   const waitFor = async (expression) => {
     for (const end = Date.now() + 90000; Date.now() < end; await sleep(100)) {
-      if (await page.evaluate(expression)) return;
+      if (await page.evaluate(`!!(${expression})`)) return;
     }
     throw new Error(`Timed out: ${expression}`);
   };
