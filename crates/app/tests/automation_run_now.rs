@@ -19,7 +19,7 @@ while IFS= read -r line; do
   case "$line" in
     *'"model/list"'*) printf '{"id":%s,"result":{"data":%s}}\n' "$id" "$MODELS" ;;
     *'"config/read"'*) printf '{"id":%s,"result":{"config":%s}}\n' "$id" "$CONFIG" ;;
-    *'"configRequirements/read"'*) printf '{"id":%s,"result":{"requirements":%s}}\n' "$id" "$REQUIREMENTS" ;;
+    *'"configRequirements/read"'*) [ -z "$FAIL_REQUIREMENTS" ] || { printf '{"id":%s,"error":{"code":-32000,"message":"requirements unavailable"}}\n' "$id"; continue; }; printf '{"id":%s,"result":{"requirements":%s}}\n' "$id" "$REQUIREMENTS" ;;
     *'"thread/start"'*)
       [ -z "$FAIL_THREAD" ] || { printf '{"id":%s,"error":{"code":-32000,"message":"no thread"}}\n' "$id"; continue; }
       [ -z "$STATE_AFTER_THREAD" ] || printf '%s' "$STATE_AFTER_THREAD" > "$STATE"
@@ -1088,5 +1088,61 @@ fn projectless_metadata_write_failure_starts_no_turn_and_preserves_state() -> Re
             .is_dir()
     );
     ensure!(runs(&home)?[0].1 == "ARCHIVED");
+    Ok(())
+}
+
+#[test]
+fn concurrent_hosts_preserve_all_project_updates() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let home = dir.path().join("home");
+    let roots: Vec<_> = (0..12)
+        .map(|id| dir.path().join(format!("project-{id}")))
+        .collect();
+    for root in &roots {
+        fs::create_dir(root)?;
+    }
+    let expected = roots
+        .iter()
+        .map(fs::canonicalize)
+        .collect::<std::io::Result<std::collections::BTreeSet<_>>>()?;
+    let barrier = std::sync::Barrier::new(roots.len());
+    std::thread::scope(|scope| -> Result<()> {
+        let (home, barrier) = (&home, &barrier);
+        let writers: Vec<_> = roots
+            .iter()
+            .map(|root| {
+                scope.spawn(move || {
+                    barrier.wait();
+                    LocalHost::new(home).add_project(root)
+                })
+            })
+            .collect();
+        for writer in writers {
+            writer.join().expect("project writer panicked")?;
+        }
+        Ok(())
+    })?;
+    let state: Value = serde_json::from_slice(&fs::read(home.join(".codex-global-state.json"))?)?;
+    let saved: std::collections::BTreeSet<_> = state["local-projects"]
+        .as_object()
+        .unwrap()
+        .values()
+        .map(|project| std::path::PathBuf::from(project["rootPaths"][0].as_str().unwrap()))
+        .collect();
+    ensure!(saved == expected, "concurrent writes lost a project");
+    Ok(())
+}
+
+#[test]
+fn projectless_requirements_failure_creates_no_workspace_or_run() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let home = dir.path().join("home");
+    let root = dir.path().join("workspace");
+    let log = dir.path().join("requests.jsonl");
+    let host = host_with(&home, &log, false, &[("FAIL_REQUIREMENTS", "1")])?;
+    projectless_task(&host, &home, &root, "p")?;
+    ensure!(run(&host, "free").is_err());
+    ensure!(!root.exists() && !home.join(".codex-global-state.json").exists());
+    ensure!(runs(&home)?.is_empty() && requests(&log)?.is_empty());
     Ok(())
 }

@@ -452,6 +452,7 @@ impl LocalHost {
 
     fn update_global_state(&self, update: impl FnOnce(&mut Value) -> Result<bool>) -> Result<()> {
         fs::create_dir_all(&self.home)?;
+        // ponytail: native-writer lock only; coordinate with the original app for cross-app isolation.
         let lock = fs::OpenOptions::new()
             .create(true)
             .truncate(false)

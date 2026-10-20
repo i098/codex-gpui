@@ -624,6 +624,8 @@ The host rejects relative roots and symlinks at the root or local-date folder.
 It saves `projectless-thread-ids`, `thread-workspace-root-hints`, and `thread-projectless-output-directories` through the shared atomic global-state writer.
 The thread receives the original projectless output instructions and permissions; projectless runs do not create Git worktrees.
 A failed start retains the owned folder and archives the pending run; a failed turn retains the thread metadata and archives its run.
+The host reads config requirements before it creates a projectless workspace, as in the original `Ll`.
+A failed metadata write retains the started thread and its folder without starting a turn.
 Heartbeat tasks still require renderer thread state.
 Not yet carried over: `autoArchive`, the desktop notification, and the unread dot on the rail.
 `automation_run_now` checks the requests the app-server receives and the refusals; the live `Root` flow needs macOS.

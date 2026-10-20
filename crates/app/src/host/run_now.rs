@@ -617,15 +617,12 @@ impl LocalHost {
             .bridge
             .as_ref()
             .context("The app server is not connected")?;
-        let projectless = match item["target"]["type"].as_str() {
-            Some("projectless") => Some(self.create_projectless_workspace(prompt)?),
-            _ => None,
-        };
+        let projectless_target = item["target"]["type"] == "projectless";
         let worktree_env = item["executionEnvironment"] == "worktree";
         let local_environment = item["localEnvironmentConfigPath"]
             .as_str()
             .map(std::path::PathBuf::from);
-        let cwds: Vec<String> = match item["target"]["type"].as_str() {
+        let mut cwds: Vec<String> = match item["target"]["type"].as_str() {
             None => item["cwds"]
                 .as_array()
                 .into_iter()
@@ -635,11 +632,11 @@ impl LocalHost {
             Some("project") => {
                 vec![self.project_root(item["target"]["projectId"].as_str().unwrap_or_default())?]
             }
-            Some("projectless") => vec![projectless.as_ref().unwrap().cwd.clone()],
+            Some("projectless") => Vec::new(),
             Some(_) => bail!("Unknown automation target"),
         };
         ensure!(
-            !cwds.is_empty(),
+            projectless_target || !cwds.is_empty(),
             "Scheduled run skipped: no folders configured"
         );
         self.record_run_now(&item, chrono::Utc::now().timestamp_millis());
@@ -689,6 +686,14 @@ impl LocalHost {
                 json!(item["reasoningEffort"].as_str().unwrap_or(DEFAULT_EFFORT)),
             ),
         };
+        let projectless = if projectless_target {
+            Some(self.create_projectless_workspace(prompt)?)
+        } else {
+            None
+        };
+        if let Some(workspace) = &projectless {
+            cwds = vec![workspace.cwd.clone()];
+        }
         let mut first_error = None;
         for cwd in &cwds {
             let pending = format!("pending:{}", super::device_id());
