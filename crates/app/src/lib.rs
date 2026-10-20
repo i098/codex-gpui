@@ -1825,7 +1825,9 @@ impl Root {
                         }
                     }
                     Ok(_) => this.toast(Toast::danger(title), cx),
-                    Err(error) => this.toast(Toast::danger(title).description(error), cx),
+                    Err(error) => {
+                        this.toast(Toast::danger(title).description(error.to_string()), cx)
+                    }
                 }
             })
             .ok();
