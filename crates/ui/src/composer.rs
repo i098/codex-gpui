@@ -764,7 +764,8 @@ impl Composer {
 
     fn editor_line_height(&self) -> Pixels {
         if self.plain_field == Some(true) {
-            px(130. / 7.)
+            // The original 13px textarea advances each line by 18.5703125 CSS pixels.
+            px(18.570_313)
         } else {
             LINE_HEIGHT
         }
