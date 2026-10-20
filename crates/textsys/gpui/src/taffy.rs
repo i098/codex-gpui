@@ -429,8 +429,8 @@ impl TaffyLayoutEngine {
         Pixels((x - round_half_up(x)) / scale_factor)
     }
 
-    pub fn layout_origin_residual_y(&mut self, id: LayoutId, scale_factor: f32) -> Pixels {
-        self.layout_bounds(id, scale_factor);
+    pub fn layout_origin_residual_y(&mut self, id: LayoutId, scale_factor: f32, content_zoom: f32) -> Pixels {
+        self.layout_bounds(id, scale_factor, content_zoom);
         let y = self.absolute_outer_origins[&id].y;
         Pixels((y - round_half_up(y)) / scale_factor)
     }
@@ -906,9 +906,9 @@ mod tests {
                 )
                 .unwrap();
             let child = LayoutId::from(child);
-            let bounds = engine.layout_bounds(child, scale);
+            let bounds = engine.layout_bounds(child, scale, 1.);
             assert_eq!(
-                bounds.origin.y + engine.layout_origin_residual_y(child, scale),
+                bounds.origin.y + engine.layout_origin_residual_y(child, scale, 1.),
                 Pixels(y / scale)
             );
         }

@@ -5606,7 +5606,7 @@ impl Window {
         self.layout_engine
             .as_mut()
             .unwrap()
-            .layout_origin_residual_y(layout_id, scale_factor)
+            .layout_origin_residual_y(layout_id, scale_factor, self.content_zoom)
     }
 
     /// This method should be called during `prepaint`. You can use
