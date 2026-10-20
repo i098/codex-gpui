@@ -31,6 +31,7 @@ use std::{
 use theme::{ActiveTheme as _, Theme};
 
 mod configuration;
+mod configuration_network;
 #[path = "computer_use.rs"]
 pub mod computer_use;
 
@@ -230,7 +231,17 @@ impl SettingsPage {
     }
 
     pub fn choice<'a>(&'a self, path: &str, default: &'a str) -> &'a str {
-        self.get(path).as_str().unwrap_or(default)
+        self.get(path).as_str().unwrap_or_else(|| {
+            if path == "config.web_search" {
+                if self.get("config.sandbox_mode") == "danger-full-access" {
+                    "live"
+                } else {
+                    "cached"
+                }
+            } else {
+                default
+            }
+        })
     }
 
     pub fn configuration_error(&self) -> Option<&str> {
