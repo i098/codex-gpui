@@ -18,7 +18,8 @@ Rust does not create another MCP client.
 Run setup outside the UI thread.
 Show its error if registration fails.
 Refresh host readiness and app-server configuration only after setup succeeds.
-Restart the existing app-server after registration before starting another turn.
+Reload the app-server with `config/mcpServer/reload`, then refresh `config/read`, after a Settings change.
+Command-line setup still requires an app restart.
 Do not show an enabled provider before that refresh succeeds.
 
 Setup selects the same executable as `bridge::default_command()`.
@@ -63,6 +64,9 @@ Setup installs and trusts the original `Stop`, `Interrupt`, and `SubagentStop` h
 Their `turn_ended` input retains `hook_event_name`, `session_id`, and `turn_id` substitutions.
 E must not send a second cleanup call for those events.
 Unsupported hooks fail setup before the provider becomes enabled.
+The Any App switch changes the provider and these existing hooks in one `config/batchWrite`.
+Hook enablement uses `hooks.state.<quoted opaque key>.enabled`; it does not change the trusted hash or create another hook.
+Repeated native Stop actions share one pending interrupt for each thread and turn.
 
 ## Elicitation requests and responses
 

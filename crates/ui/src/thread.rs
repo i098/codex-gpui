@@ -132,7 +132,7 @@ pub struct ThreadView {
     composer: AnyView,
     _tick: Option<Task<()>>,
     stream_fades: HashMap<String, Vec<StreamSegment>>,
-    mcp_images: RefCell<HashMap<String, Vec<(usize, Arc<Image>)>>>,
+    mcp_images: items::McpImages,
     /// Open disclosures: turns whose `Worked for` is expanded, by turn id, and activity groups
     /// whose rows show, by the id of their first item.
     expanded: HashSet<String>,
@@ -1762,32 +1762,15 @@ impl ThreadView {
             .as_ref()
             .is_none_or(|find| find.matches.is_empty())
         {
-            return activity(
-                items,
-                running,
-                &self.expanded,
-                &self.stream_fades,
-                &self.mcp_images,
-                window,
-                t,
-                cx,
-            );
+            return activity(items, running, self, window, t, cx);
         }
         let mut column = div().flex().flex_col().gap(px(16.));
         let mut start = 0;
         for (index, item) in items.iter().enumerate() {
             if let ThreadItem::AgentMessage { id, text, .. } = item {
                 if start < index {
-                    column = column.child(activity(
-                        &items[start..index],
-                        running,
-                        &self.expanded,
-                        &self.stream_fades,
-                        &self.mcp_images,
-                        window,
-                        t,
-                        cx,
-                    ));
+                    column =
+                        column.child(activity(&items[start..index], running, self, window, t, cx));
                 }
                 column = column.child(markdown::with_find(
                     text,
@@ -1800,16 +1783,7 @@ impl ThreadView {
             }
         }
         if start < items.len() {
-            column = column.child(activity(
-                &items[start..],
-                running,
-                &self.expanded,
-                &self.stream_fades,
-                &self.mcp_images,
-                window,
-                t,
-                cx,
-            ));
+            column = column.child(activity(&items[start..], running, self, window, t, cx));
         }
         column
     }

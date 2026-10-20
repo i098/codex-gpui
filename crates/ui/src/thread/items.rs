@@ -1,6 +1,8 @@
 use super::*;
 use base64::Engine as _;
 
+pub(super) type McpImages = RefCell<HashMap<String, Vec<(usize, Arc<Image>)>>>;
+
 /// Right-aligned user message: `bg-user-message`, 22 px squircle, at most 70% wide.
 pub(super) fn user_bubble(message: &str, t: &Theme) -> Div {
     div().flex().flex_col().items_end().pb(px(30.)).child(
@@ -492,13 +494,14 @@ fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
 pub(super) fn activity(
     items: &[ThreadItem],
     running: bool,
-    open: &HashSet<String>,
-    fades: &HashMap<String, Vec<StreamSegment>>,
-    images: &RefCell<HashMap<String, Vec<(usize, Arc<Image>)>>>,
+    view: &ThreadView,
     window: &Window,
     t: &Theme,
     cx: &Context<ThreadView>,
 ) -> Div {
+    let open = &view.expanded;
+    let fades = &view.stream_fades;
+    let images = &view.mcp_images;
     let text60 = t.text_alpha_60;
     // Exact-width 14 px text, styled before it is boxed (see [`measured`]).
     let label = |s: String, color: Hsla| {

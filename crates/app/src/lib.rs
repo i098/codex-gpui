@@ -22,11 +22,11 @@ use bridge::types::{
 };
 use bridge::{Bridge, Event};
 use gpui::{
-    Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, BorrowAppContext as _, Context, Entity,
-    EntityInputHandler as _, FocusHandle, Focusable as _, InteractiveElement as _, IntoElement,
-    KeyBinding, KeyDownEvent, Menu, MenuItem, OsAction, ParentElement as _, PathPromptOptions,
-    Pixels, Render, SharedString, Styled as _, SystemMenuType, Task, WeakEntity, Window,
-    WindowAppearance, actions, div, px,
+    Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, BorrowAppContext as _,
+    Context, Entity, EntityInputHandler as _, FocusHandle, Focusable as _, InteractiveElement as _,
+    IntoElement, KeyBinding, KeyDownEvent, Menu, MenuItem, OsAction, ParentElement as _,
+    PathPromptOptions, Pixels, Render, SharedString, Styled as _, SystemMenuType, Task, WeakEntity,
+    Window, WindowAppearance, actions, div, px,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -515,11 +515,6 @@ impl Root {
         let computer_use = this.clone();
         cx.set_global(ComputerUseState {
             available: cfg!(target_os = "macos") && !bridge.is_acp(),
-            plugin: Load::Loading,
-            approvals: Load::Loading,
-            sound: None,
-            pending: false,
-            error: None,
             permission_guidance: Some(
                 "macOS controls Accessibility and Screen Recording access.".into(),
             ),
@@ -528,6 +523,7 @@ impl Root {
                     .update(cx, |root, cx| root.computer_use_action(action, cx))
                     .ok();
             })),
+            ..Default::default()
         });
         // Both pickers write the user's `config.toml`, like the original's `writeModel`.
         let on_model = |this: WeakEntity<Self>| {
@@ -4707,7 +4703,12 @@ fn computer_use_overrides(config: &Value) -> Option<Value> {
         return None;
     }
     let mut overrides = serde_json::Map::new();
-    overrides.insert("mcp_servers.cua_repl.enabled".into(), Value::Bool(false));
+    if config["mcp_servers"]
+        .get("cua_repl")
+        .is_some_and(Value::is_object)
+    {
+        overrides.insert("mcp_servers.cua_repl.enabled".into(), Value::Bool(false));
+    }
     if let Some(plugins) = config["plugins"].as_object() {
         for name in plugins
             .keys()
@@ -4719,7 +4720,7 @@ fn computer_use_overrides(config: &Value) -> Option<Value> {
             );
         }
     }
-    Some(Value::Object(overrides))
+    (!overrides.is_empty()).then_some(Value::Object(overrides))
 }
 
 /// `None` (the server's default) when `model/list` gave the picker nothing.
@@ -5605,7 +5606,10 @@ mod computer_use_tests {
     #[test]
     fn lcu_cutover_disables_only_the_original_computer_use_surface() {
         let mut config = json!({
-            "mcp_servers": {"lcu": {"enabled": true}},
+            "mcp_servers": {
+                "lcu": {"enabled": true},
+                "cua_repl": {"enabled": true, "command": "original"}
+            },
             "plugins": {
                 "unified-computer-use@openai-bundled": {"enabled": true},
                 "unrelated@openai-bundled": {"enabled": true}
@@ -5620,5 +5624,13 @@ mod computer_use_tests {
         );
         config["mcp_servers"]["lcu"]["enabled"] = false.into();
         assert_eq!(computer_use_overrides(&config), None);
+    }
+
+    #[test]
+    fn lcu_without_an_original_provider_does_not_create_an_invalid_transport() {
+        assert_eq!(
+            computer_use_overrides(&json!({"mcp_servers": {"lcu": {"enabled": true}}})),
+            None
+        );
     }
 }
