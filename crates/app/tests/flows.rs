@@ -263,11 +263,10 @@ fn rail_hover_fill() -> Result<String> {
     Ok(format!("{n} px"))
 }
 
-/// 1280 (reference), 767 (below the 768 px sidebar breakpoint), 600 (below 40rem).
+/// The recorded 1280, 767 and 600 px layouts keep the rail and sidebar controls usable.
 fn resize_three_widths() -> Result<String> {
-    for w in [1280., 767., 600.] {
+    for (w, wide) in [(1280., true), (767., true), (600., false)] {
         let mut fx = Fx::with("dark", (w, 832.), None, |_| {})?;
-        let wide = w >= 768.;
         ensure!(fx.sidebar_open() == wide, "{w} px: sidebar_open {}", !wide);
         // The rail keeps its 52 px column: rail Home still answers.
         fx.type_text("draft")?;
@@ -1515,8 +1514,7 @@ fn scroll_automations() -> Result<String> {
 
 // --- Window ---
 
-/// Live resizes across the 768 px breakpoint: the sidebar hides below it and comes back as
-/// the user left it.
+/// Live resize preserves the recorded default-sidebar boundary and the user's closed state.
 fn resize_live() -> Result<String> {
     let mut fx = Fx::new()?;
     let resize = |fx: &mut Fx, w: f32| {
@@ -1524,12 +1522,19 @@ fn resize_live() -> Result<String> {
             .simulate_window_resize(fx.window, size(px(w), px(832.)));
         fx.cx.run_until_parked();
     };
-    for (w, open) in [(767., false), (1280., true), (600., false), (1440., true)] {
+    for (w, open) in [
+        (725., true),
+        (724., false),
+        (767., true),
+        (1280., true),
+        (600., false),
+        (1440., true),
+    ] {
         resize(&mut fx, w);
         ensure!(fx.sidebar_open() == open, "{w} px: sidebar_open {}", !open);
     }
     fx.keys("cmd-b")?;
-    resize(&mut fx, 767.);
+    resize(&mut fx, 724.);
     resize(&mut fx, 1280.);
     ensure!(!fx.sidebar_open(), "the closed sidebar came back");
     Ok(String::new())

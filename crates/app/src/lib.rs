@@ -97,8 +97,9 @@ pub struct GoToChat(pub usize);
 #[action(namespace = app, no_json)]
 pub struct GoToRecentChat(pub usize);
 
-/// `(min-width: 768px)`: below it the original hides the sidebar panel.
-const SIDEBAR_BREAKPOINT: Pixels = px(768.);
+/// The recorded default sidebar stays visible at 725 px and hides at 724 px.
+// ponytail: default layout only; add the original viewport clamp with manual-sidebar resize parity.
+const SIDEBAR_BREAKPOINT: Pixels = px(725.);
 
 /// Key bindings (docs/inventory.md §12) and the app-level commands.
 pub fn init(cx: &mut App) {
@@ -433,6 +434,7 @@ pub struct Root {
     chatgpt_account: bool,
     bridge: Arc<Bridge>,
     host: Arc<dyn host::Host>,
+    account_access_load: Option<Task<()>>,
     project_load: Option<Task<()>>,
     picking_project: bool,
     automations: Option<Result<Value, String>>,
@@ -499,6 +501,9 @@ impl Root {
         cx: &mut Context<Self>,
     ) -> Self {
         cx.set_global(AppServer(bridge.clone()));
+        if !cx.has_global::<ui::HomeAccountAccess>() {
+            cx.set_global(ui::HomeAccountAccess::default());
+        }
         if !cx.has_global::<host_settings::Settings>() {
             let settings = match state.path.as_ref() {
                 Some(path) => {
@@ -692,6 +697,7 @@ impl Root {
             home: cx.new(|_| HomeMain {
                 composer: home_composer,
                 project: state.project_root.as_deref().map(project_name),
+                utility_compact: false,
             }),
             thread_composer,
             queue_edit: None,
@@ -717,6 +723,7 @@ impl Root {
                 host::CloudHost::from_env(host::app_server_credentials(bridge.clone()))
                     .with_bridge(bridge.clone()),
             ),
+            account_access_load: None,
             bridge,
             automations: None,
             automation_load: None,
@@ -797,7 +804,14 @@ impl Root {
             let account = if acp {
                 None
             } else {
-                Some(bridge.account_read().await?)
+                Some(bridge.account_read().await.unwrap_or_else(|error| {
+                    eprintln!("codex-gpui: account read: {error:#}");
+                    // The original shows Login for a failed read, without an automatic retry.
+                    AccountReadResponse {
+                        account: None,
+                        requires_openai_auth: true,
+                    }
+                }))
             };
             let threads = bridge.thread_list().await?;
             let (mut catalog, config, skills) = if acp {
@@ -905,6 +919,7 @@ impl Root {
                 this.ready = true;
                 this.select_route(cx);
                 this.sync(window, cx);
+                this.load_account_access(cx);
                 if bridge.is_acp() {
                     let note = format!(
                         "{} over ACP: only chats, streaming, Stop and approvals work",
@@ -1026,6 +1041,7 @@ impl Root {
 
     /// Replaces the desktop host and cancels pending UI callbacks for its reads and updates.
     pub fn set_host(&mut self, host: Arc<dyn host::Host>, cx: &mut Context<Self>) {
+        self.account_access_load = None;
         self.automation_load = None;
         self.project_load = None;
         self.suggestion_load = None;
@@ -1042,12 +1058,43 @@ impl Root {
         self.host = host;
         self.automations = None;
         self.load_projects(cx);
+        self.load_account_access(cx);
         if self.scheduled_route() {
             self.load_automations(cx);
             self.load_suggestions(cx);
         }
         self.refresh_git_actions(cx);
         cx.notify();
+    }
+
+    fn load_account_access(&mut self, cx: &mut Context<Self>) {
+        if !self.ready || self.signed_out() || self.bridge.is_acp() {
+            return;
+        }
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move { host.account_access() });
+        self.account_access_load = Some(cx.spawn(async move |this, cx| {
+            let available = read.await.unwrap_or(false);
+            this.update(cx, |this, cx| {
+                this.set_account_access(available, cx);
+            })
+            .ok();
+        }));
+    }
+
+    fn set_account_access(&mut self, available: bool, cx: &mut Context<Self>) {
+        if ui::HomeAccountAccess::available(cx) == available {
+            return;
+        }
+        let access = ui::HomeAccountAccess { available };
+        let mut theme = match cx.global::<Theme>().appearance {
+            theme::Appearance::Dark => Theme::dark(),
+            theme::Appearance::Light => Theme::light(),
+        };
+        access.apply_palette(&mut theme);
+        cx.set_global(access);
+        cx.set_global(theme);
+        cx.refresh_windows();
     }
 
     fn load_projects(&mut self, cx: &mut Context<Self>) {
@@ -2726,6 +2773,8 @@ impl Root {
                         let host = this.host.clone();
                         cx.background_spawn(async move { host.invalidate_identity() })
                             .detach();
+                        this.account_access_load = None;
+                        this.set_account_access(true, cx);
                         this.command_menu = None;
                         this.dialog = None;
                         this.thread = None;
@@ -4422,6 +4471,7 @@ impl Root {
                 self.refresh_threads(cx);
                 self.load_projects(cx);
                 self.load_sections(cx);
+                self.load_account_access(cx);
                 cx.notify();
             }
             return;
@@ -4652,7 +4702,11 @@ impl Root {
     }
 
     fn apply_theme(&self, window: &mut Window, cx: &mut Context<Self>) {
-        cx.set_global(self.state.theme.theme(window.appearance()));
+        let mut theme = self.state.theme.theme(window.appearance());
+        if let Some(access) = cx.try_global::<ui::HomeAccountAccess>() {
+            access.apply_palette(&mut theme);
+        }
+        cx.set_global(theme);
         window.refresh();
     }
 

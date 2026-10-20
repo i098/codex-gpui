@@ -81,6 +81,38 @@ pub const SANS: &str = ".SystemUIFont";
 /// `ui-monospace`, which Chromium on macOS resolves to Menlo.
 pub const MONO: &str = "Menlo";
 
+#[derive(Clone, Copy)]
+pub struct HomeAccountAccess {
+    pub available: bool,
+}
+
+impl Default for HomeAccountAccess {
+    fn default() -> Self {
+        Self { available: true }
+    }
+}
+
+impl gpui::Global for HomeAccountAccess {}
+
+impl HomeAccountAccess {
+    pub fn available(cx: &App) -> bool {
+        cx.try_global::<Self>()
+            .is_none_or(|access| access.available)
+    }
+
+    pub fn apply_palette(&self, theme: &mut Theme) {
+        if !self.available {
+            if theme.appearance == theme::Appearance::Dark {
+                theme.text = gpui::rgb(0xdfdfdf).into();
+                theme.button_primary_solid = theme.text;
+                theme.text_inverse = gpui::rgb(0x2d2d2d).into();
+            }
+            theme.composer_primary = theme.button_primary_solid;
+            theme.text_composer_primary = theme.text_inverse;
+        }
+    }
+}
+
 pub struct Shell {
     pub sidebar_open: bool,
     /// The toggle's spring: its start and the progress it left from
@@ -574,6 +606,7 @@ pub fn home_shell(_: &mut Window, cx: &mut App) -> AnyView {
 /// `New chat` and `Your dot` rows. With `unread` chats the bell carries the blue dot.
 pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
     let t = cx.theme();
+    let account_access = HomeAccountAccess::available(cx);
     let keyboard_ring = |inset| {
         move |style: gpui::StyleRefinement| {
             style.shadow(vec![gpui::BoxShadow {
@@ -642,23 +675,25 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
                         .child(icon::icon("chevron-down-medium", 14., t.text_tertiary)),
                 )
                 .child(div().flex_1())
-                .child(tooltip(
-                    icon_button(
-                        "activity",
-                        icon::icon(
-                            if unread { "bell-unread" } else { "bell" },
-                            16.,
-                            t.text_tertiary,
-                        ),
-                        t,
+                .children(account_access.then(|| {
+                    tooltip(
+                        icon_button(
+                            "activity",
+                            icon::icon(
+                                if unread { "bell-unread" } else { "bell" },
+                                16.,
+                                t.text_tertiary,
+                            ),
+                            t,
+                        )
+                        .tab_index(0)
+                        .focus_visible(keyboard_ring(false)),
+                        "View activity",
+                        Some("⌥⌘U"),
+                        Side::Bottom,
                     )
-                    .tab_index(0)
-                    .focus_visible(keyboard_ring(false)),
-                    "View activity",
-                    Some("⌥⌘U"),
-                    Side::Bottom,
-                ))
-                .child(div().w(px(4.)))
+                }))
+                .when(account_access, |d| d.child(div().w(px(4.))))
                 .child(tooltip(
                     icon_button(
                         "search",
@@ -692,23 +727,26 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
                     )
                     .on_click(dispatch::<NewChat>),
                 ))
-                .child(rounded_clip(
-                    RADIUS_BUTTON_XL,
-                    shapes::Corner::Squircle,
-                    row(
-                        "your-dot",
-                        // An `<img>`: its svg (with its own fill) draws into the overlap layer.
-                        icon::icon("your-dot", 16., gpui::rgb(0xbac1d3).into())
-                            .own_layer(Some(overlap))
-                            .into_any_element(),
-                        "Your dot",
-                    ),
-                )),
+                .children(account_access.then(|| {
+                    rounded_clip(
+                        RADIUS_BUTTON_XL,
+                        shapes::Corner::Squircle,
+                        row(
+                            "your-dot",
+                            // An `<img>`: its svg (with its own fill) draws into the overlap layer.
+                            icon::icon("your-dot", 16., gpui::rgb(0xbac1d3).into())
+                                .own_layer(Some(overlap))
+                                .into_any_element(),
+                            "Your dot",
+                        ),
+                    )
+                })),
         )
 }
 
 impl Shell {
     fn rail(&self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let account_access = HomeAccountAccess::available(cx);
         let (hover_bg, hover_fg) = (t.ghost_hover, t.text);
         let selected = self.selected_rail;
         let home = self.main.entity_type() == std::any::TypeId::of::<screens::home::HomeMain>();
@@ -819,17 +857,21 @@ impl Shell {
                             }),
                         "Home",
                     ))
-                    .child(rail_tip(item("space"), "Space"))
-                    .child(rail_tip(
-                        item("scheduled").on_click(dispatch::<OpenScheduled>),
-                        "Scheduled",
-                    ))
+                    .children(account_access.then(|| rail_tip(item("space"), "Space")))
+                    .children(account_access.then(|| {
+                        rail_tip(
+                            item("scheduled").on_click(dispatch::<OpenScheduled>),
+                            "Scheduled",
+                        )
+                    }))
                     .child(rail_tip(item("plugins"), "Plugins"))
                     // Explore with its unread dot; it shows no tooltip.
-                    .child(item("explore").child(dot(4.)))
-                    .child(div().w(px(24.)).h(px(1.)).bg(t.border))
-                    .child(rail_tip(item("rail-code-review"), "Code Review"))
-                    .child(rail_tip(item("sites"), "Sites"))
+                    .child(item("explore").when(account_access, |d| d.child(dot(4.))))
+                    .when(account_access, |d| {
+                        d.child(div().w(px(24.)).h(px(1.)).bg(t.border))
+                            .child(rail_tip(item("rail-code-review"), "Code Review"))
+                            .child(rail_tip(item("sites"), "Sites"))
+                    })
                     .child(shapes::top_fade(px(16.))),
             )
             .child(
@@ -851,7 +893,23 @@ impl Shell {
                     cx.notify();
                 }))
                 .child(motion::ButtonVisual {
-                    glyph: div().size(px(24.)).child(avatar()),
+                    glyph: div()
+                        .size(px(24.))
+                        .when(account_access, |d| d.child(avatar()))
+                        .when(!account_access, |d| {
+                            d.relative()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(shapes::decoration(shapes::Decoration {
+                                    radius: Corners::all(Theme::RADIUS_FULL),
+                                    corner: shapes::Corner::Round,
+                                    fill: Some(gpui::rgb(0xff7419).into()),
+                                    border: Some((px(1.), gpui::transparent_black())),
+                                    ..Default::default()
+                                }))
+                                .child(text("U", 12., 16., 400., gpui::white()))
+                        }),
                     radius: RADIUS_RAIL,
                     hover: hover_bg,
                     foreground: hover_fg,

@@ -30,7 +30,7 @@ The rows were not clicked again on the original through `tools/route1`: its `ser
 | App shell: shortcuts, menu bar, window | 20 | 13 | 3 | 4 |
 | 14.1 Left rail | 12 | 4 | 1 | 7 |
 | 14.2 Sidebar | 23 | 12 | 4 | 7 |
-| 14.3 Home | 21 | 10 | 3 | 8 |
+| 14.3 Home | 21 | 13 | 0 | 8 |
 | 14.4 Thread view | 20 | 6 | 3 | 11 |
 | 14.5 Composer | 20 | 6 | 5 | 9 |
 | 14.6 Diff view | 20 | 14 | 5 | 1 |
@@ -38,7 +38,7 @@ The rows were not clicked again on the original through `tools/route1`: its `ser
 | 15.1 Automations | 16 | 2 | 2 | 12 |
 | 15.2 Background terminal | 10 | 10 | 0 | 0 |
 | 15.3 Mobile setup | 10 | 3 | 2 | 5 |
-| **All** | **192** | **75** | **32** | **85** |
+| **All** | **192** | **90** | **33** | **69** |
 
 Before round 5 (F2Flows): 57 PASS, 33 FAIL, 102 NOT WIRED. Before round 4 (F1Flows): 42 PASS, 25 FAIL, 125 NOT WIRED.
 
@@ -336,7 +336,7 @@ The existing replay checks the original colors, row actions, tooltips, canceled 
 | 7 | `Choose project` | click | Project dropdown. | Opens the native folder picker and selects a local project for new chats. | Native local-folder flow (`project_picker`); no project dropdown. |
 | 8 | `Work in` / `This computer` | click | Location menu. | Chip has no handler. | NOT WIRED (`crates/ui/src/screens/home.rs` `utility_bar`) |
 | 9 | Editor `Do anything` | focus | Caret shows. | Click focuses the editor. | PASS (`editor_click_focuses`) |
-| 10 | `+` Add files and more | click | Context menu (files, photos, @-mentions). | Opens the system file picker at once. | FAIL (`crates/ui/src/composer.rs` `add_files`: no context menu) |
+| 10 | `+` Add files and more | click | Opens the recorded Add/mention menu. | The existing menu opens without inserting `@`; typing, Escape, outside dismissal, and the tooltip follow the recording. | PASS (`s018`) |
 | 11 | `Custom` permissions | click | Permissions dropdown. | Opens; Escape closes. | PASS (`permissions_popover`) |
 | 12 | Model picker | click | Model and effort menu. | Opens; Escape closes. | PASS (`model_picker_popover`) |
 | 13 | `Dictate` | click | Starts dictation. | No handler. | NOT WIRED (`crates/ui/src/composer.rs`, `dictate`) |
@@ -346,8 +346,26 @@ The existing replay checks the original colors, row actions, tooltips, canceled 
 | 17 | Tab through controls | focus ring | 2 px ring. | No tab stops. | NOT WIRED (`crates/ui/src/composer.rs`, `crates/ui/src/screens/home.rs`) |
 | 18 | No projects / no chats | empty | `No projects`, `No chats`, `What should we build?`. | Same with an empty `thread/list`. | PASS (`sidebar_empty_lists`) |
 | 19 | Model list loading | loading | `Loading model…`. | Empty `model/list` shows `Loading model…` (the pill repaints). | PASS (`model_list_loading`) |
-| 20 | Account load failure | error | `We couldn’t load your account`, `Reload`, `Sign out`. | An `account/read` error stops `Root::connect`; the window stays empty. | FAIL (`crates/app/src/lib.rs` `connect`; no error page in `crates/ui`) |
-| 21 | Resize | resize | Below 768 px the sidebar is an overlay; below 40rem the composer stacks. | Sidebar hides (row 14.2/23); composer does not stack. | FAIL (`crates/ui/src/composer.rs`: only the 475 px compact footer) |
+| 20 | Account availability | error | An `account/read` RPC error shows Login. A separate `accessInputs` error keeps Coding Home. | A refused account read shows Login. Unavailable optional account metadata keeps Coding Home with reduced controls. | PASS (`home_account`: both failure paths) |
+| 21 | Resize | resize | At 767 px the sidebar stays visible and the utility labels collapse. At 600 px the sidebar hides and the labels remain visible. The primary footer stays horizontal. | Uses the recorded default-sidebar layouts and content-width rules. The folder action remains available. | PASS (`home_account`, `resize_three_widths`, `resize_live`) |
+
+The original account fixtures correct the earlier JRt error-page assumption for row 20.
+An `account/read` failure does not show `Reload` and `Sign out` in the captured original.
+The native fix reuses Login without starting sign-in.
+`home_account` checks Login after a failed account read and blocks signed-out shortcuts from opening the old chat view.
+It also checks that missing optional account metadata preserves the draft, keeps the editor usable, and restores navigation after recovery.
+The native host reads the original account fields without a new sign-in flow.
+The Login glyphs, header spacing, and dark palette follow the captured original view.
+
+The recorded default sidebar stays visible at 725 px and hides at 724 px.
+Utility labels collapse at a 475 px content width; the permission label collapses at a 480 px footer content width.
+The macOS overlay-scrollbar layout reserves no horizontal gutter.
+At 600 px the utility, permission and model labels remain visible; at 767 px the utility and permission labels collapse.
+The native checks cover the 600, 767 and 1280 px layouts, the folder action, and the saved closed-sidebar state.
+
+The native-folder substitute in rows 4 and 7 stays unchanged.
+`project_picker` and `s018` still pass against their existing fixtures.
+No microphone, OS consent, sign-in, or live voice session runs in these checks.
 
 ## 14.4 Thread view
 

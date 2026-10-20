@@ -881,8 +881,8 @@ impl gpui::Element for Editor {
             Some(bounds.size.width),
             window,
         );
-        // The editor spans the card minus its 12 px side padding.
-        let width = f32::from(bounds.size.width) + 24.;
+        // The footer has 8 px side padding; the editor has 12 px side padding.
+        let width = f32::from(bounds.size.width) + 8.;
         let collapse = |w: f32| (w <= SM_WIDTH, w <= XS_WIDTH);
         let changed = self.0.update(cx, |c, _| {
             c.lines = lines;

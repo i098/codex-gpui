@@ -177,9 +177,8 @@ pub use slash::SlashCommand;
 const KEY_CONTEXT: &str = "Composer";
 const REQUEST_CONTEXT: &str = "ComposerRequest";
 const REQUEST_FORM_CONTEXT: &str = "ComposerRequestForm";
-/// `@container composer-footer` (the card's width, CSS px) at or below which the footer hides
-/// its `collapse=sm` labels (permissions) and its `collapse=xs` labels (model and effort).
-const SM_WIDTH: f32 = 440.;
+/// Desktop `composer-footer` content-width breakpoints for permission and model labels.
+const SM_WIDTH: f32 = 480.;
 const XS_WIDTH: f32 = 300.;
 const FONT_SIZE: Pixels = px(14.);
 const LINE_HEIGHT: Pixels = px(20.);
@@ -616,7 +615,7 @@ pub struct Composer {
     speed_timer: Option<Task<()>>,
     permissions_focus: FocusHandle,
     model_focus: FocusHandle,
-    /// The card's (`composer-footer` container's) width, CSS px: see `SM_WIDTH`, `XS_WIDTH`.
+    /// The `composer-footer` content width, CSS px: see `SM_WIDTH`, `XS_WIDTH`.
     footer_width: f32,
     menu_trigger_hovered: bool,
     approval: Option<Approval>,

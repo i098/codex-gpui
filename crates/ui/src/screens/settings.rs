@@ -1643,7 +1643,6 @@ impl Login {
 
 /// 46 px outlined pill button of the sign-in screen.
 fn login_button(id: &'static str, label: &'static str, t: &Theme) -> Stateful<Div> {
-    let hover = over(t.ghost_hover, t.surface);
     div()
         .id(id)
         .h(px(46.))
@@ -1653,16 +1652,29 @@ fn login_button(id: &'static str, label: &'static str, t: &Theme) -> Stateful<Di
         .justify_center()
         .gap(px(8.))
         .rounded_full()
-        .border_1()
-        .border_color(over(t.border, t.surface))
-        .bg(t.surface)
-        .hover(move |s| s.bg(hover))
-        .child(text(label, 14., 20., 500., t.text))
+        .p(px(1.))
+        .relative()
+        .child(shapes::decoration(shapes::Decoration {
+            radius: Corners::all(Theme::RADIUS_FULL),
+            corner: shapes::Corner::Round,
+            fill: Some(t.surface),
+            border: Some((px(1.), t.border)),
+            ..Default::default()
+        }))
+        .child(motion::ButtonVisual {
+            glyph: text(label, 14., 20., 500., t.text),
+            radius: Theme::RADIUS_FULL,
+            hover: t.ghost_hover,
+            foreground: t.text,
+            selected: false,
+        })
 }
 
 impl Render for Login {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = cx.theme().clone();
+        let mut t = cx.theme().clone();
+        crate::HomeAccountAccess { available: false }.apply_palette(&mut t);
+        t.text_description = t.text_tertiary;
         let title = |s: &'static str| {
             text(s, 28., 36., 400., t.text)
                 .w(px(316.))
@@ -1688,8 +1700,16 @@ impl Render for Login {
                             .justify_center()
                             .gap(px(8.))
                             .rounded_full()
-                            .bg(t.button_primary_solid)
-                            .child(icon("codex-logo", 24., t.text_inverse))
+                            .relative()
+                            .p(px(1.))
+                            .child(shapes::decoration(shapes::Decoration {
+                                radius: Corners::all(Theme::RADIUS_FULL),
+                                corner: shapes::Corner::Round,
+                                fill: Some(t.button_primary_solid),
+                                border: Some((px(1.), gpui::transparent_black())),
+                                ..Default::default()
+                            }))
+                            .child(icon("login-provider", 24., t.text_inverse))
                             .child(text("Continue to sign in", 14., 20., 500., t.text_inverse))
                             .on_click(cx.listener(|this, _, _, cx| this.start_chatgpt(cx))),
                     )
@@ -1705,7 +1725,20 @@ impl Render for Login {
                             .px(px(8.))
                             .flex()
                             .items_center()
-                            .child(text("Sign up", 14., 20., 500., t.text_description).underline())
+                            .child(
+                                text("Sign up", 14., 20., 500., t.text_description)
+                                    .relative()
+                                    .top_layer()
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .left_0()
+                                            .right_0()
+                                            .top(px(16.))
+                                            .h(px(1.))
+                                            .bg(t.text_description),
+                                    ),
+                            )
                             .on_click(cx.listener(|this, _, _, cx| this.start_chatgpt(cx))),
                     )
                     .into_any_element(),
@@ -1818,7 +1851,7 @@ impl Render for Login {
             .flex()
             .items_center()
             .justify_center()
-            .pb(px(48.))
+            .pb(px(24.))
             .font_family(SANS)
             .bg(t.surface)
             .child(
@@ -1828,8 +1861,16 @@ impl Render for Login {
                     .flex_col()
                     .items_center()
                     .gap(px(32.))
-                    .child(icon("codex-logo", 40., t.text))
-                    .child(heading)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .gap(px(16.))
+                            .layer()
+                            .child(icon("login-logo", 36., t.text))
+                            .child(heading),
+                    )
                     .child(body)
                     .children(self.error.clone().map(|e| {
                         text(SharedString::from(e), 14., 20., 430., t.text_error)

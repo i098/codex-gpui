@@ -106,6 +106,11 @@ pub trait Host: Send + Sync {
     fn identity(&self) -> Option<Identity> {
         None
     }
+
+    /// Reads optional account metadata off the UI thread. Local hosts do not gate Home.
+    fn account_access(&self) -> Result<bool> {
+        Ok(true)
+    }
 }
 
 /// What the webview client sends with a ChatGPT backend request: the account and user of
@@ -1559,6 +1564,13 @@ impl Host for CloudHost {
         true
     }
 
+    fn account_access(&self) -> Result<bool> {
+        let credentials = self
+            .credentials(false)
+            .map_err(|(_, message)| anyhow::anyhow!(message))?;
+        Ok(claims(&credentials.token).complete_account_info)
+    }
+
     fn identity(&self) -> Option<Identity> {
         let claims = claims(&self.credentials(false).ok()?.token);
         Some(Identity {
@@ -1643,6 +1655,7 @@ struct Claims {
     /// `chatgpt_user_id`, else `user_id`.
     user_id: Option<String>,
     fedramp: bool,
+    complete_account_info: bool,
 }
 
 fn claims(token: &str) -> Claims {
@@ -1659,6 +1672,9 @@ fn claims(token: &str) -> Claims {
         principal_account: text("chatgpt_account_id").or_else(|| text("account_id")),
         user_id: text("chatgpt_user_id").or_else(|| text("user_id")),
         fedramp: auth["chatgpt_account_is_fedramp"] == true,
+        complete_account_info: ["chatgpt_account_id", "chatgpt_user_id", "chatgpt_plan_type"]
+            .iter()
+            .all(|key| auth[*key].as_str().is_some_and(|value| !value.is_empty())),
     }
 }
 
@@ -1851,4 +1867,43 @@ fn definition(id: &str, contents: &str) -> Result<Value> {
         };
     }
     Ok(item)
+}
+
+#[cfg(test)]
+mod account_access_tests {
+    use super::*;
+
+    #[test]
+    fn account_access_requires_complete_chatgpt_metadata() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        for (auth, expected) in [
+            (
+                json!({"chatgpt_account_id":"a","chatgpt_user_id":"u","chatgpt_plan_type":"plus"}),
+                true,
+            ),
+            (
+                json!({"chatgpt_account_id":"a","user_id":"u","chatgpt_plan_type":"plus"}),
+                false,
+            ),
+        ] {
+            let payload = json!({"https://api.openai.com/auth":auth});
+            let token = format!(
+                "x.{}.x",
+                URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload)?)
+            );
+            let host = CloudHost::new(
+                LocalHost::new(home.path()),
+                Box::new(move |_| {
+                    Ok(Some(Credentials {
+                        token: token.clone(),
+                        backend_origin: None,
+                        routing_override: None,
+                    }))
+                }),
+                "http://127.0.0.1:9",
+            );
+            assert_eq!(host.account_access()?, expected);
+        }
+        Ok(())
+    }
 }

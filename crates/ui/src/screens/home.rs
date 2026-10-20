@@ -8,7 +8,7 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyView, App, AppContext as _, Context, Corners, Div, Entity, Hsla, InteractiveElement as _,
     IntoElement, KeyDownEvent, ParentElement, Render, SharedString,
-    StatefulInteractiveElement as _, Styled, Window, actions, div, px,
+    StatefulInteractiveElement as _, Styled, Window, actions, canvas, div, px,
 };
 use theme::{ActiveTheme as _, Theme};
 
@@ -17,6 +17,7 @@ actions!(home, [OpenFolder]);
 pub struct HomeMain {
     pub composer: Entity<Composer>,
     pub project: Option<SharedString>,
+    pub utility_compact: bool,
 }
 
 impl HomeMain {
@@ -24,6 +25,7 @@ impl HomeMain {
         Self {
             composer: fixture_composer(window, cx, Composer::home),
             project: None,
+            utility_compact: false,
         }
     }
 }
@@ -56,7 +58,7 @@ fn open_folder_key(event: &KeyDownEvent, window: &mut Window, cx: &mut App) {
 fn chip(
     id: &'static str,
     glyph: &str,
-    s: SharedString,
+    s: Option<SharedString>,
     fg: Hsla,
     t: &Theme,
     focus: &Entity<focus::ControlFocus>,
@@ -80,14 +82,22 @@ fn chip(
                     .px(px(8.))
                     .gap(px(6.))
                     .child(icon(glyph, 16., fg))
-                    .child(label(s, fg)),
+                    .children(s.map(|s| label(s, fg))),
             )),
     )
 }
 
 /// `Composer utility bar` (`_rail_1hrlq` attached above the composer): project and
 /// environment.
-fn utility_bar(project: Option<SharedString>, t: &Theme, window: &mut Window, cx: &mut App) -> Div {
+fn utility_bar(
+    home: &HomeMain,
+    owner: Entity<HomeMain>,
+    t: &Theme,
+    window: &mut Window,
+    cx: &mut App,
+) -> Div {
+    let project = home.project.clone();
+    let compact = home.utility_compact;
     let project_focus = focus::handle("choose-project", 0, window, cx);
     let work_focus = focus::handle("work-in", 0, window, cx);
     div().mx(px(13.)).pb(px(20.)).mb(px(-24.)).child(
@@ -110,34 +120,60 @@ fn utility_bar(project: Option<SharedString>, t: &Theme, window: &mut Window, cx
             // 1rem at both ends (the scroll timeline is inactive) in a `saveLayer` of the page
             // layer, so they rasterize on the page's tiles.
             .child(
-                div().py(px(3.)).child(
-                    div()
-                        .mx(px(-2.))
-                        .p(px(2.))
-                        .flex()
-                        .items_center()
-                        .gap(px(8.))
-                        .saved_layer()
-                        .child(chip(
-                            "choose-project",
-                            "folder",
-                            project.unwrap_or_else(|| "Choose project".into()),
-                            t.text_tertiary,
-                            t,
-                            &project_focus,
-                            cx,
-                        ))
-                        .child(chip(
-                            "work-in",
-                            "laptop",
-                            "This computer".into(),
-                            t.text,
-                            t,
-                            &work_focus,
-                            cx,
-                        ))
-                        .child(shapes::x_fade(px(16.), px(16.))),
-                ),
+                div()
+                    .py(px(3.))
+                    .relative()
+                    .child(
+                        div()
+                            .mx(px(-2.))
+                            .p(px(2.))
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .saved_layer()
+                            .child(chip(
+                                "choose-project",
+                                "folder",
+                                (!compact)
+                                    .then(|| project.unwrap_or_else(|| "Choose project".into())),
+                                t.text_tertiary,
+                                t,
+                                &project_focus,
+                                cx,
+                            ))
+                            .child(chip(
+                                "work-in",
+                                "laptop",
+                                (!compact).then(|| "This computer".into()),
+                                t.text,
+                                t,
+                                &work_focus,
+                                cx,
+                            ))
+                            .child(shapes::x_fade(px(16.), px(16.))),
+                    )
+                    .child(
+                        canvas(
+                            move |bounds, window, cx| {
+                                let compact = bounds.size.width <= px(475.);
+                                let changed = owner.update(cx, |home, _| {
+                                    std::mem::replace(&mut home.utility_compact, compact) != compact
+                                });
+                                if changed {
+                                    let owner = owner.clone();
+                                    window.defer(cx, move |_, cx| {
+                                        owner.update(cx, |_, cx| cx.notify())
+                                    });
+                                }
+                            },
+                            |_, (), _, _| {},
+                        )
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .w_full()
+                        .h(px(1.)),
+                    ),
             ),
     )
 }
@@ -183,15 +219,15 @@ impl Render for HomeMain {
             .flex()
             .flex_col()
             .child(div().h(px(8.)))
-            .child(utility_bar(self.project.clone(), &t, window, cx))
+            .child(utility_bar(self, cx.entity(), &t, window, cx))
             .child(self.composer.clone());
         // The page column under the `home-mode-toggle` row is the file drop target.
+        // macOS overlay scrollbars reserve no horizontal gutter.
         let page = div()
             .flex_1()
             .min_h_0()
             .flex()
             .flex_col()
-            .px(px(10.))
             .pt(px(24.))
             .child(
                 div()

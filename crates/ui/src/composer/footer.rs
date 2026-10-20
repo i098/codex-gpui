@@ -175,6 +175,7 @@ impl Composer {
                 d.child(self.anchored_menu(self.models_menu(t, cx), Some(EFFORT_MENU_SLOT), cx))
             });
         let has_input = !self.content.is_empty() || !self.attachments.is_empty();
+        let voice_available = crate::HomeAccountAccess::available(cx);
         let stopping = self.running && !has_input;
         let waiting_for_model = loading && !self.running;
         let armed = stopping && self.stop_armed.is_some();
@@ -277,6 +278,9 @@ impl Composer {
             .items_center()
             .justify_center()
             .relative()
+            .when(!voice_available && !has_input && !self.running, |d| {
+                d.opacity(0.5)
+            })
             .child(if waiting_for_model {
                 loading_send(t.composer_primary, t.text_composer_primary).into_any_element()
             } else {
@@ -297,7 +301,7 @@ impl Composer {
             .when(!stopping && !waiting_for_model, |d| {
                 d.child(
                     icon(
-                        if has_input {
+                        if has_input || !voice_available {
                             "composer-arrow-up"
                         } else {
                             "voice"
