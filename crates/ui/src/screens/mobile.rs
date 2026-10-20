@@ -312,13 +312,14 @@ impl Render for MobileSetupPage {
         } else {
             t.text_inverse
         };
-        // `loading` and the unwired `Allow` disable the button: no hover fill.
-        let button_bg =
-            if self.hovered && !matches!(step, SetupStep::Pending | SetupStep::AllowHost) {
-                t.button_primary_solid_hover
-            } else {
-                t.button_primary_solid
-            };
+        // `loading` and the unwired `Allow` disable the button (`disabled: disabled || loading`):
+        // no hover fill, and the shared Button's `dimmed` look, `disabled:opacity-40`.
+        let disabled = matches!(step, SetupStep::Pending | SetupStep::AllowHost);
+        let button_bg = if self.hovered && !disabled {
+            t.button_primary_solid_hover
+        } else {
+            t.button_primary_solid
+        };
         // A `size="large"` primary button: 36 px pill, 14/18 label after the loading spinner.
         let button = |id: &'static str, label: &'static str| -> Stateful<Div> {
             div()
@@ -346,6 +347,7 @@ impl Render for MobileSetupPage {
                     )
                 })
                 .child(text(label, 14., 18., 430., button_fg))
+                .when(disabled, |b| b.opacity(0.4))
         };
         let (heading, description) = match step {
             SetupStep::AllowHost => (
@@ -386,7 +388,7 @@ impl Render for MobileSetupPage {
             // `Allow` would enable remote control (`remoteControl/enable`), which this app does
             // not support yet: the button is disabled and says so.
             SetupStep::AllowHost => column
-                .child(button("allow-host", "Allow").px(px(20.)).opacity(0.5))
+                .child(button("allow-host", "Allow").px(px(20.)))
                 .child(text(
                     "Remote control can’t be turned on from this app yet",
                     13.,
