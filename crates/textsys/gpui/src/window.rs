@@ -5543,6 +5543,15 @@ impl Window {
             .layout_origin_residual_x(layout_id, scale_factor)
     }
 
+    /// Return the fractional y offset removed by `layout_bounds`.
+    pub fn layout_origin_residual_y(&mut self, layout_id: LayoutId) -> Pixels {
+        let scale_factor = self.scale_factor();
+        self.layout_engine
+            .as_mut()
+            .unwrap()
+            .layout_origin_residual_y(layout_id, scale_factor)
+    }
+
     /// This method should be called during `prepaint`. You can use
     /// the returned [Hitbox] during `paint` or in an event handler
     /// to determine whether the inserted hitbox was the topmost.
