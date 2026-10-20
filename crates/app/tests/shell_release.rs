@@ -137,10 +137,26 @@ fn zoom_preserves_draft_focus_and_scaled_pointer_targets() -> Result<()> {
 
 #[test]
 fn sidebar_follows_the_recorded_responsive_widths() -> Result<()> {
-    let mut fx = Fx::scripted(script(None, |_| {})?)?;
+    let mut lines = script(None, |_| {})?;
+    let mut read = exchange("thread/read", json!({"thread": recorded_thread(SUBTRACT)?}));
+    read[0]["msg"]["params"] = json!({"threadId": SUBTRACT, "includeTurns": true});
+    lines.extend(read);
+    let mut fx = Fx::scripted(lines)?;
+    fx.keys("cmd-2")?;
+    fx.wait_thread(SUBTRACT)?;
     for (width, open) in [(1280., true), (767., true), (600., false), (1280., true)] {
         fx.resize(width, 832.)?;
         ensure!(fx.sidebar_open() == open, "sidebar visibility at {width}px");
+        if width == 600. {
+            if let Some(directory) = std::env::var_os("CGX_SHELL_PROOF") {
+                std::fs::create_dir_all(&directory)?;
+                fx.reference_shot()?.save(std::path::Path::new(&directory).join("native-thread-600.png"))?;
+            }
+            fx.click((536., 22.))?;
+            ensure!(fx.read(|root, cx| root.thread().unwrap().read(cx).summary_open), "narrow titlebar summary button is missing");
+            fx.click((536., 22.))?;
+            ensure!(!fx.read(|root, cx| root.thread().unwrap().read(cx).summary_open));
+        }
     }
     Ok(())
 }
