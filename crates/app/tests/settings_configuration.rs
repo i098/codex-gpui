@@ -50,6 +50,7 @@ fn open_configuration(fx: &mut Fx, request_count: usize) -> Result<()> {
 fn evidence(fx: &mut Fx, name: &str) -> Result<()> {
     if let Ok(out) = std::env::var("CGX_CONFIGURATION_EVIDENCE") {
         std::fs::create_dir_all(&out)?;
+        fx.advance(ui::motion::BASIC)?;
         fx.shot()?.save(format!("{out}/{name}.png"))?;
     }
     Ok(())
