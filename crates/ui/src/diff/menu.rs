@@ -82,7 +82,7 @@ impl DiffPanel {
         let count = match kind {
             None => 0,
             Some(Kind::Source) => SOURCES.len(),
-            Some(Kind::Options) => 4,
+            Some(Kind::Options) => 5,
             Some(Kind::Branches) => repository.map_or(0, |r| r.branches.len()),
             Some(Kind::Commits) => repository.map_or(0, |r| r.commits.len()),
             Some(Kind::Header) => {
@@ -102,7 +102,8 @@ impl DiffPanel {
                     0 => ("Expand all diffs", true),
                     1 => ("Collapse all diffs", true),
                     2 => ("Word wrap", true),
-                    _ => (self.layout.label(), true),
+                    3 => (self.layout.label(), true),
+                    _ => ("Word diffs", true),
                 },
                 Kind::Branches => (repository.unwrap().branches[index].as_str(), !self.pending),
                 Kind::Commits => (
@@ -145,6 +146,10 @@ impl DiffPanel {
 
     pub fn wraps_lines(&self) -> bool {
         self.wrap
+    }
+
+    pub fn shows_word_diffs(&self) -> bool {
+        self.word_diffs
     }
 
     pub(super) fn open_menu(
@@ -329,7 +334,8 @@ impl DiffPanel {
                 0 => self.files.iter_mut().for_each(|file| file.open = true),
                 1 => self.files.iter_mut().for_each(|file| file.open = false),
                 2 => self.wrap = !self.wrap,
-                _ => self.layout = self.layout.next(),
+                3 => self.layout = self.layout.next(),
+                _ => self.word_diffs = !self.word_diffs,
             }
             self.selection = None;
             cx.stop_propagation();
@@ -409,6 +415,14 @@ impl DiffPanel {
                     .id((row_id, i))
                     .role(Role::MenuItem)
                     .aria_label(label.to_owned())
+                    .when(kind == Kind::Options && i == 4, |d| {
+                        d.role(Role::MenuItemCheckBox)
+                            .aria_toggled(if self.word_diffs {
+                                gpui::Toggled::True
+                            } else {
+                                gpui::Toggled::False
+                            })
+                    })
                     .aria_disabled(!enabled)
                     .when(active == Some(i), |d| {
                         d.aria_active_descendant().bg(t.menu_item_hover)
@@ -461,6 +475,9 @@ impl DiffPanel {
                     )
                     .when(source && SOURCES[i] == self.source, |d| {
                         d.child(source_glyph(SOURCE_CHECK, "diff-source-check", t.text, 191))
+                    })
+                    .when(kind == Kind::Options && i == 4 && self.word_diffs, |d| {
+                        d.child(source_glyph(SOURCE_CHECK, "diff-word-check", t.text, 191))
                     })
                     .when(source && i == 4, |d| {
                         d.child(source_glyph(

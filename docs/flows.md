@@ -569,7 +569,13 @@ Diff controls reuse `DiffPanel` for the thread panel and the standalone `/diff <
 The standalone entry reads a Git-style unified patch from disk without starting an app-server.
 Auto uses split layout only when both sides change and the file pane is at least 800 px wide.
 The file tree filter changes the tree, not the displayed code.
-Paired replacement lines mark the changed text range.
+The Word diffs option toggles separate changed-word spans without changing the patch or line counts.
+The tokenizer keeps UTF-8 boundaries and limits its comparison table to 2 MB.
+Larger replacements use one changed span per side.
+Diffs and file tabs cache syntax tokens from the installed Syntect grammars.
+The old and new sides keep separate multiline parser state.
+Binary, empty, and unchanged rename entries stay in the file list with their original placeholder labels.
+Git-quoted paths retain spaces, newlines, and UTF-8 bytes.
 The header and context menu share the same word-wrap state.
 The file viewer handles `⌘L`, clamps line numbers, and counts negative numbers from the end.
 The line input stays closed until file contents are available.
@@ -581,6 +587,8 @@ A failed read or mutation adds a status row with Retry.
 `cargo test -p app --test diff_controls -- --nocapture --test-threads=1` runs the native input proof on macOS.
 `CGX_DIFF_EVIDENCE` selects its screenshot folder; the default is the system temporary folder under `cgx-diff-controls`.
 The proof covers header wrap, file filtering, layout changes, empty and loading states, real read failure, Retry, and line navigation.
+`cargo test -p app --test diff_review -- --nocapture --test-threads=1` checks the Word diffs toggle and four real Git file states.
+`CGX_DIFF_REVIEW_EVIDENCE` retains that proof's screenshots and source patch.
 Original captures for the file tree and file filter remain open capture items.
 The release comparison omits both pairs and identifies its exact matching component crops.
 Whole-window pixel parity is not claimed by those component comparisons.
