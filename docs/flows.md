@@ -721,6 +721,7 @@ Cancel discards the draft.
 Navigation, Back, window close, and Quit ask `Discard changes?` while edits remain.
 The multiline field resizes vertically and keeps its document while its viewport changes.
 The field keeps its border outside the scrolling content.
+The editor restores fractional vertical layout offsets before it paints text.
 Typing scrolls the caret into view; the field keeps a minimum height of 96 pixels.
 The instructions tests use owned files and cover save, cancel, discard, load failure, and save retry.
 The coordinate-based instructions cases run on macOS because Linux uses the no-op text system.
