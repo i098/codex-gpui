@@ -3,6 +3,7 @@
 //! plus the key bindings and menu bar. `main.rs` only opens the window;
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
+pub mod computer_use_requests;
 mod features;
 pub mod host;
 pub mod host_settings;

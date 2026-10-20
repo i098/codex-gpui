@@ -65,6 +65,7 @@ actions!(
 );
 
 mod attach;
+pub mod computer_use;
 mod editor;
 mod footer;
 mod menu {
