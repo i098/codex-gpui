@@ -281,6 +281,40 @@ pub(super) fn permissions(
     })
 }
 
+/// `Ml`: thread permissions retain the saved approval policy, unlike unattended cron runs.
+pub(super) fn thread_permissions(
+    roots: &[String],
+    config: &Value,
+    requirements: &Value,
+    selected: Option<&str>,
+) -> Result<Permissions> {
+    let own = if config["sandbox_mode"].is_string() || !config["approval_policy"].is_null() {
+        "custom"
+    } else if guardian(saved_reviewer(config)) {
+        "guardian-approvals"
+    } else {
+        "auto"
+    };
+    let wanted = selected.unwrap_or(own);
+    let modes = allowed_modes(requirements, config);
+    let counterpart = match wanted {
+        "auto" => "guardian-approvals",
+        "guardian-approvals" => "auto",
+        _ => "read-only",
+    };
+    let chosen = [wanted, counterpart, "read-only"]
+        .into_iter()
+        .chain(modes.iter().copied().filter(|m| *m != "full-access"))
+        .find(|m| modes.contains(m))
+        .context("No compatible automation permissions satisfy the managed requirements")?;
+    let picked = mode(chosen, roots, config);
+    Ok(Permissions {
+        approval_policy: picked.approval_policy,
+        reviewer: picked.reviewer,
+        sandbox_policy: picked.sandbox_policy,
+    })
+}
+
 /// `Pr`: the model and effort a run uses, given the server's `model/list` data.
 pub(super) fn model_settings(item: &Value, models: &[Value]) -> (String, Value) {
     let find = |name: Option<&str>| name.and_then(|n| models.iter().find(|m| m["model"] == n));
@@ -468,7 +502,7 @@ impl LocalHost {
     /// kept when it is still ahead, else recalculated after the run's own nominal time, and the
     /// run itself becomes the task's last run. A paused task keeps its times [INFERENCE: `QF`
     /// is assumed to leave them alone]. Like the original, a failed write is not an error.
-    fn record_run_now(&self, item: &Value, now: i64) {
+    pub(super) fn record_run_now(&self, item: &Value, now: i64) {
         let Ok(Some(db)) = self.database(OpenFlags::SQLITE_OPEN_READ_WRITE) else {
             return;
         };
@@ -478,19 +512,34 @@ impl LocalHost {
         );
         let (next, nominal) = if item["status"] != "ACTIVE" {
             (next, nominal)
+        } else if item["kind"] == "heartbeat"
+            && automation_schedule::Schedule::parse(item["rrule"].as_str().unwrap_or_default(), now)
+                .and_then(|schedule| schedule.heartbeat_interval())
+                .is_some()
+        {
+            automation_schedule::next_run_after(
+                item["rrule"].as_str().unwrap_or_default(),
+                "heartbeat",
+                item["id"].as_str().unwrap_or_default(),
+                now,
+                None,
+                rrule::Tz::LOCAL,
+                &self.jitter_salt(),
+            )
+            .map_or((None, nominal), |(n, m)| (Some(n), Some(m)))
         } else if let Some((n, m)) = next.zip(nominal).filter(|(n, m)| *n > now && *m > now) {
             (Some(n), Some(m))
         } else if next.is_none() && nominal.is_some() && item["lastRunAt"].is_i64() {
             (None, nominal)
         } else {
             let rule = item["rrule"].as_str().unwrap_or_default();
-            let one_shot = rule.split(';').any(|part| part == "COUNT=1");
+            let one_shot = item["kind"] == "cron" && rule.split(';').any(|part| part == "COUNT=1");
             let after = next.filter(|n| *n <= now).and(nominal);
             let scheduled = (!(one_shot && next.is_some_and(|n| n <= now)))
                 .then(|| {
                     automation_schedule::next_run_after(
                         rule,
-                        "cron",
+                        item["kind"].as_str().unwrap_or("cron"),
                         item["id"].as_str().unwrap_or_default(),
                         now,
                         after,
@@ -658,11 +707,7 @@ impl LocalHost {
         Ok(())
     }
 
-    /// The original's `automation-run-now` for a task: one app-server thread per task folder, in
-    /// a new worktree of the folder's repository for the original default environment, titled
-    /// with the task name, then a turn with the original's run preamble and the prompt. A run
-    /// that cannot start fails with the reason. Projectless tasks use an owned workspace.
-    /// Heartbeat tasks still need renderer thread state and fail here.
+    /// Starts a cron task in its folders or a heartbeat turn in its existing thread.
     pub(super) fn automation_run_now(&self, params: &Value) -> Result<Value> {
         let id = params["id"].as_str().context("missing automation id")?;
         let item = self
@@ -677,10 +722,9 @@ impl LocalHost {
             !ui::screens::automations::event_triggered(prompt),
             "Automations triggered by events can’t be run manually"
         );
-        ensure!(
-            item["kind"] == "cron",
-            "Heartbeat tasks cannot be run from this app yet"
-        );
+        if item["kind"] == "heartbeat" {
+            return self.run_heartbeat(&item, params);
+        }
         ensure!(
             matches!(
                 item["executionEnvironment"].as_str(),
@@ -884,6 +928,321 @@ impl LocalHost {
     }
 }
 
+pub(crate) mod heartbeat {
+    use super::{LocalHost, model_settings, thread_permissions};
+    use anyhow::{Context as _, Result, ensure};
+    use bridge::{Bridge, Event};
+    use serde_json::{Value, json};
+    use std::time::{Duration, Instant};
+    use ui::composer::Permission;
+
+    #[derive(Clone)]
+    pub(crate) struct RendererState {
+        pub collaboration_mode: Value,
+        pub permission: Permission,
+    }
+
+    pub(crate) async fn request_params(
+        bridge: &Bridge,
+        id: &str,
+        thread_id: &str,
+        state: Option<RendererState>,
+    ) -> Result<Value> {
+        let read: Value = bridge
+            .request(
+                "thread/read",
+                json!({"threadId": thread_id, "includeTurns": false}),
+            )
+            .await?;
+        let cwd = read["thread"]["cwd"]
+            .as_str()
+            .context("Heartbeat thread not found.")?;
+        let selected = state.as_ref().map(|s| match s.permission {
+            Permission::Ask => "auto",
+            Permission::ApproveForMe => "guardian-approvals",
+            Permission::FullAccess => "full-access",
+            Permission::Custom => "custom",
+        });
+        let (config, permissions) = read_permissions(bridge, cwd, selected).await?;
+        let collaboration_mode = state.map(|s| s.collaboration_mode).unwrap_or_else(|| json!({
+        "mode": "default", "settings": {
+            "model": read["thread"]["model"].as_str().or_else(|| config["model"].as_str()).unwrap_or_default(),
+            "reasoning_effort": config["model_reasoning_effort"],
+            "developer_instructions": null,
+        }
+    }));
+        Ok(json!({"id": id, "collaborationMode": collaboration_mode, "permissions": permissions}))
+    }
+
+    async fn read_permissions(
+        bridge: &Bridge,
+        cwd: &str,
+        selected: Option<&str>,
+    ) -> Result<(Value, Value)> {
+        let mut saved: Value = bridge
+            .request("config/read", json!({"cwd": cwd, "includeLayers": false}))
+            .await?;
+        let requirements: Value = bridge
+            .request("configRequirements/read", json!({}))
+            .await
+            .unwrap_or(Value::Null);
+        let config = saved["config"].take();
+        let permissions = thread_permissions(
+            &[cwd.to_owned()],
+            &config,
+            &requirements["requirements"],
+            selected,
+        )?;
+        Ok((
+            config,
+            json!({
+                "approvalPolicy": permissions.approval_policy,
+                "approvalsReviewer": permissions.reviewer,
+                "sandboxPolicy": permissions.sandbox_policy,
+            }),
+        ))
+    }
+
+    fn thread_activity(event: &Event, id: &str) -> bool {
+        let Event::Notification { method, params } = event else {
+            return false;
+        };
+        method == "account/updated"
+            || (params["threadId"] == id
+                && matches!(
+                    method.as_str(),
+                    "thread/deleted"
+                        | "turn/started"
+                        | "item/started"
+                        | "item/completed"
+                        | "thread/status/changed"
+                ))
+    }
+
+    fn has_active_flags(thread: &Value) -> bool {
+        thread["status"]["type"] == "active"
+            && thread["status"]["activeFlags"]
+                .as_array()
+                .is_none_or(|f| !f.is_empty())
+    }
+
+    async fn ensure_idle(bridge: &Bridge, thread: &Value) -> Result<()> {
+        if thread["status"]["type"] != "active" {
+            return Ok(());
+        }
+        let busy = "Heartbeat thread is busy right now.";
+        ensure!(!has_active_flags(thread), "{busy}");
+        let id = thread["id"]
+            .as_str()
+            .context("Heartbeat thread not found.")?;
+        let events = bridge.subscribe();
+        let history: Value = bridge
+            .request("thread/read", json!({"threadId": id, "includeTurns": true}))
+            .await
+            .context(busy)?;
+        ensure!(
+            history["thread"]["turns"]
+                .as_array()
+                .and_then(|t| t.last())
+                .is_some_and(|t| t["status"] == "completed"),
+            "{busy}"
+        );
+        let latest: Value = bridge
+            .request(
+                "thread/read",
+                json!({"threadId": id, "includeTurns": false}),
+            )
+            .await
+            .context(busy)?;
+        ensure!(
+            latest["thread"]["id"] == id && !has_active_flags(&latest["thread"]),
+            "{busy}"
+        );
+        ensure!(
+            !events.try_iter().any(|e| thread_activity(&e, id)),
+            "{busy}"
+        );
+        Ok(())
+    }
+
+    impl LocalHost {
+        pub(super) fn run_heartbeat(&self, item: &Value, params: &Value) -> Result<Value> {
+            let bridge = self
+                .bridge
+                .as_ref()
+                .context("The app server is not connected")?;
+            let id = item["targetThreadId"]
+                .as_str()
+                .context("Heartbeat thread not found.")?;
+            pollster::block_on(async {
+                let read: Value = bridge
+                    .request(
+                        "thread/read",
+                        json!({"threadId": id, "includeTurns": false}),
+                    )
+                    .await
+                    .context("Heartbeat thread not found.")?;
+                let thread = &read["thread"];
+                ensure!(thread["id"] == id, "Heartbeat thread not found.");
+                ensure_idle(bridge, thread).await?;
+                let mut collaboration = params["collaborationMode"].clone();
+                ensure!(
+                    collaboration["settings"]["model"]
+                        .as_str()
+                        .is_some_and(|m| !m.is_empty()),
+                    "Heartbeat thread mode is still loading."
+                );
+                self.record_run_now(item, chrono::Utc::now().timestamp_millis());
+                if let Ok(models) = heartbeat_models(bridge).await
+                    && !models.is_empty()
+                {
+                    let settings = &collaboration["settings"];
+                    let requested = settings["model"].as_str().unwrap_or_default();
+                    let upgraded = models
+                        .iter()
+                        .find(|m| m["model"] == requested)
+                        .and_then(|m| m["upgrade"].as_str())
+                        .unwrap_or(requested);
+                    let (model, effort) = model_settings(
+                        &json!({"model": upgraded, "reasoningEffort": settings["reasoning_effort"]}),
+                        &models,
+                    );
+                    let changed = model != requested;
+                    let has_effort = !settings["reasoning_effort"].is_null();
+                    collaboration["settings"]["model"] = json!(model);
+                    if changed || has_effort {
+                        collaboration["settings"]["reasoning_effort"] = effort;
+                    }
+                }
+                let base = collaboration["settings"]["developer_instructions"]
+                    .as_str()
+                    .unwrap_or_default();
+                if !base.contains(HEARTBEAT_INSTRUCTIONS) {
+                    collaboration["settings"]["developer_instructions"] =
+                        json!(if base.trim().is_empty() {
+                            HEARTBEAT_INSTRUCTIONS.to_owned()
+                        } else {
+                            format!("{}\n\n{HEARTBEAT_INSTRUCTIONS}", base.trim())
+                        });
+                }
+                let resumed: Value = bridge
+                    .request(
+                        "thread/resume",
+                        json!({"threadId": id, "cwd": thread["cwd"], "path": thread["path"]}),
+                    )
+                    .await?;
+                ensure!(
+                    resumed["thread"]["id"] == id,
+                    "Heartbeat resume returned a different thread."
+                );
+                let cwd = resumed["thread"]["cwd"]
+                    .as_str()
+                    .filter(|c| !c.is_empty())
+                    .or_else(|| resumed["cwd"].as_str())
+                    .or_else(|| thread["cwd"].as_str())
+                    .context("Heartbeat thread has no folder.")?;
+                let permissions = if params["permissions"].is_null() {
+                    read_permissions(bridge, cwd, None).await?.1
+                } else {
+                    params["permissions"].clone()
+                };
+                ensure!(
+                    !permissions["approvalPolicy"].is_null()
+                        && permissions["approvalsReviewer"].is_string()
+                        && permissions["sandboxPolicy"].is_object(),
+                    "Invalid heartbeat permissions"
+                );
+                let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                let text = format!(
+                    "<heartbeat>\n  <automation_id>{}</automation_id>\n  <current_time_iso>{now}</current_time_iso>\n  <instructions>\n{}\n  </instructions>\n</heartbeat>\n",
+                    item["id"].as_str().unwrap_or_default(),
+                    item["prompt"].as_str().unwrap_or_default()
+                );
+                let events = bridge.subscribe();
+                let turn: Value = bridge.start_automation_turn(json!({
+                "threadId": id, "turnTrigger": "automation_heartbeat_run_now", "cwd": cwd,
+                "input": [{"type": "text", "text": text, "text_elements": []}],
+                "approvalPolicy": permissions["approvalPolicy"], "approvalsReviewer": permissions["approvalsReviewer"],
+                "sandboxPolicy": permissions["sandboxPolicy"], "model": null, "effort": null,
+                "serviceTier": null, "summary": "auto", "personality": null, "outputSchema": null,
+                "collaborationMode": collaboration,
+            }), item["notificationPolicy"] == "failed_runs_only", false).await?;
+                let turn_id = turn["turn"]["id"]
+                    .as_str()
+                    .context("Heartbeat turn/start returned no turn.")?;
+                let deadline = Instant::now() + Duration::from_secs(30);
+                loop {
+                    let event = events
+                        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                        .context("Timed out waiting for heartbeat automation to start.")?;
+                    if let Event::Notification { method, params } = event
+                        && matches!(method.as_str(), "turn/started" | "turn/completed")
+                        && params["threadId"] == id
+                        && params["turn"]["id"] == turn_id
+                    {
+                        break;
+                    }
+                }
+                Ok(json!({"success": true}))
+            })
+        }
+    }
+
+    async fn heartbeat_models(bridge: &Bridge) -> Result<Vec<Value>> {
+        let mut models = Vec::new();
+        let mut cursor = Value::Null;
+        loop {
+            let page: Value = bridge
+                .request(
+                    "model/list",
+                    json!({"includeHidden": true, "cursor": cursor, "limit": 100}),
+                )
+                .await?;
+            models.extend(
+                page["data"]
+                    .as_array()
+                    .context("model/list returned no models")?
+                    .iter()
+                    .cloned(),
+            );
+            cursor = page["nextCursor"].clone();
+            if cursor.is_null() {
+                return Ok(models);
+            }
+        }
+    }
+
+    const HEARTBEAT_INSTRUCTIONS: &str = r#"## Heartbeats
+
+Occasionally you will see a user message surrounded with a `<heartbeat>` XML tag. This is a special heartbeat message. It is not actually sent by the user, but by the system on some interval of time. The purpose of heartbeats is to make you feel magical and proactive. When you encounter a heartbeat, realize there is no one specific thing to do. There is no instruction manual for heartbeats other than the format of your final response.
+
+A general guideline is to use your existing tools and capabilities. Orient yourself, be proactive, and think big picture. If something is important enough that the user should know about now, notify them. Otherwise, stay quiet.
+
+Routine polling results are quiet by default. Choose `DONT_NOTIFY` when the monitored state is unchanged or still non-actionable, such as pending, queued, in progress, or healthy. Choose `NOTIFY` only for a meaningful update the user should know about now, such as completion, failure, a material state change, or required user action. Do not treat the heartbeat firing, work performed, or an automation prompt's generic request for a status update as sufficient reason to notify. Honor routine periodic updates only when the user explicitly asked for them.
+
+```xml
+<heartbeat>
+  <automation_id>automation id string</automation_id>
+  <decision>NOTIFY</decision>
+  <message>One short user-facing notification message.</message>
+</heartbeat>
+```
+
+```xml
+<heartbeat>
+  <automation_id>automation id string</automation_id>
+  <decision>DONT_NOTIFY</decision>
+  <message>One short quiet-status message explaining why no user action is needed.</message>
+</heartbeat>
+```
+
+If you choose `NOTIFY`, you may include a brief user-facing update before the XML block.
+If you choose `DONT_NOTIFY`, include the short quiet-status `<message>`, but do not include any user-facing prose outside the XML block, including commentary or progress updates while the heartbeat runs.
+
+Every heartbeat turn must end with exactly one non-empty final response containing one of the XML blocks above. Never finish a heartbeat with an empty final response, even when there is no change to report; return the `DONT_NOTIFY` block with a short quiet-status message instead.
+
+The current heartbeat trigger includes `<automation_id>`. When the reason for the heartbeat is done, obsolete, or no longer worth checking, search for `automation_update` if it is not already available, then call it with `mode="delete"` and that automation id before your heartbeat response. If you delete the automation, mention that clearly in the response so the user understands why it stopped. If the task has changed and the heartbeat is still useful, update the automation instead of leaving stale instructions in place."#;
+}
 #[cfg(test)]
 mod tests {
     use super::*;

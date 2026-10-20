@@ -372,8 +372,11 @@ struct DeletedQueuedMessage {
 pub struct Root {
     /// Window size, sidebar and route, saved back on every change.
     state: State,
-    back: Vec<Route>,
-    forward: Vec<Route>,
+    back: Vec<(Route, Option<String>)>,
+    forward: Vec<(Route, Option<String>)>,
+    navigation_epoch: u64,
+    sidebar_automation: Option<String>,
+    thread_run_settings: HashMap<String, host::run_now::heartbeat::RendererState>,
     shell: Entity<Shell>,
     sidebar: Entity<HomeSidebar>,
     /// Recents in sidebar order, for `⌘1`…`⌘9`, Previous/Next Chat and the command menu.
@@ -423,7 +426,7 @@ pub struct Root {
     picking_project: bool,
     automations: Option<Result<Value, String>>,
     automation_load: Option<Task<()>>,
-    /// Tasks whose `automation-run-now` has not answered; their rows read `Starting run…`.
+    /// Tasks whose `automation-run-now` request has not answered.
     running_automations: HashSet<String>,
     automation_updates: HashMap<String, Task<()>>,
     suggestion_load: Option<Task<()>>,
@@ -639,6 +642,9 @@ impl Root {
         let mut root = Self {
             back: Vec::new(),
             forward: Vec::new(),
+            navigation_epoch: 0,
+            sidebar_automation: None,
+            thread_run_settings: HashMap::new(),
             shell,
             sidebar,
             threads: Vec::new(),
@@ -1733,31 +1739,91 @@ impl Root {
         }
     }
 
-    /// Row menu `Run now` (`run-now-11e55df28c95.js`): the host's `automation-run-now` with an
-    /// info toast and the row's `Starting run…` until it answers. A refusal or a
-    /// `success: false` answer is the original's `Could not start scheduled task` danger toast;
-    /// a started run shows as the new thread in Recents.
-    fn run_automation_now(&mut self, id: String, cx: &mut Context<Self>) {
+    fn remember_thread_settings(&mut self, cx: &App) {
+        if let Route::Thread(id) = &self.state.route
+            && self
+                .thread
+                .as_ref()
+                .is_some_and(|view| view.read(cx).id() == id)
+        {
+            let (collaboration_mode, permission) = self.thread_composer.read(cx).run_settings();
+            self.thread_run_settings.insert(
+                id.clone(),
+                host::run_now::heartbeat::RendererState {
+                    collaboration_mode,
+                    permission,
+                },
+            );
+        }
+    }
+
+    /// Uses the target thread's renderer settings and keeps navigation bound to the starting location.
+    fn run_automation_now(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         if !self.running_automations.insert(id.clone()) {
             return;
         }
+        self.remember_thread_settings(cx);
+        let target = self
+            .automations
+            .as_ref()
+            .and_then(|r| r.as_ref().ok())
+            .and_then(|v| v["items"].as_array())
+            .and_then(|items| {
+                items
+                    .iter()
+                    .find(|item| item["id"] == id && item["kind"] == "heartbeat")
+            })
+            .and_then(|item| item["targetThreadId"].as_str())
+            .map(str::to_owned);
+        let settings = target
+            .as_ref()
+            .and_then(|t| self.thread_run_settings.get(t))
+            .cloned();
         self.sync_starting(cx);
         self.toast(Toast::info("Starting run…"), cx);
+        let epoch = self.navigation_epoch;
         let host = self.host.clone();
-        let params = json!({ "id": id, "collaborationMode": null, "permissions": null });
+        let bridge = self.bridge.clone();
+        let task_id = id.clone();
+        let target_id = target.clone();
         let run = cx.background_spawn(async move {
+            let params = if let Some(thread) = target_id {
+                pollster::block_on(host::run_now::heartbeat::request_params(
+                    &bridge, &task_id, &thread, settings,
+                ))?
+            } else {
+                json!({ "id": task_id, "collaborationMode": null, "permissions": null })
+            };
             host.fetch(&host::Request::post("automation-run-now", Some(params)))
                 .and_then(|response| host::json_body(&response))
-                .map_err(|error| error.to_string())
         });
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let result = run.await;
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.running_automations.remove(&id);
                 this.sync_starting(cx);
                 let title = "Could not start scheduled task";
                 match result {
-                    Ok(body) if body["success"] == true => {}
+                    Ok(body) if body["success"] == true => {
+                        if let Some(target) = target {
+                            this.loaded.insert(target.clone());
+                            if this.navigation_epoch == epoch {
+                                let reload = this
+                                    .thread
+                                    .as_ref()
+                                    .is_some_and(|view| view.read(cx).id() == target);
+                                this.navigate_with_sidebar(
+                                    Route::Thread(target.clone()),
+                                    Some(id),
+                                    window,
+                                    cx,
+                                );
+                                if reload {
+                                    this.load_thread(target, window, cx);
+                                }
+                            }
+                        }
+                    }
                     Ok(_) => this.toast(Toast::danger(title), cx),
                     Err(error) => this.toast(Toast::danger(format!("{title}: {error}")), cx),
                 }
@@ -1911,9 +1977,23 @@ impl Root {
     }
 
     fn navigate(&mut self, route: Route, window: &mut Window, cx: &mut Context<Self>) {
-        if route != self.state.route {
-            self.back
-                .push(std::mem::replace(&mut self.state.route, route));
+        self.navigate_with_sidebar(route, None, window, cx);
+    }
+
+    fn navigate_with_sidebar(
+        &mut self,
+        route: Route,
+        automation: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if route != self.state.route || automation != self.sidebar_automation {
+            self.remember_thread_settings(cx);
+            self.back.push((
+                std::mem::replace(&mut self.state.route, route),
+                std::mem::replace(&mut self.sidebar_automation, automation),
+            ));
+            self.navigation_epoch += 1;
             self.forward.clear();
             self.sync(window, cx);
         }
@@ -1921,13 +2001,18 @@ impl Root {
     }
 
     fn step(&mut self, back: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.remember_thread_settings(cx);
         let (from, to) = if back {
             (&mut self.back, &mut self.forward)
         } else {
             (&mut self.forward, &mut self.back)
         };
-        if let Some(route) = from.pop() {
-            to.push(std::mem::replace(&mut self.state.route, route));
+        if let Some((route, automation)) = from.pop() {
+            to.push((
+                std::mem::replace(&mut self.state.route, route),
+                std::mem::replace(&mut self.sidebar_automation, automation),
+            ));
+            self.navigation_epoch += 1;
             self.select_route(cx);
             self.sync(window, cx);
         }
@@ -2008,6 +2093,18 @@ impl Root {
                 self.archive_page = Some(page);
                 Some(shell)
             }
+            Route::Thread(_) if self.sidebar_automation.is_some() => {
+                let tasks = self.tasks();
+                let task = tasks
+                    .iter()
+                    .find(|t| Some(&t.id) == self.sidebar_automation.as_ref())
+                    .cloned();
+                let selected = task.map(|task| (task, cx.new(|_| ui::EmptyMain).into()));
+                let (shell, sidebar, _) = automations::shell(tasks, selected, utc_offset(), cx);
+                self.scheduled = Some(sidebar);
+                self.sync_starting(cx);
+                Some(shell)
+            }
             Route::Mobile => Some(mobile::shell(cx)),
             Route::Home | Route::Thread(_) => None,
         };
@@ -2041,10 +2138,19 @@ impl Root {
             }
             (None, _) => self.home.clone().into(),
         };
+        let shell = if self.sidebar_automation.is_some() {
+            self.page.clone().unwrap_or_else(|| self.shell.clone())
+        } else {
+            self.shell.clone()
+        };
         window.focus(&self.route_focus(cx), cx);
         let home = matches!(self.state.route, Route::Home | Route::Thread(_));
-        self.shell.update(cx, |shell, cx| {
-            shell.selected_rail = home.then_some("home");
+        shell.update(cx, |shell, cx| {
+            shell.selected_rail = if self.sidebar_automation.is_some() {
+                Some("scheduled")
+            } else {
+                home.then_some("home")
+            };
             shell.can_go_back = can_back;
             shell.can_go_forward = can_forward;
             // Thread routes: `with_side_panel` below sets its own.
@@ -2054,7 +2160,7 @@ impl Root {
         });
         self.split = view.map(|view| {
             let panel = self.side_tabs_view(&view, cx);
-            with_side_tabs(self.shell.clone(), view, panel, cx)
+            with_side_tabs(shell.clone(), view, panel, cx)
         });
         if let Some(id) = thread_id
             && self
@@ -2073,8 +2179,9 @@ impl Root {
     fn route_focus(&self, cx: &App) -> FocusHandle {
         let open = |id: &str| self.thread.as_ref().is_some_and(|v| v.read(cx).id() == id);
         match &self.state.route {
-            _ if self.login.is_some() || self.page.is_some() => self.focus.clone(),
+            _ if self.login.is_some() => self.focus.clone(),
             Route::Thread(id) if open(id) => self.thread_composer.focus_handle(cx),
+            _ if self.page.is_some() => self.focus.clone(),
             Route::Thread(_) => self.focus.clone(),
             _ => self.home.read(cx).composer.focus_handle(cx),
         }
@@ -2502,6 +2609,9 @@ impl Root {
                         this.suggestions = None;
                         this.back.clear();
                         this.forward.clear();
+                        this.navigation_epoch += 1;
+                        this.sidebar_automation = None;
+                        this.thread_run_settings.clear();
                         this.state.route = Route::Home;
                         this.toaster = cx.new(|_| Toaster::new());
                         for composer in [
@@ -2662,6 +2772,17 @@ impl Root {
             c.set_queue_pending(self.queue_pending, cx);
             c.set_search_roots(vec![thread.cwd.clone()], cx);
         });
+        if let Some(state) = self.thread_run_settings.get(&thread.id) {
+            self.thread_composer.update(cx, |c, cx| {
+                c.restore_run_settings(&state.collaboration_mode, state.permission, cx)
+            });
+        } else if let Some(model) = thread.model.as_deref() {
+            let effort = self.config["model_reasoning_effort"]
+                .as_str()
+                .unwrap_or("medium");
+            self.thread_composer
+                .update(cx, |c, cx| c.set_model_and_effort(model, effort, cx));
+        }
         let route = Route::Thread(thread.id.clone());
         let clock = self.clock.unwrap_or_else(|| Clock {
             utc_offset: utc_offset(),
@@ -4642,6 +4763,9 @@ impl Render for Root {
                 .into_any_element();
         }
         let content: AnyElement = match (&self.page, &self.split) {
+            (_, Some(split)) if self.sidebar_automation.is_some() => {
+                split.clone().into_any_element()
+            }
             (Some(page), _) => page.clone().into_any_element(),
             (None, Some(split)) => split.clone().into_any_element(),
             (None, None) => self.shell.clone().into_any_element(),
@@ -4705,8 +4829,8 @@ impl Render for Root {
                 }),
             )
             .on_action(
-                cx.listener(|this, a: &automations::RunAutomationNow, _, cx| {
-                    this.run_automation_now(a.id.clone(), cx)
+                cx.listener(|this, a: &automations::RunAutomationNow, window, cx| {
+                    this.run_automation_now(a.id.clone(), window, cx)
                 }),
             )
             .on_action(
