@@ -262,7 +262,6 @@ impl Composer {
         div()
             .relative()
             .p(px(1.))
-            .overflow_hidden()
             .flex()
             .flex_col()
             .child(shapes::decoration(shapes::Decoration {
@@ -291,7 +290,10 @@ impl Composer {
                 .absolute()
                 .size_full(),
             )
-            .child(body)
-            .child(footer)
+            .child(crate::rounded_clip(
+                px(24.),
+                shapes::Corner::Squircle,
+                div().flex().flex_col().child(body).child(footer),
+            ))
     }
 }

@@ -382,6 +382,7 @@ The revised native replay and appearance approval remain pending.
 
 Native Computer Use app approvals use this queue and retain the original request, thread, and turn IDs.
 The card shows the app name, elevated risk, and first-use disclosure.
+The card clips its content through the shared rounded-clip renderer.
 `Allow this conversation` selects the offered session scope; without that scope, `Allow once` permits one use.
 `Always allow` appears only when the server offers that scope in the persistence array.
 MCP responses use `action`, optional empty `content`, and the selected `_meta.persist`; they never use a command-approval `decision`.
