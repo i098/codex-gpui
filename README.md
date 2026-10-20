@@ -259,6 +259,11 @@ Wrap a sparse viewport layer's decorated subtree in `ui::recorded_bounds`.
 It collects painted bounds, including shadows, without adding an opacity layer.
 The Toaster uses this scope to match Chromium's shifted tile grid and local corner geometry.
 
+For a composited layer recorded in window coordinates, add `.window_space_recording()` to its container.
+Keep `.cc_tiles()` when the original layer rectangle sets the tile size.
+Paths retain their window coordinates; the tile grid remains relative to the layer.
+Nested composited layers keep their own recording space. Saved layers inherit it; sparse recordings retain their local origin.
+
 ## Parity method
 
 The references come from the original renderer itself.

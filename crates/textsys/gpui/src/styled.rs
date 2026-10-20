@@ -783,6 +783,14 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Construct this layer's Skia paths in window coordinates while retaining its tile grid.
+    /// Saved layers inherit their enclosing space; sparse recordings retain their local origin.
+    fn window_space_recording(mut self) -> Self {
+        self.style().layer = Some(true);
+        self.style().window_space_recording = Some(true);
+        self
+    }
+
     /// Starts this element and its content at its origin rounded to device pixels, dropping
     /// the subpixel fraction its content would inherit: Blink's paint offset at a CSS
     /// `contain: paint` box, or a transform rounded by Floating UI's `roundByDPR`.

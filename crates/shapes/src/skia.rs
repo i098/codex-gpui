@@ -862,6 +862,8 @@ struct Probe {
 pub(crate) struct Layer {
     /// Coordinate origin in the window; sparse recordings may use local box geometry.
     pub(crate) origin: [i32; 2],
+    /// The tile grid's origin in recording coordinates.
+    tile_origin: [i32; 2],
     /// Window size (bounds the root layer's tiles).
     pub(crate) window: [i32; 2],
     /// cc tile size of the layer ([`cc_tile`]).
@@ -880,7 +882,7 @@ impl Layer {
     pub(crate) fn new(window: &Window, composited: Option<gpui::Point<Pixels>>) -> Self {
         let (vp, s) = (window.viewport_size(), window.scale_factor());
         let dev = |v: Pixels| (f32::from(v) * s).round() as i32;
-        let (origin, size) = match composited {
+        let (mut origin, size) = match composited {
             Some(o) => ([dev(o.x), dev(o.y)], None),
             None => match crate::backdrop::compositor_rect(window) {
                 Some([x0, y0, x1, y1]) => ([x0, y0], Some([x1 - x0, y1 - y0])),
@@ -892,6 +894,14 @@ impl Layer {
                 }),
             },
         };
+        let recorded_bounds = RECORDED_BOUNDS.get();
+        let tile_origin =
+            if composited.is_none() && window.window_space_recording() && recorded_bounds.is_none()
+            {
+                std::mem::take(&mut origin)
+            } else {
+                [0, 0]
+            };
         // The innermost `with_layer`, else a `saved_layer` div: Skia's layer device.
         let floor = |v: Pixels| (f32::from(v) * s).floor() as i32;
         let device = DEVICE
@@ -903,11 +913,11 @@ impl Layer {
             })
             .map(|[x, y]| [x - origin[0], y - origin[1]]);
         let window = [dev(vp.width), dev(vp.height)];
-        let recorded = RECORDED_BOUNDS
-            .get()
+        let recorded = recorded_bounds
             .map(|r| recording_rect(r, origin, [window[0] - origin[0], window[1] - origin[1]]));
         Self {
             origin,
+            tile_origin,
             window,
             tile: recorded.map_or_else(
                 || size.map_or([TILE; 2], cc_tile),
@@ -919,8 +929,15 @@ impl Layer {
         }
     }
 
-    /// `b` (window px) in layer space: Blink paints a layer's content in that space, and the
-    /// float geometry of curves and anti-aliasing depends on where the shape lies in it.
+    fn anchor(&self) -> [i32; 2] {
+        [
+            self.origin[0] + self.tile_origin[0],
+            self.origin[1] + self.tile_origin[1],
+        ]
+    }
+
+    /// `b` (window px) in recording coordinates. Curve geometry and anti-aliasing depend
+    /// on the recording origin, which can differ from the tile grid's origin.
     pub(crate) fn local(&self, b: Bounds<Pixels>, s: f32) -> Bounds<Pixels> {
         let o = point(px(self.origin[0] as f32 / s), px(self.origin[1] as f32 / s));
         Bounds::new(b.origin - o, b.size)
@@ -962,7 +979,7 @@ impl Layer {
             return [r[2], r[3]];
         }
         let size = self.size();
-        if self.origin == [0, 0] {
+        if self.origin == [0, 0] && self.tile_origin == [0, 0] {
             size
         } else {
             [size[0], i32::MAX / 2]
@@ -970,7 +987,7 @@ impl Layer {
     }
 
     fn clip_bounds(&self, [x0, y0, x1, y1]: [i32; 4]) -> [i32; 4] {
-        let min = self.recorded.map_or([0, 0], |r| [r[0], r[1]]);
+        let min = self.recorded.map_or(self.tile_origin, |r| [r[0], r[1]]);
         let max = self.clamp();
         [
             x0.max(min[0]),
@@ -985,7 +1002,7 @@ impl Layer {
         [x0, y0, x1, y1]: [i32; 4],
         extent: [i32; 2],
     ) -> impl Iterator<Item = ([i32; 2], (i32, i32), [i32; 4])> {
-        let offset = self.recorded.map_or([0, 0], |r| [r[0], r[1]]);
+        let offset = self.recorded.map_or(self.tile_origin, |r| [r[0], r[1]]);
         let max = self.recorded.map_or(extent, |r| [r[2], r[3]]);
         let raster_size = self.recorded.map(|_| (self.tile[0], self.tile[1]));
         tiles(
@@ -1012,11 +1029,12 @@ impl Layer {
         })
     }
 
-    /// What a raster in this layer depends on besides its layer-space ops: not the origin, so
-    /// a scroller's contents keep their sprites while they scroll.
+    /// Raster inputs besides the recorded operations. Local recordings can reuse sprites
+    /// while scrolling; window-space recordings also depend on the tile grid's origin.
     fn key(&self) -> impl std::fmt::Debug {
         (
             self.tile,
+            self.tile_origin,
             self.clamp(),
             self.composited,
             self.device,
@@ -1771,7 +1789,7 @@ pub(crate) fn with_rounded_clip<R>(
         ..Default::default()
     };
     let (clip, _) = ops(&d, bounds, window.scale_factor());
-    let only = (!layers).then(|| Layer::new(window, None).origin);
+    let only = (!layers).then(|| Layer::new(window, None).anchor());
     CLIPS.with_borrow_mut(|c| c.push((clip, only)));
     let out = paint(window);
     CLIPS.with_borrow_mut(|c| c.pop());
@@ -1811,7 +1829,7 @@ pub(crate) fn with_layer<R>(
 /// The active [`CLIPS`] in `layer`'s space.
 fn clips(window: &Window, layer: Layer) -> Vec<Contour> {
     let [x, y] = layer.origin.map(|v| -v as f32);
-    let inner = Layer::new(window, None).origin;
+    let inner = Layer::new(window, None).anchor();
     CLIPS.with_borrow(|c| {
         c.iter()
             .filter(|(_, only)| only.is_none_or(|o| o == inner))
@@ -2753,6 +2771,7 @@ mod tests {
         let recorded = recording_rect([877, 68, 1683, 266], [0, 0], [2560, 1664]);
         let layer = Layer {
             origin: [0, 0],
+            tile_origin: [0, 0],
             window: [2560, 1664],
             tile: recorded_tile([recorded[2] - recorded[0], recorded[3] - recorded[1]]),
             composited: false,
@@ -2840,6 +2859,113 @@ mod tests {
             (1638, 100, [49, 26, 25, 255]),
             (918, 211, [119, 31, 28, 255]),
             (1643, 211, [67, 27, 26, 255]),
+        ] {
+            assert_eq!(image.get_pixel(x, y).0, expected, "corner ({x}, {y})");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn window_recording_preserves_original_squircle_edges() -> anyhow::Result<()> {
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        struct Recording;
+        impl Render for Recording {
+            fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+                let probe = |expected| {
+                    canvas(
+                        |_, _, _| (),
+                        move |_, (), window, _| {
+                            assert_eq!(window.window_space_recording(), expected);
+                        },
+                    )
+                    .size(px(1.))
+                };
+                let subtree = div()
+                    .size_full()
+                    .relative()
+                    .child(
+                        div()
+                            .absolute()
+                            .left(px(340.5))
+                            .top(px(621.5))
+                            .w(px(935.5))
+                            .h(px(206.5))
+                            .cc_tiles()
+                            .window_space_recording()
+                            .child(probe(true))
+                            .child(div().size(px(1.)).layer().child(probe(false)))
+                            .child(div().size(px(1.)).saved_layer().child(probe(true)))
+                            .child(probe(true))
+                            .child(shapes::decoration(Decoration {
+                                fill: Some(gpui::rgb(0x181818).into()),
+                                ..Default::default()
+                            }))
+                            .child(
+                                div()
+                                    .absolute()
+                                    .left(px(99.75))
+                                    .top(px(0.))
+                                    .w(px(736.))
+                                    .h(px(190.5))
+                                    .child(shapes::decoration(Decoration {
+                                        radius: Corners::all(px(25.)),
+                                        corner: Corner::Squircle,
+                                        fill: Some(gpui::rgb(0x2d2d2d).into()),
+                                        border: Some((
+                                            px(1.),
+                                            gpui::Hsla {
+                                                a: 0.082,
+                                                ..gpui::white()
+                                            },
+                                        )),
+                                        ..Default::default()
+                                    })),
+                            ),
+                    )
+                    .child(probe(false))
+                    .into_any_element();
+                div().size_full().bg(gpui::rgb(0x181818)).child(
+                    canvas(
+                        move |bounds, window, cx| {
+                            let mut subtree = subtree;
+                            subtree.prepaint_as_root(
+                                bounds.origin,
+                                bounds.size.map(gpui::AvailableSpace::Definite),
+                                window,
+                                cx,
+                            );
+                            subtree
+                        },
+                        |_, mut subtree, window, cx| {
+                            with_rounded_clip(
+                                Corners::default(),
+                                Corner::Round,
+                                Bounds::new(point(px(0.), px(0.)), size(px(10.), px(10.))),
+                                false,
+                                window,
+                                |window| subtree.paint(window, cx),
+                            );
+                        },
+                    )
+                    .size_full(),
+                )
+            }
+        }
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(()),
+            gpui_platform::current_headless_renderer,
+        );
+        let window = cx.open_window(size(px(1280.), px(832.)), |_, cx| cx.new(|_| Recording))?;
+        cx.run_until_parked();
+        let image = cx.capture_screenshot(window.into())?;
+        for (x, y, expected) in [
+            (2350, 1267, [30, 30, 30, 255]),
+            (2352, 1276, [28, 28, 28, 255]),
+            (2351, 1273, [47, 47, 47, 255]),
         ] {
             assert_eq!(image.get_pixel(x, y).0, expected, "corner ({x}, {y})");
         }
