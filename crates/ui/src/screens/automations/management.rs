@@ -142,7 +142,7 @@ impl Management {
             .border_b_1()
             .border_color(if t.appearance == theme::Appearance::Dark {
                 gpui::Hsla {
-                    a: 0.042,
+                    a: 0.043,
                     ..t.border_subtle
                 }
             } else {
@@ -174,7 +174,20 @@ impl Management {
                             .gap(px(12.))
                             .child(text(task.name.clone(), 13., 18.5714, 430., t.text))
                             .when(unread, |d| {
-                                d.child(div().size(px(8.)).rounded_full().bg(gpui::rgb(0x3a83f7)))
+                                d.child(
+                                    div()
+                                        .size(px(20.))
+                                        .flex_none()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .child(
+                                            div()
+                                                .size(px(8.))
+                                                .rounded_full()
+                                                .bg(gpui::rgb(0x3a83f7)),
+                                        ),
+                                )
                             }),
                     )
                     .child(
@@ -344,10 +357,8 @@ impl Render for Management {
                                     .h(px(32.))
                                     .flex_1()
                                     .min_w_0()
-                                    .px(px(12.))
+                                    .px(px(13.))
                                     .rounded_full()
-                                    .border_1()
-                                    .border_color(gpui::transparent_black())
                                     .flex()
                                     .items_center()
                                     .child(shapes::decoration(shapes::Decoration {
@@ -356,7 +367,15 @@ impl Render for Management {
                                         border: Some((px(1.), t.text.opacity(0.157))),
                                         ..Default::default()
                                     }))
-                                    .child(icon("search", 16., t.text_secondary))
+                                    .child(icon(
+                                        "search",
+                                        16.,
+                                        if t.appearance == theme::Appearance::Dark {
+                                            t.text.opacity(0.65)
+                                        } else {
+                                            t.text_secondary
+                                        },
+                                    ))
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.open_search(window, cx)
                                     })),
@@ -392,8 +411,7 @@ impl Render for Management {
                                             .gap(px(6.))
                                             .child(
                                                 icon("automations-plus", 16., t.menu_background)
-                                                    .relative()
-                                                    .left(px(-1.)),
+                                                    .ml(px(-1.)),
                                             )
                                             .child(text("Add", 14., 14., 400., t.menu_background)),
                                     )

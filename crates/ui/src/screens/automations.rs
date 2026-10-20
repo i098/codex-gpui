@@ -881,7 +881,7 @@ impl Render for ScheduledSidebar {
                                 .h(px(30.))
                                 .mt(px(1.))
                                 .pl(px(24.))
-                                .pr(px(12.))
+                                .pr(px(8.))
                                 .rounded(px(12.5))
                                 .flex()
                                 .items_center()
@@ -901,7 +901,19 @@ impl Render for ScheduledSidebar {
                                 )
                                 .when(run["readAt"].is_null(), |d| {
                                     d.child(
-                                        div().size(px(8.)).rounded_full().bg(gpui::rgb(0x3a83f7)),
+                                        div()
+                                            .size(px(20.))
+                                            .mr(px(-4.))
+                                            .flex_none()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .child(
+                                                div()
+                                                    .size(px(8.))
+                                                    .rounded_full()
+                                                    .bg(gpui::rgb(0x3a83f7)),
+                                            ),
                                     )
                                 })
                                 .on_click(move |_, _, cx| {
