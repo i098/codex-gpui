@@ -2140,6 +2140,7 @@ pub(crate) struct AriaProperties {
 pub struct Interactivity {
     /// The element ID of the element. In id is required to support a stateful subset of the interactivity such as on_click.
     pub element_id: Option<ElementId>,
+    pub(crate) layout_id: Option<LayoutId>,
     /// Whether the element was clicked. This will only be present after layout.
     pub active: Option<bool>,
     /// Whether the element was hovered. This will only be present after paint if an hitbox
@@ -2300,6 +2301,7 @@ impl Interactivity {
 
                 let style = self.compute_style_internal(None, element_state.as_mut(), window, cx);
                 let layout_id = f(style, window, cx);
+                self.layout_id = Some(layout_id);
                 (layout_id, element_state)
             },
         )
@@ -2551,10 +2553,16 @@ impl Interactivity {
                 // A scroller's composited layer is its scrolling contents: Chromium rasters
                 // them in content space, so its tiles (and `crates/shapes`' sprites) start at
                 // the content's origin and keep their pixels while it scrolls.
-                let layer_bounds = match &self.scroll_offset {
+                let mut layer_bounds = match &self.scroll_offset {
                     Some(offset) => Bounds::new(bounds.origin + *offset.borrow(), bounds.size),
                     None => bounds,
                 };
+                if style.layer && !style.top_layer
+                    && let Some(layout_id) = self.layout_id
+                {
+                    layer_bounds.origin.x += window.layout_origin_residual_x(layout_id);
+                    layer_bounds.size = window.layout_size_unrounded(layout_id);
+                }
                 window.with_element_opacity(
                     style.opacity,
                     style.layer.then_some((layer_bounds, &style)),

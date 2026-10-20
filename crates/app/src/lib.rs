@@ -101,8 +101,8 @@ pub struct GoToChat(pub usize);
 #[action(namespace = app, no_json)]
 pub struct GoToRecentChat(pub usize);
 
-/// `(min-width: 768px)`: below it the original hides the sidebar panel.
-const SIDEBAR_BREAKPOINT: Pixels = px(768.);
+/// The original thread shell auto-collapses its sidebar at `iLi = 720`.
+const SIDEBAR_BREAKPOINT: Pixels = px(720.);
 
 /// Key bindings (docs/inventory.md §12) and the app-level commands.
 pub fn init(cx: &mut App) {
@@ -409,7 +409,7 @@ pub struct Root {
     /// `thread/list` cursor of the page after `threads`, while the sidebar's end asks for it.
     next_cursor: Option<String>,
     loading_more: bool,
-    /// The window is at least [`SIDEBAR_BREAKPOINT`] wide; narrower hides the sidebar.
+    /// The window exceeds [`SIDEBAR_BREAKPOINT`]; narrower windows hide the sidebar.
     wide: bool,
     /// Holds key focus when no composer shows (Settings, a loading thread, sign-in), so
     /// shortcuts still reach the root's actions.
@@ -493,6 +493,92 @@ pub struct Root {
     /// The `Notifications` region over the window.
     toaster: Entity<Toaster>,
     _events: Task<()>,
+}
+
+/// The feedback is outside the original's zoomed content and keeps its normal optical font size.
+struct ZoomFeedbackText {
+    line: gpui::ShapedLine,
+    zoom: f32,
+    line_height: Pixels,
+    color: gpui::Hsla,
+}
+
+impl gpui::IntoElement for ZoomFeedbackText {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl gpui::Element for ZoomFeedbackText {
+    type RequestLayoutState = gpui::LayoutId;
+    type PrepaintState = gpui::Point<Pixels>;
+
+    fn id(&self) -> Option<gpui::ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        window: &mut Window,
+        _: &mut App,
+    ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+        let size = gpui::size(self.line.width / self.zoom, self.line_height / self.zoom);
+        let id = window.request_measured_layout(Default::default(), move |_, _, _, _| size);
+        (id, id)
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        bounds: gpui::Bounds<Pixels>,
+        layout: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        _: &mut App,
+    ) -> Self::PrepaintState {
+        let mut origin = bounds.origin;
+        origin.x += window.layout_origin_residual_x(*layout);
+        origin
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        _: gpui::Bounds<Pixels>,
+        _: &mut Self::RequestLayoutState,
+        origin: &mut Self::PrepaintState,
+        window: &mut Window,
+        _: &mut App,
+    ) {
+        let scale = window.scale_factor() / self.zoom;
+        let leading = self.line_height - self.line.ascent - self.line.descent;
+        let baseline = self.line.ascent + px((f32::from(leading) * scale / 2.).floor() / scale);
+        let offset = gpui::point(px(0.), baseline);
+        for run in &self.line.runs {
+            for glyph in &run.glyphs {
+                let position = *origin + (glyph.position + offset) / self.zoom;
+                window
+                    .paint_glyph_with_optical_size(
+                        position,
+                        run.font_id,
+                        glyph.id,
+                        self.line.font_size / self.zoom,
+                        self.line.font_size,
+                        self.color,
+                    )
+                    .expect("zoom feedback glyph rasterization failed");
+            }
+        }
+    }
 }
 
 impl Root {
@@ -645,7 +731,7 @@ impl Root {
         })
         .detach();
         let main = cx.new(|_| ui::EmptyMain).into();
-        let wide = window.viewport_size().width >= SIDEBAR_BREAKPOINT;
+        let wide = window.viewport_size().width > SIDEBAR_BREAKPOINT;
         let sidebar_open = state.sidebar_open && wide;
         let shell = cx.new(|_| {
             let mut shell = Shell::new(sidebar.clone().into(), main);
@@ -2099,76 +2185,153 @@ impl Root {
     }
 
     fn zoom_feedback(&self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
+        use gpui::prelude::FluentBuilder as _;
         use theme::ActiveTheme as _;
+        static NUMBER_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
+            std::sync::LazyLock::new(|| gpui::FontFeatures(Arc::new(vec![("tnum".into(), 1)])));
         let t = cx.theme().clone();
         let zoom = self.state.zoom;
+        let reset: Option<fn(&mut Window, &mut App)> =
+            (zoom != 1.).then_some(|window, cx| window.dispatch_action(Box::new(ActualSize), cx));
+        let text = |value: SharedString, weight, height, color, features| {
+            let run = gpui::TextRun {
+                len: value.len(),
+                font: gpui::Font { weight: gpui::FontWeight(weight), features, ..gpui::font(ui::SANS) },
+                color,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            ZoomFeedbackText {
+                line: window.text_system().shape_line(value, px(13.), &[run], None),
+                zoom,
+                line_height: px(height),
+                color,
+            }.into_any_element()
+        };
+        let percentage_label: SharedString = format!("{:.0}%", zoom * 100.).into();
+        let percentage = text(percentage_label.clone(), 600., 18.5714, t.text, (*NUMBER_FEATURES).clone());
+        let reset_label = text("Reset".into(), 430., 18., t.text_tertiary, Default::default());
         let button = |id: &'static str,
                       label: &'static str,
                       content: AnyElement,
-                      action: fn(&mut Window, &mut App),
+                      action: Option<fn(&mut Window, &mut App)>,
                       window: &mut Window,
                       cx: &mut Context<Self>| {
-            let focus = ui::focus::handle(id, 0, window, cx);
-            ui::focus::ring(div().id(id), &focus, px(12.5) / zoom, px(0.), cx)
+            let button = if action.is_some() {
+                let focus = ui::focus::handle(id, 0, window, cx);
+                ui::focus::ring(div().id(id), &focus, px(12.5) / zoom, px(0.), cx)
+            } else {
+                div().id(id)
+            };
+            button
                 .role(gpui::Role::Button)
                 .aria_label(label)
+                .aria_disabled(action.is_none())
+                .when(action.is_none(), |button| button.opacity(0.4))
                 .h(px(28.) / zoom)
                 .px(px(8.) / zoom)
+                .border(px(1.) / zoom)
+                .border_color(gpui::rgba(0))
                 .flex()
                 .items_center()
                 .justify_center()
                 .rounded(px(12.5) / zoom)
-                .hover(move |style| style.bg(t.ghost_hover))
-                .on_click(move |_, window, cx| action(window, cx))
+                .when(action.is_some(), |button| {
+                    button.hover(move |style| style.bg(t.ghost_hover))
+                })
+                .on_click(move |_, window, cx| {
+                    if let Some(action) = action {
+                        action(window, cx);
+                    }
+                })
                 .child(content)
         };
-        div()
-            .absolute()
-            .top(px(8.) / zoom)
-            .right(px(16.) / zoom)
+        let surface = div()
             .h(px(44.) / zoom)
-            .px(px(8.) / zoom)
+            .px(px(8.5) / zoom)
             .flex()
             .items_center()
             .rounded(px(20.) / zoom)
-            .bg(t.surface_secondary)
             .on_key_down(ui::focus::tab)
-            .child(div().px(px(8.) / zoom).child(ui::text(
-                format!("{:.0}%", zoom * 100.),
-                13. / zoom,
-                18. / zoom,
-                600.,
-                t.text,
-            )))
-            .child(button(
-                "zoom-out",
-                "Zoom out",
+            .child(shapes::decoration(shapes::Decoration {
+                radius: gpui::Corners::all(px(20.) / zoom),
+                fill: Some(t.surface_secondary),
+                border: Some((px(0.5) / zoom, t.border)),
+                shadows: vec![shapes::Shadow {
+                    color: gpui::black().opacity(0.12),
+                    offset: gpui::point(px(0.), px(8.) / zoom),
+                    blur: px(16.) / zoom,
+                    spread: px(-4.) / zoom,
+                    inset: false,
+                }],
+                ..Default::default()
+            }))
+            .child(
                 div()
-                    .w(px(12.) / zoom)
-                    .h(px(1.33) / zoom)
-                    .bg(t.text_tertiary)
-                    .into_any_element(),
-                |window, cx| window.dispatch_action(Box::new(ZoomOut), cx),
-                window,
-                cx,
-            ))
-            .child(button(
-                "zoom-in",
-                "Zoom in",
-                ui::icon::icon("plus", 16. / zoom, t.text_tertiary).into_any_element(),
-                |window, cx| window.dispatch_action(Box::new(ZoomIn), cx),
-                window,
-                cx,
-            ))
-            .child(div().h(px(16.) / zoom).w(px(0.5) / zoom).bg(t.border))
+                    .id("zoom-percentage")
+                    .role(gpui::Role::Label)
+                    .aria_label(percentage_label)
+                    .w(px(48.) / zoom)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(percentage),
+            )
+            .child(
+                div()
+                    .ml(px(4.) / zoom)
+                    .flex()
+                    .items_center()
+                    .child(
+                        button(
+                            "zoom-out",
+                            "Zoom out",
+                            ui::icon::icon("zoom-out", 16. / zoom, t.text_tertiary)
+                                .into_any_element(),
+                            Some(|window, cx| window.dispatch_action(Box::new(ZoomOut), cx)),
+                            window,
+                            cx,
+                        )
+                        .w(px(28.) / zoom)
+                        .px_0(),
+                    )
+                    .child(
+                        button(
+                            "zoom-in",
+                            "Zoom in",
+                            ui::icon::icon("zoom-in", 16. / zoom, t.text_tertiary).into_any_element(),
+                            Some(|window, cx| window.dispatch_action(Box::new(ZoomIn), cx)),
+                            window,
+                            cx,
+                        )
+                        .w(px(28.) / zoom)
+                        .px_0(),
+                    ),
+            )
+            .child(
+                div()
+                    .mx(px(4.) / zoom)
+                    .h(px(16.) / zoom)
+                    .w(px(1.) / zoom)
+                    .bg(t.border),
+            )
             .child(button(
                 "zoom-reset",
                 "Reset",
-                ui::text("Reset", 13. / zoom, 18. / zoom, 430., t.text_tertiary).into_any_element(),
-                |window, cx| window.dispatch_action(Box::new(ActualSize), cx),
+                reset_label,
+                reset,
                 window,
                 cx,
-            ))
+            ));
+        div()
+            .absolute()
+            .top(px(-4.) / zoom)
+            .right(px(16.) / zoom)
+            .pl(px(20.) / zoom)
+            .pt(px(12.) / zoom)
+            .layer()
+            .child(surface)
     }
 
     /// Opens the Recents row `delta` rows from the open thread; from any other route,
@@ -2191,10 +2354,9 @@ impl Root {
         }
     }
 
-    /// Below [`SIDEBAR_BREAKPOINT`] the sidebar hides; wider again it shows as the user
-    /// left it.
+    /// At or below [`SIDEBAR_BREAKPOINT`], hide the sidebar without changing the user's preference.
     fn fit(&mut self, window: &Window, cx: &mut Context<Self>) {
-        let wide = window.viewport_size().width >= SIDEBAR_BREAKPOINT;
+        let wide = window.viewport_size().width > SIDEBAR_BREAKPOINT;
         if wide != self.wide {
             self.wide = wide;
             let open = wide && self.state.sidebar_open;

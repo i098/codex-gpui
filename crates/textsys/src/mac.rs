@@ -414,6 +414,10 @@ impl PlatformTextSystem for SkiaMatchedTextSystem {
         }
     }
 
+    fn font_x_height(&self, font_id: FontId, font_size: Pixels) -> Option<Pixels> {
+        Some(px(self.0.lock().font(font_id, f32::from(font_size)).x_height() as f32))
+    }
+
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
         let font = self.0.lock().font(font_id, METRICS_SIZE as f32);
         let s = font.units_per_em() as f64 / METRICS_SIZE;

@@ -555,17 +555,35 @@ fn paint_line(
     window.paint_layer(line_bounds, |window| {
         // Blink floors the half leading to whole device px.
         let scale = window.scale_factor();
-        let leading = f32::from(line_height - layout.ascent - layout.descent);
+        let text_system = cx.text_system().clone();
+        // The Mac layout cache rounds before content zoom. Round raw metrics on the paint grid
+        // when zoom changes, and preserve the normal-size path.
+        let (ascent, descent) = if window.content_zoom() != 1. && !layout.runs.is_empty() {
+            layout
+                .runs
+                .iter()
+                .fold((px(0.), px(0.)), |(ascent, descent), run| {
+                    let raw_ascent = f32::from(text_system.ascent(run.font_id, layout.font_size));
+                    let raw_descent =
+                        f32::from(text_system.descent(run.font_id, layout.font_size)).abs();
+                    (
+                        ascent.max(px((raw_ascent * scale).round() / scale)),
+                        descent.max(px((raw_descent * scale).round() / scale)),
+                    )
+                })
+        } else {
+            (layout.ascent, layout.descent)
+        };
+        let leading = f32::from(line_height - ascent - descent);
         let padding_top = px((leading * scale / 2.).floor() / scale);
-        let baseline_offset = point(px(0.), padding_top + layout.ascent);
-        let underline_y_offset = underline_y_offset(line_height, layout.ascent, layout.descent);
+        let baseline_offset = point(px(0.), padding_top + ascent);
+        let underline_y_offset = underline_y_offset(line_height, ascent, descent);
         let mut decoration_runs = decoration_runs.iter();
         let mut wraps = wrap_boundaries.iter().peekable();
         let mut run_end = 0;
         let mut color = black();
         let mut current_underline: Option<(Point<Pixels>, UnderlineStyle, Range<usize>)> = None;
         let mut current_strikethrough: Option<(Point<Pixels>, StrikethroughStyle)> = None;
-        let text_system = cx.text_system().clone();
         let mut glyph_origin = point(
             aligned_origin_x(
                 origin,
@@ -693,8 +711,7 @@ fn paint_line(
                             current_strikethrough.get_or_insert((
                                 point(
                                     glyph_origin.x,
-                                    glyph_origin.y
-                                        + (((layout.ascent * 0.5) + baseline_offset.y) * 0.5),
+                                    glyph_origin.y + (((ascent * 0.5) + baseline_offset.y) * 0.5),
                                 ),
                                 StrikethroughStyle {
                                     color: Some(run_strikethrough.color.unwrap_or(style_run.color)),

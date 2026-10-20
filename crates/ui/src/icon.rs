@@ -32,8 +32,6 @@ pub fn icon(name: &str, size: f32, color: Hsla) -> Icon {
 pub fn icon_sized(name: &str, width: f32, height: f32, color: Hsla) -> Icon {
     Icon {
         name: name.into(),
-        width,
-        height,
         flip_x: false,
         composited: None,
         own_layer: false,
@@ -48,9 +46,6 @@ pub fn icon_sized(name: &str, width: f32, height: f32, color: Hsla) -> Icon {
 
 pub struct Icon {
     name: SharedString,
-    /// CSS size: the svg's viewBox maps onto it unsnapped.
-    width: f32,
-    height: f32,
     flip_x: bool,
     composited: Option<Point<Pixels>>,
     own_layer: bool,
@@ -111,16 +106,20 @@ fn load(path: String, cx: &App) -> Option<Arc<RenderImage>> {
         .clone()
 }
 
-/// `color` as the 8-bit `rrggbbaa` key of the fitted images.
-fn color_key(color: Hsla) -> String {
+/// Use the same 8-bit color for fitted images and SVG paint.
+fn color_key(color: Hsla) -> (String, Hsla) {
     let c = Rgba::from(color);
     let b = |v: f32| (v.clamp(0., 1.) * 255.).round() as u8;
-    format!("{:02x}{:02x}{:02x}{:02x}", b(c.r), b(c.g), b(c.b), b(c.a))
+    let [r, g, b, a] = [c.r, c.g, c.b, c.a].map(b);
+    (
+        format!("{r:02x}{g:02x}{b:02x}{a:02x}"),
+        Rgba { r: f32::from(r) / 255., g: f32::from(g) / 255., b: f32::from(b) / 255., a: f32::from(a) / 255. }.into(),
+    )
 }
 
 impl Element for Icon {
-    type RequestLayoutState = ();
-    type PrepaintState = Option<Hitbox>;
+    type RequestLayoutState = LayoutId;
+    type PrepaintState = (Option<Hitbox>, gpui::Size<Pixels>);
 
     fn id(&self) -> Option<ElementId> {
         self.interactivity.element_id.clone()
@@ -136,7 +135,7 @@ impl Element for Icon {
         inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
-    ) -> (LayoutId, ()) {
+    ) -> (LayoutId, LayoutId) {
         let layout_id = self.interactivity.request_layout(
             global_id,
             inspector_id,
@@ -144,7 +143,7 @@ impl Element for Icon {
             cx,
             |style, window, cx| window.request_layout(style, None, cx),
         );
-        (layout_id, ())
+        (layout_id, layout_id)
     }
 
     fn prepaint(
@@ -152,11 +151,12 @@ impl Element for Icon {
         global_id: Option<&GlobalElementId>,
         inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
-        _: &mut (),
+        layout_id: &mut LayoutId,
         window: &mut Window,
         cx: &mut App,
-    ) -> Option<Hitbox> {
-        self.interactivity.prepaint(
+    ) -> Self::PrepaintState {
+        let size = window.layout_size_unrounded(*layout_id);
+        let hitbox = self.interactivity.prepaint(
             global_id,
             inspector_id,
             bounds,
@@ -164,7 +164,8 @@ impl Element for Icon {
             window,
             cx,
             |_, _, hitbox, _, _| hitbox,
-        )
+        );
+        (hitbox, size)
     }
 
     fn paint(
@@ -172,16 +173,17 @@ impl Element for Icon {
         global_id: Option<&GlobalElementId>,
         inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
-        _: &mut (),
-        hitbox: &mut Option<Hitbox>,
+        _: &mut LayoutId,
+        state: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
+        let (hitbox, css) = state;
+        let css = *css;
         // The icon's own opacity goes into the color (and the fitted images' key).
         let opacity = self.interactivity.base_style.opacity.take().unwrap_or(1.);
         let (name, flip_x, own_layer) = (self.name.clone(), self.flip_x, self.own_layer);
         let (composited, runtime) = (self.composited, self.runtime);
-        let css = size(px(self.width), px(self.height));
         self.interactivity.paint(
             global_id,
             inspector_id,
@@ -201,7 +203,7 @@ impl Element for Icon {
                 let dev = |v: Pixels| (f32::from(v) * scale).ceil();
                 let (w, h) = (dev(css.width), dev(css.height));
                 let flipped = if flip_x { "-flipx" } else { "" };
-                let key = color_key(color);
+                let (key, color) = color_key(color);
                 let dir = format!("icons/px/{name}{flipped}@{w}x{h}/{key}");
                 let fitted = || {
                     load(format!("{dir}@{x}_{y}.png"), cx)
@@ -237,14 +239,14 @@ impl Element for Icon {
                 }
                 let mut matrix = TransformationMatrix::unit();
                 if flip_x {
-                    let center = bounds.center();
+                    let center = Bounds::new(bounds.origin, css).center();
                     matrix = matrix
                         .translate(center.scale(scale))
                         .scale(size(-1., 1.))
                         .translate(center.scale(-scale));
                 }
                 window
-                    .paint_svg(bounds, path.into(), None, matrix, color, cx)
+                    .paint_svg(Bounds::new(bounds.origin, css), path.into(), None, matrix, color, cx)
                     .ok();
             },
         )

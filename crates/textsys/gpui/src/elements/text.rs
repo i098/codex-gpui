@@ -643,13 +643,13 @@ impl TextLayout {
     ) -> LayoutId {
         let text_style = window.text_style();
         let font_size = text_style.font_size.to_pixels(window.rem_size());
-        // Fractional like Blink (LayoutUnit::FromFloatRound of the device-px value, 1/64 px);
-        // lines and glyphs snap when painted.
+        // Keep fractional layout units until glyph painting.
         let units = window.scale_factor() * 64.;
         let line_height = text_style
             .line_height
             .to_pixels(font_size.into(), window.rem_size());
-        let line_height = Pixels((line_height.0 * units).round() / units);
+        let value = line_height.0 * units;
+        let line_height = Pixels(if window.content_zoom() == 1. { value.round() } else { value.trunc() } / units);
 
         let runs = if let Some(runs) = runs {
             runs

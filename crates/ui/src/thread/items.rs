@@ -4,9 +4,23 @@ use gpui::{Image, ImageFormat};
 
 pub(super) type McpImages = RefCell<HashMap<String, Vec<(usize, Arc<Image>)>>>;
 
+fn layout_pixels(window: &Window, value: f32) -> f32 {
+    let value = value * window.scale_factor() * 64.;
+    if window.content_zoom() == 1. { value.round() / 64. } else { value.trunc() / 64. }
+}
+
+pub(super) fn action_button_size(window: &Window) -> Pixels {
+    let scale = window.scale_factor();
+    px((layout_pixels(window, 16.) + 2. * layout_pixels(window, 4.) + 2. * scale.floor().max(1.)) / scale)
+}
+
+pub(super) fn user_action_space(window: &Window) -> Pixels {
+    action_button_size(window) + px(layout_pixels(window, 4.) / window.scale_factor())
+}
+
 /// Right-aligned user message: `bg-user-message`, 22 px squircle, at most 70% wide.
-pub(super) fn user_bubble(message: &str, t: &Theme) -> Div {
-    div().flex().flex_col().items_end().pb(px(30.)).child(
+pub(super) fn user_bubble(message: &str, t: &Theme, window: &Window) -> Div {
+    div().flex().flex_col().items_end().pb(user_action_space(window)).child(
         div()
             .relative()
             .max_w(relative(0.7))
@@ -96,11 +110,20 @@ pub(super) fn disclosure(label: String, angle: f32, window: &Window, t: &Theme) 
         .h(px(14.))
         .into_any_element()
     };
+    let scale = window.scale_factor();
+    let system = window.text_system();
+    let font_id = system.resolve_font(&gpui::Font { weight: FontWeight(430.), ..font(SANS) });
+    let ascent = (f32::from(system.ascent(font_id, px(14.))) * scale).round();
+    let descent = (f32::from(system.descent(font_id, px(14.))).abs() * scale).round();
+    let x_height = layout_pixels(window, f32::from(system.x_height(font_id, px(14.))));
+    let top = ((ascent - descent - x_height) * 32.).floor() / 64.;
+    let height = layout_pixels(window, 21.) + top;
+    let line = px(scale.floor().max(1.) / scale);
     div()
         .flex()
         .flex_col()
         .child(
-            div().h(px(22.3)).pt(px(1.3)).child(
+            div().h(px(height / scale)).pt(px(top / scale)).child(
                 div()
                     .flex()
                     .items_center()
@@ -112,7 +135,7 @@ pub(super) fn disclosure(label: String, angle: f32, window: &Window, t: &Theme) 
         .child(
             div()
                 .pt(px(4.))
-                .child(div().h(px(1.)).bg(over(t.border, t.surface))),
+                .child(div().h(line).bg(over(t.border, t.surface))),
         )
 }
 
@@ -144,8 +167,9 @@ pub(super) fn diff_card(
     };
     let tones = tones(t);
     let card_bg = tones.card;
-    // A 1 px border box (`px-2 border`): the padding stands in for the border, which the
-    // decoration paints under the label.
+    // Include the painted border's device-pixel width in the label padding.
+    let scale = window.scale_factor();
+    let border = px(scale.floor().max(1.) / scale);
     let button = |label: &'static str, decoration: Option<gpui::AnyElement>| {
         div()
             .relative()
@@ -153,7 +177,7 @@ pub(super) fn diff_card(
             .flex()
             .items_center()
             .gap(px(4.))
-            .px(px(9.))
+            .px(px(8.) + border)
             .children(decoration)
             .child(measured(window, label, 13., 18., 430., t.text, None))
     };
@@ -192,7 +216,11 @@ pub(super) fn diff_card(
                                 }),
                                 ..Default::default()
                             }))
-                            .child(icon("thread-file-diff", 24., t.text_secondary)),
+                            .child(icon(
+                                "thread-file-diff",
+                                24.,
+                                Hsla { a: 0.65, ..t.text_secondary },
+                            )),
                     )
                     .child(
                         div()

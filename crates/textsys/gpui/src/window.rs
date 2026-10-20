@@ -5047,11 +5047,34 @@ impl Window {
         font_size: Pixels,
         color: Hsla,
     ) -> Result<()> {
+        self.paint_glyph_with_optical_size(origin, font_id, glyph_id, font_size, font_size, color)
+    }
+
+    fn glyph_raster_origin(&self, origin: Point<Pixels>, scale: f32) -> Point<ScaledPixels> {
+        let mut origin = origin.scale(scale);
+        // Quantize inside the layer, then place its integer-aligned texture.
+        if let Some((layer, _)) = self.composited_layer {
+            let layer_x = f32::from(layer.origin.x) * scale;
+            origin.x += ScaledPixels(round_half_up(layer_x) - layer_x);
+        }
+        origin
+    }
+
+    /// Paints at `font_size` in content coordinates while keeping the font's `optical_size` design.
+    pub fn paint_glyph_with_optical_size(
+        &mut self,
+        origin: Point<Pixels>,
+        font_id: FontId,
+        glyph_id: GlyphId,
+        font_size: Pixels,
+        optical_size: Pixels,
+        color: Hsla,
+    ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
         let element_opacity = self.element_opacity();
         let scale_factor = self.scale_factor();
-        let glyph_origin = origin.scale(scale_factor);
+        let glyph_origin = self.glyph_raster_origin(origin, scale_factor);
 
         let quantized_origin = Point::new(
             round_half_toward_zero(glyph_origin.x.0 * SUBPIXEL_VARIANTS_X as f32)
@@ -5069,9 +5092,13 @@ impl Window {
         let params = RenderGlyphParams {
             font_id,
             glyph_id,
-            font_size,
+            font_size: optical_size,
             subpixel_variant,
-            scale_factor,
+            scale_factor: if font_size == optical_size {
+                scale_factor
+            } else {
+                scale_factor * f32::from(font_size) / f32::from(optical_size)
+            },
             is_emoji: false,
             subpixel_rendering,
             dilation,
@@ -5161,7 +5188,7 @@ impl Window {
         }
 
         let scale_factor = self.scale_factor();
-        let glyph_origin = origin.scale(scale_factor);
+        let glyph_origin = self.glyph_raster_origin(origin, scale_factor);
         // Skia places bitmap glyphs at the device origin rounded half up.
         let integer_origin = glyph_origin.map(|c| ScaledPixels(round_half_up(c.0)));
         let params = RenderGlyphParams {
@@ -5491,6 +5518,7 @@ impl Window {
             style,
             rem_size,
             scale_factor,
+            self.content_zoom,
             &cx.layout_id_buffer,
         )
     }
@@ -5515,7 +5543,7 @@ impl Window {
         self.layout_engine
             .as_mut()
             .unwrap()
-            .request_measured_layout(style, rem_size, scale_factor, measure)
+            .request_measured_layout(style, rem_size, scale_factor, self.content_zoom, measure)
     }
 
     /// Compute the layout for the given id within the given available space.
@@ -5548,11 +5576,16 @@ impl Window {
             .layout_engine
             .as_mut()
             .unwrap()
-            .layout_bounds(layout_id, scale_factor)
+            .layout_bounds(layout_id, scale_factor, self.content_zoom)
             .map(Into::into);
         let snapped_offset = self.pixel_snap_point(self.element_offset());
         bounds.origin += snapped_offset;
         bounds
+    }
+
+    /// Returns the layout size before device-pixel edge snapping.
+    pub fn layout_size_unrounded(&self, layout_id: LayoutId) -> Size<Pixels> {
+        self.layout_engine.as_ref().unwrap().layout_size_unrounded(layout_id, self.scale_factor())
     }
 
     /// The unsnapped minus the snapped x of the layout's origin (`layout_bounds` snaps it to
@@ -5564,7 +5597,7 @@ impl Window {
         self.layout_engine
             .as_mut()
             .unwrap()
-            .layout_origin_residual_x(layout_id, scale_factor)
+            .layout_origin_residual_x(layout_id, scale_factor, self.content_zoom)
     }
 
     /// Return the fractional y offset removed by `layout_bounds`.
@@ -5899,6 +5932,45 @@ impl Window {
             .unwrap_or_else(|| action.name().to_string())
     }
 
+    fn scale_input_coordinates(&self, event: &mut PlatformInput) {
+        let scale = 1. / self.content_zoom;
+        match event {
+            PlatformInput::MouseDown(event) => event.position *= scale,
+            PlatformInput::MouseUp(event) => event.position *= scale,
+            PlatformInput::MouseMove(event) => event.position *= scale,
+            PlatformInput::MouseExited(event) => event.position *= scale,
+            PlatformInput::MousePressure(event) => event.position *= scale,
+            PlatformInput::Pinch(event) => event.position *= scale,
+            PlatformInput::ScrollWheel(event) => {
+                event.position *= scale;
+                if let crate::ScrollDelta::Pixels(delta) = &mut event.delta {
+                    *delta *= scale;
+                }
+            }
+            PlatformInput::Touch(event) => {
+                event.position *= scale;
+                event.predicted_position = event.predicted_position.map(|point| point * scale);
+            }
+            PlatformInput::LongPress(event) => {
+                event.position *= scale;
+                event.start_position *= scale;
+            }
+            PlatformInput::TouchDrag(event) => {
+                event.position *= scale;
+                event.start_position *= scale;
+            }
+            PlatformInput::FileDrop(
+                FileDropEvent::Entered { position, .. }
+                | FileDropEvent::Pending { position }
+                | FileDropEvent::Submit { position },
+            ) => *position *= scale,
+            PlatformInput::FileDrop(FileDropEvent::Exited | FileDropEvent::Ended)
+            | PlatformInput::KeyDown(_)
+            | PlatformInput::KeyUp(_)
+            | PlatformInput::ModifiersChanged(_) => {}
+        }
+    }
+
     /// Dispatch a mouse, keyboard, or touch event on the window.
     #[profiling::function]
     pub fn dispatch_event(
@@ -5910,7 +5982,7 @@ impl Window {
         self.window_profiler.begin_input(event.kind_name());
         let update_count_before = self.invalidator.update_count();
         if self.content_zoom != 1. {
-            event.scale_coordinates(1. / self.content_zoom);
+            self.scale_input_coordinates(&mut event);
         }
         // Track input modality for focus-visible styling and hover suppression.
         // Hover is suppressed during keyboard modality so that keyboard navigation

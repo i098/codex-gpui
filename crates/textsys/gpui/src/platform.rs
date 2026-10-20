@@ -1524,6 +1524,10 @@ pub trait PlatformTextSystem: Send + Sync {
     fn prewarm_fonts(&self, _font_ids: &[FontId]) {}
     /// Get metrics for a font.
     fn font_metrics(&self, font_id: FontId) -> FontMetrics;
+    /// A size-specific x-height when optical sizing changes the font's metrics.
+    fn font_x_height(&self, _font_id: FontId, _font_size: Pixels) -> Option<Pixels> {
+        None
+    }
     /// Get typographic bounds for a glyph.
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>>;
     /// Get the advance width for a glyph.

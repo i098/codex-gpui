@@ -7,10 +7,10 @@
 
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, Bounds, ClickEvent, ContentMask, Context,
-    Corners, CursorStyle, DispatchPhase, Div, FontWeight, Hsla, Image, ImageFormat,
+    Corners, CursorStyle, DispatchPhase, Div, FontWeight, Hsla,
     InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     ParentElement, Pixels, Point, Render, Rgba, SharedString, Stateful, StatefulInteractiveElement,
-    Styled, Svg, Window, actions, canvas, div, fill, img, point, prelude::FluentBuilder as _, px,
+    Styled, Svg, Window, actions, canvas, div, fill, point, prelude::FluentBuilder as _, px,
     size, svg,
 };
 use std::sync::{Arc, LazyLock};
@@ -67,6 +67,8 @@ actions!(edit, [Undo, Redo, Cut, Copy, Paste, SelectAll]);
 
 /// `--app-shell-navigation-rail-width`
 pub const RAIL_WIDTH: Pixels = px(52.);
+const RAIL_BUTTON_SIZE: Pixels = px(36.);
+const RAIL_PADDING: Pixels = px(8.);
 /// `--app-shell-page-inline-end-inset`, also the layout's bottom padding.
 const PAGE_INSET: Pixels = px(4.);
 /// `--border-width-hairline` of `_MainContentLeftBorder`.
@@ -124,23 +126,55 @@ pub struct Shell {
     main: AnyView,
 }
 
-/// The fixture account's 24 px avatar with its circular clip baked into alpha. The two
-/// straight-alpha layers are solved so GPUI's sprite blend lands on the refs' pixels over
-/// both layout colors; `avatar-fix.png` only covers edge pixels one layer cannot reach.
-fn avatar() -> impl IntoElement {
-    static LAYERS: LazyLock<[Arc<Image>; 2]> = LazyLock::new(|| {
-        [
-            &include_bytes!("../assets/avatar.png")[..],
-            include_bytes!("../assets/avatar-fix.png"),
-        ]
-        .map(|png| Arc::new(Image::from_bytes(ImageFormat::Png, png.to_vec())))
-    });
-    let layer = |image: &Arc<Image>| img(image.clone()).absolute().size(px(24.));
-    div()
-        .relative()
-        .size(px(24.))
-        .child(layer(&LAYERS[0]))
-        .child(layer(&LAYERS[1]))
+#[derive(gpui::IntoElement)]
+struct Avatar;
+
+impl gpui::RenderOnce for Avatar {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        static SOURCE: LazyLock<image::RgbaImage> = LazyLock::new(|| {
+            image::load_from_memory(include_bytes!("../assets/avatar-source.png"))
+                .expect("embedded avatar").into_rgba8()
+        });
+        type Raster = (Bounds<Pixels>, f32, Arc<gpui::RenderImage>, bool);
+        let cache = window.use_keyed_state("profile-avatar-raster", cx, |_, _| None::<Raster>);
+        let radius = Corners::all(Theme::RADIUS_FULL);
+        canvas(
+            move |bounds, window, cx| {
+                let scale = window.scale_factor();
+                if let Some((previous, previous_scale, image, rounded)) = cache.read(cx)
+                    && *previous == bounds && *previous_scale == scale
+                {
+                    return (image.clone(), *rounded);
+                }
+                if let Some((_, _, image, _)) = cache.update(cx, |value, _| value.take()) {
+                    window.drop_image(image).ok();
+                }
+                let raster = shapes::raster_images(
+                    &[(&*SOURCE, bounds)], bounds, radius,
+                    shapes::Corner::Round, shapes::ImageComposition::Direct(gpui::rgba(0).into()), window,
+                );
+                let rounded = raster.is_none();
+                let image = Arc::new(raster.unwrap_or_else(|| {
+                    let mut pixels = image::imageops::resize(
+                        &*SOURCE,
+                        (f32::from(bounds.size.width) * scale).round() as u32,
+                        (f32::from(bounds.size.height) * scale).round() as u32,
+                        image::imageops::FilterType::Triangle,
+                    );
+                    for pixel in pixels.pixels_mut() {
+                        pixel.0.swap(0, 2);
+                    }
+                    gpui::RenderImage::new([image::Frame::new(pixels)])
+                }));
+                cache.update(cx, |value, _| *value = Some((bounds, scale, image.clone(), rounded)));
+                (image, rounded)
+            },
+            move |bounds, (image, rounded), window, _| {
+                let corners = if rounded { radius } else { Corners::default() };
+                window.paint_image(bounds, bounds, corners, image, 0, false).ok();
+            },
+        ).size_full()
+    }
 }
 
 impl Shell {
@@ -708,7 +742,7 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
 }
 
 impl Shell {
-    fn rail(&self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
+    fn rail(&self, t: &Theme, width: Pixels, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let (hover_bg, hover_fg) = (t.ghost_hover, t.text);
         let selected = self.selected_rail;
         let home = self.main.entity_type() == std::any::TypeId::of::<screens::home::HomeMain>();
@@ -744,7 +778,7 @@ impl Shell {
                     .id(id)
                     .relative()
                     .flex_none()
-                    .size(px(36.))
+                    .size(RAIL_BUTTON_SIZE)
                     .flex()
                     .items_center()
                     .justify_center()
@@ -787,19 +821,21 @@ impl Shell {
             .tab_stop(false)
             .absolute()
             .left_0()
-            .top(Theme::TITLEBAR_HEIGHT)
-            .bottom(PAGE_INSET)
-            .w(RAIL_WIDTH)
+            .top_0()
+            .bottom_0()
+            .w(width)
+            .px(RAIL_PADDING)
             .flex()
             .flex_col()
             .items_center()
-            .pt(px(6.))
+            .pt(RAIL_PADDING)
+            .gap(px(8.))
             .pb(px(4.))
             .child(
                 div()
                     .flex_1()
-                    .w(px(40.))
-                    .pt(px(2.))
+                    .m(px(-2.))
+                    .p(px(2.))
                     .flex()
                     .flex_col()
                     .items_center()
@@ -840,7 +876,7 @@ impl Shell {
                     px(1.),
                     cx,
                 )
-                .size(px(36.))
+                .size(RAIL_BUTTON_SIZE)
                 .flex()
                 .items_center()
                 .justify_center()
@@ -851,7 +887,7 @@ impl Shell {
                     cx.notify();
                 }))
                 .child(motion::ButtonVisual {
-                    glyph: div().size(px(24.)).child(avatar()),
+                    glyph: div().size(px(24.)).child(Avatar),
                     radius: RADIUS_RAIL,
                     hover: hover_bg,
                     foreground: hover_fg,
@@ -921,30 +957,32 @@ impl Shell {
     /// It is a composited cc layer: its tile holds the translucent background and the content
     /// is blitted onto it before the layer is composited (`.layer()`).
     /// While the toggle springs, the content fades with `progress` and slides from -16 px.
-    fn sidebar_panel(&self, t: &Theme, progress: f32) -> Div {
+    fn sidebar_panel(&self, t: &Theme, progress: f32, rail_width: Pixels) -> Div {
         let r = Theme::RADIUS_XL_BASE;
+        let background = t.sidebar_background;
         div()
             .tab_group()
             .tab_index(1)
             .tab_stop(false)
             .absolute()
-            .left(RAIL_WIDTH)
+            .left(rail_width)
             .top(Theme::TITLEBAR_HEIGHT)
             .bottom(PAGE_INSET)
-            .w(self.sidebar_width - RAIL_WIDTH)
+            .w(self.sidebar_width - rail_width)
             .flex()
             .flex_col()
             .overflow_hidden()
             .layer()
-            .child(shapes::decoration(shapes::Decoration {
-                radius: Corners {
-                    top_left: r,
-                    bottom_left: r,
-                    ..Default::default()
+            .child(canvas(
+                |_, _, _| {},
+                move |bounds, (), window, cx| {
+                    let clip = window.composited_layer().map_or(bounds, |(bounds, _)| bounds);
+                    let radius = Corners { top_left: r, bottom_left: r, ..Default::default() };
+                    shapes::with_rounded_clip(radius, shapes::Corner::Round, clip, false, window, |window| {
+                        shapes::paint(&shapes::Decoration { fill: Some(background), ..Default::default() }, None, bounds, window, cx);
+                    });
                 },
-                fill: Some(t.sidebar_background),
-                ..Default::default()
-            }))
+            ).absolute().inset_0())
             .child(
                 div()
                     .size_full()
@@ -961,8 +999,11 @@ impl Shell {
     /// (`background-clip: padding-box`) paint with the page in `render`: with the sidebar open
     /// the left edge is square and the right corners are rounded by its `clip-path`; with it
     /// closed it is a plain 12 px rounded box. `left` is its edge, `open` its shape.
-    fn main_panel(&self, left: Pixels, open: bool, focus: &gpui::FocusHandle) -> Div {
+    fn main_panel(&self, left: Pixels, open: bool, focus: &gpui::FocusHandle, window: &Window) -> Div {
         let r = Theme::RADIUS_XL_BASE;
+        let scale = window.scale_factor();
+        // The layout offset must match the painted, device-pixel border.
+        let hairline = px((f32::from(MAIN_HAIRLINE) * scale).floor().max(1.) / scale);
         let panel = div()
             .tab_group()
             .tab_index(3)
@@ -975,12 +1016,12 @@ impl Shell {
             .overflow_hidden()
             .child(self.main.clone());
         if self.main_composited {
-            return panel.left(if open { left + MAIN_HAIRLINE } else { left });
+            return panel.left(if open { left + hairline } else { left });
         }
         // The `clip-path` box (its left corners under the open sidebar): Skia rasters main's
         // draws under that anti-aliased clip, but not its composited layers.
         let (left, inset) = if open {
-            (left - r, r + MAIN_HAIRLINE)
+            (left - r, r + hairline)
         } else {
             (left, px(0.))
         };
@@ -1006,6 +1047,9 @@ impl Shell {
         // The header is the window drag region (`-webkit-app-region: drag`, macOS hiddenInset);
         // its buttons are `no-drag`: each stops the press before the move handler below.
         // Disabled history controls do not participate in keyboard navigation.
+        // The pinned original keeps 82 physical pixels for the macOS window controls.
+        let native_inset = px(82.);
+        let titlebar_offset = native_inset / window.content_zoom() - native_inset;
         let mut nav = |id: &'static str, glyph: icon::Icon, enabled: bool| {
             if enabled {
                 let focus = focus::handle(id, 0, window, cx);
@@ -1057,13 +1101,16 @@ impl Shell {
                 }
             })
             .child(tooltip(
-                back.left(px(88.)).on_click(dispatch::<GoBack>),
+                back.left(px(88.) + titlebar_offset)
+                    .on_click(dispatch::<GoBack>),
                 "Back",
                 Some("⌘["),
                 Side::Bottom,
             ))
             .child(tooltip(
-                forward.left(px(122.)).on_click(dispatch::<GoForward>),
+                forward
+                    .left(px(122.) + titlebar_offset)
+                    .on_click(dispatch::<GoForward>),
                 "Forward",
                 Some("⌘]"),
                 Side::Bottom,
@@ -1088,7 +1135,7 @@ impl Shell {
                         "Show sidebar"
                     })
                     .absolute()
-                    .left(px(156.))
+                    .left(px(156.) + titlebar_offset)
                     .top(px(8.))
                     .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                         sidebar_focus.read(cx).handle.clone().focus(window, cx);
@@ -1216,7 +1263,14 @@ impl Render for Shell {
         // The original keeps the page-sidebar shape (`data-app-shell-page-sidebar`) above 0.1
         // of progress; its hairline fades out over 0.2 to 0.05 while closing.
         let open = progress > 0.1;
-        let main_left = RAIL_WIDTH + (self.sidebar_width - RAIL_WIDTH) * progress;
+        // The rail width comes from its quantized button and padding, not a rounded 52 px box.
+        let units = window.scale_factor() * 64.;
+        let length = |value: Pixels| {
+            let value = f32::from(value) * units;
+            if window.content_zoom() == 1. { value.round() } else { value.trunc() }
+        };
+        let rail_width = px((length(RAIL_BUTTON_SIZE) + 2. * length(RAIL_PADDING)) / units);
+        let main_left = rail_width + (self.sidebar_width - rail_width) * progress;
         let hairline_alpha = if self.sidebar_open {
             1.
         } else {
@@ -1268,7 +1322,7 @@ impl Render for Shell {
                           cx: &mut App| {
             let fill = if square { &square_fill } else { &main_fill };
             let page_surface = Bounds::from_corners(
-                bounds.origin + point(RAIL_WIDTH, Theme::TITLEBAR_HEIGHT),
+                bounds.origin + point(rail_width, Theme::TITLEBAR_HEIGHT),
                 bounds.bottom_right() - point(PAGE_INSET, PAGE_INSET),
             );
             let mut main = Bounds::from_corners(
@@ -1428,8 +1482,13 @@ impl Render for Shell {
             .font_family(SANS)
             .bg(under)
             .child(page)
-            .when(progress > 0., |d| d.child(self.sidebar_panel(&t, progress)))
-            .child(self.main_panel(main_left, open, &main_focus))
+            .when(progress > 0., |d| d.child(self.sidebar_panel(&t, progress, rail_width)))
+            .child(
+                div().absolute().left_0().top(Theme::TITLEBAR_HEIGHT).bottom(PAGE_INSET)
+                    .w(rail_width).snap_origin()
+                    .child(self.rail(&t, rail_width, window, cx)),
+            )
+            .child(self.main_panel(main_left, open, &main_focus, window))
             .when(composited || self.main_backgrounds > 0, |d| {
                 d.child(corners)
             })
@@ -1479,7 +1538,6 @@ impl Render for Shell {
                     },
                 ))
             })
-            .child(self.rail(&t, window, cx))
             .child(self.titlebar(&t, window, cx))
             .child(skip_link)
             .when(self.profile_menu, |d| d.child(self.profile_menu(&t, cx)))

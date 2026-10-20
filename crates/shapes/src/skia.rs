@@ -166,6 +166,16 @@ pub(crate) struct Contour {
 }
 
 impl Contour {
+    fn new(mut rr: Rounded, corner: Corner) -> Self {
+        rr.constrain();
+        let squircle = 2f64.powf(1.5) as f32;
+        let k = rr.radii.map(|c| match corner {
+            Corner::Squircle if c[0] > 0. && c[1] > 0. => squircle,
+            _ => 2.,
+        });
+        Self { rr, k, origin: rr }
+    }
+
     fn is_rounded(&self) -> bool {
         self.rr.is_rounded() || self.origin.is_rounded()
     }
@@ -1880,12 +1890,12 @@ pub(crate) fn with_rounded_clip<R>(
     window: &mut Window,
     paint: impl FnOnce(&mut Window) -> R,
 ) -> R {
-    let d = Decoration {
-        radius,
-        corner,
-        ..Default::default()
-    };
-    let (clip, _) = ops(&d, bounds, window.scale_factor());
+    let s = window.scale_factor();
+    let radius = [radius.top_left, radius.top_right, radius.bottom_right, radius.bottom_left];
+    let clip = Contour::new(Rounded {
+        r: [f32::from(bounds.left()) * s, f32::from(bounds.top()) * s, f32::from(bounds.size.width) * s, f32::from(bounds.size.height) * s],
+        radii: radius.map(|value| [f32::from(value) * s; 2]),
+    }, corner);
     let only = (!layers).then(|| Layer::new(window, None).anchor());
     CLIPS.with_borrow_mut(|c| c.push((clip, only)));
     let out = paint(window);
@@ -2149,17 +2159,11 @@ pub(crate) fn ops(d: &Decoration, bounds: Bounds<Pixels>, s: f32) -> (Contour, V
         d.radius.bottom_right,
         d.radius.bottom_left,
     ];
-    let mut rr = Rounded {
+    let border = Contour::new(Rounded {
         r: [l, t, dev(bounds.right()) - l, dev(bounds.bottom()) - t],
         radii: radius.map(|v| [f32::from(v) * s; 2]),
-    };
-    rr.constrain();
-    let squircle = 2f64.powf(1.5) as f32;
-    let k = rr.radii.map(|c| match d.corner {
-        Corner::Squircle if c[0] > 0. && c[1] > 0. => squircle,
-        _ => 2.,
-    });
-    let border = Contour { rr, k, origin: rr };
+    }, d.corner);
+    let rr = border.rr;
     let has_radius = radius.iter().any(|r| *r > px(0.));
     let opaque_bg = d.fill.is_some_and(|c| alpha_byte(c.a) == 255);
     let width = d

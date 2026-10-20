@@ -64,7 +64,7 @@ pub enum GitAction {
 
 impl gpui::EventEmitter<GitAction> for ThreadView {}
 
-use items::{activity, diff_card, disclosure, user_bubble, wrap_row};
+use items::{action_button_size, activity, diff_card, disclosure, user_action_space, user_bubble, wrap_row};
 use markdown::{markdown, tones};
 pub use select::Selection;
 use select::{Carets, block_end, frame_start, highlight};
@@ -1721,7 +1721,7 @@ impl ThreadView {
             if let Some(card) = diff_card(&turn.id, &turn.items, window, t) {
                 col = col.child(div().mt(px(12.)).pb(px(8.)).child(card));
             }
-            return col.child(action_row(last, &group, &turn.id, answer, t));
+            return col.child(action_row(last, &group, &turn.id, answer, t, window));
         }
         if turn.status == TurnStatus::InProgress {
             let secs = self.clock.now() - turn.started_at.unwrap_or(self.clock.now());
@@ -2202,9 +2202,8 @@ fn day_and_time(at: i64, now: i64, utc_offset: i64) -> (String, String) {
     (day, t.format("%-I:%M %p").to_string())
 }
 
-/// Exact layout width of a single-line run. GPUI rounds measured text boxes up to whole px;
-/// inline runs placed after one another need the fractional advances Chromium uses.
-fn width(window: &Window, s: &str, size: f32, weight: f32, family: Option<&str>) -> Pixels {
+/// Unrounded advance of a shaped text run.
+fn text_advance(window: &Window, s: &str, size: f32, weight: f32, family: Option<&str>) -> Pixels {
     let family = SharedString::from(family.unwrap_or(SANS));
     let run = TextRun {
         len: s.len(),
@@ -2221,6 +2220,13 @@ fn width(window: &Window, s: &str, size: f32, weight: f32, family: Option<&str>)
         .text_system()
         .layout_line(s, px(size), &[run], None)
         .width
+}
+
+/// CSS rounds each inline run width up to a 1/64 device-pixel layout unit.
+fn width(window: &Window, s: &str, size: f32, weight: f32, family: Option<&str>) -> Pixels {
+    let advance = text_advance(window, s, size, weight, family);
+    let units = window.scale_factor() * 64.;
+    px((f32::from(advance) * units).ceil() / units)
 }
 
 /// Text of a known run width (see [`width`]).

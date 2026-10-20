@@ -30,10 +30,11 @@ pub(crate) fn paint_opacity(alpha: u8, bounds: Bounds<Pixels>, window: &mut Wind
 pub(crate) fn paint_top_fade(fade: Pixels, bounds: Bounds<Pixels>, window: &mut Window, cx: &App) {
     let s = window.scale_factor();
     let dev = |v: Pixels| (f32::from(v) * s).round() as i32;
-    let (x0, y0, fade) = (dev(bounds.left()), dev(bounds.top()), dev(fade));
+    let (x0, y0) = (dev(bounds.left()), dev(bounds.top()));
+    let fade = f32::from(fade) * s;
     let (w, h) = (
         dev(bounds.right()) - x0,
-        fade.min(dev(bounds.bottom()) - y0),
+        (fade.ceil() as i32).min(dev(bounds.bottom()) - y0),
     );
     if w <= 0 || h <= 0 {
         return;
@@ -43,7 +44,7 @@ pub(crate) fn paint_top_fade(fade: Pixels, bounds: Bounds<Pixels>, window: &mut 
         // fade are opaque and need no sprite.
         let blits = (0..h)
             .flat_map(|y| {
-                let alpha = ((y as f32 + 0.5) / fade as f32 * 255.).round() as u8;
+                let alpha = ((y as f32 + 0.5) / fade * 255.).round().clamp(0., 255.) as u8;
                 std::iter::repeat_n([alpha, DST_IN, 0, MASK] as Blits, w as usize)
             })
             .collect();
@@ -63,8 +64,14 @@ pub(crate) fn paint_x_fade(
 ) {
     let s = window.scale_factor();
     let dev = |v: Pixels| (f32::from(v) * s).round() as i32;
-    let (x0, y0) = (dev(bounds.left()), dev(bounds.top()));
-    let (w, h) = (dev(bounds.right()) - x0, dev(bounds.bottom()) - y0);
+    let bounds = window.saved_layer().unwrap_or(bounds);
+    let offset = window.composited_layer().map_or(0., |(layer, _)| {
+        let x = f32::from(layer.origin.x) * s;
+        x.round() - x
+    });
+    let x = |value: Pixels| (f32::from(value) * s + offset).round() as i32;
+    let (x0, y0) = (x(bounds.left()), dev(bounds.top()));
+    let (w, h) = (x(bounds.right()) - x0, dev(bounds.bottom()) - y0);
     let (l, r) = (f32::from(left) * s, f32::from(right) * s);
     if w <= 0 || h <= 0 {
         return;

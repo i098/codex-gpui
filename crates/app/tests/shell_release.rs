@@ -62,11 +62,34 @@ fn zoom_preserves_draft_focus_and_scaled_pointer_targets() -> Result<()> {
     })?;
     fx.keys("cmd-a")?;
     fx.keys("backspace")?;
+    let image = fx.reference_shot()?;
     if let Some(directory) = std::env::var_os("CGX_SHELL_PROOF") {
         std::fs::create_dir_all(&directory)?;
-        fx.reference_shot()?
-            .save(std::path::Path::new(&directory).join("native-zoom.png"))?;
+        image.save(std::path::Path::new(&directory).join("native-zoom.png"))?;
     }
+    // The pinned Mac original fixes the prompt and inline-code ink rows at 110%.
+    for (columns, mut rows, expected) in [
+        (1360..2430, 303..348, 318),
+        (954..1195, 625..670, 636),
+    ] {
+        let first_bright_row = rows.find(|&y| {
+            columns.clone().any(|x| {
+                image.get_pixel(x, y).0[..3]
+                    .iter()
+                    .all(|&channel| channel > 230)
+            })
+        });
+        ensure!(
+            first_bright_row == Some(expected),
+            "zoomed text row: {first_bright_row:?}, expected {expected}"
+        );
+    }
+    fx.action(Box::new(ui::OpenScheduled))?;
+    fx.click((90.5, 24.2))?;
+    ensure!(
+        fx.route() == app::Route::Thread(SUBTRACT.into()),
+        "zoomed Back target moved with native window controls"
+    );
     fx.action(Box::new(ui::OpenScheduled))?;
     fx.click((26. * 1.1, 70. * 1.1))?;
     ensure!(fx.route() == app::Route::Home && fx.composer_focused()?);
@@ -77,11 +100,32 @@ fn zoom_preserves_draft_focus_and_scaled_pointer_targets() -> Result<()> {
     })?;
     fx.keys("cmd-=")?;
     fx.keys("cmd-0")?;
+    for (point, zoom) in [
+        ((1180., 30.), 1.1),
+        ((1152., 30.), 1.),
+        ((1180., 30.), 1.1),
+        ((1229., 30.), 1.),
+    ] {
+        fx.click(point)?;
+        fx.cx.update_window(fx.window, |_, window, _| {
+            assert_eq!(window.content_zoom(), zoom);
+        })?;
+    }
     fx.cx
         .simulate_window_resize(fx.window, size(px(1000.), px(700.)));
     fx.cx.update_window(fx.window, |_, window, _| {
         assert_eq!(window.content_zoom(), 1.);
         assert_eq!(window.viewport_size(), size(px(1000.), px(700.)));
     })?;
+    Ok(())
+}
+
+#[test]
+fn sidebar_follows_the_recorded_responsive_widths() -> Result<()> {
+    let mut fx = Fx::scripted(script(None, |_| {})?)?;
+    for (width, open) in [(1280., true), (767., true), (600., false), (1280., true)] {
+        fx.resize(width, 832.)?;
+        ensure!(fx.sidebar_open() == open, "sidebar visibility at {width}px");
+    }
     Ok(())
 }

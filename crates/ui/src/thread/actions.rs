@@ -119,12 +119,13 @@ impl RenderOnce for UserMessage {
         let group = SharedString::from(format!("{}-group", self.id));
         let shown = t.text_tertiary;
         let color = shown.opacity(if visible { 1. } else { 0. });
+        let button_size = action_button_size(window);
         let button = |id: &'static str| {
             div()
                 .id(SharedString::from(format!("{}-{id}", self.id)))
                 .role(gpui::Role::Button)
                 .relative()
-                .size(px(26.))
+                .size(button_size)
                 .flex()
                 .items_center()
                 .justify_center()
@@ -147,7 +148,7 @@ impl RenderOnce for UserMessage {
             .absolute()
             .bottom_0()
             .right(px(4.))
-            .h(px(26.))
+            .h(button_size)
             .flex()
             .items_center()
             .gap(px(8.))
@@ -189,10 +190,10 @@ impl RenderOnce for UserMessage {
                         ))
                     }),
             );
-        // Keep the existing 30 px reserve: revealing controls must not move the transcript.
+        // Reserve the hidden controls without changing height when they become visible.
         let bubble = match &self.find {
-            None => user_bubble(&self.message, t),
-            Some(find) => div().flex().flex_col().items_end().pb(px(30.)).child(
+            None => user_bubble(&self.message, t, window),
+            Some(find) => div().flex().flex_col().items_end().pb(user_action_space(window)).child(
                 div()
                     .relative()
                     .max_w(relative(0.7))
@@ -409,7 +410,9 @@ pub(super) fn action_row(
     turn_id: &str,
     answer: &str,
     t: &Theme,
+    window: &Window,
 ) -> Div {
+    let button_size = action_button_size(window);
     let action = |name: &'static str| {
         let color = t.text_tertiary;
         // `Icon` folds its own opacity into the color, so the hover sets the color.
@@ -420,7 +423,7 @@ pub(super) fn action_row(
                 .group_hover(group.clone(), move |s| s.text_color(color))
         };
         div()
-            .size(px(26.))
+            .size(button_size)
             .flex()
             .items_center()
             .justify_center()
@@ -431,7 +434,7 @@ pub(super) fn action_row(
     div()
         .mt(px(6.))
         .ml(px(-4.))
-        .h(px(26.))
+        .h(button_size)
         .flex()
         .gap(px(2.))
         .child(tooltip(

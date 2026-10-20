@@ -30,7 +30,13 @@ pub(super) fn tones(t: &Theme) -> Tones {
                 a: 0.107_059,
                 ..t.text
             },
-            mention: rgb(0x5685d1).into(),
+            mention: gpui::Rgba {
+                r: 0.338_039,
+                g: 0.523_137,
+                b: 0.818_039,
+                a: 1.,
+            }
+            .into(),
             secondary_button: rgba(0xffffff08).into(),
         },
         Appearance::Light => Tones {
@@ -345,7 +351,7 @@ impl Markdown<'_> {
                 div()
                     .flex()
                     .justify_end()
-                    .child(self.word(&format!("{n}. "), None, style))
+                    .children(self.words(&format!("{n}. "), None, style))
             } else {
                 let size = if depth == 1 { 6. } else { 5. };
                 div().child(
@@ -389,16 +395,11 @@ impl Markdown<'_> {
             }
             match self.events.next().expect("peeked event") {
                 Event::Text(s) | Event::Html(s) | Event::InlineHtml(s) => {
-                    let mut at = self.events.start;
-                    row.extend(s.split_inclusive(' ').map(|s| {
-                        let here = at;
-                        at += s.len();
-                        self.word(s, Some(here), style).into_any_element()
-                    }));
+                    row.extend(self.words(&s, Some(self.events.start), style));
                 }
                 Event::SoftBreak => {
                     let at = self.events.start;
-                    row.push(self.word(" ", Some(at), style).into_any_element());
+                    row.extend(self.words(" ", Some(at), style));
                 }
                 Event::HardBreak => row.push(block_end(1).w_full().h_0().into_any_element()),
                 Event::Code(code) => {
@@ -481,12 +482,18 @@ impl Markdown<'_> {
                                     })
                                 })
                                 .when(!external && dest_url.ends_with(".py"), |d| {
-                                    d.child(div().w(px(19.))).child(
-                                        div().absolute().left_0().bottom(px(3.37)).child(icon(
-                                            "thread-lang-python",
-                                            16.,
-                                            tones(self.theme).mention,
-                                        )),
+                                    d.child(
+                                        div()
+                                            .w(px(19.))
+                                            .h(px(style.line_height))
+                                            .flex_none()
+                                            .flex()
+                                            .items_center()
+                                            .child(icon(
+                                                "thread-lang-python",
+                                                16.,
+                                                tones(self.theme).mention,
+                                            )),
                                     )
                                 })
                                 .children(label)
@@ -536,38 +543,45 @@ impl Markdown<'_> {
         (row, task)
     }
 
-    /// A word box with its selection highlight under its glyphs: one box, so a long answer
-    /// lays out a node per word.
-    fn word(&self, s: &str, at: Option<usize>, style: Typography) -> Div {
-        let (width, label) = self.label(s, at, style);
-        div()
-            .relative()
-            .flex_none()
-            .w(width)
-            .child(
-                highlight(s.to_owned().into(), style.size, style.weight, None, 0.)
-                    .absolute()
-                    .inset_0(),
-            )
-            .child(label)
+    /// Keep fractional advances across the words of a single source text node.
+    fn words<'a>(&'a self, text: &'a str, at: Option<usize>, style: Typography) -> impl Iterator<Item = AnyElement> + 'a {
+        let units = f64::from(self.window.scale_factor()) * 64.;
+        let mut advance = 0.;
+        let mut placed = 0.;
+        let mut consumed = 0;
+        text.split_inclusive(' ').map(move |word| {
+            let index = at.map(|at| at + consumed);
+            consumed += word.len();
+            let (width, label) = self.label(word, index, style);
+            advance += f64::from(f32::from(width)) * units;
+            let end = if consumed == text.len() { advance.ceil() } else { advance.floor() };
+            let width = px(((end - placed) / units) as f32);
+            placed = end;
+            div()
+                .relative()
+                .flex_none()
+                .w(width)
+                .child(highlight(word.to_owned().into(), style.size, style.weight, None, 0.).absolute().inset_0())
+                .child(label)
+                .into_any_element()
+        })
     }
 
     /// The word's run width and its text.
-    fn label(&self, s: &str, at: Option<usize>, style: Typography) -> (Pixels, AnyElement) {
+    fn label(&self, s: &str, at: Option<usize>, style: Typography) -> (Pixels, Div) {
         let color = style.color.unwrap_or(self.theme.text);
         let find = self.find.zip(at);
         let fades = self.fades(s);
         if !style.italic && !style.strike && find.is_none() && fades.is_empty() {
             return (
-                width(self.window, s, style.size, style.weight, None),
+                text_advance(self.window, s, style.size, style.weight, None),
                 text(
                     s.to_owned(),
                     style.size,
                     style.line_height,
                     style.weight,
                     color,
-                )
-                .into_any_element(),
+                ),
             );
         }
         let font = gpui::Font {
@@ -600,7 +614,7 @@ impl Markdown<'_> {
             Some((find, at)) => label.child(find.text(s, at)),
             None => label.child(StyledText::new(s.to_owned()).with_highlights(fades)),
         };
-        (width, label.into_any_element())
+        (width, label)
     }
 
     /// The fade of each still-streaming part of `text`, by its position in [`Self::source`].
@@ -643,6 +657,35 @@ impl Markdown<'_> {
     }
 
     fn code(&self, code: &str, at: usize) -> Vec<Div> {
+        // The inline font and prose share a baseline, but their line boxes have different descents.
+        let scale = self.window.scale_factor();
+        // Blink's font cache uses two decimal places for device font sizes.
+        let font_size = (12.88 * scale * 100.).floor() / 100. / scale;
+        let text_system = self.window.text_system();
+        let metrics = |family: &'static str, size| {
+            let font = gpui::Font {
+                weight: FontWeight(430.),
+                ..font(SharedString::new_static(family))
+            };
+            let id = text_system.resolve_font(&font);
+            (
+                (f32::from(text_system.ascent(id, px(size))) * scale).round(),
+                (f32::from(text_system.descent(id, px(size))).abs() * scale).round(),
+            )
+        };
+        let (ascent, descent) = metrics(SANS, 14.);
+        let (code_ascent, code_descent) = metrics(MONO, font_size);
+        let line_height = (22.75 * scale * 64.).round() / 64.;
+        let baseline = |ascent: f32, descent: f32| ascent + ((line_height - ascent - descent) / 2.).floor();
+        let prose_baseline = baseline(ascent, descent);
+        let code_baseline = baseline(code_ascent, code_descent);
+        let shared_baseline = prose_baseline.max(code_baseline);
+        let row_height = shared_baseline
+            + (line_height - prose_baseline).max(line_height - code_baseline);
+        let padding = (scale * 64.).trunc() / 64.;
+        let top = shared_baseline - code_ascent - padding;
+        let bottom = row_height - top - code_ascent - code_descent - 2. * padding;
+        let glyph_line_height = (code_ascent + code_descent) / scale;
         let count = code.split_inclusive(' ').count();
         let positions = Rc::new(RefCell::new(vec![
             (Bounds::<Pixels>::default(), px(0.));
@@ -670,7 +713,7 @@ impl Markdown<'_> {
                         } else {
                             let next = Bounds::new(
                                 point(bounds.left() - px(6.), top),
-                                gpui::size(right - bounds.left() + px(6.), px(17.)),
+                                gpui::size(right - bounds.left() + px(6.), px(glyph_line_height + 2.)),
                             );
                             if let Some(rect) = line.replace(next) {
                                 shapes::paint(&decoration, None, rect, window, cx);
@@ -685,25 +728,25 @@ impl Markdown<'_> {
             .absolute()
             .size_full(),
         );
-        let space = width(self.window, " ", 12.88, 430., Some(MONO));
+        let space = width(self.window, " ", font_size, 430., Some(MONO));
         let mut offset = at;
         let mut parts = Vec::with_capacity(count);
         for (index, word) in code.split_inclusive(' ').enumerate() {
             let fades = self.fades(word);
-            let word_width = width(self.window, word, 12.88, 430., Some(MONO));
+            let word_width = width(self.window, word, font_size, 430., Some(MONO));
             let label = match self.find {
                 Some(find) => div().flex_none().w(word_width).child(
-                    run_style(12.88, 15., 430., self.theme.text)
+                    run_style(font_size, glyph_line_height, 430., self.theme.text)
                         .font_family(MONO)
                         .child(find.text(word, offset)),
                 ),
                 None if !fades.is_empty() => div().flex_none().w(word_width).child(
-                    run_style(12.88, 15., 430., self.theme.text)
+                    run_style(font_size, glyph_line_height, 430., self.theme.text)
                         .font_family(MONO)
                         .child(StyledText::new(word.to_owned()).with_highlights(fades)),
                 ),
                 None => div().flex_none().w(word_width).child(
-                    text(word.to_owned(), 12.88, 15., 430., self.theme.text).font_family(MONO),
+                    text(word.to_owned(), font_size, glyph_line_height, 430., self.theme.text).font_family(MONO),
                 ),
             };
             let measured = positions.clone();
@@ -711,24 +754,23 @@ impl Markdown<'_> {
                 word_width - space * (word.len() - word.trim_end_matches(' ').len()) as f32;
             parts.push(
                 div()
-                    .pt(px(3.5))
-                    .pb(px(3.25))
+                    .pt(px(top / scale))
+                    .pb(px(bottom / scale))
                     // ponytail: shared padding can overhang a line by 12 px; use inline layout for exact edge fits.
                     .mr(px(if index + 1 == count { 0. } else { -12. }))
                     .child(
                         div()
                             .relative()
-                            .h(px(17.))
                             .py(px(1.))
                             .px(px(6.))
                             .children(background.take())
                             .child(
-                                highlight(word.to_owned().into(), 12.88, 430., Some(MONO), 6.)
+                                highlight(word.to_owned().into(), font_size, 430., Some(MONO), 6.)
                                     .absolute()
                                     .left_0()
                                     .right_0()
-                                    .top(px(-3.5))
-                                    .bottom(px(-3.25)),
+                                    .top(px(-top / scale))
+                                    .bottom(px(-bottom / scale)),
                             )
                             .child(label)
                             .on_children_prepainted(move |bounds, _, _| {

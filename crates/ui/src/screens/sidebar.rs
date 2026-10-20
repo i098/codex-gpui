@@ -1212,7 +1212,7 @@ fn thread_row(
                     .h(px(20.))
                     .pl(px(8.))
                     .overflow_hidden()
-                    .layer()
+                    .saved_layer()
                     .child(text(label, 14., 20., 430., t.text_default_nav))
                     .child(shapes::x_fade(px(8.), px(16.))),
             )
