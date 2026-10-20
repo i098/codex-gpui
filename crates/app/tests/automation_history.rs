@@ -51,13 +51,24 @@ fn previous_runs_confirm_cancel_and_persist_partial_results() -> Result<()> {
     let host = Arc::new(LocalHost::new(home.path()));
     host.write_automation("owned-review", "version = 1\nid = \"owned-review\"\nname = \"Review changes\"\nprompt = \"Check the project\"\nstatus = \"ACTIVE\"\nrrule = \"FREQ=DAILY;BYHOUR=9\"\ncwds = []\ncreated_at = 1792083600000\nupdated_at = 1792083600000\n")?;
     let mut lines = script(None, |_| {})?;
-    for (index, thread) in [GREETING, SUBTRACT].into_iter().enumerate() {
-        let id = 90000 + index;
-        lines.push(json!({"dir":"send","msg":{"id":id,"method":"thread/archive","params":{"threadId":thread}}}));
+    for attempt in 0..3 {
+        for (index, thread) in [GREETING, SUBTRACT].into_iter().enumerate() {
+            let id = 90000 + attempt * 10 + index;
+            lines.push(json!({"dir":"send","msg":{"id":id,"method":"thread/archive","params":{"threadId":thread}}}));
+            lines.push(if index == 0 {
+                json!({"dir":"recv","msg":{"id":id,"result":{}}})
+            } else {
+                json!({"dir":"recv","msg":{"id":id,"error":{"code":-32000,"message":"owned refusal"}}})
+            });
+        }
+    }
+    for index in 0..2 {
+        let id = 91000 + index;
+        lines.push(json!({"dir":"send","msg":{"id":id,"method":"thread/unarchive","params":{"threadId":GREETING}}}));
         lines.push(if index == 0 {
             json!({"dir":"recv","msg":{"id":id,"result":{}}})
         } else {
-            json!({"dir":"recv","msg":{"id":id,"error":{"code":-32000,"message":"owned refusal"}}})
+            json!({"dir":"recv","msg":{"id":id,"error":{"code":-32000,"message":"owned rollback refusal"}}})
         });
     }
     let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
@@ -102,7 +113,6 @@ fn previous_runs_confirm_cancel_and_persist_partial_results() -> Result<()> {
         ui::dialog::Kind::ArchiveRuns { count: 2 }
     );
     if let Some(dir) = &shots {
-        fs::create_dir_all(dir)?;
         fx.shot()?.save(dir.join("native-confirm.png"))?;
     }
     fx.keys("escape")?;
@@ -149,6 +159,26 @@ fn previous_runs_confirm_cancel_and_persist_partial_results() -> Result<()> {
         )?,
         4
     );
+    db.execute_batch("CREATE TRIGGER refuse_archive BEFORE UPDATE OF status ON automation_runs WHEN NEW.status = 'ARCHIVED' BEGIN SELECT RAISE(ABORT,'owned archive refusal'); END;")?;
+    for failures in 1..=2 {
+        history_keys(&mut fx, "space down enter")?;
+        fx.keys("tab enter")?;
+        fx.wait("archive persistence refusal", |fx| {
+            fx.read(|root, cx| {
+                root.toasts(cx)
+                    .iter()
+                    .filter(|title| title.as_ref() == "Archived 0; could not archive 2")
+                    .count()
+                    == failures
+            })
+        })?;
+        assert_eq!(status(GREETING)?, "PENDING_REVIEW");
+        assert_eq!(
+            fx.read(|root, _| root.recents().iter().any(|id| id == GREETING)),
+            failures == 1
+        );
+    }
+    db.execute_batch("DROP TRIGGER refuse_archive;")?;
     history_keys(&mut fx, "space down enter")?;
     fx.keys("tab")?;
     fx.keys("enter")?;
@@ -165,6 +195,10 @@ fn previous_runs_confirm_cancel_and_persist_partial_results() -> Result<()> {
         archives(&mut fx)?,
         vec![
             json!({"method":"thread/archive","params":{"threadId":GREETING}}),
+            json!({"method":"thread/archive","params":{"threadId":SUBTRACT}}),
+            json!({"method":"thread/archive","params":{"threadId":GREETING}}),
+            json!({"method":"thread/archive","params":{"threadId":SUBTRACT}}),
+            json!({"method":"thread/archive","params":{"threadId":GREETING}}),
             json!({"method":"thread/archive","params":{"threadId":SUBTRACT}})
         ]
     );
@@ -172,7 +206,7 @@ fn previous_runs_confirm_cancel_and_persist_partial_results() -> Result<()> {
         fx.shot()?.save(dir.join("native-partial.png"))?;
     }
     println!(
-        "Owned stored results: Cancel and Escape write nothing; read failure preserves unread state; read success persists; archive skips running/archived and retains the refused run."
+        "Owned results: Cancel and Escape write nothing. Read failures preserve unread state. Archive write and rollback failures keep stored rows."
     );
     Ok(())
 }

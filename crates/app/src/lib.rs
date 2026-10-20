@@ -430,6 +430,7 @@ pub struct Root {
     running_automations: HashSet<String>,
     automation_updates: HashMap<String, Task<()>>,
     automation_history_updates: HashSet<String>,
+    run_history_load: Option<Task<()>>,
     suggestion_load: Option<Task<()>>,
     /// The Scheduled routes' sidebar, fed the host's list when the read completes.
     scheduled: Option<Entity<automations::ScheduledSidebar>>,
@@ -687,6 +688,7 @@ impl Root {
             picking_project: false,
             automation_updates: HashMap::new(),
             automation_history_updates: HashSet::new(),
+            run_history_load: None,
             suggestion_load: None,
             scheduled: None,
             suggestions: None,
@@ -981,6 +983,7 @@ impl Root {
         self.automation_load = None;
         self.project_load = None;
         self.suggestion_load = None;
+        self.run_history_load = None;
         self.git_status_load = None;
         self.automation_updates.clear();
         if let Some(sidebar) = &self.scheduled {
@@ -997,6 +1000,7 @@ impl Root {
         if self.scheduled_route() {
             self.load_automations(cx);
             self.load_suggestions(cx);
+            self.load_run_history(cx);
         }
         self.refresh_git_actions(cx);
         cx.notify();
@@ -2034,6 +2038,7 @@ impl Root {
         self.flush_settings(cx);
         self.settings_page = None;
         self.suggestion_load = None;
+        self.run_history_load = None;
         let (can_back, can_forward) = (!self.back.is_empty(), !self.forward.is_empty());
         self.archive_page = None;
         self.page = match self.state.route.clone() {
@@ -2630,6 +2635,7 @@ impl Root {
                         this.automation_load = None;
                         this.project_load = None;
                         this.suggestion_load = None;
+                        this.run_history_load = None;
                         this.automations = None;
                         this.scheduled = None;
                         this.suggestions = None;
@@ -3998,9 +4004,10 @@ impl Root {
                         self.sidebar.update(cx, |s, cx| s.set_unread(id, cx));
                         let host = self.host.clone();
                         let (id, turn) = (id.to_owned(), params["turn"].clone());
-                        let finish = cx.background_spawn(async move {
-                            host.finish_automation_run(&id, &turn)
-                        });
+                        let finish =
+                            cx.background_spawn(
+                                async move { host.finish_automation_run(&id, &turn) },
+                            );
                         cx.spawn(async move |this, cx| match finish.await {
                             Ok(true) => {
                                 this.update(cx, |this, cx| this.load_run_history(cx)).ok();
