@@ -327,8 +327,11 @@ The existing replay checks the original colors, row actions, tooltips, canceled 
 
 The retained native Home input capture reaches `Choose project` and `This computer` with Tab and Shift-Tab.
 Pointer movement keeps the keyboard ring; a pointer press clears it.
-This proves focus traversal, not menu activation: both chooser chips still have no menu handler.
-The focus-edge comparison remains deferred; the original recordings and strict gates stay unchanged.
+`Choose project` keeps the existing native folder picker; `This computer` still has no location-menu handler.
+Home derives live fades from the scroll range and captures the finished-animation mask for static references.
+The project folder uses the existing runtime icon path so the mask affects its pixels.
+The capture regression checks live-state restoration, another window, a closed-window error, and the reduced-motion preference.
+The original focus-edge pixel comparison remains open; recordings and strict gates stay unchanged.
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|

@@ -13,6 +13,11 @@ use gpui::{
 };
 use theme::{ActiveTheme as _, Theme};
 
+static PROJECT_TOOLTIP_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
+    std::sync::LazyLock::new(|| textsys::letter_spacing(-0.15));
+static CONTROL_TEXT_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
+    std::sync::LazyLock::new(Default::default);
+
 /// Identifies the window whose scroll animation a static capture finishes.
 #[derive(Clone, Copy)]
 pub struct FinishedScrollAnimation(pub AnyWindowHandle);
@@ -78,23 +83,26 @@ fn chip(
     )
     .when(id == "choose-project", |chip| {
         chip.role(gpui::Role::Button)
+            .font_features(PROJECT_TOOLTIP_FEATURES.clone())
             .aria_label("Choose project")
             .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenFolder), cx))
             .on_key_down(open_folder_key)
     })
     .child(
-        pill(id, t).child(rounded_clip(
-            px(13.),
-            shapes::Corner::Round,
-            div()
-                .h_full()
-                .flex()
-                .items_center()
-                .px(px(8.))
-                .gap(px(6.))
-                .child(icon(glyph, 16., fg))
-                .child(label(s, fg)),
-        )),
+        pill(id, t)
+            .font_features(CONTROL_TEXT_FEATURES.clone())
+            .child(rounded_clip(
+                px(13.),
+                shapes::Corner::Round,
+                div()
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .px(px(8.))
+                    .gap(px(6.))
+                    .child(icon(glyph, 16., fg).when(id == "choose-project", |icon| icon.runtime()))
+                    .child(label(s, fg)),
+            )),
     )
 }
 

@@ -111,6 +111,11 @@ pub fn capture_frozen(cx: &mut HeadlessAppContext, window: AnyWindowHandle) -> R
     });
     let image = (|| {
         cx.update_window(window, |_, window, _| window.refresh())?;
+        cx.test_window(window)
+            .simulate_frame_request(gpui::RequestFrameOptions {
+                require_presentation: true,
+                ..Default::default()
+            });
         cx.run_until_parked();
         cx.capture_screenshot(window)
     })();
@@ -121,6 +126,13 @@ pub fn capture_frozen(cx: &mut HeadlessAppContext, window: AnyWindowHandle) -> R
         }
     });
     let restored = cx.update_window(window, |_, window, _| window.refresh());
+    if restored.is_ok() {
+        cx.test_window(window)
+            .simulate_frame_request(gpui::RequestFrameOptions {
+                require_presentation: true,
+                ..Default::default()
+            });
+    }
     cx.run_until_parked();
     image.and_then(|image| {
         restored?;
@@ -328,6 +340,7 @@ fn html(report: &[Metrics]) -> String {
 #[cfg(target_os = "macos")]
 #[test]
 fn frozen_home_capture_restores_live_scroll_masks() -> Result<()> {
+    use gpui::PlatformWindow as _;
     use ui::screens::home::FinishedScrollAnimation;
 
     let mut cx = headless(Arc::new(theme::Assets));
@@ -343,12 +356,12 @@ fn frozen_home_capture_restores_live_scroll_masks() -> Result<()> {
         cx.open_window(size(px(1280.), px(832.)), open)?.into(),
         cx.open_window(size(px(1280.), px(832.)), open)?.into(),
     ];
+    cx.test_window(windows[0]).activate();
     cx.run_until_parked();
     let live = cx.capture_screenshot(windows[0])?;
     let other_live = cx.capture_screenshot(windows[1])?;
 
     let frozen = capture_frozen(&mut cx, windows[0])?;
-
     assert!(
         frozen.get_pixel(936, 1390)[0] < live.get_pixel(936, 1390)[0],
         "finishing the original scroll animation must fade the folder edge"
