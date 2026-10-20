@@ -423,7 +423,7 @@ fn bubble(
                 .anchor(anchor)
                 .offset(offset)
                 .snap_to_window_with_margin(gpui::Edges::all(px(8.)))
-                .child(pill),
+                .child(crate::composited_bounds(pill.top_layer())),
         ),
     )
     .with_priority(2)

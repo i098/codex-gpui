@@ -261,6 +261,11 @@ Wrap a sparse viewport layer's decorated subtree in `ui::recorded_bounds`.
 It collects painted bounds, including shadows, without adding an opacity layer.
 The Toaster uses this scope to match Chromium's shifted tile grid and local corner geometry.
 
+Wrap a tightly bounded compositor layer in `ui::composited_bounds`.
+It keeps the exact shadow bounds and uses Chromium's dense tile sizes.
+The tooltip uses this scope around its own `top_layer`.
+`focus::shadow_ring` paints outer spread shadows. `focus::ring` retains the outline path.
+
 For a composited layer recorded in window coordinates, add `.window_space_recording()` to its container.
 Keep `.cc_tiles()` when the original layer rectangle sets the tile size.
 Paths retain their window coordinates; the tile grid remains relative to the layer.
