@@ -158,7 +158,7 @@ impl SettingsPane {
             rows.push(settings_row(title, lock.or(Some(detail)), control, t));
         }
         rows.extend(self.configuration_network(t, window, cx));
-        vec![("Permissions", rows)]
+        vec![("Codex", rows)]
     }
 
     pub(super) fn configuration_select(
@@ -201,7 +201,15 @@ impl SettingsPane {
                 "tab" => this.open_select = None,
                 "escape" => this.open_select = None,
                 "enter" | "space" if this.open_select == Some(key) => {
-                    let value = options[this.config_menu_index].0;
+                    let index = this.config_menu_index.unwrap_or_else(|| {
+                        options
+                            .iter()
+                            .position(|(value, _)| {
+                                this.page.read(cx).config_option_allowed(key, value)
+                            })
+                            .unwrap_or(0)
+                    });
+                    let value = options[index].0;
                     this.page
                         .update(cx, |page, cx| page.set(key, json!(value), cx));
                     this.open_select = None;
@@ -214,10 +222,20 @@ impl SettingsPane {
                         0
                     } else if key_name == "end" {
                         count - 1
-                    } else if key_name == "up" {
-                        (this.config_menu_index + count - 1) % count
                     } else {
-                        (this.config_menu_index + 1) % count
+                        let current_index = this.config_menu_index.unwrap_or_else(|| {
+                            options
+                                .iter()
+                                .position(|(value, _)| {
+                                    this.page.read(cx).config_option_allowed(key, value)
+                                })
+                                .unwrap_or(0)
+                        });
+                        if key_name == "up" {
+                            (current_index + count - 1) % count
+                        } else {
+                            (current_index + 1) % count
+                        }
                     };
                     for _ in 0..count {
                         if this
@@ -233,7 +251,7 @@ impl SettingsPane {
                             (index + 1) % count
                         };
                     }
-                    this.config_menu_index = index;
+                    this.config_menu_index = Some(index);
                 }
                 _ => return,
             }

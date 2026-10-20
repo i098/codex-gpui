@@ -692,7 +692,7 @@ ST-086 offers Disabled, Cached, Indexed, and Live with the original descriptions
 Without an explicit search mode, Full access uses Live; other sandbox modes use Cached.
 The `settings_configuration` native fixture target covers save, reopen, managed restrictions, and failed writes.
 The final native run passes all six checks, including pointer and keyboard access changes.
-Original/native appearance approval and the external review verdict remain open.
+Original/native appearance approval remains open.
 An owned original app-server smoke confirms both permission values in `config.toml` and after a server restart.
 An owned original app-server smoke confirms network access and all four search modes on disk and through `config/read`.
 The scope picker, project config, and additional Configuration products are not part of this delivery.

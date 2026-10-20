@@ -512,7 +512,7 @@ pub struct SettingsPane {
     open_select: Option<&'static str>,
     /// Pointer over that menu: a press there is not a click outside.
     menu_hovered: bool,
-    config_menu_index: usize,
+    config_menu_index: Option<usize>,
     git_fields: Vec<(&'static str, Entity<Composer>)>,
 }
 
@@ -547,7 +547,7 @@ impl SettingsPane {
             layer: Layer::default(),
             open_select: None,
             menu_hovered: false,
-            config_menu_index: 0,
+            config_menu_index: None,
             git_fields: Vec::new(),
         }
     }
@@ -565,6 +565,12 @@ impl SettingsPane {
         let label = configuration::config_label(key, &current, options);
         let open = self.open_select == Some(key);
         let hover = t.menu_item_hover;
+        let configuration_menu = key.starts_with("config.");
+        let (menu_font_size, menu_line_height) = if configuration_menu {
+            (13., 18.5625)
+        } else {
+            (14., 20.)
+        };
         let menu = open.then(|| {
             let rows = options
                 .iter()
@@ -574,25 +580,43 @@ impl SettingsPane {
                     div()
                         .id(value)
                         .px(px(8.))
-                        .py(px(6.))
-                        .rounded(px(12.))
-                        .when(value == current, |d| d.bg(hover))
+                        .py(px(if configuration_menu { 5. } else { 6. }))
+                        .rounded(px(if configuration_menu { 15. } else { 12. }))
+                        .when(value == current && !configuration_menu, |d| d.bg(hover))
                         .when(
-                            key.starts_with("config.") && self.config_menu_index == index,
+                            configuration_menu && self.config_menu_index == Some(index),
                             |d| d.bg(hover),
                         )
                         .hover(move |s| s.bg(hover))
-                        .child(text(label, 14., 20., 430., t.text))
-                        .when_some(
-                            configuration::option_description(key, value),
-                            |d, detail| {
-                                d.flex_col().items_start().child(
-                                    text(detail, 14., 20., 400., t.text_secondary)
-                                        .w_full()
-                                        .whitespace_normal(),
+                        .child(if configuration_menu {
+                            div()
+                                .flex_1()
+                                .min_w(px(0.))
+                                .child(text(label, menu_font_size, menu_line_height, 430., t.text))
+                                .when_some(
+                                    configuration::option_description(key, value),
+                                    |d, detail| {
+                                        d.child(
+                                            text(
+                                                detail,
+                                                menu_font_size,
+                                                menu_line_height,
+                                                430.,
+                                                t.text_secondary,
+                                            )
+                                            .mt(px(4.))
+                                            .w_full()
+                                            .whitespace_normal(),
+                                        )
+                                    },
                                 )
-                            },
-                        )
+                        } else {
+                            text(label, menu_font_size, menu_line_height, 430., t.text)
+                        })
+                        .when(configuration_menu, |d| d.flex().items_center().gap(px(6.)))
+                        .when(configuration_menu && value == current, |d| {
+                            d.child(icon("menu-check", 16., t.text))
+                        })
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.page.update(cx, |p, cx| p.set(key, json!(value), cx));
                             this.open_select = None;
@@ -605,14 +629,21 @@ impl SettingsPane {
                 div().absolute().top_0().right_0().child(
                     anchored()
                         .anchor(Anchor::TopRight)
-                        .offset(point(px(0.), px(32.)))
+                        .offset(point(
+                            px(0.),
+                            px(if configuration_menu { 30. } else { 32. }),
+                        ))
                         .child(
                             div()
                                 .id("select-menu")
                                 .on_hover(cx.listener(|this, hovered: &bool, _, _| {
                                     this.menu_hovered = *hovered
                                 }))
-                                .child(popover(t, 280., |d| d.children(rows))),
+                                .child(popover(
+                                    t,
+                                    if configuration_menu { 360. } else { 280. },
+                                    |d| d.children(rows),
+                                )),
                         ),
                 ),
             )
@@ -621,10 +652,7 @@ impl SettingsPane {
             .id(key)
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.open_select = (!open).then_some(key);
-                this.config_menu_index = options
-                    .iter()
-                    .position(|(value, _)| this.page.read(cx).config_option_allowed(key, value))
-                    .unwrap_or(0);
+                this.config_menu_index = None;
                 cx.notify();
             }))
             .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
@@ -1290,6 +1318,7 @@ impl Render for SettingsPane {
                     .id("settings-page")
                     .flex_1()
                     .overflow_y_scroll()
+                    .when(section == "Configuration", |d| d.pr(px(10.)))
                     .layer()
                     .child(probe(&self.layer))
                     .child(
@@ -1309,12 +1338,18 @@ impl Render for SettingsPane {
                                         .justify_center()
                                         .child(text(section, 28., 33.6, 500., t.text))
                                         .when(section == "Configuration", |d| {
-                                            d.child(description(
-                                                "Configure permissions, web access, and agent responses for new chats",
-                                                &t,
-                                            ))
+                                            d.child(
+                                                text(
+                                                    "Choose how ChatGPT works on your tasks",
+                                                    14.,
+                                                    24.,
+                                                    430.,
+                                                    t.text_secondary,
+                                                )
+                                                .mt(px(4.)),
+                                            )
                                         }),
-                            ),
+                                ),
                             ),
                     )
                     .child(
@@ -1327,7 +1362,13 @@ impl Render for SettingsPane {
                                 .when(section == "Configuration", |d| {
                                     let page = self.page.read(cx);
                                     d.when(page.configuration_loading, |d| {
-                                        d.child(text("Loading configuration…", 13., 20., 400., t.text_secondary))
+                                        d.child(text(
+                                            "Loading configuration…",
+                                            13.,
+                                            20.,
+                                            400.,
+                                            t.text_secondary,
+                                        ))
                                     })
                                     .when_some(page.configuration_error.clone(), |d, error| {
                                         d.child(text(error, 13., 20., 400., t.text))
