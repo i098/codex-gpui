@@ -1072,6 +1072,12 @@ fn thread_row(
     )
 }
 
+enum ItemKey {
+    Thread(String),
+    Url(String),
+    Command(SharedString),
+}
+
 /// One command menu row: optional 16 px leading icon, label, then a description, the chat's
 /// project, its key equivalent, or an external-link arrow.
 #[derive(Default)]
@@ -1131,6 +1137,26 @@ impl Item {
             snippet: snippet.map(Into::into),
             unread,
             ..Default::default()
+        }
+    }
+
+    fn key(&self) -> ItemKey {
+        if let Some(id) = &self.thread {
+            ItemKey::Thread(id.clone())
+        } else if let Some(url) = &self.url {
+            ItemKey::Url(url.clone())
+        } else {
+            ItemKey::Command(self.label.clone())
+        }
+    }
+
+    fn matches_key(&self, key: &ItemKey) -> bool {
+        match key {
+            ItemKey::Thread(id) => self.thread.as_ref() == Some(id),
+            ItemKey::Url(url) => self.url.as_ref() == Some(url),
+            ItemKey::Command(label) => {
+                self.thread.is_none() && self.url.is_none() && self.label == *label
+            }
         }
     }
 
@@ -1647,12 +1673,14 @@ pub struct CommandMenu {
     query_dragging: bool,
     show_caret: bool,
     selected: usize,
+    retained_selection: Option<ItemKey>,
     focus: FocusHandle,
     /// A thread is open: its commands show (`Search files`, `Mark as unread`, ...).
     thread_open: bool,
     git_available: bool,
     /// Bumped on every query change; a debounced search only fires for the latest.
     search_gen: usize,
+    search_scheduled: bool,
     /// The local and ChatGPT searches complete independently.
     searching: bool,
     cloud_enabled: bool,
@@ -2276,10 +2304,12 @@ impl CommandMenu {
             query_dragging: false,
             show_caret: true,
             selected: 0,
+            retained_selection: None,
             focus: cx.focus_handle(),
             thread_open,
             git_available: false,
             search_gen: 0,
+            search_scheduled: false,
             searching: false,
             cloud_enabled: false,
             cloud_searching: false,
@@ -2298,7 +2328,12 @@ impl CommandMenu {
         }
         self.cloud_enabled = true;
         if self.query.trim().chars().count() >= SEARCH_MIN_CHARS {
-            self.retry_cloud_search(cx);
+            if self.search_scheduled {
+                self.cloud_searching = true;
+                cx.notify();
+            } else {
+                self.retry_cloud_search(cx);
+            }
         }
     }
 
@@ -2314,22 +2349,39 @@ impl CommandMenu {
         self.search_gen == request.generation && self.query.trim() == request.term.as_ref()
     }
 
-    fn selected_key(&self) -> Option<(Option<String>, Option<String>, SharedString)> {
+    fn selected_key(&self) -> Option<ItemKey> {
         self.visible()
             .into_iter()
             .flat_map(|(_, rows)| rows)
             .nth(self.selected)
-            .map(|item| (item.thread.clone(), item.url.clone(), item.label.clone()))
+            .map(Item::key)
     }
 
-    fn restore_selection(&mut self, key: Option<(Option<String>, Option<String>, SharedString)>) {
+    fn select(&mut self, index: usize) {
+        let groups = self.visible();
+        let count = groups.iter().map(|(_, rows)| rows.len()).sum::<usize>();
+        let index = index.min(count.saturating_sub(1));
+        let key = groups
+            .into_iter()
+            .flat_map(|(_, rows)| rows)
+            .nth(index)
+            .map(Item::key);
+        self.selected = index;
+        self.restore_selection(key);
+    }
+
+    fn restore_selection(&mut self, key: Option<ItemKey>) {
+        self.retained_selection = key;
         let visible = self.visible();
         let count = visible.iter().map(|(_, rows)| rows.len()).sum::<usize>();
-        self.selected = key
+        self.selected = self
+            .retained_selection
+            .as_ref()
             .and_then(|key| {
-                visible.iter().flat_map(|(_, rows)| rows).position(|item| {
-                    item.thread == key.0 && item.url == key.1 && item.label == key.2
-                })
+                visible
+                    .iter()
+                    .flat_map(|(_, rows)| rows)
+                    .position(|item| item.matches_key(key))
             })
             .unwrap_or(self.selected)
             .min(count.saturating_sub(1));
@@ -2339,8 +2391,11 @@ impl CommandMenu {
         if !self.cloud_enabled || self.cloud_searching {
             return;
         }
+        if self.cloud_error {
+            self.selected = 0;
+            self.retained_selection = None;
+        }
         self.cloud_error = false;
-        self.selected = 0;
         self.cloud_searching = true;
         cx.emit(CommandMenuEvent::RetryCloudSearch(SearchRequest {
             term: self.query.trim().to_owned().into(),
@@ -2362,8 +2417,8 @@ impl CommandMenu {
         self.cloud_searching = false;
         self.cloud_error = result.is_err();
         let chats = &mut self.groups[0].1;
-        chats.retain(|item| item.url.is_none());
         if let Ok(hits) = result {
+            chats.retain(|item| item.url.is_none());
             chats.extend(hits.into_iter().map(|hit| {
                 let label: SharedString = hit.title.into();
                 Item {
@@ -2383,13 +2438,9 @@ impl CommandMenu {
     }
 
     pub fn set_git_available(&mut self, available: bool, cx: &mut Context<Self>) {
+        let selected = self.selected_key();
         self.git_available = available;
-        let count = self
-            .visible()
-            .iter()
-            .map(|(_, rows)| rows.len())
-            .sum::<usize>();
-        self.selected = self.selected.min(count.saturating_sub(1));
+        self.restore_selection(selected);
         cx.notify();
     }
 
@@ -2433,6 +2484,13 @@ impl CommandMenu {
                     });
                 }
                 if *heading == "Chats" && !query.is_empty() {
+                    if let Some(key) = &self.retained_selection
+                        && let Some(index) =
+                            ranked.iter().position(|(_, item)| item.matches_key(key))
+                        && index >= SEARCH_LIMIT as usize
+                    {
+                        ranked.swap(SEARCH_LIMIT as usize - 1, index);
+                    }
                     ranked.truncate(SEARCH_LIMIT as usize);
                 }
                 (
@@ -2537,6 +2595,8 @@ impl CommandMenu {
     /// The query changed: drop the old search results and schedule the next search.
     fn query_changed(&mut self, cx: &mut Context<Self>) {
         self.selected = 0;
+        self.retained_selection = None;
+        self.search_scheduled = false;
         let chats = &mut self.groups[0].1;
         chats.retain(|c| !c.from_search);
         chats.iter_mut().for_each(|c| c.snippet = None);
@@ -2548,12 +2608,14 @@ impl CommandMenu {
         if term.chars().count() < SEARCH_MIN_CHARS {
             return;
         }
+        self.search_scheduled = true;
         self.cloud_searching = self.cloud_enabled;
         let generation = self.search_gen;
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SEARCH_DEBOUNCE).await;
             this.update(cx, |this, cx| {
                 if this.search_gen == generation {
+                    this.search_scheduled = false;
                     this.searching = true;
                     cx.emit(CommandMenuEvent::Search(SearchRequest { term, generation }));
                     cx.notify();
@@ -2780,17 +2842,12 @@ impl CommandMenu {
         let k = &e.keystroke;
         match k.key.as_str() {
             "down" | "up" => {
-                self.selected = if k.key == "down" {
+                let next = if k.key == "down" {
                     self.selected + 1
                 } else {
                     self.selected.saturating_sub(1)
                 };
-                let count = self
-                    .visible()
-                    .iter()
-                    .map(|(_, items)| items.len())
-                    .sum::<usize>();
-                self.selected = self.selected.min(count.saturating_sub(1));
+                self.select(next);
             }
             "left" | "right" => {
                 let forward = k.key == "right";
@@ -2997,7 +3054,10 @@ impl Render for CommandMenu {
         // the 16 px icon slot with its 8 px gap.
         let text_width = width - 2. * 5. - 2. * 8. - 16. - 8.;
         let mut index = 0;
-        let groups = self.visible().into_iter().map(|(heading, items)| {
+        let visible = self.visible();
+        let loading = self.searching || self.cloud_searching;
+        let empty_loading = loading && visible.is_empty();
+        let groups = visible.into_iter().map(|(heading, items)| {
             // The pending content search shows its spinner next to `Chats`.
             let searching = heading == "Chats" && (self.searching || self.cloud_searching);
             div()
@@ -3045,13 +3105,13 @@ impl Render for CommandMenu {
                             })
                             .on_mouse_move(cx.listener(move |this, _, _, cx| {
                                 if this.selected != index - 1 {
-                                    this.selected = index - 1;
+                                    this.select(index - 1);
                                     cx.notify();
                                 }
                             }))
                             .on_click(cx.listener(
                                 move |this, _, _, cx| {
-                                    this.selected = index - 1;
+                                    this.select(index - 1);
                                     this.confirm(cx);
                                 },
                             ))
@@ -3132,7 +3192,26 @@ impl Render for CommandMenu {
                                             .top_layer()
                                             .flex()
                                             .flex_col()
-                                            .children(groups),
+                                            .children(groups)
+                                            .when(empty_loading, |list| {
+                                                list.child(
+                                                    div()
+                                                        .id("empty-chat-search-loading")
+                                                        .role(gpui::Role::Label)
+                                                        .aria_label("Loading chats")
+                                                        .h(px(48.))
+                                                        .w_full()
+                                                        .px(px(16.))
+                                                        .flex()
+                                                        .items_center()
+                                                        .justify_center()
+                                                        .child(icon(
+                                                            "sidebar-cmd-spinner",
+                                                            18.,
+                                                            t.text_secondary,
+                                                        )),
+                                                )
+                                            }),
                                     ),
                             ),
                     ),
