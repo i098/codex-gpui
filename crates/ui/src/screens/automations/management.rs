@@ -302,19 +302,13 @@ impl Render for Management {
         let filter_focus = crate::focus::handle("management-filter", 0, window, cx);
         let add_focus = crate::focus::handle("management-add", 0, window, cx);
         let mut list = div()
-            .relative()
-            .layer()
-            .cc_tiles()
             .h_full()
             .min_w_0()
             .flex()
             .flex_col()
             .px(px(30.))
             .pt(px(30.))
-            .child(shapes::decoration(shapes::Decoration {
-                fill: Some(t.surface),
-                ..Default::default()
-            }));
+            .bg(t.surface);
         list = if task.is_some() {
             list.w(px(352.)).flex_none()
         } else {
@@ -590,8 +584,6 @@ impl Render for Management {
                             .px(px(16.))
                             .py(px(24.))
                             .overflow_y_scroll()
-                            .layer()
-                            .cc_tiles()
                             .child(history),
                     ),
             );

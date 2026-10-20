@@ -3046,24 +3046,7 @@ impl Render for Dialog {
                     } else {
                         content.into_any_element()
                     })
-                    .map(|panel| {
-                        if archive {
-                            // Keep the CSS shadow ink inside the layer, outside the content clip.
-                            div()
-                                .absolute()
-                                .left(px((f32::from(viewport.width) - width) / 2. - 10.))
-                                .top(px(top - 6.))
-                                .w(px(width + 20.))
-                                .h(px(height + 20.))
-                                .layer()
-                                .top_layer()
-                                .snap_origin()
-                                .child(panel.relative().left(px(10.)).top(px(6.)))
-                                .into_any_element()
-                        } else {
-                            panel.into_any_element()
-                        }
-                    }),
+                    .when(archive, |panel| panel.snap_origin()),
             )
     }
 }
