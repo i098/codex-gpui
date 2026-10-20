@@ -616,6 +616,12 @@ Projectless and heartbeat tasks are refused: the host has no workspace-directory
 Not yet carried over: the project assignment of the new thread, `autoArchive`, the desktop notification, the unread dot on the rail, `lastRunAt` and next-run updates.
 `automation_run_now` checks the requests the app-server receives and the refusals; the live `Root` flow needs macOS.
 
+`Share` (AM-024) is the item after `Run now` and `Pause` / `Resume` in the same menu, as in `actions-b3b1b77c618b.js` (`scheduled.sidebar.share`); it has the original's `link-light-20` icon (`automation-share.svg`, 20 px in a 16 px box at opacity 0.75, 1 on hover).
+Choosing it copies `https://chatgpt.com/scheduled?automationId=<id>&automationSource=local` (the original's `Rzt` on the `https://chatgpt.com/codex` origin, which drops `/codex`) and shows the success toast `Link copied`.
+Like the original's `copy(link).then(ok => ok && toast)`, `Root` shows the toast only when the clipboard reads back the link; otherwise it logs the failure and shows nothing.
+No request leaves the app, and the task is not opened.
+`automation_share` checks the link and, on macOS, the menu click, the clipboard text and the toast on the headless platform's in-memory clipboard.
+
 `LocalHost` implements the original `automation-update` status change for local tasks (issue https://github.com/i098/codex-gpui/issues/226).
 It accepts `{id, status}` or the original full cron or heartbeat body; any other changed field fails.
 Like the original `ugi`, a task without a target sends its first cwd as `projectId`; the host compares that value with the stored cwd.

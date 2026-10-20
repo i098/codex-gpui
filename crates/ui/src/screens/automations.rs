@@ -62,6 +62,13 @@ pub struct RunAutomationNow {
     pub id: String,
 }
 
+/// `Share` in a task row's menu: the app copies the task's link to the clipboard.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = automations, no_json)]
+pub struct ShareAutomation {
+    pub id: String,
+}
+
 /// One `list-automations` item, as the sidebar `Upcoming` list and the task thread show it.
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -430,21 +437,26 @@ impl ScheduledSidebar {
         window.dispatch_action(Box::new(ToggleAutomation { id: id.to_owned() }), cx);
     }
 
+    fn share(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_menu(window, cx);
+        window.dispatch_action(Box::new(ShareAutomation { id: id.to_owned() }), cx);
+    }
+
     fn menu_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         match event.keystroke.key.as_str() {
             "escape" => self.close_menu(window, cx),
             "enter" | "space" => {
                 if let Some(id) = self.menu.clone() {
-                    if self.menu_item == Some(0) {
-                        self.run_now(&id, window, cx);
-                    } else {
-                        self.toggle(&id, window, cx);
+                    match self.menu_item {
+                        Some(0) => self.run_now(&id, window, cx),
+                        Some(2) => self.share(&id, window, cx),
+                        _ => self.toggle(&id, window, cx),
                     }
                 }
             }
             "up" | "down" | "home" | "end" => {
                 let last = matches!(event.keystroke.key.as_str(), "down" | "end");
-                self.menu_item = Some(usize::from(last));
+                self.menu_item = Some(if last { 2 } else { 0 });
                 cx.stop_propagation();
                 cx.notify();
             }
@@ -512,6 +524,33 @@ impl ScheduledSidebar {
                     .child(status_icon(paused, t.text)),
             )
             .child(text(label, 13., 18.5714, 430., t.text));
+        let share_id = task.id.clone();
+        let share = div()
+            .id("share")
+            .group("share-item")
+            .role(Role::MenuItem)
+            .aria_label("Share")
+            .h(px(28.5625))
+            .px(px(8.))
+            .rounded(px(15.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .when(self.menu_item == Some(2), |d| d.bg(hover))
+            .hover(move |s| s.bg(hover))
+            .on_click(cx.listener(move |this, _, window, cx| this.share(&share_id, window, cx)))
+            .child(
+                div()
+                    .size(px(16.))
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .opacity(0.75)
+                    .group_hover("share-item", |s| s.opacity(1.))
+                    .child(icon("automation-share", 20., t.text)),
+            )
+            .child(text("Share", 13., 18.5714, 430., t.text));
         let menu = div()
             .id("task-actions-menu")
             .occlude()
@@ -525,7 +564,7 @@ impl ScheduledSidebar {
                 }
             }))
             .child(crate::composer::popover(t, 220., |menu| {
-                menu.child(run).child(item)
+                menu.child(run).child(item).child(share)
             }));
         deferred(
             div().absolute().top(px(30.)).right(px(1.)).child(

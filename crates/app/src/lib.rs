@@ -1581,6 +1581,34 @@ impl Root {
         self.automations.as_ref()
     }
 
+    /// A task's link as the original builds it (`Rzt`: `new URL("/scheduled", origin)` with the
+    /// `https://chatgpt.com/codex` origin, so the path drops `/codex`), with `automationId` and
+    /// `automationSource` (`local` for these tasks).
+    pub fn automation_link(id: &str) -> String {
+        let mut link = url::Url::parse("https://chatgpt.com/scheduled").expect("constant url");
+        link.query_pairs_mut()
+            .append_pair("automationId", id)
+            .append_pair("automationSource", "local");
+        link.into()
+    }
+
+    /// Row menu `Share`: copies the task's link and, like the original's `E(link).then(ok => ok
+    /// && toast)`, says `Link copied` only when the clipboard really holds it.
+    fn share_automation(&mut self, id: &str, cx: &mut Context<Self>) {
+        let link = Self::automation_link(id);
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(link.clone()));
+        if cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .as_deref()
+            == Some(&link)
+        {
+            self.toast(Toast::success("Link copied"), cx);
+        } else {
+            eprintln!("codex-gpui: share task: the clipboard did not take the link");
+        }
+    }
+
     fn scheduled_route(&self) -> bool {
         matches!(self.state.route, Route::Scheduled | Route::Automation(_))
     }
@@ -4673,6 +4701,11 @@ impl Render for Root {
             .on_action(
                 cx.listener(|this, action: &automations::ToggleAutomation, _, cx| {
                     this.toggle_automation(&action.id, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|this, a: &automations::ShareAutomation, _, cx| {
+                    this.share_automation(&a.id, cx)
                 }),
             )
             .on_action(cx.listener(|this, _: &automations::NewTask, window, cx| {
