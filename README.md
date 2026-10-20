@@ -236,6 +236,12 @@ That command does not close QA or any normal app.
 | `parity` | The pixel-parity harness: it renders each screen headless and compares it with the reference screenshot. |
 | `app` | The `codex-gpui` binary: the root view, the menu bar and the app-server session. |
 
+App routing lives in `crates/app/src/routes/`.
+Home, Thread, Settings, Automations, Mobile, and Archive each own their action registration and page activation there.
+`routes/mod.rs` keeps the route enum, family registration, navigation history, and shared shell updates.
+`app::Route` and its saved values stay unchanged.
+Shared RPC handlers and state remain on `Root` in `lib.rs`.
+
 On macOS, `textsys::show_definition(window, selection, baseline)` opens AppKit's native Look Up popover.
 The baseline uses window-local logical pixels from the top left; the adapter handles both view orientations.
 Call it on the main thread with the unchanged selection.
