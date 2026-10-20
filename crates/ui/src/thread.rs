@@ -132,6 +132,7 @@ pub struct ThreadView {
     composer: AnyView,
     _tick: Option<Task<()>>,
     stream_fades: HashMap<String, Vec<StreamSegment>>,
+    mcp_images: RefCell<HashMap<String, Vec<(usize, Arc<Image>)>>>,
     /// Open disclosures: turns whose `Worked for` is expanded, by turn id, and activity groups
     /// whose rows show, by the id of their first item.
     expanded: HashSet<String>,
@@ -581,6 +582,7 @@ impl ThreadView {
             composer,
             _tick: None,
             stream_fades: HashMap::new(),
+            mcp_images: RefCell::default(),
             expanded: HashSet::new(),
             pending_question: None,
             scroll: ScrollHandle::new(),
@@ -1408,6 +1410,9 @@ impl ThreadView {
                     return;
                 };
                 let id = item_id(&n.item).map(str::to_owned);
+                if let Some(id) = &id {
+                    self.mcp_images.borrow_mut().remove(id);
+                }
                 match turn
                     .items
                     .iter_mut()
@@ -1437,10 +1442,50 @@ impl ThreadView {
                             // A completion without a final snapshot must retain streamed output.
                             *after = before.take();
                         }
+                        if let (
+                            ThreadItem::McpToolCall {
+                                progress: previous,
+                                metadata: previous_metadata,
+                                ..
+                            },
+                            ThreadItem::McpToolCall {
+                                progress,
+                                metadata,
+                                ..
+                            },
+                        ) = (&mut *item, &mut n.item)
+                        {
+                            if progress.is_empty() {
+                                *progress = std::mem::take(previous);
+                            }
+                            for (key, value) in std::mem::take(previous_metadata) {
+                                metadata.entry(key).or_insert(value);
+                            }
+                        }
                         *item = n.item;
                     }
                     None => turn.items.push(n.item),
                 }
+            }
+            "item/mcpToolCall/progress" => {
+                let Some(item_id) = params["itemId"].as_str() else {
+                    return;
+                };
+                let Some(turn) = self
+                    .turns
+                    .iter_mut()
+                    .find(|turn| Some(turn.id.as_str()) == params["turnId"].as_str())
+                else {
+                    return;
+                };
+                let Some(ThreadItem::McpToolCall { progress, .. }) = turn
+                    .items
+                    .iter_mut()
+                    .find(|item| self::item_id(item) == Some(item_id))
+                else {
+                    return;
+                };
+                progress.push(params.clone());
             }
             "item/agentMessage/delta" | "item/commandExecution/outputDelta" => {
                 let Ok(n) = serde_json::from_value::<AgentMessageDeltaNotification>(params.clone())
@@ -1724,6 +1769,7 @@ impl ThreadView {
                 running,
                 &self.expanded,
                 &self.stream_fades,
+                &self.mcp_images,
                 window,
                 t,
                 cx,
@@ -1739,6 +1785,7 @@ impl ThreadView {
                         running,
                         &self.expanded,
                         &self.stream_fades,
+                        &self.mcp_images,
                         window,
                         t,
                         cx,
@@ -1760,6 +1807,7 @@ impl ThreadView {
                 running,
                 &self.expanded,
                 &self.stream_fades,
+                &self.mcp_images,
                 window,
                 t,
                 cx,

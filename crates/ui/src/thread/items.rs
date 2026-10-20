@@ -1,4 +1,5 @@
 use super::*;
+use base64::Engine as _;
 
 /// Right-aligned user message: `bg-user-message`, 22 px squircle, at most 70% wide.
 pub(super) fn user_bubble(message: &str, t: &Theme) -> Div {
@@ -267,6 +268,7 @@ pub(super) enum Activity<'a> {
     Markdown(&'a str, &'a str),
     /// A command still running, by its command line.
     Running(&'a str),
+    Mcp(&'a ThreadItem),
     /// Consecutive finished commands and file changes behind one summary
     /// (`agent-activity-group`, keyed by its first item): `Edited a file, read files, ran
     /// commands`.
@@ -318,6 +320,7 @@ impl Activity<'_> {
         match self {
             Activity::Markdown(_, text) => vec![(*text).to_owned()],
             Activity::Running(command) => vec![(*command).to_owned()],
+            Activity::Mcp(item) => vec![mcp_label(item)],
             Activity::Group {
                 key, summary, rows, ..
             } => std::iter::once(summary.clone())
@@ -345,6 +348,10 @@ pub(super) fn activities<'a>(items: &'a [ThreadItem], running: bool) -> Vec<Acti
             } if running && status == "inProgress" => {
                 flush(&mut out, &mut group);
                 out.push(Activity::Running(command));
+            }
+            ThreadItem::McpToolCall { .. } => {
+                flush(&mut out, &mut group);
+                out.push(Activity::Mcp(item));
             }
             ThreadItem::CommandExecution { .. } | ThreadItem::FileChange { .. } => {
                 group.push(item);
@@ -487,6 +494,7 @@ pub(super) fn activity(
     running: bool,
     open: &HashSet<String>,
     fades: &HashMap<String, Vec<StreamSegment>>,
+    images: &RefCell<HashMap<String, Vec<(usize, Arc<Image>)>>>,
     window: &Window,
     t: &Theme,
     cx: &Context<ThreadView>,
@@ -552,6 +560,92 @@ pub(super) fn activity(
             Activity::Running(command) => {
                 row("thread-terminal", plain(label(command.to_owned(), text60)))
             }
+            Activity::Mcp(item) => {
+                let ThreadItem::McpToolCall {
+                    id,
+                    server,
+                    tool,
+                    status,
+                    arguments,
+                    result,
+                    error,
+                    duration_ms,
+                    progress,
+                    metadata,
+                } = item else {
+                    unreachable!();
+                };
+                let key = format!("mcp-{id}");
+                let is_open = open.contains(&key);
+                let color = if status == "failed" || error.is_some() {
+                    t.text
+                } else {
+                    text60
+                };
+                let mut content = div().w_full().flex().flex_col().gap(px(8.)).child(
+                    disclosure(key, "settings-computer-use", label(mcp_label(item), color), is_open),
+                );
+                if is_open {
+                    for update in progress {
+                        if let Some(message) = update["message"].as_str() {
+                            content = content.child(text(message.to_owned(), 14., 21., 430., text60));
+                        }
+                    }
+                    if let Some(result) = result {
+                        if let Some(blocks) = result["content"].as_array() {
+                            for (index, block) in blocks.iter().enumerate() {
+                                if let Some(text) = block["text"].as_str() {
+                                    content = content.child(markdown(text, window, t, &[]));
+                                } else if block["type"] == "image" {
+                                    let mut images = images.borrow_mut();
+                                    let decoded = images.entry(id.clone()).or_insert_with(|| {
+                                        blocks.iter().enumerate().filter_map(|(index, block)| {
+                                            let format = ImageFormat::from_mime_type(block["mimeType"].as_str()?)?;
+                                            let data = base64::engine::general_purpose::STANDARD
+                                                .decode(block["data"].as_str()?).ok()?;
+                                            Some((index, Arc::new(Image::from_bytes(format, data))))
+                                        }).collect()
+                                    });
+                                    if let Some((_, image)) = decoded.iter().find(|(at, _)| *at == index) {
+                                        content = content.child(gpui::img(image.clone()).max_w_full());
+                                    } else {
+                                        content = content.child(text(
+                                            "Could not display tool image", 14., 21., 430., t.text,
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                        if let Some(structured) = result.get("structuredContent") {
+                            content = content.child(markdown(
+                                &format!("```json\n{structured:#}\n```"), window, t, &[],
+                            ));
+                        }
+                    }
+                    if let Some(error) = error {
+                        content = content.child(markdown(
+                            error["message"].as_str().unwrap_or("Tool call failed"), window, t, &[],
+                        ));
+                    }
+                    let raw_key = format!("mcp-raw-{id}");
+                    let raw_open = open.contains(&raw_key);
+                    content = content.child(disclosure(
+                        raw_key, "thread-read",
+                        label("Show raw tool call output".into(), text60), raw_open,
+                    ));
+                    if raw_open {
+                        let raw = serde_json::json!({
+                            "server": server, "tool": tool, "arguments": arguments,
+                            "result": result, "error": error, "durationMs": duration_ms,
+                            "metadata": metadata,
+                        });
+                        content = content.child(markdown(
+                            &format!("```json\n{raw:#}\n```"), window, t, &[],
+                        ));
+                    }
+                }
+                content
+            }
             Activity::Group {
                 key,
                 summary,
@@ -606,6 +700,25 @@ pub(super) fn activity(
         });
     }
     col
+}
+
+fn mcp_label(item: &ThreadItem) -> String {
+    let ThreadItem::McpToolCall { server, tool, arguments, .. } = item else {
+        unreachable!();
+    };
+    if tool == "js"
+        && let Some(title) = arguments["title"].as_str()
+    {
+        let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
+        if !title.is_empty() {
+            return if title.chars().count() > 80 {
+                format!("{}…", title.chars().take(79).collect::<String>().trim_end())
+            } else {
+                title
+            };
+        }
+    }
+    format!("{server}.{tool}")
 }
 
 /// The card under an open `Ran` row, 8 px below it and 4 px above the next row, 10 px short

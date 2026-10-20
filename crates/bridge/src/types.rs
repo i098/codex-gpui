@@ -141,6 +141,15 @@ pub enum ThreadItem {
         server: String,
         tool: String,
         status: String,
+        #[serde(default)]
+        arguments: Value,
+        result: Option<Value>,
+        error: Option<Value>,
+        duration_ms: Option<i64>,
+        #[serde(default)]
+        progress: Vec<Value>,
+        #[serde(flatten)]
+        metadata: serde_json::Map<String, Value>,
     },
     ContextCompaction {
         id: String,

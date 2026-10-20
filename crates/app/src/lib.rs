@@ -458,6 +458,7 @@ pub struct Root {
     /// Server approval requests waiting for a decision, oldest first. The thread composer
     /// shows the open thread's oldest one.
     approvals: Vec<PendingApproval>,
+    interrupting: HashSet<(String, String)>,
     /// A commit, push or branch workflow is running (the original's single workflow state).
     git_busy: Option<&'static str>,
     git_status_load: Option<Task<()>>,
@@ -722,6 +723,7 @@ impl Root {
             deleted_queued: Vec::new(),
             steered_queued: HashSet::new(),
             approvals: Vec::new(),
+            interrupting: HashSet::new(),
             git_busy: None,
             git_status_load: None,
             commit_cwd: None,
@@ -3495,11 +3497,15 @@ impl Root {
             return;
         };
         let (thread_id, turn_id) = (id.clone(), turn.id.clone());
+        if !self.interrupting.insert((thread_id.clone(), turn_id.clone())) {
+            return;
+        }
         let bridge = self.bridge.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {
             let result = bridge.turn_interrupt(&thread_id, &turn_id).await;
             if result.is_err() {
                 this.update(cx, |this, cx| {
+                    this.interrupting.remove(&(thread_id, turn_id));
                     this.toast(Toast::danger("Failed to stop chat"), cx)
                 })?;
             }
@@ -4275,6 +4281,10 @@ impl Root {
                     }
                     // Standalone elicitations and nonblocking questions wait for explicit resolution.
                     let turn = &params["turn"]["id"];
+                    self.interrupting.retain(|(thread, pending_turn)| {
+                        params["threadId"].as_str() != Some(thread.as_str())
+                            || turn.as_str() != Some(pending_turn.as_str())
+                    });
                     self.approvals.retain(|p| {
                         p.method == "mcpServer/elicitation/request"
                             || (p.method == "item/tool/requestUserInput"
