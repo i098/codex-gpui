@@ -19,9 +19,11 @@ Stop and fix the cause if a new report appears.
 - **PASS (flow)**: the named flow or slice test in `crates/app/tests/` passes.
 - **FAIL (why)**: the port behaves differently, or no flow can reach the row yet (the reason tells which).
 - **NOT WIRED (owner)**: the port has no handler for the row; the owner file must add it.
+- **PARTIAL**: a subset works; these rows remain in the FAIL total.
 
 The "Original" column gives the behavior from the inventory.
-The rows were not clicked again on the original through `tools/route1`: its `server.mjs` starts a live `codex app-server` with `CODEX_HOME=/tmp/cgx-mac/home`, and this lane must not touch that directory.
+The historical harness run did not click these rows again on the original.
+Later slice sections identify their retained original evidence.
 
 ## Totals
 
@@ -35,10 +37,10 @@ The rows were not clicked again on the original through `tools/route1`: its `ser
 | 14.5 Composer | 20 | 6 | 5 | 9 |
 | 14.6 Diff view | 20 | 14 | 5 | 1 |
 | 14.7 Settings, login and onboarding | 20 | 7 | 8 | 5 |
-| 15.1 Automations | 16 | 2 | 2 | 12 |
+| 15.1 Automations | 16 | 11 | 2 | 3 |
 | 15.2 Background terminal | 10 | 10 | 0 | 0 |
 | 15.3 Mobile setup | 10 | 3 | 2 | 5 |
-| **All** | **192** | **75** | **32** | **85** |
+| **All** | **192** | **96** | **36** | **60** |
 
 Before round 5 (F2Flows): 57 PASS, 33 FAIL, 102 NOT WIRED. Before round 4 (F1Flows): 42 PASS, 25 FAIL, 125 NOT WIRED.
 
@@ -720,6 +722,23 @@ The `host` test `scheduled_suggestions_follow_late_reads_and_host_replacement` c
 The new host read does not load oracle or replay files.
 This read-only repair does not create tasks, prepare conversations, schedule work, or change accounts.
 
+The list and selected task consume the same `list-automations` result.
+Late reads update the selected task without a second store or a fabricated next-run time.
+`Route::from_url` accepts `/scheduled?automationId=…`, the original ChatGPT URL form, and `codex-gpui://scheduled?automationId=…`.
+The native URL callback and launch arguments use that parser.
+The bundle registers only the separate `codex-gpui` scheme.
+`RunHistory` retains the shared read/archive handlers and opens the stored run through the existing thread route.
+History responses from a replaced host cannot update the current view.
+
+The native `automation_lists` and `automation_history` checks cover rows 2, 5, 6, 10, 12, 14, and 15.
+The original search and focus captures come from the original renderer with the owned, read-only fixture adapter.
+Other rows retain their prior grades.
+Run the focused checks on macOS:
+
+```sh
+cargo test -p app --test automation_lists --test automation_history -- --test-threads=1
+```
+
 Slice S035 proves suggestion hover (AM-037) with `refs/interactions/s035.json` and `crates/app/tests/s035.rs`.
 The test replays pointer entry and exit on the existing fixture screen with the original server suggestions.
 It checks the card fill, the adjacent card, and the icon colors against the Linux route1 recording.
@@ -823,20 +842,20 @@ Run now calls `create_worktree` and `set_owner_thread` directly for worktree tas
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Rail `Scheduled` | entry | Automations page, `ScheduledSidebar`. | `Route::Scheduled` with `ScheduledSidebar` and the page. | PASS (`rail_scheduled`, `parity_automations`) |
-| 2 | Deep link `/scheduled?automationId=…` | entry | Page with the task selected. | — | NOT WIRED (`crates/app/src/lib.rs`: no URL routing; no tasks without the host) |
+| 2 | Deep link `/scheduled?automationId=…` | entry | Page with the task selected. | Selects the task after a cold host read; missing IDs show `Scheduled task not found`. | PASS (`automation_lists`) |
 | 3 | `New task` | click | Create flow. | Dispatches `NewTask`; no handler. | NOT WIRED (no host: `automation-create` is a host fetch) |
 | 4 | `Create` menu | click | Create with Codex / ChatGPT / manually. | — | NOT WIRED (no host: `automation-create`) |
-| 5 | Search | focus | Filters; `No matching tasks`. | Dispatches `SearchTasks`; no handler. | NOT WIRED (no host: `list-automations`) |
-| 6 | Status filter | click | All / Active / Paused. | — | NOT WIRED (no host: `list-automations`) |
+| 5 | Search | focus | Filters; `No matching tasks`. | Native text input filters stored names and prompts. Escape restores focus to Search. | PASS (`automation_lists`; `screens::automations::tests`) |
+| 6 | Status filter | click | All / Active / Paused. | Filters the same stored task list; pointer and keyboard controls preserve the query. | PASS (`automation_lists`) |
 | 7 | Task row | click | Detail panel. | Selects the task and opens its thread. | PASS (`s037::task_row_hover_and_click_match_original`) |
 | 8 | Row actions | click | Edit, Run now, Pause, Delete. | `Run now` (through `automation-run-now`) and `Pause` / `Resume` in the row menu; the status control persists through `automation-update`. Edit and Delete remain outside this slice. | PARTIAL (`automation_run_now`; `s037::task_status_controls_persist_through_the_real_local_host`) |
 | 9 | Editor fields | focus | Name, Prompt, schedule. | — | NOT WIRED (no host: `automation-create`) |
-| 10 | Previous runs | click | Run chat, mark read, archive. | — | NOT WIRED (no host: `inbox-items`, `automation-run-archive`) |
+| 10 | Previous runs | click | Run chat, mark read, archive. | Reads stored runs through `inbox-items`; opens the run chat and returns with Back. Shared read/archive actions persist their results. | PASS (`automation_history`) |
 | 11 | Row hover | hover | Row highlight. | The recorded row fill and actions match; the status icon changes to Pause on hover or keyboard focus. | PASS (`s037::task_row_hover_and_click_match_original`; suggestion hover: `s035::suggestion_hover_matches_original`) |
-| 12 | Focus ring | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/screens/automations.rs`) |
+| 12 | Focus ring | focus ring | 2 px ring. | Named controls and run rows support keyboard focus. The New task ring matches the retained original bounds. | PASS (`automation_lists`, `automation_history`) |
 | 13 | No tasks | empty | `No scheduled tasks`, suggestions. | `No scheduled tasks`, server suggestions and distinct landing examples, up to six cards. | PASS (`rail_scheduled`, `parity_automations`, `host::scheduled_suggestions_follow_late_reads_and_host_replacement`) |
-| 14 | Loading | loading | `Loading scheduled tasks…`. | — | NOT WIRED (no host: `list-automations`) |
-| 15 | Error | error | `Scheduled tasks could not be loaded`. | — | NOT WIRED (no host: `list-automations`) |
+| 14 | Loading | loading | `Loading scheduled tasks…`. | Initial reads show loading in the list and selected task instead of an empty result. | PASS (`automation_lists`) |
+| 15 | Error | error | `Scheduled tasks could not be loaded`. | Failed reads show the error and an operable `Try again` control; retry restores the stored list. | PASS (`automation_lists`) |
 | 16 | Resize | resize | List and detail share the main column. | No list or detail panel. | FAIL (no task list without the host) |
 
 ## 15.2 Background terminal
