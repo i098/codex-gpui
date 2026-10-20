@@ -923,7 +923,11 @@ impl HomeSidebar {
             };
             let handle = focus::handle(section.paging_id.clone(), 0, window, cx);
             let color = Hsla {
-                a: 0.5,
+                a: if cx.theme().appearance == Appearance::Dark {
+                    0.498
+                } else {
+                    0.5
+                },
                 ..cx.theme().text_tertiary
             };
             let hover = cx.theme().ghost_hover;
