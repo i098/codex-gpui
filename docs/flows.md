@@ -527,7 +527,11 @@ Without a target the host opens the file with the system default app.
 The host runs macOS `open [-a App] file` after it resolves the path, symlinks included, to a regular file under the Git root of `cwd`.
 A missing file, a path outside the project, an unknown target, or an opener failure shows the `Unable to open in editor` toast and changes nothing else.
 `s027::open_in_editor_native_input_reaches_the_host_opener` runs the real host with a controlled opener executable on an owned repository.
-Comment actions (S075/S082) and additional external targets remain separate slices.
+The gutter opens a comment editor for one line or a selected range.
+Comments support edit, cancel, delete, and send actions.
+Dismissed model comments persist after confirmation.
+`diff_comments` checks those actions through native pointer and keyboard input.
+Additional external targets remain a separate slice.
 
 Local Changes uses the existing desktop host for `git-changes`, `git-stage`, and `git-unstage`.
 Each request uses the open thread's absolute `cwd`; file actions also send one repository-relative `path`.

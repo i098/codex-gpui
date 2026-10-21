@@ -159,6 +159,44 @@ impl DiffPanel {
         self.annotations.draft.as_ref().map(|draft| &draft.editor)
     }
 
+    pub(super) fn comments_enabled(&self) -> bool {
+        self.annotations.enabled
+    }
+
+    pub(super) fn context_comment(
+        &mut self,
+        file: usize,
+        side: Side,
+        line: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(shown) = self.files.get(file) else {
+            return;
+        };
+        let same = |position: &Position| {
+            position.side == side
+                && position.line.get() == line
+                && position.path.strip_suffix(shown.name.as_ref()) == Some(shown.dir.as_ref())
+        };
+        if self
+            .annotations
+            .entries
+            .iter()
+            .filter(|entry| !self.annotations.dismissed.contains(&entry.key))
+            .any(|entry| same(&entry.comment.position))
+            || self
+                .annotations
+                .draft
+                .as_ref()
+                .is_some_and(|draft| same(&draft.position))
+        {
+            return;
+        }
+        self.annotations.selection = None;
+        self.open_comment(file, side, line, None, window, cx);
+    }
+
     pub(super) fn end_gutter_selection(&mut self) {
         self.annotations.selecting = false;
     }
@@ -263,6 +301,7 @@ impl DiffPanel {
         if !self.annotations.enabled || line == 0 {
             return;
         }
+        self.cancel_context_request();
         let Some(file_diff) = self.files.get(file) else {
             return;
         };

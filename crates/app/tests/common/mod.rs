@@ -249,7 +249,8 @@ impl Fx {
         // Never the user's `CODEX_HOME`: its project rows move the recorded sidebar layout.
         // No project state yet; a scenario that expects rows installs its own host.
         let host_home = tempfile::tempdir()?;
-        let host = Arc::new(app::host::LocalHost::new(host_home.path()));
+        let settings = cx.update(|cx| cx.try_global::<app::host_settings::Settings>().cloned());
+        let host = Arc::new(app::host::LocalHost::new(host_home.path()).with_settings(settings));
         cx.update(|cx| root.update(cx, |root, cx| root.set_host(host, cx)));
         let mut fx = Self {
             cx,
