@@ -499,9 +499,9 @@ impl Fx {
         Ok(())
     }
 
-    /// Clicks `menu` ▸ `item` of [`app::native_menus::menus`].
+    /// Clicks `menu` ▸ `item` of [`app::menus`]: dispatches its action like the menu bar.
     pub fn menu(&mut self, menu: &str, item: &str) -> Result<()> {
-        let action = app::native_menus::menus()
+        let action = app::menus()
             .into_iter()
             .filter(|m| m.name == menu)
             .flat_map(|m| m.items)

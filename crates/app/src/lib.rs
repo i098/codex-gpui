@@ -149,6 +149,11 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
 }
 
+/// Registers the menu supplied by the native menu family.
+pub fn menus() -> Vec<gpui::Menu> {
+    native_menus::menus()
+}
+
 /// The thread route's side panel tab.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SidePanel {

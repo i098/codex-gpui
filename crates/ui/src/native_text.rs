@@ -16,10 +16,22 @@ pub(crate) fn misspelling(text: &str, offset_utf16: usize) -> Option<Spelling> {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static LEARNED_WORD: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn take_learned_word() -> Option<String> {
+    LEARNED_WORD.with(|word| word.borrow_mut().take())
+}
+
 pub(crate) fn learn(word: &str) {
-    #[cfg(target_os = "macos")]
+    #[cfg(test)]
+    LEARNED_WORD.with(|learned| *learned.borrow_mut() = Some(word.to_string()));
+    #[cfg(all(not(test), target_os = "macos"))]
     native::learn(word);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(not(test), not(target_os = "macos")))]
     let _ = word;
 }
 
@@ -173,6 +185,7 @@ mod native {
         })
     }
 
+    #[cfg(not(test))]
     pub(super) fn learn(word: &str) {
         if word.is_empty() {
             return;

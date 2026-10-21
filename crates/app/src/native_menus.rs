@@ -10,8 +10,7 @@ use gpui::{
     SystemMenuType, actions,
 };
 use ui::{
-    Copy, Cut, DeleteSelection, OpenBackgroundTerminal, Paste, PasteAndMatchStyle, Redo, SelectAll,
-    Undo,
+    Copy, Cut, DeleteSelection, Paste, PasteAndMatchStyle, Redo, SelectAll, Undo,
 };
 
 actions!(
@@ -78,7 +77,7 @@ fn bring_all_to_front(cx: &mut App) {
 }
 
 /// Builds the native menu items backed by the app's registered actions.
-pub fn menus() -> Vec<Menu> {
+pub(crate) fn menus() -> Vec<Menu> {
     vec![
         Menu::new("Codex").items([
             MenuItem::action("About Codex", ShowAbout),
@@ -119,7 +118,6 @@ pub fn menus() -> Vec<Menu> {
         ]),
         Menu::new("View").items([
             MenuItem::action("Toggle Sidebar", ToggleSidebar),
-            MenuItem::action("Open Terminal", OpenBackgroundTerminal),
             MenuItem::action("Toggle Changes Panel", ToggleChangesPanel),
             MenuItem::separator(),
             MenuItem::action("Find", FindInThread),

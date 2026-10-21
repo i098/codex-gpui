@@ -1051,3 +1051,42 @@ impl gpui::Element for Editor {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spelling_actions_replace_learn_and_ignore_stale_words() {
+        #[cfg(target_os = "macos")]
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        let mut cx = gpui::TestAppContext::single();
+        cx.update(|cx| cx.set_global(Theme::dark()));
+        let window = cx.add_window(|_, cx| Composer::new("Do anything", false, cx));
+        window
+            .update(&mut cx, |composer, window, cx| {
+                composer.set_text("teh", cx);
+                composer.context_spelling = Some((0..3, "teh".into()));
+                composer.activate_context_item("dictionarySuggestions", "the".into(), window, cx);
+                assert_eq!(composer.content, "the");
+                composer.undo(&crate::Undo, window, cx);
+                assert_eq!(composer.content, "teh");
+
+                composer.context_spelling = Some((0..3, "teh".into()));
+                composer.activate_context_item("learnSpelling", String::new(), window, cx);
+                assert_eq!(
+                    crate::native_text::take_learned_word().as_deref(),
+                    Some("teh")
+                );
+
+                composer.context_spelling = Some((0..3, "teh".into()));
+                composer.set_text("safe", cx);
+                composer.activate_context_item("dictionarySuggestions", "the".into(), window, cx);
+                assert_eq!(composer.content, "safe");
+            })
+            .expect("dispatch spelling menu actions");
+    }
+}
