@@ -9,7 +9,7 @@ use gpui::{
     AnyView, AnyWindowHandle, App, AppContext as _, Context, Corners, Div, Entity, Global, Hsla,
     InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement, Pixels, Render,
     ScrollHandle, SharedString, Stateful, StatefulInteractiveElement as _, Styled, Window, actions,
-    div, px,
+    div, px, relative,
 };
 use theme::{ActiveTheme as _, Theme};
 
@@ -236,16 +236,20 @@ impl Render for HomeMain {
                                 window.dispatch_action(Box::new(OpenFolder), cx)
                             })
                     })
-                    .child(text(
-                        self.project.as_ref().map_or_else(
-                            || "What should we build?".to_owned(),
-                            |project| format!("What should we build in {project}?"),
-                        ),
-                        28.,
-                        33.6,
-                        400.,
-                        t.text,
-                    )),
+                    .child(
+                        text(
+                            self.project.as_ref().map_or_else(
+                                || "What should we build?".to_owned(),
+                                |project| format!("What should we build in {project}?"),
+                            ),
+                            28.,
+                            33.6,
+                            400.,
+                            t.text,
+                        )
+                        // `.heading-xl`: a unitless `line-height: 1.2`.
+                        .line_height(relative(1.2)),
+                    ),
             );
         let column = div()
             .w_full()
