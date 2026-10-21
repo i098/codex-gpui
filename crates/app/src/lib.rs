@@ -711,6 +711,7 @@ impl Root {
         // node leaves the tree), the root takes focus so the key bindings keep working.
         cx.on_focus_lost(window, |this, window, cx| window.focus(&this.focus, cx))
             .detach();
+        security::bind(cx);
         root.connect(window, cx);
         root.load_projects(cx);
         windows::bind_root(window, cx);
@@ -842,6 +843,7 @@ impl Root {
                 this.skills = skills;
                 this.models = models;
                 this.ready = true;
+                security::load(this, cx);
                 this.select_route(cx);
                 this.sync(window, cx);
                 if bridge.is_acp() {

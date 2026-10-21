@@ -7,6 +7,28 @@ pub(super) fn actions(root: gpui::Div, cx: &mut Context<Root>) -> gpui::Div {
     }))
 }
 
+pub(super) fn bind(cx: &mut Context<Root>) {
+    cx.observe_global::<settings::integrations::State>(|root, cx| {
+        let state = cx.global::<settings::integrations::State>();
+        let access = if state.gates_loaded && !root.bridge.is_acp() {
+            security::Access::from_evaluations(&state.evaluations, false, true)
+        } else {
+            security::Access::default()
+        };
+        if cx.try_global::<security::Access>() != Some(&access) {
+            cx.set_global(access);
+            root.shell.update(cx, |_, cx| cx.notify());
+        }
+    })
+    .detach();
+}
+
+pub(super) fn load(root: &mut Root, cx: &mut Context<Root>) {
+    if !root.bridge.is_acp() {
+        root.load_settings_integrations(cx);
+    }
+}
+
 pub(super) fn shell(root: &mut Root, window: &mut Window, cx: &mut Context<Root>) -> Entity<Shell> {
     let model = root.config["model"]
         .as_str()
