@@ -780,6 +780,7 @@ All native project-state writers use the same locked, atomic `.codex-global-stat
 An assignment failure archives the pending row and sends no turn; the started thread keeps its worktree.
 Legacy folder targets do not receive a project assignment, even when a saved project contains the folder.
 Projectless tasks use the original `nl`/`Ct` allocation under `projectlessWorkspaceRoot`, or `~/Documents/Codex` when that setting is absent.
+The host reads `desktop.projectlessWorkspaceRoot` through `config/read`, matching the General page's configuration write.
 Each run gets a local-date folder and a unique prompt-derived folder with `work` and `outputs` subfolders.
 The host rejects relative roots and symlinks at the root or local-date folder.
 It saves `projectless-thread-ids`, `thread-workspace-root-hints`, and `thread-projectless-output-directories` through the shared atomic global-state writer.

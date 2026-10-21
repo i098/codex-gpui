@@ -474,7 +474,6 @@ pub struct LocalHost {
     /// process holds the same connection.
     bridge: Option<Arc<Bridge>>,
     opener: PathBuf,
-    host_settings_path: PathBuf,
     computer_use_settings: Option<computer_use::ComputerUseSettings>,
     native_computer_use: Arc<computer_use_native::NativeComputerUse>,
 }
@@ -488,18 +487,11 @@ impl LocalHost {
             home,
             bridge: None,
             opener: "/usr/bin/open".into(),
-            host_settings_path: PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
-                .join("Library/Application Support/codex-gpui/host-settings.json"),
         }
     }
 
     pub fn with_bridge(mut self, bridge: Arc<Bridge>) -> Self {
         self.bridge = Some(bridge);
-        self
-    }
-
-    pub fn with_host_settings_path(mut self, path: impl Into<PathBuf>) -> Self {
-        self.host_settings_path = path.into();
         self
     }
 
