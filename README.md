@@ -188,6 +188,7 @@ Select an unmodified-lines gap to expand it, or use its controls to add 20 lines
 Expanding context preserves the reviewed line position, including wrapped rows, and enforces the normal diff display limits.
 File headers remain visible during scrolling.
 Failed reads retain the patch and provide Retry.
+Only Staged and Unstaged sources show staging actions. Uncommitted combines both states and does not expose those actions.
 
 Scheduled > New task accepts instructions, a daily or weekly repeat, and a local time in `HH:MM` format.
 Create saves the definition through `create-automation` to `CODEX_HOME/automations/<id>/automation.toml`.
