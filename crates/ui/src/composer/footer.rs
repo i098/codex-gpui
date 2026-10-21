@@ -219,42 +219,45 @@ impl Composer {
                 // The 1 px trigger border leaves a 4 px visible gap with this content-edge offset.
                 .side_offset(px(5.)),
             )
-            .child(
-                div()
-                    .relative()
-                    .child(
-                        pill("permissions", t)
-                            .track_focus(&self.permissions_focus)
-                            .focus_visible(menu::trigger_focus)
-                            .on_hover(cx.listener(|this, hovered: &bool, _, _| {
-                                this.menu_trigger_hovered = *hovered
-                            }))
-                            .on_key_down(cx.listener(|this, event, window, cx| {
-                                this.trigger_key(Menu::Permissions, event, window, cx)
-                            }))
-                            .px(px(6.))
-                            .gap(px(4.))
-                            .child(footer_icon("permissions", t.text_tertiary))
-                            .when(self.footer_width > SM_WIDTH, |d| {
-                                d.child(
-                                    text(
-                                        self.permission.short_label(),
-                                        13.,
-                                        18.,
-                                        400.,
-                                        t.text_tertiary,
+            .when(self.hotkey_controls.is_none(), |left| {
+                left.child(
+                    div()
+                        .relative()
+                        .child(
+                            pill("permissions", t)
+                                .track_focus(&self.permissions_focus)
+                                .focus_visible(menu::trigger_focus)
+                                .on_hover(cx.listener(|this, hovered: &bool, _, _| {
+                                    this.menu_trigger_hovered = *hovered
+                                }))
+                                .on_key_down(cx.listener(|this, event, window, cx| {
+                                    this.trigger_key(Menu::Permissions, event, window, cx)
+                                }))
+                                .px(px(6.))
+                                .gap(px(4.))
+                                .child(footer_icon("permissions", t.text_tertiary))
+                                .when(self.footer_width > SM_WIDTH, |d| {
+                                    d.child(
+                                        text(
+                                            self.permission.short_label(),
+                                            13.,
+                                            18.,
+                                            400.,
+                                            t.text_tertiary,
+                                        )
+                                        .when(self.docked, |d| d.top_layer()),
                                     )
-                                    .when(self.docked, |d| d.top_layer()),
-                                )
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.toggle_menu(Menu::Permissions, window, cx)
-                            })),
-                    )
-                    .when(self.menu == Some(Menu::Permissions), |d| {
-                        d.child(self.anchored_menu(self.permissions_menu(t, cx), None, cx))
-                    }),
-            );
+                                })
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.toggle_menu(Menu::Permissions, window, cx)
+                                })),
+                        )
+                        .when(self.menu == Some(Menu::Permissions), |d| {
+                            d.child(self.anchored_menu(self.permissions_menu(t, cx), None, cx))
+                        }),
+                )
+            })
+            .children(self.hotkey_controls.clone());
         let send = div()
             .id("send")
             .role(gpui::Role::Button)
