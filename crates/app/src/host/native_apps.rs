@@ -100,7 +100,7 @@ fn is_literal_bundle_id(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
 }
 
-fn display_name(path: &str) -> String {
+pub(super) fn display_name(path: &str) -> String {
     let plist = Path::new(path).join("Contents/Info.plist");
     for key in ["CFBundleDisplayName", "CFBundleName"] {
         if let Ok(output) = Command::new("/usr/libexec/PlistBuddy")
