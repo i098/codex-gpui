@@ -1138,7 +1138,7 @@ impl Root {
                     None => change.path.clone(),
                 }),
             ),
-            DiffRequest::Open(_) => return,
+            DiffRequest::Open(_) | DiffRequest::LoadFullFile(_) => return,
         };
         if let Some(review) = panel.read(cx).review_params().as_object() {
             params.as_object_mut().unwrap().extend(review.clone());
@@ -2803,7 +2803,7 @@ impl Root {
             elapsed_since: None,
         });
         let composer = self.thread_composer.clone().into();
-        let diff = cx.new(|_| DiffPanel::last_turn(&self.cwd, &thread.cwd, &thread.turns));
+        let diff = diff_content::new_panel(&self.cwd, &thread.cwd, &thread.turns, cx);
         let cwd = thread.cwd.clone();
         cx.subscribe_in(
             &diff,
@@ -2816,6 +2816,12 @@ impl Root {
                     action: "revert", ..
                 } => this.confirm_revert(panel.clone(), &cwd, request, window, cx),
                 DiffRequest::Open(path) => this.open_in_editor(&cwd, path, cx),
+                DiffRequest::LoadFullFile(request) => diff_content::load_requested(
+                    panel.clone(),
+                    this.host.clone(),
+                    request.clone(),
+                    cx,
+                ),
                 _ => this.repository_request(panel.clone(), &cwd, request, cx),
             },
         )

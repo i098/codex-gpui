@@ -265,14 +265,26 @@ impl DiffPanel {
     }
 
     /// The directory a displayed file path is relative to.
-    fn file_root(&self) -> &str {
+    pub(super) fn file_root(&self) -> &str {
         if self.source == DiffSource::LastTurn {
-            &self.workspace
+            if self.aggregated_turn.is_some() {
+                &self.cwd
+            } else {
+                &self.workspace
+            }
         } else {
             self.repository
                 .as_ref()
                 .map_or(self.workspace.as_str(), |r| r.root.as_str())
         }
+    }
+
+    pub(super) fn file_path(&self, index: usize) -> Option<String> {
+        let file = self.files.get(index)?;
+        Some(absolute_path(
+            self.file_root(),
+            &format!("{}{}", file.dir, file.name),
+        ))
     }
 
     pub(super) fn request_open(&self, file: usize, cx: &mut Context<Self>) {
