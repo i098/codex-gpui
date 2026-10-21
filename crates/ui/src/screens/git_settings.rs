@@ -193,7 +193,7 @@ impl SettingsPane {
         let mut content = Vec::new();
         for (index, (title, mut rows)) in groups.into_iter().enumerate() {
             if index == 0 {
-                content.push(super::worktrees::card(rows, &self.layer, t));
+                content.push(super::worktrees::card(rows, Some(&self.layer), t));
                 continue;
             }
             let (key, editor) = self.git_fields[index].clone();
@@ -202,18 +202,25 @@ impl SettingsPane {
                 .git_saved_until
                 .get(key)
                 .is_some_and(|until| *until > std::time::Instant::now());
+            let is_watch = key == "host.git-pr-watch-instructions";
             let mut heading = div()
-                .min_h(px(46.))
-                .pb(px(6.))
+                .pb(px(if is_watch { 6. } else { 12. }))
                 .flex()
-                .items_center()
+                .when(is_watch, |heading| heading.min_h(px(46.)).items_center())
+                .when(!is_watch, |heading| heading.items_start())
                 .justify_between()
                 .child(
                     div()
                         .flex()
                         .flex_col()
                         .gap(px(2.))
-                        .child(text(title, 14., 21., 500., t.text))
+                        .child(text(
+                            title,
+                            if is_watch { 14. } else { 16. },
+                            if is_watch { 21. } else { 24.888_89 },
+                            500.,
+                            t.text,
+                        ))
                         .children(
                             match key {
                                 "host.git-commit-instructions" => {
@@ -224,7 +231,7 @@ impl SettingsPane {
                                 }
                                 _ => None,
                             }
-                            .map(|subtitle| text(subtitle, 12., 16., 430., t.text_secondary)),
+                            .map(|subtitle| text(subtitle, 13., 18., 400., t.text_secondary)),
                         ),
                 );
             if dirty {
@@ -248,7 +255,7 @@ impl SettingsPane {
                         .flex_col()
                         .gap(px(6.))
                         .when(!rows.is_empty(), |group| {
-                            group.child(super::worktrees::card(rows, &self.layer, t))
+                            group.child(super::worktrees::card(rows, Some(&self.layer), t))
                         })
                         .children(editor),
                 ),

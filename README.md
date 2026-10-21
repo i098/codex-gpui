@@ -259,9 +259,10 @@ Settings > Git stores branch, merge, push, draft, and pull request instruction p
 Review delivery uses the existing app-server config store.
 Branch prefix saves on blur or Enter; multiline instructions save after three idle seconds or when the page closes.
 Save and Command-S also write pending instructions.
-The focused `cargo test -p app --test git_settings -- --test-threads=1` native replay verifies saved values after reopening Git settings.
+The native `cargo test -p app --test git_settings -- --test-threads=1` replay checks autosave, write recovery, shutdown flush, and confirmed worktree preferences.
 PR watch preference changes update active PR heartbeat instructions; paused automations remain unchanged.
 Settings > Worktrees provides General and Environments tabs, root and retention preferences, live worktree rows, and row actions.
+The tabs stay accessible while the content scrolls.
 Pinned conversations prevent worktree deletion.
 The Environments tab lists project and inherited files and edits setup scripts, cleanup scripts, platform overrides, and named actions.
 
@@ -334,7 +335,10 @@ Cursor projectless imports keep their workspace and output-folder records withou
 `ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.
 The multi-select emits `SelectionChanged`; the caller saves the value and can restore it with `set_checked` if saving fails.
 `ui::confirmation::Confirmation` emits one confirm or cancel result and returns focus to the previous control.
-Use `Composer::settings_field` for multiline text and `Toast` for existing information, error, and success messages.
+Use `Composer::settings_field` for text and `.monospace_field()` for scripts and commands.
+Textareas scroll inside a fixed initial height, resize to a 96-pixel minimum, and keep the caret visible after resizing.
+Run `cargo test -p ui --lib composer::settings_field::tests` for input clipping, resize, release, minimum-height, and caret checks.
+Use `Toast` for existing information, error, and success messages.
 Run `cargo test -p ui --test settings_kit` for the keyboard and locked-choice check.
 
 Cloud environment routes use `Root::open_cloud_environment` and the existing authenticated host transport.
