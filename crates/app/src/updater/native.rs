@@ -1,0 +1,288 @@
+//! Sparkle 2.9 user-driver messages stay on the main thread.
+//! Sparkle owns archive verification, privileged installation, and relaunch.
+use anyhow::{Context as _, Result, ensure};
+use async_channel::{Receiver, Sender};
+use block2::{DynBlock, RcBlock};
+use objc2::{
+    DefinedClass, MainThreadOnly, define_class, msg_send,
+    rc::{Allocated, Retained},
+    runtime::{AnyClass, AnyObject},
+};
+use objc2_foundation::{MainThreadMarker, NSBundle, NSError, NSObject, NSObjectProtocol, NSString};
+use std::cell::{Cell, RefCell};
+use ui::updater::Status;
+
+const SKIP: isize = 0;
+const INSTALL: isize = 1;
+const DISMISS: isize = 2;
+const STAGE_INSTALLING: isize = 2;
+
+struct Installation {
+    reply: RcBlock<dyn Fn(isize)>,
+    cancel_choice: isize,
+}
+
+struct DriverState {
+    events: Sender<Status>,
+    standard: Retained<AnyObject>,
+    install: RefCell<Option<Installation>>,
+    cancel: RefCell<Option<RcBlock<dyn Fn()>>>,
+    blocked: Cell<bool>,
+    expected: Cell<u64>,
+    received: Cell<u64>,
+    status: Cell<Status>,
+}
+
+define_class!(
+    #[unsafe(super = NSObject)]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = DriverState]
+    #[name = "CGXUpdaterUserDriver"]
+    struct UserDriver;
+
+    unsafe impl NSObjectProtocol for UserDriver {}
+
+    impl UserDriver {
+        #[unsafe(method(showUpdatePermissionRequest:reply:))]
+        fn permission(&self, request: &AnyObject, reply: &DynBlock<dyn Fn(*mut AnyObject)>) {
+            unsafe { let _: () = msg_send![&*self.ivars().standard, showUpdatePermissionRequest: request, reply: reply]; }
+        }
+
+        #[unsafe(method(showUserInitiatedUpdateCheckWithCancellation:))]
+        fn checking(&self, cancellation: &DynBlock<dyn Fn()>) {
+            *self.ivars().cancel.borrow_mut() = Some(cancellation.copy());
+            self.emit(Status::Checking);
+            unsafe { let _: () = msg_send![&*self.ivars().standard, showUserInitiatedUpdateCheckWithCancellation: cancellation]; }
+        }
+
+        #[unsafe(method(showUpdateFoundWithAppcastItem:state:reply:))]
+        fn found(&self, item: &AnyObject, state: &AnyObject, reply: &DynBlock<dyn Fn(isize)>) {
+            if self.ivars().blocked.get() {
+                reply.call((DISMISS,));
+                return;
+            }
+            unsafe {
+                let information_only: bool = msg_send![item, isInformationOnlyUpdate];
+                if information_only {
+                    let _: () = msg_send![&*self.ivars().standard, showUpdateFoundWithAppcastItem: item, state: state, reply: reply];
+                    return;
+                }
+                let stage: isize = msg_send![state, stage];
+                if stage == STAGE_INSTALLING {
+                    *self.ivars().install.borrow_mut() = Some(Installation { reply: reply.copy(), cancel_choice: DISMISS });
+                    self.emit(Status::Ready);
+                } else {
+                    self.dismiss_standard();
+                    reply.call((INSTALL,));
+                }
+            }
+        }
+
+        #[unsafe(method(showUpdateReleaseNotesWithDownloadData:))]
+        fn release_notes(&self, data: &AnyObject) {
+            unsafe { let _: () = msg_send![&*self.ivars().standard, showUpdateReleaseNotesWithDownloadData: data]; }
+        }
+
+        #[unsafe(method(showUpdateReleaseNotesFailedToDownloadWithError:))]
+        fn release_notes_error(&self, error: &NSError) {
+            unsafe { let _: () = msg_send![&*self.ivars().standard, showUpdateReleaseNotesFailedToDownloadWithError: error]; }
+        }
+
+        #[unsafe(method(showUpdateNotFoundWithError:acknowledgement:))]
+        fn not_found(&self, error: &NSError, reply: &DynBlock<dyn Fn()>) {
+            self.emit(Status::Idle);
+            unsafe { let _: () = msg_send![&*self.ivars().standard, showUpdateNotFoundWithError: error, acknowledgement: reply]; }
+        }
+
+        #[unsafe(method(showUpdaterError:acknowledgement:))]
+        fn error(&self, error: &NSError, reply: &DynBlock<dyn Fn()>) {
+            eprintln!("codex-gpui: update failed: {error:?}");
+            self.ivars().install.borrow_mut().take();
+            self.emit(Status::Idle);
+            unsafe { let _: () = msg_send![&*self.ivars().standard, showUpdaterError: error, acknowledgement: reply]; }
+        }
+
+        #[unsafe(method(showDownloadInitiatedWithCancellation:))]
+        fn downloading(&self, cancellation: &DynBlock<dyn Fn()>) {
+            *self.ivars().cancel.borrow_mut() = Some(cancellation.copy());
+            self.ivars().expected.set(0);
+            self.ivars().received.set(0);
+            self.dismiss_standard();
+            self.emit(Status::Downloading(None));
+        }
+
+        #[unsafe(method(showDownloadDidReceiveExpectedContentLength:))]
+        fn expected(&self, length: u64) {
+            self.ivars().expected.set(length);
+            self.progress();
+        }
+
+        #[unsafe(method(showDownloadDidReceiveDataOfLength:))]
+        fn received(&self, length: u64) {
+            self.ivars().received.set(self.ivars().received.get().saturating_add(length));
+            self.progress();
+        }
+
+        #[unsafe(method(showDownloadDidStartExtractingUpdate))]
+        fn extracting(&self) {
+            self.ivars().cancel.borrow_mut().take();
+            self.emit(Status::Installing);
+        }
+
+        #[unsafe(method(showExtractionReceivedProgress:))]
+        fn extraction_progress(&self, _: f64) {}
+
+        #[unsafe(method(showReadyToInstallAndRelaunch:))]
+        fn ready(&self, reply: &DynBlock<dyn Fn(isize)>) {
+            if self.ivars().blocked.get() {
+                reply.call((SKIP,));
+                return;
+            }
+            *self.ivars().install.borrow_mut() = Some(Installation { reply: reply.copy(), cancel_choice: SKIP });
+            self.emit(Status::Ready);
+        }
+
+        #[unsafe(method(showInstallingUpdateWithApplicationTerminated:retryTerminatingApplication:))]
+        fn installing(&self, terminated: bool, retry: &DynBlock<dyn Fn()>) {
+            self.emit(Status::Installing);
+            unsafe { let _: () = msg_send![&*self.ivars().standard, showInstallingUpdateWithApplicationTerminated: terminated, retryTerminatingApplication: retry]; }
+        }
+
+        #[unsafe(method(showUpdateInstalledAndRelaunched:acknowledgement:))]
+        fn installed(&self, relaunched: bool, reply: &DynBlock<dyn Fn()>) {
+            self.emit(Status::Idle);
+            unsafe { let _: () = msg_send![&*self.ivars().standard, showUpdateInstalledAndRelaunched: relaunched, acknowledgement: reply]; }
+        }
+
+        #[unsafe(method(dismissUpdateInstallation))]
+        fn dismiss(&self) {
+            self.ivars().install.borrow_mut().take();
+            self.ivars().cancel.borrow_mut().take();
+            self.dismiss_standard();
+            self.emit(Status::Idle);
+        }
+
+        #[unsafe(method(showUpdateInFocus))]
+        fn focus(&self) {
+            unsafe { let _: () = msg_send![&*self.ivars().standard, showUpdateInFocus]; }
+        }
+    }
+);
+
+impl UserDriver {
+    fn emit(&self, status: Status) {
+        if self.ivars().status.replace(status) != status {
+            let _ = self.ivars().events.try_send(status);
+        }
+    }
+
+    fn progress(&self) {
+        let expected = self.ivars().expected.get();
+        let percent = (expected > 0).then(|| {
+            ((self.ivars().received.get() as f64 / expected as f64 * 100.)
+                .round()
+                .clamp(0., 100.)) as u8
+        });
+        self.emit(Status::Downloading(percent));
+    }
+
+    fn dismiss_standard(&self) {
+        unsafe {
+            let _: () = msg_send![&*self.ivars().standard, dismissUpdateInstallation];
+        }
+    }
+}
+
+pub(super) struct Backend {
+    updater: Retained<AnyObject>,
+    driver: Retained<UserDriver>,
+}
+
+impl Backend {
+    pub(super) fn check(&self) {
+        unsafe {
+            let allowed: bool = msg_send![&*self.updater, canCheckForUpdates];
+            if allowed {
+                let _: () = msg_send![&*self.updater, checkForUpdates];
+            }
+        }
+    }
+
+    pub(super) fn install(&self) {
+        let reply = self.driver.ivars().install.borrow_mut().take();
+        if let Some(reply) = reply {
+            self.driver.emit(Status::Installing);
+            reply.reply.call((INSTALL,));
+        }
+    }
+
+    pub(super) fn cancel(&self) {
+        self.driver.ivars().blocked.set(true);
+        let cancel = self.driver.ivars().cancel.borrow_mut().take();
+        if let Some(cancel) = cancel {
+            cancel.call(());
+        }
+        let install = self.driver.ivars().install.borrow_mut().take();
+        if let Some(install) = install {
+            install.reply.call((install.cancel_choice,));
+        }
+    }
+}
+
+fn bundle_string(key: &str) -> Option<String> {
+    let bundle = NSBundle::mainBundle();
+    let value = bundle.objectForInfoDictionaryKey(&NSString::from_str(key))?;
+    value
+        .downcast_ref::<NSString>()
+        .map(ToString::to_string)
+        .filter(|value| !value.is_empty())
+}
+
+pub(super) fn start() -> Result<Option<(Backend, Receiver<Status>)>> {
+    let (Some(feed), Some(key)) = (bundle_string("SUFeedURL"), bundle_string("SUPublicEDKey"))
+    else {
+        return Ok(None);
+    };
+    super::validate(&feed, &key)?;
+    let mtm = MainThreadMarker::new().context("updater requires the main thread")?;
+    let bundle = NSBundle::mainBundle();
+    let frameworks = bundle
+        .privateFrameworksPath()
+        .context("application has no Frameworks directory")?;
+    let path = NSString::from_str(&format!("{frameworks}/Sparkle.framework"));
+    let framework = NSBundle::bundleWithPath(&path).context("Sparkle.framework is missing")?;
+    ensure!(unsafe { framework.load() }, "cannot load Sparkle.framework");
+    let class =
+        AnyClass::get(c"SPUStandardUserDriver").context("Sparkle user driver is unavailable")?;
+    let standard: Retained<AnyObject> = unsafe {
+        let allocated: Allocated<AnyObject> = msg_send![class, alloc];
+        msg_send![allocated, initWithHostBundle: &*bundle, delegate: std::ptr::null::<AnyObject>()]
+    };
+    let (events, receiver) = async_channel::unbounded();
+    let driver = UserDriver::alloc(mtm).set_ivars(DriverState {
+        events,
+        standard,
+        install: RefCell::new(None),
+        cancel: RefCell::new(None),
+        blocked: Cell::new(false),
+        expected: Cell::new(0),
+        received: Cell::new(0),
+        status: Cell::new(Status::Idle),
+    });
+    let driver: Retained<UserDriver> = unsafe { msg_send![super(driver), init] };
+    let class = AnyClass::get(c"SPUUpdater").context("Sparkle updater is unavailable")?;
+    let updater: Retained<AnyObject> = unsafe {
+        let allocated: Allocated<AnyObject> = msg_send![class, alloc];
+        msg_send![allocated, initWithHostBundle: &*bundle, applicationBundle: &*bundle, userDriver: &*driver, delegate: std::ptr::null::<AnyObject>()]
+    };
+    let mut error: Option<Retained<NSError>> = None;
+    let started: bool = unsafe { msg_send![&*updater, startUpdater: &mut error] };
+    ensure!(
+        started,
+        "{}",
+        error
+            .map(|error| error.localizedDescription().to_string())
+            .unwrap_or_else(|| "Sparkle could not start".into())
+    );
+    Ok(Some((Backend { updater, driver }, receiver)))
+}

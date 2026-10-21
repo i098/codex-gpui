@@ -154,9 +154,24 @@ tools/bundle.sh
 
 The script builds the release binary on the Mac build host through `tools/mac.sh`.
 It assembles `Codex GPUI.app` (bundle id `dev.codexgpui.app`, version from `crates/app/Cargo.toml`, macOS 13.0 or later).
-It signs the bundle ad hoc, checks it with `plutil -lint` and `codesign --verify --strict`, and zips it with `ditto`.
+By default, it signs the bundle ad hoc, checks it with `plutil -lint` and `codesign --verify --strict`, and zips it with `ditto`.
 The zip goes to `/tmp/cgx/release/codex-gpui-<version>-macos-arm64.zip`.
 The script does not open the app.
+
+### In-app updates
+
+Development bundles have no update feed, so update checks and the update menu stay off.
+For a release, set `CODEX_GPUI_UPDATE_FEED`, `CODEX_GPUI_UPDATE_PUBLIC_KEY`, and `CODEX_GPUI_SPARKLE_FRAMEWORK` before running `tools/bundle.sh`.
+The framework path refers to the Mac build host and must contain the verified Sparkle 2.9 framework.
+Set `CODEX_GPUI_SIGN_IDENTITY` to the release signing identity.
+The script embeds the feed and Ed25519 public key, then signs Sparkle's helpers, framework, and app with that identity.
+The release owner must supply the production feed and complete signing and notarization before distribution.
+
+Sparkle checks, downloads, verifies, installs, and relaunches the app.
+The rail shows download progress and enables `Update available` only when installation is ready.
+The app reads the `in_app_updates` policy through `experimentalFeature/list`.
+A disabled policy removes the update action and shows the read-only `Managed` row in General settings.
+The native Sparkle dialogs show check progress, no-update results, and update errors.
 
 The app icon is the original icon from `ChatGPT.app/Contents/Resources/Assets.car`.
 To make `assets/app/AppIcon.icns` again, run this on the Mac:

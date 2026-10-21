@@ -29,6 +29,7 @@ pub mod screens;
 pub mod settings_kit;
 pub mod toast;
 pub mod tooltip;
+pub mod updater;
 
 actions!(
     shell,
@@ -832,6 +833,7 @@ impl Shell {
                     .child(rail_tip(item("sites"), "Sites"))
                     .child(shapes::top_fade(px(16.))),
             )
+            .children(updater::rail(t, window, cx))
             .child(
                 focus::ring(
                     div().id("rail-profile"),
