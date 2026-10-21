@@ -1,7 +1,7 @@
 mod common;
 
 use anyhow::{Context as _, Result, ensure};
-use common::{CWD, Fx, GREETING, GREETING_PROMPT, script};
+use common::{CWD, Fx, GREETING, GREETING_PROMPT, exchange, script};
 use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
 use ui::screens::settings::keyboard_shortcuts::{Change, KeyboardState, NumberTarget};
@@ -27,15 +27,14 @@ fn hidden_standalone_menu_allocates_its_own_workspace() -> Result<()> {
     let home = directory.path().join("codex");
     let workspaces = directory.path().join("standalone");
     std::fs::create_dir(&home)?;
-    let settings_path = directory.path().join("host.json");
-    let mut settings = app::host_settings::Settings::load(settings_path.clone())?;
-    settings.write("projectlessWorkspaceRoot", json!(workspaces))?;
-    let host = app::host::LocalHost::new(&home).with_host_settings_path(settings_path);
-    let mut fx = Fx::captured(
-        "dark",
-        (1280., 832.),
-        script(Some("sessions/greeting.jsonl"), |_| {})?,
-    )?;
+    let mut recording = script(Some("sessions/greeting.jsonl"), |_| {})?;
+    recording.extend(exchange(
+        "config/read",
+        json!({"config": {"desktop": {"projectlessWorkspaceRoot": workspaces}}}),
+    ));
+    let mut fx = Fx::captured("dark", (1280., 832.), recording)?;
+    let bridge = fx.cx.update(|cx| cx.global::<ui::screens::settings::AppServer>().0.clone());
+    let host = app::host::LocalHost::new(&home).with_bridge(bridge);
     fx.root
         .update(&mut fx.cx, |root, cx| root.set_host(Arc::new(host), cx));
     ensure!(menu_hidden(&fx, "File", "New standalone chat")?);

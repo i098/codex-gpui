@@ -1,13 +1,23 @@
 use anyhow::{Context as _, Result};
 use gpui::Global;
 use serde_json::{Map, Value};
-use std::{fs, io::ErrorKind, path::PathBuf};
+use std::{
+    fs,
+    io::ErrorKind,
+    path::PathBuf,
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
+};
 
 /// The desktop host's `settings.readAll` and `settings.write(key, value)` service.
 /// Host settings never go to the app-server's `config/value/write` endpoint.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Settings {
-    values: Map<String, Value>,
+    state: Arc<State>,
+}
+
+#[derive(Default)]
+struct State {
+    values: Mutex<Map<String, Value>>,
     path: Option<PathBuf>,
 }
 
@@ -21,35 +31,43 @@ impl Settings {
             Err(error) => return Err(error.into()),
         };
         Ok(Self {
-            values,
-            path: Some(path),
+            state: Arc::new(State {
+                values: Mutex::new(values),
+                path: Some(path),
+            }),
         })
     }
 
-    pub fn read_all(&self) -> &Map<String, Value> {
-        &self.values
+    /// Drop this shared read guard before writing settings.
+    pub fn read_all(&self) -> MutexGuard<'_, Map<String, Value>> {
+        self.state
+            .values
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     pub fn write(&mut self, key: &str, value: Value) -> Result<()> {
-        self.write_batch([(key, value)])
+        self.update(key, |_| Ok(value))
     }
 
+    /// Writes every pair under one lock and one save; a failed save restores all of them.
     pub fn write_batch<'a>(
         &mut self,
-        values: impl IntoIterator<Item = (&'a str, Value)>,
+        pairs: impl IntoIterator<Item = (&'a str, Value)>,
     ) -> Result<()> {
-        let previous: Vec<_> = values
+        let mut values = self.read_all();
+        let previous: Vec<_> = pairs
             .into_iter()
-            .map(|(key, value)| (key.to_owned(), self.values.insert(key.to_owned(), value)))
+            .map(|(key, value)| (key.to_owned(), values.insert(key.to_owned(), value)))
             .collect();
-        if let Err(error) = self.save() {
+        if let Err(error) = self.save(&values) {
             for (key, value) in previous.into_iter().rev() {
                 match value {
                     Some(value) => {
-                        self.values.insert(key, value);
+                        values.insert(key, value);
                     }
                     None => {
-                        self.values.remove(&key);
+                        values.remove(&key);
                     }
                 }
             }
@@ -58,14 +76,78 @@ impl Settings {
         Ok(())
     }
 
-    fn save(&self) -> Result<()> {
-        let Some(path) = &self.path else {
+    pub(crate) fn update(
+        &mut self,
+        key: &str,
+        change: impl FnOnce(Option<&Value>) -> Result<Value>,
+    ) -> Result<()> {
+        let mut values = self.read_all();
+        let value = change(values.get(key))?;
+        let old = values.insert(key.to_owned(), value);
+        if let Err(error) = self.save(&values) {
+            match old {
+                Some(value) => {
+                    values.insert(key.to_owned(), value);
+                }
+                None => {
+                    values.remove(key);
+                }
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn save(&self, values: &Map<String, Value>) -> Result<()> {
+        let Some(path) = &self.state.path else {
             return Ok(());
         };
         fs::create_dir_all(path.parent().context("host settings path has no parent")?)?;
         let temporary = path.with_extension("json.tmp");
-        fs::write(&temporary, serde_json::to_vec_pretty(&self.values)?)?;
+        fs::write(&temporary, serde_json::to_vec_pretty(values)?)?;
         fs::rename(&temporary, path)?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn cloned_settings_preserve_concurrent_updates_and_failed_write_state() -> Result<()> {
+        #[cfg(target_os = "macos")]
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("settings.json");
+        let mut settings = Settings::load(path.clone())?;
+        settings.write("unrelated", json!("kept"))?;
+        let threads: Vec<_> = ["editor", "terminal"]
+            .into_iter()
+            .map(|key| {
+                let mut writer = settings.clone();
+                std::thread::spawn(move || writer.write(key, json!(true)))
+            })
+            .collect();
+        for thread in threads {
+            thread.join().expect("settings writer")?;
+        }
+        let saved: Value = serde_json::from_slice(&fs::read(&path)?)?;
+        assert_eq!(
+            saved,
+            json!({"editor": true, "terminal": true, "unrelated": "kept"})
+        );
+        assert_eq!(settings.read_all()["editor"], true);
+        assert_eq!(settings.read_all()["terminal"], true);
+        fs::remove_file(&path)?;
+        fs::create_dir(&path)?;
+        let mut writer = settings.clone();
+        assert!(writer.write("editor", json!(false)).is_err());
+        assert_eq!(settings.read_all()["editor"], true);
         Ok(())
     }
 }

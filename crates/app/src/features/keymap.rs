@@ -160,7 +160,7 @@ fn rebind(previous: Option<&Preferences>, next: &Preferences, cx: &mut App) {
     }
     bindings.extend(enabled);
     cx.bind_keys(bindings);
-    crate::refresh_menus(cx);
+    crate::native_menus::refresh_menus(cx);
 }
 
 fn action(id: &str) -> Option<Box<dyn Action>> {
@@ -184,7 +184,7 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
         "toggleSidePanel" => Box::new(ToggleChangesPanel),
         "undoAppAction" => Box::new(Undo),
         "redoAppAction" => Box::new(Redo),
-        "openFolder" => Box::new(OpenFolder),
+        "openFolder" | "composer.openProjectPicker" => Box::new(OpenFolder),
         "openCommandMenu" => Box::new(OpenCommandMenu),
         "searchFiles" => Box::new(super::command_destinations::SearchFiles),
         "archiveThread" => Box::new(ArchiveChat),

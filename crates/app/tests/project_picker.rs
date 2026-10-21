@@ -320,13 +320,18 @@ fn project_selection_changes_new_chats_but_not_existing_chats() -> Result<()> {
         alpha.to_str().unwrap()
     );
     let before = fs::read(&state_path)?;
-    fx.keys("cmd-o")?;
-    assert!(fx.cx.did_prompt_for_paths());
-    fx.cx.simulate_path_prompt_response(|_| None);
-    fx.cx.run_until_parked();
-    assert_eq!(fx.route(), Route::Thread(GREETING.into()));
-    assert_eq!(fs::read(&state_path)?, before);
-    assert_eq!(host.projects()?.len(), 1);
+    for shortcut in ["cmd-o", "alt-shift-cmd-o"] {
+        fx.keys(shortcut)?;
+        assert!(
+            fx.cx.did_prompt_for_paths(),
+            "{shortcut} must open the native folder picker"
+        );
+        fx.cx.simulate_path_prompt_response(|_| None);
+        fx.cx.run_until_parked();
+        assert_eq!(fx.route(), Route::Thread(GREETING.into()));
+        assert_eq!(fs::read(&state_path)?, before);
+        assert_eq!(host.projects()?.len(), 1);
+    }
 
     fx.keys("cmd-o")?;
     fx.cx

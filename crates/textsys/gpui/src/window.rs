@@ -4413,27 +4413,26 @@ impl Window {
     /// None under an opacity of 0: Chromium paints nothing there, and a sprite outside the
     /// layers would reset the layer state of the pixels it covers (a hidden hover fill would
     /// detach the text painted over it from its composited layer).
-    fn sprite_layers(&self) -> Option<u32> {
+    fn sprite_layers(&self) -> Option<[u16; 4]> {
         if self.element_opacity <= 0. {
             return None;
         }
-        let mut layers = self.element_layers.iter();
-        Some(match layers.next() {
-            Some(&(id, alpha)) => {
-                // ponytail: two layers; deeper ones multiply their alpha into the second.
-                let inner = layers.next().map_or(0, |&(id, alpha)| {
-                    let alpha = layers.fold(u32::from(alpha), |a, &(_, b)| {
-                        (a * u32::from(b) + 127) / 255
-                    });
-                    u32::from(id) << 8 | alpha
-                });
-                u32::from(id) << 8 | u32::from(alpha) | inner << 16
+        let mut ancestors = self.element_layers.iter();
+        let mut layers = [0u16; 4];
+        for layer in &mut layers {
+            if let Some(&(id, alpha)) = ancestors.next() {
+                *layer = u16::from(id) << 8 | u16::from(alpha);
             }
-            _ => 0,
-        })
+        }
+        // ponytail: four layer pixels fill Metal's color targets. Deeper alpha folds until a separate pass is needed.
+        for &(_, alpha) in ancestors {
+            let alpha = (u32::from(layers[3] & 255) * u32::from(alpha) + 127) / 255;
+            layers[3] = layers[3] & 0xff00 | alpha as u16;
+        }
+        Some(layers)
     }
 
-    fn sprite_color_and_layers(&self, color: Hsla) -> Option<(Hsla, u32)> {
+    fn sprite_color_and_layers(&self, color: Hsla) -> Option<(Hsla, [u16; 4])> {
         self.sprite_layers().map(|layers| (color, layers))
     }
 
@@ -5185,7 +5184,7 @@ impl Window {
                 order: 0,
                 skia: 1,
                 #[cfg(target_vendor = "apple")]
-                layers: 0,
+                layers: [0; 4],
                 grayscale: false.into(),
                 bounds,
                 corner_radii: Default::default(),
@@ -5361,7 +5360,7 @@ impl Window {
             .scale(self.scale_factor());
         let opacity = self.element_opacity();
         #[cfg(target_vendor = "apple")]
-        let opacity = if layers == 0 { opacity } else { 1. };
+        let opacity = if layers == [0; 4] { opacity } else { 1. };
 
         self.next_frame.scene.insert_primitive(PolychromeSprite {
             order: 0,

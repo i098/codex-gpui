@@ -1011,7 +1011,10 @@ impl SettingsPane {
                         Some("Allow ChatGPT to use installed plugins"),
                         self.toggle("features.plugins", true, t, window, cx),
                     ),
-                ],
+                ]
+                .into_iter()
+                .chain(crate::updater::managed_row(t, cx))
+                .collect(),
             ),
             (
                 "Composer",
@@ -1281,7 +1284,7 @@ fn middle_truncate(s: &str, fits: impl Fn(&str) -> bool) -> String {
 
 /// One settings row: title, optional description (an `<a>…</a>` span renders as the inline
 /// link) and the trailing control.
-fn settings_row(
+pub(crate) fn settings_row(
     title: &'static str,
     detail: Option<&'static str>,
     control: AnyElement,

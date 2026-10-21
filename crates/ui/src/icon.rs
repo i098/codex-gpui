@@ -14,8 +14,8 @@
 use gpui::{
     App, Bounds, Corners, Element, ElementId, GlobalElementId, Hitbox, Hsla, Image, ImageFormat,
     InspectorElementId, InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, Point,
-    RenderImage, Rgba, SharedString, StyleRefinement, Styled, TransformationMatrix, Window, point,
-    px, size,
+    RenderImage, Rgba, SharedString, StyleRefinement, Styled, Transformation, Window, point, px,
+    size,
 };
 use std::{
     collections::HashMap,
@@ -38,6 +38,7 @@ pub fn icon_sized(name: &str, width: f32, height: f32, color: Hsla) -> Icon {
         composited: None,
         own_layer: false,
         runtime: false,
+        transformation: None,
         interactivity: Interactivity::new(),
     }
     .w(px(width))
@@ -55,6 +56,7 @@ pub struct Icon {
     composited: Option<Point<Pixels>>,
     own_layer: bool,
     runtime: bool,
+    transformation: Option<Transformation>,
     interactivity: Interactivity,
 }
 
@@ -88,6 +90,12 @@ impl Icon {
     /// body) does not have.
     pub fn runtime(mut self) -> Self {
         self.runtime = true;
+        self
+    }
+
+    /// Transforms the rendered icon without changing its layout or hitbox.
+    pub fn with_transformation(mut self, transformation: Transformation) -> Self {
+        self.transformation = Some(transformation);
         self
     }
 }
@@ -181,6 +189,7 @@ impl Element for Icon {
         let opacity = self.interactivity.base_style.opacity.take().unwrap_or(1.);
         let (name, flip_x, own_layer) = (self.name.clone(), self.flip_x, self.own_layer);
         let (composited, runtime) = (self.composited, self.runtime);
+        let transformation = self.transformation;
         let css = size(px(self.width), px(self.height));
         self.interactivity.paint(
             global_id,
@@ -196,6 +205,9 @@ impl Element for Icon {
                 // Chromium snaps the svg origin to the nearest device pixel (half up) and
                 // rasterizes its box rounded up to whole device pixels.
                 let scale = window.scale_factor();
+                let transform = transformation
+                    .map(|value| value.into_matrix(bounds.center(), scale))
+                    .unwrap_or_default();
                 let snap = |v: Pixels| (f32::from(v) * scale + 0.5).floor();
                 let (x, y) = (snap(bounds.origin.x), snap(bounds.origin.y));
                 let dev = |v: Pixels| (f32::from(v) * scale).ceil();
@@ -207,7 +219,10 @@ impl Element for Icon {
                     load(format!("{dir}@{x}_{y}.png"), cx)
                         .or_else(|| load(format!("{dir}.png"), cx))
                 };
-                if let Some(image) = (!own_layer && !runtime).then(fitted).flatten() {
+                if let Some(image) = (!own_layer && !runtime && transformation.is_none())
+                    .then(fitted)
+                    .flatten()
+                {
                     let device = Bounds {
                         origin: point(px(x / scale), px(y / scale)),
                         size: size(px(w / scale), px(h / scale)),
@@ -221,21 +236,37 @@ impl Element for Icon {
                     return;
                 }
                 let path = format!("icons/{name}.svg");
-                if let Ok(Some(src)) = cx.asset_source().load(&path)
-                    && shapes::paint_icon(
-                        &src,
-                        &path,
-                        Bounds::new(bounds.origin, css),
-                        flip_x,
-                        color,
-                        composited.or(own_layer.then_some(bounds.origin)),
-                        window,
-                        cx,
-                    )
-                {
-                    return;
+                if let Ok(Some(src)) = cx.asset_source().load(&path) {
+                    let layer = composited.or(own_layer.then_some(bounds.origin));
+                    let painted = if transformation.is_some() {
+                        shapes::paint_icon_transformed(
+                            &src,
+                            &path,
+                            Bounds::new(bounds.origin, css),
+                            flip_x,
+                            color,
+                            layer,
+                            transform,
+                            window,
+                            cx,
+                        )
+                    } else {
+                        shapes::paint_icon(
+                            &src,
+                            &path,
+                            Bounds::new(bounds.origin, css),
+                            flip_x,
+                            color,
+                            layer,
+                            window,
+                            cx,
+                        )
+                    };
+                    if painted {
+                        return;
+                    }
                 }
-                let mut matrix = TransformationMatrix::unit();
+                let mut matrix = transform;
                 if flip_x {
                     let center = bounds.center();
                     matrix = matrix
@@ -451,5 +482,53 @@ mod tests {
             "total"
         );
         assert_eq!(a, 0, "icons differ from Chromium");
+    }
+
+    struct RotatingIcon(f32);
+
+    impl Render for RotatingIcon {
+        fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+            div().size_full().bg(rgb(0x181818)).child(
+                icon("sidebar-cmd-spinner", 28., gpui::white().opacity(0.65))
+                    .own_layer(None)
+                    .with_transformation(Transformation::rotate(gpui::radians(self.0)))
+                    .absolute()
+                    .left(px(18.))
+                    .top(px(18.)),
+            )
+        }
+    }
+
+    #[test]
+    fn native_icon_rotation_preserves_its_raster() -> anyhow::Result<()> {
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        let mut cx = HeadlessAppContext::with_platform(
+            Arc::new(gpui::NoopTextSystem::new()),
+            Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        let mut images = Vec::new();
+        for angle in [0., std::f32::consts::FRAC_PI_2] {
+            let window = cx.open_window(size(px(64.), px(64.)), |_, cx| {
+                cx.new(|_| RotatingIcon(angle))
+            })?;
+            cx.run_until_parked();
+            images.push(cx.capture_screenshot(window.into())?);
+            cx.update_window(window.into(), |_, window, _| window.remove_window())?;
+        }
+        assert_eq!(images[0].get_pixel(64, 47).0, [190, 190, 190, 255]);
+        for y in 0..128 {
+            for x in 0..128 {
+                assert_eq!(
+                    images[1].get_pixel(x, y),
+                    images[0].get_pixel(y, 127 - x),
+                    "clockwise quarter turn at {x},{y}",
+                );
+            }
+        }
+        Ok(())
     }
 }

@@ -82,9 +82,15 @@ impl<T: 'static> Element for Canvas<T> {
         cx: &mut App,
     ) {
         let prepaint = prepaint.take().unwrap();
-        style.paint(bounds, window, cx, |window, cx| {
-            (self.paint.take().unwrap())(bounds, prepaint, window, cx)
-        });
+        window.with_element_opacity(
+            style.opacity,
+            style.layer.then_some((bounds, &*style)),
+            |window| {
+                style.paint(bounds, window, cx, |window, cx| {
+                    (self.paint.take().unwrap())(bounds, prepaint, window, cx)
+                });
+            },
+        );
     }
 }
 

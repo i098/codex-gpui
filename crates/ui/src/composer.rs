@@ -67,6 +67,7 @@ actions!(
 
 mod attach;
 pub mod computer_use;
+pub mod dictation;
 mod editor;
 mod footer;
 mod requests;
@@ -371,6 +372,8 @@ impl Permission {
 pub struct Submission {
     pub text: String,
     pub attachments: Vec<PathBuf>,
+    /// File references added as context, not image uploads.
+    pub context_files: Vec<PathBuf>,
     pub model: String,
     pub effort: String,
     pub permission: Permission,
@@ -587,6 +590,8 @@ pub struct Composer {
     history: editor::History,
     /// The right-click menu (Electron's native editable-field menu).
     context_menu: Option<crate::screens::thread::view::menu::ContextMenu>,
+    context_spelling: Option<(Range<usize>, String)>,
+    context_image: Option<crate::image_context::ImageContext>,
     is_selecting: bool,
     /// Shaped lines and editor bounds of the last paint, for hit testing.
     lines: Vec<WrappedLine>,
@@ -646,6 +651,8 @@ pub struct Composer {
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
     search_field: bool,
+    dictation: Option<dictation::Active>,
+    dictation_error: Option<String>,
 }
 
 impl Composer {
@@ -676,6 +683,8 @@ impl Composer {
             marked_range: None,
             history: editor::History::default(),
             context_menu: None,
+            context_spelling: None,
+            context_image: None,
             is_selecting: false,
             lines: Vec::new(),
             bounds: None,
@@ -723,6 +732,8 @@ impl Composer {
             on_model: None,
             plain_field: None,
             search_field: false,
+            dictation: None,
+            dictation_error: None,
         }
     }
 
@@ -882,6 +893,9 @@ impl Composer {
             .as_ref()
             .map(|approval| approval.identity.as_ref())
             == approval.as_ref().map(|approval| approval.identity.as_ref());
+        if !same_request {
+            self.cancel_dictation(cx);
+        }
         if !same_request
             && let Some(old) = &self.approval
             && old.form.is_some()
@@ -1137,11 +1151,15 @@ impl Composer {
     }
 
     pub fn set_text(&mut self, s: &str, cx: &mut Context<Self>) {
+        self.cancel_dictation(cx);
+        self.dictation_error = None;
         self.content = s.into();
         self.mentions.clear();
         self.selected_range = s.len()..s.len();
         self.marked_range = None;
         self.history = editor::History::default();
+        self.context_spelling = None;
+        self.context_image = None;
         self.slash.reset();
         self.end_search(cx);
         cx.notify();
@@ -1248,16 +1266,25 @@ impl Composer {
         {
             return;
         }
+        self.cancel_dictation(cx);
+        self.submitted = std::mem::take(&mut self.attachments);
+        let mut attachments = Vec::new();
+        let mut context_files = Vec::new();
+        for attachment in &self.submitted {
+            if attachment.is_context_file() {
+                context_files.push(attachment.path.clone());
+            } else {
+                attachments.push(attachment.path.clone());
+            }
+        }
         let submission = Submission {
             text: if self.mentions.is_empty() && self.on_cancel_edit.is_none() {
                 std::mem::take(&mut self.content)
             } else {
                 self.prompt()
             },
-            attachments: {
-                self.submitted = std::mem::take(&mut self.attachments);
-                self.submitted.iter().map(|a| a.path.clone()).collect()
-            },
+            attachments,
+            context_files,
             model: self
                 .current_model()
                 .map(|m| m.id.clone())
@@ -1284,6 +1311,7 @@ impl Composer {
     }
 
     fn decide(&mut self, decision: ApprovalDecision, window: &mut Window, cx: &mut Context<Self>) {
+        self.cancel_dictation(cx);
         if self.approval.is_none() {
             return;
         }
@@ -1347,6 +1375,10 @@ impl Composer {
     }
 
     fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dictation.is_some() {
+            self.cancel_dictation(cx);
+            return;
+        }
         if self.marked_range.is_some() {
             return;
         }
@@ -1896,6 +1928,20 @@ impl Render for Composer {
             .on_action(cx.listener(Self::copy))
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(|this, _: &crate::Paste, window, cx| this.paste(window, cx)))
+            .on_action(
+                cx.listener(|this, _: &crate::PasteAndMatchStyle, window, cx| {
+                    this.paste_and_match_style(window, cx)
+                }),
+            )
+            .on_action(cx.listener(|this, _: &crate::DeleteSelection, window, cx| {
+                if !this.selected_range.is_empty() {
+                    this.insert("", window, cx);
+                }
+            }))
+            .when(
+                cfg!(target_os = "macos") && !self.secret && !self.content.is_empty(),
+                |card| card.on_action(cx.listener(Self::speak_selection)),
+            )
             .on_action(self.request_listener(cx, Self::dismiss))
             .on_action(cx.listener(Self::complete_command))
             .on_action(cx.listener(Self::next_command))
@@ -2106,6 +2152,8 @@ impl Render for Composer {
                     "composer-menu",
                     if menu.items.first().is_some_and(|item| item.id == QUEUE_EDIT) {
                         QUEUE_ACTIONS
+                    } else if self.context_image.is_some() {
+                        "Image actions"
                     } else {
                         "Edit actions"
                     },
