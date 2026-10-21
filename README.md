@@ -55,6 +55,16 @@ An in-flight JavaScript call can delay Interrupt cleanup; the original hook can 
 
 Run `cargo test -p app --test computer_use_lifecycle` on macOS for native Stop and thread-projection regression checks.
 
+## Background terminal output
+
+Background command output displays ANSI colors and supports text selection.
+Copy preserves the selected text without ANSI control bytes.
+Like the original app, the view keeps 1,000 scrollback rows plus the visible screen.
+The terminal fixture in `fixtures/terminal-depth.json` contains recorded `thread/shellCommand` output.
+
+Run `cargo test -p ui --lib terminal` for parser and command-label checks.
+Run `cargo test -p app --test terminal_states background_ansi_output_supports_selection_and_copy` on macOS for the native selection check.
+
 ## ACP backend
 
 Set `CODEX_GPUI_ACP` to the command line of an [Agent Client Protocol](https://agentclientprotocol.com) agent to use that agent instead of `codex app-server`:
@@ -311,6 +321,8 @@ Opening an unloaded chat reads its history and resumes the thread before showing
 The composer restores that thread's returned model, reasoning effort, and permissions instead of using startup defaults.
 An unset effort stays unset in requests; the picker shows Medium.
 The composer labels modified workspace policies as Custom.
+The default pinned-summary layout hides the thread identity in a single pane.
+Opening a right pane restores the header identity; the toolbar actions stay available.
 
 `LocalHost` serves `native-desktop-apps` and `native-desktop-app-by-bundle-id` through the desktop fetch boundary.
 On macOS, the adapter reads Spotlight metadata, applies the original app exclusions, and supports usage or display-name ordering.
