@@ -1,5 +1,5 @@
 use crate::*;
-use gpui::{MouseButton, NavigationDirection, prelude::FluentBuilder as _};
+use gpui::{ClipboardItem, MouseButton, NavigationDirection, prelude::FluentBuilder as _};
 use ui::confirmation::{Confirmation, Outcome as ConfirmationOutcome};
 
 actions!(
@@ -13,7 +13,10 @@ actions!(
         NextAttentionChat,
         OpenShortcutSettings,
         ToggleThreadPin,
-        RenameOpenChat
+        RenameOpenChat,
+        NextSideTab,
+        PreviousSideTab,
+        CopyDeeplink
     ]
 );
 
@@ -97,6 +100,15 @@ pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> 
             this.set_pinned(id, !pinned, window, cx);
         }
     }))
+    // The original's `copy-deeplink` (local host, no thread access) copies
+    // `codex://threads/{id}` without a toast.
+    .on_action(cx.listener(|this, _: &CopyDeeplink, _, cx| {
+        if let Route::Thread(id) = &this.state.route {
+            cx.write_to_clipboard(ClipboardItem::new_string(format!("codex://threads/{id}")));
+        }
+    }))
+    .on_action(cx.listener(|this, _: &NextSideTab, window, cx| this.step_side(1, window, cx)))
+    .on_action(cx.listener(|this, _: &PreviousSideTab, window, cx| this.step_side(-1, window, cx)))
     .on_action(cx.listener(|this, _: &RenameOpenChat, window, cx| {
         if let Route::Thread(id) = this.state.route.clone() {
             this.open_rename(id, false, window, cx);

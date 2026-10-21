@@ -40,3 +40,66 @@ fn pin_rename_and_find_shortcuts_act_on_the_open_chat() -> Result<()> {
 fn proxy() {
     common::proxy_child();
 }
+
+#[test]
+fn next_tab_takes_its_keys_only_with_focus_in_a_side_tab() -> Result<()> {
+    let mut fx = Fx::new()?;
+    fx.keys("cmd-2")?;
+    fx.wait_thread(common::SUBTRACT)?;
+    fx.keys("alt-cmd-b")?;
+    for mut event in ui::screens::terminal::running_command_replay() {
+        if let bridge::Event::Notification { params, .. } = &mut event
+            && params["turn"].is_object()
+        {
+            params["turn"]["rootTurnId"] = params["turn"]["id"].clone();
+        }
+        fx.root
+            .update(&mut fx.cx, |root, cx| root.on_event(event, cx));
+        fx.cx.run_until_parked();
+    }
+    fx.keys("ctrl-`")?;
+    let tabs = fx.read(|root, _| root.side_tabs().to_vec());
+    ensure!(tabs.len() == 2, "tabs {tabs:?}");
+    fx.keys("alt-cmd-b")?;
+    ensure!(
+        fx.read(|root, _| root.side_panel() == Some(app::SidePanel::Changes)),
+        "changes"
+    );
+    fx.focus_composer()?;
+    fx.keys("ctrl-tab")?;
+    ensure!(
+        fx.read(|root, _| root.side_panel() == Some(app::SidePanel::Changes)),
+        "outside a side tab ctrl-tab stays with the chats"
+    );
+    fx.click((1000., 400.))?;
+    fx.keys("ctrl-tab")?;
+    ensure!(
+        fx.read(|root, _| root.side_panel() == Some(app::SidePanel::Terminal)),
+        "panel focus: next tab"
+    );
+    fx.keys("alt-cmd-b")?;
+    fx.click((1000., 400.))?;
+    fx.keys("ctrl-shift-tab")?;
+    ensure!(
+        fx.read(|root, _| root.side_panel() == Some(app::SidePanel::Terminal)),
+        "previous tab wraps"
+    );
+    Ok(())
+}
+
+#[test]
+fn copy_deeplink_puts_the_open_chats_link_on_the_clipboard() -> Result<()> {
+    let mut fx = Fx::new()?;
+    fx.keys("cmd-1")?;
+    fx.wait_thread(GREETING)?;
+    fx.keys("alt-cmd-l")?;
+    let copied = fx
+        .cx
+        .update(|cx| cx.read_from_clipboard())
+        .and_then(|item| item.text());
+    ensure!(
+        copied == Some(format!("codex://threads/{GREETING}")),
+        "{copied:?}"
+    );
+    Ok(())
+}

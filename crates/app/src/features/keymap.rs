@@ -137,7 +137,11 @@ fn rebind(previous: Option<&Preferences>, next: &Preferences, cx: &mut App) {
             if key.starts_with("mouse") {
                 continue;
             }
-            let context = if command.id.starts_with("composer.") {
+            // Their keys are chat navigation's too: only focus inside a side tab's view takes
+            // them, anywhere else the chat commands keep them.
+            let context = if matches!(command.id, "nextTab" | "previousTab") {
+                Some("SideTabs")
+            } else if command.id.starts_with("composer.") {
                 Some("Composer")
             } else if !key.contains("cmd-") && !key.contains("ctrl-") && !key.contains("alt-") {
                 Some("!Composer && !Editable")
@@ -168,6 +172,9 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
         "temporaryChat" => Box::new(shortcuts::NewTemporaryChat),
         "settings" => Box::new(OpenSettings),
         "keyboardShortcuts" => Box::new(shortcuts::OpenShortcutSettings),
+        "copyDeeplink" => Box::new(shortcuts::CopyDeeplink),
+        "nextTab" => Box::new(shortcuts::NextSideTab),
+        "previousTab" => Box::new(shortcuts::PreviousSideTab),
         "toggleThreadPin" => Box::new(shortcuts::ToggleThreadPin),
         "renameThread" => Box::new(shortcuts::RenameOpenChat),
         "findInThread" => Box::new(FindInThread),

@@ -2135,6 +2135,15 @@ impl Root {
         self.sync(window, cx);
     }
 
+    /// `Next tab` / `Previous tab`: the neighbouring side tab, wrapping.
+    fn step_side(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ix) = self.tabs.iter().position(|t| Some(*t) == self.side) else {
+            return;
+        };
+        let next = (ix as isize + delta).rem_euclid(self.tabs.len() as isize) as usize;
+        self.set_side(self.tabs[next], window, cx);
+    }
+
     /// Closes tab `side` (`Close {title} tab`, `⌘W` on the selected one): the next tab, else
     /// the previous, is selected; closing the last tab closes the panel.
     fn close_side(&mut self, side: SidePanel, window: &mut Window, cx: &mut Context<Self>) {

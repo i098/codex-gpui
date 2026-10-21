@@ -571,3 +571,4 @@ Command keybindings come from the original registry (`crates/ui/src/keyboard.rs`
 Settings > Keyboard shortcuts lists the original command registry in one flat card with text search, keystroke search, per-command capture, clear and reset, conflict messages, the number-shortcut and open-link preferences, and the dictation rows. Every edit goes through `ui::keyboard` and the keymap, so it applies live and persists.
 The `⌘/` dialog lists the shortcuts the app really binds (registry order, persisted overrides applied) and updates while it is open when a binding changes.
 `⌥⌘P` toggles the open chat's pin, `⌥⌘R` renames it and `⌘F` finds in it, all through the keymap; the `⌘/` dialog lists them in the original's recorded row order.
+`⌥⌘L` copies the open chat's `codex://threads/{id}` link, and `Next tab`/`Previous tab` step the side tabs when focus is inside one.
