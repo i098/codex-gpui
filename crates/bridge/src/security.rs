@@ -273,8 +273,8 @@ impl Setup {
 #[derive(Clone)]
 pub struct Client {
     bridge: Arc<Bridge>,
-    thread_id: String,
-    tools: Option<HashSet<String>>,
+    thread_id: Arc<str>,
+    tools: Option<Arc<HashSet<String>>>,
 }
 
 impl Client {
@@ -297,10 +297,10 @@ impl Client {
             .and_then(|status| status["data"].as_array())
             .and_then(|servers| servers.iter().find(|server| server["name"] == SERVER))
             .and_then(|server| server["tools"].as_object())
-            .map(|tools| tools.keys().cloned().collect());
+            .map(|tools| Arc::new(tools.keys().cloned().collect()));
         Ok(Self {
             bridge,
-            thread_id,
+            thread_id: thread_id.into(),
             tools,
         })
     }
@@ -308,7 +308,10 @@ impl Client {
     pub async fn close(&self) {
         let _ = self
             .bridge
-            .request::<_, Value>("thread/unsubscribe", json!({"threadId": self.thread_id}))
+            .request::<_, Value>(
+                "thread/unsubscribe",
+                json!({"threadId": self.thread_id.as_ref()}),
+            )
             .await;
     }
 
@@ -326,8 +329,8 @@ impl Client {
                 "mcpServer/tool/call",
                 json!({
                     "server": SERVER, "tool": tool, "arguments": arguments,
-                    "threadId": self.thread_id,
-                    "_meta": {"thread_id": self.thread_id, "threadId": self.thread_id}
+                    "threadId": self.thread_id.as_ref(),
+                    "_meta": {"thread_id": self.thread_id.as_ref(), "threadId": self.thread_id.as_ref()}
                 }),
             )
             .await
