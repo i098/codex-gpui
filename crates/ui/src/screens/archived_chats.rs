@@ -13,6 +13,7 @@ use gpui::{
     IntoElement, KeyDownEvent, ParentElement, Render, SharedString, Stateful,
     StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder as _, px,
 };
+use serde::Deserialize;
 use serde_json::Value;
 use shapes::Corner::Squircle;
 use std::collections::HashSet;
@@ -22,6 +23,7 @@ use theme::ActiveTheme as _;
 pub enum Operation {
     Load,
     Restore(String),
+    RestoreCloud(String),
     Delete(DeleteScope),
 }
 
@@ -40,6 +42,85 @@ pub struct ArchiveAction {
 }
 
 gpui::actions!(archived_chats, [OpenArchivedChats]);
+
+#[derive(Clone, Deserialize)]
+pub struct CloudArchive {
+    pub id: String,
+    pub title: Option<String>,
+    pub created_at: Option<f64>,
+    pub updated_at: Option<f64>,
+    #[serde(default)]
+    pub task_status_display: Value,
+}
+
+impl CloudArchive {
+    fn title(&self) -> &str {
+        self.title
+            .as_deref()
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+            .unwrap_or("Untitled chat")
+    }
+
+    fn created(&self) -> i64 {
+        self.created_at
+            .or(self.updated_at)
+            .filter(|value| value.is_finite())
+            .unwrap_or(0.) as i64
+    }
+
+    fn updated(&self) -> i64 {
+        self.updated_at
+            .or(self.created_at)
+            .filter(|value| value.is_finite())
+            .unwrap_or(0.) as i64
+    }
+
+    fn environment(&self) -> &str {
+        self.task_status_display["environment_label"]
+            .as_str()
+            .unwrap_or("")
+    }
+}
+
+pub struct ArchiveData {
+    pub threads: anyhow::Result<Vec<Thread>>,
+    pub projects: Vec<Project>,
+    pub metadata: Value,
+    pub metadata_error: Option<String>,
+}
+
+#[derive(Default)]
+struct Metadata {
+    values: Value,
+    projectless: HashSet<String>,
+    scheduled: HashSet<String>,
+}
+
+impl From<Value> for Metadata {
+    fn from(mut values: Value) -> Self {
+        let ids = |key: &str| {
+            values[key]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        };
+        let projectless = ids("projectless-thread-ids");
+        let scheduled = ids("automationThreadIds");
+        if let Some(object) = values.as_object_mut() {
+            object.remove("projectless-thread-ids");
+            object.remove("automationThreadIds");
+        }
+        Self {
+            values,
+            projectless,
+            scheduled,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Sort {
@@ -82,7 +163,8 @@ enum Menu {
 #[derive(Clone, PartialEq)]
 enum Control {
     Restore(String),
-    DeleteRow(usize),
+    RestoreCloud(String),
+    DeleteRow(String),
     DeleteAll,
     Menu(Menu),
     Retry,
@@ -98,8 +180,13 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
 
 pub struct ArchivedChats {
     pub threads: Option<anyhow::Result<Vec<Thread>>>,
+    cloud: Vec<CloudArchive>,
+    cloud_pending: HashSet<String>,
+    cloud_loading: bool,
+    cloud_error: Option<String>,
     projects: Vec<Project>,
-    metadata: Value,
+    metadata: Metadata,
+    metadata_error: Option<String>,
     query: Entity<Composer>,
     kind: Kind,
     project_filter: ProjectFilter,
@@ -133,8 +220,13 @@ impl ArchivedChats {
         });
         Self {
             threads: None,
+            cloud: Vec::new(),
+            cloud_pending: HashSet::new(),
+            cloud_loading: true,
+            cloud_error: None,
             projects: Vec::new(),
-            metadata: Value::Null,
+            metadata: Metadata::default(),
+            metadata_error: None,
             query,
             kind: Kind::All,
             project_filter: ProjectFilter::All,
@@ -163,17 +255,32 @@ impl ArchivedChats {
         self.confirmation.clone()
     }
 
-    pub fn loaded(
-        &mut self,
-        result: anyhow::Result<(Vec<Thread>, Vec<Project>, Value)>,
-        cx: &mut Context<Self>,
-    ) {
-        self.threads = Some(result.map(|(mut threads, projects, metadata)| {
-            self.projects = projects;
-            self.metadata = metadata;
+    pub fn loaded(&mut self, data: ArchiveData, cx: &mut Context<Self>) {
+        self.projects = data.projects;
+        self.metadata = data.metadata.into();
+        self.metadata_error = data.metadata_error;
+        self.threads = Some(data.threads.map(|mut threads| {
             threads.retain(|thread| !self.removed.contains(&thread.id));
             threads
         }));
+        self.rebuild(cx);
+        cx.notify();
+    }
+
+    pub fn cloud_loaded(
+        &mut self,
+        result: anyhow::Result<Vec<CloudArchive>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.cloud_loading = false;
+        match result {
+            Ok(mut cloud) => {
+                cloud.retain(|task| !self.removed.contains(&task.id));
+                self.cloud = cloud;
+                self.cloud_error = None;
+            }
+            Err(error) => self.cloud_error = Some(error.to_string()),
+        }
         self.rebuild(cx);
         cx.notify();
     }
@@ -186,7 +293,8 @@ impl ArchivedChats {
             self.removed.extend(ids.iter().cloned());
         }
         if success && let Some(Ok(threads)) = &mut self.threads {
-            threads.retain(|thread| !ids.contains(&thread.id));
+            let removed: HashSet<&str> = ids.iter().map(String::as_str).collect();
+            threads.retain(|thread| !removed.contains(thread.id.as_str()));
         }
         self.rebuild(cx);
         cx.notify();
@@ -197,22 +305,42 @@ impl ArchivedChats {
         self.finished(ids, true, cx);
     }
 
-    fn rebuild(&mut self, cx: &App) {
-        self.groups = self
-            .threads
+    pub fn cloud_finished(&mut self, id: &str, success: bool, cx: &mut Context<Self>) {
+        self.cloud_pending.remove(id);
+        if success {
+            self.removed.insert(id.to_owned());
+            self.cloud.retain(|task| task.id != id);
+        }
+        self.rebuild(cx);
+        cx.notify();
+    }
+
+    fn local_threads(&self) -> &[Thread] {
+        self.threads
             .as_ref()
-            .and_then(|r| r.as_ref().ok())
-            .map(|threads| {
-                project_groups(
-                    threads,
-                    &self.projects,
-                    &self.metadata,
-                    self.query.read(cx).field_text(),
-                    (self.kind, &self.project_filter, self.sort),
-                    &self.pending,
-                )
-            })
-            .unwrap_or_default();
+            .and_then(|threads| threads.as_ref().ok())
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    fn restore_cloud(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.pending.is_empty() || !self.cloud_pending.insert(id.clone()) {
+            return;
+        }
+        self.dispatch(Operation::RestoreCloud(id), window, cx);
+        cx.notify();
+    }
+
+    fn rebuild(&mut self, cx: &App) {
+        self.groups = project_groups(
+            self.local_threads(),
+            &self.cloud,
+            &self.projects,
+            &self.metadata,
+            self.query.read(cx).field_text(),
+            (self.kind, &self.project_filter, self.sort),
+            &self.pending,
+        );
     }
 
     fn restore(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
@@ -228,7 +356,7 @@ impl ArchivedChats {
     fn confirm_delete(
         &mut self,
         project: Option<usize>,
-        row: Option<usize>,
+        row: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -238,11 +366,14 @@ impl ArchivedChats {
         let Some(Ok(threads)) = &self.threads else {
             return;
         };
-        let (title, description, ids) = if let Some(row) = row {
+        let (title, description, ids) = if let Some(id) = row.as_deref() {
+            let Some(thread) = threads.iter().find(|thread| thread.id == id) else {
+                return;
+            };
             (
                 "Delete archived chat?",
                 "This permanently deletes the archived chat".to_owned(),
-                vec![threads[row].id.clone()],
+                vec![thread.id.clone()],
             )
         } else if let Some(project) = project {
             let ids: Vec<_> = self
@@ -250,7 +381,8 @@ impl ArchivedChats {
                 .iter()
                 .filter(|group| group.project == Some(project))
                 .flat_map(|group| &group.rows)
-                .map(|&index| threads[index].id.clone())
+                .filter_map(|&index| threads.get(index))
+                .map(|thread| thread.id.clone())
                 .collect();
             let noun = if ids.len() == 1 { "chat" } else { "chats" };
             (
@@ -301,6 +433,10 @@ impl ArchivedChats {
 
     fn retry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.threads = None;
+        self.cloud_loading = true;
+        self.cloud_error = None;
+        self.metadata_error = None;
+        self.rebuild(cx);
         self.dispatch(Operation::Load, window, cx);
         cx.notify();
     }
@@ -314,7 +450,8 @@ impl ArchivedChats {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let t = cx.theme().clone();
-        let disabled = !self.pending.is_empty() && !matches!(command, Control::Menu(_));
+        let disabled = (!self.pending.is_empty() && !matches!(command, Control::Menu(_)))
+            || matches!(&command, Control::RestoreCloud(id) if self.cloud_pending.contains(id));
         let focus = focus::handle(id.clone(), 0, window, cx);
         let handle = focus.read(cx).handle.clone();
         let icon_only = matches!(
@@ -409,6 +546,7 @@ impl ArchivedChats {
     fn activate(&mut self, command: Control, window: &mut Window, cx: &mut Context<Self>) {
         match command {
             Control::Restore(id) => self.restore(id, window, cx),
+            Control::RestoreCloud(id) => self.restore_cloud(id, window, cx),
             Control::DeleteRow(row) => self.confirm_delete(None, Some(row), window, cx),
             Control::DeleteAll => self.confirm_delete(None, None, window, cx),
             Control::Retry => self.retry(window, cx),
@@ -425,26 +563,49 @@ impl ArchivedChats {
 
     fn row(&self, index: usize, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let t = cx.theme().clone();
-        let thread = &self
-            .threads
-            .as_ref()
-            .and_then(|r| r.as_ref().ok())
-            .expect("loaded rows")[index];
-        let id = thread.id.clone();
-        let restore = self.control(
-            format!("unarchive-{id}").into(),
-            "Unarchive".into(),
-            Control::Restore(id),
-            window,
-            cx,
-        );
-        let delete = self.control(
-            format!("delete-archived-{}", thread.id).into(),
-            "Delete archived chat".into(),
-            Control::DeleteRow(index),
-            window,
-            cx,
-        );
+        let locals = self.local_threads();
+        let (label, date, restore, delete) = if let Some(thread) = locals.get(index) {
+            (
+                title(thread).to_owned(),
+                row_date(thread.updated_at, thread.created_at),
+                Control::Restore(thread.id.clone()),
+                Some(Control::DeleteRow(thread.id.clone())),
+            )
+        } else {
+            let task = &self.cloud[index - locals.len()];
+            (
+                task.title().to_owned(),
+                row_date(task.updated(), task.created()),
+                Control::RestoreCloud(task.id.clone()),
+                None,
+            )
+        };
+        let id = match &restore {
+            Control::Restore(id) | Control::RestoreCloud(id) => id.clone(),
+            _ => unreachable!(),
+        };
+        let cloud = delete.is_none();
+        let restoring = cloud && self.cloud_pending.contains(&id);
+        let restore = self
+            .control(
+                format!("unarchive-{id}").into(),
+                "Unarchive".into(),
+                restore,
+                window,
+                cx,
+            )
+            .when(restoring, |button| {
+                button.child(icon("sidebar-cmd-spinner", 12., t.text))
+            });
+        let delete = delete.map(|command| {
+            self.control(
+                format!("delete-archived-{id}").into(),
+                "Delete archived chat".into(),
+                command,
+                window,
+                cx,
+            )
+        });
         div()
             .relative()
             .flex()
@@ -453,6 +614,9 @@ impl ArchivedChats {
             .gap(px(24.))
             .px(px(16.))
             .py(px(12.))
+            .when(cloud, |row| {
+                row.child(icon("cloud-web", 16., t.text_secondary))
+            })
             .child(
                 div()
                     .flex_1()
@@ -460,8 +624,8 @@ impl ArchivedChats {
                     .flex()
                     .flex_col()
                     .gap(px(2.))
-                    .child(text(title(thread).to_owned(), 13., 18.571_428, 500., t.text).truncate())
-                    .child(text(thread_date(thread), 12., 16., 430., t.text_secondary).truncate()),
+                    .child(text(label, 13., 18.571_428, 500., t.text).truncate())
+                    .child(text(date, 12., 16., 430., t.text_secondary).truncate()),
             )
             .child(
                 div()
@@ -471,7 +635,7 @@ impl ArchivedChats {
                     .items_center()
                     .justify_end()
                     .gap(px(8.))
-                    .child(delete)
+                    .children(delete)
                     .child(restore),
             )
     }
@@ -700,7 +864,12 @@ enum MenuChoice {
 impl Render for ArchivedChats {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
-        let has_threads = matches!(&self.threads, Some(Ok(threads)) if !threads.is_empty());
+        let has_local = !self.local_threads().is_empty();
+        let has_threads = has_local || !self.cloud.is_empty();
+        let show_error = (self.kind != Kind::Cloud
+            && self.threads.as_ref().is_some_and(Result::is_err))
+            || (self.kind != Kind::Local && self.cloud_error.is_some())
+            || self.metadata_error.is_some();
         let mut content = div()
             .w_full()
             .max_w(px(768.))
@@ -712,7 +881,9 @@ impl Render for ArchivedChats {
             content = content.child(self.filter_controls(window, cx));
         }
         match &self.threads {
-            None => {
+            _ if self.groups.is_empty()
+                && (self.threads.is_none() || (self.kind != Kind::Local && self.cloud_loading)) =>
+            {
                 content = content.child(text(
                     "Loading archived chats…",
                     13.,
@@ -721,7 +892,7 @@ impl Render for ArchivedChats {
                     t.text_secondary,
                 ))
             }
-            Some(Err(_)) => {
+            Some(_) if !has_threads && show_error => {
                 content = content.child(
                     div()
                         .flex()
@@ -743,7 +914,7 @@ impl Render for ArchivedChats {
                         )),
                 );
             }
-            Some(Ok(threads)) if threads.is_empty() => {
+            Some(Ok(threads)) if threads.is_empty() && self.cloud.is_empty() => {
                 content = content.child(text(
                     "No archived chats",
                     13.,
@@ -752,7 +923,7 @@ impl Render for ArchivedChats {
                     t.text_secondary,
                 ))
             }
-            Some(Ok(_)) if self.groups.is_empty() => {
+            Some(_) if self.groups.is_empty() && !show_error => {
                 content = content.child(text(
                     "No matching archived chats",
                     13.,
@@ -761,7 +932,7 @@ impl Render for ArchivedChats {
                     t.text_secondary,
                 ))
             }
-            Some(Ok(_)) => {
+            _ => {
                 for group in &self.groups {
                     let rows: Vec<_> = group
                         .rows
@@ -797,7 +968,12 @@ impl Render for ArchivedChats {
                                 430.,
                                 t.text_secondary,
                             ));
-                        if let Some(project) = group.project {
+                        if let Some(project) = group.project
+                            && group
+                                .rows
+                                .iter()
+                                .any(|index| *index < self.local_threads().len())
+                        {
                             header = header.child(self.control(
                                 format!("archive-project-{project}").into(),
                                 "Project actions".into(),
@@ -845,7 +1021,29 @@ impl Render for ArchivedChats {
                 }
             }
         }
-        let delete_all = has_threads.then(|| {
+        if has_threads && show_error {
+            content = content.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(text(
+                        "Could not load archived chats",
+                        13.,
+                        18.571_428,
+                        430.,
+                        t.text,
+                    ))
+                    .child(self.control(
+                        "archive-retry".into(),
+                        "Retry".into(),
+                        Control::Retry,
+                        window,
+                        cx,
+                    )),
+            );
+        }
+        let delete_all = has_local.then(|| {
             self.control(
                 "archive-delete-all".into(),
                 "Delete all".into(),
@@ -919,15 +1117,13 @@ fn title(thread: &Thread) -> &str {
     }
 }
 
-fn project_for(thread: &Thread, projects: &[Project], metadata: &Value) -> Option<usize> {
-    if metadata["projectless-thread-ids"]
-        .as_array()
-        .is_some_and(|ids| ids.iter().any(|id| id.as_str() == Some(&thread.id)))
-    {
+fn project_for(thread: &Thread, projects: &[Project], metadata: &Metadata) -> Option<usize> {
+    if metadata.projectless.contains(&thread.id) {
         return None;
     }
-    if let Some(id) = metadata["thread-project-assignments"][&thread.id]["projectId"].as_str()
-        && metadata["thread-project-assignments"][&thread.id]["projectKind"] == "local"
+    if let Some(id) =
+        metadata.values["thread-project-assignments"][&thread.id]["projectId"].as_str()
+        && metadata.values["thread-project-assignments"][&thread.id]["projectKind"] == "local"
         && let Some(index) = projects
             .iter()
             .position(|project| project.id.as_ref() == id)
@@ -935,7 +1131,7 @@ fn project_for(thread: &Thread, projects: &[Project], metadata: &Value) -> Optio
         return Some(index);
     }
     for path in [
-        metadata["thread-workspace-root-hints"][&thread.id].as_str(),
+        metadata.values["thread-workspace-root-hints"][&thread.id].as_str(),
         Some(thread.cwd.as_str()),
     ]
     .into_iter()
@@ -958,50 +1154,91 @@ fn project_for(thread: &Thread, projects: &[Project], metadata: &Value) -> Optio
 
 fn project_groups(
     threads: &[Thread],
+    cloud: &[CloudArchive],
     projects: &[Project],
-    metadata: &Value,
+    metadata: &Metadata,
     query: &str,
     selection: (Kind, &ProjectFilter, Sort),
     pending: &HashSet<String>,
 ) -> Vec<Group> {
-    let (kind, filter, sort) = selection;
-    if kind == Kind::Cloud {
-        return Vec::new();
+    struct Row<'a> {
+        id: &'a str,
+        title: &'a str,
+        location: &'a str,
+        path: &'a str,
+        created: i64,
+        updated: i64,
+        project: Option<usize>,
+        kind: Kind,
+        scheduled: bool,
     }
+    let rows: Vec<_> = threads
+        .iter()
+        .map(|thread| Row {
+            id: &thread.id,
+            title: title(thread),
+            location: &thread.cwd,
+            path: thread.path.as_deref().unwrap_or(""),
+            created: thread.created_at,
+            updated: thread.updated_at,
+            project: project_for(thread, projects, metadata),
+            kind: Kind::Local,
+            scheduled: metadata.scheduled.contains(&thread.id),
+        })
+        .chain(cloud.iter().map(|task| {
+            let projectless = metadata.projectless.contains(&task.id);
+            let assignment = &metadata.values["thread-project-assignments"][&task.id];
+            let project = (!projectless && assignment["projectKind"] == "local")
+                .then(|| {
+                    projects.iter().position(|project| {
+                        assignment["projectId"].as_str() == Some(project.id.as_ref())
+                    })
+                })
+                .flatten();
+            Row {
+                id: &task.id,
+                title: task.title(),
+                location: task.environment(),
+                path: "",
+                created: task.created(),
+                updated: task.updated(),
+                project,
+                kind: Kind::Cloud,
+                scheduled: false,
+            }
+        }))
+        .collect();
+    let (kind, filter, sort) = selection;
     let query = query.trim().to_lowercase();
     let mut groups: Vec<Group> = Vec::new();
-    for (index, thread) in threads.iter().enumerate() {
-        if pending.contains(&thread.id) {
+    for (index, row) in rows.iter().enumerate() {
+        if (row.kind == Kind::Local && pending.contains(row.id))
+            || (kind != Kind::All && kind != row.kind)
+        {
             continue;
         }
-        let project = project_for(thread, projects, metadata);
-        let scheduled = metadata["automationThreadIds"]
-            .as_array()
-            .is_some_and(|ids| ids.iter().any(|id| id.as_str() == Some(&thread.id)));
         let selected = match filter {
             ProjectFilter::All => true,
-            ProjectFilter::Project(id) => project.is_some_and(|i| projects[i].id.as_ref() == id),
-            ProjectFilter::Chats => project.is_none() && !scheduled,
-            ProjectFilter::Scheduled => scheduled,
+            ProjectFilter::Project(id) => {
+                row.project.is_some_and(|i| projects[i].id.as_ref() == id)
+            }
+            ProjectFilter::Chats => row.project.is_none() && !row.scheduled,
+            ProjectFilter::Scheduled => row.scheduled,
         };
-        if !selected {
-            continue;
-        }
-        let label = project.map(|i| projects[i].label.as_ref()).unwrap_or("");
-        if !query.is_empty()
-            && ![
-                title(thread),
-                label,
-                &thread.cwd,
-                thread.path.as_deref().unwrap_or(""),
-            ]
-            .iter()
-            .any(|field| fuzzy_match(field, &query))
+        let project_label = row
+            .project
+            .map(|i| projects[i].label.as_ref())
+            .unwrap_or("");
+        if !selected
+            || (!query.is_empty()
+                && ![row.title, project_label, row.location, row.path]
+                    .iter()
+                    .any(|field| fuzzy_match(field, &query)))
         {
             continue;
         }
         let key = if *filter == ProjectFilter::All {
-            project
+            row.project
         } else {
             None
         };
@@ -1016,21 +1253,17 @@ fn project_groups(
     }
     for group in &mut groups {
         group.rows.sort_by(|&a, &b| {
-            let (a, b) = (&threads[a], &threads[b]);
-            match sort {
-                Sort::Alphabetical => title(a)
+            let (a, b) = (&rows[a], &rows[b]);
+            let title_order = || {
+                a.title
                     .chars()
                     .flat_map(char::to_lowercase)
-                    .cmp(title(b).chars().flat_map(char::to_lowercase))
-                    .then(b.updated_at.cmp(&a.updated_at)),
-                Sort::Created => b
-                    .created_at
-                    .cmp(&a.created_at)
-                    .then_with(|| title(a).cmp(title(b))),
-                Sort::Updated => b
-                    .updated_at
-                    .cmp(&a.updated_at)
-                    .then_with(|| title(a).cmp(title(b))),
+                    .cmp(b.title.chars().flat_map(char::to_lowercase))
+            };
+            match sort {
+                Sort::Alphabetical => title_order().then(b.updated.cmp(&a.updated)),
+                Sort::Created => b.created.cmp(&a.created).then_with(title_order),
+                Sort::Updated => b.updated.cmp(&a.updated).then_with(title_order),
             }
         });
     }
@@ -1050,9 +1283,9 @@ fn project_groups(
                     .iter()
                     .map(|&i| {
                         if sort == Sort::Created {
-                            threads[i].created_at
+                            rows[i].created
                         } else {
-                            threads[i].updated_at
+                            rows[i].updated
                         }
                     })
                     .max()
@@ -1091,12 +1324,12 @@ fn fuzzy_match(field: &str, query: &str) -> bool {
     false
 }
 
-fn thread_date(thread: &Thread) -> String {
+fn row_date(updated: i64, created: i64) -> String {
     use chrono::{Local, TimeZone as _};
     Local
-        .timestamp_opt(thread.updated_at, 0)
+        .timestamp_opt(updated, 0)
         .single()
-        .or_else(|| Local.timestamp_opt(thread.created_at, 0).single())
+        .or_else(|| Local.timestamp_opt(created, 0).single())
         .map(|date| {
             format!(
                 "{}, {}",
@@ -1142,14 +1375,20 @@ mod tests {
         thread.cwd = "/repo".into();
         let projects = vec![project("one", "/repo"), project("two", "/elsewhere")];
         let mut metadata = json!({"thread-project-assignments": {thread.id.clone(): {"projectId": "two", "projectKind": "local"}}});
-        assert_eq!(project_for(&thread, &projects, &metadata), Some(1));
+        assert_eq!(
+            project_for(&thread, &projects, &Metadata::from(metadata.clone())),
+            Some(1)
+        );
         metadata["projectless-thread-ids"] = json!([thread.id]);
-        assert_eq!(project_for(&thread, &projects, &metadata), None);
+        assert_eq!(
+            project_for(&thread, &projects, &Metadata::from(metadata)),
+            None
+        );
         assert_eq!(
             project_for(
                 &thread,
                 &[project("one", "/repo"), project("two", "/repo/")],
-                &Value::Null
+                &Metadata::default()
             ),
             None
         );
@@ -1158,10 +1397,11 @@ mod tests {
     #[test]
     fn filtering_keeps_scheduled_chats_out_of_projectless_results() {
         let threads = recorded_threads();
-        let metadata = json!({"automationThreadIds": [threads[0].id]});
+        let metadata = Metadata::from(json!({"automationThreadIds": [threads[0].id]}));
         let pending = HashSet::from([threads[1].id.clone()]);
         let groups = project_groups(
             &threads,
+            &[],
             &[],
             &metadata,
             "",
@@ -1179,6 +1419,7 @@ mod tests {
         let groups = project_groups(
             &threads,
             &[],
+            &[],
             &metadata,
             "",
             (Kind::All, &ProjectFilter::Scheduled, Sort::Updated),
@@ -1188,6 +1429,7 @@ mod tests {
         assert!(
             project_groups(
                 &threads,
+                &[],
                 &[],
                 &metadata,
                 "",
@@ -1209,11 +1451,95 @@ mod tests {
         let groups = project_groups(
             &threads,
             &[],
-            &Value::Null,
+            &[],
+            &Metadata::default(),
             "",
             (Kind::All, &ProjectFilter::All, Sort::Created),
             &HashSet::new(),
         );
         assert_eq!(groups[0].rows, vec![1, 2, 0]);
+    }
+
+    #[test]
+    fn cloud_filter_uses_cloud_rows_and_searches_the_environment() {
+        let threads = recorded_threads();
+        let cloud: Vec<CloudArchive> = serde_json::from_value(json!([{
+            "id": "archived-cloud", "title": "Review a change",
+            "created_at": 1, "updated_at": 2,
+            "task_status_display": {"environment_label": "Review environment"}
+        }]))
+        .unwrap();
+        let groups = project_groups(
+            &threads,
+            &cloud,
+            &[],
+            &Metadata::default(),
+            "environment",
+            (Kind::Cloud, &ProjectFilter::All, Sort::Updated),
+            &HashSet::new(),
+        );
+        assert_eq!(groups[0].rows, vec![threads.len()]);
+        let groups = project_groups(
+            &threads,
+            &cloud,
+            &[],
+            &Metadata::default(),
+            "environment",
+            (Kind::Local, &ProjectFilter::All, Sort::Updated),
+            &HashSet::new(),
+        );
+        assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn retry_after_partial_failure_clears_stale_row_indices() -> anyhow::Result<()> {
+        use gpui::{AppContext as _, HeadlessAppContext, size};
+        use std::sync::Arc;
+        #[cfg(target_os = "macos")]
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        let mut app =
+            HeadlessAppContext::with_asset_source(textsys::text_system(), Arc::new(theme::Assets));
+        app.update(|cx| {
+            theme::load_fonts(cx);
+            cx.set_global(theme::Theme::dark());
+        });
+        let window = app.open_window(size(px(1280.), px(832.)), |window, cx| {
+            cx.new(|cx| ArchivedChats::new(window, cx))
+        })?;
+        let page = app.read_window(&window, |page, _| page)?;
+        app.update(|cx| {
+            page.update(cx, |page, cx| {
+                page.loaded(
+                    ArchiveData {
+                        threads: Ok(recorded_threads()),
+                        projects: Vec::new(),
+                        metadata: Value::Null,
+                        metadata_error: Some("project metadata unavailable".into()),
+                    },
+                    cx,
+                );
+                page.cloud_loaded(Err(anyhow::anyhow!("offline")), cx);
+                assert_eq!(page.local_threads().len(), 3);
+                assert_eq!(
+                    page.groups
+                        .iter()
+                        .map(|group| group.rows.len())
+                        .sum::<usize>(),
+                    3
+                );
+            })
+        });
+        app.run_until_parked();
+        app.update_window(window.into(), |_, window, cx| {
+            page.update(cx, |page, cx| page.retry(window, cx))
+        })?;
+        app.run_until_parked();
+        page.read_with(&app, |page, _| {
+            assert!(page.threads.is_none() && page.groups.is_empty() && page.cloud_error.is_none());
+        });
+        Ok(())
     }
 }

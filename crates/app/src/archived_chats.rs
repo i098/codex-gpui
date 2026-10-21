@@ -1,7 +1,7 @@
 use super::*;
 use gpui::Div;
 use ui::screens::settings::archived_chats::{
-    ArchiveAction, DeleteScope, OpenArchivedChats, Operation,
+    ArchiveAction, ArchiveData, CloudArchive, DeleteScope, OpenArchivedChats, Operation,
 };
 use ui::screens::sidebar::archived_threads;
 
@@ -25,8 +25,18 @@ impl Root {
         let host = self.host.clone();
         match action.operation {
             Operation::Load => {
-                self.archived_settings = Some(action.page.clone());
-                cx.observe(&action.page, |_, _, cx| cx.notify()).detach();
+                if self.archived_settings.as_ref() != Some(&action.page) {
+                    cx.observe(&action.page, |_, _, cx| cx.notify()).detach();
+                    self.archived_settings = Some(action.page.clone());
+                }
+                let cloud_host = host.clone();
+                let cloud_page = action.page.clone();
+                let cloud = cx.background_spawn(async move { cloud_archived(&*cloud_host) });
+                cx.spawn(async move |_, cx| {
+                    let result = cloud.await;
+                    cloud_page.update(cx, |page, cx| page.cloud_loaded(result, cx));
+                })
+                .detach();
                 cx.spawn(async move |_, cx| {
                     let metadata = cx.background_spawn(async move {
                         let mut state = json!({});
@@ -45,22 +55,27 @@ impl Root {
                             "inbox-items",
                             Some(json!({"limit": 100000})),
                         ))?)?;
-                        state["automationThreadIds"] = Value::Array(
-                            inbox["items"]
-                                .as_array()
-                                .into_iter()
-                                .flatten()
-                                .filter_map(|run| run.get("threadId").cloned())
-                                .collect(),
-                        );
+                        let ids: std::collections::BTreeSet<String> = inbox["items"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|run| run["threadId"].as_str().map(str::to_owned))
+                            .collect();
+                        state["automationThreadIds"] = json!(ids);
                         Ok::<_, anyhow::Error>((host.projects()?, state))
                     });
                     let threads = archived_threads(&bridge, 100).await;
-                    let metadata = metadata.await;
-                    let result = threads.and_then(|threads| {
-                        metadata.map(|(projects, metadata)| (threads, projects, metadata))
-                    });
-                    action.page.update(cx, |page, cx| page.loaded(result, cx));
+                    let (projects, metadata, metadata_error) = match metadata.await {
+                        Ok((projects, metadata)) => (projects, metadata, None),
+                        Err(error) => (Vec::new(), Value::Null, Some(error.to_string())),
+                    };
+                    let data = ArchiveData {
+                        threads,
+                        projects,
+                        metadata,
+                        metadata_error,
+                    };
+                    action.page.update(cx, |page, cx| page.loaded(data, cx));
                 })
                 .detach();
             }
@@ -112,6 +127,58 @@ impl Root {
                 })
                 .detach();
             }
+            Operation::RestoreCloud(id) => {
+                let key = format!("recover-cloud-task-{id}");
+                let task_id = id.clone();
+                let work = cx.background_spawn(async move {
+                    let identity = host
+                        .identity()
+                        .context("Cloud tasks require a ChatGPT account")?;
+                    let path = format!(
+                        "/wham/tasks/{}/recover",
+                        crate::cloud_task::segment(&task_id)
+                    );
+                    let response =
+                        host.fetch(&crate::cloud_task::request(&identity, &path, "POST", None))?;
+                    let wire = host::response_wire(&response);
+                    ensure!(
+                        wire["status"]
+                            .as_u64()
+                            .is_some_and(|status| (200..300).contains(&status)),
+                        "Failed to unarchive cloud chat"
+                    );
+                    Ok::<_, anyhow::Error>(())
+                });
+                cx.spawn_in(window, async move |this, cx| {
+                    let result = work.await;
+                    action
+                        .page
+                        .update(cx, |page, cx| page.cloud_finished(&id, result.is_ok(), cx));
+                    this.update(cx, |this, cx| {
+                        let toast = match result {
+                            Ok(()) => {
+                                let root = cx.weak_entity();
+                                Toast::info("Unarchived chat")
+                                    .icon("sidebar-archive")
+                                    .action("View", move |window, cx| {
+                                        root.update(cx, |this, cx| {
+                                            this.open_remote_task(id.clone(), false, window, cx)
+                                        })
+                                        .ok();
+                                    })
+                            }
+                            Err(error) => {
+                                eprintln!("recover cloud task: {error:#}");
+                                Toast::danger("Failed to unarchive chat")
+                            }
+                        };
+                        this.toaster
+                            .update(cx, |toaster, cx| toaster.push_keyed(key, toast, cx));
+                    })
+                    .ok();
+                })
+                .detach();
+            }
             Operation::Delete(scope) => {
                 let single = matches!(scope, DeleteScope::Single(_));
                 let key = "delete-archived-chats";
@@ -132,7 +199,8 @@ impl Root {
                         page.deletion_finished(&deleted, cx);
                     });
                     this.update(cx, |this, cx| {
-                        this.threads.retain(|thread| !deleted.contains(&thread.id));
+                        let deleted_ids: HashSet<&str> = deleted.iter().map(String::as_str).collect();
+                        this.threads.retain(|thread| !deleted_ids.contains(thread.id.as_str()));
                         this.sidebar.update(cx, |sidebar, cx| sidebar.set_threads(&this.threads, cx));
                         let toast = if let Some(error) = first_error {
                             let message = if error.downcast_ref::<bridge::RpcError>().is_some_and(|error| error.code == -32601) {
@@ -150,6 +218,41 @@ impl Root {
                 }).detach();
             }
         }
+    }
+}
+
+fn cloud_archived(host: &dyn host::Host) -> Result<Vec<CloudArchive>> {
+    #[derive(Deserialize)]
+    struct Page {
+        items: Vec<CloudArchive>,
+        cursor: Option<String>,
+    }
+    let Some(identity) = host.identity() else {
+        return Ok(Vec::new());
+    };
+    let mut tasks = Vec::new();
+    let mut cursor: Option<String> = None;
+    let mut seen = HashSet::new();
+    loop {
+        let mut query = url::form_urlencoded::Serializer::new(String::new());
+        query.append_pair("limit", "20");
+        if let Some(cursor) = &cursor {
+            query.append_pair("cursor", cursor);
+        }
+        query.append_pair("task_filter", "archived");
+        let path = format!("/wham/tasks/list?{}", query.finish());
+        let response = host.fetch(&crate::cloud_task::request(&identity, &path, "GET", None))?;
+        let status = host::response_wire(&response)["status"].as_u64();
+        if matches!(status, Some(401 | 403 | 404)) {
+            return Ok(tasks);
+        }
+        let page: Page = serde_json::from_value(host::json_body(&response)?)?;
+        tasks.extend(page.items);
+        cursor = page.cursor;
+        let Some(next) = &cursor else {
+            return Ok(tasks);
+        };
+        ensure!(seen.insert(next.clone()), "Cloud archive repeated a cursor");
     }
 }
 
@@ -202,12 +305,11 @@ mod tests {
         let pair = |method: &str| {
             records
                 .windows(2)
-                .filter(|pair| {
+                .rfind(|pair| {
                     pair[0]["dir"] == "send"
                         && pair[0]["msg"]["method"] == method
                         && pair[1]["dir"] == "recv"
                 })
-                .next_back()
                 .expect("recorded transaction")
         };
         let list = pair("thread/list");
@@ -216,14 +318,13 @@ mod tests {
             .context("archived list")?;
         let delete = records
             .windows(2)
-            .filter(|pair| {
+            .rfind(|pair| {
                 pair[0]["msg"]["method"] == "thread/delete"
                     && pair[1]["dir"] == "recv"
                     && !archived
                         .iter()
                         .any(|thread| thread["id"] == pair[0]["msg"]["params"]["threadId"])
             })
-            .next_back()
             .context("recorded stale delete")?;
         let id = delete[0]["msg"]["params"]["threadId"]
             .as_str()
@@ -270,6 +371,67 @@ mod tests {
         let (deleted, error) = pollster::block_on(delete_archived(&bridge, &DeleteScope::All));
         ensure!(error.is_none(), "recorded delete failed: {error:?}");
         ensure!(deleted == ["01a13de9-35ed-7c72-a36a-68eeb2f4e1ee"]);
+        Ok(())
+    }
+
+    #[test]
+    fn cloud_archive_stays_empty_without_a_cloud_identity() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let host = host::LocalHost::new(home.path());
+        ensure!(cloud_archived(&host)?.is_empty());
+        Ok(())
+    }
+
+    struct CloudPages(std::sync::Mutex<std::collections::VecDeque<(u16, Value)>>);
+
+    impl host::Host for CloudPages {
+        fn identity(&self) -> Option<host::Identity> {
+            Some(host::Identity {
+                account_id: "account".into(),
+                user_id: "user".into(),
+                device_id: "device".into(),
+            })
+        }
+
+        fn fetch(&self, _: &host::Request) -> Result<Value> {
+            let (status, body) = self
+                .0
+                .lock()
+                .expect("test response lock")
+                .pop_front()
+                .context("unexpected cloud request")?;
+            Ok(json!({"status": status, "bodyJsonString": body.to_string()}))
+        }
+    }
+
+    #[test]
+    fn cloud_archive_merges_pages_and_rejects_repeated_cursors() -> Result<()> {
+        let page =
+            |id: &str, cursor: Option<&str>| json!({"items": [{"id": id}], "cursor": cursor});
+        let host = CloudPages(std::sync::Mutex::new(std::collections::VecDeque::from([
+            (200, page("first", Some("next"))),
+            (200, page("second", None)),
+        ])));
+        ensure!(
+            cloud_archived(&host)?
+                .iter()
+                .map(|task| task.id.as_str())
+                .collect::<Vec<_>>()
+                == ["first", "second"]
+        );
+        let host = CloudPages(std::sync::Mutex::new(std::collections::VecDeque::from([
+            (200, page("first", Some("repeat"))),
+            (200, page("second", Some("repeat"))),
+        ])));
+        let error = cloud_archived(&host)
+            .err()
+            .context("repeated cursor must fail")?;
+        ensure!(error.to_string() == "Cloud archive repeated a cursor");
+        let host = CloudPages(std::sync::Mutex::new(std::collections::VecDeque::from([(
+            404,
+            Value::Null,
+        )])));
+        ensure!(cloud_archived(&host)?.is_empty());
         Ok(())
     }
 }

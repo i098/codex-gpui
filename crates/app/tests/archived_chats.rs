@@ -18,7 +18,7 @@ fn native_archived_settings_restores_and_deletes_chats() -> Result<()> {
         thread,
         time::{Duration, Instant},
     };
-    use ui::screens::settings::archived_chats::{ArchiveAction, OpenArchivedChats, Operation};
+    use ui::screens::settings::archived_chats::OpenArchivedChats;
 
     std::panic::set_hook(Box::new(|info| {
         eprintln!("{info}");
@@ -50,6 +50,7 @@ fn native_archived_settings_restores_and_deletes_chats() -> Result<()> {
         theme::load_fonts(cx);
         cx.set_global(theme::Theme::dark());
         cx.set_global(settings);
+        ui::composer::Composer::set_caret_transparent(cx, true);
         app::init(cx);
     });
     cx.allow_parking();
@@ -78,7 +79,7 @@ fn native_archived_settings_restores_and_deletes_chats() -> Result<()> {
         ensure!(Instant::now() < until, "application startup did not finish");
         thread::sleep(Duration::from_millis(5));
     }
-    cx.update_window(window, |_, window, cx| {
+    cx.update_window(window.into(), |_, window, cx| {
         window.dispatch_action(Box::new(OpenArchivedChats), cx);
     })?;
     let until = Instant::now() + Duration::from_secs(30);
@@ -106,62 +107,122 @@ fn native_archived_settings_restores_and_deletes_chats() -> Result<()> {
             .collect()
     });
     ensure!(ids.len() == 3);
-    if let Ok(directory) = std::env::var("CGX_ARCHIVE_SHOTS") {
-        fs::create_dir_all(&directory)?;
-        cx.capture_screenshot(window.into())?
-            .save(Path::new(&directory).join("archive-list.png"))?;
+    let shots = std::env::var("CGX_ARCHIVE_SHOTS").ok();
+    if let Some(directory) = &shots {
+        fs::create_dir_all(directory)?;
     }
-    cx.update_window(window, |_, window, cx| {
-        let position = point(px(1128.), px(136.));
-        window.dispatch_event(
-            PlatformInput::MouseDown(MouseDownEvent {
-                button: MouseButton::Left,
-                position,
-                modifiers: Modifiers::default(),
-                click_count: 1,
-                first_mouse: false,
-            }),
-            cx,
-        );
-        window.dispatch_event(
-            PlatformInput::MouseUp(MouseUpEvent {
-                button: MouseButton::Left,
-                position,
-                modifiers: Modifiers::default(),
-                click_count: 1,
-            }),
-            cx,
-        );
-    })?;
-    cx.run_until_parked();
+    let click = |cx: &mut HeadlessAppContext, x: f32, y: f32| -> Result<()> {
+        cx.update_window(window.into(), |_, window, cx| {
+            let position = point(px(x), px(y));
+            window.dispatch_event(
+                PlatformInput::MouseMove(gpui::MouseMoveEvent {
+                    position,
+                    pressed_button: None,
+                    modifiers: Modifiers::default(),
+                }),
+                cx,
+            );
+            window.dispatch_event(
+                PlatformInput::MouseDown(MouseDownEvent {
+                    button: MouseButton::Left,
+                    position,
+                    modifiers: Modifiers::default(),
+                    click_count: 1,
+                    first_mouse: false,
+                }),
+                cx,
+            );
+            window.dispatch_event(
+                PlatformInput::MouseUp(MouseUpEvent {
+                    button: MouseButton::Left,
+                    position,
+                    modifiers: Modifiers::default(),
+                    click_count: 1,
+                }),
+                cx,
+            );
+        })?;
+        cx.run_until_parked();
+        Ok(())
+    };
+    let key = |cx: &mut HeadlessAppContext, key: &str| -> Result<()> {
+        let stroke = Keystroke::parse(key)?;
+        cx.update_window(window.into(), |_, window, cx| {
+            window.dispatch_keystroke(stroke, cx);
+        })?;
+        cx.run_until_parked();
+        Ok(())
+    };
+    let type_text = |cx: &mut HeadlessAppContext, text: &str| -> Result<()> {
+        cx.update_window(window.into(), |_, window, cx| {
+            for character in text.chars() {
+                window.dispatch_keystroke(
+                    Keystroke {
+                        key: character.to_string(),
+                        ..Default::default()
+                    },
+                    cx,
+                );
+            }
+        })?;
+        cx.run_until_parked();
+        Ok(())
+    };
+    let shot = |cx: &mut HeadlessAppContext, name: &str| -> Result<()> {
+        if let Some(directory) = &shots {
+            cx.update_window(window.into(), |_, window, cx| {
+                window.dispatch_event(
+                    PlatformInput::MouseMove(gpui::MouseMoveEvent {
+                        position: point(px(768.), px(6.)),
+                        pressed_button: None,
+                        modifiers: Modifiers::default(),
+                    }),
+                    cx,
+                );
+            })?;
+            cx.run_until_parked();
+            cx.capture_screenshot(window.into())?
+                .save(Path::new(directory).join(format!("archive-{name}.png")))?;
+        }
+        Ok(())
+    };
+    shot(&mut cx, "list")?;
+    if shots.is_some() {
+        click(&mut cx, 916., 202.)?;
+        shot(&mut cx, "filter")?;
+        key(&mut cx, "escape")?;
+        click(&mut cx, 1084., 202.)?;
+        shot(&mut cx, "projects")?;
+        key(&mut cx, "escape")?;
+    }
+    click(&mut cx, 1128., 136.)?;
     ensure!(
         page.read_with(&cx, |page, _| page.confirmation().is_some()),
         "Delete all did not ask for confirmation"
     );
-    if let Ok(directory) = std::env::var("CGX_ARCHIVE_SHOTS") {
-        cx.capture_screenshot(window.into())?
-            .save(Path::new(&directory).join("archive-delete-confirm.png"))?;
-    }
-    let escape = Keystroke::parse("escape")?;
-    cx.update_window(window, |_, window, cx| {
-        window.dispatch_keystroke(escape, cx);
-    })?;
-    cx.run_until_parked();
+    shot(&mut cx, "delete-all")?;
+    key(&mut cx, "escape")?;
     ensure!(
         page.read_with(&cx, |page, _| page.confirmation().is_none()
             && page.threads.as_ref().unwrap().as_ref().unwrap().len() == 3),
         "Cancel changed the archived list"
     );
     let restored = ids[0].clone();
-    cx.update_window(window, |_, window, cx| {
-        window.dispatch_action(
-            Box::new(ArchiveAction {
-                page: page.clone(),
-                operation: Operation::Restore(restored.clone()),
-            }),
-            cx,
-        );
-    })?;
+    if shots.is_some() {
+        click(&mut cx, 1054., 336.)?;
+        shot(&mut cx, "delete-single")?;
+        key(&mut cx, "escape")?;
+        click(&mut cx, 600., 202.)?;
+        type_text(&mut cx, "subtract")?;
+        shot(&mut cx, "search")?;
+        key(&mut cx, "cmd-a")?;
+        key(&mut cx, "backspace")?;
+        type_text(&mut cx, "zzzzzz")?;
+        shot(&mut cx, "no-matches")?;
+        key(&mut cx, "cmd-a")?;
+        key(&mut cx, "backspace")?;
+    }
+    click(&mut cx, 1115., 336.)?;
     let until = Instant::now() + Duration::from_secs(30);
     loop {
         cx.run_until_parked();
@@ -196,22 +257,14 @@ fn native_archived_settings_restores_and_deletes_chats() -> Result<()> {
                 .iter()
                 .all(|title| title.as_ref() != "Unarchiving chat")
     }));
-    if let Ok(directory) = std::env::var("CGX_ARCHIVE_SHOTS") {
-        cx.capture_screenshot(window.into())?
-            .save(Path::new(&directory).join("archive-restored.png"))?;
-    }
+    shot(&mut cx, "restored")?;
     let deleted = ids[2].clone();
-    cx.update_window(window, |_, window, cx| {
-        window.dispatch_action(
-            Box::new(ArchiveAction {
-                page: page.clone(),
-                operation: Operation::Delete(
-                    ui::screens::settings::archived_chats::DeleteScope::Single(deleted.clone()),
-                ),
-            }),
-            cx,
-        );
-    })?;
+    click(&mut cx, 1054., 396.)?;
+    ensure!(
+        page.read_with(&cx, |page, _| page.confirmation().is_some()),
+        "Row delete did not ask for confirmation"
+    );
+    click(&mut cx, 795., 456.)?;
     let until = Instant::now() + Duration::from_secs(30);
     loop {
         cx.run_until_parked();
@@ -236,5 +289,6 @@ fn native_archived_settings_restores_and_deletes_chats() -> Result<()> {
                 .iter()
                 .any(|title| title.as_ref() == "Deleted archived chat")
     }));
+    shot(&mut cx, "deleted")?;
     Ok(())
 }

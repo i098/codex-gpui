@@ -1708,57 +1708,6 @@ fn event_stream(
     Ok(())
 }
 
-#[cfg(test)]
-mod cloud_stream_tests {
-    use super::event_stream;
-    use serde_json::{Value, json};
-
-    #[test]
-    fn events_join_data_lines_and_stop_before_later_messages() {
-        let input = b": keepalive\r\ndata: {\"item_type\":\"log\",\r\ndata: \"line\":\"ready\"}\r\n\r\ndata: {\"line\":\"ignored\"}\n\n";
-        let mut received = Vec::<Value>::new();
-        event_stream(
-            std::io::Cursor::new(input),
-            &std::sync::atomic::AtomicBool::new(false),
-            &mut |event| {
-                received.push(event);
-                false
-            },
-        )
-        .unwrap();
-        assert_eq!(received, [json!({"item_type":"log","line":"ready"})]);
-    }
-
-    #[test]
-    fn invalid_event_is_an_error_not_a_successful_empty_stream() {
-        assert!(
-            event_stream(
-                std::io::Cursor::new(b"data: invalid\n\n"),
-                &std::sync::atomic::AtomicBool::new(false),
-                &mut |_| true
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn cancelled_stream_does_not_deliver_buffered_events() {
-        let cancelled = std::sync::atomic::AtomicBool::new(false);
-        let mut received = Vec::new();
-        event_stream(
-            std::io::Cursor::new(b"data: 1\n\n: keepalive\n\ndata: 2\n\n"),
-            &cancelled,
-            &mut |event| {
-                received.push(event);
-                cancelled.store(true, std::sync::atomic::Ordering::Release);
-                true
-            },
-        )
-        .unwrap();
-        assert_eq!(received, [json!(1)]);
-    }
-}
-
 /// A random v4 UUID from the standard library's hasher keys.
 pub(crate) fn device_id() -> String {
     use std::hash::{BuildHasher as _, RandomState};
@@ -2041,4 +1990,55 @@ fn definition(id: &str, contents: &str) -> Result<Value> {
         };
     }
     Ok(item)
+}
+
+#[cfg(test)]
+mod cloud_stream_tests {
+    use super::event_stream;
+    use serde_json::{Value, json};
+
+    #[test]
+    fn events_join_data_lines_and_stop_before_later_messages() {
+        let input = b": keepalive\r\ndata: {\"item_type\":\"log\",\r\ndata: \"line\":\"ready\"}\r\n\r\ndata: {\"line\":\"ignored\"}\n\n";
+        let mut received = Vec::<Value>::new();
+        event_stream(
+            std::io::Cursor::new(input),
+            &std::sync::atomic::AtomicBool::new(false),
+            &mut |event| {
+                received.push(event);
+                false
+            },
+        )
+        .unwrap();
+        assert_eq!(received, [json!({"item_type":"log","line":"ready"})]);
+    }
+
+    #[test]
+    fn invalid_event_is_an_error_not_a_successful_empty_stream() {
+        assert!(
+            event_stream(
+                std::io::Cursor::new(b"data: invalid\n\n"),
+                &std::sync::atomic::AtomicBool::new(false),
+                &mut |_| true
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn cancelled_stream_does_not_deliver_buffered_events() {
+        let cancelled = std::sync::atomic::AtomicBool::new(false);
+        let mut received = Vec::new();
+        event_stream(
+            std::io::Cursor::new(b"data: 1\n\n: keepalive\n\ndata: 2\n\n"),
+            &cancelled,
+            &mut |event| {
+                received.push(event);
+                cancelled.store(true, std::sync::atomic::Ordering::Release);
+                true
+            },
+        )
+        .unwrap();
+        assert_eq!(received, [json!(1)]);
+    }
 }

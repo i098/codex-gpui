@@ -427,6 +427,12 @@ fn check_state(fx: &mut Fx, state: &Value) -> Result<()> {
                 Route::Automation(id) => format!("scheduled?automationId={id}"),
                 Route::Mobile => "mobile".to_owned(),
                 Route::Archive => "archive".to_owned(),
+                Route::Remote { task_id, hotkey } => {
+                    format!(
+                        "{}remote:{task_id}",
+                        if hotkey { "hotkey-window/" } else { "" }
+                    )
+                }
             }
             .into(),
             "selectedRail" => fx.shell(|s| s.selected_rail).into(),

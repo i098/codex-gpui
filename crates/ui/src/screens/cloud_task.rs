@@ -184,34 +184,33 @@ impl CloudTaskPage {
             if let Some(line) = event["line"].as_str() {
                 turn.logs.push(line.to_owned());
             }
-        } else if event["item_type"] == "thread_event" {
-            if let Some(method) = event
+        } else if event["item_type"] == "thread_event"
+            && let Some(method) = event
                 .pointer("/event/method")
                 .and_then(serde_json::Value::as_str)
+        {
+            let mut params = event["event"]["params"].clone();
+            params["threadId"] = data.id.clone().into();
+            if method.starts_with("item/") {
+                turn.phase = Phase::Chat;
+            }
+            if method == "turn/diff/updated"
+                && let Some(diff) = params["diff"].as_str()
             {
-                let mut params = event["event"]["params"].clone();
-                params["threadId"] = data.id.clone().into();
-                if method.starts_with("item/") {
-                    turn.phase = Phase::Chat;
-                }
-                if method == "turn/diff/updated" {
-                    if let Some(diff) = params["diff"].as_str() {
-                        data.diff = diff.to_owned();
-                        data.diff_turn = Some(turn_id.to_owned());
-                    }
-                }
-                if method == "turn/completed" {
-                    data.working = false;
-                    self.composer
-                        .update(cx, |composer, cx| composer.set_running(false, cx));
-                }
-                if let Some(view) = self.transcripts.get(turn_id) {
-                    let notification = bridge::Event::Notification {
-                        method: method.to_owned(),
-                        params,
-                    };
-                    view.update(cx, |view, cx| view.apply(&notification, cx));
-                }
+                data.diff = diff.to_owned();
+                data.diff_turn = Some(turn_id.to_owned());
+            }
+            if method == "turn/completed" {
+                data.working = false;
+                self.composer
+                    .update(cx, |composer, cx| composer.set_running(false, cx));
+            }
+            if let Some(view) = self.transcripts.get(turn_id) {
+                let notification = bridge::Event::Notification {
+                    method: method.to_owned(),
+                    params,
+                };
+                view.update(cx, |view, cx| view.apply(&notification, cx));
             }
         }
         cx.notify();
@@ -869,6 +868,7 @@ mod tests {
             reasoning_effort: None,
             model_provider: String::new(),
             cwd: String::new(),
+            path: None,
             created_at: 0,
             updated_at: 0,
             section: None,

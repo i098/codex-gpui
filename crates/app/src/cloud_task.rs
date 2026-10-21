@@ -438,11 +438,16 @@ fn upload_image(host: &dyn Host, identity: &Identity, path: &std::path::Path) ->
     )
 }
 
-fn segment(value: &str) -> String {
+pub(crate) fn segment(value: &str) -> String {
     url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
-fn request(identity: &Identity, path: &str, method: &str, body: Option<Value>) -> Request {
+pub(crate) fn request(
+    identity: &Identity,
+    path: &str,
+    method: &str,
+    body: Option<Value>,
+) -> Request {
     let mut request = json!({"url":path,"method":method,"headers":{"OAI-Language":"en-US","X-OpenAI-Attach-Auth":"1","X-OpenAI-Attach-Integrity-State":"1","originator":"Codex Desktop"},"expectedIdentity":{"accountId":identity.account_id,"userId":identity.user_id},"returnErrorResponse":true});
     if let Some(body) = body {
         request["body"] = body.to_string().into();
@@ -532,10 +537,10 @@ fn run(
                     if cancelled.load(Ordering::Acquire) {
                         return false;
                     }
-                    if let Some(id) = event["id"].as_str() {
-                        if !seen.insert(id.to_owned()) {
-                            return true;
-                        }
+                    if let Some(id) = event["id"].as_str()
+                        && !seen.insert(id.to_owned())
+                    {
+                        return true;
                     }
                     send.send_blocking(Update::Event(turn.clone(), event))
                         .is_ok()
@@ -743,15 +748,14 @@ fn project(detail: &Value, turns: &Value) -> Result<CloudTask> {
                 .items
                 .iter()
                 .any(|item| matches!(item, ThreadItem::AgentMessage { .. }))
+            && let Some(assistant) = assistant
         {
-            if let Some(assistant) = assistant {
-                let text = content(&assistant["output_items"]);
-                if !text.trim().is_empty() {
-                    turn.items.push(ThreadItem::AgentMessage {
-                        id: format!("cloud-assistant-message:{assistant_id}"),
-                        text,
-                    });
-                }
+            let text = content(&assistant["output_items"]);
+            if !text.trim().is_empty() {
+                turn.items.push(ThreadItem::AgentMessage {
+                    id: format!("cloud-assistant-message:{assistant_id}"),
+                    text,
+                });
             }
         }
         let images = user["input_items"]
@@ -770,6 +774,7 @@ fn project(detail: &Value, turns: &Value) -> Result<CloudTask> {
                 reasoning_effort: None,
                 model_provider: String::new(),
                 cwd: String::new(),
+                path: None,
                 created_at: 0,
                 updated_at: 0,
                 section: None,
