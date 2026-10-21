@@ -99,12 +99,18 @@ impl DiffPanel {
     }
 
     pub(super) fn apply_reveal_path(&mut self) {
-        let Some(path) = self.reveal_path.as_deref() else { return };
-        let path = path.strip_prefix(&self.workspace)
-            .and_then(|path| path.strip_prefix('/')).unwrap_or(path);
-        if let Some(index) = self.files.iter().position(|file| {
-            path.strip_prefix(file.dir.as_ref()) == Some(file.name.as_ref())
-        }) {
+        let Some(path) = self.reveal_path.as_deref() else {
+            return;
+        };
+        let path = path
+            .strip_prefix(&self.workspace)
+            .and_then(|path| path.strip_prefix('/'))
+            .unwrap_or(path);
+        if let Some(index) = self
+            .files
+            .iter()
+            .position(|file| path.strip_prefix(file.dir.as_ref()) == Some(file.name.as_ref()))
+        {
             self.select_jump(index);
         }
     }
