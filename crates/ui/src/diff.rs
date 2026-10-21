@@ -54,6 +54,13 @@ pub use states::{LastTurnState, OmittedFiles};
 mod content;
 pub use content::{BlobReply, BlobRequest, FullError, FullFileRequest, FullText};
 
+#[path = "diff/preview.rs"]
+mod preview;
+pub use preview::{PreviewContent, PreviewRequest, PreviewSource};
+
+#[path = "diff/pdf.rs"]
+mod pdf;
+
 /// Panel width the capture had stored (`app-shell:right-panel-width:v3`) before clamping.
 const STORED_WIDTH: f32 = 664.17;
 /// Room the chat keeps beside the panel (`unified` layout), also the panel's minimum.
@@ -149,6 +156,7 @@ pub struct FileDiff {
     full_loading: bool,
     original_hunks: Option<Vec<Hunk>>,
     pending_expansion: Option<(usize, content::Expand)>,
+    preview: Option<preview::Preview>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -207,6 +215,7 @@ pub enum DiffRequest {
     SourceChanged,
     Notice(&'static str),
     LoadFullFile(FullFileRequest),
+    LoadPreview(PreviewRequest),
     Preference(&'static str, serde_json::Value),
     /// Open this absolute path in the configured editor.
     Open(String),
@@ -237,6 +246,10 @@ pub struct RepositoryChanges {
     pub base_branch: Option<String>,
     #[serde(default)]
     pub commit: Option<String>,
+    #[serde(default)]
+    pub before_ref: Option<String>,
+    #[serde(default)]
+    pub after_ref: Option<String>,
     #[serde(default)]
     pub not_repository: bool,
 }
@@ -291,6 +304,7 @@ pub struct DiffPanel {
     last_turn_state: Option<LastTurnState>,
     full_files: bool,
     content_generation: u64,
+    rich_preview: bool,
 }
 
 impl DiffPanel {
@@ -366,6 +380,7 @@ impl DiffPanel {
                     full_loading: false,
                     original_hunks: None,
                     pending_expansion: None,
+                    preview: None,
                 }),
             }
         }
@@ -408,6 +423,7 @@ impl DiffPanel {
             last_turn_state: None,
             full_files: true,
             content_generation: 0,
+            rich_preview: true,
         }
     }
 
@@ -698,6 +714,9 @@ impl DiffPanel {
                     file.original_hunks = old.original_hunks.take();
                     if file.original_hunks.is_some() {
                         file.hunks = std::mem::take(&mut old.hunks);
+                    }
+                    if old.preview.as_ref().is_some_and(preview::Preview::loaded) {
+                        file.preview = old.preview.take();
                     }
                 }
             }
@@ -1205,6 +1224,7 @@ impl Render for DiffPanel {
             } else {
                 px(0.)
             };
+        self.request_visible_previews(code_width, window.scale_factor(), cx);
         let not_repository = self.source != DiffSource::LastTurn
             && self.repository.as_ref().is_some_and(|r| r.not_repository);
         let boundary = if not_repository {
@@ -1256,7 +1276,11 @@ impl Render for DiffPanel {
                     .child(self.scrolling_file_header(i, file, scroll_top, &t, cx))
                     .when(file.open, |d| d.children(self.full_error_notice(i, cx)))
                     .map(|d| {
-                        if file.open && file.problem.is_some() {
+                        if file.open
+                            && let Some(preview) = self.preview(i, code_width, cx)
+                        {
+                            d.child(preview)
+                        } else if file.open && file.problem.is_some() {
                             d.child(self.file_placeholder(i, file, &t, cx))
                         } else if file.open {
                             d.children(file.hunks.iter().enumerate().map(|(index, h)| {

@@ -82,7 +82,7 @@ impl DiffPanel {
         let count = match kind {
             None => 0,
             Some(Kind::Source) => SOURCES.len(),
-            Some(Kind::Options) => 6,
+            Some(Kind::Options) => 7,
             Some(Kind::Branches) => repository.map_or(0, |r| r.branches.len()),
             Some(Kind::Commits) => repository.map_or(0, |r| r.commits.len()),
             Some(Kind::Header) => {
@@ -104,7 +104,8 @@ impl DiffPanel {
                     2 => ("Word wrap", true),
                     3 => (self.layout.label(), true),
                     4 => ("Word diffs", true),
-                    _ => ("Load full files", true),
+                    5 => ("Load full files", true),
+                    _ => ("Rich preview", true),
                 },
                 Kind::Branches => (repository.unwrap().branches[index].as_str(), !self.pending),
                 Kind::Commits => (
@@ -371,7 +372,8 @@ impl DiffPanel {
                         self.word_diffs.into(),
                     ));
                 }
-                _ => self.toggle_full_files(cx),
+                5 => self.toggle_full_files(cx),
+                _ => self.toggle_rich_preview(cx),
             }
             self.selection = None;
             cx.stop_propagation();
@@ -451,9 +453,12 @@ impl DiffPanel {
                     .id((row_id, i))
                     .role(Role::MenuItem)
                     .aria_label(label.to_owned())
-                    .when(kind == Kind::Options && matches!(i, 4 | 5), |d| {
+                    .when(kind == Kind::Options && matches!(i, 4 | 5 | 6), |d| {
                         d.role(Role::MenuItemCheckBox).aria_toggled(
-                            if (i == 4 && self.word_diffs) || (i == 5 && self.full_files) {
+                            if (i == 4 && self.word_diffs)
+                                || (i == 5 && self.full_files)
+                                || (i == 6 && self.rich_preview)
+                            {
                                 gpui::Toggled::True
                             } else {
                                 gpui::Toggled::False
@@ -515,7 +520,9 @@ impl DiffPanel {
                     })
                     .when(
                         kind == Kind::Options
-                            && ((i == 4 && self.word_diffs) || (i == 5 && self.full_files)),
+                            && ((i == 4 && self.word_diffs)
+                                || (i == 5 && self.full_files)
+                                || (i == 6 && self.rich_preview)),
                         |d| d.child(source_glyph(SOURCE_CHECK, "diff-word-check", t.text, 191)),
                     )
                     .when(source && i == 4, |d| {
