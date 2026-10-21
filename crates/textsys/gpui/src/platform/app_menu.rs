@@ -100,6 +100,9 @@ pub enum MenuItem {
 
         /// Whether this action is disabled
         disabled: bool,
+
+        /// Whether this action is hidden while its shortcut remains active.
+        hidden: bool,
     },
 }
 
@@ -130,6 +133,7 @@ impl MenuItem {
             os_action: None,
             checked: false,
             disabled: false,
+            hidden: false,
         }
     }
 
@@ -145,6 +149,7 @@ impl MenuItem {
             os_action: Some(os_action),
             checked: false,
             disabled: false,
+            hidden: false,
         }
     }
 
@@ -159,12 +164,14 @@ impl MenuItem {
                 os_action,
                 checked,
                 disabled,
+                hidden,
             } => OwnedMenuItem::Action {
                 name: name.into(),
                 action,
                 os_action,
                 checked,
                 disabled,
+                hidden,
             },
             MenuItem::SystemMenu(os_menu) => OwnedMenuItem::SystemMenu(os_menu.owned()),
         }
@@ -204,6 +211,14 @@ impl MenuItem {
                 submenu.disabled = disabled;
             }
             _ => {}
+        }
+        self
+    }
+
+    /// Hide this action without disabling its shortcut.
+    pub fn hidden(mut self, hidden: bool) -> Self {
+        if let Self::Action { hidden: value, .. } = &mut self {
+            *value = hidden;
         }
         self
     }
@@ -274,6 +289,9 @@ pub enum OwnedMenuItem {
 
         /// Whether this action is disabled
         disabled: bool,
+
+        /// Whether this action is hidden while its shortcut remains active.
+        hidden: bool,
     },
 }
 
@@ -288,12 +306,14 @@ impl Clone for OwnedMenuItem {
                 os_action,
                 checked,
                 disabled,
+                hidden,
             } => OwnedMenuItem::Action {
                 name: name.clone(),
                 action: action.boxed_clone(),
                 os_action: *os_action,
                 checked: *checked,
                 disabled: *disabled,
+                hidden: *hidden,
             },
             OwnedMenuItem::SystemMenu(os_menu) => OwnedMenuItem::SystemMenu(os_menu.clone()),
         }

@@ -4,7 +4,7 @@ pub(crate) mod context_files;
 use crate::{
     CloseWindow, FindInThread, GoBack, GoForward, Hide, HideOthers, LogOut, Minimize, NewChat,
     NextChat, OpenFolder, OpenSettings, PreviousChat, Quit, ShowAll, ShowKeyboardShortcuts,
-    ToggleChangesPanel, ToggleSidebar, Zoom,
+    ToggleChangesPanel, ToggleSidebar, Zoom, features,
 };
 use gpui::{
     App, Context, Div, InteractiveElement as _, KeyBinding, Menu, MenuItem, OsAction,
@@ -121,6 +121,13 @@ pub(crate) fn menus() -> Vec<Menu> {
         ]),
         Menu::new("File").items([
             MenuItem::action("New Chat", NewChat),
+            MenuItem::action("New Temporary Chat", features::shortcuts::NewTemporaryChat),
+            MenuItem::action(
+                "New standalone chat",
+                features::shortcuts::NewStandaloneChat,
+            )
+            .hidden(true),
+            MenuItem::separator(),
             MenuItem::action("Open Folder…", OpenFolder),
             MenuItem::separator(),
             MenuItem::action("Close", CloseWindow),

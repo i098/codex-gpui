@@ -330,6 +330,7 @@ pub struct Root {
     /// Recents in sidebar order, for `⌘1`…`⌘9`, Previous/Next Chat and the command menu.
     threads: Vec<Thread>,
     recent_chats: Vec<String>,
+    shortcut_state: features::shortcuts::ShortcutState,
     new_chat_section: Option<String>,
     /// `thread/list` cursor of the page after `threads`, while the sidebar's end asks for it.
     next_cursor: Option<String>,
@@ -633,6 +634,7 @@ impl Root {
             sidebar,
             threads: Vec::new(),
             recent_chats: Vec::new(),
+            shortcut_state: features::shortcuts::ShortcutState::default(),
             new_chat_section: None,
             next_cursor: None,
             loading_more: false,
@@ -2008,6 +2010,11 @@ impl Root {
 
     /// `⌘N`, the `New chat` row and rail Home: Home with an empty, focused composer.
     fn new_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.shortcut_state.new_chat_mode = features::shortcuts::NewChatMode::Project;
+        self.home.update(cx, |home, cx| {
+            home.project = self.state.project_root.as_deref().map(project_name);
+            cx.notify();
+        });
         self.new_chat_section = None;
         self.navigate(Route::Home, window, cx);
         let composer = self.home.read(cx).composer.clone();
@@ -2869,8 +2876,27 @@ impl Root {
             .clone();
         let section = self.new_chat_section.clone();
         let computer_use = computer_use_overrides(&self.config);
+        let mode = self.shortcut_state.new_chat_mode;
+        let host = self.host.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            let mut params = json!({ "cwd": cwd, "model": model(&s) });
+            let workspace = if mode == features::shortcuts::NewChatMode::Standalone {
+                let prepare = host.clone();
+                let prompt = s.text.clone();
+                match cx.background_executor().spawn(async move { prepare.prepare_projectless(&prompt) }).await {
+                    Ok(workspace) => Some(workspace),
+                    Err(error) => {
+                        this.update(cx, |this, cx| this.restore_start_draft(&s, cx))?;
+                        return Err(error);
+                    }
+                }
+            } else { None };
+            let mut params = json!({ "cwd": workspace.as_ref().map(|workspace| workspace.cwd.as_str()).unwrap_or(&cwd), "model": model(&s) });
+            if let Some(workspace) = &workspace {
+                params["developerInstructions"] = json!(workspace.instructions());
+            }
+            if mode == features::shortcuts::NewChatMode::Temporary {
+                params["ephemeral"] = json!(true);
+            }
             apply_permissions(&mut params, s.permission);
             if let Some(config) = computer_use {
                 params["config"] = config;
@@ -2882,11 +2908,7 @@ impl Root {
                 Ok(started) => started.thread,
                 Err(error) => {
                     // The draft, its attachments and the chosen project stay as they were.
-                    this.update(cx, |this, cx| {
-                        let composer = this.home.read(cx).composer.clone();
-                        composer.update(cx, |c, cx| c.restore_submission(&s.text, cx));
-                        this.toast(Toast::danger("Error starting chat"), cx);
-                    })?;
+                    this.update(cx, |this, cx| this.restore_start_draft(&s, cx))?;
                     return Err(error);
                 }
             };
@@ -2895,6 +2917,14 @@ impl Root {
                 thread.preview = s.text.clone();
             }
             let id = thread.id.clone();
+            if let Some(workspace) = workspace {
+                let record = host.clone();
+                let thread_id = id.clone();
+                if let Err(error) = cx.background_executor().spawn(async move { record.record_projectless(&thread_id, &workspace) }).await {
+                    this.update(cx, |this, cx| this.restore_start_draft(&s, cx))?;
+                    return Err(error);
+                }
+            }
             let section = if let Some(section) = section {
                 match bridge
                     .request::<_, Value>(
@@ -2924,7 +2954,11 @@ impl Root {
             this.update_in(cx, |this, window, cx| {
                 this.new_chat_section = None;
                 this.loaded.insert(id.clone());
-                this.add_thread(&thread, cx);
+                if mode == features::shortcuts::NewChatMode::Temporary {
+                    this.shortcut_state.ephemeral.insert(id.clone());
+                } else {
+                    this.add_thread(&thread, cx);
+                }
                 if let Some(section) = &section {
                     this.sidebar
                         .update(cx, |s, cx| s.assign_section(&id, section, cx));
@@ -4474,7 +4508,7 @@ impl Root {
             self.state.sidebar_open = self.shell.read(cx).sidebar_open;
         }
         self.state.sidebar_width = self.shell.read(cx).sidebar_width.into();
-        self.state.save();
+        self.save_shortcut_state();
     }
 }
 
@@ -5254,7 +5288,7 @@ impl Render for Root {
             .children(self.dialog.clone());
         let root = routes::actions(root, cx);
         native_menus::actions(
-            section_actions::actions(features::actions(root, cx), cx),
+            section_actions::actions(features::actions(root, self, cx), cx),
             self,
             cx,
         )

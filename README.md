@@ -560,3 +560,7 @@ The headless Save-dialog hook allows tests to select a destination without openi
 ```sh
 tools/mac.sh -l cgx-command-dispatch 'cargo test -p app --test command_dispatch --test s025 --test s025_rank --test s026 -- --test-threads=1'
 ```
+A hidden native menu item dispatches the shared `NewStandaloneChat` action and keeps its keyboard shortcut (`⌥⌘O`).
+Its first message creates a separate projectless workspace.
+File > New Temporary Chat (`⇧⌘N`) uses the existing ephemeral mode and does not add a Recents entry or restore on launch.
+The temporary action is unavailable for ACP backends.

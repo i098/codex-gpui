@@ -14,7 +14,7 @@ use crate::Root;
 use gpui::{App, Context, Div};
 
 mod command_destinations;
-mod shortcuts;
+pub(crate) mod shortcuts;
 pub(crate) use command_destinations::OpenThreadInNewWindow;
 
 /// Called by [`crate::init`], after the app's own bindings.
@@ -24,9 +24,10 @@ pub(crate) fn init(cx: &mut App) {
 }
 
 /// Called by `Root::render` on the root element, after the app's own actions.
-pub(crate) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
+pub(crate) fn actions(root: Div, owner: &Root, cx: &mut Context<Root>) -> Div {
     shortcuts::actions(
         command_destinations::actions(crate::windows::actions(root, cx), cx),
+        owner,
         cx,
     )
 }
