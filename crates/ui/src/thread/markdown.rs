@@ -587,11 +587,13 @@ impl Markdown<'_> {
             underline: None,
             strikethrough: None,
         };
-        let width = self
-            .window
-            .text_system()
-            .layout_line(s, px(style.size), &[run], None)
-            .width;
+        let width = crate::run_width(
+            self.window
+                .text_system()
+                .layout_line(s, px(style.size), &[run], None)
+                .width,
+            self.window,
+        );
         let label = run_style(style.size, style.line_height, style.weight, color)
             .when(style.italic, |d| d.italic())
             .when(style.strike, |d| d.line_through());
@@ -928,12 +930,13 @@ impl RenderOnce for CodeBlock {
                             }]
                         }
                     };
-                    width = width.max(
+                    width = width.max(crate::run_width(
                         window
                             .text_system()
                             .layout_line(line, px(12.), &runs, None)
                             .width,
-                    );
+                        window,
+                    ));
                     (SharedString::from(line.to_owned()), runs)
                 })
                 .collect();

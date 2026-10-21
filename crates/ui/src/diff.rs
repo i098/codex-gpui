@@ -39,8 +39,10 @@ pub mod word;
 #[path = "diff/patch.rs"]
 pub mod patch;
 
-/// Panel width the capture had stored (`app-shell:right-panel-width:v3`) before clamping.
-const STORED_WIDTH: f32 = 664.17;
+/// Panel width the capture had stored (`app-shell:right-panel-width:v3`, a width ratio) before
+/// clamping. The spec prints it as 664.17; the 2x refs put its edge at 85014 LayoutUnits (1/128
+/// px at 2x), so the computed width is at least that, which Blink's truncation keeps.
+const STORED_WIDTH: f32 = 85014. / 128.;
 /// Room the chat keeps beside the panel (`unified` layout), also the panel's minimum.
 const MIN_CHAT: f32 = 320.;
 /// `--diffs-font-size`, `--diffs-line-height`.

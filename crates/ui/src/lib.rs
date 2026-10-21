@@ -322,6 +322,14 @@ pub fn text(
         .child(s.into())
 }
 
+/// A measured inline-run advance, kept on the LayoutUnit (1/64 device px) grid by rounding:
+/// Blink positions inline runs from their advances, so authored-size truncation must not
+/// apply to it.
+pub fn run_width(width: Pixels, window: &Window) -> Pixels {
+    let unit = window.scale_factor() * 64.;
+    px((f32::from(width) * unit).round() / unit)
+}
+
 pub fn dispatch<A: Action + Default>(_: &ClickEvent, window: &mut Window, cx: &mut App) {
     window.dispatch_action(Box::new(A::default()), cx);
 }

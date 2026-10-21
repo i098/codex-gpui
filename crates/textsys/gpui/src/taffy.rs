@@ -515,22 +515,19 @@ impl ToTaffy<taffy::style::Style> for Style {
             overflow: self.overflow.into(),
             scrollbar_width: self.scrollbar_width.to_taffy(rem_size, scale_factor),
             position: self.position.into(),
-            inset: inset_to_taffy(&self.inset, rem_size, scale_factor),
+            inset: self.inset.to_taffy(rem_size, scale_factor),
             size: self.size.to_taffy(rem_size, scale_factor),
             min_size: self.min_size.to_taffy(rem_size, scale_factor),
             max_size: self.max_size.to_taffy(rem_size, scale_factor),
             aspect_ratio: self.aspect_ratio,
             margin: self.margin.to_taffy(rem_size, scale_factor),
-            padding: padding_to_taffy(&self.padding, rem_size, scale_factor),
+            padding: self.padding.to_taffy(rem_size, scale_factor),
             border: border_widths_to_taffy(&self.border_widths, rem_size, scale_factor),
             align_items: self.align_items.map(|x| x.into()),
             align_self: self.align_self.map(|x| x.into()),
             align_content: self.align_content.map(|x| x.into()),
             justify_content: self.justify_content.map(|x| x.into()),
-            gap: TaffySize {
-                width: truncated(&self.gap.width, rem_size, scale_factor),
-                height: truncated(&self.gap.height, rem_size, scale_factor),
-            },
+            gap: self.gap.to_taffy(rem_size, scale_factor),
             flex_direction: self.flex_direction.into(),
             flex_wrap: self.flex_wrap.into(),
             flex_basis: self.flex_basis.to_taffy(rem_size, scale_factor),
@@ -553,58 +550,15 @@ impl ToTaffy<taffy::style::Style> for Style {
     }
 }
 
-/// Blink resolves padding and gaps with `MinimumValueForLength`, whose `LayoutUnit(float)`
-/// truncates: at a fractional zoom that is up to 1/64 device px less than rounding (16 px at
-/// 110% is 35.1875, not 35.203125).
-fn truncated(
-    length: &DefiniteLength,
-    rem_size: Pixels,
-    scale_factor: f32,
-) -> taffy::style::LengthPercentage {
-    match length {
-        DefiniteLength::Absolute(length) => taffy::style::LengthPercentage::length(
-            (length.to_pixels(rem_size).0 * scale_factor * 64.).trunc() / 64.,
-        ),
-        DefiniteLength::Fraction(fraction) => taffy::style::LengthPercentage::percent(*fraction),
-    }
-}
-
-fn padding_to_taffy(
-    padding: &Edges<DefiniteLength>,
-    rem_size: Pixels,
-    scale_factor: f32,
-) -> TaffyRect<taffy::style::LengthPercentage> {
-    TaffyRect {
-        top: truncated(&padding.top, rem_size, scale_factor),
-        right: truncated(&padding.right, rem_size, scale_factor),
-        bottom: truncated(&padding.bottom, rem_size, scale_factor),
-        left: truncated(&padding.left, rem_size, scale_factor),
-    }
-}
-
-/// Insets (`top`, `left`, …) resolve like padding: truncated to LayoutUnit.
-fn inset_to_taffy(
-    inset: &Edges<Length>,
-    rem_size: Pixels,
-    scale_factor: f32,
-) -> TaffyRect<taffy::style::LengthPercentageAuto> {
-    let side = |length: &Length| match length {
-        Length::Definite(length) => truncated(length, rem_size, scale_factor).into(),
-        Length::Auto => taffy::style::LengthPercentageAuto::auto(),
-    };
-    TaffyRect {
-        top: side(&inset.top),
-        right: side(&inset.right),
-        bottom: side(&inset.bottom),
-        left: side(&inset.left),
-    }
-}
-
 impl ToTaffy<f32> for AbsoluteLength {
-    /// Blink keeps authored lengths as LayoutUnit (`FromFloatRound`, 1/64 device px); boxes
-    /// snap to device pixels in `layout_bounds`, text keeps the fraction.
+    /// Blink resolves an authored length with `LayoutUnit(float)` (1/64 device px), which
+    /// truncates: 16 px at 110% is 35.1875 device px, not 35.203125. Boxes snap to device
+    /// pixels in `layout_bounds`; text keeps the fraction.
     fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> f32 {
-        (self.to_pixels(rem_size).0 * scale_factor * 64.).round() / 64.
+        let units = self.to_pixels(rem_size).0 * scale_factor * 64.;
+        // Truncated as Blink's `LayoutUnit(float)`; the tolerance keeps values already on the
+        // grid (measured run widths, `ui::run_width`) where they are.
+        (units + 0.001f32.copysign(units)).trunc() / 64.
     }
 }
 
@@ -860,16 +814,21 @@ mod tests {
     }
 
     #[test]
-    fn padding_to_taffy_truncates_like_blink_layout_units() {
+    fn authored_lengths_truncate_like_blink_layout_units() {
         let padding = Edges::all(DefiniteLength::from(Pixels(16.0)));
         // 110% zoom on a 2x display: 35.2 device px is 35.1875 (2252/64), not 35.203125.
-        let zoomed = padding_to_taffy(&padding, Pixels(16.0), 2.2);
+        let zoomed: TaffyRect<taffy::style::LengthPercentage> =
+            padding.to_taffy(Pixels(16.0), 2.2);
         assert_eq!(
             zoomed.left,
             taffy::style::LengthPercentage::length(2252. / 64.)
         );
-        let whole = padding_to_taffy(&padding, Pixels(16.0), 2.0);
+        let whole: TaffyRect<taffy::style::LengthPercentage> = padding.to_taffy(Pixels(16.0), 2.0);
         assert_eq!(whole.top, taffy::style::LengthPercentage::length(32.));
+        // A length already on the LayoutUnit grid stays on it despite f32 error.
+        let on_grid = AbsoluteLength::Pixels(Pixels(2252. / (2.2 * 64.)));
+        let units: f32 = on_grid.to_taffy(Pixels(16.0), 2.2);
+        assert_eq!(units, 2252. / 64.);
     }
 
     #[test]
