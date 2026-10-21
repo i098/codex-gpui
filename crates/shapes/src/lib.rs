@@ -410,6 +410,25 @@ pub fn with_composited_bounds<R>(bounds: Option<[i32; 4]>, paint: impl FnOnce() 
     }
 }
 
+/// Returns the icon's painted bounds in window coordinates, including its strokes.
+/// Bounds round outward to device pixels and remain inside the SVG viewport.
+/// Returns `None` for an unsupported or empty SVG, or on other platforms.
+pub fn icon_paint_bounds(
+    src: &[u8],
+    key: &str,
+    bounds: Bounds<Pixels>,
+    flip_x: bool,
+    window: &Window,
+) -> Option<Bounds<Pixels>> {
+    #[cfg(target_os = "macos")]
+    return skia::icon_paint_bounds(src, key, bounds, flip_x, window);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (src, key, bounds, flip_x, window);
+        None
+    }
+}
+
 /// Paints the svg icon `src` (asset bytes; `key` names it for the cache) into `bounds`,
 /// mirrored horizontally if `flip_x`, in `color`; `layer` as in [`paint`].
 /// An explicit layer origin composites the complete SVG, including overlapping paths.
@@ -426,10 +445,63 @@ pub fn paint_icon(
     cx: &App,
 ) -> bool {
     #[cfg(target_os = "macos")]
-    return skia::paint_icon(src, key, bounds, flip_x, color, layer, window, cx);
+    return skia::paint_icon(
+        src,
+        key,
+        bounds,
+        flip_x,
+        color,
+        layer,
+        gpui::TransformationMatrix::unit(),
+        window,
+        cx,
+    );
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (src, key, bounds, flip_x, color, layer, window, cx);
+        false
+    }
+}
+
+/// Paints an icon as [`paint_icon`] does, then transforms its cached raster in device pixels.
+/// The transform does not change layout, hitboxes, or the raster cache key.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_icon_transformed(
+    src: &[u8],
+    key: &str,
+    bounds: Bounds<Pixels>,
+    flip_x: bool,
+    color: Hsla,
+    layer: Option<Point<Pixels>>,
+    transformation: gpui::TransformationMatrix,
+    window: &mut Window,
+    cx: &App,
+) -> bool {
+    #[cfg(target_os = "macos")]
+    return skia::paint_icon(
+        src,
+        key,
+        bounds,
+        flip_x,
+        color,
+        layer,
+        transformation,
+        window,
+        cx,
+    );
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (
+            src,
+            key,
+            bounds,
+            flip_x,
+            color,
+            layer,
+            transformation,
+            window,
+            cx,
+        );
         false
     }
 }
