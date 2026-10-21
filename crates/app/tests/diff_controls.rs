@@ -72,6 +72,7 @@ fn loaded(fx: &mut Fx) -> Result<()> {
 
 #[test]
 fn header_wrap_retry_and_line_navigation_use_native_input() -> Result<()> {
+    common::install_panic_hook();
     fs::create_dir_all(out())?;
     let repo = tempfile::tempdir_in(out())?;
     git(repo.path(), &["init", "-q"])?;
@@ -243,7 +244,7 @@ fn header_wrap_retry_and_line_navigation_use_native_input() -> Result<()> {
     fx.resize(1280., 832.)?;
     let large = format!(
         "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -0,0 +1 @@\n+{}\n",
-        "x".repeat(10_001)
+        "x".repeat(1_048_577)
     );
     let big = fx.cx.open_window(size(px(1280.), px(832.)), |_, cx| {
         cx.new(|_| DiffPanel::from_patch(&cwd, &large))

@@ -130,6 +130,9 @@ impl FileDiff {
             added += usize::from(line.kind == Kind::Added);
             removed += usize::from(line.kind == Kind::Removed);
         }
+        if problem.is_some() {
+            (added, removed) = patch::counts(diff, None);
+        }
         let mut file = Self {
             dir: path[..split].to_owned().into(),
             name: path[split..].to_owned().into(),
@@ -955,10 +958,43 @@ mod tests {
     }
 
     #[test]
-    fn oversized_and_overflowing_patches_never_reach_the_renderer() {
-        assert!(parse(&"a".repeat(10_000), Some(Kind::Added)).is_ok());
-        assert!(parse(&"a".repeat(10_001), Some(Kind::Added)).is_err());
-        assert!(parse(&"+a\n".repeat(20_001), Some(Kind::Added)).is_err());
+    fn file_size_limits_match_changed_lines_and_utf16_units() {
+        let line = "a".repeat(1_048_576);
+        assert!(parse(&line, Some(Kind::Added)).is_ok());
+        assert!(parse(&format!("{line}a"), Some(Kind::Added)).is_err());
+        let unicode = "\u{1f600}".repeat(524_288);
+        assert!(parse(&unicode, Some(Kind::Added)).is_ok());
+        assert!(parse(&format!("{unicode}a"), Some(Kind::Added)).is_err());
+        assert!(parse(&"a\n".repeat(15_000), Some(Kind::Added)).is_ok());
+        assert!(parse(&"a\n".repeat(15_001), Some(Kind::Added)).is_err());
+        let total = format!("{}\n", "a".repeat(524_287)).repeat(6);
+        assert!(parse(&total, Some(Kind::Added)).is_ok());
+        assert!(parse(&format!("{total}a"), Some(Kind::Added)).is_err());
+        let context = format!(" {}\n", "a".repeat(1_048_577)).repeat(3);
+        assert!(parse(&format!("@@ -1,4 +1,4 @@\n{context}-old\n+new\n"), None).is_ok());
+        assert!(
+            parse(
+                &format!("@@ -0,0 +1 @@\n+{line}\n\\ No newline at end of file\n"),
+                None,
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn oversized_files_keep_change_counts_and_large_diff_navigation() {
+        let patch = format!(
+            "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -0,0 +1,15001 @@\n{}",
+            "+line\n".repeat(15_001),
+        );
+        let panel = DiffPanel::from_patch("/repo", &patch);
+        assert_eq!(panel.files[0].problem, Some("Diff too large to display"));
+        assert_eq!((panel.files[0].added, panel.files[0].removed), (15_001, 0));
+        assert!(panel.capped());
+    }
+
+    #[test]
+    fn invalid_hunk_numbers_never_reach_the_renderer() {
         assert!(parse("@@ -4294967295 +1 @@\n-old\n+new\n", None).is_err());
         assert!(parse("@@ -nope +1 @@\n+new\n", None).is_err());
     }

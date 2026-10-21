@@ -391,7 +391,11 @@ impl DiffPanel {
                     .filter(|l| l.kind == k)
                     .count()
             };
-            let (added, removed) = (count(Kind::Added), count(Kind::Removed));
+            let (added, removed) = if problem.is_some() {
+                patch::counts(&change.diff, raw)
+            } else {
+                (count(Kind::Added), count(Kind::Removed))
+            };
             match files.iter_mut().find(|f| f.dir == dir && f.name == name) {
                 Some(f) => {
                     f.added += added;
@@ -3117,13 +3121,38 @@ fn hunk(
 fn parse(diff: &str, raw: Option<Kind>) -> Result<Vec<Hunk>, &'static str> {
     const TOO_LARGE: &str = "Diff too large to display";
     const INVALID: &str = "Diff failed to render";
-    if diff.len() > 2_000_000
-        || diff
-            .lines()
-            .enumerate()
-            .any(|(index, line)| index >= 20_000 || line.len() > 10_000)
-    {
-        return Err(TOO_LARGE);
+    let mut changed_lines = 0;
+    let mut changed_units = 0;
+    let mut in_hunk = raw.is_some();
+    let mut lines = diff.split_inclusive('\n').peekable();
+    while let Some(line) = lines.next() {
+        let text = if raw.is_some() {
+            line
+        } else if line.starts_with("@@ ") {
+            in_hunk = true;
+            continue;
+        } else if line.starts_with("diff --git ") {
+            in_hunk = false;
+            continue;
+        } else if in_hunk {
+            let Some(text) = line.strip_prefix('+').or_else(|| line.strip_prefix('-')) else {
+                continue;
+            };
+            text
+        } else {
+            continue;
+        };
+        let missing_newline = raw.is_none()
+            && text.ends_with('\n')
+            && lines
+                .peek()
+                .is_some_and(|line| line.starts_with("\\ No newline at end of file"));
+        let units = text.encode_utf16().count() - usize::from(missing_newline);
+        changed_lines += 1;
+        changed_units += units;
+        if changed_lines > 15_000 || changed_units > 3_145_728 || units > 1_048_576 {
+            return Err(TOO_LARGE);
+        }
     }
     if let Some(kind) = raw {
         return Ok(vec![Hunk {
@@ -3210,13 +3239,7 @@ fn parse(diff: &str, raw: Option<Kind>) -> Result<Vec<Hunk>, &'static str> {
             syntax: Vec::new(),
         });
     }
-    if hunks
-        .iter()
-        .flat_map(|hunk| &hunk.lines)
-        .filter(|line| line.kind != Kind::Context)
-        .count()
-        > 2_000
-    {
+    if changed_lines > 2_000 {
         return Ok(hunks);
     }
     for hunk in &mut hunks {

@@ -95,6 +95,25 @@ pub(super) fn path(patch: &str) -> Option<Cow<'_, str>> {
     None
 }
 
+pub(super) fn counts(patch: &str, raw: Option<super::Kind>) -> (usize, usize) {
+    if let Some(kind) = raw {
+        let lines = patch.lines().count();
+        return (
+            lines * usize::from(kind == super::Kind::Added),
+            lines * usize::from(kind == super::Kind::Removed),
+        );
+    }
+    patch
+        .lines()
+        .skip_while(|line| !line.starts_with("@@ "))
+        .fold((0, 0), |(added, removed), line| {
+            (
+                added + usize::from(line.starts_with('+')),
+                removed + usize::from(line.starts_with('-')),
+            )
+        })
+}
+
 pub(super) fn empty_state(patch: &str) -> &'static str {
     if patch
         .lines()
