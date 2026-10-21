@@ -1110,8 +1110,8 @@ mod tests {
             div().size_full().relative().bg(rgb(0x181818)).child(
                 markdown("`2`.", window, &Theme::dark(), &[])
                     .absolute()
-                    .left(px(1081.765625))
-                    .top(px(282.796875)),
+                    .left(px(1_081.765_6))
+                    .top(px(282.796_88)),
             )
         }
     }
