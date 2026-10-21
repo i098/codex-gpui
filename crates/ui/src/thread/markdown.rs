@@ -391,11 +391,16 @@ impl Markdown<'_> {
             match self.events.next().expect("peeked event") {
                 Event::Text(s) | Event::Html(s) | Event::InlineHtml(s) => {
                     let mut at = self.events.start;
-                    row.extend(s.split_inclusive(' ').map(|s| {
-                        let here = at;
-                        at += s.len();
-                        self.word(s, Some(here), style).into_any_element()
-                    }));
+                    let limit = LINE_WIDTH.with(|w| w.get());
+                    for word in s.split_inclusive(' ') {
+                        for chunk in
+                            break_long(self.window, word, style.size, style.weight, None, limit)
+                        {
+                            let here = at;
+                            at += chunk.len();
+                            row.push(self.word(chunk, Some(here), style).into_any_element());
+                        }
+                    }
                 }
                 Event::SoftBreak => {
                     let at = self.events.start;
@@ -643,8 +648,41 @@ impl Markdown<'_> {
             .unwrap_or_default()
     }
 
+    /// How the code font's inline box differs from the default code font's (CSS aligns it by
+    /// baseline): `(line growth, text baseline shift, pill height change)` in px. A font whose
+    /// descent plus half-leading is larger grows the line (Courier New by about 1 px); a
+    /// different ascent moves the glyphs inside the 15 px text box; the pill is the font's
+    /// content area plus 1 px each side.
+    fn code_metrics(&self) -> (f32, f32, f32) {
+        const LINE: f32 = 22.75;
+        let system = self.window.text_system();
+        let metrics = |family: &'static str, size: f32| {
+            let id = system.resolve_font(&font(family));
+            let size = px(size);
+            let ascent = f32::from(system.ascent(id, size));
+            let descent = f32::from(system.descent(id, size)).abs();
+            (ascent, descent)
+        };
+        let (sa, sd) = metrics(SANS, 14.);
+        let strut = sd + (LINE - (sa + sd)) / 2.;
+        let below = |(a, d): (f32, f32)| (d + (LINE - (a + d)) / 2. - strut).max(0.);
+        let baseline = |(a, d): (f32, f32)| (15. - (a + d)) / 2. + a;
+        let (code, mono) = (metrics(code_font(), 12.88), metrics(MONO, 12.88));
+        (
+            below(code) - below(mono),
+            baseline(mono) - baseline(code),
+            (code.0 + code.1) - (mono.0 + mono.1),
+        )
+    }
+
     fn code(&self, code: &str, at: usize) -> Vec<Div> {
-        let count = code.split_inclusive(' ').count();
+        // The 6 px padding of the first piece comes off the line.
+        let limit = LINE_WIDTH.with(|w| w.get()) - 6.;
+        let chunks: Vec<&str> = code
+            .split_inclusive(' ')
+            .flat_map(|word| break_long(self.window, word, 12.88, 430., Some(code_font()), limit))
+            .collect();
+        let count = chunks.len();
         let positions = Rc::new(RefCell::new(vec![
             (Bounds::<Pixels>::default(), px(0.));
             count
@@ -686,10 +724,11 @@ impl Markdown<'_> {
             .absolute()
             .size_full(),
         );
+        let (growth, shift, pill) = self.code_metrics();
         let space = width(self.window, " ", 12.88, 430., Some(code_font()));
         let mut offset = at;
         let mut parts = Vec::with_capacity(count);
-        for (index, word) in code.split_inclusive(' ').enumerate() {
+        for (index, word) in chunks.into_iter().enumerate() {
             let fades = self.fades(word);
             let word_width = width(self.window, word, 12.88, 430., Some(code_font()));
             let label = match self.find {
@@ -712,14 +751,14 @@ impl Markdown<'_> {
             let trailing_space = space * (word.len() - word.trim_end_matches(' ').len()) as f32;
             parts.push(
                 div()
-                    .pt(px(3.5))
-                    .pb(px(3.25))
+                    .pt(px(3.5 + shift))
+                    .pb(px(3.25 + growth - shift - pill))
                     // ponytail: shared padding can overhang a line by 12 px; use inline layout for exact edge fits.
                     .mr(px(if index + 1 == count { 0. } else { -12. }))
                     .child(
                         div()
                             .relative()
-                            .h(px(17.))
+                            .h(px(17. + pill))
                             .py(px(1.))
                             .px(px(6.))
                             .children(background.take())
@@ -749,6 +788,62 @@ impl Markdown<'_> {
         }
         parts
     }
+}
+
+thread_local! {
+    /// Width of the turn column the markdown flows in; `0` until the first layout.
+    static LINE_WIDTH: std::cell::Cell<f32> = const { std::cell::Cell::new(0.) };
+}
+
+/// Tells the markdown below how wide its lines are (set by the thread before it builds turns).
+pub(super) fn set_line_width(width: Pixels) {
+    LINE_WIDTH.with(|w| w.set(f32::from(width)));
+}
+
+/// `overflow-wrap: break-word`: a word wider than a whole line breaks into chunks that each fill
+/// a line; the last chunk flows on with the following words.
+fn break_long<'s>(
+    window: &Window,
+    word: &'s str,
+    size: f32,
+    weight: f32,
+    family: Option<&'static str>,
+    limit: f32,
+) -> Vec<&'s str> {
+    let trimmed = word.trim_end_matches(' ');
+    if limit <= 0.
+        || trimmed.chars().count() < 2
+        || f32::from(width(window, trimmed, size, weight, family)) <= limit
+    {
+        return vec![word];
+    }
+    let mut chunks = Vec::new();
+    let mut rest = word;
+    while f32::from(width(
+        window,
+        rest.trim_end_matches(' '),
+        size,
+        weight,
+        family,
+    )) > limit
+    {
+        let ends: Vec<usize> = rest.char_indices().map(|(i, c)| i + c.len_utf8()).collect();
+        let fit = ends
+            .iter()
+            .take_while(|&&end| {
+                f32::from(width(window, &rest[..end], size, weight, family)) <= limit
+            })
+            .count()
+            .max(1);
+        let end = ends[fit - 1];
+        if end >= rest.len() {
+            break;
+        }
+        chunks.push(&rest[..end]);
+        rest = &rest[end..];
+    }
+    chunks.push(rest);
+    chunks
 }
 
 /// A wrapped inline row that ends a block: `newlines` is what Chrome's `Selection.toString`
