@@ -2722,7 +2722,7 @@ impl Root {
         log_err(task, cx);
     }
 
-    /// `thread/read` with turns, then shows it if the route still points at it.
+    /// Loads history and resumes its settings before showing the selected thread.
     fn load_thread(
         &mut self,
         id: String,
@@ -2742,11 +2742,18 @@ impl Root {
         })
         .detach();
         let bridge = self.bridge.clone();
+        let resume = (!self.loaded.contains(&id)).then(|| {
+            let mut params = json!({"threadId": id, "excludeTurns": true});
+            if let Some(config) = computer_use_overrides(&self.config) {
+                params["config"] = config;
+            }
+            params
+        });
         let loading_view = view.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            let result = bridge.thread_read(&id, true).await;
+            let result = routes::load_thread(&bridge, &id, resume).await;
             this.update_in(cx, |this, window, cx| {
-                if this.state.route != Route::Thread(id)
+                if !matches!(&this.state.route, Route::Thread(current) if current == &id)
                     || !this
                         .history
                         .as_ref()
@@ -2755,9 +2762,15 @@ impl Root {
                     return;
                 }
                 match result {
-                    Ok(read) => this.show_thread(read.thread, window, cx),
+                    Ok((thread, settings)) => {
+                        if let Some(settings) = settings {
+                            this.loaded.insert(id.clone());
+                            this.thread_run_settings.entry(id).or_insert(settings);
+                        }
+                        this.show_thread(thread, window, cx);
+                    }
                     Err(error) => {
-                        eprintln!("codex-gpui: thread/read: {error:#}");
+                        eprintln!("codex-gpui: thread/load: {error:#}");
                         loading_view.update(cx, |view, cx| view.fail(format!("{error:#}"), cx));
                     }
                 }

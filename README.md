@@ -307,6 +307,9 @@ Home, Thread, Settings, Automations, Mobile, and Archive each own their action r
 `app::Route` and its saved values stay unchanged.
 Shared RPC handlers and state remain on `Root` in `lib.rs`.
 
+Opening an unloaded chat reads its history and resumes the thread before showing it.
+The composer restores that thread's returned model, reasoning effort, and permissions instead of using startup defaults.
+
 `LocalHost` serves `native-desktop-apps` and `native-desktop-app-by-bundle-id` through the desktop fetch boundary.
 On macOS, the adapter reads Spotlight metadata, applies the original app exclusions, and supports usage or display-name ordering.
 It returns each app's path, bundle ID, and display name without launching the app.

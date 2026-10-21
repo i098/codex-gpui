@@ -9,6 +9,8 @@ The recorder replaces secrets with fixed placeholders (`user@example.com`, `<red
 - `sessions/subtract.jsonl`: same setup, one turn that adds `subtract` to `src/math.py` (fileChange item with diff, `turn/diff/updated` with a full unified diff) and runs the python3 check (commandExecution item, output `2`).
 - `sessions/greeting.jsonl`: same setup, one turn that changes `hello.py` to print "Hello, Codex" (fileChange item with diff).
 - `readback.jsonl`: one connection that sends every startup read the desktop UI uses (auth, account, config, models, features, rate limits, usage, skills, hooks, plugins, apps, MCP status, projects, sections), then thread/list with the desktop Recents params and, for each thread, thread/read (includeTurns), thread/turns/list, thread/items/list, thread/goal/get and thread/queue/list. Error replies stay as recorded.
+- `sessions/thread-settings.jsonl` supplies session settings for the read/resume handshake. The subtract reply comes from the original desktop oracle.
+  Greeting and explain replies project their recorded start settings into the default collaboration mode. These replay fixtures are not new original-image evidence.
 
 Re-record (needs `ssh mac`; recreates `/tmp/cgx-mac/proj` and runs every server with `CODEX_HOME=/tmp/cgx-mac/home` and `-c 'notify=[]'`):
 
