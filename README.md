@@ -445,6 +445,10 @@ The fullscreen replay checks command dispatch and window state without bringing 
 The spelling menu replaces the selected misspelling and sends Learn Spelling to the native service.
 Headless tests check these actions without relying on the system dictionary's suggestions.
 The Speech submenu uses the native speech synthesizer; its service test sets the volume to zero.
+Images in the composer and tool output support Copy Image and Save Image As.
+Images with a local source also support Reveal in Finder.
+Saving writes the original bytes and replaces the destination only after the write succeeds.
+The headless Save-dialog hook allows tests to select a destination without opening a native window.
 
 ```sh
 tools/mac.sh -l cgx-command-dispatch 'cargo test -p app --test command_dispatch --test s025 --test s025_rank --test s026 -- --test-threads=1'
