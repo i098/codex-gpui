@@ -47,7 +47,16 @@ impl Settings {
     }
 
     pub fn write(&mut self, key: &str, value: Value) -> Result<()> {
+        self.update(key, |_| Ok(value))
+    }
+
+    pub(crate) fn update(
+        &mut self,
+        key: &str,
+        change: impl FnOnce(Option<&Value>) -> Result<Value>,
+    ) -> Result<()> {
         let mut values = self.read_all();
+        let value = change(values.get(key))?;
         let old = values.insert(key.to_owned(), value);
         if let Err(error) = self.save(&values) {
             match old {

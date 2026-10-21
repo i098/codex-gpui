@@ -41,14 +41,17 @@ pub(crate) fn open(
     host: Arc<dyn Host>,
     request: &OpenTargetRequest,
     cx: &mut App,
-) -> Task<anyhow::Result<serde_json::Value>> {
+) -> Task<anyhow::Result<()>> {
     let params = serde_json::json!({
         "cwd":request.cwd, "path":request.path, "line":request.line,
         "target":request.target, "appPath":request.app_path,
         "persistPreferredTargetPath":request.persist_preferred_target_path,
     });
-    cx.background_executor()
-        .spawn(async move { host.fetch(&Request::post("open-file", Some(params))) })
+    cx.background_executor().spawn(async move {
+        let response = json_body(&host.fetch(&Request::post("open-in", Some(params)))?)?;
+        anyhow::ensure!(response["success"] == true, "open target failed");
+        Ok(())
+    })
 }
 
 impl crate::Root {

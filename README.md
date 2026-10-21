@@ -296,12 +296,21 @@ Linux returns an empty native app list, as the original host does.
 
 `open-in-targets` returns the original editor and terminal catalog, installed targets, and the preferred target.
 It reads `open-in-target-preferences` from the same shared host settings store as the UI.
-It reads `custom_file_handlers` from the app-server configuration.
+Saving one project's preference preserves entries for other projects.
+It reads `custom_file_handlers` from enabled raw app-server configuration layers because the typed configuration omits this desktop setting.
 Set `deferEnrichment` without a path to read the catalog without application detection.
 Path queries include native file handlers and their icons; discovery does not launch an application.
 Alacritty is a Linux fallback for the `terminal` target, not a separate target ID in this original build.
 Cloned `host_settings::Settings` handles share updates; release `read_all()` guards before writing.
 
+`open-in` launches a selected target and returns its success state.
+Local paths must resolve inside the project, including symlink targets.
+Existing relative paths take precedence over Git diff prefixes.
+Editor locations and terminal commands follow the original platform rules.
+Custom handlers receive a path argument, a JSON argument, or JSON on standard input.
+The native UI reports failed launches and keeps the current diff.
+Command text sent to an interactive terminal rejects control characters.
+ACP connections use built-in targets without requesting Codex-only configuration.
 
 On macOS, `textsys::show_definition(window, selection, baseline)` opens AppKit's native Look Up popover.
 The baseline uses window-local logical pixels from the top left; the adapter handles both view orientations.

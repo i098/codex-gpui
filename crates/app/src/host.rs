@@ -13,8 +13,8 @@
 //! (`getAuthStatus` with `includeToken`) plus the account route from `account/read`, retries once
 //! after a 401 with a refreshed token, and answers the original wire shapes, including errors.
 //! The token never reaches logs, errors, or `Debug` output.
-//! Local fetches support the automation and `git-*` endpoints, scoped text and binary file reads,
-//! worktree operations, and `paths-exist`; other endpoints return errors.
+//! Local fetches support automations, Git, scoped file reads, native app discovery, and open-in requests.
+//! Unsupported endpoints return errors.
 //! `Root` loads the automation list off the UI thread when the Scheduled route opens.
 //! Consumers read the result through `Root::automations`; this service slice does not change the static screens.
 //!
@@ -539,7 +539,7 @@ impl LocalHost {
         self
     }
 
-    /// Launches editors through `opener`, which takes macOS `open`'s `[-a App] file` arguments.
+    /// Uses an alternate OS application opener with macOS `open` arguments.
     pub fn with_opener(mut self, opener: impl Into<PathBuf>) -> Self {
         self.opener = opener.into();
         self
@@ -1175,7 +1175,7 @@ impl Host for LocalHost {
                     .context("Failed to set thread worktree owner")?;
                 json!({"success": true})
             }
-            "open-file" => open_file(&self.opener, &params)?,
+            "open-in" => self.open_in(&params)?,
             "read-file" => diff_files::text(&params)?,
             "read-file-binary" => diff_files::binary(&params)?,
             "read-git-file-binary" => diff_files::git_binary(&params)?,
@@ -1202,51 +1202,6 @@ impl Host for LocalHost {
             "headers": {"content-type": "application/json"}, "bodyJsonString": body.to_string()}),
         )
     }
-}
-
-/// The original's editor targets (`openIn.getTargets` ids) and their macOS application names.
-const EDITORS: [(&str, &str); 11] = [
-    ("vscode", "Visual Studio Code"),
-    ("vscodeInsiders", "Visual Studio Code - Insiders"),
-    ("cursor", "Cursor"),
-    ("devin", "Devin Desktop"),
-    ("bbedit", "BBEdit"),
-    ("emacs", "Emacs"),
-    ("sublimeText", "Sublime Text"),
-    ("zed", "Zed"),
-    ("windsurf", "Windsurf"),
-    ("antigravity", "Antigravity"),
-    ("xcode", "Xcode"),
-];
-
-/// `open-file`: opens `path`, a file inside the project of `cwd`, in the editor `target` (the
-/// default app without one). The path must resolve, symlinks included, to a regular file under
-/// the Git root of `cwd` (`cwd` itself outside a repository). `opener` reports its own failure.
-fn open_file(opener: &Path, params: &Value) -> Result<Value> {
-    let file = diff_files::scoped_path(params)?;
-    let mut command = std::process::Command::new(opener);
-    match params["target"].as_str() {
-        None | Some("systemDefault") => {}
-        Some(id) => {
-            let app = EDITORS
-                .iter()
-                .find(|(known, _)| *known == id)
-                .map(|(_, app)| *app)
-                .with_context(|| format!("unsupported editor target: {id}"))?;
-            command.args(["-a", app]);
-        }
-    }
-    let output = command
-        .arg(&file)
-        .stdin(std::process::Stdio::null())
-        .output()
-        .with_context(|| format!("run {}", opener.display()))?;
-    ensure!(
-        output.status.success(),
-        "editor failed: {}",
-        String::from_utf8_lossy(&output.stderr).trim()
-    );
-    Ok(json!({"path": file}))
 }
 
 /// The sign-in the cloud transport attaches: the ChatGPT token and the workspace route.
