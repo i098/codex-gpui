@@ -1464,16 +1464,25 @@ impl Render for KeyboardPage {
             .control(
                 "shortcut-search-mode".into(),
                 "Search by keystrokes".into(),
-                icon(
-                    "settings-keyboard-shortcuts",
-                    18.,
-                    if self.search_by_key {
-                        t.text
-                    } else {
-                        t.text_tertiary
-                    },
-                )
-                .into_any_element(),
+                div()
+                    .relative()
+                    .size(px(28.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .when(self.search_by_key, |d| {
+                        d.child(on_card(12.5, Squircle, t.text.opacity(0.05), None))
+                    })
+                    .child(icon(
+                        "settings-keyboard-shortcuts",
+                        18.,
+                        if self.search_by_key {
+                            t.text
+                        } else {
+                            t.text_tertiary
+                        },
+                    ))
+                    .into_any_element(),
                 Control::SearchMode,
                 window,
                 cx,
@@ -1481,8 +1490,7 @@ impl Render for KeyboardPage {
             .size(px(28.))
             .flex()
             .items_center()
-            .justify_center()
-            .when(self.search_by_key, |d| d.bg(t.list_hover));
+            .justify_center();
         let clear = (!self.search_by_key && !query.is_empty()).then(|| {
             self.control(
                 "clear-shortcut-search".into(),
