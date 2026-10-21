@@ -71,6 +71,7 @@ The standalone card supports collapse and expansion.
 
 Run `cargo test -p app --test plan_summary -- --test-threads=1`.
 These tests check protocol scoping, completion timing, card controls, file bytes, and cancellation.
+Run `cargo test -p ui --test plan_summary` on macOS to check the preview mask pixels.
 Synthetic regression data does not prove original pixel parity.
 The original capture gate remains required before release.
 

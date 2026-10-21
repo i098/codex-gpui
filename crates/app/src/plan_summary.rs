@@ -10,6 +10,11 @@ pub(crate) struct State {
 
 impl Root {
     pub(crate) fn sync_plan_route(&mut self, cx: &mut Context<Self>) {
+        if let (Route::PlanSummary(plan), Some(page)) = (&self.state.route, &self.plans.page)
+            && page.read(cx).plan() == plan
+        {
+            return;
+        }
         self.plans.page = match &self.state.route {
             Route::PlanSummary(plan) => Some(cx.new(|_| PlanSummary::page(plan.clone()))),
             _ => None,

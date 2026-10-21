@@ -611,8 +611,10 @@ impl ThreadView {
     }
 
     pub fn set_open_plan(&mut self, id: Option<String>, cx: &mut Context<Self>) {
-        self.open_plan = id;
-        cx.notify();
+        if self.open_plan != id {
+            self.open_plan = id;
+            cx.notify();
+        }
     }
 
     pub fn plan_completed(&self, id: &str) -> bool {
