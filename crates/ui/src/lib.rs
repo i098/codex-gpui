@@ -31,8 +31,8 @@ pub mod screens;
 pub mod settings_kit;
 pub mod toast;
 pub mod tooltip;
-pub mod zoom;
 pub mod updater;
+pub mod zoom;
 
 actions!(
     shell,

@@ -1214,13 +1214,14 @@ impl KeyboardPage {
                             .flex()
                             .items_center()
                             .gap(px(6.))
-                            .child(div().w(px(widest)).child(text(label, 13., 18.571_428, 500., t.text)))
                             .child(
                                 div()
-                                    .size(px(18.))
-                                    .flex_none()
-                                    .children((label == current).then(|| icon("menu-check", 18., t.text))),
+                                    .w(px(widest))
+                                    .child(text(label, 13., 18.571_428, 500., t.text)),
                             )
+                            .child(div().size(px(18.)).flex_none().children(
+                                (label == current).then(|| icon("menu-check", 18., t.text)),
+                            ))
                             .into_any_element(),
                         action,
                         window,
@@ -1574,7 +1575,8 @@ impl Render for KeyboardPage {
                 .py(px(5.)),
             )
         };
-        let scrolls = self.scroll.bounds().size.height <= px(0.) || self.scroll.max_offset().y > px(0.);
+        let scrolls =
+            self.scroll.bounds().size.height <= px(0.) || self.scroll.max_offset().y > px(0.);
         div()
             .size_full()
             .relative()
@@ -1658,5 +1660,10 @@ fn label_width(window: &Window, label: &str) -> f32 {
         underline: None,
         strikethrough: None,
     };
-    f32::from(window.text_system().layout_line(label, px(13.), &[run], None).width)
+    f32::from(
+        window
+            .text_system()
+            .layout_line(label, px(13.), &[run], None)
+            .width,
+    )
 }

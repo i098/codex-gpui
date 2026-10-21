@@ -2,9 +2,9 @@ mod about;
 pub(crate) mod context_files;
 
 use crate::{
-    features, CloseWindow, FindInThread, GoBack, GoForward, Hide, HideOthers, LogOut, Minimize, NewChat,
+    CloseWindow, FindInThread, GoBack, GoForward, Hide, HideOthers, LogOut, Minimize, NewChat,
     NextChat, OpenFolder, OpenSettings, PreviousChat, Quit, ShowAll, ShowKeyboardShortcuts,
-    ToggleChangesPanel, ToggleSidebar, Zoom,
+    ToggleChangesPanel, ToggleSidebar, Zoom, features,
 };
 use gpui::{
     App, Context, Div, InteractiveElement as _, KeyBinding, Menu, MenuItem, OsAction,

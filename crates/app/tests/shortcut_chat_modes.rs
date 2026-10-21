@@ -33,7 +33,9 @@ fn hidden_standalone_menu_allocates_its_own_workspace() -> Result<()> {
         json!({"config": {"desktop": {"projectlessWorkspaceRoot": workspaces}}}),
     ));
     let mut fx = Fx::captured("dark", (1280., 832.), recording)?;
-    let bridge = fx.cx.update(|cx| cx.global::<ui::screens::settings::AppServer>().0.clone());
+    let bridge = fx
+        .cx
+        .update(|cx| cx.global::<ui::screens::settings::AppServer>().0.clone());
     let host = app::host::LocalHost::new(&home).with_bridge(bridge);
     fx.root
         .update(&mut fx.cx, |root, cx| root.set_host(Arc::new(host), cx));
