@@ -74,7 +74,7 @@ mod menu {
     //! Focus rules for the recorded Radix menus: arrows stop at the ends, Escape returns
     //! focus to the trigger, and Enter or Space activates the focused item.
 
-    use gpui::{App, BoxShadow, FocusHandle, StyleRefinement, Styled, Window, point, px, rgb};
+    use gpui::{App, FocusHandle, Window};
     use std::time::{Duration, Instant};
 
     pub(super) struct MenuFocus {
@@ -157,16 +157,6 @@ mod menu {
         pub fn restore(&self, window: &mut Window, cx: &mut App) {
             self.trigger.focus(window, cx);
         }
-    }
-
-    pub(super) fn trigger_focus(style: StyleRefinement) -> StyleRefinement {
-        style.shadow(vec![BoxShadow {
-            color: rgb(0x3a83f7).into(),
-            offset: point(px(0.), px(0.)),
-            blur_radius: px(0.),
-            spread_radius: px(2.),
-            inset: false,
-        }])
     }
 }
 mod mention;
@@ -646,6 +636,7 @@ pub struct Composer {
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
+    search_field: bool,
 }
 
 impl Composer {
@@ -723,6 +714,7 @@ impl Composer {
             on_approval: None,
             on_model: None,
             plain_field: None,
+            search_field: false,
         }
     }
 
@@ -735,6 +727,13 @@ impl Composer {
         let mut editor = Self::new(placeholder, false, cx);
         editor.plain_field = Some(multiline);
         editor.set_text(value, cx);
+        editor
+    }
+
+    pub fn settings_search(placeholder: &'static str, cx: &mut Context<Self>) -> Self {
+        let mut editor = Self::settings_field(placeholder, "", false, cx);
+        editor.search_field = true;
+        editor.request_compact = true;
         editor
     }
 
@@ -1042,7 +1041,7 @@ impl Composer {
                 .aria_disabled(self.queue_pending)
                 .focusable()
                 .tab_index(0)
-                .focus_visible(menu::trigger_focus)
+                .focus_visible(crate::focus::trigger_focus)
                 .opacity(if self.queue_pending { 0.4 } else { 1. })
                 .when(!self.queue_pending, |d| d.hover(|s| s.bg(t.ghost_hover)))
                 .child(match action {
@@ -1088,7 +1087,7 @@ impl Composer {
                 .aria_disabled(self.queue_pending)
                 .focusable()
                 .tab_index(0)
-                .focus_visible(menu::trigger_focus)
+                .focus_visible(crate::focus::trigger_focus)
                 .opacity(if self.queue_pending { 0.4 } else { 1. })
                 .when(!self.queue_pending, |d| d.hover(|s| s.bg(t.ghost_hover)))
                 .child(icon("diff-more", 14., t.text_tertiary))
@@ -1913,7 +1912,7 @@ impl Render for Composer {
         if self.plain_field.is_some() {
             return div().w_full().child(
                 card.key_context(KEY_CONTEXT)
-                    .when(self.request_parent.is_none(), |d| {
+                    .when(self.request_parent.is_none() && !self.search_field, |d| {
                         d.border_1()
                             .border_color(t.border)
                             .rounded(px(8.))

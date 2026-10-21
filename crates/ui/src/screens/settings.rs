@@ -548,7 +548,7 @@ impl SettingsPane {
                 ),
             )
         });
-        select(label, None, false, t)
+        select(label, None, false, false, t)
             .id(key)
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.open_select = (!open).then_some(key);
@@ -924,6 +924,7 @@ impl SettingsPane {
                             "Zed",
                             Some(app_icon(over(t.primary_soft_alpha, t.background_panel))),
                             false,
+                            false,
                             t,
                         )
                         .into_any_element(),
@@ -931,7 +932,7 @@ impl SettingsPane {
                     row(
                         "Language",
                         Some("Language for the app UI"),
-                        select("Auto detect", None, false, t).into_any_element(),
+                        select("Auto detect", None, false, false, t).into_any_element(),
                     ),
                     row(
                         "Show in menu bar",
@@ -989,7 +990,7 @@ impl SettingsPane {
                         Some(
                             "Choose how quickly ChatGPT runs across chats, subagents, and compaction",
                         ),
-                        select("Standard", None, false, t).into_any_element(),
+                        select("Standard", None, false, false, t).into_any_element(),
                     ),
                     row(
                         "Suggested prompts",
@@ -1090,7 +1091,7 @@ impl SettingsPane {
                     row(
                         "Turn completion notifications",
                         Some("Set when ChatGPT alerts you that it's finished"),
-                        select("Only when unfocused", None, true, t).into_any_element(),
+                        select("Only when unfocused", None, true, false, t).into_any_element(),
                     ),
                     row(
                         "Enable permission notifications",
@@ -1110,7 +1111,7 @@ impl SettingsPane {
                     row(
                         "Notification sound",
                         Some("Sound for task completion, permission requests, and questions"),
-                        select("Default", None, true, t).into_any_element(),
+                        select("Default", None, true, false, t).into_any_element(),
                     ),
                 ],
             ),
@@ -1446,7 +1447,13 @@ fn button(label: &'static str, fill: Hsla, border: Option<Hsla>, t: &Theme) -> D
         .child(text(label, 13., 18., 430., t.text))
 }
 /// Dropdown trigger: value (with an optional leading app icon) and a chevron.
-fn select(label: &'static str, leading: Option<AnyElement>, disabled: bool, t: &Theme) -> Div {
+pub(crate) fn select(
+    label: impl Into<SharedString>,
+    leading: Option<AnyElement>,
+    disabled: bool,
+    open: bool,
+    t: &Theme,
+) -> Div {
     div()
         .h(px(28.))
         .px(px(13.))
@@ -1458,7 +1465,11 @@ fn select(label: &'static str, leading: Option<AnyElement>, disabled: bool, t: &
         .child(on_card(
             12.5,
             Squircle,
-            t.primary_soft_alpha,
+            if open {
+                t.ghost_hover
+            } else {
+                t.primary_soft_alpha
+            },
             Some(t.border),
         ))
         .when(disabled, |d| d.opacity(0.4))
