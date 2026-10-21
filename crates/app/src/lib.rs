@@ -9,6 +9,7 @@ pub mod host;
 pub mod host_settings;
 pub mod native_menus;
 pub mod qa;
+mod onboarding_connect;
 mod routes;
 pub use routes::Route;
 mod search;
