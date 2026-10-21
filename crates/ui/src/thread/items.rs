@@ -60,7 +60,10 @@ pub(super) fn user_bubble(
         .line_height(px(LINE))
         .font_weight(FontWeight(430.))
         .text_color(white())
-        .when(collapsed, |d| d.line_clamp(COLLAPSED_LINES - 1))
+        .when(collapsed, |d| {
+            d.max_h(px(LINE * (COLLAPSED_LINES - 1) as f32))
+                .line_clamp(COLLAPSED_LINES - 1)
+        })
         .child(match find {
             Some(find) => find.text(message, 0).into_any_element(),
             None => message.to_owned().into_any_element(),
@@ -73,6 +76,7 @@ pub(super) fn user_bubble(
             .aria_label(if collapsed { "Show more" } else { "Show less" })
             .mt(px(6.))
             .h(px(21.))
+            .self_start()
             .flex()
             .items_center()
             .gap(px(4.))
@@ -94,27 +98,26 @@ pub(super) fn user_bubble(
                 d.child(icon("chevron-down-small", 14., t.text_tertiary))
             })
     });
-    div().flex().flex_col().items_end().pb(px(30.)).child(
-        div()
-            .relative()
-            .max_w(relative(0.7))
-            .py(px(10.))
-            .px(px(16.))
-            .child(shapes::decoration(shapes::Decoration {
-                radius: Corners::all(px(22.)),
-                corner: shapes::Corner::Squircle,
-                fill: Some(t.user_message_background),
-                ..Default::default()
-            }))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_start()
-                    .child(body)
-                    .children(toggle),
-            ),
-    )
+    // ponytail: a collapsed message sits 5.5 px higher above what follows (one measured state).
+    div()
+        .flex()
+        .flex_col()
+        .items_end()
+        .pb(px(if collapsed { 35.5 } else { 30. }))
+        .child(
+            div()
+                .relative()
+                .max_w(relative(0.7))
+                .py(px(10.))
+                .px(px(16.))
+                .child(shapes::decoration(shapes::Decoration {
+                    radius: Corners::all(px(22.)),
+                    corner: shapes::Corner::Squircle,
+                    fill: Some(t.user_message_background),
+                    ..Default::default()
+                }))
+                .child(div().flex().flex_col().child(body).children(toggle)),
+        )
 }
 
 /// A row that wraps its word boxes like an inline formatting context. Chromium lets a line's
@@ -188,11 +191,15 @@ pub(super) fn disclosure(label: String, angle: f32, window: &Window, t: &Theme) 
         .flex()
         .flex_col()
         .child(
-            div().h(px(22.3)).pt(px(1.3)).child(
+            // In a column narrower than the label the chevron wraps under it and the label
+            // overflows the column (`flex-wrap`).
+            div().min_h(px(22.3)).pt(px(1.3)).child(
                 div()
                     .flex()
+                    .flex_wrap()
                     .items_center()
-                    .gap(px(4.))
+                    .gap_x(px(4.))
+                    .gap_y(px(2.7))
                     .child(measured(window, label, 14., 21., 430., color, None))
                     .child(chevron),
             ),
