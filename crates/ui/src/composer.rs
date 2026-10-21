@@ -326,7 +326,7 @@ impl Permission {
     ];
 
     /// The preset `config/read` matches; anything else is `Custom (config.toml)`.
-    fn from_config(config: &Value) -> Self {
+    pub fn from_config(config: &Value) -> Self {
         match (
             config["approval_policy"].as_str(),
             config["sandbox_mode"].as_str(),

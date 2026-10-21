@@ -587,10 +587,13 @@ impl Fx {
     }
 }
 
-/// readback.jsonl, then `session` (under fixtures/), each recorded line rewritten by `edit`.
+/// Loads the baseline, optional scenario, and projected session settings; `edit` rewrites each line.
 pub fn script(session: Option<&str>, edit: fn(&mut Value)) -> Result<Vec<Value>> {
     let mut lines = Vec::new();
-    for file in std::iter::once("readback.jsonl").chain(session) {
+    for file in std::iter::once("readback.jsonl")
+        .chain(session)
+        .chain(std::iter::once("sessions/thread-settings.jsonl"))
+    {
         let path = format!("{ROOT}/fixtures/{file}");
         let text = fs::read_to_string(&path).with_context(|| path.clone())?;
         for line in text.lines().filter(|l| !l.trim().is_empty()) {
