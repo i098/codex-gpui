@@ -46,6 +46,10 @@ pub use controls::DiffLayout;
 pub(crate) use find::find_scope_buttons;
 pub use find::{FindInChat, FindInDiff};
 
+#[path = "diff/states.rs"]
+mod states;
+pub use states::{LastTurnState, OmittedFiles};
+
 /// Panel width the capture had stored (`app-shell:right-panel-width:v3`) before clamping.
 const STORED_WIDTH: f32 = 664.17;
 /// Room the chat keeps beside the panel (`unified` layout), also the panel's minimum.
@@ -126,6 +130,7 @@ pub struct FileDiff {
     pub name: SharedString,
     pub added: usize,
     pub removed: usize,
+    changed_bytes: usize,
     hunks: Vec<Hunk>,
     pub open: bool,
     problem: Option<&'static str>,
@@ -184,6 +189,8 @@ pub enum DiffRequest {
     },
     CreateRepository,
     OpenTab(String),
+    SourceChanged,
+    Notice(&'static str),
     /// Open this absolute path in the configured editor.
     Open(String),
 }
@@ -207,6 +214,8 @@ pub struct RepositoryChanges {
     pub branches: Vec<String>,
     #[serde(default)]
     pub commits: Vec<RepositoryCommit>,
+    #[serde(default, rename = "untrackedFilesOmitted")]
+    pub untracked_files_omitted: Option<OmittedFiles>,
     #[serde(default)]
     pub base_branch: Option<String>,
     #[serde(default)]
@@ -261,6 +270,8 @@ pub struct DiffPanel {
     commit: Option<String>,
     word_diffs: bool,
     jump: Option<navigation::JumpToFile>,
+    watch_limited: bool,
+    last_turn_state: Option<LastTurnState>,
 }
 
 impl DiffPanel {
@@ -316,6 +327,7 @@ impl DiffPanel {
                 Some(f) => {
                     f.added += added;
                     f.removed += removed;
+                    f.changed_bytes += change.diff.len();
                     f.hunks.extend(hunks);
                 }
                 None => files.push(FileDiff {
@@ -323,6 +335,7 @@ impl DiffPanel {
                     name: name.to_string().into(),
                     added,
                     removed,
+                    changed_bytes: change.diff.len(),
                     hunks,
                     open: true,
                     problem,
@@ -364,6 +377,8 @@ impl DiffPanel {
             base_branch: None,
             commit: None,
             jump: None,
+            watch_limited: false,
+            last_turn_state: None,
         }
     }
 
@@ -539,6 +554,7 @@ impl DiffPanel {
                 cx.emit(DiffRequest::Refresh);
             }
         }
+        cx.emit(DiffRequest::SourceChanged);
         cx.notify();
     }
 
@@ -592,6 +608,11 @@ impl DiffPanel {
         if params["turnId"].as_str() != Some(&turn.id) {
             return;
         }
+        let had_changes = if self.source == DiffSource::LastTurn {
+            !self.files.is_empty()
+        } else {
+            !self.turn_files.is_empty()
+        };
         let files = match method.as_str() {
             "turn/diff/updated" => {
                 let Some(diff) = params["diff"].as_str() else {
@@ -600,14 +621,21 @@ impl DiffPanel {
                 self.aggregated_turn = Some(turn.id.clone());
                 controls::files(diff)
             }
-            "item/started" | "item/completed"
-                if params["item"]["type"] == "fileChange"
+            "item/started" | "item/completed" | "item/fileChange/patchUpdated"
+                if (method == "item/fileChange/patchUpdated"
+                    || params["item"]["type"] == "fileChange")
                     && self.aggregated_turn.as_deref() != Some(&turn.id) =>
             {
                 self.aggregated_turn = None;
                 Self::last_turn(workspace, &self.cwd, turns).files
             }
             _ => return,
+        };
+        self.last_turn_state = if files.is_empty() {
+            self.last_turn_state
+                .or(had_changes.then_some(LastTurnState::CommittedOrReverted))
+        } else {
+            None
         };
         if self.source == DiffSource::LastTurn {
             self.replace_files(files);
@@ -673,6 +701,7 @@ impl DiffPanel {
         }
         self.active_match = self.active_match.min(self.matches.saturating_sub(1));
         self.find_scroll.pending.set(self.matches > 0);
+        self.reveal_find_match();
     }
 
     pub fn selected_text(&self) -> String {
@@ -1121,39 +1150,58 @@ impl Render for DiffPanel {
         };
         let status = self.repository_status(&t, cx);
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
-        let line_index = Cell::new(0);
-        let scroll_top = self.scroll.logical_scroll_top();
-        let files = self.files.iter().enumerate().map(|(i, file)| {
-            div()
-                .flex()
-                .flex_col()
-                .flex_none()
-                .when(self.standalone, |d| {
-                    d.relative()
-                        .overflow_hidden()
-                        .child(shapes::decoration(Decoration {
-                            fill: Some(t.surface),
-                            ..Default::default()
-                        }))
-                })
-                .on_mouse_down(
-                    MouseButton::Right,
-                    cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
-                        this.open_menu(i, menu::Kind::Body, event.position, window, cx);
-                    }),
-                )
-                .child(self.scrolling_file_header(i, file, scroll_top, &t, cx))
-                .map(|d| {
-                    if file.open && file.problem.is_some() {
-                        d.child(self.file_placeholder(i, file, &t, cx))
-                    } else if file.open {
-                        d.children(file.hunks.iter().enumerate().map(|(index, h)| {
-                            let controls =
-                                matches!(self.source, DiffSource::Unstaged | DiffSource::Staged)
-                                    && h.lines.iter().any(|l| l.kind != Kind::Context);
-                            div()
-                                .when(controls, |d| {
-                                    d.child(
+        let capped = self.capped();
+        let notices = self.state_notices(capped, window, cx);
+        let first_line = if capped {
+            self.files
+                .iter()
+                .take(self.active_file)
+                .flat_map(|file| &file.hunks)
+                .map(|hunk| hunk.lines.len())
+                .sum()
+        } else {
+            0
+        };
+        let line_index = Cell::new(first_line);
+        let (first, offset) = self.scroll.logical_scroll_top();
+        let scroll_top = (if capped { self.active_file } else { first }, offset);
+        let files = self
+            .files
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !capped || *index == self.active_file)
+            .map(|(i, file)| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_none()
+                    .when(self.standalone, |d| {
+                        d.relative()
+                            .overflow_hidden()
+                            .child(shapes::decoration(Decoration {
+                                fill: Some(t.surface),
+                                ..Default::default()
+                            }))
+                    })
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                            this.open_menu(i, menu::Kind::Body, event.position, window, cx);
+                        }),
+                    )
+                    .child(self.scrolling_file_header(i, file, scroll_top, &t, cx))
+                    .map(|d| {
+                        if file.open && file.problem.is_some() {
+                            d.child(self.file_placeholder(i, file, &t, cx))
+                        } else if file.open {
+                            d.children(file.hunks.iter().enumerate().map(|(index, h)| {
+                                let controls = matches!(
+                                    self.source,
+                                    DiffSource::Unstaged | DiffSource::Staged
+                                ) && h.lines.iter().any(|l| l.kind != Kind::Context);
+                                div()
+                                    .when(controls, |d| {
+                                        d.child(
                                         div()
                                             .flex()
                                             .justify_end()
@@ -1217,33 +1265,33 @@ impl Render for DiffPanel {
                                                     .child(text("Revert", 12., 20., 430., t.text)),
                                             ),
                                     )
-                                })
-                                .child(hunk(
-                                    h,
-                                    &t,
-                                    &line_index,
-                                    self,
-                                    self.layout.split(file, code_width),
-                                    cx,
-                                ))
-                        }))
-                    } else {
-                        line_index.set(
-                            line_index.get()
-                                + file.hunks.iter().map(|h| h.lines.len()).sum::<usize>(),
-                        );
-                        d
-                    }
-                })
-                .map(|d| {
-                    if self.standalone {
-                        crate::rounded_clip(px(12.5), shapes::Corner::Squircle, d)
-                            .into_any_element()
-                    } else {
-                        d.into_any_element()
-                    }
-                })
-        });
+                                    })
+                                    .child(hunk(
+                                        h,
+                                        &t,
+                                        &line_index,
+                                        self,
+                                        self.layout.split(file, code_width),
+                                        cx,
+                                    ))
+                            }))
+                        } else {
+                            line_index.set(
+                                line_index.get()
+                                    + file.hunks.iter().map(|h| h.lines.len()).sum::<usize>(),
+                            );
+                            d
+                        }
+                    })
+                    .map(|d| {
+                        if self.standalone {
+                            crate::rounded_clip(px(12.5), shapes::Corner::Squircle, d)
+                                .into_any_element()
+                        } else {
+                            d.into_any_element()
+                        }
+                    })
+            });
         // No fill: the main panel's rounded fill (a `shapes` decoration the capsules' backdrop
         // blur reads) shows through, so its corners stay round. The body's 1 px top border
         // (translucent) sits in the layer under the capsules, whose shadows blend over it; they
@@ -1352,6 +1400,7 @@ impl Render for DiffPanel {
                     }),
             )
             .children(status)
+            .children(notices)
             .when(not_repository, |d| {
                 d.child(
                     div()
@@ -1365,7 +1414,11 @@ impl Render for DiffPanel {
                             div()
                                 .id("create-git-repository")
                                 .role(gpui::Role::Button)
-                                .aria_label("Create git repository")
+                                .aria_label(if self.pending {
+                                    "Creating…"
+                                } else {
+                                    "Create git repository"
+                                })
                                 .aria_disabled(self.pending)
                                 .focusable()
                                 .tab_index(0)
@@ -1388,7 +1441,17 @@ impl Render for DiffPanel {
                                         cx.emit(DiffRequest::CreateRepository);
                                     }
                                 }))
-                                .child(text("Create git repository", 13., 20., 430., t.text)),
+                                .child(text(
+                                    if self.pending {
+                                        "Creating…"
+                                    } else {
+                                        "Create git repository"
+                                    },
+                                    13.,
+                                    20.,
+                                    430.,
+                                    t.text,
+                                )),
                         ),
                 )
             })
@@ -2859,6 +2922,15 @@ fn parse(diff: &str, raw: Option<Kind>) -> Result<Vec<Hunk>, &'static str> {
             word_changes: Vec::new(),
             syntax: Vec::new(),
         });
+    }
+    if hunks
+        .iter()
+        .flat_map(|hunk| &hunk.lines)
+        .filter(|line| line.kind != Kind::Context)
+        .count()
+        > 2_000
+    {
+        return Ok(hunks);
     }
     for hunk in &mut hunks {
         let mut removed = 0..0;

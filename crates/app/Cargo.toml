@@ -24,6 +24,7 @@ chrono-tz = "0.10"
 gpui.workspace = true
 gpui_platform.workspace = true
 iana-time-zone = "0.1"
+notify = "8"
 pollster = "0.4"
 rrule = { path = "../../vendor/rrule", features = ["exrule"] }
 rusqlite = { version = "0.37", features = ["bundled"] }

@@ -88,6 +88,7 @@ impl Root {
     /// persists the state.
     pub(crate) fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.flush_settings(cx);
+        self.sync_diff_watch(cx);
         self.settings_page = None;
         self.suggestion_load = None;
         let (can_back, can_forward) = (!self.back.is_empty(), !self.forward.is_empty());

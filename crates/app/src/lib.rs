@@ -5,6 +5,7 @@
 
 pub mod computer_use_requests;
 mod diff_find;
+mod diff_watch;
 mod features;
 pub mod host;
 pub mod host_settings;
@@ -341,6 +342,7 @@ pub struct Root {
     queue_edit: Option<QueueEdit>,
     thread: Option<Entity<ThreadView>>,
     diff: Option<Entity<DiffPanel>>,
+    diff_watch: Option<diff_watch::Watch>,
     /// The file viewer of [`SidePanel::File`]; cleared with the thread.
     file: Option<Entity<FileView>>,
     /// The open thread in the main shell, with its side panel if any.
@@ -634,6 +636,7 @@ impl Root {
             queue_edit: None,
             thread: None,
             diff: None,
+            diff_watch: None,
             file: None,
             split: None,
             tabs: Vec::new(),
@@ -1116,8 +1119,12 @@ impl Root {
                     None => change.path.clone(),
                 }),
             ),
-            DiffRequest::Open(_) | DiffRequest::OpenTab(_) => return,
+            DiffRequest::Open(_)
+            | DiffRequest::OpenTab(_)
+            | DiffRequest::SourceChanged
+            | DiffRequest::Notice(_) => return,
         };
+        let creating = endpoint == "git-init-repo";
         if let Some(review) = panel.read(cx).review_params().as_object() {
             params.as_object_mut().unwrap().extend(review.clone());
         }
@@ -1148,6 +1155,9 @@ impl Root {
         cx.spawn(async move |this, cx| {
             let result = read.await;
             this.update(cx, |this, cx| {
+                if creating {
+                    this.notify_git_init(result.as_ref().err().map(String::as_str), cx);
+                }
                 if let Some(target) = reverted {
                     let toast = match &result {
                         Ok((_, Some(true))) => Toast::info(format!("Partially reverted {target}")),
@@ -1159,6 +1169,8 @@ impl Root {
                 panel.update(cx, |panel, cx| {
                     panel.set_repository(result.map(|(changes, _)| changes), cx)
                 });
+                this.sync_diff_watch(cx);
+                this.refresh_watched_diff(cx);
                 this.refresh_git_actions(cx);
             })
             .ok();
@@ -2020,6 +2032,7 @@ impl Root {
         }
     }
 
+
     /// HC-033: a printable key (no ⌘/⌃, not Space) typed outside an editable, with no
     /// dialog, menu or popover open, goes to the route's composer and focuses it.
     /// Content ancestors can hold plain focus handles without being popovers.
@@ -2761,6 +2774,9 @@ impl Root {
                     action: "revert", ..
                 } => this.confirm_revert(panel.clone(), &cwd, request, window, cx),
                 DiffRequest::Open(path) => this.open_in_editor(&cwd, path, cx),
+                DiffRequest::SourceChanged => this.sync_diff_watch(cx),
+                DiffRequest::Notice(text) => this.toast(Toast::info(*text), cx),
+                DiffRequest::Refresh => this.refresh_diff(panel.clone(), &cwd, cx),
                 DiffRequest::OpenTab(path) => this.open_file(
                     &OpenFile {
                         path: path.clone(),
@@ -3332,6 +3348,7 @@ impl Root {
             this.update_in(cx, |this, window, cx| {
                 if this.state.route == Route::Thread(read.thread.id.clone()) {
                     this.show_thread(read.thread, window, cx);
+                    this.mark_diff_reverted(cx);
                 }
             })
         });
@@ -4853,7 +4870,10 @@ async fn commit_workflow(
         });
         match run.call(cx, "git-commit", params).await {
             Ok(done) => match git_result(&done) {
-                Ok(committed) => branch = committed,
+                Ok(committed) => {
+                    branch = committed;
+                    let _ = this.update(cx, |this, cx| this.mark_diff_committed(&run.cwd, cx));
+                }
                 Err(failed) => return failed,
             },
             Err(error) => return GitOutcome::failed("Failed to commit changes", Some(error)),
