@@ -176,6 +176,12 @@ The app opens that thread after a successful start, unless you navigate away whi
 Run `cargo test -p app --test task_create -- --test-threads=1` on macOS for the native creation and reload proof.
 Run `cargo test -p app --test automation_run_now` for the `Run now` requests over a stdio app-server stub.
 
+## Managed update policy
+
+General settings shows the read-only `In-app updates` row with `Managed` when the app-server disables `in_app_updates`.
+The row uses `experimentalFeature/list`, not a local preference.
+The app hides the row when that policy is absent or enabled.
+
 ## Release bundle
 
 ```sh

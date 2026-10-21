@@ -31,6 +31,7 @@ pub mod screens;
 pub mod settings_kit;
 pub mod toast;
 pub mod tooltip;
+pub mod updater;
 
 actions!(
     shell,
@@ -1019,6 +1020,11 @@ impl Shell {
     }
 
     fn titlebar(&self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let fullscreen_shift = if window.is_fullscreen() {
+            px(80.)
+        } else {
+            px(0.)
+        };
         // The header is the window drag region (`-webkit-app-region: drag`, macOS hiddenInset);
         // its buttons are `no-drag`: each stops the press before the move handler below.
         // Disabled history controls do not participate in keyboard navigation.
@@ -1073,13 +1079,16 @@ impl Shell {
                 }
             })
             .child(tooltip(
-                back.left(px(88.)).on_click(dispatch::<GoBack>),
+                back.left(px(88.) - fullscreen_shift)
+                    .on_click(dispatch::<GoBack>),
                 "Back",
                 Some("⌘["),
                 Side::Bottom,
             ))
             .child(tooltip(
-                forward.left(px(122.)).on_click(dispatch::<GoForward>),
+                forward
+                    .left(px(122.) - fullscreen_shift)
+                    .on_click(dispatch::<GoForward>),
                 "Forward",
                 Some("⌘]"),
                 Side::Bottom,
@@ -1104,7 +1113,7 @@ impl Shell {
                         "Show sidebar"
                     })
                     .absolute()
-                    .left(px(156.))
+                    .left(px(156.) - fullscreen_shift)
                     .top(px(8.))
                     .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                         sidebar_focus.read(cx).handle.clone().focus(window, cx);
