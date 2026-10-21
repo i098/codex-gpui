@@ -626,9 +626,11 @@ impl Root {
             loading_more: false,
             wide,
             focus: cx.focus_handle(),
-            home: cx.new(|_| HomeMain {
-                composer: home_composer,
-                project: state.project_root.as_deref().map(project_name),
+            home: cx.new(|_| {
+                HomeMain::with_composer(
+                    home_composer,
+                    state.project_root.as_deref().map(project_name),
+                )
             }),
             thread_composer,
             queue_edit: None,

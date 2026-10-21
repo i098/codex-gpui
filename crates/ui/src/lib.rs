@@ -1165,7 +1165,14 @@ impl Shell {
                         div()
                             .id("new-tab")
                             .rounded(Theme::RADIUS_LG)
-                            .when(self.window_state.menu_open, |d| d.bg(t.ghost_hover))
+                            .when(self.window_state.menu_open, |d| {
+                                d.child(shapes::decoration(shapes::Decoration {
+                                    radius: Corners::all(Theme::RADIUS_LG),
+                                    corner: shapes::Corner::Squircle,
+                                    fill: Some(t.ghost_hover),
+                                    ..Default::default()
+                                }))
+                            })
                             .child(motion::ButtonVisual {
                                 glyph: icon::icon("new-tab", 16., t.text_tertiary),
                                 radius: Theme::RADIUS_LG,

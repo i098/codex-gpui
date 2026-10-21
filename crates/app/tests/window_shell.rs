@@ -16,10 +16,14 @@ fn sidebar_peek_waits_for_hover_and_does_not_navigate() -> Result<()> {
     fx.advance(Duration::from_millis(2))?;
     assert!(fx.shell(|shell| shell.is_peeking()));
     assert_eq!(fx.route(), app::Route::Home);
-    fx.hover((140., 200.))?;
+    fx.hover((140., 600.))?;
     fx.advance(Duration::from_millis(200))?;
     assert!(fx.shell(|shell| shell.is_peeking()));
-    fx.capture_evidence("CGX_WINDOW_SHELL_PROOF", "sidebar-peek")?;
+    if let Some(directory) = std::env::var_os("CGX_WINDOW_SHELL_PROOF") {
+        let directory = std::path::Path::new(&directory);
+        std::fs::create_dir_all(directory)?;
+        fx.frozen_shot()?.save(directory.join("sidebar-peek.png"))?;
+    }
     fx.hover((800., 200.))?;
     fx.advance(Duration::from_millis(99))?;
     assert!(fx.shell(|shell| shell.is_peeking()));

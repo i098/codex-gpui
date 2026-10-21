@@ -124,21 +124,18 @@ impl Shell {
         cx.notify();
     }
 
-    pub(super) fn peek_sidebar(
-        &self,
-        t: &Theme,
-        cx: &mut Context<Self>,
-    ) -> gpui::Stateful<Div> {
+    pub(super) fn peek_sidebar(&self, t: &Theme, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
         let sidebar = self.window_state.sidebar.as_ref().unwrap_or(&self.sidebar);
         let radius = px(8.);
         div()
             .id("floating-sidebar")
             .absolute()
-            .left(RAIL_WIDTH)
-            .top(Theme::TITLEBAR_HEIGHT)
-            .bottom(PAGE_INSET)
-            .w(self.sidebar_width - RAIL_WIDTH)
+            .left(RAIL_WIDTH + px(4.))
+            .top(Theme::TITLEBAR_HEIGHT + px(4.))
+            .bottom(PAGE_INSET + px(4.))
+            .w(self.sidebar_width - RAIL_WIDTH - px(4.))
             .occlude()
+            .layer()
             .on_hover(
                 cx.listener(|this, entered, window, cx| this.hover_peek(*entered, window, cx)),
             )
@@ -151,8 +148,11 @@ impl Shell {
             }))
             .child(shapes::decoration(shapes::Decoration {
                 radius: Corners::all(radius),
-                fill: Some(t.surface),
-                shadows: vec![composer::shadow(t.shadow_card, 8., 32., 0., false)],
+                fill: Some(t.surface_elevated_secondary),
+                shadows: vec![
+                    composer::shadow(t.border, 0., 0., 0.5, true),
+                    composer::shadow(t.shadow_card, 4., 16., 0., false),
+                ],
                 ..Default::default()
             }))
             .child(rounded_clip(

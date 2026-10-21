@@ -529,6 +529,11 @@ impl Fx {
     /// Matches the reference pointer and caret preparation without changing keyboard focus.
     pub fn reference_shot(&mut self) -> Result<RgbaImage> {
         self.hover(((self.size.0 * 0.6).round(), 6.))?;
+        self.frozen_shot()
+    }
+
+    /// Freezes animation and the caret without moving the pointer.
+    pub fn frozen_shot(&mut self) -> Result<RgbaImage> {
         self.cx.update_window(self.window, |_, window, cx| {
             Composer::set_caret_transparent(cx, true);
             window.refresh();

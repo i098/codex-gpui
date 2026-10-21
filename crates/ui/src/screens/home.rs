@@ -29,13 +29,19 @@ actions!(home, [OpenFolder]);
 pub struct HomeMain {
     pub composer: Entity<Composer>,
     pub project: Option<SharedString>,
+    compact: bool,
 }
 
 impl HomeMain {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::with_composer(fixture_composer(window, cx, Composer::home), None)
+    }
+
+    pub fn with_composer(composer: Entity<Composer>, project: Option<SharedString>) -> Self {
         Self {
-            composer: fixture_composer(window, cx, Composer::home),
-            project: None,
+            composer,
+            project,
+            compact: false,
         }
     }
 }
@@ -68,7 +74,7 @@ fn open_folder_key(event: &KeyDownEvent, window: &mut Window, cx: &mut App) {
 fn chip(
     id: &'static str,
     glyph: &str,
-    s: SharedString,
+    label_text: Option<SharedString>,
     fg: Hsla,
     t: &Theme,
     focus: &Entity<focus::ControlFocus>,
@@ -101,7 +107,9 @@ fn chip(
                     .px(px(8.))
                     .gap(px(6.))
                     .child(icon(glyph, 16., fg).runtime())
-                    .child(label(s, fg)),
+                    .when_some(label_text, |child, label_text| {
+                        child.child(label(label_text, fg))
+                    }),
             )),
     )
 }
@@ -120,7 +128,13 @@ fn scroll_fades(offset: Pixels, maximum: Pixels) -> (Pixels, Pixels) {
 
 /// `Composer utility bar` (`_rail_1hrlq` attached above the composer): project and
 /// environment.
-fn utility_bar(project: Option<SharedString>, t: &Theme, window: &mut Window, cx: &mut App) -> Div {
+fn utility_bar(
+    project: Option<SharedString>,
+    compact: bool,
+    t: &Theme,
+    window: &mut Window,
+    cx: &mut App,
+) -> Div {
     let project_focus = focus::handle("choose-project", 0, window, cx);
     let work_focus = focus::handle("work-in", 0, window, cx);
     let scroll = window
@@ -179,7 +193,9 @@ fn utility_bar(project: Option<SharedString>, t: &Theme, window: &mut Window, cx
                                         chip(
                                             "choose-project",
                                             "folder",
-                                            project.unwrap_or_else(|| "Choose project".into()),
+                                            (!compact).then(|| {
+                                                project.unwrap_or_else(|| "Choose project".into())
+                                            }),
                                             t.text_tertiary,
                                             t,
                                             &project_focus,
@@ -194,7 +210,7 @@ fn utility_bar(project: Option<SharedString>, t: &Theme, window: &mut Window, cx
                                 .child(chip(
                                     "work-in",
                                     "laptop",
-                                    "This computer".into(),
+                                    (!compact).then(|| "This computer".into()),
                                     t.text,
                                     t,
                                     &work_focus,
@@ -217,7 +233,34 @@ impl Render for HomeMain {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let hero_focus = focus::handle("home-project-title", 0, window, cx);
+        let view = cx.entity().downgrade();
+        let width_probe = gpui::canvas(
+            move |bounds, window, cx| {
+                let compact = (f32::from(bounds.size.width).min(768.) - 32.) <= 475.;
+                let changed = view
+                    .update(cx, |this, _| {
+                        std::mem::replace(&mut this.compact, compact) != compact
+                    })
+                    .unwrap_or(false);
+                if changed {
+                    let view = view.clone();
+                    window.defer(cx, move |_, cx| {
+                        let _ = view.update(cx, |this, cx| {
+                            this.composer
+                                .update(cx, |composer, cx| composer.set_compact(compact, cx));
+                            cx.notify();
+                        });
+                    });
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full();
         let hero = div()
+            .when(self.compact, |hero| {
+                hero.w_full().max_w(px(768.)).px(px(20.))
+            })
             .flex()
             .flex_col()
             .items_center()
@@ -226,6 +269,7 @@ impl Render for HomeMain {
             .child(
                 div()
                     .id("home-project-title")
+                    .when(self.compact, |title| title.max_w_full().min_w_0())
                     .when(self.project.is_some(), |title| {
                         focus::ring(title, &hero_focus, px(4.), px(2.), cx)
                             .role(gpui::Role::Button)
@@ -235,16 +279,19 @@ impl Render for HomeMain {
                                 window.dispatch_action(Box::new(OpenFolder), cx)
                             })
                     })
-                    .child(text(
-                        self.project.as_ref().map_or_else(
-                            || "What should we build?".to_owned(),
-                            |project| format!("What should we build in {project}?"),
-                        ),
-                        28.,
-                        33.6,
-                        400.,
-                        t.text,
-                    )),
+                    .child(
+                        text(
+                            self.project.as_ref().map_or_else(
+                                || "What should we build?".to_owned(),
+                                |project| format!("What should we build in {project}?"),
+                            ),
+                            28.,
+                            33.6,
+                            400.,
+                            t.text,
+                        )
+                        .when(self.compact, |text| text.whitespace_normal().text_center()),
+                    ),
             );
         let column = div()
             .w_full()
@@ -254,7 +301,13 @@ impl Render for HomeMain {
             .flex()
             .flex_col()
             .child(div().h(px(8.)))
-            .child(utility_bar(self.project.clone(), &t, window, cx))
+            .child(utility_bar(
+                self.project.clone(),
+                self.compact,
+                &t,
+                window,
+                cx,
+            ))
             .child(self.composer.clone());
         // The page column under the `home-mode-toggle` row is the file drop target.
         let page = div()
@@ -262,7 +315,7 @@ impl Render for HomeMain {
             .min_h_0()
             .flex()
             .flex_col()
-            .px(px(10.))
+            .when(!self.compact, |page| page.px(px(10.)))
             .pt(px(24.))
             .child(
                 div()
@@ -294,8 +347,10 @@ impl Render for HomeMain {
             );
         div()
             .size_full()
+            .relative()
             .flex()
             .flex_col()
+            .child(width_probe)
             // `home-mode-toggle` toolbar row.
             .child(div().flex_none().h(px(46.)))
             .child(crate::composer::drop_target(page, &self.composer, cx))
