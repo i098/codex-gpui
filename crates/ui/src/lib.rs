@@ -705,7 +705,9 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
                             if unread { "bell-unread" } else { "bell" },
                             16.,
                             t.text_tertiary,
-                        ),
+                        )
+                        // The original paints the bell into its button's own composited layer.
+                        .own_layer(None),
                         t,
                     )
                     .tab_index(0)
