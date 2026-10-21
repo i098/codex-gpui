@@ -33,6 +33,9 @@ use theme::{ActiveTheme as _, Theme};
 #[path = "computer_use.rs"]
 pub mod computer_use;
 
+#[path = "voice.rs"]
+pub mod voice;
+
 /// The app's theme setting (`ThemeSetting`): `system`, `light` or `dark`.
 pub const THEME: &str = "host.appearance-theme";
 
@@ -1172,6 +1175,9 @@ impl Render for SettingsPane {
         }
         if section == "Computer use" {
             return super::computer_use::render(window, cx);
+        }
+        if section == "Voice" {
+            return voice::render(window, cx);
         }
         // Unimplemented sections retain their title-only surface.
         let groups = match section {

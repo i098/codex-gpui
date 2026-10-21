@@ -22,6 +22,7 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
 
 pub(super) fn page(root: &mut Root, cx: &mut Context<Root>) -> Entity<Shell> {
     root.load_computer_use(cx);
+    root.load_voice(cx);
     // The Appearance page shows the theme the app keeps.
     let mut config = root.config.clone();
     config["host"] = cx

@@ -16,6 +16,7 @@ mod routes;
 pub use routes::Route;
 mod search;
 mod section_actions;
+mod voice;
 pub mod windows;
 
 use anyhow::{Context as _, Result, ensure};
