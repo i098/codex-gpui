@@ -45,7 +45,7 @@
 //!
 //! Colors outside [0, 1] (out-of-gamut oklab/color-mix results) are drawn as Skia draws them,
 //! with its float raster pipeline. Limits: inset shadows paint apart from Blink's clip layer.
-//! Use [`with_composited_opacity`] for CSS opacity; [`with_layer`] retains Skia's save-layer rounding.
+//! Use [`with_composited_opacity`] for compositor opacity; [`with_layer`] retains Skia's save-layer rounding.
 
 use gpui::{App, Bounds, Corners, Hsla, IntoElement, Pixels, Point, Styled as _, Window, canvas};
 
@@ -335,6 +335,7 @@ pub fn with_rounded_clip<R>(
 /// px; a CSS `opacity` on a box): Skia draws into the layer's own device, where an ancestor's
 /// anti-aliased clip ([`with_rounded_clip`]) that covers `bounds` is a plain rect clip, so the
 /// shapes painted in it raster without that clip.
+/// The bounds round outward to the full device rectangle, including its right and bottom edges.
 pub fn with_layer<R>(
     alpha: u8,
     bounds: Bounds<Pixels>,

@@ -221,3 +221,126 @@ fn svg_opacity_uses_one_layer_restore() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+struct SavedDeviceScene;
+
+impl Render for SavedDeviceScene {
+    fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        div().size_full().bg(gpui::rgb(0x2d2d2d)).child(
+            gpui::canvas(
+                |_, _, _| (),
+                |_, _, window, cx| {
+                    let bounds = Bounds::new(point(px(987.), px(179.99)), size(px(16.), px(16.)));
+                    let device = Bounds::new(point(px(988.5), px(182.5)), size(px(12.5), px(11.)));
+                    let source = include_bytes!("../../../assets/icons/diff-load-full-files.svg");
+                    shapes::with_layer(191, device, window, |window| {
+                        assert!(shapes::paint_icon(
+                            source,
+                            "saved-device-icon",
+                            bounds,
+                            false,
+                            gpui::white(),
+                            Some(bounds.origin),
+                            window,
+                            cx,
+                        ));
+                    });
+                },
+            )
+            .size_full(),
+        )
+    }
+}
+
+#[test]
+fn svg_opacity_respects_saved_device_edges() -> anyhow::Result<()> {
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("{info}");
+        std::process::exit(101);
+    }));
+    let mut cx = gpui::HeadlessAppContext::with_platform(
+        textsys::text_system(),
+        Arc::new(()),
+        gpui_platform::current_headless_renderer,
+    );
+    let window = cx.open_window(size(px(1280.), px(832.)), |_, cx| {
+        cx.new(|_| SavedDeviceScene)
+    })?;
+    cx.run_until_parked();
+    let image = cx.capture_screenshot(window.into())?;
+    if let Some(path) = std::env::var_os("CGX_SAVED_DEVICE_PROOF") {
+        image.save(path)?;
+    }
+    let points = [
+        (1977, 381),
+        (1980, 381),
+        (1984, 381),
+        (1986, 381),
+        (1987, 381),
+        (1977, 382),
+        (1980, 382),
+        (1986, 382),
+        (1987, 382),
+    ];
+    let actual = points.map(|(x, y)| image.get_pixel(x, y).0);
+    let expected =
+        [85, 106, 162, 183, 46, 84, 202, 184, 46].map(|value| [value, value, value, 255]);
+    assert_eq!(
+        actual, expected,
+        "the saved device must end at its painted bounds"
+    );
+    Ok(())
+}
+
+struct NestedSavedDeviceScene;
+
+impl Render for NestedSavedDeviceScene {
+    fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        div().size_full().bg(gpui::black()).child(
+            gpui::canvas(
+                |_, _, _| (),
+                |_, _, window, cx| {
+                    let parent = Bounds::new(point(px(10.), px(10.)), size(px(20.), px(20.)));
+                    let child = Bounds::new(point(px(15.), px(15.)), size(px(25.), px(25.)));
+                    shapes::with_layer(255, parent, window, |window| {
+                        shapes::with_layer(255, child, window, |window| {
+                            shapes::paint(
+                                &shapes::Decoration {
+                                    fill: Some(gpui::white()),
+                                    ..Default::default()
+                                },
+                                None,
+                                child,
+                                window,
+                                cx,
+                            );
+                        });
+                    });
+                },
+            )
+            .size_full(),
+        )
+    }
+}
+
+#[test]
+fn nested_saved_device_stays_inside_parent() -> anyhow::Result<()> {
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("{info}");
+        std::process::exit(101);
+    }));
+    let mut cx = gpui::HeadlessAppContext::with_platform(
+        textsys::text_system(),
+        Arc::new(()),
+        gpui_platform::current_headless_renderer,
+    );
+    let window = cx.open_window(size(px(50.), px(50.)), |_, cx| {
+        cx.new(|_| NestedSavedDeviceScene)
+    })?;
+    cx.run_until_parked();
+    let image = cx.capture_screenshot(window.into())?;
+    assert_eq!(image.get_pixel(45, 45).0, [255, 255, 255, 255]);
+    assert_eq!(image.get_pixel(65, 45).0, [0, 0, 0, 255]);
+    assert_eq!(image.get_pixel(45, 65).0, [0, 0, 0, 255]);
+    Ok(())
+}
