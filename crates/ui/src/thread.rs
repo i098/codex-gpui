@@ -57,8 +57,8 @@ mod select;
 
 pub use recovery::{History, RetryHistory, UsageLimitNotice};
 
-use actions::action_row;
 pub use actions::{EditMessage, ForkThread, RevertTurn};
+use actions::{TurnFocus, action_row};
 pub enum GitAction {
     Refresh,
     OpenForm,
@@ -1630,6 +1630,25 @@ impl ThreadView {
     ) -> Div {
         let group = SharedString::from(format!("turn-{}", turn.id));
         let mut col = div().group(group.clone()).flex().flex_col();
+        let sent_at = turn.started_at.and_then(|at| {
+            chrono::DateTime::from_timestamp(at + self.clock.utc_offset, 0)
+                .map(|at| at.format("%A %-I:%M %p").to_string())
+        });
+        let mut button_focus = |name: &str| {
+            window
+                .use_keyed_state(format!("turn-focus-{}-{name}", turn.id), cx, |_, cx| {
+                    cx.focus_handle().tab_stop(true).tab_index(0)
+                })
+                .read(cx)
+                .clone()
+        };
+        let focus = TurnFocus::new(
+            button_focus("undo"),
+            button_focus("view"),
+            button_focus("copy"),
+            button_focus("fork"),
+            window,
+        );
         let user = turn.items.iter().find_map(|i| match i {
             ThreadItem::UserMessage { id, content } => Some((
                 id,
@@ -1654,10 +1673,7 @@ impl ThreadView {
                 find: self.find_paint(item),
                 thread_id: self.thread_id.clone(),
                 editable_turn: self.can_edit(&turn.id).then(|| turn.id.clone()),
-                sent_at: turn.started_at.and_then(|at| {
-                    chrono::DateTime::from_timestamp(at + self.clock.utc_offset, 0)
-                        .map(|at| at.format("%A %-I:%M %p").to_string())
-                }),
+                sent_at: sent_at.clone(),
             });
         }
         let (work, final_answer) = work(turn);
@@ -1696,7 +1712,7 @@ impl ThreadView {
                     )
                     .child(text("Asking question", 14., 20., 430., t.text_tertiary)),
             );
-            if let Some(card) = diff_card(&turn.id, &turn.items, window, t) {
+            if let Some(card) = diff_card(&turn.id, &turn.items, &focus, window, t) {
                 col = col.child(div().mt(px(16.)).pb(px(8.)).child(card));
             }
             return col;
@@ -1800,11 +1816,13 @@ impl ThreadView {
                 self.find_paint(item).as_ref(),
                 self.fades(item),
             ));
-            if let Some(card) = diff_card(&turn.id, &turn.items, window, t) {
+            if let Some(card) = diff_card(&turn.id, &turn.items, &focus, window, t) {
                 col = col.child(div().mt(px(12.)).pb(px(8.)).child(card));
             }
             return col.when(!self.embedded, |col| {
-                col.child(action_row(last, &group, &turn.id, answer, t))
+                col.child(action_row(
+                    last, &group, &turn.id, answer, sent_at, &focus, t,
+                ))
             });
         }
         if turn.status == TurnStatus::InProgress && (!self.embedded || has_work) {

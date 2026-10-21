@@ -403,17 +403,54 @@ pub struct RevertTurn(pub String);
 /// turns (group `group`) show them on hover.
 /// ponytail: Read aloud (ChatGPT voice playback) and Rate response (feedback menu) have no
 /// handler; wire them with a voice backend and the feedback menu.
+/// Focus handles of a turn's buttons. The original's `group-focus-within` shows a turn's hover
+/// UI (action row time, diff card subtitle) while any of them has focus.
+#[derive(Clone)]
+pub(super) struct TurnFocus {
+    pub undo: FocusHandle,
+    pub view: FocusHandle,
+    pub copy: FocusHandle,
+    pub fork: FocusHandle,
+    /// One of them has focus.
+    pub engaged: bool,
+}
+
+impl TurnFocus {
+    pub(super) fn new(
+        undo: FocusHandle,
+        view: FocusHandle,
+        copy: FocusHandle,
+        fork: FocusHandle,
+        window: &Window,
+    ) -> Self {
+        let engaged = [&undo, &view, &copy, &fork]
+            .iter()
+            .any(|handle| handle.is_focused(window));
+        Self {
+            undo,
+            view,
+            copy,
+            fork,
+            engaged,
+        }
+    }
+}
+
+/// `sent_at` is the turn's `Wednesday 9:54 PM`, shown beside the actions on hover or focus.
 pub(super) fn action_row(
     last: bool,
     group: &SharedString,
     turn_id: &str,
     answer: &str,
+    sent_at: Option<String>,
+    focus: &TurnFocus,
     t: &Theme,
 ) -> Div {
+    let engaged = focus.engaged;
     let action = |name: &'static str| {
         let color = t.text_tertiary;
         // `Icon` folds its own opacity into the color, so the hover sets the color.
-        let icon = if last {
+        let icon = if last || engaged {
             icon(name, 16., color)
         } else {
             icon(name, 16., color.opacity(0.))
@@ -439,8 +476,7 @@ pub(super) fn action_row(
                 .id("copy-response")
                 .aria_label("Copy")
                 .role(gpui::Role::Button)
-                .focusable()
-                .tab_index(0)
+                .track_focus(&focus.copy)
                 .on_click(move |_, _, cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(answer.clone()));
                     #[cfg(target_os = "macos")]
@@ -476,8 +512,7 @@ pub(super) fn action_row(
                 .id("fork-thread")
                 .aria_label("Fork chat from here")
                 .role(gpui::Role::Button)
-                .focusable()
-                .tab_index(0)
+                .track_focus(&focus.fork)
                 .on_click(move |_, window, cx| {
                     window.dispatch_action(Box::new(ForkThread(turn_id.clone())), cx)
                 }),
@@ -485,6 +520,23 @@ pub(super) fn action_row(
             None,
             Side::Top,
         ))
+        .children(sent_at.map(|time| {
+            let mut stamp = div()
+                .ml(px(6.))
+                .mt(px(3.))
+                .h(px(20.))
+                .flex()
+                .items_center()
+                .child(text(time, 12., 16., 430., t.text_tertiary));
+            stamp = if engaged {
+                stamp
+            } else {
+                stamp
+                    .invisible()
+                    .group_hover(group.clone(), |s| s.visible())
+            };
+            stamp
+        }))
 }
 
 #[cfg(all(test, target_os = "macos"))]
