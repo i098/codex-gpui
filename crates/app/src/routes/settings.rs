@@ -12,6 +12,16 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             this.open_settings_section("Plugins", window, cx)
         },
     ))
+    .on_action(cx.listener(
+        |this, action: &settings::integrations::OpenExtensionDirectory, window, cx| {
+            this.open_plugins(action.0, window, cx);
+        },
+    ))
+    .on_action(cx.listener(
+        |this, _: &settings::integrations::OpenPluginCreator, window, cx| {
+            this.open_plugin_creator(window, cx);
+        },
+    ))
     .on_action(cx.listener(Root::open_settings_subtree))
     .on_action(cx.listener(Root::open_settings_parent))
     .on_action(cx.listener(|this, _: &LogOut, window, cx| {

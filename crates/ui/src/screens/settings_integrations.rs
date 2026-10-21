@@ -15,10 +15,20 @@ use std::{
 };
 use theme::{ActiveTheme as _, Theme};
 
-gpui::actions!(settings_integrations, [OpenPluginManager]);
+gpui::actions!(
+    settings_integrations,
+    [OpenPluginManager, OpenPluginCreator]
+);
+
+#[derive(Clone, PartialEq, gpui::Action)]
+#[action(namespace = settings_integrations, no_json)]
+pub struct OpenExtensionDirectory(pub &'static str);
 
 #[path = "settings_mcp_form.rs"]
 mod form;
+
+#[path = "settings_marketplace_form.rs"]
+mod marketplace_form;
 
 #[derive(Clone, Debug)]
 pub enum Action {
@@ -50,6 +60,7 @@ pub enum Action {
     RemovePlugin(Value),
     RemoveMarketplace(String),
     UpgradeMarketplace(String),
+    AddMarketplace(Value),
     SetAppEnabled {
         id: String,
         enabled: bool,
@@ -65,6 +76,7 @@ pub type Dispatch = Arc<dyn Fn(Action, &mut App) + Send + Sync>;
 #[derive(Clone, Default)]
 pub struct State {
     pub configuration: Arc<Value>,
+    pub plugin_creator: Option<String>,
     pub config_error: Option<String>,
     pub servers: Load<Arc<Value>>,
     pub plugins: Load<Arc<Value>>,
@@ -81,6 +93,7 @@ pub struct State {
     pub form_error: Option<String>,
     pub operation_error: Option<String>,
     pub form_saved: u64,
+    pub marketplace_added: u64,
     pub oauth: BTreeMap<String, Option<String>>,
     pub suppressed_servers: HashSet<String>,
     pub removal_completed: Option<String>,
@@ -100,6 +113,12 @@ pub fn render(section: &'static str, window: &mut Window, cx: &mut App) -> AnyEl
                     this.form = None;
                     this.form_saved = saved;
                 }
+                let added = cx.global::<State>().marketplace_added;
+                if added != this.marketplace_added {
+                    this.marketplace_form = None;
+                    this.marketplace_added = added;
+                    this.tab = Tab::Marketplace;
+                }
                 if this.marketplace.as_ref() == cx.global::<State>().removal_completed.as_ref() {
                     this.marketplace = None;
                 }
@@ -115,6 +134,10 @@ pub fn render(section: &'static str, window: &mut Window, cx: &mut App) -> AnyEl
                 menu: None,
                 form: None,
                 form_saved: cx.try_global::<State>().map_or(0, |state| state.form_saved),
+                marketplace_form: None,
+                marketplace_added: cx
+                    .try_global::<State>()
+                    .map_or(0, |state| state.marketplace_added),
                 marketplace: None,
                 selected_hooks: None,
                 modal_focus: cx.focus_handle(),
@@ -151,6 +174,8 @@ struct Manager {
     menu: Option<Menu>,
     form: Option<Entity<form::Form>>,
     form_saved: u64,
+    marketplace_form: Option<Entity<marketplace_form::MarketplaceForm>>,
+    marketplace_added: u64,
     marketplace: Option<String>,
     selected_hooks: Option<String>,
     modal_focus: gpui::FocusHandle,
@@ -1323,6 +1348,7 @@ impl Manager {
     fn close_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.marketplace = None;
         self.selected_hooks = None;
+        self.marketplace_form = None;
         if let Some(focus) = self.return_focus.take() {
             focus.focus(window, cx);
         }
@@ -1590,21 +1616,12 @@ impl Manager {
         &self,
         title: String,
         content: Div,
-        controls: Vec<String>,
+        controls: Vec<gpui::FocusHandle>,
         pending: bool,
         t: &Theme,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let controls = controls
-            .into_iter()
-            .map(|id| {
-                focus::handle(SharedString::from(id), 0, window, cx)
-                    .read(cx)
-                    .handle
-                    .clone()
-            })
-            .collect::<Vec<_>>();
         gpui::deferred(
             div()
                 .absolute()
@@ -1675,12 +1692,24 @@ impl Manager {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        if let Some(form) = &self.marketplace_form {
+            let controls = form.update(cx, |form, cx| form.controls(window, cx));
+            return Some(self.modal(
+                "Add plugin marketplace".into(),
+                div().child(form.clone()),
+                controls,
+                state.pending,
+                t,
+                window,
+                cx,
+            ));
+        }
         if let Some(source) = &self.selected_hooks {
             let (content, controls) = self.hook_details(source, state, t, window, cx);
             return Some(self.modal(
                 hook_source_title(source, state),
                 content,
-                controls,
+                control_handles(controls, window, cx),
                 state.pending,
                 t,
                 window,
@@ -1740,7 +1769,11 @@ impl Manager {
             return Some(self.modal(
                 title_label,
                 confirm,
-                vec!["cancel-removal".into(), "confirm-removal".into()],
+                control_handles(
+                    vec!["cancel-removal".into(), "confirm-removal".into()],
+                    window,
+                    cx,
+                ),
                 pending,
                 t,
                 window,
@@ -1749,7 +1782,11 @@ impl Manager {
         }
         let menu = self.menu.as_ref()?;
         let options = match menu {
-            Menu::Add => vec![("Add MCP server", None), ("Manage marketplaces", None)],
+            Menu::Add => vec![
+                ("Create plugin", None),
+                ("Add a marketplace", None),
+                ("Add MCP server", None),
+            ],
             Menu::OAuth(name) => vec![
                 ("Automatic", Some((name.clone(), "auto"))),
                 (
@@ -1762,6 +1799,7 @@ impl Manager {
                 ),
             ],
         };
+        let can_create_plugin = state.plugin_creator.is_some();
         let content =
             div()
                 .w(px(260.))
@@ -1777,14 +1815,30 @@ impl Manager {
                         .rounded(px(10.))
                         .hover(|style| style.bg(t.menu_item_hover))
                         .child(text(label, 13., 18., 430., t.text))
-                        .on_activate(window, cx, move |this, _, cx| {
+                        .aria_disabled(label == "Create plugin" && !can_create_plugin)
+                        .when(label == "Create plugin" && !can_create_plugin, |d| {
+                            d.opacity(0.4)
+                        })
+                        .on_activate(window, cx, move |this, window, cx| {
+                            if label == "Create plugin" && !can_create_plugin {
+                                return;
+                            }
                             this.menu = None;
-                            if let Some((name, registration)) = &oauth {
+                            if label == "Create plugin" {
+                                window.dispatch_action(Box::new(OpenPluginCreator), cx);
+                            } else if let Some((name, registration)) = &oauth {
                                 this.registrations.insert(name.clone(), *registration);
                             } else if label == "Add MCP server" {
                                 this.open_form(None, serde_json::json!({"command":""}), cx);
                             } else {
-                                this.select_tab(Tab::Marketplace, cx);
+                                this.begin_modal(window, cx);
+                                let form = cx.new(marketplace_form::MarketplaceForm::new);
+                                cx.subscribe(&form, |this, _, _: &form::Close, cx| {
+                                    this.marketplace_form = None;
+                                    cx.notify();
+                                })
+                                .detach();
+                                this.marketplace_form = Some(form);
                             }
                             cx.notify();
                         })
@@ -1798,6 +1852,26 @@ impl Manager {
                 .into_any_element(),
         )
     }
+}
+
+fn control_handles(ids: Vec<String>, window: &mut Window, cx: &mut App) -> Vec<gpui::FocusHandle> {
+    ids.into_iter()
+        .map(|id| {
+            focus::handle(SharedString::from(id), 0, window, cx)
+                .read(cx)
+                .handle
+                .clone()
+        })
+        .collect()
+}
+
+pub fn plugin_creator_path(skills: &Value) -> Option<String> {
+    array(skills, "data")
+        .iter()
+        .flat_map(|entry| array(entry, "skills"))
+        .find(|skill| skill["name"] == "plugin-creator" && skill["scope"] == "system")
+        .and_then(|skill| skill["path"].as_str())
+        .map(str::to_owned)
 }
 
 fn unique_hooks(value: &Value) -> Vec<&Value> {
@@ -1881,6 +1955,7 @@ impl Render for Manager {
         let hooks = self.section == "Hooks";
         if self.marketplace.is_none()
             && self.selected_hooks.is_none()
+            && self.marketplace_form.is_none()
             && let Some(focus) = self.return_focus.take()
         {
             focus.focus(window, cx);
@@ -1956,11 +2031,17 @@ impl Render for Manager {
         } else {
             actions = actions
                 .child(
-                    action_button("manage-marketplaces", "Manage marketplaces", &t).on_activate(
-                        window,
-                        cx,
-                        |this, _, cx| this.select_tab(Tab::Marketplace, cx),
-                    ),
+                    action_button("browse-extension-directory", "Browse directory", &t)
+                        .on_activate(window, cx, {
+                            let path = if self.tab == Tab::Skills {
+                                "/skills"
+                            } else {
+                                "/plugins"
+                            };
+                            move |_, window, cx| {
+                                window.dispatch_action(Box::new(OpenExtensionDirectory(path)), cx)
+                            }
+                        }),
                 )
                 .child(action_button("integrations-add", "Add", &t).on_activate(
                     window,
