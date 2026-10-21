@@ -5,7 +5,9 @@
 use super::*;
 use crate::code_font;
 use crate::tooltip::{Side, tooltip};
-use gpui::{AnyElement, FocusHandle, MouseButton, PathBuilder, StyledText, canvas, point};
+use gpui::{
+    AnyElement, FocusHandle, MouseButton, PathBuilder, Stateful, StyledText, canvas, point,
+};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Color, FontStyle, StyleModifier, ThemeItem, ThemeSettings};
 use syntect::parsing::SyntaxSet;
@@ -170,6 +172,8 @@ pub(super) fn with_find(
         source,
         segments,
         block_index: 0,
+        link_width: std::cell::Cell::new(0.),
+        indent: std::cell::Cell::new(0.),
     }
     .blocks(Typography::default(), 0)
     .0
@@ -183,6 +187,10 @@ struct Markdown<'a> {
     source: &'a str,
     segments: &'a [StreamSegment],
     block_index: usize,
+    /// Width of the words of the link being built (see `Tag::Link`).
+    link_width: std::cell::Cell<f32>,
+    /// Indent of the first word of a link: its leading icon.
+    indent: std::cell::Cell<f32>,
 }
 
 impl Markdown<'_> {
@@ -391,8 +399,9 @@ impl Markdown<'_> {
             match self.events.next().expect("peeked event") {
                 Event::Text(s) | Event::Html(s) | Event::InlineHtml(s) => {
                     let mut at = self.events.start;
-                    let limit = LINE_WIDTH.with(|w| w.get());
+                    let line = LINE_WIDTH.with(|w| w.get());
                     for word in s.split_inclusive(' ') {
+                        let limit = line - self.indent.take();
                         for chunk in
                             break_long(self.window, word, style.size, style.weight, None, limit)
                         {
@@ -436,6 +445,10 @@ impl Markdown<'_> {
                             scheme.eq_ignore_ascii_case("http")
                                 || scheme.eq_ignore_ascii_case("https")
                         });
+                        let python = !external && dest_url.ends_with(".py");
+                        let icon_width = if python { 19. } else { 0. };
+                        self.link_width.set(0.);
+                        self.indent.set(icon_width);
                         let label = self
                             .inline(Typography {
                                 weight: 500.,
@@ -443,13 +456,20 @@ impl Markdown<'_> {
                                 ..style
                             })
                             .0;
-                        row.push(
+                        self.indent.set(0.);
+                        let line = LINE_WIDTH.with(|w| w.get());
+                        // A link wider than a line flows word by word like inline text; each
+                        // word keeps the link's behavior.
+                        let flow = line > 0. && self.link_width.get() + icon_width > line;
+                        let dest = dest_url.to_string();
+                        let link_box = |id: String| {
+                            let dest = dest.clone();
                             div()
-                                .id(SharedString::from(format!("file-link-{dest_url}")))
+                                .id(SharedString::from(id))
                                 .relative()
                                 .flex()
                                 .when(external, |d| {
-                                    let url = dest_url.to_string();
+                                    let url = dest.clone();
                                     let middle_url = url.clone();
                                     let menu_url = url.clone();
                                     d.tab_index(0)
@@ -470,12 +490,10 @@ impl Markdown<'_> {
                                 .when(!external, |d| {
                                     // `path:12` cites a line; the thread's cwd resolves a
                                     // relative path.
-                                    let (path, line) = dest_url
+                                    let (path, line) = dest
                                         .rsplit_once(':')
                                         .and_then(|(p, n)| Some((p.to_owned(), n.parse().ok()?)))
-                                        .map_or((dest_url.to_string(), None), |(p, n)| {
-                                            (p, Some(n))
-                                        });
+                                        .map_or((dest.clone(), None), |(p, n)| (p, Some(n)));
                                     d.on_click(move |_, window, cx| {
                                         window.dispatch_action(
                                             Box::new(crate::screens::diff::panel::OpenFile {
@@ -486,18 +504,32 @@ impl Markdown<'_> {
                                         )
                                     })
                                 })
-                                .when(!external && dest_url.ends_with(".py"), |d| {
-                                    d.child(div().w(px(19.))).child(
-                                        div().absolute().left_0().bottom(px(3.37)).child(icon(
-                                            "thread-lang-python",
-                                            16.,
-                                            tones(self.theme).mention,
-                                        )),
-                                    )
-                                })
-                                .children(label)
-                                .into_any_element(),
-                        );
+                        };
+                        let python_icon = |d: Stateful<Div>| {
+                            d.child(div().w(px(19.))).child(
+                                div().absolute().left_0().bottom(px(3.37)).child(icon(
+                                    "thread-lang-python",
+                                    16.,
+                                    tones(self.theme).mention,
+                                )),
+                            )
+                        };
+                        if flow {
+                            for (index, word) in label.into_iter().enumerate() {
+                                let mut piece =
+                                    link_box(format!("file-link-{dest}-{index}")).flex_none();
+                                if index == 0 && python {
+                                    piece = python_icon(piece);
+                                }
+                                row.push(piece.child(word).into_any_element());
+                            }
+                        } else {
+                            let mut piece = link_box(format!("file-link-{dest}"));
+                            if python {
+                                piece = python_icon(piece);
+                            }
+                            row.push(piece.children(label).into_any_element());
+                        }
                     } else {
                         let (children, checked) = self.inline(next);
                         row.extend(children);
@@ -546,6 +578,8 @@ impl Markdown<'_> {
     /// lays out a node per word.
     fn word(&self, s: &str, at: Option<usize>, style: Typography) -> Div {
         let (width, label) = self.label(s, at, style);
+        self.link_width
+            .set(self.link_width.get() + f32::from(width));
         div()
             .relative()
             .flex_none()
@@ -798,6 +832,11 @@ thread_local! {
 /// Tells the markdown below how wide its lines are (set by the thread before it builds turns).
 pub(super) fn set_line_width(width: Pixels) {
     LINE_WIDTH.with(|w| w.set(f32::from(width)));
+}
+
+/// The turn column's width as last laid out; `0` before the first layout.
+pub(super) fn line_width() -> f32 {
+    LINE_WIDTH.with(|w| w.get())
 }
 
 /// `overflow-wrap: break-word`: a word wider than a whole line breaks into chunks that each fill

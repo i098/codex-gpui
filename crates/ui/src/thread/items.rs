@@ -4,8 +4,96 @@ use gpui::{Image, ImageFormat};
 
 pub(super) type McpImages = RefCell<HashMap<String, Vec<(usize, Arc<Image>)>>>;
 
-/// Right-aligned user message: `bg-user-message`, 22 px squircle, at most 70% wide.
-pub(super) fn user_bubble(message: &str, t: &Theme) -> Div {
+/// Right-aligned user message: `bg-user-message`, 22 px squircle, at most 70% wide. A message
+/// that wraps to more than 20 lines collapses to 19 with `Show more`
+/// (`collapsible-user-message-content`, `collapsedLineCount` 20, ellipsis indicator).
+pub(super) fn user_bubble(
+    id: &SharedString,
+    message: &str,
+    find: Option<&FindPaint>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Div {
+    const COLLAPSED_LINES: usize = 20;
+    const LINE: f32 = 22.75;
+    let t = cx.theme().clone();
+    let width = markdown::line_width() * 0.7 - 32.;
+    let lines = if width > 0. {
+        let run = TextRun {
+            len: message.len(),
+            font: gpui::Font {
+                weight: FontWeight(430.),
+                ..font(SANS)
+            },
+            color: white(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        window
+            .text_system()
+            .shape_text(
+                message.to_owned().into(),
+                px(14.),
+                &[run],
+                Some(px(width)),
+                None,
+            )
+            .map(|lines| {
+                lines
+                    .iter()
+                    .map(|line| line.wrap_boundaries.len() + 1)
+                    .sum::<usize>()
+            })
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    let collapsible = lines > COLLAPSED_LINES;
+    let expanded =
+        window.use_keyed_state(SharedString::from(format!("{id}-expanded")), cx, |_, _| {
+            false
+        });
+    let collapsed = collapsible && !*expanded.read(cx);
+    let body = div()
+        .text_size(px(14.))
+        .line_height(px(LINE))
+        .font_weight(FontWeight(430.))
+        .text_color(white())
+        .when(collapsed, |d| d.line_clamp(COLLAPSED_LINES - 1))
+        .child(match find {
+            Some(find) => find.text(message, 0).into_any_element(),
+            None => message.to_owned().into_any_element(),
+        });
+    let toggle = collapsible.then(|| {
+        let state = expanded.clone();
+        div()
+            .id(SharedString::from(format!("{id}-toggle")))
+            .role(gpui::Role::Button)
+            .aria_label(if collapsed { "Show more" } else { "Show less" })
+            .mt(px(6.))
+            .h(px(21.))
+            .flex()
+            .items_center()
+            .gap(px(4.))
+            .cursor_pointer()
+            .on_click(move |_, _, cx| {
+                state.update(cx, |open, cx| {
+                    *open = !*open;
+                    cx.notify();
+                })
+            })
+            .child(text(
+                if collapsed { "Show more" } else { "Show less" },
+                14.,
+                21.,
+                430.,
+                t.text_tertiary,
+            ))
+            .when(collapsed, |d| {
+                d.child(icon("chevron-down-small", 14., t.text_tertiary))
+            })
+    });
     div().flex().flex_col().items_end().pb(px(30.)).child(
         div()
             .relative()
@@ -20,11 +108,11 @@ pub(super) fn user_bubble(message: &str, t: &Theme) -> Div {
             }))
             .child(
                 div()
-                    .text_size(px(14.))
-                    .line_height(px(22.75))
-                    .font_weight(FontWeight(430.))
-                    .text_color(white())
-                    .child(message.to_owned()),
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .child(body)
+                    .children(toggle),
             ),
     )
 }
