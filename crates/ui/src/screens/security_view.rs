@@ -535,10 +535,9 @@ impl SecurityPage {
             let action = self
                 .button(
                     "security-first-scan",
-                    "Start a scan",
+                    ("Start a scan", None),
                     Action::Navigate(Location::NewScan),
                     ButtonKind::SmallPrimary,
-                    None,
                     window,
                     cx,
                 )
