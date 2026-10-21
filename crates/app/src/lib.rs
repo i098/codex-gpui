@@ -10,6 +10,7 @@ pub mod host_settings;
 pub mod qa;
 mod search;
 mod section_actions;
+mod settings_subtrees;
 pub mod windows;
 
 use anyhow::{Context as _, Result, ensure};
@@ -210,6 +211,7 @@ pub enum Route {
     Home,
     Thread(String),
     Settings,
+    SettingsSubtree(String),
     /// Rail `Scheduled` (`/scheduled`): the Automations page.
     Scheduled,
     /// A sidebar task row (`/scheduled?automationId=<id>`): the task's thread.
@@ -2143,7 +2145,7 @@ impl Root {
         self.archive_page = None;
         self.mobile_page = None;
         self.page = match self.state.route.clone() {
-            Route::Settings => {
+            Route::Settings | Route::SettingsSubtree(_) => {
                 self.load_computer_use(cx);
                 // The Appearance page shows the theme the app keeps.
                 let mut config = self.config.clone();
@@ -2157,6 +2159,11 @@ impl Root {
                 let section = self.settings_section.take();
                 let (shell, page) = settings::shell(&config, &self.skills, section, cx);
                 self.settings_page = Some(page.clone());
+                if let Route::SettingsSubtree(path) = &self.state.route {
+                    if let Some(view) = self.settings_subtree(path, cx) {
+                        page.update(cx, |page, cx| page.show_subtree(view, cx));
+                    }
+                }
                 cx.subscribe(&page, |this, page, e: &SettingChanged, cx| {
                     this.write_setting(e, cx);
                     if e.path.starts_with("host.") && e.path != settings::THEME {
@@ -5436,6 +5443,8 @@ impl Render for Root {
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
                 this.navigate(Route::Settings, window, cx)
             }))
+            .on_action(cx.listener(Self::open_settings_subtree))
+            .on_action(cx.listener(Self::open_settings_parent))
             .on_action(cx.listener(|this, _: &LogOut, window, cx| {
                 if !this.logout_pending {
                     let email = this.account_email.clone();

@@ -33,6 +33,9 @@ use theme::{ActiveTheme as _, Theme};
 #[path = "computer_use.rs"]
 pub mod computer_use;
 
+#[path = "settings_subtrees.rs"]
+pub mod subtrees;
+
 /// The app's theme setting (`ThemeSetting`): `system`, `light` or `dark`.
 pub const THEME: &str = "host.appearance-theme";
 
@@ -167,6 +170,7 @@ const EXTERNAL: &str = "Profile";
 ///   access menu visibility, Bottom panel, Show predictions); session only.
 pub struct SettingsPage {
     section: &'static str,
+    subtree: Option<AnyView>,
     query: String,
     /// `config/read` config, plus a `host` object for host settings.
     values: Value,
@@ -192,6 +196,7 @@ impl SettingsPage {
         let values = config.clone();
         Self {
             section: "General",
+            subtree: None,
             query: String::new(),
             values,
             projectless_root,
@@ -225,6 +230,11 @@ impl SettingsPage {
 
     pub fn refresh_host(&mut self, values: Value, cx: &mut Context<Self>) {
         self.values["host"] = values;
+        cx.notify();
+    }
+
+    pub fn show_subtree(&mut self, view: AnyView, cx: &mut Context<Self>) {
+        self.subtree = Some(view);
         cx.notify();
     }
 
@@ -358,9 +368,16 @@ impl SettingsNav {
                 d.child(icon("arrow-up-right", 16., t.text_secondary).opacity(0.5))
             })
             .when(label != EXTERNAL, |d| {
-                d.on_click(cx.listener(move |this, _, _, cx| {
+                d.on_click(cx.listener(move |this, _, window, cx| {
+                    if this.page.read(cx).subtree.is_some() {
+                        window.dispatch_action(Box::new(subtrees::OpenSection {
+                            label: label.into(),
+                        }), cx);
+                        return;
+                    }
                     this.page.update(cx, |p, cx| {
                         p.section = label;
+                        p.subtree = None;
                         cx.notify();
                     })
                 }))
@@ -1001,7 +1018,14 @@ impl SettingsPane {
                     row(
                         "Open source licenses",
                         Some("Third-party notices for bundled dependencies"),
-                        button("View", t.text_alpha_5, None, t).into_any_element(),
+                        button("View", t.text_alpha_5, None, t)
+                            .id("open-source-licenses")
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(subtrees::OpenSubtree {
+                                    path: subtrees::LICENSES_PATH.into(),
+                                }), cx);
+                            })
+                            .into_any_element(),
                     ),
                     row(
                         "Plugins",
@@ -1138,6 +1162,9 @@ impl SettingsPane {
 impl Render for SettingsPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
+        if let Some(view) = &self.page.read(cx).subtree {
+            return view.clone().into_any_element();
+        }
         let section = self.page.read(cx).section;
         if section == "Computer use" {
             return super::computer_use::render(window, cx);

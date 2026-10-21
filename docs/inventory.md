@@ -312,9 +312,14 @@ Section registry: `gWa` (order) and `lQa` (lazy pages) in app-initial-6350d04672
 | `cloud-computer` | — | `ChatGptCloudBrowserSettings` | settings-65381b73a1a2.js |
 | `passwords` | — | `PasswordsSettings` | settings-156aaa691e7d.js |
 | `teams` | — | `TeamSettingsPage` | team-settings-page-9276d495b863.js |
+| `open-source-licenses` | General > View | `OpenSourceLicensesPage` | open-source-licenses-page-aa8c2e98f58d.js |
 
 - General settings (general-settings-65e65871cdcd.js): `Theme` `Light` / `Dark` / `System`, light and dark chrome themes (accent, background, foreground, UI/code fonts, contrast, translucent sidebar, import/copy theme), `UI font size`, `Code font size`, `Diff markers` (`Color` / `+/-`), `Use pointer cursors`, `Font smoothing`, `Reduce motion`, `Dock icon`, `Send shortcut`, `Follow-up behavior`.
 - Keyboard shortcuts (keyboard-shortcuts-settings-e5d452e7d34c.js) lists and rebinds the commands of section 11; `⌘/` opens `KeyboardShortcutsDialog` (keyboard-shortcuts-dialog-a55e88bf0464.js).
+- Native `/settings/open-source-licenses` reads `THIRD_PARTY_NOTICES.txt` from the app bundle, then the working directory's asset paths.
+  It retains loading and missing-file states.
+  Back replaces the subtree with General; selecting another settings section leaves the subtree.
+  The file lookup test and Linux headless page smoke pass; original/native pixel verification remains pending.
 
 ### 9.2 Login and onboarding
 
