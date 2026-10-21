@@ -1014,11 +1014,12 @@ impl Layer {
     fn clip_bounds(&self, [x0, y0, x1, y1]: [i32; 4]) -> [i32; 4] {
         let min = self.recorded.map_or(self.tile_origin, |r| [r[0], r[1]]);
         let max = self.clamp();
+        let [right, bottom] = self.size();
         [
-            x0.max(min[0]),
-            y0.max(min[1]),
-            x1.min(max[0]),
-            y1.min(max[1]),
+            x0.max(min[0]).max(-self.origin[0]),
+            y0.max(min[1]).max(-self.origin[1]),
+            x1.min(max[0]).min(right),
+            y1.min(max[1]).min(bottom),
         ]
     }
 
@@ -1054,9 +1055,9 @@ impl Layer {
         })
     }
 
-    /// Raster inputs besides the recorded operations. Local recordings can reuse sprites
-    /// while scrolling; window-space recordings also depend on the tile grid's origin.
-    fn key(&self) -> impl std::fmt::Debug {
+    /// Unclipped local drawings can reuse sprites while scrolling.
+    /// Clipped drawings include the visible rectangle in their cache key.
+    fn key(&self, bounds: [i32; 4]) -> impl std::fmt::Debug {
         (
             self.tile,
             self.tile_origin,
@@ -1064,6 +1065,7 @@ impl Layer {
             self.composited,
             self.device,
             self.recorded,
+            self.clip_bounds(bounds),
         )
     }
 }
@@ -1289,8 +1291,7 @@ fn composited_sprites(
     draw: &dyn Fn(&Canvas),
 ) -> Vec<Sprite> {
     let size = layer.clamp();
-    let (x0, y0) = (x0.max(0), y0.max(0));
-    let (x1, y1) = (x1.min(size[0]), y1.min(size[1]));
+    let [x0, y0, x1, y1] = layer.clip_bounds([x0, y0, x1, y1]);
     if x0 >= x1 || y0 >= y1 {
         return Vec::new();
     }
@@ -1948,7 +1949,7 @@ fn paint_op(op: Op, color: Hsla, layer: Layer, window: &mut Window, cx: &App) {
     if matches!(op, Op::ClipLayer { .. }) || op.restored(a) {
         // ponytail: restored layers ignore the ancestors' AA clips.
         let col = color4f(color);
-        let sprites = cached(format!("{op:?}{:?}{col:?}", layer.key()), || {
+        let sprites = cached(format!("{op:?}{:?}{col:?}", layer.key(op.bbox())), || {
             restore_sprites(&op, col, layer)
         });
         return paint_sprites(&sprites, color, layer.origin, window, cx);
@@ -1960,7 +1961,7 @@ fn paint_op(op: Op, color: Hsla, layer: Layer, window: &mut Window, cx: &App) {
     let clips = clips(window, layer);
     let black = is_black(color, a);
     let wide = wide(color);
-    let key = format!("{op:?}{:?}{a}{black}{wide}{clips:?}", layer.key());
+    let key = format!("{op:?}{:?}{a}{black}{wide}{clips:?}", layer.key(bbox));
     let sprites = sprites(key, || {
         raster(bbox, layer, a, black, wide, &clips, &|c, col| {
             op.draw(c, col)
@@ -2536,7 +2537,7 @@ pub(crate) fn paint_icon(
         let sprites = cached(
             format!(
                 "{key}#composited{flip_x}{clip:?}{w}x{h}{rgba:?}{:?}{clips:?}",
-                layer.key()
+                layer.key(bbox)
             ),
             || {
                 composited_sprites(bbox, layer, &|c| {
@@ -2573,7 +2574,7 @@ pub(crate) fn paint_icon(
         let sprites = sprites(
             format!(
                 "{key}#{n}{flip_x}{clip:?}{w}x{h}{:?}{a}{black}{wide}{clips:?}",
-                layer.key()
+                layer.key(bbox)
             ),
             || raster(bbox, layer, a, black, wide, &clips, &draw),
         );
