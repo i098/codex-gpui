@@ -325,14 +325,7 @@ impl Composer {
             .flex()
             .items_center()
             .child(model_button)
-            .child(
-                pill("dictate", t)
-                    .tab_index(0)
-                    .focus_visible(menu::trigger_focus)
-                    .w(px(28.))
-                    .justify_center()
-                    .child(footer_icon("mic", t.text)),
-            )
+            .child(self.dictation_button(t, cx))
             .child(send);
         div()
             .flex()

@@ -6,6 +6,7 @@
 mod cloud_task;
 pub use cloud_task::parse_task_response;
 pub mod computer_use_requests;
+pub mod dictation;
 mod features;
 pub mod host;
 pub mod host_settings;
@@ -694,6 +695,9 @@ impl Root {
             _update_policy: None,
             state,
         };
+        if !cx.has_global::<ui::composer::dictation::Dispatcher>() {
+            cx.set_global(dictation::dispatcher(root.host.clone()));
+        }
         let this = cx.weak_entity();
         window.on_window_should_close(cx, move |window, cx| {
             this.update(cx, |this, cx| {
@@ -977,6 +981,7 @@ impl Root {
 
     /// Replaces the desktop host and cancels pending UI callbacks for its reads and updates.
     pub fn set_host(&mut self, host: Arc<dyn host::Host>, cx: &mut Context<Self>) {
+        dictation::dispatcher(host.clone()).install(cx);
         self.cloud = None;
         self.automation_load = None;
         self.project_load = None;

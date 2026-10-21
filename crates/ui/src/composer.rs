@@ -67,6 +67,7 @@ actions!(
 
 mod attach;
 pub mod computer_use;
+pub mod dictation;
 mod editor;
 mod footer;
 mod requests;
@@ -647,6 +648,8 @@ pub struct Composer {
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
+    dictation: Option<dictation::Active>,
+    dictation_error: Option<String>,
 }
 
 impl Composer {
@@ -725,6 +728,8 @@ impl Composer {
             on_approval: None,
             on_model: None,
             plain_field: None,
+            dictation: None,
+            dictation_error: None,
         }
     }
 
@@ -878,6 +883,9 @@ impl Composer {
             .as_ref()
             .map(|approval| approval.identity.as_ref())
             == approval.as_ref().map(|approval| approval.identity.as_ref());
+        if !same_request {
+            self.cancel_dictation(cx);
+        }
         if !same_request
             && let Some(old) = &self.approval
             && old.form.is_some()
@@ -1133,6 +1141,8 @@ impl Composer {
     }
 
     pub fn set_text(&mut self, s: &str, cx: &mut Context<Self>) {
+        self.cancel_dictation(cx);
+        self.dictation_error = None;
         self.content = s.into();
         self.mentions.clear();
         self.selected_range = s.len()..s.len();
@@ -1246,6 +1256,7 @@ impl Composer {
         {
             return;
         }
+        self.cancel_dictation(cx);
         let submission = Submission {
             text: if self.mentions.is_empty() && self.on_cancel_edit.is_none() {
                 std::mem::take(&mut self.content)
@@ -1282,6 +1293,7 @@ impl Composer {
     }
 
     fn decide(&mut self, decision: ApprovalDecision, window: &mut Window, cx: &mut Context<Self>) {
+        self.cancel_dictation(cx);
         if self.approval.is_none() {
             return;
         }
@@ -1345,6 +1357,10 @@ impl Composer {
     }
 
     fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dictation.is_some() {
+            self.cancel_dictation(cx);
+            return;
+        }
         if self.marked_range.is_some() {
             return;
         }
@@ -1961,6 +1977,13 @@ impl Render for Composer {
                     .child(self.editor(cx).when(self.request_number, |d| d.pr(px(30.))))
                     .when(self.request_number, |d| {
                         d.child(self.request_number_stepper(&t, cx))
+                    })
+                    .when(
+                        self.request_parent.is_some() && !self.secret && !self.request_number,
+                        |d| d.child(self.dictation_button(&t, cx)),
+                    )
+                    .when_some(self.dictation_error.clone(), |d, error| {
+                        d.child(text(error, 12., 16., 400., t.text))
                     }),
             );
         }
@@ -2113,6 +2136,9 @@ impl Render for Composer {
                 d.child(self.approval_card(&a, &t, cx))
             })
             .child(div().children(tray).child(card))
+            .when_some(self.dictation_error.clone(), |d, error| {
+                d.child(text(error, 12., 16., 400., t.text))
+            })
             .when_some(self.context_menu.as_ref(), |d, menu| {
                 d.child(menu.overlay(
                     "composer-menu",
