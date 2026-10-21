@@ -10,7 +10,35 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
 };
+use ui::composer::dictation::{
+    Command as DictationCommand, Dispatcher, Event as DictationEvent, Session,
+};
 use ui::screens::diff::panel::comments::model_comments;
+
+type DictationControls = (
+    std::sync::mpsc::Receiver<DictationCommand>,
+    async_channel::Sender<DictationEvent>,
+);
+
+fn install_controlled_dictation(
+    fx: &mut Fx,
+) -> Result<std::sync::mpsc::Receiver<DictationControls>> {
+    let (control, sessions) = std::sync::mpsc::channel();
+    let dispatcher = Dispatcher::new(move || {
+        let (commands, received) = std::sync::mpsc::channel();
+        let (events, delivered) = async_channel::unbounded();
+        control
+            .send((received, events))
+            .map_err(|error| error.to_string())?;
+        Ok(Session {
+            commands,
+            events: delivered,
+        })
+    });
+    fx.cx
+        .update_window(fx.window, |_, _, cx| dispatcher.install(cx))?;
+    Ok(sessions)
+}
 
 #[test]
 fn proxy() {
@@ -318,9 +346,6 @@ fn model_comment_dismissal_uses_confirmation_and_persists() -> Result<()> {
 
 #[test]
 fn controlled_dictation_targets_the_comment_and_cancels_on_close() -> Result<()> {
-    use ui::composer::dictation::{
-        Command as DictationCommand, Dispatcher, Event as DictationEvent, Session,
-    };
     common::install_panic_hook();
     let mut fx = Fx::new()?;
     fx.keys("cmd-2")?;
@@ -341,20 +366,7 @@ fn controlled_dictation_targets_the_comment_and_cancels_on_close() -> Result<()>
             .unwrap()
             .clone()
     });
-    let (control, sessions) = std::sync::mpsc::channel();
-    let dispatcher = Dispatcher::new(move || {
-        let (commands, received) = std::sync::mpsc::channel();
-        let (events, delivered) = async_channel::unbounded();
-        control
-            .send((received, events))
-            .map_err(|error| error.to_string())?;
-        Ok(Session {
-            commands,
-            events: delivered,
-        })
-    });
-    fx.cx
-        .update_window(fx.window, |_, _, cx| dispatcher.install(cx))?;
+    let sessions = install_controlled_dictation(&mut fx)?;
     fx.click((1099., 357.))?;
     let (commands, events) = sessions.recv_timeout(std::time::Duration::from_secs(2))?;
     events.send_blocking(DictationEvent::Recording)?;
@@ -377,6 +389,12 @@ fn controlled_dictation_targets_the_comment_and_cancels_on_close() -> Result<()>
     fx.wait("second controlled recording", |fx| {
         fx.read(|_, cx| editor.read(cx).dictation_label() == "Stop dictation")
     })?;
+    fx.click((1221., 357.))?;
+    ensure!(draft(&fx), "Comment saved before the pending transcript");
+    ensure!(matches!(
+        commands.recv_timeout(std::time::Duration::from_secs(2)),
+        Ok(DictationCommand::Finish)
+    ));
     fx.click((1148., 357.))?;
     ensure!(!draft(&fx));
     ensure!(matches!(
@@ -386,9 +404,94 @@ fn controlled_dictation_targets_the_comment_and_cancels_on_close() -> Result<()>
     let _ = events.try_send(DictationEvent::Finished(Ok("late result".into())));
     fx.advance(std::time::Duration::from_millis(100))?;
     ensure!(fx.read(|_, cx| editor.read(cx).field_text() == "replacement"));
+    ensure!(
+        comment_text(&fx).is_none(),
+        "Cancelled dictation saved a comment"
+    );
     ensure!(fx.composer_text()? == "Keep this draft.");
     println!(
         "Controlled comment dictation passed without microphone capture or a permission request."
     );
+    Ok(())
+}
+
+#[test]
+fn comment_save_waits_for_dictation_and_keeps_failures_editable() -> Result<()> {
+    let (repo, mut fx) = prepare(false)?;
+    fx.drag((686., 194.4), (686., 302.4), 6)?;
+    fx.click((704., 302.4))?;
+    fx.wait("comment editor", |fx| draft(fx))?;
+    fx.type_text("keep ")?;
+    let editor = fx.read(|root, cx| {
+        root.diff_panel()
+            .unwrap()
+            .read(cx)
+            .comment_draft()
+            .unwrap()
+            .clone()
+    });
+    let sessions = install_controlled_dictation(&mut fx)?;
+    fx.keys("tab enter")?;
+    let (commands, events) = sessions.recv_timeout(std::time::Duration::from_secs(2))?;
+    events.send_blocking(DictationEvent::Recording)?;
+    fx.wait("controlled recording", |fx| {
+        fx.read(|_, cx| editor.read(cx).dictation_label() == "Stop dictation")
+    })?;
+    fx.keys("tab tab tab enter")?;
+    ensure!(draft(&fx), "Comment saved before the transcript arrived");
+    ensure!(comment_text(&fx).is_none());
+    ensure!(matches!(
+        commands.recv_timeout(std::time::Duration::from_secs(2)),
+        Ok(DictationCommand::Finish)
+    ));
+    events.send_blocking(DictationEvent::Finished(Ok("dictated".into())))?;
+    fx.wait("saved transcribed comment", |fx| {
+        !draft(fx) && comment_text(fx).as_deref() == Some("keep dictated")
+    })?;
+    let settings =
+        app::host_settings::Settings::load(repo.path().join(".proof-settings/host.json"))?;
+    ensure!(
+        settings.read_all()["diff_comments"][SUBTRACT][0]["content"][0]["text"] == "keep dictated"
+    );
+
+    fx.click((850., 375.4))?;
+    fx.wait("editing saved comment", |fx| draft(fx))?;
+    let editor = fx.read(|root, cx| {
+        root.diff_panel()
+            .unwrap()
+            .read(cx)
+            .comment_draft()
+            .unwrap()
+            .clone()
+    });
+    fx.keys("cmd-a")?;
+    fx.type_text("retry ")?;
+    fx.keys("tab tab enter")?;
+    let (commands, events) = sessions.recv_timeout(std::time::Duration::from_secs(2))?;
+    events.send_blocking(DictationEvent::Recording)?;
+    fx.wait("controlled retry recording", |fx| {
+        fx.read(|_, cx| editor.read(cx).dictation_label() == "Stop dictation")
+    })?;
+    fx.keys("tab tab tab tab enter")?;
+    ensure!(draft(&fx), "Save closed an unfinished transcription");
+    ensure!(matches!(
+        commands.recv_timeout(std::time::Duration::from_secs(2)),
+        Ok(DictationCommand::Finish)
+    ));
+    events.send_blocking(DictationEvent::Finished(Err(
+        "Controlled transcription failure".into(),
+    )))?;
+    fx.wait("transcription failure", |fx| {
+        fx.read(|_, cx| editor.read(cx).dictation_error().is_some())
+    })?;
+    ensure!(draft(&fx));
+    ensure!(comment_text(&fx).as_deref() == Some("keep dictated"));
+    fx.click((850., 375.4))?;
+    fx.keys("cmd-a")?;
+    fx.type_text("retry safe")?;
+    fx.keys("tab tab tab tab enter")?;
+    fx.wait("saved corrected text", |fx| {
+        !draft(fx) && comment_text(fx).as_deref() == Some("retry safe")
+    })?;
     Ok(())
 }

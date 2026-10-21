@@ -362,6 +362,8 @@ The original recordings, masks and strict gates stay unchanged; remaining toolti
 
 The shared entry point is `Composer::dictate(window, cx)`.
 `cancel_dictation(cx)` cancels capture and pending insertion; `dictation_label()` and `dictation_error()` expose the state.
+`finish_dictation(window, cx)` requests transcription without cancelling the session.
+`Completion` reports success after transcript processing, failure, or cancellation.
 Request text fields use the same dispatcher; secret and numeric fields do not expose Dictate.
 The comment editor owner calls this API on its own Composer entity.
 
@@ -549,6 +551,9 @@ The composer groups comments in one count attachment.
 Its preview opens the selected source file; `Remove comments attachment` clears the stored comments.
 Closing the keyboard preview restores focus to its trigger.
 The comment's Dictate control targets its own Composer through the shared dispatcher.
+Comment and Save wait for a successful completion before persisting the edited text.
+A failed or cancelled transcription keeps the comment editable and preserves its stored value.
+Clicking the comment card returns focus to its editor, including after an error.
 Controlled native input checks transcript placement, finish/cancel commands, and rejection of late results after closing.
 The test does not open a microphone or request permission.
 Dismissed model comments persist after confirmation.

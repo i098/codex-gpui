@@ -1,7 +1,7 @@
 use super::comments::{Comment, Position, Side};
 use super::*;
-use crate::composer::Composer;
-use gpui::{MouseMoveEvent, Subscription};
+use crate::composer::{Composer, dictation::Completion};
+use gpui::{Focusable as _, MouseMoveEvent, Subscription};
 use std::{collections::HashSet, num::NonZeroU32};
 
 struct Entry {
@@ -16,6 +16,8 @@ struct Draft {
     hunk: Option<String>,
     editing: Option<String>,
     editor: Entity<Composer>,
+    save_after_dictation: bool,
+    _completion: Subscription,
     _observe: Subscription,
 }
 
@@ -402,11 +404,14 @@ impl DiffPanel {
             end: (position.side, position.line.get()),
         });
         let observe = cx.observe(&editor, |_, _, cx| cx.notify());
+        let completion = cx.subscribe_in(&editor, window, Self::dictation_completed);
         self.annotations.draft = Some(Draft {
             position,
             hunk,
             editing,
             editor,
+            save_after_dictation: false,
+            _completion: completion,
             _observe: observe,
         });
         self.annotations.selecting = false;
@@ -416,11 +421,40 @@ impl DiffPanel {
         cx.notify();
     }
 
+    fn focus_comment(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(draft) = &self.annotations.draft {
+            let focus = draft.editor.read(cx).focus_handle(cx);
+            window.focus(&focus, cx);
+            cx.stop_propagation();
+        }
+    }
+
     fn dictate_comment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(draft) = &self.annotations.draft {
             draft
                 .editor
                 .update(cx, |editor, cx| editor.dictate(window, cx));
+        }
+    }
+
+    fn dictation_completed(
+        &mut self,
+        editor: &Entity<Composer>,
+        completion: &Completion,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(draft) = &mut self.annotations.draft else {
+            return;
+        };
+        if draft.editor.entity_id() != editor.entity_id() {
+            return;
+        }
+        let save = std::mem::take(&mut draft.save_after_dictation);
+        if save && *completion == Completion::Succeeded {
+            self.save_comment(window, cx);
+        } else {
+            cx.notify();
         }
     }
 
@@ -446,9 +480,20 @@ impl DiffPanel {
     }
 
     fn save_comment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(draft) = &self.annotations.draft else {
+        let Some(draft) = &mut self.annotations.draft else {
             return;
         };
+        if draft.save_after_dictation {
+            return;
+        }
+        if draft.editor.read(cx).has_active_dictation() {
+            draft.save_after_dictation = true;
+            draft
+                .editor
+                .update(cx, |editor, cx| editor.finish_dictation(window, cx));
+            cx.notify();
+            return;
+        }
         let text = draft.editor.read(cx).field_text().trim().to_owned();
         if text.is_empty() {
             return;
@@ -695,7 +740,9 @@ impl DiffPanel {
             && matches(&draft.position)
         {
             let editing = draft.editing.is_some();
-            let enabled = !draft.editor.read(cx).field_text().trim().is_empty();
+            let enabled = (!draft.editor.read(cx).field_text().trim().is_empty()
+                || draft.editor.read(cx).has_active_dictation())
+                && !draft.save_after_dictation;
             let dictation_label = draft.editor.read(cx).dictation_label();
             rows.push((
                 div()
@@ -705,6 +752,10 @@ impl DiffPanel {
                     .font_family(SANS)
                     .child(
                         local_comment_frame(&draft.position, t)
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, window, cx| this.focus_comment(window, cx)),
+                            )
                             .child(div().p(px(12.)).child(draft.editor.clone()))
                             .child(
                                 div()
