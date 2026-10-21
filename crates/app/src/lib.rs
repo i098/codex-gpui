@@ -18,6 +18,7 @@ pub use routes::Route;
 mod plugins;
 mod search;
 mod section_actions;
+pub(crate) mod settings_integrations;
 mod settings_subtrees;
 mod signin;
 pub mod updater;
@@ -483,6 +484,7 @@ impl Root {
                 Err(error) => eprintln!("codex-gpui: cannot load host settings: {error:#}"),
             }
         }
+        cx.set_global(settings::integrations::State::default());
         let this = cx.weak_entity();
         let computer_use = this.clone();
         cx.set_global(ComputerUseState {
@@ -4460,6 +4462,7 @@ impl Root {
     pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
         self.plugins_event(&event, cx);
         self.oauth_account_event(&event, cx);
+        self.settings_integration_event(&event, cx);
         if let Some(login) = &self.login {
             login.update(cx, |login, cx| login.apply(&event, cx));
             return;
