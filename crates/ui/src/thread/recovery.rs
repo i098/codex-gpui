@@ -176,10 +176,8 @@ impl Render for History {
                         .aria_label("Loading task")
                         .size(px(28.))
                         .child(
-                            gpui::svg()
-                                .path("icons/sidebar-cmd-spinner.svg")
-                                .size(px(28.))
-                                .text_color(t.text_secondary)
+                            crate::icon::icon("sidebar-cmd-spinner", 28., t.text_secondary)
+                                .own_layer(None)
                                 .with_animation(
                                     "history-loading",
                                     gpui::Animation::new(std::time::Duration::from_secs(1))
