@@ -25,7 +25,10 @@ use std::{
 /// `size` x `size` CSS px icon `assets/icons/<name>.svg` in `color` (same signature as
 /// `crate::icon`).
 pub fn icon(name: &str, size: f32, color: Hsla) -> Icon {
-    icon_sized(name, size, size, color)
+    Icon {
+        authored: true,
+        ..icon_sized(name, size, size, color)
+    }
 }
 
 /// An icon whose box is not square, e.g. `codex-wordmark` (53.22 x 18).
@@ -34,6 +37,7 @@ pub fn icon_sized(name: &str, width: f32, height: f32, color: Hsla) -> Icon {
         name: name.into(),
         width,
         height,
+        authored: false,
         flip_x: false,
         composited: None,
         own_layer: false,
@@ -52,6 +56,9 @@ pub struct Icon {
     /// CSS size: the svg's viewBox maps onto it unsnapped.
     width: f32,
     height: f32,
+    /// An authored CSS size (`size-4`), which Blink's LayoutUnit truncates: 16 px at 110% is
+    /// a 35.1875 device px box, and the svg scales to it.
+    authored: bool,
     flip_x: bool,
     composited: Option<Point<Pixels>>,
     own_layer: bool,
@@ -191,6 +198,12 @@ impl Element for Icon {
         let (composited, runtime) = (self.composited, self.runtime);
         let transformation = self.transformation;
         let css = size(px(self.width), px(self.height));
+        let css = if self.authored {
+            let unit = window.scale_factor() * 64.;
+            css.map(|v| px((f32::from(v) * unit).trunc() / unit))
+        } else {
+            css
+        };
         self.interactivity.paint(
             global_id,
             inspector_id,
