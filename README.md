@@ -282,6 +282,8 @@ The Plugins rail opens the native plugin directory and the Skills page.
 Both pages load app-server data and support search.
 Plugin installation, removal, enablement, and sharing wait for server responses.
 Failed operations keep the last confirmed catalog state.
+Share creates a remote link only after Copy link; only personal-marketplace plugins can publish a shared version.
+Plugins with install-time authentication require confirmed app connections before Try now.
 New skill prepares an editable draft without sending a turn.
 App connections open the original browser setup flow; Check connection reads the app list again.
 Manage opens Settings > Plugins, which owns the management tabs and marketplace controls.

@@ -76,6 +76,9 @@ impl Root {
         });
         let bridge = self.bridge.clone();
         let cwd = self.cwd.clone();
+        let personal_marketplace = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(|home| PathBuf::from(home).join(".agents/plugins/marketplace.json"));
         let available = page.read(cx).available;
         let task = cx.background_spawn(async move {
             let plugins = if available {
@@ -95,6 +98,7 @@ impl Root {
                 plugins,
                 skills,
                 apps,
+                personal_marketplace,
             }
         });
         cx.spawn(async move |this, cx| {
@@ -231,7 +235,33 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let personal = match action {
+            Action::Share(plugin)
+            | Action::CreateShare(plugin)
+            | Action::UpdateSharedVersion(plugin)
+            | Action::EditPlugin(plugin) => Some(plugin),
+            _ => None,
+        };
+        if personal.is_some_and(|plugin| page.read(cx).data.personal_path(plugin).is_none()) {
+            page.update(cx, |page, cx| {
+                page.error = Some(
+                    "Only plugins from your personal marketplace can be edited or shared".into(),
+                );
+                cx.notify();
+            });
+            return;
+        }
         match action {
+            Action::Share(plugin) => {
+                page.update(cx, |page, cx| {
+                    page.share_url = page
+                        .detail_data
+                        .value()
+                        .and_then(|detail| detail["shareUrl"].as_str())
+                        .map(str::to_owned);
+                    page.show_modal(Modal::Share(plugin.clone()), window, cx);
+                });
+            }
             Action::Manage => self.open_settings_section("Plugins", window, cx),
             Action::Navigate(route) => {
                 self.open_plugins(route, window, cx);
@@ -261,10 +291,14 @@ impl Root {
                     .find(|current| current.id() == plugin.id())
                     .cloned();
                 let Some(plugin) = current.filter(|plugin| {
-                    plugin.installed() && plugin.enabled() && plugin.disabled_reason().is_none()
+                    let state = page.read(cx);
+                    state.data.can_use(plugin, state.detail_data.value())
                 }) else {
                     page.update(cx, |page, cx| {
-                        page.error = Some("Enable this plugin before trying it".into());
+                        page.error = Some(
+                            "Enable this plugin and connect its required apps before trying it"
+                                .into(),
+                        );
                         cx.notify();
                     });
                     return;
@@ -379,14 +413,27 @@ impl Root {
                 let Ok((action, value)) = result else {
                     return;
                 };
+                let copy_link = matches!(action, Action::CreateShare(_));
                 match action {
-                    Action::Share(plugin) | Action::UpdateSharedVersion(plugin) => {
+                    Action::CreateShare(plugin) | Action::UpdateSharedVersion(plugin) => {
                         page.update(cx, |page, cx| {
                             page.share_url = value["shareUrl"].as_str().map(str::to_owned);
+                            if copy_link && let Some(url) = &page.share_url {
+                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(url.clone()));
+                            }
                             let mut published = (*plugin).clone();
-                            published.summary["shareContext"] =
-                                json!({"remotePluginId":value["remotePluginId"]});
-                            page.modal = Some(Modal::Share(Arc::new(published)));
+                            if !published.summary["shareContext"].is_object() {
+                                published.summary["shareContext"] = json!({});
+                            }
+                            published.summary["shareContext"]["remotePluginId"] =
+                                value["remotePluginId"].clone();
+                            if let Resource::Ready(detail) = &mut page.detail_data {
+                                detail["shareUrl"] = value["shareUrl"].clone();
+                                detail["summary"] = published.summary.clone();
+                            }
+                            let published = Arc::new(published);
+                            page.detail = Some(published.clone());
+                            page.modal = Some(Modal::Share(published));
                             cx.notify();
                         });
                     }
@@ -546,11 +593,31 @@ async fn perform(bridge: &Bridge, host: &dyn host::Host, action: &Action) -> Res
         Action::EnableApp { id, enabled } => {
             write_config(bridge, format!("apps.{id}.enabled"), json!(enabled)).await
         }
-        Action::Share(plugin) | Action::UpdateSharedVersion(plugin) => {
+        Action::CreateShare(plugin) | Action::UpdateSharedVersion(plugin) => {
             let path = plugin
                 .local_path()
                 .context("Only a local plugin can publish a shared version")?;
-            bridge.request("plugin/share/save", json!({"pluginPath":path,"remotePluginId":plugin.summary["shareContext"]["remotePluginId"]})).await
+            let remote_id = &plugin.summary["shareContext"]["remotePluginId"];
+            if matches!(action, Action::UpdateSharedVersion(_)) {
+                ensure!(
+                    remote_id.is_string(),
+                    "Create a share link before updating its version"
+                );
+            }
+            let result: Value = bridge
+                .request(
+                    "plugin/share/save",
+                    json!({"pluginPath":path,"remotePluginId":remote_id}),
+                )
+                .await?;
+            ensure!(
+                result["remotePluginId"].is_string()
+                    && result["shareUrl"]
+                        .as_str()
+                        .is_some_and(|url| !url.is_empty()),
+                "The server returned an incomplete plugin share"
+            );
+            Ok(result)
         }
         Action::DisconnectApp(id) => connector_request(
             host,

@@ -114,3 +114,52 @@ fn new_skill_prepares_an_editable_draft_without_sending_a_turn() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn opening_share_does_not_publish_a_plugin() -> Result<()> {
+    let mut fx = Fx::captured("dark", (1280., 832.), catalog_fixture()?)?;
+    fx.action(Box::new(ui::OpenPlugins))?;
+    fx.wait("plugin catalog", |fx| {
+        fx.read(|root, cx| {
+            root.plugins_page()
+                .is_some_and(|page| matches!(page.read(cx).data.plugins, Resource::Ready(_)))
+        })
+    })?;
+    let page = fx
+        .read(|root, _| root.plugins_page().cloned())
+        .context("plugin page")?;
+    let plugin = fx.read(|_, cx| {
+        let state = page.read(cx);
+        let mut plugin = (**state
+            .data
+            .plugins
+            .value()
+            .unwrap()
+            .iter()
+            .flat_map(|market| &market.plugins)
+            .find(|plugin| plugin.id() == "chrome@openai-bundled")
+            .unwrap())
+        .clone();
+        plugin.marketplace_path = Some(
+            state
+                .data
+                .personal_marketplace
+                .as_ref()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+        );
+        std::sync::Arc::new(plugin)
+    });
+    fx.cx
+        .update(|cx| page.update(cx, |page, cx| page.act(Action::Share(plugin), cx)));
+    fx.wait("share dialog", |fx| {
+        fx.read(|_, cx| matches!(page.read(cx).modal, Some(Modal::Share(_))))
+    })?;
+    ensure!(
+        fx.sent()?
+            .iter()
+            .all(|message| message["method"] != "plugin/share/save")
+    );
+    Ok(())
+}
