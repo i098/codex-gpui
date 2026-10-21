@@ -35,6 +35,7 @@ pub mod screenshot;
 mod search;
 mod section_actions;
 mod security;
+mod settings_git;
 pub mod settings_import;
 pub(crate) mod settings_integrations;
 mod settings_subtrees;
@@ -538,6 +539,7 @@ impl Root {
         features::install_shortcuts(cx);
         let this = cx.weak_entity();
         usage::install(this.clone(), cx);
+        settings_git::init(this.clone(), cx);
         let computer_use = this.clone();
         cx.set_global(ComputerUseState {
             available: cfg!(target_os = "macos") && !bridge.is_acp(),
@@ -5336,6 +5338,7 @@ impl Root {
                 self.toast(Toast::danger(message), cx);
             } else {
                 self.sync_terminal(cx);
+                self.git_setting_saved(key, cx);
                 let message = match key {
                     "git-branch-prefix" => Some("Saved branch prefix".to_owned()),
                     "git-pull-request-merge-method" => {

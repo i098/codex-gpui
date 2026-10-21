@@ -255,11 +255,15 @@ Thread replies retain the optional rollout `path` for archived-chat search.
 Run `cargo test -p app --test host global_state` for the filesystem and request checks.
 This support increment does not change the Archived chats page.
 
-Settings > Git stores branch, merge, push, draft, diff, and pull request instruction preferences in `host-settings.json`.
+Settings > Git stores branch, merge, push, draft, and pull request instruction preferences in `host-settings.json`.
 Review delivery uses the existing app-server config store.
 Branch prefix saves on blur or Enter; multiline instructions save after three idle seconds or when the page closes.
+Save and Command-S also write pending instructions.
 The focused `cargo test -p app --test git_settings -- --test-threads=1` native replay verifies saved values after reopening Git settings.
-This page does not implement Git operations or active pull request watchers, and it does not complete other settings pages.
+PR watch preference changes update active PR heartbeat instructions; paused automations remain unchanged.
+Settings > Worktrees provides General and Environments tabs, root and retention preferences, live worktree rows, and row actions.
+Pinned conversations prevent worktree deletion.
+The Environments tab lists project and inherited files and edits setup scripts, cleanup scripts, platform overrides, and named actions.
 
 Settings > Voice keeps microphone, sound, screen-context, and local dictionary preferences in the same host settings store.
 Its gate adapter accepts trusted original Statsig and capability values; missing inputs never enable Voice.
