@@ -412,21 +412,23 @@ impl Markdown<'_> {
                             at += chunk.len();
                             let word = self.word(chunk, Some(here), style);
                             // No break opportunity between a chip and the text that touches it.
-                            if glue && !chunk.starts_with(char::is_whitespace) {
-                                if let Some(chip) = row.pop() {
-                                    row.push(
-                                        div()
-                                            .flex()
-                                            .flex_none()
-                                            .child(chip)
-                                            .child(word)
-                                            .into_any_element(),
-                                    );
-                                    glue = false;
-                                    continue;
-                                }
-                            }
+                            let chip = if glue && !chunk.starts_with(char::is_whitespace) {
+                                row.pop()
+                            } else {
+                                None
+                            };
                             glue = false;
+                            if let Some(chip) = chip {
+                                row.push(
+                                    div()
+                                        .flex()
+                                        .flex_none()
+                                        .child(chip)
+                                        .child(word)
+                                        .into_any_element(),
+                                );
+                                continue;
+                            }
                             row.push(word.into_any_element());
                         }
                     }
