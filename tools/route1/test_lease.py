@@ -32,7 +32,7 @@ def check_lease():
         )
         try:
             assert cancelled.stdout.readline().strip() == "held"
-            cancelled.terminate()
+            cancelled.kill()
             cancelled.wait(timeout=5)
             blocked = subprocess.run(
                 [str(lease), "true"], env={**env, "R1_CAPTURE_WAIT": "0.05"}, timeout=5,
@@ -50,6 +50,7 @@ def check_lease():
         pool_env = {**env, "R1_CAPTURE_CDP_URLS": "http://slot-1,http://slot-2,http://slot-3"}
         holders = []
         endpoints = set()
+        by_endpoint = {}
         try:
             for _ in range(3):
                 process = subprocess.Popen(
@@ -57,16 +58,24 @@ def check_lease():
                     env=pool_env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
                 )
                 holders.append(process)
-                endpoints.add(process.stdout.readline().strip())
+                endpoint = process.stdout.readline().strip()
+                endpoints.add(endpoint)
+                by_endpoint[endpoint] = process
             assert endpoints == {"http://slot-1", "http://slot-2", "http://slot-3"}, endpoints
-            blocked = subprocess.run(
-                [str(lease), "true"], env={**pool_env, "R1_CAPTURE_WAIT": "0.05"}, timeout=5,
+            for endpoint in ["http://slot-2", "http://slot-3"]:
+                process = by_endpoint[endpoint]
+                process.communicate("\n", timeout=5)
+                holders.remove(process)
+            available = subprocess.run(
+                [str(lease), sys.executable, "-c", "import os; print(os.environ['R1_CDP'])"],
+                env={**pool_env, "R1_CAPTURE_WAIT": "0.05"}, timeout=5, text=True, capture_output=True,
             )
-            assert blocked.returncode == 75, blocked.returncode
+            assert available.returncode == 0, available.stderr
+            assert available.stdout.strip() in {"http://slot-2", "http://slot-3"}, available.stdout
         finally:
             for process in holders:
                 process.communicate("\n", timeout=5)
-    print("capture lease: exclusion, cancellation, deadlines, and three-slot capacity passed")
+    print("capture lease: exclusion, cancellation, deadlines, and idle-slot selection passed")
 
 
 if __name__ == "__main__":

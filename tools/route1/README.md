@@ -33,7 +33,8 @@ The server needs the extracted 26.1007.30912 renderer at `/tmp/cgx/asar-x/webvie
 Keep `R1_SF_FONTS` unset on the Mac capture route; even `R1_SF_FONTS=0` enables font aliases.
 Close only owned contexts and stop only owned server and tunnel PIDs.
 
-The lease uses `flock` on Linux and assigns captures to three slots in round-robin order.
+The lease uses `flock` on Linux and tries all three slots, starting at a rotating slot.
+It waits only while every slot is busy.
 Its default lock prefix is `/sdc-disk/tmp/cgx/cgx-capture-service/capture.lock`.
 `R1_CAPTURE_LOCK` overrides the prefix; every worker must use the same prefix.
 The lease sets `R1_CDP` to the selected slot's endpoint.
