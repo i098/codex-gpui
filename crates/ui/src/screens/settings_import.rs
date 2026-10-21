@@ -18,7 +18,10 @@ use theme::{ActiveTheme as _, Theme};
 #[derive(Clone)]
 pub enum ImportAction {
     Refresh,
-    Import(Vec<DetectedItem>),
+    Import {
+        items: Vec<DetectedItem>,
+        selection: BTreeMap<String, bool>,
+    },
     SetSync(bool),
     SavePreferences(Preferences),
     OpenItem(ItemType, String),
@@ -84,6 +87,7 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
             import_completed: 0,
             preferences_saved: 0,
             attention_tab: ItemType::McpServerConfig,
+            composited: false,
         };
         if let Some(dispatch) = cx
             .try_global::<ImportState>()
@@ -100,7 +104,9 @@ enum Modal {
     Review {
         provider: Provider,
         items: Arc<Vec<DetectedItem>>,
-        selected: BTreeSet<usize>,
+        selected: BTreeMap<String, bool>,
+        choices: Vec<ReviewChoice>,
+        tools_expanded: bool,
     },
     Customize {
         preferences: Preferences,
@@ -108,11 +114,23 @@ enum Modal {
     },
 }
 
+struct ReviewChoice {
+    id: String,
+    keys: Vec<String>,
+    title: String,
+    detail: String,
+    icon: &'static str,
+    tooltip: Option<String>,
+    nested: bool,
+    expandable: bool,
+}
+
 #[derive(Clone)]
 enum Control {
     Dispatch(ImportAction),
     Review(Provider),
-    Select(usize),
+    Select(Vec<String>),
+    ToggleTools,
     Import,
     Customize,
     Category(ItemType),
@@ -139,11 +157,31 @@ struct ImportPage {
     import_completed: u64,
     preferences_saved: u64,
     attention_tab: ItemType,
+    composited: bool,
 }
 
 impl ImportPage {
     fn state(cx: &App) -> ImportState {
         cx.try_global::<ImportState>().cloned().unwrap_or_default()
+    }
+
+    fn surface(&self, theme: &Theme) -> AnyElement {
+        if self.composited {
+            deco(
+                &self.layer,
+                20.,
+                shapes::Corner::Squircle,
+                theme.background_panel,
+                Some(theme.border),
+            )
+        } else {
+            on_card(
+                20.,
+                shapes::Corner::Squircle,
+                theme.background_panel,
+                Some(theme.border),
+            )
+        }
     }
 
     fn dispatch(action: ImportAction, window: &mut Window, cx: &mut App) {
@@ -175,14 +213,18 @@ impl ImportPage {
                 let Load::Ready(items) = &state.detected else {
                     return;
                 };
+                let choices = review_choices(items, provider);
+                let selected = choices
+                    .iter()
+                    .flat_map(|choice| choice.keys.iter().cloned())
+                    .map(|key| (key, true))
+                    .collect();
                 self.modal = Some(Modal::Review {
                     provider,
                     items: items.clone(),
-                    selected: items
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(index, item)| (item.provider_id == provider).then_some(index))
-                        .collect(),
+                    selected,
+                    choices,
+                    tools_expanded: false,
                 });
                 cx.update_global::<ImportState, _>(|state, _| {
                     state.reviewing = true;
@@ -191,24 +233,41 @@ impl ImportPage {
                 self.return_focus = window.focused(cx);
                 self.modal_focus.focus(window, cx);
             }
-            Control::Select(index) => {
-                if let Some(Modal::Review { selected, .. }) = &mut self.modal
-                    && !selected.remove(&index)
-                {
-                    selected.insert(index);
+            Control::Select(keys) => {
+                if let Some(Modal::Review { selected, .. }) = &mut self.modal {
+                    let value = !keys.iter().all(|key| selected.get(key) == Some(&true));
+                    for key in keys {
+                        selected.insert(key, value);
+                    }
+                }
+            }
+            Control::ToggleTools => {
+                if let Some(Modal::Review { tools_expanded, .. }) = &mut self.modal {
+                    *tools_expanded = !*tools_expanded;
                 }
             }
             Control::Import => {
                 if let Some(Modal::Review {
-                    selected, items, ..
+                    provider,
+                    selected,
+                    items,
+                    ..
                 }) = &self.modal
                 {
-                    let selected = selected
+                    let chosen: Vec<_> = items
                         .iter()
-                        .filter_map(|index| items.get(*index).cloned())
-                        .collect::<Vec<_>>();
-                    if !selected.is_empty() && !state.pending {
-                        Self::dispatch(ImportAction::Import(selected), window, cx);
+                        .filter(|item| item.provider_id == *provider && item.selected(selected))
+                        .cloned()
+                        .collect();
+                    if !chosen.is_empty() && !state.pending {
+                        Self::dispatch(
+                            ImportAction::Import {
+                                items: chosen,
+                                selection: selected.clone(),
+                            },
+                            window,
+                            cx,
+                        );
                     }
                 }
             }
@@ -288,6 +347,7 @@ impl ImportPage {
                 if !disabled {
                     this.activate(control.clone(), window, cx);
                 }
+                cx.stop_propagation();
             }))
             .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
                 if !disabled && matches!(event.keystroke.key.as_str(), "enter" | "space") {
@@ -310,12 +370,23 @@ impl ImportPage {
         let t = cx.theme().clone();
         let handle = focus::handle(id.clone(), 0, window, cx);
         let element = focus::ring(
-            button(label, t.text_alpha_5, None, &t)
-                .id(id)
-                .role(gpui::Role::Button)
-                .aria_label(label)
-                .aria_disabled(disabled)
-                .when(disabled, |d| d.opacity(0.4)),
+            button(
+                label,
+                if matches!(control, Control::Customize)
+                    && matches!(self.modal, Some(Modal::Customize { .. }))
+                {
+                    t.text_alpha_10
+                } else {
+                    t.text_alpha_5
+                },
+                None,
+                &t,
+            )
+            .id(id)
+            .role(gpui::Role::Button)
+            .aria_label(label)
+            .aria_disabled(disabled)
+            .when(disabled, |d| d.opacity(0.4)),
             &handle,
             px(12.5),
             px(2.),
@@ -390,6 +461,25 @@ impl ImportPage {
         let t = cx.theme().clone();
         let id = id.into();
         let handle = focus::handle(id.clone(), 0, window, cx);
+        let accent = matches!(control, Control::Select(_));
+        let fill = if checked == Some(false) {
+            gpui::transparent_black()
+        } else if accent {
+            t.switch_track_checked
+        } else {
+            gpui::Hsla {
+                a: 0.96,
+                ..t.menu_background
+            }
+        };
+        let border = if accent && checked != Some(false) {
+            t.switch_track_checked
+        } else {
+            t.border_strong
+        };
+        let size = if accent { 16. } else { 14. };
+        // Inline controls sit 1.3 px below flex centering at the original 14 px / 21 px font size.
+        let baseline_offset = (21. - size) / 2. + 1.3;
         let element = focus::ring(
             div()
                 .id(id)
@@ -401,26 +491,23 @@ impl ImportPage {
                     Some(false) => gpui::Toggled::False,
                     None => gpui::Toggled::Mixed,
                 })
-                .size(px(16.))
+                .size(px(size))
                 .relative()
+                .top(px(baseline_offset))
                 .flex()
                 .items_center()
                 .justify_center()
                 .child(on_card(
-                    5.,
+                    if accent { 3. } else { 5. },
                     shapes::Corner::Round,
-                    if checked != Some(false) {
-                        t.text
-                    } else {
-                        t.text_alpha_5
-                    },
-                    Some(t.border),
+                    fill,
+                    Some(border),
                 ))
                 .when(checked == Some(true), |d| {
-                    d.child(icon("menu-check", 12., t.text_inverse))
+                    d.child(icon("menu-check", 12., t.text))
                 })
                 .when(checked.is_none(), |d| {
-                    d.child(div().w(px(8.)).h(px(2.)).bg(t.text_inverse))
+                    d.child(div().w(px(8.)).h(px(2.)).bg(t.text))
                 })
                 .when(disabled, |d| d.opacity(0.4)),
             &handle,
@@ -428,7 +515,10 @@ impl ImportPage {
             px(2.),
             cx,
         );
-        self.bind_control(element, control, disabled, cx)
+        div()
+            .w(px(size))
+            .h(px(21.))
+            .child(self.bind_control(element, control, disabled, cx))
             .into_any_element()
     }
 
@@ -514,7 +604,7 @@ impl ImportPage {
                             row(
                                 provider.label(),
                                 None,
-                                Some(provider_icon(provider, &t)),
+                                Some(provider_icon(provider, 15., &t)),
                                 self.action(
                                     provider.id(),
                                     "Import",
@@ -534,7 +624,7 @@ impl ImportPage {
             "Import from another AI app",
             subtitle,
             rows,
-            &self.layer,
+            self.surface(&t),
             &t,
         )
     }
@@ -584,7 +674,7 @@ impl ImportPage {
                     &t,
                 ),
             ],
-            &self.layer,
+            self.surface(&t),
             &t,
         )
     }
@@ -601,8 +691,27 @@ impl ImportPage {
                 return Some(group(
                     "Import history",
                     None,
-                    vec![row("Loading import history", None, None, spinner(&t), &t)],
-                    &self.layer,
+                    vec![
+                        div().child(
+                            div()
+                                .id("import-history-loading")
+                                .role(gpui::Role::Status)
+                                .px(px(16.))
+                                .py(px(12.))
+                                .flex()
+                                .items_center()
+                                .gap(px(8.))
+                                .child(spinner(&t))
+                                .child(text(
+                                    "Loading import history",
+                                    13.,
+                                    18.571_428,
+                                    400.,
+                                    t.text_secondary,
+                                )),
+                        ),
+                    ],
+                    self.surface(&t),
                     &t,
                 ));
             }
@@ -624,7 +733,7 @@ impl ImportPage {
                         ),
                         &t,
                     )],
-                    &self.layer,
+                    self.surface(&t),
                     &t,
                 ));
             }
@@ -636,222 +745,196 @@ impl ImportPage {
         let newest = histories
             .first()
             .map_or(0, |history| history.completed_at_ms);
-        let mut rows = Vec::new();
+        let mut entries = Vec::new();
         if let Some(items) = &state.running {
-            rows.push(row("Importing now", None, None, spinner(&t), &t));
+            let mut rows = vec![row("Importing now", None, None, spinner(&t), &t)];
             for category in ItemType::ALL {
                 if items.iter().any(|item| item.item.item_type == category) {
-                    rows.push(row(
+                    rows.push(nested_row(
                         category.label(),
-                        None,
                         None,
                         text("Importing", 12., 16., 430., t.text_secondary).into_any_element(),
                         &t,
                     ));
                 }
             }
+            entries.push(card(rows, self.surface(&t), &t));
         }
-        let visible = histories
-            .iter()
-            .filter(|history| self.show_all_history || newest - history.completed_at_ms <= 60_000);
         let mut visible_count = 0;
-        for history in visible {
+        for history in histories
+            .iter()
+            .filter(|history| self.show_all_history || newest - history.completed_at_ms <= 60_000)
+        {
             visible_count += 1;
+            let mut rows = Vec::new();
             let id = &history.import_id;
             let expanded = self.expanded.contains(id);
             let title = history.provider_id.map_or_else(
                 || "Import".into(),
                 |provider| format!("Imported from {}", provider.label()),
             );
-            let summary = if history.failures.is_empty() {
-                format!("{} imported", history.successes.len())
-            } else {
-                format!(
-                    "{} imported · {} did not import",
-                    history.successes.len(),
-                    history.failures.len()
-                )
-            };
-            let history_control = Control::History(id.clone());
-            let arrow =
-                gpui::svg()
-                    .path("icons/chevron-down.svg")
-                    .size(px(12.))
-                    .text_color(t.text_tertiary)
-                    .with_transformation(gpui::Transformation::rotate(gpui::radians(
-                        if expanded { std::f32::consts::PI } else { 0. },
-                    )));
+            let warning_count = history_warning_count(history, state);
+            let mut summary = format!("{} imported", history.successes.len());
+            if !history.failures.is_empty() {
+                summary.push_str(&format!(" · {} did not import", history.failures.len()));
+            }
+            if warning_count > 0 {
+                summary.push_str(&format!(" · {warning_count} need review"));
+            }
+            let description = div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(px(8.))
+                .child(text(
+                    history_time(history.completed_at_ms),
+                    12.,
+                    16.,
+                    430.,
+                    t.text_secondary,
+                ))
+                .child(text(summary, 12., 16., 430., t.text_secondary));
+            let arrow = history_arrow(expanded, RowKind::Standard, &t);
             rows.push(
                 self.disclosure(
                     format!("history-{id}"),
-                    row(
+                    row_content(
                         title,
-                        Some(format!(
-                            "{}  {summary}",
-                            history_time(history.completed_at_ms)
-                        )),
+                        Some(description.into_any_element()),
                         history
                             .provider_id
-                            .map(|provider| provider_icon(provider, &t)),
-                        arrow.into_any_element(),
+                            .map(|provider| provider_icon(provider, 12.5, &t)),
+                        arrow,
                         &t,
+                        RowKind::Standard,
                     ),
                     expanded,
-                    history_control,
+                    Control::History(id.clone()),
                     window,
                     cx,
                 ),
             );
-            if !expanded {
-                continue;
-            }
-            let mut categories = BTreeSet::new();
-            for item in history.successes.iter().chain(&history.failures) {
-                categories.insert(item.item_type);
-            }
-            if categories.is_empty() {
-                rows.push(row(
-                    "No results recorded",
-                    None,
-                    None,
-                    div().into_any_element(),
-                    &t,
-                ));
-            }
-            for category in categories {
-                let count = history
+            if expanded {
+                let categories: BTreeSet<_> = history
                     .successes
                     .iter()
-                    .filter(|item| item.item_type == category)
-                    .count();
-                let failures = history
-                    .failures
-                    .iter()
-                    .filter(|item| item.item_type == category)
-                    .count();
-                let category_key = (id.clone(), category);
-                let expanded = self.categories.contains(&category_key);
-                let summary = if failures == 0 {
-                    format!("{count} imported")
-                } else {
-                    format!("{count} imported · {failures} did not import")
-                };
-                let detail = match category {
-                    ItemType::Commands => Some("Converted into Codex skills".into()),
-                    ItemType::Hooks if count > 0 => {
-                        Some("Manage imported hooks in Hooks settings".into())
-                    }
-                    _ => None,
-                };
-                let arrow = gpui::svg()
-                    .path("icons/chevron-down.svg")
-                    .size(px(12.))
-                    .text_color(t.text_tertiary)
-                    .with_transformation(gpui::Transformation::rotate(gpui::radians(
-                        if expanded {
-                            0.
-                        } else {
-                            -std::f32::consts::FRAC_PI_2
-                        },
-                    )));
-                rows.push(
-                    self.disclosure(
+                    .chain(&history.failures)
+                    .map(|item| item.item_type)
+                    .collect();
+                if categories.is_empty() {
+                    rows.push(nested_row(
+                        "No results recorded",
+                        None,
+                        div().into_any_element(),
+                        &t,
+                    ));
+                }
+                for category in categories {
+                    let count = history
+                        .successes
+                        .iter()
+                        .filter(|item| item.item_type == category)
+                        .count();
+                    let failed = history
+                        .failures
+                        .iter()
+                        .filter(|item| item.item_type == category)
+                        .count();
+                    let auth = imported_auth_count(history, state, category);
+                    let expanded = self.categories.contains(&(id.clone(), category));
+                    let detail = match category {
+                        ItemType::Commands => Some("Converted into Codex skills".into()),
+                        ItemType::Hooks if count > 0 => {
+                            Some("Manage imported hooks in Hooks settings".into())
+                        }
+                        ItemType::McpServerConfig if auth > 0 => Some(format!(
+                            "{auth} {} authentication",
+                            if auth == 1 {
+                                "server needs"
+                            } else {
+                                "servers need"
+                            }
+                        )),
+                        _ => None,
+                    };
+                    let status = div()
+                        .flex()
+                        .items_center()
+                        .gap(px(12.))
+                        .child(category_status(category, count, failed, auth, &t))
+                        .child(history_arrow(expanded, RowKind::Nested, &t));
+                    rows.push(self.disclosure(
                         format!("history-{id}-{}", category.id()),
-                        row(
-                            category.label(),
-                            detail,
-                            None,
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(12.))
-                                .child(text(
-                                    summary,
-                                    12.,
-                                    16.,
-                                    500.,
-                                    if failures > 0 { t.text_error } else { t.text },
-                                ))
-                                .child(arrow)
-                                .into_any_element(),
-                            &t,
-                        )
-                        .pl(px(32.)),
+                        nested_row(category.label(), detail, status.into_any_element(), &t),
                         expanded,
                         Control::HistoryCategory(id.clone(), category),
                         window,
                         cx,
-                    ),
-                );
-                if expanded {
-                    for (failed, item) in history
-                        .successes
-                        .iter()
-                        .map(|item| (false, item))
-                        .chain(history.failures.iter().map(|item| (true, item)))
-                        .filter(|(_, item)| item.item_type == category)
-                    {
-                        let label = if category == ItemType::Sessions {
-                            item.title.clone().unwrap_or_else(|| "Untitled chat".into())
-                        } else {
-                            item.source
-                                .clone()
-                                .unwrap_or_else(|| "Imported item".into())
-                        };
-                        let detail = if failed {
-                            item.message.clone()
-                        } else {
-                            item.target
-                                .clone()
-                                .filter(|target| Some(target) != item.source.as_ref())
-                        };
-                        let control = if !failed
-                            && matches!(
-                                category,
-                                ItemType::Sessions
-                                    | ItemType::Skills
-                                    | ItemType::Commands
-                                    | ItemType::McpServerConfig
-                                    | ItemType::Plugins
-                            ) {
-                            item.target.as_ref().map(|target| {
-                                self.action(
-                                    format!("open-import-{id}-{target}"),
-                                    match category {
-                                        ItemType::Sessions => "Open chat",
-                                        ItemType::Skills | ItemType::Commands => "Open in Skills",
-                                        ItemType::McpServerConfig => "Open MCP settings",
-                                        ItemType::Plugins => "Open plugin",
-                                        _ => "Open",
-                                    },
-                                    Control::Dispatch(ImportAction::OpenItem(
-                                        category,
-                                        target.clone(),
-                                    )),
-                                    false,
-                                    window,
-                                    cx,
-                                )
-                            })
-                        } else {
-                            None
-                        };
-                        rows.push(
-                            row(
+                    ));
+                    if expanded {
+                        for (failed, item) in history
+                            .successes
+                            .iter()
+                            .map(|item| (false, item))
+                            .chain(history.failures.iter().map(|item| (true, item)))
+                            .filter(|(_, item)| item.item_type == category)
+                        {
+                            let label = if category == ItemType::Sessions {
+                                item.title.clone().unwrap_or_else(|| "Untitled chat".into())
+                            } else {
+                                item.source
+                                    .clone()
+                                    .unwrap_or_else(|| "Imported item".into())
+                            };
+                            let detail = if failed {
+                                item.message.clone()
+                            } else {
+                                item.target
+                                    .clone()
+                                    .filter(|target| Some(target) != item.source.as_ref())
+                            };
+                            let control = if !failed
+                                && matches!(
+                                    category,
+                                    ItemType::Sessions
+                                        | ItemType::Skills
+                                        | ItemType::Commands
+                                        | ItemType::McpServerConfig
+                                        | ItemType::Plugins
+                                ) {
+                                item.target.as_ref().map(|target| {
+                                    self.action(
+                                        format!("open-import-{id}-{target}"),
+                                        match category {
+                                            ItemType::Sessions => "Open chat",
+                                            ItemType::Skills | ItemType::Commands => {
+                                                "Open in Skills"
+                                            }
+                                            ItemType::McpServerConfig => "Open MCP settings",
+                                            _ => "Open plugin",
+                                        },
+                                        Control::Dispatch(ImportAction::OpenItem(
+                                            category,
+                                            target.clone(),
+                                        )),
+                                        false,
+                                        window,
+                                        cx,
+                                    )
+                                })
+                            } else {
+                                None
+                            };
+                            rows.push(nested_row(
                                 label,
                                 detail,
-                                None,
                                 control.unwrap_or_else(|| div().into_any_element()),
                                 &t,
-                            )
-                            .pl(px(48.)),
-                        );
-                    }
-                    if category == ItemType::Hooks {
-                        rows.push(
-                            row(
+                            ));
+                        }
+                        if category == ItemType::Hooks {
+                            rows.push(nested_row(
                                 "Manage imported hooks",
-                                None,
                                 None,
                                 self.action(
                                     format!("manage-hooks-{id}"),
@@ -865,15 +948,15 @@ impl ImportPage {
                                     cx,
                                 ),
                                 &t,
-                            )
-                            .pl(px(48.)),
-                        );
+                            ));
+                        }
                     }
                 }
             }
+            entries.push(card(rows, self.surface(&t), &t));
         }
         if visible_count < histories.len() {
-            rows.push(div().p(px(12.)).flex().justify_center().child(self.action(
+            entries.push(div().flex().justify_center().child(self.action(
                 "more-import-history",
                 "View more",
                 Control::MoreHistory,
@@ -882,8 +965,13 @@ impl ImportPage {
                 cx,
             )));
         }
-
-        Some(group("Import history", None, rows, &self.layer, &t))
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .child(section_heading("Import history", None, &t))
+                .child(div().flex().flex_col().gap(px(6.)).children(entries)),
+        )
     }
     fn attention(
         &self,
@@ -1040,21 +1128,147 @@ impl ImportPage {
             "Needs attention",
             Some("Finish setting up items from a previous import"),
             rows,
-            &self.layer,
+            self.surface(&t),
             &t,
         ))
+    }
+
+    fn review_row(
+        &self,
+        choice: &ReviewChoice,
+        selected: &BTreeMap<String, bool>,
+        tools_expanded: bool,
+        disabled: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let theme = cx.theme().clone();
+        let count = choice
+            .keys
+            .iter()
+            .filter(|key| selected.get(*key) == Some(&true))
+            .count();
+        let checked = if count == choice.keys.len() {
+            Some(true)
+        } else if count == 0 {
+            Some(false)
+        } else {
+            None
+        };
+        let extra = if choice.expandable {
+            let handle = focus::handle("import-tools-details", 0, window, cx);
+            let trigger = focus::ring(
+                div()
+                    .id("import-tools-details")
+                    .role(gpui::Role::Button)
+                    .aria_label(if tools_expanded {
+                        "Hide Tools & setup details"
+                    } else {
+                        "Show Tools & setup details"
+                    })
+                    .aria_expanded(tools_expanded)
+                    .size(px(20.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(history_arrow(tools_expanded, RowKind::Standard, &theme)),
+                &handle,
+                px(4.),
+                px(0.),
+                cx,
+            );
+            Some(
+                self.bind_control(trigger, Control::ToggleTools, disabled, cx)
+                    .into_any_element(),
+            )
+        } else if let Some(tooltip) = &choice.tooltip {
+            let id = format!("import-info-{}", choice.id);
+            let handle = focus::handle(id.clone(), 0, window, cx)
+                .read(cx)
+                .handle
+                .clone();
+            let click_focus = handle.clone();
+            let trigger = div()
+                .id(id)
+                .role(gpui::Role::Button)
+                .track_focus(&handle)
+                .aria_label(if choice.id == "projects" {
+                    "What will be imported for Projects"
+                } else {
+                    "What will be imported for Chat sessions"
+                })
+                .size(px(20.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(icon("import-info", 16., theme.text_secondary))
+                .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
+                    click_focus.focus(window, cx);
+                    cx.stop_propagation();
+                });
+            Some(
+                crate::tooltip::tooltip(trigger, tooltip.clone(), None, crate::tooltip::Side::Top)
+                    .delay(std::time::Duration::ZERO)
+                    .side_offset(px(8.))
+                    .focus_handle(&handle)
+                    .into_any_element(),
+            )
+        } else {
+            None
+        };
+        let label_control = Control::Select(choice.keys.clone());
+        div()
+            .relative()
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .px(px(12.))
+            .py(px(12.))
+            .when(choice.nested, |row| row.pl(px(32.)))
+            .child(icon(choice.icon, 20., theme.text))
+            .child(
+                div()
+                    .id(format!("import-label-{}", choice.id))
+                    .min_w_0()
+                    .flex_1()
+                    .overflow_hidden()
+                    .child(text(choice.title.clone(), 14., 20., 430., theme.text))
+                    .child(text(
+                        choice.detail.clone(),
+                        12.,
+                        16.,
+                        430.,
+                        theme.text_secondary,
+                    ))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        if !disabled {
+                            this.activate(label_control.clone(), window, cx);
+                        }
+                    })),
+            )
+            .children(extra)
+            .child(div().h(px(21.)).flex().items_center().child(self.checkbox(
+                (
+                    format!("import-choice-{}", choice.id),
+                    choice.title.as_str(),
+                ),
+                checked,
+                Control::Select(choice.keys.clone()),
+                disabled,
+                window,
+                cx,
+            )))
     }
 
     fn dialog_action(
         &self,
         (id, label): (&'static str, &'static str),
         control: Control,
-        (fill, foreground): (gpui::Hsla, gpui::Hsla),
+        (fill, foreground, border): (gpui::Hsla, gpui::Hsla, Option<gpui::Hsla>),
         disabled: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let theme = cx.theme().clone();
         let handle = focus::handle(id, 0, window, cx);
         let element = focus::ring(
             div()
@@ -1063,19 +1277,12 @@ impl ImportPage {
                 .aria_label(label)
                 .aria_disabled(disabled)
                 .h(px(32.))
-                .px(px(16.))
-                .border_1()
-                .border_color(gpui::transparent_black())
+                .px(px(17.))
                 .relative()
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(on_card(
-                    12.5,
-                    shapes::Corner::Squircle,
-                    fill,
-                    Some(theme.border),
-                ))
+                .child(on_card(12.5, shapes::Corner::Squircle, fill, border))
                 .child(text(label, 14., 18., 430., foreground))
                 .when(disabled, |element| element.opacity(0.4)),
             &handle,
@@ -1094,43 +1301,47 @@ impl ImportPage {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let modal = self.modal.as_ref()?;
+        let review = matches!(modal, Modal::Review { .. });
         let t = cx.theme().clone();
         let mut rows = Vec::new();
         let mut footer_rows = Vec::new();
         let mut focus_ids = Vec::new();
-        let (title, subtitle, save, disabled) = match modal {
+        let (title, subtitle, save, disabled): (SharedString, &str, Control, bool) = match modal {
             Modal::Review {
                 provider,
                 items,
                 selected,
+                choices,
+                tools_expanded,
             } => {
-                for (index, item) in items
+                for choice in choices
                     .iter()
-                    .enumerate()
-                    .filter(|(_, item)| item.provider_id == *provider)
+                    .filter(|choice| !choice.nested || *tools_expanded)
                 {
-                    let label = item.item.item_type.label();
-                    rows.push(row(
-                        label,
-                        Some(item.item.description.clone()),
-                        None,
-                        self.checkbox(
-                            (format!("import-item-{index}"), label),
-                            Some(selected.contains(&index)),
-                            Control::Select(index),
-                            state.pending,
-                            window,
-                            cx,
-                        ),
-                        &t,
+                    rows.push(self.review_row(
+                        choice,
+                        selected,
+                        *tools_expanded,
+                        state.pending,
+                        window,
+                        cx,
                     ));
-                    focus_ids.push(format!("import-item-{index}"));
+                    focus_ids.push(format!("import-choice-{}", choice.id));
+                    if choice.expandable {
+                        focus_ids.push("import-tools-details".into());
+                    }
+                    if choice.tooltip.is_some() {
+                        focus_ids.push(format!("import-info-{}", choice.id));
+                    }
                 }
                 (
-                    format!("Import from {}", provider.label()),
-                    "Bring your setup, projects, and recent chats to ChatGPT",
+                    "Select items to import".into(),
+                    "Choose what to bring over. Your existing setup won’t be affected.",
                     Control::Import,
-                    selected.is_empty() || state.pending,
+                    state.pending
+                        || !items
+                            .iter()
+                            .any(|item| item.provider_id == *provider && item.selected(selected)),
                 )
             }
             Modal::Customize {
@@ -1157,20 +1368,30 @@ impl ImportPage {
                         ItemType::Commands => Some("Imported as skills".into()),
                         _ => None,
                     };
-                    rows.push(row(
-                        category.label(),
-                        detail,
-                        Some(icon(category.icon(), 20., t.text_secondary).into_any_element()),
-                        self.checkbox(
-                            (format!("sync-category-{}", category.id()), category.label()),
-                            preferences.category_checked(category, &state.sync_state),
-                            Control::Category(category),
-                            false,
-                            window,
-                            cx,
+                    rows.push(
+                        div().child(
+                            row(
+                                category.label(),
+                                detail,
+                                Some(icon(category.icon(), 20., t.text).into_any_element()),
+                                self.checkbox(
+                                    (format!("sync-category-{}", category.id()), category.label()),
+                                    preferences.category_checked(category, &state.sync_state),
+                                    Control::Category(category),
+                                    false,
+                                    window,
+                                    cx,
+                                ),
+                                &t,
+                            )
+                            .id(format!("sync-row-{}", category.id()))
+                            .on_click(cx.listener(
+                                move |this, _, window, cx| {
+                                    this.activate(Control::Category(category), window, cx);
+                                },
+                            )),
                         ),
-                        &t,
-                    ));
+                    );
                     focus_ids.push(format!("sync-category-{}", category.id()));
                 }
                 footer_rows.push(row(
@@ -1232,7 +1453,11 @@ impl ImportPage {
         let cancel = self.dialog_action(
             ("cancel-import-dialog", "Cancel"),
             Control::Close,
-            (t.primary_soft_alpha, t.text),
+            if review {
+                (gpui::transparent_black(), t.text_tertiary, None)
+            } else {
+                (t.primary_soft_alpha, t.text, Some(t.border))
+            },
             state.pending,
             window,
             cx,
@@ -1247,19 +1472,63 @@ impl ImportPage {
                 },
             ),
             save,
-            (t.button_primary_solid, t.menu_background),
+            (t.button_primary_solid, t.menu_background, Some(t.border)),
             disabled,
             window,
             cx,
         );
         focus_ids.extend(["cancel-import-dialog".into(), "save-import-dialog".into()]);
+        let close = review.then(|| {
+            focus_ids.push("close-import-review".into());
+            let handle = focus::handle("close-import-review", 0, window, cx);
+            self.bind_control(
+                focus::ring(
+                    div()
+                        .id("close-import-review")
+                        .role(gpui::Role::Button)
+                        .aria_label("Close")
+                        .absolute()
+                        .top(px(16.))
+                        .right(px(16.))
+                        .size(px(24.))
+                        .p(px(4.))
+                        .child(icon("diff-tab-close", 16., t.text.opacity(0.8))),
+                    &handle,
+                    px(4.),
+                    px(0.),
+                    cx,
+                ),
+                Control::Close,
+                state.pending,
+                cx,
+            )
+            .into_any_element()
+        });
         let focus_order: Vec<_> = focus_ids
             .into_iter()
             .map(|id: String| focus::handle(id, 0, window, cx).read(cx).handle.clone())
             .collect();
         let pending = state.pending;
         let viewport = window.viewport_size();
-        let surface = div()
+        let backdrop = shapes::backdrop_blur(
+            px(24.),
+            shapes::Fill::Color,
+            false,
+            shapes::Decoration {
+                radius: gpui::Corners::all(px(25.)),
+                corner: shapes::Corner::Squircle,
+                fill: Some(gpui::Hsla {
+                    a: 0.9,
+                    ..t.surface_elevated_secondary
+                }),
+                shadows: vec![
+                    crate::composer::shadow(t.border, 0., 0., 0.5, false),
+                    crate::composer::shadow(gpui::rgba(0x0000001a).into(), 4., 8., -2., false),
+                ],
+                ..Default::default()
+            },
+        );
+        let mut surface = div()
             .id("import-dialog")
             .role(gpui::Role::Dialog)
             .aria_label(title.clone())
@@ -1285,29 +1554,14 @@ impl ImportPage {
                     cx.stop_propagation();
                 }
             }))
-            .w(px(680_f32.min(f32::from(viewport.width) * 0.92)))
+            .w(px(
+                (if review { 520_f32 } else { 680. }).min(f32::from(viewport.width) * 0.92)
+            ))
             .max_h(px(720_f32.min(f32::from(viewport.height) - 64.)))
             .relative()
             .flex()
             .flex_col()
             .p(px(20.))
-            .child(shapes::backdrop_blur(
-                px(24.),
-                shapes::Fill::Color,
-                false,
-                shapes::Decoration {
-                    radius: gpui::Corners::all(px(25.)),
-                    fill: Some(gpui::Hsla {
-                        a: 0.9,
-                        ..t.surface_elevated_secondary
-                    }),
-                    shadows: vec![
-                        crate::composer::shadow(t.border, 0., 0., 0.5, false),
-                        crate::composer::shadow(gpui::rgba(0x0000001a).into(), 4., 8., -2., false),
-                    ],
-                    ..Default::default()
-                },
-            ))
             .child(
                 div()
                     .flex_none()
@@ -1320,7 +1574,7 @@ impl ImportPage {
             .child(
                 div()
                     .id("import-dialog-content")
-                    .pt(px(12.))
+                    .pt(px(if review { 16. } else { 12. }))
                     .min_h_0()
                     .overflow_y_scroll()
                     .child(card(
@@ -1328,7 +1582,11 @@ impl ImportPage {
                         on_card(
                             20.,
                             shapes::Corner::Squircle,
-                            t.background_panel,
+                            if review {
+                                gpui::transparent_black()
+                            } else {
+                                t.background_panel
+                            },
                             Some(t.border),
                         ),
                         &t,
@@ -1336,7 +1594,7 @@ impl ImportPage {
             )
             .child(
                 div()
-                    .pt(px(12.))
+                    .pt(px(if review { 16. } else { 12. }))
                     .flex_none()
                     .flex()
                     .flex_col()
@@ -1360,30 +1618,57 @@ impl ImportPage {
                             .child(cancel)
                             .child(save),
                     ),
-            );
+            )
+            .children(close)
+            .into_any_element();
+        let mut overlay = div()
+            .w(viewport.width)
+            .h(viewport.height)
+            .occlude()
+            .bg(gpui::rgba(0x00000022))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(move |this, _, window, cx| {
+                    if !pending {
+                        this.close(window, cx);
+                    }
+                }),
+            )
+            .into_any_element();
         Some(
             gpui::deferred(
-                gpui::anchored()
-                    .position(gpui::point(px(0.), px(0.)))
-                    .child(
-                        div()
-                            .w(viewport.width)
-                            .h(viewport.height)
-                            .occlude()
-                            .bg(gpui::rgba(0x00000022))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .on_mouse_down(
-                                gpui::MouseButton::Left,
-                                cx.listener(move |this, _, window, cx| {
-                                    if !pending {
-                                        this.close(window, cx);
-                                    }
-                                }),
-                            )
-                            .child(surface),
-                    ),
+                gpui::canvas(
+                    move |_, window, cx| {
+                        overlay.prepaint_as_root(
+                            gpui::Point::default(),
+                            viewport.into(),
+                            window,
+                            cx,
+                        );
+                        let size = surface.layout_as_root(viewport.into(), window, cx);
+                        let height = size.height.round();
+                        let origin = gpui::point(
+                            (viewport.width - size.width) / 2.,
+                            (viewport.height - height) / 2.,
+                        );
+                        let mut background = div()
+                            .w(size.width)
+                            .h(height)
+                            .child(backdrop)
+                            .into_any_element();
+                        background.prepaint_as_root(origin, viewport.into(), window, cx);
+                        surface.prepaint_at(origin, window, cx);
+                        (overlay, background, surface)
+                    },
+                    |_, (mut overlay, mut background, mut surface), window, cx| {
+                        overlay.paint(window, cx);
+                        background.paint(window, cx);
+                        surface.paint(window, cx);
+                    },
+                )
+                .absolute()
+                .top_0()
+                .left_0(),
             )
             .into_any_element(),
         )
@@ -1422,6 +1707,16 @@ impl Render for ImportPage {
                     .map(|history| history.import_id.clone()),
             );
         }
+        let view = cx.entity().downgrade();
+        window.on_next_frame(move |_, cx| {
+            let _ = view.update(cx, |this, cx| {
+                let composited = this.scroll.max_offset().y > px(0.);
+                if this.composited != composited {
+                    this.composited = composited;
+                    cx.notify();
+                }
+            });
+        });
         let detection = self.detection(&state, window, cx);
         let sync = state.policy.sync.then(|| self.sync(&state, window, cx));
         let history = self.history(&state, window, cx);
@@ -1429,7 +1724,7 @@ impl Render for ImportPage {
         let dialog = self.dialog(&state, window, cx);
         div().size_full().relative().flex().flex_col()
             .child(div().flex_none().h(px(46.)))
-            .child(div().id("import-settings-page").flex_1().overflow_y_scroll().track_scroll(&self.scroll).layer().child(probe(&self.layer))
+            .child(div().id("import-settings-page").flex_1().overflow_y_scroll().track_scroll(&self.scroll).when(self.composited, |d| d.layer()).child(probe(&self.layer))
                 .child(div().pt(px(16.)).pb(px(1.)).child(div().w_full().max_w(px(768.)).mx_auto().px(px(20.))
                     .child(div().py(px(12.)).flex().flex_col().gap(px(4.))
                         .child(text("Import", 28., 33.6, 500., t.text))
@@ -1442,21 +1737,301 @@ impl Render for ImportPage {
     }
 }
 
+fn review_choices(items: &[DetectedItem], provider: Provider) -> Vec<ReviewChoice> {
+    let mut home = Vec::new();
+    let mut projects = BTreeSet::new();
+    let mut chats = 0;
+    for (index, item) in items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| item.provider_id == provider)
+    {
+        if item.item.item_type == ItemType::Sessions {
+            if let Some(sessions) = item
+                .item
+                .details
+                .as_ref()
+                .and_then(|details| details["sessions"].as_array())
+            {
+                chats += sessions.len();
+                projects.extend(
+                    sessions
+                        .iter()
+                        .filter(|session| session["workspaceKind"] != "projectless")
+                        .filter_map(|session| session["cwd"].as_str())
+                        .filter(|cwd| !cwd.is_empty()),
+                );
+            }
+        } else if let Some(project) = item.project() {
+            projects.insert(project);
+        } else {
+            let count = match item.item.item_type {
+                ItemType::Skills => item
+                    .item
+                    .details
+                    .as_ref()
+                    .and_then(|details| details["skills"].as_array())
+                    .map(Vec::len)
+                    .unwrap_or(0),
+                ItemType::Plugins => item
+                    .item
+                    .details
+                    .as_ref()
+                    .and_then(|details| details["plugins"].as_array())
+                    .map(|plugins| {
+                        plugins
+                            .iter()
+                            .filter_map(|plugin| plugin["pluginNames"].as_array())
+                            .map(Vec::len)
+                            .sum()
+                    })
+                    .unwrap_or(0),
+                _ => 0,
+            };
+            let title = if count > 0 {
+                format!("{} ({count})", item.item.item_type.label())
+            } else {
+                item.item.item_type.label().into()
+            };
+            home.push(ReviewChoice {
+                id: format!("item-{index}"),
+                keys: vec![item.key()],
+                title,
+                detail: item
+                    .item
+                    .description
+                    .strip_prefix("Migrate ")
+                    .unwrap_or(&item.item.description)
+                    .replace(" into ", " to "),
+                icon: item.item.item_type.icon(),
+                tooltip: None,
+                nested: true,
+                expandable: false,
+            });
+        }
+    }
+    let mut choices = Vec::new();
+    if !home.is_empty() {
+        choices.push(ReviewChoice {
+            id: "tools".into(),
+            keys: home
+                .iter()
+                .flat_map(|choice| choice.keys.iter().cloned())
+                .collect(),
+            title: "Tools & setup".into(),
+            detail: "Settings, instructions, plugins, skills".into(),
+            icon: "import-category-braces",
+            tooltip: None,
+            nested: false,
+            expandable: true,
+        });
+        choices.extend(home);
+    }
+    if !projects.is_empty() {
+        choices.push(ReviewChoice {
+            id: "projects".into(),
+            keys: vec!["projects".into()],
+            title: format!("Projects ({})", projects.len()),
+            detail: "Use your existing project folders".into(),
+            icon: "import-projects",
+            tooltip: Some(
+                projects
+                    .iter()
+                    .map(|path| {
+                        std::path::Path::new(path)
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .unwrap_or(path)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ),
+            nested: false,
+            expandable: false,
+        });
+    }
+    if chats > 0 {
+        choices.push(ReviewChoice {
+            id: "chats".into(),
+            keys: vec!["chats".into()],
+            title: format!("Chat sessions ({chats})"),
+            detail: "Recent chats".into(),
+            icon: "import-category-chats",
+            tooltip: Some(format!(
+                "{chats} recent {} from {} will be imported",
+                if chats == 1 { "chat" } else { "chats" },
+                provider.label()
+            )),
+            nested: false,
+            expandable: false,
+        });
+    }
+    choices
+}
+
+#[derive(Clone, Copy)]
+enum RowKind {
+    Standard,
+    Nested,
+}
+
+fn imported_auth_count(history: &History, state: &ImportState, category: ItemType) -> usize {
+    if category != ItemType::McpServerConfig {
+        return 0;
+    }
+    match &state.mcp_auth {
+        Load::Ready(names) => names
+            .iter()
+            .filter(|name| {
+                history.successes.iter().any(|item| {
+                    item.item_type == category && item.target.as_deref() == Some(name.as_str())
+                })
+            })
+            .count(),
+        _ => 0,
+    }
+}
+
+fn history_warning_count(history: &History, state: &ImportState) -> usize {
+    history
+        .successes
+        .iter()
+        .filter(|item| item.item_type == ItemType::Hooks)
+        .count()
+        + imported_auth_count(history, state, ItemType::McpServerConfig)
+}
+
+fn category_status(
+    category: ItemType,
+    imported: usize,
+    failed: usize,
+    auth: usize,
+    theme: &Theme,
+) -> AnyElement {
+    let review = category == ItemType::Hooks && imported > 0;
+    let (label, color, dot) = if failed > 0 {
+        (
+            format!("{imported} imported · {failed} did not import"),
+            theme.text_error,
+            theme.text_error,
+        )
+    } else if auth > 0 {
+        (
+            format!(
+                "{imported} imported · {auth} {} authentication",
+                if auth == 1 { "needs" } else { "need" }
+            ),
+            theme.text_warning,
+            theme.text_warning,
+        )
+    } else if review {
+        (
+            format!("{imported} imported · Needs review"),
+            theme.text_warning,
+            theme.text_warning,
+        )
+    } else {
+        (
+            format!("{imported} imported"),
+            theme.text,
+            theme.text_success,
+        )
+    };
+    div()
+        .relative()
+        .flex()
+        .items_center()
+        .gap(px(8.))
+        .when(failed > 0 || auth > 0 || review, |badge| {
+            badge.px(px(8.)).py(px(4.))
+        })
+        .when(failed > 0, |badge| {
+            badge.child(on_card(
+                8.,
+                shapes::Corner::Squircle,
+                theme.text_error.opacity(0.1),
+                None,
+            ))
+        })
+        .child(div().size(px(8.)).relative().child(on_card(
+            9999.,
+            shapes::Corner::Round,
+            dot,
+            None,
+        )))
+        .child(text(label, 12., 16., 500., color))
+        .into_any_element()
+}
+
+fn history_arrow(expanded: bool, kind: RowKind, theme: &Theme) -> AnyElement {
+    let name = match (kind, expanded) {
+        (RowKind::Standard, false) => "chevron-down",
+        (RowKind::Standard, true) => "import-history-up",
+        (RowKind::Nested, false) => "import-history-right",
+        (RowKind::Nested, true) => "import-history-down",
+    };
+    icon(name, 14., theme.text_tertiary).into_any_element()
+}
+
 fn row(
     label: impl Into<SharedString>,
     detail: Option<String>,
     image: Option<AnyElement>,
     control: AnyElement,
-    t: &Theme,
+    theme: &Theme,
 ) -> Div {
+    row_content(
+        label,
+        detail.map(|detail| {
+            text(detail, 12., 16., 430., theme.text_secondary)
+                .whitespace_normal()
+                .into_any_element()
+        }),
+        image,
+        control,
+        theme,
+        RowKind::Standard,
+    )
+}
+
+fn nested_row(
+    label: impl Into<SharedString>,
+    detail: Option<String>,
+    control: AnyElement,
+    theme: &Theme,
+) -> Div {
+    row_content(
+        label,
+        detail.map(|detail| {
+            text(detail, 12., 16., 430., theme.text_secondary)
+                .whitespace_normal()
+                .into_any_element()
+        }),
+        None,
+        control,
+        theme,
+        RowKind::Nested,
+    )
+}
+
+fn row_content(
+    label: impl Into<SharedString>,
+    detail: Option<AnyElement>,
+    image: Option<AnyElement>,
+    control: AnyElement,
+    theme: &Theme,
+    kind: RowKind,
+) -> Div {
+    let nested = matches!(kind, RowKind::Nested);
     div()
         .relative()
         .flex()
         .items_center()
         .justify_between()
-        .gap(px(24.))
+        .gap(px(if nested { 12. } else { 24. }))
         .px(px(16.))
-        .py(px(12.))
+        .py(px(if nested { 8. } else { 12. }))
+        .when(nested, |row| row.min_h(px(40.)))
         .child(
             div()
                 .min_w_0()
@@ -1472,19 +2047,26 @@ fn row(
                         .flex()
                         .flex_col()
                         .gap(px(2.))
-                        .child(text(label, 13., 18.571_428, 500., t.text).whitespace_normal())
-                        .children(detail.map(|detail| {
-                            text(detail, 12., 16., 430., t.text_secondary).whitespace_normal()
-                        })),
+                        .child(
+                            text(
+                                label,
+                                13.,
+                                18.571_428,
+                                if nested { 430. } else { 500. },
+                                theme.text,
+                            )
+                            .whitespace_normal(),
+                        )
+                        .children(detail),
                 ),
         )
         .child(
             div()
-                .flex_none()
-                .min_w(px(160.))
                 .flex()
                 .items_center()
                 .justify_end()
+                .when(nested, |control| control.min_w_0().flex_1())
+                .when(!nested, |control| control.flex_none().min_w(px(160.)))
                 .child(control),
         )
 }
@@ -1493,35 +2075,33 @@ fn group(
     title: &'static str,
     subtitle: Option<&'static str>,
     rows: Vec<Div>,
-    layer: &Layer,
+    surface: AnyElement,
     t: &Theme,
 ) -> Div {
     div()
         .flex()
         .flex_col()
-        .child(
-            div()
-                .min_h(px(46.))
-                .pb(px(6.))
-                .flex()
-                .flex_col()
-                .justify_center()
-                .child(text(title, 14., 21., 500., t.text))
-                .children(
-                    subtitle.map(|subtitle| text(subtitle, 12., 16., 430., t.text_secondary)),
-                ),
-        )
-        .child(card(
-            rows,
-            deco(
-                layer,
-                20.,
-                shapes::Corner::Squircle,
-                t.background_panel,
-                Some(t.border),
-            ),
-            t,
-        ))
+        .child(section_heading(title, subtitle, t))
+        .child(card(rows, surface, t))
+}
+
+fn section_heading(title: &'static str, subtitle: Option<&'static str>, theme: &Theme) -> Div {
+    if let Some(subtitle) = subtitle {
+        div()
+            .pb(px(12.))
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .child(text(title, 16., 24.888_89, 500., theme.text))
+            .child(text(subtitle, 13., 18., 400., theme.text_secondary))
+    } else {
+        div()
+            .h(px(46.))
+            .pb(px(6.))
+            .flex()
+            .items_center()
+            .child(text(title, 14., 21., 500., theme.text))
+    }
 }
 
 fn card(rows: Vec<Div>, surface: AnyElement, t: &Theme) -> Div {
@@ -1552,7 +2132,7 @@ fn card(rows: Vec<Div>, surface: AnyElement, t: &Theme) -> Div {
         ))
 }
 
-fn provider_icon(provider: Provider, t: &Theme) -> AnyElement {
+fn provider_icon(provider: Provider, radius: f32, t: &Theme) -> AnyElement {
     let name = match provider {
         Provider::ClaudeCode => "import-claude-code",
         Provider::ClaudeCowork => "import-claude-cowork",
@@ -1566,8 +2146,15 @@ fn provider_icon(provider: Provider, t: &Theme) -> AnyElement {
     div()
         .size(px(40.))
         .flex_none()
-        .rounded(px(12.))
-        .when(provider != Provider::Cursor, |d| d.bg(gpui::rgb(orange)))
+        .relative()
+        .when(provider != Provider::Cursor, |d| {
+            d.child(on_card(
+                radius,
+                shapes::Corner::Squircle,
+                gpui::rgb(orange).into(),
+                None,
+            ))
+        })
         .child(icon(
             name,
             40.,
@@ -1715,6 +2302,47 @@ mod tests {
     use gpui::{AppContext as _, HeadlessAppContext, Keystroke, size};
 
     #[test]
+    fn project_and_chat_choices_select_their_own_import_items() {
+        let items = vec![
+            DetectedItem {
+                provider_id: Provider::ClaudeCode,
+                item: bridge::imports::MigrationItem {
+                    item_type: ItemType::AgentsMd,
+                    description: "Project instructions".into(),
+                    cwd: Some("/owned/project".into()),
+                    details: None,
+                },
+            },
+            DetectedItem {
+                provider_id: Provider::ClaudeCode,
+                item: bridge::imports::MigrationItem {
+                    item_type: ItemType::Sessions,
+                    description: "Recent chats".into(),
+                    cwd: None,
+                    details: Some(
+                        serde_json::json!({"sessions":[{"cwd":"/owned/project","title":"Recorded chat"}]}),
+                    ),
+                },
+            },
+        ];
+        let choices = review_choices(&items, Provider::ClaudeCode);
+        assert_eq!(
+            choices
+                .iter()
+                .map(|choice| choice.id.as_str())
+                .collect::<Vec<_>>(),
+            ["projects", "chats"]
+        );
+        let selected = BTreeMap::from([("projects".into(), false), ("chats".into(), true)]);
+        let imported: Vec<_> = items
+            .iter()
+            .filter(|item| item.selected(&selected))
+            .map(|item| item.item.item_type)
+            .collect();
+        assert_eq!(imported, [ItemType::Sessions]);
+    }
+
+    #[test]
     fn legacy_project_selection_does_not_invent_available_categories() {
         let item = DetectedItem {
             provider_id: Provider::ClaudeCode,
@@ -1770,7 +2398,7 @@ mod tests {
         let mut sync_state = SyncState::default();
         sync_state.merge_import(
             std::slice::from_ref(&item),
-            std::slice::from_ref(&item),
+            BTreeMap::from([(item.key(), true)]),
             1_000,
         );
         cx.update(|cx| {
@@ -1805,6 +2433,7 @@ mod tests {
                     import_completed: 0,
                     preferences_saved: 0,
                     attention_tab: ItemType::McpServerConfig,
+                    composited: false,
                 })
             })
             .unwrap();
