@@ -296,6 +296,8 @@ use std::time::{Duration, Instant};
 #[path = "git/contents.rs"]
 mod contents;
 pub(super) use contents::read_file_version;
+#[path = "git/file_url.rs"]
+mod file_url;
 #[path = "git/review_patch.rs"]
 mod review_patch;
 
@@ -835,6 +837,9 @@ pub(super) fn fetch(endpoint: &str, params: &Value) -> Result<Value> {
     }
     if endpoint == "git-review-patch" {
         return review_patch::read(root, params);
+    }
+    if endpoint == "git-file-url" {
+        return file_url::read(root, params);
     }
     if let Some(result) = commit_flow(endpoint, root, params) {
         return result;

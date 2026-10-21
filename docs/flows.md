@@ -593,6 +593,9 @@ File headers stay at the top of the viewport while their diff scrolls.
 Its Cloud changes source has no local source selector or repository mutation controls.
 The file viewer handles `⌘L`, clamps line numbers, and counts negative numbers from the end.
 The line input stays closed until file contents are available.
+The `git-file-url` host read returns a GitHub blob link at HEAD when the repository uses a GitHub origin.
+It encodes path segments and can include a line anchor.
+Other origins return no link.
 The parser stops above 2,000,000 input bytes, 20,000 input lines, or 10,000 bytes per input line.
 Invalid hunk numbers show `Diff failed to render` instead of overflowing a line counter.
 File boundaries must start a line; a `diff --git` string inside changed code does not split the file.
