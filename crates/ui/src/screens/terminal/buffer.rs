@@ -1,5 +1,7 @@
 use std::num::NonZeroU16;
 
+const SCROLLBACK_ROWS: usize = 1000;
+
 #[derive(Clone)]
 pub struct Row {
     pub cells: Vec<vt100::Cell>,
@@ -9,7 +11,12 @@ pub struct Row {
 impl Row {
     pub fn text(&self, start: usize, end: usize) -> String {
         let mut text = String::new();
-        for cell in &self.cells[start.min(self.cells.len())..end.min(self.cells.len())] {
+        let cells = &self.cells[start.min(self.cells.len())..end.min(self.cells.len())];
+        let printed_end = cells
+            .iter()
+            .rposition(|cell| cell.has_contents() || cell.is_wide_continuation())
+            .map_or(0, |column| column + 1);
+        for cell in &cells[..printed_end] {
             if cell.is_wide_continuation() {
                 continue;
             }
@@ -19,7 +26,6 @@ impl Row {
                 text.push(' ');
             }
         }
-        text.truncate(text.trim_end_matches(' ').len());
         text
     }
 
@@ -73,7 +79,7 @@ impl Buffer {
         let rows = rows.max(1);
         let cols = cols.max(1);
         Self {
-            parser: vt100::Parser::new(nonzero(rows), nonzero(cols), 1000),
+            parser: vt100::Parser::new(nonzero(rows), nonzero(cols), SCROLLBACK_ROWS),
             source: Vec::new(),
             rows: Vec::new(),
             cursor: (0, 0),
@@ -93,7 +99,8 @@ impl Buffer {
     }
 
     pub fn replace(&mut self, bytes: &[u8]) {
-        self.parser = vt100::Parser::new(nonzero(self.size.0), nonzero(self.size.1), 1000);
+        self.parser =
+            vt100::Parser::new(nonzero(self.size.0), nonzero(self.size.1), SCROLLBACK_ROWS);
         self.source.clear();
         self.append(bytes);
     }
@@ -104,7 +111,7 @@ impl Buffer {
             return false;
         }
         self.size = size;
-        self.parser = vt100::Parser::new(nonzero(size.0), nonzero(size.1), 1000);
+        self.parser = vt100::Parser::new(nonzero(size.0), nonzero(size.1), SCROLLBACK_ROWS);
         self.parser.process(&self.source);
         self.snapshot();
         true
@@ -209,5 +216,29 @@ mod tests {
         assert_eq!(row.text(columns.start, columns.end), url);
         assert!(row.link_at(0).is_none());
         assert!(row.link_at(29).is_none());
+    }
+
+    #[test]
+    fn copied_wrapped_rows_preserve_printed_spaces() {
+        let mut buffer = Buffer::new(2, 4);
+        buffer.append(b"ab  cd");
+        assert_eq!(buffer.selected((0, 0), (1, 2)), "ab  cd");
+    }
+
+    #[test]
+    fn scrollback_matches_the_original_limit_after_resize() {
+        let output: String = (0..1200).map(|line| format!("{line:04}\r\n")).collect();
+        let expected: String = (199..1200).map(|line| format!("{line:04}\n")).collect();
+        let mut buffer = Buffer::new(2, 8);
+        buffer.append(output.as_bytes());
+        assert_eq!(
+            buffer.selected((0, 0), (buffer.rows.len() - 1, 8)),
+            expected
+        );
+        buffer.resize(2, 6);
+        assert_eq!(
+            buffer.selected((0, 0), (buffer.rows.len() - 1, 6)),
+            expected
+        );
     }
 }

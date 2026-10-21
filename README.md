@@ -65,6 +65,7 @@ The terminal warns when its shell belongs outside the chat's current workspaces.
 
 Background command tabs retain their output after completion.
 Both terminal views support ANSI colors, text selection, copy, scrollback, HTTP(S) links, and font/theme changes.
+Like the original app, the views keep 1,000 scrollback rows plus the visible screen.
 Output follows the bottom only while the view is already at the bottom.
 The recorded PTY stream in `fixtures/sessions/terminal-shell.jsonl` comes from the bundled macOS app-server.
 Run `cargo test -p app --test terminal_states` on macOS for native terminal checks.
