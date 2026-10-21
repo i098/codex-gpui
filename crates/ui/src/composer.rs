@@ -14,8 +14,8 @@ use bridge::types::{
     PermissionsApprovalRequest, QueuedSubmission,
 };
 use gpui::{
-    AnyElement, App, AvailableSpace, Bounds, ClipboardItem, Context, Corners, CursorStyle, Div,
-    ElementId, ElementInputHandler, Entity, EntityInputHandler, ExternalPaths, FocusHandle,
+    AnyElement, AnyView, App, AvailableSpace, Bounds, ClipboardItem, Context, Corners, CursorStyle,
+    Div, ElementId, ElementInputHandler, Entity, EntityInputHandler, ExternalPaths, FocusHandle,
     Focusable, GlobalElementId, Hsla, InspectorElementId, InteractiveElement, IntoElement,
     KeyBinding, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
     PathPromptOptions, Pixels, Point, Render, SharedString, Size, Stateful,
@@ -645,6 +645,7 @@ pub struct Composer {
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
+    hotkey_controls: Option<AnyView>,
 }
 
 impl Composer {
@@ -721,7 +722,29 @@ impl Composer {
             on_approval: None,
             on_model: None,
             plain_field: None,
+            hotkey_controls: None,
         }
+    }
+
+    pub fn set_hotkey_home(
+        &mut self,
+        controls: AnyView,
+        placeholder: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.hotkey_controls = Some(controls);
+        self.placeholder = placeholder.into();
+        cx.notify();
+    }
+
+    pub fn attach_png(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
+        self.save_paste(
+            attach::Content::Image(std::sync::Arc::new(gpui::Image::from_bytes(
+                gpui::ImageFormat::Png,
+                bytes,
+            ))),
+            cx,
+        );
     }
 
     pub fn settings_field(
@@ -1947,24 +1970,26 @@ impl Render for Composer {
         let card = card
             .flex()
             .flex_col()
-            .child(shapes::decoration(if editing {
-                shapes::Decoration {
-                    radius: Corners::all(px(24.)),
-                    fill: Some(match t.appearance {
-                        Appearance::Dark => t.control_background.opacity(0.95),
-                        Appearance::Light => t.text_alpha_5,
-                    }),
-                    ..Default::default()
-                }
-            } else if self.drag_active(cx) {
-                // `[data-composer-drag-active]`: `surface-elevated-secondary` at 50%.
-                shapes::Decoration {
-                    fill: Some(t.surface_elevated_secondary.opacity(0.5)),
-                    ..card_decoration(&t)
-                }
-            } else {
-                card_decoration(&t)
-            }))
+            .when(self.hotkey_controls.is_none(), |card| {
+                card.child(shapes::decoration(if editing {
+                    shapes::Decoration {
+                        radius: Corners::all(px(24.)),
+                        fill: Some(match t.appearance {
+                            Appearance::Dark => t.control_background.opacity(0.95),
+                            Appearance::Light => t.text_alpha_5,
+                        }),
+                        ..Default::default()
+                    }
+                } else if self.drag_active(cx) {
+                    // `[data-composer-drag-active]`: `surface-elevated-secondary` at 50%.
+                    shapes::Decoration {
+                        fill: Some(t.surface_elevated_secondary.opacity(0.5)),
+                        ..card_decoration(&t)
+                    }
+                } else {
+                    card_decoration(&t)
+                }))
+            })
             // See `docked`: the docked body is a transparent cc layer over the card.
             .child(
                 div()
@@ -1977,6 +2002,7 @@ impl Render for Composer {
                     })
                     .child(
                         self.editor(cx)
+                            .when(self.hotkey_controls.is_some(), |d| d.px_0().min_h(px(48.)))
                             .when(editing, |d| d.pt(px(12.)).pb_0().min_h(px(52.))),
                     )
                     .child(if editing {

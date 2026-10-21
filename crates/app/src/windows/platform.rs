@@ -120,7 +120,19 @@ mod native {
             if kind.panel() {
                 let mask: usize = msg_send![native, styleMask];
                 if kind != Kind::Hud {
-                    let _: () = msg_send![native, setStyleMask: mask & !1usize];
+                    let mask = match kind {
+                        Kind::HotkeyThread => (mask & !1usize) | 8,
+                        Kind::HotkeyHome => mask & !9usize,
+                        _ => mask & !1usize,
+                    };
+                    let _: () = msg_send![native, setStyleMask: mask];
+                    if let Some(minimum) = kind.minimum() {
+                        let size = objc2_foundation::NSSize::new(
+                            f32::from(minimum.width) as f64,
+                            f32::from(minimum.height) as f64,
+                        );
+                        let _: () = msg_send![native, setContentMinSize: size];
+                    }
                 }
                 let _: () = msg_send![native, setHasShadow: matches!(kind, Kind::Hud | Kind::HotkeyHome | Kind::HotkeyThread)];
                 let level: isize = if matches!(
