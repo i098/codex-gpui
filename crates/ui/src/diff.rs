@@ -61,6 +61,11 @@ pub use preview::{PreviewContent, PreviewRequest, PreviewSource};
 #[path = "diff/pdf.rs"]
 mod pdf;
 
+#[path = "diff/comment_view.rs"]
+mod comment_view;
+#[path = "diff/comments.rs"]
+pub mod comments;
+
 /// Panel width the capture had stored (`app-shell:right-panel-width:v3`) before clamping.
 const STORED_WIDTH: f32 = 664.17;
 /// Room the chat keeps beside the panel (`unified` layout), also the panel's minimum.
@@ -217,6 +222,8 @@ pub enum DiffRequest {
     LoadFullFile(FullFileRequest),
     LoadPreview(PreviewRequest),
     Preference(&'static str, serde_json::Value),
+    CommentsChanged(Vec<comments::Comment>),
+    DismissModelComment(String),
     /// Open this absolute path in the configured editor.
     Open(String),
 }
@@ -305,6 +312,7 @@ pub struct DiffPanel {
     full_files: bool,
     content_generation: u64,
     rich_preview: bool,
+    annotations: comment_view::Annotations,
 }
 
 impl DiffPanel {
@@ -387,7 +395,7 @@ impl DiffPanel {
         for file in &mut files {
             syntax::apply(&file.name, &mut file.hunks);
         }
-        Self {
+        let mut panel = Self {
             files,
             focus: None,
             query: None,
@@ -424,7 +432,12 @@ impl DiffPanel {
             full_files: true,
             content_generation: 0,
             rich_preview: true,
-        }
+            annotations: comment_view::Annotations::default(),
+        };
+        panel
+            .annotations
+            .models(turns, cwd, &[workspace_root.to_owned()]);
+        panel
     }
 
     pub fn pending(&self) -> bool {
@@ -650,6 +663,15 @@ impl DiffPanel {
             return;
         };
         let Some(turn) = turns.last() else { return };
+        if method == "turn/completed" {
+            self.annotations.models(
+                std::slice::from_ref(turn),
+                &self.cwd,
+                &[workspace.to_owned()],
+            );
+            cx.notify();
+            return;
+        }
         if params["turnId"].as_str() != Some(&turn.id) {
             return;
         }
@@ -1362,6 +1384,7 @@ impl Render for DiffPanel {
                                         &line_index,
                                         self,
                                         self.layout.split(file, code_width),
+                                        window,
                                         cx,
                                     ))
                             }))
@@ -1456,6 +1479,7 @@ impl Render for DiffPanel {
                 MouseButton::Left,
                 cx.listener(|this, _, _, _| {
                     this.selecting = false;
+                    this.end_gutter_selection();
                 }),
             )
             .size_full()
@@ -2658,6 +2682,7 @@ fn hunk(
     line_index: &Cell<usize>,
     panel: &DiffPanel,
     split: bool,
+    window: &Window,
     cx: &Context<DiffPanel>,
 ) -> Div {
     let digits = h
@@ -2684,7 +2709,8 @@ fn hunk(
                bg: Hsla,
                content: StyledText,
                mark: Vec<gpui::AnyElement>,
-               bar: Option<Hsla>| {
+               bar: Option<Hsla>,
+               utility: Option<gpui::AnyElement>| {
         div()
             .h(px(CODE_LINE))
             .when(panel.wrap, |d| d.h_auto().min_h(px(CODE_LINE)))
@@ -2715,7 +2741,8 @@ fn hunk(
                         ))
                     })
                     .text_color(number_fg)
-                    .when_some(number, |d, n| d.child(n.to_string())),
+                    .when_some(number, |d, n| d.child(n.to_string()))
+                    .children(utility),
             )
             .child(
                 div()
@@ -2738,8 +2765,15 @@ fn hunk(
             )
     };
     let separator = mix(t.surface, t.info_solid, 0.06);
-    let render_line = |l: &Line, index: usize, number: u32| {
-        let (number_bg, bg, number_fg) = line_colors(l.kind, t);
+    let render_line = |l: &Line, index: usize, number: u32, side: comments::Side| {
+        let (mut number_bg, bg, number_fg) = line_colors(l.kind, t);
+        if panel.comment_selection_contains(location.0, side, number)
+            || !split
+                && l.kind == Kind::Context
+                && panel.comment_selection_contains(location.0, comments::Side::Left, l.old_number)
+        {
+            number_bg = over(t.text_selection, number_bg);
+        }
         let found = l.matches.iter().enumerate().map(|(ordinal, range)| {
             let index = l.match_start + ordinal;
             (
@@ -2807,15 +2841,17 @@ fn hunk(
             .filter(|_| panel.word_diffs)
             .filter_map(|range| word_mark(l, range.clone(), down_layout.clone(), t))
             .collect();
-        row(
+        let line = row(
             Some(number),
             (number_bg, number_fg),
             bg,
             content,
             mark,
             (l.kind != Kind::Context).then_some(number_fg),
+            panel.comment_gutter(location.0, side, number, cx),
         )
         .cursor_pointer()
+        .group("diff-comment-line")
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
@@ -2850,6 +2886,18 @@ fn hunk(
                 }
             }),
         )
+        .into_any_element();
+        let mut comments = panel.comment_rows(location.0, side, number, window, cx);
+        if !split && l.kind == Kind::Context {
+            comments.extend(panel.comment_rows(
+                location.0,
+                comments::Side::Left,
+                l.old_number,
+                window,
+                cx,
+            ));
+        }
+        div().flex().flex_col().child(line).children(comments)
     };
     div()
         .flex()
@@ -2880,6 +2928,7 @@ fn hunk(
                     )]),
                     Vec::new(),
                     None,
+                    None,
                 ),
                 location,
                 cx,
@@ -2899,7 +2948,12 @@ fn hunk(
                                 .overflow_hidden()
                                 .min_h(px(CODE_LINE))
                                 .children(old.map(|i| {
-                                    render_line(&h.lines[i], base_index + i, h.lines[i].old_number)
+                                    render_line(
+                                        &h.lines[i],
+                                        base_index + i,
+                                        h.lines[i].old_number,
+                                        comments::Side::Left,
+                                    )
                                 })),
                         )
                         .child(
@@ -2909,17 +2963,28 @@ fn hunk(
                                 .overflow_hidden()
                                 .min_h(px(CODE_LINE))
                                 .children(new.map(|i| {
-                                    render_line(&h.lines[i], base_index + i, h.lines[i].number)
+                                    render_line(
+                                        &h.lines[i],
+                                        base_index + i,
+                                        h.lines[i].number,
+                                        comments::Side::Right,
+                                    )
                                 })),
                         )
                 }))
             } else {
-                d.children(
-                    h.lines
-                        .iter()
-                        .enumerate()
-                        .map(|(i, line)| render_line(line, base_index + i, line.number)),
-                )
+                d.children(h.lines.iter().enumerate().map(|(i, line)| {
+                    render_line(
+                        line,
+                        base_index + i,
+                        line.number,
+                        if line.kind == Kind::Removed {
+                            comments::Side::Left
+                        } else {
+                            comments::Side::Right
+                        },
+                    )
+                }))
             }
         })
 }

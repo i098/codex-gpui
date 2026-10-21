@@ -4,6 +4,7 @@
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
 pub mod computer_use_requests;
+mod diff_comments;
 mod diff_content;
 mod diff_preview;
 pub use diff_content::bind_standalone_diff;
@@ -365,6 +366,7 @@ pub struct Root {
     /// `⌘K` command menu over the window.
     command_menu: Option<Entity<CommandMenu>>,
     dialog: Option<Entity<Dialog>>,
+    diff_confirmation: Option<Entity<ui::confirmation::Confirmation>>,
     /// The open dialog came from the composer: its close returns focus there.
     dialog_to_composer: bool,
     /// Signed out: replaces the whole window.
@@ -513,6 +515,13 @@ impl Root {
             },
         )
         .detach();
+        cx.subscribe(
+            &thread_composer,
+            |this, _, change: &ui::composer::DiffCommentsChanged, cx| {
+                this.change_diff_comments(&change.0, cx);
+            },
+        )
+        .detach();
         for composer in [&home_composer, &thread_composer] {
             cx.subscribe_in(composer, window, |this, _, command: &ui::composer::SlashCommand, window, cx| {
                 match command {
@@ -651,6 +660,7 @@ impl Root {
             settings_page: None,
             command_menu: None,
             dialog: None,
+            diff_confirmation: None,
             dialog_to_composer: false,
             login: None,
             logout_pending: false,
@@ -880,7 +890,7 @@ impl Root {
                 .threads
                 .iter()
                 .all(|thread| thread.status != ThreadStatus::Active)
-            && self.dialog.is_none()
+            && !self.has_dialog()
             && self.command_menu.is_none()
             && self.approvals.is_empty()
             && self.automation_load.is_none()
@@ -1128,6 +1138,8 @@ impl Root {
             | DiffRequest::Notice(_)
             | DiffRequest::LoadFullFile(_)
             | DiffRequest::LoadPreview(_)
+            | DiffRequest::CommentsChanged(_)
+            | DiffRequest::DismissModelComment(_)
             | DiffRequest::Preference(_, _) => return,
         };
         let creating = endpoint == "git-init-repo";
@@ -1266,7 +1278,7 @@ impl Root {
         let Some(thread) = self.thread.clone() else {
             return;
         };
-        if self.git_busy.is_some() || self.dialog.is_some() {
+        if self.git_busy.is_some() || self.has_dialog() {
             return;
         }
         let view = thread.read(cx);
@@ -1288,7 +1300,7 @@ impl Root {
                 if this.thread.as_ref() != Some(&thread)
                     || !Arc::ptr_eq(&this.host, &request_host)
                     || this.git_busy.is_some()
-                    || this.dialog.is_some()
+                    || this.has_dialog()
                 {
                     return;
                 }
@@ -1569,7 +1581,7 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if panel.read(cx).pending() || self.dialog.is_some() {
+        if panel.read(cx).pending() || self.has_dialog() {
             return;
         }
         let request = request.clone();
@@ -2066,7 +2078,7 @@ impl Root {
         if !printable
             || keystroke.modifiers.platform
             || keystroke.modifiers.control
-            || self.dialog.is_some()
+            || self.has_dialog()
             || self.command_menu.is_some()
             || route_focus == self.focus
             || in_popover
@@ -2301,7 +2313,7 @@ impl Root {
     }
 
     fn show_dialog(&mut self, dialog: Entity<Dialog>, window: &mut Window, cx: &mut Context<Self>) {
-        if self.dialog.is_some() {
+        if self.has_dialog() {
             return;
         }
         self.command_menu = None;
@@ -2467,6 +2479,7 @@ impl Root {
                             .detach();
                         this.command_menu = None;
                         this.dialog = None;
+                        this.diff_confirmation = None;
                         this.thread = None;
                         this.diff = None;
                         this.file = None;
@@ -2516,7 +2529,7 @@ impl Root {
     /// `⌘W`: Electron main runs `closeTab` (`close-active-app-shell-tab`) while the thread
     /// route's panel shows a tab, else the window closes.
     fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.dialog.is_some() {
+        if self.has_dialog() {
             return;
         }
         if let Some(side) = self.side.filter(|_| self.split.is_some()) {
@@ -2768,6 +2781,7 @@ impl Root {
         });
         let composer = self.thread_composer.clone().into();
         let diff = diff_content::new_panel(&self.cwd, &thread.cwd, &thread.turns, cx);
+        self.configure_diff_comments(&diff, &thread.id, cx);
         let cwd = thread.cwd.clone();
         cx.subscribe_in(
             &diff,
@@ -2799,6 +2813,10 @@ impl Root {
                 ),
                 DiffRequest::LoadPreview(request) => {
                     diff_preview::load(panel.clone(), this.host.clone(), request.clone(), cx)
+                }
+                DiffRequest::CommentsChanged(comments) => this.change_diff_comments(comments, cx),
+                DiffRequest::DismissModelComment(key) => {
+                    this.confirm_diff_comment(panel.clone(), key.clone(), window, cx)
                 }
                 DiffRequest::Preference(key, value) => this.write_setting(
                     &SettingChanged {
@@ -3478,7 +3496,7 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.dialog.is_some() {
+        if self.has_dialog() {
             return;
         }
         let title = self.threads.iter().find(|t| t.id == id).map(thread_title);
@@ -5202,7 +5220,8 @@ impl Render for Root {
             .child(content)
             .children(self.command_menu.clone())
             .child(self.toaster.clone())
-            .children(self.dialog.clone());
+            .children(self.dialog.clone())
+            .children(self.diff_confirmation.clone());
         let root = routes::actions(root, cx);
         native_menus::actions(
             section_actions::actions(features::actions(root, cx), cx),

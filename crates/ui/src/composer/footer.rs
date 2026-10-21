@@ -174,7 +174,9 @@ impl Composer {
             .when(self.menu == Some(Menu::Models), |d| {
                 d.child(self.anchored_menu(self.models_menu(t, cx), Some(EFFORT_MENU_SLOT), cx))
             });
-        let has_input = !self.content.is_empty() || !self.attachments.is_empty();
+        let has_input = !self.content.is_empty()
+            || !self.attachments.is_empty()
+            || !self.diff_comments.is_empty();
         let stopping = self.running && !has_input;
         let waiting_for_model = loading && !self.running;
         let armed = stopping && self.stop_armed.is_some();
