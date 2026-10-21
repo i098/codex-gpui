@@ -12,6 +12,7 @@ mod routes;
 pub use routes::Route;
 mod search;
 mod section_actions;
+mod settings_git;
 pub mod windows;
 
 use anyhow::{Context as _, Result, ensure};
@@ -499,6 +500,7 @@ impl Root {
             }
         }
         let this = cx.weak_entity();
+        settings_git::init(this.clone(), cx);
         let computer_use = this.clone();
         cx.set_global(ComputerUseState {
             available: cfg!(target_os = "macos") && !bridge.is_acp(),
@@ -3959,6 +3961,7 @@ impl Root {
                 };
                 self.toast(Toast::danger(message), cx);
             } else {
+                self.git_setting_saved(key, cx);
                 let message = match key {
                     "git-branch-prefix" => Some("Saved branch prefix".to_owned()),
                     "git-pull-request-merge-method" => {

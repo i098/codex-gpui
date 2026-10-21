@@ -645,6 +645,7 @@ pub struct Composer {
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
+    settings_rows: usize,
 }
 
 impl Composer {
@@ -721,6 +722,7 @@ impl Composer {
             on_approval: None,
             on_model: None,
             plain_field: None,
+            settings_rows: 0,
         }
     }
 
@@ -732,12 +734,40 @@ impl Composer {
     ) -> Self {
         let mut editor = Self::new(placeholder, false, cx);
         editor.plain_field = Some(multiline);
+        editor.settings_rows = if multiline { 6 } else { 1 };
         editor.set_text(value, cx);
         editor
     }
 
+    pub fn with_field_rows(mut self, rows: usize) -> Self {
+        self.settings_rows = rows.max(1);
+        self
+    }
+
+    pub fn compact_field(mut self) -> Self {
+        self.request_compact = true;
+        self
+    }
+
     pub fn field_text(&self) -> &str {
         &self.content
+    }
+
+    pub fn field_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.request_label = Some(label.into());
+        self
+    }
+
+    pub fn set_placeholder(
+        &mut self,
+        placeholder: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        let placeholder = placeholder.into();
+        if self.placeholder != placeholder {
+            self.placeholder = placeholder;
+            cx.notify();
+        }
     }
 
     pub fn message_edit(
@@ -1898,10 +1928,28 @@ impl Render for Composer {
                 card.key_context(KEY_CONTEXT)
                     .when(self.request_parent.is_none(), |d| {
                         d.border_1()
-                            .border_color(t.border)
-                            .rounded(px(8.))
-                            .bg(t.background_panel)
-                            .py(px(8.))
+                            .border_color(gpui::transparent_black())
+                            .child(shapes::decoration(shapes::Decoration {
+                                radius: Corners::all(px(10.)),
+                                corner: shapes::Corner::Squircle,
+                                fill: Some(t.control_background.opacity(0.96)),
+                                border: Some((
+                                    px(1.),
+                                    if self.focus_handle.is_focused(window) {
+                                        t.focus_ring
+                                    } else {
+                                        t.border_strong
+                                    },
+                                )),
+                                ..Default::default()
+                            }))
+                            .when(self.plain_field == Some(false), |d| {
+                                d.h(px(if self.request_compact { 28. } else { 36. }))
+                                    .flex()
+                                    .flex_col()
+                                    .justify_center()
+                            })
+                            .when(self.plain_field == Some(true), |d| d.py(px(8.)))
                     })
                     .when(self.request_parent.is_some(), |d| {
                         d.px(px(1.))
@@ -1923,7 +1971,7 @@ impl Render for Composer {
                                 ..Default::default()
                             }))
                     })
-                    .when(self.request_parent.is_some(), |d| {
+                    .when(self.plain_field.is_some(), |d| {
                         d.role(if self.secret {
                             gpui::Role::PasswordInput
                         } else {
