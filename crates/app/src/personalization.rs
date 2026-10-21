@@ -198,7 +198,7 @@ pub fn reset_memory(bridge: &Bridge) -> Result<()> {
 const WRITING_APP: &str = "connector_openai_write_like_me";
 
 pub struct WritingWrite {
-    pub preference: Result<Option<WritingPreference>>,
+    pub preference: Result<WritingPreference>,
     pub error: Option<String>,
     pub skills: Option<Value>,
     pub authorization: Option<Arc<Vec<WritingAuthorization>>>,
@@ -364,11 +364,11 @@ fn read_writing_for(host: &dyn Host, identity: Identity) -> Result<WritingPrefer
     })
 }
 
-pub fn read_writing(host: &dyn Host) -> Result<Option<WritingPreference>> {
+pub fn read_writing(host: &dyn Host) -> Result<WritingPreference> {
     let identity = host
         .identity()
         .context("Writing style identity is unavailable")?;
-    read_writing_for(host, identity).map(Some)
+    read_writing_for(host, identity)
 }
 
 fn current_writing_account(host: &dyn Host, previous: &WritingPreference) -> Result<Identity> {
@@ -454,15 +454,12 @@ pub fn write_writing(
         Err(error) => (None, Some(error.to_string())),
     };
     let preference = current_writing_account(host, previous)
-        .and_then(|identity| read_writing_for(host, identity))
-        .map(Some);
+        .and_then(|identity| read_writing_for(host, identity));
     if error.is_none()
         && authorization.is_none()
-        && preference.as_ref().is_ok_and(|preference| {
-            preference
-                .as_ref()
-                .is_none_or(|preference| preference.enabled != enabled)
-        })
+        && preference
+            .as_ref()
+            .is_ok_and(|preference| preference.enabled != enabled)
     {
         error = Some("Writing style preference was not saved".into());
     }
@@ -903,18 +900,20 @@ impl Root {
                     Ok(result)
                         if result.error.is_none()
                             && result.authorization.is_none()
-                            && result.preference.as_ref().is_ok_and(|preference| {
-                                preference
-                                    .as_ref()
-                                    .is_some_and(|preference| preference.enabled)
-                            }) =>
+                            && result
+                                .preference
+                                .as_ref()
+                                .is_ok_and(|preference| preference.enabled) =>
                     {
                         if let Some(skills) = result.skills {
                             this.skills = skills;
                         }
                         view.update(cx, |view, cx| {
                             view.writing_changed(
-                                result.preference.map_err(|error| error.to_string()),
+                                result
+                                    .preference
+                                    .map(Some)
+                                    .map_err(|error| error.to_string()),
                                 None,
                                 cx,
                             )
@@ -1118,18 +1117,20 @@ impl Root {
                 }
                 let saved = result.error.is_none()
                     && result.authorization.is_none()
-                    && result.preference.as_ref().is_ok_and(|preference| {
-                        preference
-                            .as_ref()
-                            .is_some_and(|preference| preference.enabled)
-                    });
+                    && result
+                        .preference
+                        .as_ref()
+                        .is_ok_and(|preference| preference.enabled);
                 if let Some(skills) = result.skills {
                     this.skills = skills;
                 }
                 if let Some(view) = &view {
                     view.update(cx, |view, cx| {
                         view.writing_changed(
-                            result.preference.map_err(|error| error.to_string()),
+                            result
+                                .preference
+                                .map(Some)
+                                .map_err(|error| error.to_string()),
                             result.error,
                             cx,
                         )
@@ -1171,7 +1172,7 @@ impl Root {
         let host = self.host.clone();
         let read = cx.background_spawn(async move { read_writing(host.as_ref()) });
         cx.spawn(async move |this, cx| {
-            let result = read.await.map_err(|error| error.to_string());
+            let result = read.await.map(Some).map_err(|error| error.to_string());
             this.update(cx, |this, cx| {
                 if this
                     .settings_page
@@ -1218,11 +1219,10 @@ impl Root {
                 let show_setup = enabled
                     && result.error.is_none()
                     && result.authorization.is_none()
-                    && result.preference.as_ref().is_ok_and(|preference| {
-                        preference
-                            .as_ref()
-                            .is_some_and(|preference| preference.enabled)
-                    });
+                    && result
+                        .preference
+                        .as_ref()
+                        .is_ok_and(|preference| preference.enabled);
                 let authorization = if result.error.is_none() && result.preference.is_ok() {
                     result.authorization
                 } else {
@@ -1240,7 +1240,10 @@ impl Root {
                 }
                 view.update(cx, |view, cx| {
                     view.writing_changed(
-                        result.preference.map_err(|error| error.to_string()),
+                        result
+                            .preference
+                            .map(Some)
+                            .map_err(|error| error.to_string()),
                         error,
                         cx,
                     )
@@ -1578,11 +1581,11 @@ mod tests {
             enabled: AtomicBool::new(false),
             requests: Mutex::new(Vec::new()),
         };
-        let previous = read_writing(&host).unwrap().unwrap();
+        let previous = read_writing(&host).unwrap();
         let bridge = server(vec![("skills/list", Ok(json!({"data": []})))]);
         let result = write_writing(&host, &bridge, &previous, true, "/project");
         assert!(result.error.is_none());
-        assert!(result.preference.unwrap().unwrap().enabled);
+        assert!(result.preference.unwrap().enabled);
     }
 
     #[test]
@@ -1593,7 +1596,7 @@ mod tests {
             enabled: AtomicBool::new(false),
             requests: Mutex::new(Vec::new()),
         };
-        let previous = read_writing(&original).unwrap().unwrap();
+        let previous = read_writing(&original).unwrap();
         let current = WritingHost {
             account: "different",
             installed: true,
@@ -1614,7 +1617,7 @@ mod tests {
             enabled: AtomicBool::new(false),
             requests: Mutex::new(Vec::new()),
         };
-        let previous = read_writing(&host).unwrap().unwrap();
+        let previous = read_writing(&host).unwrap();
         let bridge = server(vec![(
             "plugin/install",
             Ok(json!({
@@ -1624,7 +1627,7 @@ mod tests {
         )]);
         let result = write_writing(&host, &bridge, &previous, true, "/project");
         assert!(result.error.is_none());
-        assert!(!result.preference.unwrap().unwrap().enabled);
+        assert!(!result.preference.unwrap().enabled);
         assert_eq!(result.authorization.unwrap()[0].app_id, "mail");
     }
 }
