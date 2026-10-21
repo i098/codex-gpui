@@ -34,6 +34,7 @@ pub(super) fn text(params: &Value) -> Result<Value> {
     Ok(json!({"contents": fs::read_to_string(path)?}))
 }
 
+/// Matches the original's optional `maxBytes`; omitting it reads the complete file.
 pub(super) fn binary(params: &Value) -> Result<Value> {
     let path = scoped_path(params)?;
     let limit = params

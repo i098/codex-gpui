@@ -50,11 +50,11 @@ pub(in crate::host) fn read_file_version(params: &Value) -> Result<Option<Vec<u8
         &root,
         params["path"].as_str().context("missing Git file path")?,
     )?;
-    let reference = params
-        .get("ref")
-        .map(|value| value.as_str().context("Git ref must be a string"))
-        .transpose()?
-        .unwrap_or("head");
+    let reference = match params.get("ref") {
+        None => "head",
+        Some(Value::Null) => return Ok(None),
+        Some(value) => value.as_str().context("Git ref must be a string")?,
+    };
     let revision = match reference {
         "index" | ":" => String::new(),
         "head" | "HEAD" => {

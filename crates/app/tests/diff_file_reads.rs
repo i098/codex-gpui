@@ -103,6 +103,15 @@ fn file_and_index_reads_enforce_the_project_boundary() -> Result<()> {
     ensure!(
         STANDARD.decode(index["contentsBase64"].as_str().context("index bytes")?)? == [0, 9, 8, 7]
     );
+    let root_commit = read("git-changes", json!({"cwd":root,"reviewSource":"commits"}))?;
+    ensure!(root_commit["before_ref"].is_null());
+    let absent = read(
+        "read-git-file-binary",
+        json!({
+            "cwd":root,"path":"bytes.dat","ref":root_commit["before_ref"],
+        }),
+    )?;
+    ensure!(absent["contentsBase64"].is_null());
     git(root, &["commit", "-qm", "changed"])?;
     fs::write(&path, [0, 5, 5, 5])?;
     for source in ["branch", "commits"] {
@@ -149,6 +158,53 @@ fn file_and_index_reads_enforce_the_project_boundary() -> Result<()> {
         let link = root.join("escape.txt");
         std::os::unix::fs::symlink(&outside, &link)?;
         ensure!(read("read-file-binary", json!({"cwd":root,"path":link})).is_err());
+    }
+    Ok(())
+}
+
+#[test]
+fn file_reads_preserve_text_and_identify_image_formats() -> Result<()> {
+    #[cfg(target_os = "macos")]
+    common::install_panic_hook();
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    let host = LocalHost::new(root);
+    let text = "line α\nsecond\n";
+    let text_path = root.join("file.txt");
+    fs::write(&text_path, text)?;
+    let value = json_body(&host.fetch(&Request::post(
+        "read-file",
+        Some(json!({
+            "cwd":root,"path":text_path,
+        })),
+    ))?)?;
+    ensure!(value["contents"] == text);
+    let webp = STANDARD.decode("UklGRhwAAABXRUJQVlA4TA8AAAAvAAAAAAcQ/Y/+ByKi/wEA")?;
+    for (name, bytes, mime) in [
+        (
+            "image.png",
+            &include_bytes!("../../ui/assets/avatar.png")[..],
+            "image/png",
+        ),
+        ("image.webp", webp.as_slice(), "image/webp"),
+        (
+            "image.SVG",
+            b"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"></svg>".as_slice(),
+            "image/svg+xml",
+        ),
+    ] {
+        let path = root.join(name);
+        fs::write(&path, bytes)?;
+        let value = json_body(&host.fetch(&Request::post(
+            "read-file-binary",
+            Some(json!({
+                "cwd":root,"path":path,
+            })),
+        ))?)?;
+        ensure!(value["mimeType"] == mime, "Wrong MIME type for {name}");
+        ensure!(
+            STANDARD.decode(value["contentsBase64"].as_str().context("image bytes")?)? == bytes
+        );
     }
     Ok(())
 }

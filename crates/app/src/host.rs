@@ -73,6 +73,8 @@ impl Request {
 
 pub trait Host: Send + Sync {
     /// Returns the original wire response. Call this off the UI thread for a local host.
+    /// Only trusted native UI code calls this service.
+    /// Derive `cwd` from the active workspace, never from model-provided input.
     fn fetch(&self, request: &Request) -> Result<Value>;
 
     fn computer_use_native(&self) -> Option<Arc<computer_use_native::NativeComputerUse>> {
