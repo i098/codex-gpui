@@ -217,3 +217,42 @@ fn worktree_preferences_require_confirmation_and_preserve_the_saved_limit() -> a
     std::fs::remove_file(path)?;
     Ok(())
 }
+
+#[test]
+fn worktree_tabs_remain_usable_after_scrolling() -> anyhow::Result<()> {
+    use app::host_settings::Settings;
+    use common::*;
+    use serde_json::Value;
+    use std::time::Duration;
+
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("settings.json");
+    let mut fx = Fx::new()?;
+    fx.cx
+        .update_window(fx.window, |_, window, _| window.activate_window())?;
+    fx.cx
+        .update(|cx| cx.set_global(Settings::load(path.clone()).unwrap()));
+    open_settings(&mut fx, "Worktrees")?;
+    fx.click((560., 199.))?;
+    fx.wait("environment projects", |fx| {
+        fx.cx.update(|cx| {
+            matches!(
+                &cx.global::<ui::screens::settings::environments::State>()
+                    .projects,
+                ui::screens::computer_use::Load::Ready(_)
+            )
+        })
+    })?;
+    fx.resize(1280., 300.)?;
+    fx.scroll((1000., 240.), -1500.)?;
+    fx.advance(Duration::from_millis(300))?;
+    fx.click((478., 123.))?;
+    fx.resize(1280., 832.)?;
+    fx.advance(Duration::from_millis(300))?;
+    fx.click((1140., 357.))?;
+    fx.advance(Duration::ZERO)?;
+
+    let saved: Value = serde_json::from_slice(&std::fs::read(path)?)?;
+    assert_eq!(saved["worktree-upstream-refresh-mode"], "best-effort");
+    Ok(())
+}

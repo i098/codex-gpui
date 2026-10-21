@@ -44,31 +44,43 @@ pub struct State {
 }
 impl Global for State {}
 
-pub fn render(key: SharedString, layer: &Layer, window: &mut Window, cx: &mut App) -> AnyElement {
-    window
-        .use_keyed_state(key, cx, |window, cx| {
-            cx.observe_global::<State>(|_, cx| cx.notify()).detach();
-            if let Some(dispatch) = cx
-                .try_global::<State>()
-                .and_then(|state| state.dispatch.clone())
-            {
-                dispatch(Action::Refresh, window, cx);
-            }
-            Environments {
-                layer: layer.clone(),
-                root: None,
-                path: None,
-                editing: false,
-                fields: None,
-                inherited: Vec::new(),
-                generation: 0,
-                menu: None,
-                variables: false,
-                preview_platforms: [0; 2],
-                expanded_actions: Vec::new(),
-            }
-        })
-        .into_any_element()
+pub fn render(
+    key: SharedString,
+    layer: &Layer,
+    composited: bool,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let view = window.use_keyed_state(key, cx, |window, cx| {
+        cx.observe_global::<State>(|_, cx| cx.notify()).detach();
+        if let Some(dispatch) = cx
+            .try_global::<State>()
+            .and_then(|state| state.dispatch.clone())
+        {
+            dispatch(Action::Refresh, window, cx);
+        }
+        Environments {
+            layer: layer.clone(),
+            composited,
+            root: None,
+            path: None,
+            editing: false,
+            fields: None,
+            inherited: Vec::new(),
+            generation: 0,
+            menu: None,
+            variables: false,
+            preview_platforms: [0; 2],
+            expanded_actions: Vec::new(),
+        }
+    });
+    view.update(cx, |this, cx| {
+        if this.composited != composited {
+            this.composited = composited;
+            cx.notify();
+        }
+    });
+    view.into_any_element()
 }
 
 struct Fields {
@@ -93,6 +105,7 @@ enum Menu {
 }
 struct Environments {
     layer: Layer,
+    composited: bool,
     root: Option<String>,
     path: Option<String>,
     editing: bool,
@@ -114,8 +127,15 @@ fn field(
     rows: usize,
     cx: &mut Context<Environments>,
 ) -> Entity<Composer> {
-    let field = cx
-        .new(|cx| Composer::settings_field(placeholder, value, rows > 1, cx).with_field_rows(rows));
+    let field = cx.new(|cx| {
+        let editor =
+            Composer::settings_field(placeholder, value, rows > 1, cx).with_field_rows(rows);
+        if rows > 1 {
+            editor.monospace_field()
+        } else {
+            editor
+        }
+    });
     cx.observe(&field, |_, _, cx| cx.notify()).detach();
     field
 }
@@ -285,18 +305,30 @@ impl Environments {
                                     .id("add-first-environment-project")
                                     .h(px(28.))
                                     .px(px(9.))
-                                    .rounded(px(10.))
-                                    .bg(t.button_primary_solid)
+                                    .relative()
                                     .flex()
                                     .items_center()
-                                    .child(text("Add project", 13., 18., 430., t.surface))
+                                    .child(shapes::decoration(shapes::Decoration {
+                                        radius: gpui::Corners::all(px(12.5)),
+                                        corner: shapes::Corner::Squircle,
+                                        fill: Some(t.button_primary_solid),
+                                        border: Some((px(1.), t.border)),
+                                        ..Default::default()
+                                    }))
+                                    .child(text(
+                                        "Add project",
+                                        13.,
+                                        18.,
+                                        430.,
+                                        t.control_background,
+                                    ))
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.dispatch(Action::AddProject, window, cx)
                                     })),
                             ),
                         ),
                 ],
-                &self.layer,
+                self.composited.then_some(&self.layer),
                 t,
             )],
             Load::Ready(projects) => projects
@@ -391,7 +423,7 @@ impl Environments {
                             }
                         }
                     }
-                    super::worktrees::card(rows, &self.layer, t)
+                    super::worktrees::card(rows, self.composited.then_some(&self.layer), t)
                 })
                 .collect(),
         };

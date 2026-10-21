@@ -1,6 +1,6 @@
 use super::{Layer, SettingsPage, button, deco, probe, settings_row, switch};
 use crate::{
-    composer::Composer,
+    composer::{Composer, tabular},
     confirmation::{Confirmation, Outcome},
     icon::icon,
     text,
@@ -11,10 +11,12 @@ use gpui::{
     div, prelude::FluentBuilder as _, px,
 };
 use serde_json::{Value, json};
-use std::sync::Arc;
+use std::{cell::Cell, rc::Rc, sync::Arc};
 use theme::{ActiveTheme as _, Theme};
 
 use super::computer_use::Load;
+
+const TABS_HEIGHT: f32 = 20. + 18.571_428 + 2. * 4. + 8.;
 
 #[derive(Clone)]
 pub enum Action {
@@ -52,6 +54,9 @@ struct Worktrees {
     layer: Layer,
     confirmation: Option<Entity<Confirmation>>,
     environments: bool,
+    scroll: gpui::ScrollHandle,
+    composited: bool,
+    heading_height: Rc<Cell<gpui::Pixels>>,
 }
 
 impl Worktrees {
@@ -111,6 +116,9 @@ impl Worktrees {
             layer: Layer::default(),
             confirmation: None,
             environments: false,
+            scroll: gpui::ScrollHandle::new(),
+            composited: false,
+            heading_height: Rc::new(Cell::new(px(0.))),
         }
     }
 
@@ -179,7 +187,7 @@ impl Worktrees {
             });
             return;
         }
-        let dialog = cx.new(|cx| Confirmation::new("Disable automatic worktree deletion?", "We highly recommend keeping automatic deletion on so old worktrees do not build up and use unnecessary disk space. If you prefer to manage old worktrees yourself, you can turn this off and ChatGPT will stop deleting them automatically.", "Disable automatic deletion", window, cx).destructive().cancel_label("Keep automatic deletion"));
+        let dialog = cx.new(|cx| Confirmation::new("Disable automatic worktree deletion?", "We highly recommend keeping automatic deletion on so old worktrees do not build up and use unnecessary disk space. If you prefer to manage old worktrees yourself, you can turn this off and ChatGPT will stop deleting them automatically.", "Disable automatic deletion", window, cx).destructive().settings_style().cancel_label("Keep automatic deletion"));
         cx.subscribe(&dialog, |this, _, outcome, cx| {
             if *outcome == Outcome::Confirm {
                 this.page.update(cx, |page, cx| {
@@ -230,13 +238,13 @@ impl Worktrees {
                     border: Some((px(1.), t.border_strong)),
                     ..Default::default()
                 }))
-                .child(text(
+                .child(tabular(text(
                     self.limit.read(cx).field_text().to_owned(),
                     13.,
                     18.571_428,
                     430.,
                     t.text_secondary,
-                ))
+                )))
                 .into_any_element()
         };
         let rows = vec![
@@ -287,7 +295,7 @@ impl Worktrees {
                 t,
             ),
         ];
-        card(rows, &self.layer, t)
+        card(rows, self.composited.then_some(&self.layer), t)
     }
 
     fn list(&self, t: &Theme, cx: &mut Context<Self>) -> gpui::Div {
@@ -399,7 +407,7 @@ impl Worktrees {
                     .child(text(title, 14., 21., 500., t.text))
                     .children(action),
             )
-            .child(card(rows, &self.layer, t))
+            .child(card(rows, self.composited.then_some(&self.layer), t))
     }
 
     fn worktree(&self, row: &Value, t: &Theme, cx: &mut Context<Self>) -> gpui::Div {
@@ -539,10 +547,24 @@ impl Worktrees {
 impl Render for Worktrees {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
+        let view = cx.entity().downgrade();
+        let heading_height = self.heading_height.get();
+        window.on_next_frame(move |_, cx| {
+            let _ = view.update(cx, |this, cx| {
+                let composited = this.scroll.max_offset().y > px(0.);
+                if this.composited != composited || this.heading_height.get() != heading_height {
+                    this.composited = composited;
+                    cx.notify();
+                }
+            });
+        });
+        let heading_measure = self.heading_height.clone();
+        let sticky_offset = (-self.scroll.offset().y - self.heading_height.get()).max(px(0.));
         let content = if self.environments {
             div().child(super::environments::render(
                 SharedString::from(format!("environment-{:?}", self.page.entity_id())),
                 &self.layer,
+                self.composited,
                 window,
                 cx,
             ))
@@ -557,64 +579,111 @@ impl Render for Worktrees {
         let heading = div().min_h(px(60.)).py(px(12.)).flex().flex_col().justify_center().gap(px(4.))
             .child(text("Worktrees", 28., 33.6, 500., t.text))
             .when(self.environments, |heading| {
-                heading.child(div().flex().flex_wrap().gap(px(4.))
-                    .child(text("Local environments tell ChatGPT how to set up worktrees for a project.", 14., 24., 430., t.text_secondary))
+                heading.child(div().flex().flex_wrap()
+                    .child(text("Local environments tell ChatGPT how to set up worktrees for a project. ", 14., 24., 430., t.text_secondary))
                     .child(div().id("environments-guide")
                         .child(text("Learn more", 14., 24., 430., t.text_accent))
                         .on_click(|_, _, cx| cx.open_url("https://developers.openai.com/codex/app/local-environments"))))
             });
-        let tabs = div().pt(px(20.)).pb(px(8.)).flex().gap(px(2.)).children(
-            [(false, "General"), (true, "Environments")].map(|(environments, label)| {
+        let tabs = div()
+            .relative()
+            .bg(t.surface)
+            .pt(px(20.))
+            .pb(px(8.))
+            .flex()
+            .gap(px(2.))
+            .children(
+                [(false, "General"), (true, "Environments")].map(|(environments, label)| {
+                    div()
+                        .id(label)
+                        .px(px(8.))
+                        .py(px(4.))
+                        .relative()
+                        .when(self.environments == environments, |d| {
+                            d.child(shapes::decoration(shapes::Decoration {
+                                radius: gpui::Corners::all(px(10.)),
+                                corner: shapes::Corner::Squircle,
+                                fill: Some(t.surface_secondary),
+                                ..Default::default()
+                            }))
+                        })
+                        .child(text(
+                            label,
+                            13.,
+                            18.571_428,
+                            500.,
+                            if self.environments == environments {
+                                t.text
+                            } else {
+                                t.text_secondary
+                            },
+                        ))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.environments = environments;
+                            cx.notify();
+                        }))
+                }),
+            )
+            .child(
                 div()
-                    .id(label)
-                    .px(px(8.))
-                    .py(px(4.))
-                    .rounded(px(10.))
-                    .when(self.environments == environments, |d| {
-                        d.bg(t.surface_secondary)
-                    })
-                    .child(text(
-                        label,
-                        13.,
-                        18.571_428,
-                        500.,
-                        if self.environments == environments {
-                            t.text
-                        } else {
-                            t.text_secondary
-                        },
-                    ))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.environments = environments;
-                        cx.notify();
-                    }))
-            }),
-        );
+                    .absolute()
+                    .top(gpui::relative(1.))
+                    .left_0()
+                    .right_0()
+                    .h(px(32.))
+                    .bg(gpui::linear_gradient(
+                        180.,
+                        gpui::linear_color_stop(t.surface, 0.),
+                        gpui::linear_color_stop(gpui::transparent_black(), 1.),
+                    )
+                    .color_space(gpui::ColorSpace::Oklab)),
+            );
         let page = div()
             .id("worktrees-page")
             .flex_1()
             .overflow_y_scroll()
-            .layer()
+            .track_scroll(&self.scroll)
+            .when(self.composited, |d| d.layer())
+            .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.notify()))
             .child(probe(&self.layer))
             .child(
-                div().pt(px(16.)).pb(px(1.)).child(
-                    div()
-                        .w_full()
-                        .max_w(px(768.))
-                        .mx_auto()
-                        .px(px(20.))
-                        .child(heading),
-                ),
+                div()
+                    .relative()
+                    .pt(px(16.))
+                    .pb(px(1.))
+                    .child(
+                        gpui::canvas(
+                            move |bounds, _, _| heading_measure.set(bounds.size.height),
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .size_full(),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .max_w(px(768.))
+                            .mx_auto()
+                            .px(px(20.))
+                            .child(heading),
+                    ),
             )
             .child(
                 div()
+                    .relative()
                     .w_full()
                     .max_w(px(768.))
                     .mx_auto()
                     .px(px(20.))
                     .pb(px(20.))
-                    .child(tabs)
-                    .child(div().pt(px(20.)).child(content)),
+                    .child(div().h(px(TABS_HEIGHT)))
+                    .child(div().pt(px(20.)).child(content))
+                    .child(
+                        tabs.absolute()
+                            .top(sticky_offset)
+                            .left(px(20.))
+                            .right(px(20.)),
+                    ),
             );
         div()
             .size_full()
@@ -631,24 +700,49 @@ impl Render for Worktrees {
             }))
             .child(div().h(px(46.)).flex_none())
             .child(page)
-            .children(self.confirmation.clone())
+            .children(self.confirmation.as_ref().map(|dialog| {
+                let viewport = window.viewport_size();
+                gpui::deferred(
+                    gpui::anchored()
+                        .position(gpui::point(px(0.), px(0.)))
+                        .child(
+                            div()
+                                .relative()
+                                .w(viewport.width)
+                                .h(viewport.height)
+                                .child(dialog.clone()),
+                        ),
+                )
+            }))
     }
 }
 
-pub(super) fn card(rows: Vec<gpui::Div>, layer: &Layer, t: &Theme) -> gpui::Div {
+pub(super) fn card(rows: Vec<gpui::Div>, layer: Option<&Layer>, t: &Theme) -> gpui::Div {
     let count = rows.len();
-    div()
-        .relative()
-        .flex()
-        .flex_col()
-        .p(px(1.))
-        .child(deco(
+    let decoration = if let Some(layer) = layer {
+        deco(
             layer,
             20.,
             shapes::Corner::Squircle,
             t.background_panel,
             Some(t.border),
-        ))
+        )
+    } else {
+        shapes::decoration(shapes::Decoration {
+            radius: gpui::Corners::all(px(20.)),
+            corner: shapes::Corner::Squircle,
+            fill: Some(t.background_panel),
+            border: Some((px(1.), t.border)),
+            ..Default::default()
+        })
+        .into_any_element()
+    };
+    div()
+        .relative()
+        .flex()
+        .flex_col()
+        .p(px(1.))
+        .child(decoration)
         .children(rows.into_iter().enumerate().map(|(index, row)| {
             row.relative().when(index + 1 < count, |row| {
                 row.child(

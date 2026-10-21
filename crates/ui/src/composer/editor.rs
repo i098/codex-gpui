@@ -562,6 +562,40 @@ impl Composer {
     }
 
     pub(super) fn editor(&self, cx: &mut Context<Self>) -> Div {
+        let content = if let Some(field) = self.settings_input.as_ref() {
+            div()
+                .id("settings-field-scroll")
+                .w_full()
+                .overflow_hidden()
+                .track_scroll(&field.scroll)
+                .when(self.plain_field == Some(true), |input| {
+                    input.h_full().overflow_y_scroll()
+                })
+                .when(self.plain_field == Some(false), |input| {
+                    input
+                        .h(self.editor_line_height())
+                        .flex()
+                        .overflow_x_scroll()
+                })
+                .child(Editor(cx.entity()))
+                .into_any_element()
+        } else {
+            // `--opacity-composer-placeholder: .5` on the placeholder. The text blends like
+            // Chromium's: blitted into a transparent layer (`_ComposerLayoutInput`'s
+            // `overflow-y: auto` contents), then composited onto the card.
+            div()
+                .when(
+                    self.content.is_empty()
+                        && (self.settings_rows == 0 || self.request_parent.is_some()),
+                    |input| input.opacity(0.5),
+                )
+                .when(
+                    self.settings_rows == 0 || self.request_parent.is_some(),
+                    |input| input.layer(),
+                )
+                .child(Editor(cx.entity()))
+                .into_any_element()
+        };
         div()
             .px(px(
                 if self.settings_rows > 0 && self.request_parent.is_none() && self.request_compact {
@@ -581,8 +615,12 @@ impl Composer {
                     4.
                 },
             ))
-            .min_h(if self.settings_rows > 0 && self.request_parent.is_none() {
-                self.editor_line_height() * self.settings_rows as f32
+            .min_h(if self.settings_input.is_some() {
+                if self.plain_field == Some(true) {
+                    px(0.)
+                } else {
+                    self.editor_line_height()
+                }
             } else {
                 px(if self.request_parent.is_some() {
                     20.
@@ -590,6 +628,10 @@ impl Composer {
                     48.
                 })
             })
+            .when(
+                self.settings_input.is_some() && self.plain_field == Some(true),
+                |input| input.h_full(),
+            )
             .cursor(CursorStyle::IBeam)
             .text_size(if self.settings_rows > 0 && self.request_parent.is_none() {
                 px(13.)
@@ -598,24 +640,14 @@ impl Composer {
             })
             .line_height(self.editor_line_height())
             .font_weight(gpui::FontWeight(430.))
+            .when(self.settings_monospace, |editor| editor.font_family(MONO))
+            .when(self.settings_rows > 0 && self.request_number, tabular)
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_click))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
-            // `--opacity-composer-placeholder: .5` on the placeholder. The text blends like
-            // Chromium's: blitted into a transparent layer (`_ComposerLayoutInput`'s
-            // `overflow-y: auto` contents), then composited onto the card.
-            .child(
-                div()
-                    .when(
-                        self.content.is_empty()
-                            && (self.settings_rows == 0 || self.request_parent.is_some()),
-                        |d| d.opacity(0.5),
-                    )
-                    .layer()
-                    .child(Editor(cx.entity())),
-            )
+            .child(content)
     }
 }
 
@@ -875,10 +907,19 @@ impl gpui::Element for Editor {
         _: Option<&GlobalElementId>,
         _: Option<&InspectorElementId>,
         window: &mut Window,
-        _: &mut App,
+        cx: &mut App,
     ) -> (LayoutId, LayoutId) {
         let mut style = Style::default();
-        style.size.width = relative(1.).into();
+        let single_line = {
+            let input = self.0.read(cx);
+            input.settings_input.is_some() && input.plain_field == Some(false)
+        };
+        if single_line {
+            style.min_size.width = relative(1.).into();
+            style.flex_shrink = 0.;
+        } else {
+            style.size.width = relative(1.).into();
+        }
         let input = self.0.clone();
         let id = window.request_measured_layout(style, move |known, available, window, cx| {
             let width = known.width.or(match available.width {
@@ -887,12 +928,17 @@ impl gpui::Element for Editor {
             });
             let black = gpui::black();
             let lines = shape(input.read(cx), black, black, black, width, window);
-            let height = lines
-                .iter()
-                .map(|l| l.size(input.read(cx).editor_line_height()).height)
-                .sum();
+            let line_height = input.read(cx).editor_line_height();
+            let height = lines.iter().map(|line| line.size(line_height).height).sum();
+            let content_width = if single_line {
+                lines
+                    .first()
+                    .map_or(px(1.), |line| line.size(line_height).width + px(1.))
+            } else {
+                px(0.)
+            };
             Size {
-                width: width.unwrap_or_default(),
+                width: width.unwrap_or_default().max(content_width),
                 height,
             }
         });
@@ -925,6 +971,28 @@ impl gpui::Element for Editor {
             c.bounds = Some(bounds);
             collapse(std::mem::replace(&mut c.footer_width, width)) != collapse(width)
         });
+        let caret = {
+            let composer = self.0.read(cx);
+            composer
+                .settings_input
+                .as_ref()
+                .filter(|_| composer.focus_handle.is_focused(window))
+                .and_then(|_| composer.point_for_index(composer.cursor()))
+                .map(|caret| (caret, composer.editor_line_height()))
+        };
+        if let Some((caret, line_height)) = caret {
+            self.0.update(cx, |composer, _| {
+                if let Some(field) = composer.settings_input.as_mut() {
+                    field.reveal(caret, line_height, window);
+                }
+            });
+        } else if self.0.read(cx).settings_input.is_some() {
+            self.0.update(cx, |composer, _| {
+                if let Some(field) = composer.settings_input.as_mut() {
+                    field.blur(window);
+                }
+            });
+        }
         if changed {
             let entity = self.0.clone();
             window.defer(cx, move |_, cx| entity.update(cx, |_, cx| cx.notify()));

@@ -171,6 +171,7 @@ mod menu {
 }
 mod mention;
 mod menus;
+mod settings_field;
 mod slash;
 pub use slash::SlashCommand;
 
@@ -646,6 +647,8 @@ pub struct Composer {
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
     settings_rows: usize,
+    settings_monospace: bool,
+    settings_input: Option<settings_field::State>,
 }
 
 impl Composer {
@@ -723,6 +726,8 @@ impl Composer {
             on_model: None,
             plain_field: None,
             settings_rows: 0,
+            settings_monospace: false,
+            settings_input: None,
         }
     }
 
@@ -735,12 +740,18 @@ impl Composer {
         let mut editor = Self::new(placeholder, false, cx);
         editor.plain_field = Some(multiline);
         editor.settings_rows = if multiline { 6 } else { 1 };
+        editor.settings_input = Some(settings_field::State::default());
         editor.set_text(value, cx);
         editor
     }
 
     pub fn with_field_rows(mut self, rows: usize) -> Self {
         self.settings_rows = rows.max(1);
+        self
+    }
+
+    pub fn monospace_field(mut self) -> Self {
+        self.settings_monospace = true;
         self
     }
 
@@ -1681,7 +1692,7 @@ pub fn label(s: impl Into<SharedString>, color: Hsla) -> Div {
 }
 
 /// The model name sits in a `tabular-nums` span (`GPT-6`'s digit takes its tabular advance).
-fn tabular(d: Div) -> Div {
+pub(crate) fn tabular(d: Div) -> Div {
     d.font_features(gpui::FontFeatures(std::sync::Arc::new(vec![(
         "tnum".into(),
         1,
@@ -1924,11 +1935,18 @@ impl Render for Composer {
             .on_action(cx.listener(Self::previous_command))
             .relative();
         if self.plain_field.is_some() {
+            let resizable = self.settings_input.is_some() && self.plain_field == Some(true);
+            let field_height = self
+                .settings_input
+                .as_ref()
+                .and_then(|field| field.height)
+                .unwrap_or(self.editor_line_height() * self.settings_rows as f32 + px(18.))
+                .max(px(96.));
+            let editor = self.editor(cx).when(self.request_number, |d| d.pr(px(30.)));
             return div().w_full().child(
                 card.key_context(KEY_CONTEXT)
                     .when(self.request_parent.is_none(), |d| {
-                        d.border_1()
-                            .border_color(gpui::transparent_black())
+                        d.p(px(1.))
                             .child(shapes::decoration(shapes::Decoration {
                                 radius: Corners::all(px(10.)),
                                 corner: shapes::Corner::Squircle,
@@ -1949,8 +1967,9 @@ impl Render for Composer {
                                     .flex_col()
                                     .justify_center()
                             })
-                            .when(self.plain_field == Some(true), |d| d.py(px(8.)))
+                            .when(self.plain_field == Some(true), |d| d.py(px(9.)))
                     })
+                    .when(resizable, |d| d.h(field_height))
                     .when(self.request_parent.is_some(), |d| {
                         d.px(px(1.))
                             .py(px(if self.secret {
@@ -1986,7 +2005,11 @@ impl Render for Composer {
                         .aria_placeholder(self.placeholder.clone())
                         .when(!self.secret, |d| d.aria_value(self.content.clone()))
                     })
-                    .child(self.editor(cx).when(self.request_number, |d| d.pr(px(30.))))
+                    .child(editor)
+                    .children(
+                        resizable
+                            .then(|| settings_field::grip(cx.entity().downgrade(), field_height)),
+                    )
                     .when(self.request_number, |d| {
                         d.child(self.request_number_stepper(&t, cx))
                     }),
