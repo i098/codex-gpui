@@ -15,6 +15,8 @@ pub(crate) struct Item {
     pub icon: Option<&'static [u8]>,
     /// Shown at the right, as the native menu shows `⌘X`.
     pub accelerator: Option<&'static str>,
+    /// Overrides the menu subject for this action, such as a spelling suggestion.
+    pub payload: Option<SharedString>,
     pub separator: bool,
 }
 
@@ -186,7 +188,11 @@ impl ContextMenu {
                 return;
             };
             let id = open.items[index].id;
-            let subject = std::mem::take(&mut open.subject);
+            let subject = open.items[index]
+                .payload
+                .take()
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| std::mem::take(&mut open.subject));
             open.close(window, cx);
             activate(this, id, subject, window, cx);
             cx.stop_propagation();

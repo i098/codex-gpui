@@ -427,6 +427,17 @@ The terminal command opens an existing background command, not an interactive sh
 Unsupported destinations remain known gaps; this change does not implement logout, git operations, cloud operations, or the project picker.
 Recorded command rows, ranking, and keyboard-editing checks remain unchanged.
 
+The native menu lives in `crates/app/src/native_menus.rs`.
+Edit supports plain-text Paste and Match Style and selection-only Delete, including undo.
+View contains Find; Help opens the Codex changelog, troubleshooting guide, and service status page.
+The `native_menus` and `s013` tests check the edit actions and Find navigation on macOS.
+About shows this build's version in a separate window; Escape closes it.
+The Window menu has Bring All to Front, and Control+Command+F toggles the active window's fullscreen state.
+The fullscreen replay checks command dispatch and window state without bringing a native window to the front.
+The spelling menu replaces the selected misspelling and sends Learn Spelling to the native service.
+Headless tests check these actions without relying on the system dictionary's suggestions.
+The Speech submenu uses the native speech synthesizer; its service test sets the volume to zero.
+
 ```sh
 tools/mac.sh -l cgx-command-dispatch 'cargo test -p app --test command_dispatch --test s025 --test s025_rank --test s026 -- --test-threads=1'
 ```
