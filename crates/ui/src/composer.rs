@@ -587,6 +587,8 @@ pub struct Composer {
     history: editor::History,
     /// The right-click menu (Electron's native editable-field menu).
     context_menu: Option<crate::screens::thread::view::menu::ContextMenu>,
+    context_spelling: Option<(Range<usize>, String)>,
+    context_image: Option<crate::image_context::ImageContext>,
     is_selecting: bool,
     /// Shaped lines and editor bounds of the last paint, for hit testing.
     lines: Vec<WrappedLine>,
@@ -676,6 +678,8 @@ impl Composer {
             marked_range: None,
             history: editor::History::default(),
             context_menu: None,
+            context_spelling: None,
+            context_image: None,
             is_selecting: false,
             lines: Vec::new(),
             bounds: None,
@@ -1157,6 +1161,8 @@ impl Composer {
         self.selected_range = s.len()..s.len();
         self.marked_range = None;
         self.history = editor::History::default();
+        self.context_spelling = None;
+        self.context_image = None;
         self.slash.reset();
         self.end_search(cx);
         cx.notify();
@@ -1911,6 +1917,20 @@ impl Render for Composer {
             .on_action(cx.listener(Self::copy))
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(|this, _: &crate::Paste, window, cx| this.paste(window, cx)))
+            .on_action(
+                cx.listener(|this, _: &crate::PasteAndMatchStyle, window, cx| {
+                    this.paste_and_match_style(window, cx)
+                }),
+            )
+            .on_action(cx.listener(|this, _: &crate::DeleteSelection, window, cx| {
+                if !this.selected_range.is_empty() {
+                    this.insert("", window, cx);
+                }
+            }))
+            .when(
+                cfg!(target_os = "macos") && !self.secret && !self.content.is_empty(),
+                |card| card.on_action(cx.listener(Self::speak_selection)),
+            )
             .on_action(self.request_listener(cx, Self::dismiss))
             .on_action(cx.listener(Self::complete_command))
             .on_action(cx.listener(Self::next_command))
@@ -2145,6 +2165,8 @@ impl Render for Composer {
                     "composer-menu",
                     if menu.items.first().is_some_and(|item| item.id == QUEUE_EDIT) {
                         QUEUE_ACTIONS
+                    } else if self.context_image.is_some() {
+                        "Image actions"
                     } else {
                         "Edit actions"
                     },

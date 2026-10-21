@@ -149,6 +149,35 @@ impl Render for OpacityScene {
                 .w(px(28.))
                 .h(px(16.)),
             )
+            .child(
+                gpui::canvas(
+                    |_, _, _| (),
+                    |_, _, window, cx| mask(window, cx, 56., 4., 255, gpui::white()),
+                )
+                .absolute()
+                .left(px(52.))
+                .top_0()
+                .w(px(12.))
+                .h(px(16.))
+                .opacity(0.5),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px(52.))
+                    .top(px(16.))
+                    .w(px(12.))
+                    .h(px(16.))
+                    .opacity(0.5)
+                    .child(
+                        gpui::canvas(
+                            |_, _, _| (),
+                            |_, _, window, cx| mask(window, cx, 56., 20., 255, gpui::white()),
+                        )
+                        .size_full()
+                        .top_layer(),
+                    ),
+            )
     }
 }
 #[test]
@@ -178,15 +207,17 @@ fn svg_opacity_uses_one_layer_restore() -> anyhow::Result<()> {
         (73, 9),
         (9, 73),
         (89, 9),
+        (113, 9),
+        (113, 41),
     ];
     let actual: Vec<_> = points.map(|(x, y)| image.get_pixel(x, y).0).into();
-    let expected: Vec<_> = [70, 136, 188, 50, 129, 111, 45, 82, 42]
+    let expected: Vec<_> = [70, 136, 188, 50, 129, 111, 45, 82, 42, 149, 255]
         .map(|value| [value, value, value, 255])
         .into();
     println!("OPACITY_PIXELS {actual:?}");
     assert_eq!(
         actual, expected,
-        "SVG opacity must restore one shared layer; direct color alpha must keep MASK"
+        "SVG and canvas opacity must restore each layer once; direct color alpha must keep MASK"
     );
     Ok(())
 }

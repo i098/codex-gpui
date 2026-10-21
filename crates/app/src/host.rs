@@ -44,7 +44,10 @@ mod automation_schedule;
 pub mod computer_use;
 pub mod computer_use_native;
 mod git;
+pub mod git_pr;
+mod native_apps;
 mod projectless;
+pub use projectless::Workspace;
 pub(crate) mod run_now;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -90,6 +93,14 @@ pub trait Host: Send + Sync {
 
     fn add_project(&self, _root: &Path) -> Result<String> {
         bail!("adding a local project is unsupported by this host")
+    }
+
+    fn prepare_projectless(&self, _prompt: &str) -> Result<Workspace> {
+        bail!("projectless workspaces are unsupported by this host")
+    }
+
+    fn record_projectless(&self, _thread: &str, _workspace: &Workspace) -> Result<()> {
+        bail!("projectless thread storage is unsupported by this host")
     }
 
     /// Returns the trusted native Settings service, never a model-callable tool.
@@ -466,7 +477,6 @@ pub struct LocalHost {
     /// process holds the same connection.
     bridge: Option<Arc<Bridge>>,
     opener: PathBuf,
-    host_settings_path: PathBuf,
     computer_use_settings: Option<computer_use::ComputerUseSettings>,
     native_computer_use: Arc<computer_use_native::NativeComputerUse>,
 }
@@ -481,18 +491,11 @@ impl LocalHost {
             home,
             bridge: None,
             opener: "/usr/bin/open".into(),
-            host_settings_path: PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
-                .join("Library/Application Support/codex-gpui/host-settings.json"),
         }
     }
 
     pub fn with_bridge(mut self, bridge: Arc<Bridge>) -> Self {
         self.bridge = Some(bridge);
-        self
-    }
-
-    pub fn with_host_settings_path(mut self, path: impl Into<PathBuf>) -> Self {
-        self.host_settings_path = path.into();
         self
     }
 
@@ -1072,6 +1075,14 @@ impl LocalHost {
 }
 
 impl Host for LocalHost {
+    fn prepare_projectless(&self, prompt: &str) -> Result<Workspace> {
+        self.create_projectless_workspace(prompt)
+    }
+
+    fn record_projectless(&self, thread: &str, workspace: &Workspace) -> Result<()> {
+        self.record_projectless_thread(thread, workspace)
+    }
+
     fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
         self.computer_use_settings
             .as_ref()
@@ -1190,7 +1201,7 @@ impl Host for LocalHost {
             | "git-commit-status" | "git-commit-diff" | "git-commit" | "git-push"
             | "git-checkout" => git::fetch(endpoint, &params)?,
             "create-worktree" => self.create_worktree(&params)?,
-            "set-worktree-owner-thread" => {
+            "set-worktree-owner-thread" | "worktree-set-owner-thread" => {
                 let worktree = params["worktree"].as_str().context("missing worktree")?;
                 let thread = params["conversationId"]
                     .as_str()
@@ -1200,6 +1211,10 @@ impl Host for LocalHost {
                 json!({"success": true})
             }
             "open-file" => open_file(&self.opener, &params)?,
+            "native-desktop-apps" => json!({"apps": native_apps::list(&params)?}),
+            "native-desktop-app-by-bundle-id" => {
+                json!({"app": native_apps::by_bundle_id(&params)?})
+            }
             "paths-exist" => {
                 let paths: Vec<String> =
                     serde_json::from_value(params.get("paths").cloned().unwrap_or(json!([])))?;
@@ -1597,6 +1612,14 @@ impl CloudHost {
 }
 
 impl Host for CloudHost {
+    fn prepare_projectless(&self, prompt: &str) -> Result<Workspace> {
+        self.local.prepare_projectless(prompt)
+    }
+
+    fn record_projectless(&self, thread: &str, workspace: &Workspace) -> Result<()> {
+        self.local.record_projectless(thread, workspace)
+    }
+
     fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
         self.local.computer_use_settings()
     }

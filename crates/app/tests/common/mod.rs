@@ -555,7 +555,9 @@ impl Fx {
             Composer::set_caret_transparent(cx, true);
             window.refresh();
         })?;
-        let image = self.shot();
+        let image = self
+            .advance(Duration::ZERO)
+            .and_then(|()| parity::capture_frozen(&mut self.cx, self.window));
         self.cx.update_window(self.window, |_, window, cx| {
             Composer::set_caret_transparent(cx, false);
             window.refresh();

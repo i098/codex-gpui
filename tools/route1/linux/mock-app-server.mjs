@@ -37,6 +37,13 @@ for (const f of files) {
     byMethod.get(msg.method).push({ params: msg.params ?? null, reply, notes });
   }
 }
+const oracle = JSON.parse(fs.readFileSync(process.env.R1_ORACLE || new URL("../oracle.json", import.meta.url), "utf8"));
+for (const [key, value] of Object.entries(oracle)) {
+  const prefix = "mcp local thread/resume ";
+  if (!key.startsWith(prefix) || !value?.message?.result?.thread) continue;
+  if (!byMethod.has("thread/resume")) byMethod.set("thread/resume", []);
+  byMethod.get("thread/resume").push({ params: JSON.parse(key.slice(prefix.length)), reply: value.message, notes: [] });
+}
 let signedOut = !!process.env.MOCK_SIGNED_OUT;
 const SIGNED_OUT = {
   getAuthStatus: { authMethod: null, authToken: null, requiresOpenaiAuth: true },
@@ -59,7 +66,8 @@ function pick(method, params) {
     if (p.threadId && q.threadId && p.threadId !== q.threadId) return -1;
     return (p.threadId && p.threadId === q.threadId ? 1e3 : 0) + Object.keys(p).filter((k) => same(p[k], q[k])).length;
   };
-  return c.reduce((best, r) => (score(r) > score(best) ? r : best));
+  const best = c.reduce((best, r) => (score(r) > score(best) ? r : best));
+  return score(best) < 0 ? null : best;
 }
 
 const out = (m) => process.stdout.write(`${JSON.stringify(m)}\n`);

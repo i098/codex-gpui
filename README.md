@@ -89,6 +89,20 @@ It does not use optional agent capabilities (`loadSession`, session list, image 
 An unsupported method gets the JSON-RPC error `<method> is not supported by the ACP backend`, and the app shows its usual failure state.
 The client offers no file system or terminal capability, so the agent uses its own tools.
 
+## Durable cloud transport
+
+`Bridge::connect_cloud(endpoint, token, account_id)` connects to the durable cloud app-server.
+Use `bridge::CLOUD_ENDPOINT` for the original service and call `initialize` before sending requests.
+Run the blocking connection step off the UI thread.
+The bridge sends the token through the original WebSocket subprotocol and preserves the existing request, response, and event APIs.
+Remote endpoints require TLS; plain WebSocket connections are limited to loopback.
+The caller owns authentication changes and reconnects.
+Closing the socket fails pending requests, and dropping the bridge closes its connection.
+TLS uses an explicit Ring provider with standard and system trust roots.
+The vendored Tungstenite 0.28 package omits raw handshake-request trace output because it contains the authentication token.
+
+Run `cargo test -p bridge` for real loopback WebSocket exchanges, disconnect handling, and credential checks.
+
 ## Native Computer Use service
 
 The host keeps one managed native helper at `$CODEX_HOME/computer-use/Codex Computer Use.app`.
@@ -145,6 +159,12 @@ Heartbeat tasks resume their existing thread with its selected model and permiss
 The app opens that thread after a successful start, unless you navigate away while the run starts.
 Run `cargo test -p app --test task_create -- --test-threads=1` on macOS for the native creation and reload proof.
 Run `cargo test -p app --test automation_run_now` for the `Run now` requests over a stdio app-server stub.
+
+## Managed update policy
+
+General settings shows the read-only `In-app updates` row with `Managed` when the app-server disables `in_app_updates`.
+The row uses `experimentalFeature/list`, not a local preference.
+The app hides the row when that policy is absent or enabled.
 
 ## Release bundle
 
@@ -228,7 +248,7 @@ That command does not close QA or any normal app.
 
 | Crate | Role |
 |---|---|
-| `bridge` | Client for `codex app-server`: newline-delimited JSON-RPC over stdio, hand-written protocol types, replay of recorded sessions, and the ACP backend. |
+| `bridge` | JSON-RPC client for `codex app-server` over stdio or durable cloud WebSocket, protocol types, recorded sessions, and the ACP backend. |
 | `ui` | The window shell (titlebar, navigation rail, sidebar, main panel), the 9 screens in `screens/`, the composer, the thread view, the diff view and the icons. |
 | `shapes` | Box decorations that land on Chromium's pixels: rounded and squircle corners, borders, `box-shadow`, backdrop blur, SVG icon paths. It links Skia. |
 | `textsys` | A GPUI text system that puts glyphs on the same pixels as Chromium on macOS. It also holds the vendored `gpui` and `gpui_apple`. |
@@ -241,6 +261,11 @@ Home, Thread, Settings, Automations, Mobile, and Archive each own their action r
 `routes/mod.rs` keeps the route enum, family registration, navigation history, and shared shell updates.
 `app::Route` and its saved values stay unchanged.
 Shared RPC handlers and state remain on `Root` in `lib.rs`.
+
+`LocalHost` serves `native-desktop-apps` and `native-desktop-app-by-bundle-id` through the desktop fetch boundary.
+On macOS, the adapter reads Spotlight metadata, applies the original app exclusions, and supports usage or display-name ordering.
+It returns each app's path, bundle ID, and display name without launching the app.
+Linux returns an empty native app list, as the original host does.
 
 On macOS, `textsys::show_definition(window, selection, baseline)` opens AppKit's native Look Up popover.
 The baseline uses window-local logical pixels from the top left; the adapter handles both view orientations.
@@ -267,8 +292,16 @@ Stock GPUI cannot match Chromium's pixels, so the copies change three things:
 `Window::layout_origin_residual_y` returns the fractional vertical origin removed by layout rounding.
 Use it when placing multiline field glyphs to retain Blink's baseline positions.
 
+Inline-code backgrounds use both snapped label edges, so fractional text widths do not expand their right edge.
+
 Monochrome glyphs and SVGs keep their paint alpha.
 Element opacity is applied once when the enclosing layer is restored.
+
+Canvas callbacks honor their `opacity`, `layer`, and `top_layer` styles.
+These styles use the same compositor boundary as other elements.
+
+Linear gradients interpolate premultiplied colors in the selected color space.
+Their ordered RGB dither leaves alpha unchanged, so transparent fades do not add opacity noise.
 
 Home composer permission and model labels paint directly into their parent.
 Docked composers retain the composited label path. The animated effort label keeps its filter layer.
@@ -410,6 +443,21 @@ Panel commands keep the selected chat and the existing tabs.
 The terminal command opens an existing background command, not an interactive shell.
 Unsupported destinations remain known gaps; this change does not implement logout, git operations, cloud operations, or the project picker.
 Recorded command rows, ranking, and keyboard-editing checks remain unchanged.
+
+The native menu lives in `crates/app/src/native_menus.rs`.
+Edit supports plain-text Paste and Match Style and selection-only Delete, including undo.
+View contains Find; Help opens the Codex changelog, troubleshooting guide, and service status page.
+The `native_menus` and `s013` tests check the edit actions and Find navigation on macOS.
+About shows this build's version in a separate window; Escape closes it.
+The Window menu has Bring All to Front, and Control+Command+F toggles the active window's fullscreen state.
+The fullscreen replay checks command dispatch and window state without bringing a native window to the front.
+The spelling menu replaces the selected misspelling and sends Learn Spelling to the native service.
+Headless tests check these actions without relying on the system dictionary's suggestions.
+The Speech submenu uses the native speech synthesizer; its service test sets the volume to zero.
+Images in the composer and tool output support Copy Image and Save Image As.
+Images with a local source also support Reveal in Finder.
+Saving writes the original bytes and replaces the destination only after the write succeeds.
+The headless Save-dialog hook allows tests to select a destination without opening a native window.
 
 ```sh
 tools/mac.sh -l cgx-command-dispatch 'cargo test -p app --test command_dispatch --test s025 --test s025_rank --test s026 -- --test-threads=1'

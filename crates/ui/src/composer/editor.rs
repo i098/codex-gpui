@@ -335,6 +335,22 @@ impl Composer {
         self.insert("", window, cx);
     }
 
+    pub(super) fn speak_selection(
+        &mut self,
+        _: &crate::StartSpeaking,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let text = if self.selected_range.is_empty() {
+            self.content.as_str()
+        } else {
+            &self.content[self.selected_range.clone()]
+        };
+        if let Err(error) = crate::native_text::speak(text, cx) {
+            eprintln!("codex-gpui: cannot speak selection: {error:#}");
+        }
+    }
+
     /// Command+V, or the menu's Paste: images and long text (5,000 UTF-16 units or more)
     /// become attachments, except in the message editor, which takes clipboard text only.
     pub(super) fn paste(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -362,6 +378,12 @@ impl Composer {
         }
     }
 
+    pub(super) fn paste_and_match_style(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+            self.insert(&text, window, cx);
+        }
+    }
+
     /// The open right-click menu's items as `(id, label, enabled)`; empty when none is open.
     pub fn context_menu_items(&self) -> impl Iterator<Item = (&str, &str, bool)> {
         self.context_menu.iter().flat_map(ContextMenu::rows)
@@ -383,13 +405,48 @@ impl Composer {
         }
         window.focus(&self.focus_handle, cx);
         self.menu = None;
+        self.context_spelling = None;
+        self.context_image = None;
         let at = self.index_for_point(e.position);
         if !self.selected_range.contains(&at) {
             self.move_to(at, cx);
         }
+        let spelling = crate::native_text::misspelling(&self.content, self.offset_to_utf16(at))
+            .map(|spelling| {
+                let range = self.range_from_utf16(&spelling.range_utf16);
+                (spelling, range)
+            });
+        if let Some((_, range)) = &spelling
+            && self.selected_range.is_empty()
+        {
+            self.selected_range = range.clone();
+            self.selection_reversed = false;
+        }
         let selection = self.content[self.selected_range.clone()].to_string();
         let has = !selection.is_empty();
         let mut items = Vec::new();
+        if let Some((spelling, range)) = spelling.filter(|(_, range)| *range == self.selected_range)
+        {
+            self.context_spelling = Some((range.clone(), self.content[range].to_string()));
+            if spelling.guesses.is_empty() {
+                items.push(Item::new(
+                    "dictionarySuggestions",
+                    "No Guesses Found",
+                    false,
+                ));
+            } else {
+                for guess in spelling.guesses {
+                    let label: SharedString = guess.into();
+                    items.push(Item {
+                        payload: Some(label.clone()),
+                        ..Item::new("dictionarySuggestions", label, true)
+                    });
+                }
+            }
+            items.push(Item::separator("spelling-separator"));
+            items.push(Item::new("learnSpelling", "Learn Spelling", true));
+            items.push(Item::separator("learn-spelling-separator"));
+        }
         if has {
             let trimmed = selection.trim();
             // `p$e(t, 25)`: the label shows the first 24 characters and an ellipsis.
@@ -428,6 +485,25 @@ impl Composer {
         cx: &mut Context<Self>,
     ) {
         match id {
+            crate::image_context::COPY
+            | crate::image_context::SAVE
+            | crate::image_context::REVEAL => {
+                if let Some(image) = self.context_image.take() {
+                    image.activate(id, window, cx);
+                }
+            }
+            "dictionarySuggestions" => {
+                if let Some((range, _)) = self.take_spelling() {
+                    self.selected_range = range;
+                    self.selection_reversed = false;
+                    self.insert(&selection, window, cx);
+                }
+            }
+            "learnSpelling" => {
+                if let Some((_, word)) = self.take_spelling() {
+                    crate::native_text::learn(&word);
+                }
+            }
             // ponytail: `showDefinitionForSelection` has no GPUI call; Dictionary.app opens
             // the same entry from its URL scheme.
             "lookUpSelection" => cx.open_url(&selection_url("dict://", &selection)),
@@ -440,6 +516,12 @@ impl Composer {
             "paste" => self.paste(window, cx),
             _ => {}
         }
+    }
+
+    fn take_spelling(&mut self) -> Option<(Range<usize>, String)> {
+        self.context_spelling
+            .take()
+            .filter(|(range, word)| self.content.get(range.clone()) == Some(word.as_str()))
     }
 
     pub(super) fn on_mouse_down(
@@ -977,5 +1059,44 @@ impl gpui::Element for Editor {
             );
             window.paint_quad(fill(r, caret_color));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spelling_actions_replace_learn_and_ignore_stale_words() {
+        #[cfg(target_os = "macos")]
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        let mut cx = gpui::TestAppContext::single();
+        cx.update(|cx| cx.set_global(Theme::dark()));
+        let window = cx.add_window(|_, cx| Composer::new("Do anything", false, cx));
+        window
+            .update(&mut cx, |composer, window, cx| {
+                composer.set_text("teh", cx);
+                composer.context_spelling = Some((0..3, "teh".into()));
+                composer.activate_context_item("dictionarySuggestions", "the".into(), window, cx);
+                assert_eq!(composer.content, "the");
+                composer.undo(&crate::Undo, window, cx);
+                assert_eq!(composer.content, "teh");
+
+                composer.context_spelling = Some((0..3, "teh".into()));
+                composer.activate_context_item("learnSpelling", String::new(), window, cx);
+                assert_eq!(
+                    crate::native_text::take_learned_word().as_deref(),
+                    Some("teh")
+                );
+
+                composer.context_spelling = Some((0..3, "teh".into()));
+                composer.set_text("safe", cx);
+                composer.activate_context_item("dictionarySuggestions", "the".into(), window, cx);
+                assert_eq!(composer.content, "safe");
+            })
+            .expect("dispatch spelling menu actions");
     }
 }
