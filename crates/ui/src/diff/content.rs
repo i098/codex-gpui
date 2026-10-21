@@ -636,18 +636,15 @@ impl DiffPanel {
                                                 d.border_t_2().border_color(t.surface)
                                             })
                                             .hover(|s| s.bg(t.text_alpha_10))
-                                            .child(
-                                                icon("diff-context-expand", 16., foreground).when(
-                                                    matches!(direction, Expand::Before),
-                                                    |icon| {
-                                                        icon.with_transformation(
-                                                            gpui::Transformation::scale(
-                                                                gpui::size(1., -1.),
-                                                            ),
-                                                        )
-                                                    },
-                                                ),
-                                            )
+                                            .child(icon(
+                                                if matches!(direction, Expand::Before) {
+                                                    "diff-context-expand-up"
+                                                } else {
+                                                    "diff-context-expand"
+                                                },
+                                                16.,
+                                                foreground,
+                                            ))
                                     },
                                 ),
                             )
