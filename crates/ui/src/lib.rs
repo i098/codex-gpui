@@ -47,6 +47,7 @@ actions!(
         ShowKeyboardShortcuts,
         /// Rail `Scheduled`: the Automations page.
         OpenScheduled,
+        OpenPullRequests,
         /// Profile menu ▸ Help ▸ `Set up mobile`.
         OpenMobileSetup,
         /// `⌥⌘B`: show or hide the Changes side panel.
@@ -756,7 +757,7 @@ impl Shell {
             let fg = if on { t.text } else { t.text_tertiary };
             let id = SharedString::from(format!("rail-{name}"));
             let focus = focus::handle(id.clone(), 0, window, cx);
-            let glyph = if on {
+            let glyph = if on && matches!(name, "home" | "scheduled") {
                 format!("{name}-filled")
             } else {
                 name.to_string()
@@ -850,7 +851,10 @@ impl Shell {
                     // Explore with its unread dot; it shows no tooltip.
                     .child(item("explore").child(dot(4.)))
                     .child(div().w(px(24.)).h(px(1.)).bg(t.border))
-                    .child(rail_tip(item("rail-code-review"), "Code Review"))
+                    .child(rail_tip(
+                        item("rail-code-review").on_click(dispatch::<OpenPullRequests>),
+                        "Code Review",
+                    ))
                     .child(rail_tip(item("sites"), "Sites"))
                     .child(shapes::top_fade(px(16.))),
             )

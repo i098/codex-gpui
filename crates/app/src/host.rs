@@ -13,8 +13,8 @@
 //! (`getAuthStatus` with `includeToken`) plus the account route from `account/read`, retries once
 //! after a 401 with a refreshed token, and answers the original wire shapes, including errors.
 //! The token never reaches logs, errors, or `Debug` output.
-//! Local fetches support automations, Git, scoped file reads, native app discovery, and open-in requests.
-//! Unsupported endpoints return errors.
+//! Local fetches support automations, Git, read-only pull requests, scoped file reads,
+//! native app discovery, and open-in requests. Unsupported endpoints return errors.
 //! `Root` loads the automation list off the UI thread when the Scheduled route opens.
 //! Consumers read the result through `Root::automations`; this service slice does not change the static screens.
 //!
@@ -55,6 +55,7 @@ mod native_apps;
 mod open_in;
 mod projectless;
 pub use projectless::Workspace;
+mod pull_requests;
 pub(crate) mod run_now;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1179,6 +1180,8 @@ impl Host for LocalHost {
             | "git-checkout" | "git-cat-file" | "git-review-patch" | "git-file-url" => {
                 git::fetch(endpoint, &params)?
             }
+            "gh-cli-status" | "gh-current-user" | "gh-pr-search" | "gh-pr-detail"
+            | "gh-pr-media" => self.pull_requests(endpoint, &params)?,
             "create-worktree" => self.create_worktree(&params)?,
             "set-worktree-owner-thread" | "worktree-set-owner-thread" => {
                 let worktree = params["worktree"].as_str().context("missing worktree")?;

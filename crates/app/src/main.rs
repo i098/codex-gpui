@@ -22,7 +22,9 @@ fn main() {
     let mut state = State::load();
     if let Some(route) = std::env::args()
         .nth(1)
-        .and_then(|path| app::Route::remote_path(&path))
+        .and_then(|path| {
+            app::Route::remote_path(&path).or_else(|| app::Route::pull_request_path(&path))
+        })
     {
         state.route = route;
     }

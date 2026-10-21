@@ -27,6 +27,7 @@ pub enum Route {
     /// Profile menu ▸ `Set up mobile` (`/codex-mobile`).
     Mobile,
     Archive,
+    PullRequests(Option<ui::screens::pull_requests::model::Identity>),
 }
 
 pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
@@ -36,6 +37,7 @@ pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
     root = automations::actions(root, cx);
     root = mobile::actions(root, cx);
     root = archive::actions(root, cx);
+    root = crate::pull_requests::actions(root, cx);
     root
 }
 
@@ -114,6 +116,7 @@ impl Root {
                 Some(automations::thread(self, cx))
             }
             Route::Mobile => Some(mobile::page(self, cx)),
+            Route::PullRequests(selected) => Some(self.pull_requests_shell(selected, window, cx)),
             Route::Home | Route::Thread(_) => None,
         };
         if let Some(sidebar) = &self.scheduled {

@@ -103,7 +103,23 @@ Items are reorderable by drag (dnd-kit, activation distance 6 px; screen reader 
 
 - Reselecting the current destination calls its `onReselect` (Home resets the view) instead of navigating.
 - Rail settings button (`sidebarElectron.rail.settings`) opens settings when no footer is supplied.
-- Only Home is in scope for v1 behavior; the other rail destinations need only their route switch and an empty placeholder.
+- The native Code Review destination implements the pull-request inbox. Other destination families have separate parity checks.
+
+### 3.1 Native pull-request routes
+
+Open Code Review to search, filter, and group pull requests for the active GitHub CLI account.
+The All and Reviewing views remove duplicate requests across review and authored sections.
+Each search stream retains its rows and cursor after a failed page request.
+Retry reloads the failed data without creating a GitHub write.
+
+The executable also accepts `/pull-requests` and `/pull-requests/<host>/<owner>/<repository>/<number>` as its first argument.
+The host runs GitHub CLI reads through the existing app-server `process/spawn` connection.
+Missing CLI, unavailable access, empty results, loading, and partial failures remain distinct states.
+Ask Codex fills a new chat draft; it does not install software or start a turn.
+The detail panel shows the description, branches, checks, and supported GitHub attachment images.
+Media requests validate HTTPS hosts and stop at the size limit.
+
+Implementation: `crates/app/src/pull_requests.rs`, `crates/app/src/host/pull_requests.rs`, and `crates/ui/src/screens/pull_requests.rs`.
 
 ## 4. Screen: Sidebar (thread list and search)
 

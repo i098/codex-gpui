@@ -1,0 +1,1377 @@
+pub mod model;
+
+use crate::screens::thread::view::Clock;
+use crate::{EmptySidebar, Shell, composer::Composer, icon::icon, text};
+use base64::Engine as _;
+use gpui::{
+    App, AppContext as _, ClipboardItem, Context, Div, Entity, EventEmitter, FocusHandle,
+    Focusable, InteractiveElement, IntoElement, ParentElement, Render, ScrollHandle, SharedString,
+    Stateful, StatefulInteractiveElement, Styled, StyledImage, Window, div, point,
+    prelude::FluentBuilder as _, px,
+};
+use model::{Account, Filters, Identity, Repository, SearchPage, Stream, View};
+use serde_json::Value;
+use std::{cell::RefCell, collections::HashMap, sync::Arc, time::Duration};
+use theme::ActiveTheme as _;
+
+pub const INSTALL_PROMPT: &str = "Install GitHub CLI (`gh`) on this machine, verify it works, and help me authenticate if needed so I can view and manage pull requests in Codex";
+
+#[derive(Clone, Debug)]
+pub enum Availability {
+    Checking,
+    Missing,
+    Unavailable(String),
+    Ready(Account),
+}
+
+#[derive(Clone)]
+pub enum Event {
+    Query,
+    Retry,
+    More,
+    Select(Option<Identity>),
+    AskCodex(String),
+    Media(String),
+}
+
+pub struct Page {
+    pub availability: Availability,
+    pub streams: Vec<Stream>,
+    pub view: View,
+    pub lifecycle: String,
+    pub repository: Option<Repository>,
+    pub selected: Option<Identity>,
+    pub detail: Option<Result<Value, String>>,
+    pub media: Option<String>,
+    media_images: HashMap<String, Option<Result<Arc<gpui::RenderImage>, String>>>,
+    pub generation: u64,
+    pub detail_generation: u64,
+    pub query: String,
+    search: Entity<Composer>,
+    filter_open: bool,
+    filter_submenu: Option<&'static str>,
+    collapsed_detail: [bool; 3],
+    scroll: ScrollHandle,
+    detail_scroll: ScrollHandle,
+    last_filters: Option<Filters>,
+    controls: RefCell<HashMap<gpui::ElementId, FocusHandle>>,
+    clock: Clock,
+}
+
+impl EventEmitter<Event> for Page {}
+impl Focusable for Page {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.search.focus_handle(cx)
+    }
+}
+
+pub fn shell(page: Entity<Page>, cx: &mut App) -> Entity<Shell> {
+    let sidebar = cx.new(|_| EmptySidebar).into();
+    cx.new(|_| {
+        let mut shell = Shell::new(sidebar, page.into());
+        shell.sidebar_open = false;
+        shell.selected_rail = Some("rail-code-review");
+        shell.chat_chrome = false;
+        shell.new_tab = false;
+        shell
+    })
+}
+
+impl Page {
+    pub fn new(clock: Clock, cx: &mut Context<Self>) -> Self {
+        let search = cx.new(|cx| Composer::settings_field("Search pull requests", "", false, cx));
+        cx.observe(&search, |this, editor, cx| {
+            let query = model::limit_query(editor.read(cx).field_text()).to_owned();
+            if editor.read(cx).field_text() != query {
+                editor.update(cx, |editor, cx| editor.set_text(&query, cx));
+            }
+            if query != this.query {
+                this.query = query;
+                this.query_changed(cx);
+            }
+        })
+        .detach();
+        Self {
+            availability: Availability::Checking,
+            streams: Vec::new(),
+            view: View::All,
+            lifecycle: "open".into(),
+            repository: None,
+            selected: None,
+            detail: None,
+            media: None,
+            media_images: HashMap::new(),
+            generation: 0,
+            detail_generation: 0,
+            query: String::new(),
+            search,
+            filter_open: false,
+            filter_submenu: None,
+            collapsed_detail: [false; 3],
+            scroll: ScrollHandle::new(),
+            detail_scroll: ScrollHandle::new(),
+            last_filters: None,
+            controls: RefCell::new(HashMap::new()),
+            clock,
+        }
+    }
+
+    pub fn account(&self) -> Option<&Account> {
+        if let Availability::Ready(account) = &self.availability {
+            Some(account)
+        } else {
+            None
+        }
+    }
+
+    pub fn set_availability(&mut self, availability: Availability, cx: &mut Context<Self>) {
+        match &availability {
+            Availability::Checking => {
+                self.detail_generation += 1;
+                self.detail = None;
+                self.media = None;
+                self.media_images.clear();
+                self.streams.clear();
+                self.last_filters = None;
+            }
+            Availability::Missing if self.selected.is_some() => {
+                self.detail = Some(Err("GitHub CLI (gh) is not installed".into()));
+            }
+            Availability::Unavailable(error) if self.selected.is_some() => {
+                self.detail = Some(Err(error.clone()));
+            }
+            _ => {}
+        }
+        self.availability = availability;
+        cx.notify();
+    }
+
+    pub fn begin_query(
+        &mut self,
+        more: bool,
+        cx: &mut Context<Self>,
+    ) -> Vec<(usize, Filters, Option<String>)> {
+        let (filters, explicit_relation, _) = model::filters(
+            &self.query,
+            self.view,
+            &self.lifecycle,
+            self.repository.clone(),
+        );
+        if !more {
+            self.generation += 1;
+            let sections: Vec<_> = if explicit_relation {
+                vec![("all", "Results")]
+            } else if self.view == View::Authored {
+                vec![("authored", "Authored")]
+            } else {
+                model::SECTION_KEYS
+                    .iter()
+                    .zip(model::SECTION_TITLES)
+                    .take(if self.view == View::Reviewing { 3 } else { 4 })
+                    .map(|(key, title)| (*key, title))
+                    .collect()
+            };
+            if self.last_filters.as_ref() != Some(&filters)
+                || self
+                    .streams
+                    .iter()
+                    .map(|s| (s.key, s.title))
+                    .collect::<Vec<_>>()
+                    != sections
+            {
+                self.streams = sections
+                    .into_iter()
+                    .map(|(key, title)| Stream::new(key, title))
+                    .collect();
+            }
+        }
+        self.last_filters = Some(filters.clone());
+        let mut requests = Vec::new();
+        for (index, stream) in self.streams.iter_mut().enumerate() {
+            if more && (stream.loading || stream.cursor.is_none()) {
+                continue;
+            }
+            stream.loading = true;
+            let mut filters = filters.clone();
+            filters.relationship = stream.key.into();
+            requests.push((
+                index,
+                filters,
+                if more { stream.cursor.clone() } else { None },
+            ));
+        }
+        cx.notify();
+        requests
+    }
+
+    pub fn apply_search(
+        &mut self,
+        generation: u64,
+        index: usize,
+        more: bool,
+        result: Result<SearchPage, String>,
+        cx: &mut Context<Self>,
+    ) {
+        if generation != self.generation {
+            return;
+        }
+        if let Some(stream) = self.streams.get_mut(index) {
+            stream.apply(result, more);
+        }
+        cx.notify();
+    }
+
+    pub fn select(&mut self, identity: Option<Identity>, cx: &mut Context<Self>) -> bool {
+        if self.selected == identity {
+            return false;
+        }
+        self.selected = identity;
+        self.detail = None;
+        self.media = None;
+        self.media_images.clear();
+        self.detail_generation += 1;
+        self.collapsed_detail = [false; 3];
+        self.detail_scroll.set_offset(point(px(0.), px(0.)));
+        cx.notify();
+        true
+    }
+
+    pub fn apply_detail(
+        &mut self,
+        generation: u64,
+        result: Result<Value, String>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.detail_generation != generation {
+            return;
+        }
+        if let Ok(detail) = &result {
+            for (_, url) in media_spans(detail["body"].as_str().unwrap_or("")) {
+                if !self.media_images.contains_key(&url) {
+                    self.media_images.insert(url.clone(), None);
+                    cx.emit(Event::Media(url));
+                }
+            }
+        }
+        self.detail = Some(result);
+        cx.notify();
+    }
+
+    pub fn apply_media(
+        &mut self,
+        generation: u64,
+        url: &str,
+        result: Result<Value, String>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.detail_generation != generation {
+            return;
+        }
+        self.media_images.insert(
+            url.to_owned(),
+            Some(result.and_then(|value| {
+                let source = value["contentsBase64"]
+                    .as_str()
+                    .ok_or("GitHub media is unavailable")?;
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(source)
+                    .map_err(|e| e.to_string())?;
+                let reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+                    .with_guessed_format()
+                    .map_err(|e| e.to_string())?;
+                let pixels = reader.decode().map_err(|e| e.to_string())?.into_rgba8();
+                Ok(Arc::new(gpui::RenderImage::new([image::Frame::new(
+                    pixels,
+                )])))
+            })),
+        );
+        cx.notify();
+    }
+
+    fn media_overlay(&self, cx: &Context<Self>) -> Div {
+        let t = cx.theme();
+        let mut content = div()
+            .absolute()
+            .inset_0()
+            .p(px(24.))
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap(px(16.))
+            .bg(t.dialog_backdrop);
+        content = content.child(self.button("close-media", "Close preview", cx).on_click(
+            cx.listener(|this, _, _, cx| {
+                this.media = None;
+                cx.notify();
+            }),
+        ));
+        match self
+            .media
+            .as_ref()
+            .and_then(|url| self.media_images.get(url))
+            .and_then(Option::as_ref)
+        {
+            None => content.child(text("Loading image", 14., 21., 430., t.text)),
+            Some(Err(error)) => {
+                content.child(text(error.clone(), 14., 21., 430., t.text).whitespace_normal())
+            }
+            Some(Ok(image)) => content.child(
+                gpui::img(image.clone())
+                    .max_w_full()
+                    .max_h_full()
+                    .object_fit(gpui::ObjectFit::Contain),
+            ),
+        }
+    }
+
+    fn description(&self, body: &str, window: &Window, cx: &Context<Self>) -> Div {
+        if body.trim().is_empty() {
+            return text(
+                "No description provided",
+                14.,
+                21.,
+                430.,
+                cx.theme().text_tertiary,
+            );
+        }
+        let mut content = div().flex().flex_col().gap(px(12.));
+        let mut cursor = 0;
+        for (index, (span, url)) in media_spans(body).into_iter().enumerate() {
+            if span.start > cursor {
+                content = content.child(crate::screens::thread::view::render_markdown(
+                    &body[cursor..span.start],
+                    window,
+                    cx.theme(),
+                ));
+            }
+            let mut preview = div()
+                .id(("github-media", index))
+                .role(gpui::Role::Button)
+                .aria_label("Preview image")
+                .track_focus(&self.control(("github-media", index), cx))
+                .cursor_pointer()
+                .max_w_full()
+                .max_h(px(400.));
+            preview = match self.media_images.get(&url).and_then(Option::as_ref) {
+                None => preview.child(text(
+                    "Loading image",
+                    14.,
+                    21.,
+                    430.,
+                    cx.theme().text_tertiary,
+                )),
+                Some(Err(error)) => preview.child(
+                    text(error.clone(), 14., 21., 430., cx.theme().text_error).whitespace_normal(),
+                ),
+                Some(Ok(image)) => preview.child(
+                    gpui::img(image.clone())
+                        .max_w_full()
+                        .max_h(px(400.))
+                        .object_fit(gpui::ObjectFit::Contain),
+                ),
+            };
+            content = content.child(preview.on_click(cx.listener(move |this, _, _, cx| {
+                this.media = Some(url.clone());
+                cx.notify();
+            })));
+            cursor = span.end;
+        }
+        if cursor < body.len() {
+            content = content.child(crate::screens::thread::view::render_markdown(
+                &body[cursor..],
+                window,
+                cx.theme(),
+            ));
+        }
+        content
+    }
+
+    fn changed(&mut self, cx: &mut Context<Self>) {
+        self.filter_open = false;
+        self.filter_submenu = None;
+        self.scroll.set_offset(point(px(0.), px(0.)));
+        cx.emit(Event::Query);
+        cx.notify();
+    }
+
+    fn query_changed(&mut self, cx: &mut Context<Self>) {
+        self.generation += 1;
+        let generation = self.generation;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(200))
+                .await;
+            this.update(cx, |this, cx| {
+                if this.generation == generation {
+                    this.changed(cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn control(&self, id: impl Into<gpui::ElementId>, cx: &Context<Self>) -> FocusHandle {
+        self.controls
+            .borrow_mut()
+            .entry(id.into())
+            .or_insert_with(|| cx.focus_handle().tab_stop(true))
+            .clone()
+    }
+
+    fn button(
+        &self,
+        id: impl Into<gpui::ElementId>,
+        label: impl Into<SharedString>,
+        cx: &Context<Self>,
+    ) -> Stateful<Div> {
+        let t = cx.theme();
+        let id = id.into();
+        let focus = self.control(id.clone(), cx);
+        div()
+            .id(id)
+            .role(gpui::Role::Button)
+            .track_focus(&focus)
+            .cursor_pointer()
+            .rounded(px(10.))
+            .px(px(12.))
+            .h(px(32.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(t.primary_soft_alpha)
+            .border_1()
+            .border_color(gpui::transparent_black())
+            .focus(|s| s.border_color(t.text_accent))
+            .hover(|s| s.bg(t.ghost_hover))
+            .child(text(label, 14., 20., 500., t.text))
+    }
+
+    fn empty(
+        &self,
+        title: &str,
+        description: Option<&str>,
+        actions: Option<Div>,
+        faded: bool,
+        cx: &Context<Self>,
+    ) -> Div {
+        let t = cx.theme();
+        let content = div()
+            .w_full()
+            .max_w(px(576.))
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(12.))
+            .when(faded, |d| d.opacity(0.6))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(text(title.to_owned(), 16., 24., 500., t.text))
+                    .when_some(description, |d, description| {
+                        d.child(
+                            text(description.to_owned(), 14., 21., 430., t.text_secondary)
+                                .whitespace_normal(),
+                        )
+                    }),
+            )
+            .when_some(actions, |d, actions| d.child(actions));
+        div()
+            .w_full()
+            .flex_1()
+            .min_h(px(256.))
+            .p(px(24.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(content)
+    }
+
+    fn setup(&self, cx: &Context<Self>) -> Div {
+        match &self.availability {
+            Availability::Checking => loading_rows("Checking GitHub access", cx),
+            Availability::Missing => {
+                let command = div()
+                    .w(px(320.))
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(12.))
+                    .child(
+                        div()
+                            .w_full()
+                            .p(px(6.))
+                            .pl(px(12.))
+                            .rounded(px(8.))
+                            .border_1()
+                            .border_color(cx.theme().border)
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(
+                                text("brew install gh", 13., 20., 430., cx.theme().text)
+                                    .font_family(crate::MONO)
+                                    .flex_1(),
+                            )
+                            .child(
+                                self.button("copy-install", "Copy", cx)
+                                    .aria_label("Copy install command")
+                                    .on_click(|_, _, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new_string(
+                                            "brew install gh".into(),
+                                        ))
+                                    }),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(8.))
+                            .child(
+                                self.button("retry-install", "Retry", cx)
+                                    .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Retry))),
+                            )
+                            .child(self.button("ask-install", "Ask Codex", cx).on_click(
+                                cx.listener(|_, _, _, cx| {
+                                    cx.emit(Event::AskCodex(INSTALL_PROMPT.into()))
+                                }),
+                            )),
+                    );
+                self.empty(
+                    "Install GitHub CLI",
+                    Some("Install GitHub CLI to view and manage your pull requests"),
+                    Some(command),
+                    false,
+                    cx,
+                )
+            }
+            Availability::Unavailable(error) => self.empty(
+                "GitHub CLI setup required",
+                Some(error),
+                Some(
+                    div().child(
+                        self.button("check-again", "Check again", cx)
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Retry))),
+                    ),
+                ),
+                false,
+                cx,
+            ),
+            Availability::Ready(_) => div(),
+        }
+    }
+
+    fn input(&self) -> Stateful<Div> {
+        div()
+            .id("pull-request-inbox-search")
+            .flex_1()
+            .min_w_0()
+            .child(self.search.clone())
+    }
+
+    fn filters(&self, cx: &Context<Self>) -> Div {
+        let t = cx.theme();
+        let status_disabled = self.view == View::Reviewing
+            || model::filters(
+                &self.query,
+                self.view,
+                &self.lifecycle,
+                self.repository.clone(),
+            )
+            .2;
+        let mut content = div()
+            .absolute()
+            .right(px(0.))
+            .top(px(36.))
+            .w(px(224.))
+            .p(px(4.))
+            .rounded(px(12.))
+            .border_1()
+            .border_color(t.border)
+            .bg(t.menu_background)
+            .flex()
+            .flex_col();
+        match self.filter_submenu {
+            Some("status") => {
+                for (value, label) in [
+                    ("all", "All states"),
+                    ("open", "Open"),
+                    ("merged", "Merged"),
+                    ("closed", "Closed"),
+                ] {
+                    content =
+                        content.child(self.button(value, label, cx).justify_start().on_click(
+                            cx.listener(move |this, _, _, cx| {
+                                this.lifecycle = value.into();
+                                this.changed(cx);
+                            }),
+                        ));
+                }
+            }
+            Some("repository") => {
+                content = content.child(
+                    self.button("repo-all", "All repositories", cx)
+                        .justify_start()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.repository = None;
+                            this.changed(cx);
+                        })),
+                );
+                let mut repos = self
+                    .streams
+                    .iter()
+                    .flat_map(|s| &s.items)
+                    .map(|p| {
+                        (
+                            p.pull_request.owner.clone(),
+                            p.pull_request.repository.clone(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                if let Some(repo) = &self.repository {
+                    repos.push((repo.owner.clone(), repo.repository.clone()));
+                }
+                repos.sort();
+                repos.dedup();
+                for (index, (owner, repository)) in repos.into_iter().enumerate() {
+                    content = content.child(
+                        self.button(("repo", index), format!("{owner}/{repository}"), cx)
+                            .justify_start()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.repository = Some(Repository {
+                                    owner: owner.clone(),
+                                    repository: repository.clone(),
+                                });
+                                this.changed(cx);
+                            })),
+                    );
+                }
+            }
+            _ => {
+                content = content.child(
+                    self.button("status-filter", "Status", cx)
+                        .justify_start()
+                        .when(status_disabled, |d| d.opacity(0.5))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if !status_disabled {
+                                this.filter_submenu = Some("status");
+                                cx.notify();
+                            }
+                        })),
+                );
+                content = content.child(
+                    self.button("repository-filter", "Repository", cx)
+                        .justify_start()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.filter_submenu = Some("repository");
+                            cx.notify();
+                        })),
+                );
+            }
+        }
+        content.on_mouse_down_out(cx.listener(|this, _, _, cx| {
+            this.filter_open = false;
+            this.filter_submenu = None;
+            cx.notify();
+        }))
+    }
+
+    fn inbox(&mut self, _window: &Window, cx: &mut Context<Self>) -> Div {
+        let t = cx.theme().clone();
+        let mut navigation = div().h(px(40.)).flex().items_center().gap(px(4.));
+        for (index, (view, label)) in [
+            (View::All, "All"),
+            (View::Reviewing, "Reviewing"),
+            (View::Authored, "Authored"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            navigation = navigation.child(
+                self.button(("view", index), label, cx)
+                    .when(self.view != view, |d| d.bg(gpui::transparent_black()))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if this.view != view {
+                            this.view = view;
+                            this.changed(cx);
+                        }
+                    })),
+            );
+        }
+        let search = self.input();
+        let mut toolbar = div()
+            .relative()
+            .flex()
+            .gap(px(8.))
+            .items_center()
+            .child(search)
+            .child(
+                self.button("pull-request-filters", "Filter", cx)
+                    .aria_label("Filter pull requests")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.filter_open = !this.filter_open;
+                        this.filter_submenu = None;
+                        cx.notify();
+                    })),
+            );
+        if self.filter_open {
+            toolbar = toolbar.child(gpui::deferred(self.filters(cx)).with_priority(2));
+        }
+        let rows = model::section_items(&self.streams);
+        let has_rows = rows.iter().any(|rows| !rows.is_empty());
+        let loading = self.streams.iter().any(|s| s.loading && !s.loaded);
+        let error = self.streams.iter().find_map(|s| s.error.as_deref());
+        let mut body = div().flex_1().min_h_0().flex().flex_col().gap(px(16.));
+        if error.is_some() && self.streams.iter().any(|s| s.loaded) {
+            body = body.child(
+                div()
+                    .p(px(12.))
+                    .rounded(px(8.))
+                    .border_1()
+                    .border_color(t.border)
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(
+                        text(
+                            "Some pull requests couldn’t be loaded",
+                            14.,
+                            21.,
+                            430.,
+                            t.text,
+                        )
+                        .flex_1(),
+                    )
+                    .child(
+                        self.button("partial-retry", "Retry", cx)
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Query))),
+                    ),
+            );
+        }
+        if !has_rows && !loading {
+            body = body.child(if let Some(error) = error {
+                self.empty(
+                    "Unable to load pull requests",
+                    Some(error),
+                    Some(
+                        div().child(
+                            self.button("retry-list", "Try again", cx)
+                                .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Query))),
+                        ),
+                    ),
+                    false,
+                    cx,
+                )
+            } else {
+                self.empty(
+                    if !self.query.trim().is_empty() {
+                        "No pull requests match this search"
+                    } else if self.view == View::Reviewing {
+                        "You’re all caught up"
+                    } else {
+                        "No pull requests found"
+                    },
+                    None,
+                    None,
+                    true,
+                    cx,
+                )
+            });
+        } else {
+            let mut list = div()
+                .id("pull-request-list")
+                .overflow_y_scroll()
+                .track_scroll(&self.scroll)
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .gap(px(16.));
+            for (index, stream) in self.streams.iter().enumerate() {
+                if rows[index].is_empty() && !stream.loading {
+                    continue;
+                }
+                let mut section = div().flex().flex_col().gap(px(2.)).child(
+                    div()
+                        .id(("section", index))
+                        .role(gpui::Role::Button)
+                        .aria_label(stream.title)
+                        .aria_expanded(stream.expanded)
+                        .track_focus(&self.control(("section", index), cx))
+                        .px(px(12.))
+                        .pb(px(4.))
+                        .flex()
+                        .gap(px(4.))
+                        .cursor_pointer()
+                        .child(text(stream.title, 12., 18., 500., t.text_secondary))
+                        .child(icon(
+                            if stream.expanded {
+                                "chevron-down"
+                            } else {
+                                "thread-chevron-right"
+                            },
+                            12.,
+                            t.text_secondary,
+                        ))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.streams[index].expanded = !this.streams[index].expanded;
+                            cx.notify();
+                        })),
+                );
+                if stream.expanded {
+                    if stream.loading && !stream.loaded {
+                        section = section.child(
+                            loading_rows("Loading pull requests", cx)
+                                .max_h(px(112.))
+                                .overflow_hidden(),
+                        );
+                    } else {
+                        for item in &rows[index] {
+                            section = section.child(self.row(item, stream.key != "authored", cx));
+                        }
+                    }
+                }
+                list = list.child(section);
+            }
+            if self.streams.iter().any(|s| s.cursor.is_some()) {
+                list = list.child(
+                    self.button(
+                        "load-more",
+                        if self.streams.iter().any(|s| s.loading) {
+                            "Loading…"
+                        } else {
+                            "Load more"
+                        },
+                        cx,
+                    )
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::More))),
+                );
+            }
+            body = body.child(list);
+        }
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .gap(px(16.))
+            .p(px(24.))
+            .child(navigation)
+            .child(toolbar)
+            .child(body)
+    }
+
+    fn row(&self, item: &model::Item, show_author: bool, cx: &Context<Self>) -> Stateful<Div> {
+        let t = cx.theme();
+        let identity = item.pull_request.clone();
+        let selected = self.selected.as_ref() == Some(&identity);
+        let mut metadata = div().flex().items_center().gap(px(8.)).min_w_0();
+        if show_author {
+            if let Some(url) = &item.author_avatar_url {
+                metadata = metadata.child(
+                    gpui::img(url.clone())
+                        .size(px(16.))
+                        .rounded_full()
+                        .object_fit(gpui::ObjectFit::Cover),
+                );
+            }
+        }
+        if self.repository.is_none() {
+            metadata = metadata.child(text(
+                format!("{}/{}", identity.owner, identity.repository),
+                12.,
+                18.,
+                430.,
+                t.text_tertiary,
+            ));
+        }
+        metadata = metadata
+            .child(text(item.head_branch.clone(), 12., 18., 430., t.text_tertiary).truncate());
+        div()
+            .id(SharedString::from(item.node_id.clone()))
+            .role(gpui::Role::Button)
+            .aria_label(item.title.clone())
+            .track_focus(&self.control(SharedString::from(item.node_id.clone()), cx))
+            .rounded(px(8.))
+            .px(px(12.))
+            .py(px(10.))
+            .cursor_pointer()
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .when(selected, |d| d.bg(t.primary_soft_alpha))
+            .hover(|s| s.bg(t.ghost_hover))
+            .child(status_icon(item, t))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(text(item.title.clone(), 14., 20., 500., t.text).truncate())
+                    .child(metadata),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_end()
+                    .gap(px(2.))
+                    .child(text(
+                        relative_age(&item.updated_at, self.clock),
+                        12.,
+                        18.,
+                        430.,
+                        t.text_tertiary,
+                    ))
+                    .when(item.has_diff_stats, |d| {
+                        d.child(text(
+                            format!("+{} −{}", item.additions, item.deletions),
+                            12.,
+                            18.,
+                            430.,
+                            t.text_tertiary,
+                        ))
+                    }),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                cx.emit(Event::Select(
+                    if this.selected.as_ref() == Some(&identity) {
+                        None
+                    } else {
+                        Some(identity.clone())
+                    },
+                ))
+            }))
+    }
+
+    fn detail(&self, window: &Window, cx: &Context<Self>) -> Div {
+        let Some(identity) = &self.selected else {
+            return self.empty("Select pull request to view", None, None, false, cx);
+        };
+        let t = cx.theme();
+        let mut pane = div().size_full().flex().flex_col().p(px(24.)).gap(px(16.));
+        pane = pane.child(
+            div()
+                .flex()
+                .justify_between()
+                .child(text(
+                    format!(
+                        "{}/{} #{}",
+                        identity.owner, identity.repository, identity.number
+                    ),
+                    14.,
+                    20.,
+                    430.,
+                    t.text_secondary,
+                ))
+                .child(
+                    self.button("close-pull-request", "Close", cx)
+                        .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Select(None)))),
+                ),
+        );
+        match &self.detail {
+            None => pane.child(self.empty("Loading pull request details", None, None, true, cx)),
+            Some(Err(error)) => pane.child(
+                self.empty(
+                    "Pull request details are unavailable",
+                    Some(error),
+                    Some(
+                        div().child(
+                            self.button("retry-detail", "Try again", cx)
+                                .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Retry))),
+                        ),
+                    ),
+                    false,
+                    cx,
+                ),
+            ),
+            Some(Ok(detail)) => {
+                let title = detail["title"].as_str().unwrap_or("");
+                let prompt = format!(
+                    "Help me understand pull request #{}: {}\n{}",
+                    identity.number,
+                    title,
+                    identity.url()
+                );
+                let url = identity.url();
+                pane = pane
+                    .child(text(title.to_owned(), 24., 30., 500., t.text).whitespace_normal())
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(text(
+                                detail["state"].as_str().unwrap_or(""),
+                                12.,
+                                18.,
+                                500.,
+                                t.text_secondary,
+                            ))
+                            .child(text(
+                                format!(
+                                    "{} → {}",
+                                    detail["headRefName"].as_str().unwrap_or(""),
+                                    detail["baseRefName"].as_str().unwrap_or("")
+                                ),
+                                13.,
+                                20.,
+                                430.,
+                                t.text_tertiary,
+                            )),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(8.))
+                            .child(self.button("ask-pull-request", "Ask Codex", cx).on_click(
+                                cx.listener(move |_, _, _, cx| {
+                                    cx.emit(Event::AskCodex(prompt.clone()))
+                                }),
+                            ))
+                            .child(
+                                self.button("open-github", "Open in GitHub", cx)
+                                    .on_click(move |_, _, cx| cx.open_url(&url)),
+                            ),
+                    );
+                let mut sections = div()
+                    .id("pull-request-detail-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.detail_scroll)
+                    .flex()
+                    .flex_col()
+                    .gap(px(24.));
+                for (index, title) in ["Description", "Checks"].into_iter().enumerate() {
+                    let mut section = div().flex().flex_col().gap(px(12.)).child(
+                        div()
+                            .id(("detail-section", index))
+                            .role(gpui::Role::Button)
+                            .aria_label(title)
+                            .cursor_pointer()
+                            .track_focus(&self.control(("detail-section", index), cx))
+                            .child(text(title, 14., 20., 500., t.text))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.collapsed_detail[index] = !this.collapsed_detail[index];
+                                cx.notify();
+                            })),
+                    );
+                    if !self.collapsed_detail[index] {
+                        if index == 0 {
+                            let body = detail["body"].as_str().unwrap_or("");
+                            section = section.child(self.description(body, window, cx));
+                        } else if let Some(checks) =
+                            detail["statusCheckRollup"]["contexts"]["nodes"]
+                                .as_array()
+                                .filter(|c| !c.is_empty())
+                        {
+                            for check in checks {
+                                let name = check["name"]
+                                    .as_str()
+                                    .or_else(|| check["context"].as_str())
+                                    .unwrap_or("");
+                                let status = check["conclusion"]
+                                    .as_str()
+                                    .or_else(|| check["state"].as_str())
+                                    .or_else(|| check["status"].as_str())
+                                    .unwrap_or("");
+                                section = section.child(text(
+                                    format!("{name}    {status}"),
+                                    14.,
+                                    21.,
+                                    430.,
+                                    t.text_secondary,
+                                ));
+                            }
+                        } else {
+                            section = section.child(text(
+                                "No checks reported",
+                                14.,
+                                21.,
+                                430.,
+                                t.text_tertiary,
+                            ));
+                        }
+                    }
+                    sections = sections.child(section);
+                }
+                pane.child(sections)
+            }
+        }
+    }
+}
+
+impl Render for Page {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let ready = self.account().is_some();
+        let main = if ready {
+            self.inbox(window, cx)
+        } else {
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .p(px(24.))
+                .child(text("Pull requests", 16., 24., 500., cx.theme().text))
+                .child(
+                    text(
+                        "Review and track work across GitHub.",
+                        16.,
+                        24.,
+                        430.,
+                        cx.theme().text_secondary,
+                    )
+                    .mt(px(16.)),
+                )
+                .child(self.setup(cx))
+        };
+        div()
+            .relative()
+            .size_full()
+            .flex()
+            .bg(cx.theme().surface)
+            .child(div().flex_1().min_w_0().child(main))
+            .when(ready || self.selected.is_some(), |d| {
+                d.child(
+                    div()
+                        .w(px(480.))
+                        .h_full()
+                        .border_l_1()
+                        .border_color(cx.theme().border)
+                        .child(self.detail(window, cx)),
+                )
+            })
+            .when(self.media.is_some(), |d| {
+                d.child(gpui::deferred(self.media_overlay(cx)).with_priority(3))
+            })
+    }
+}
+
+fn relative_age(date: &str, clock: Clock) -> String {
+    let Ok(date) = chrono::DateTime::parse_from_rfc3339(date) else {
+        return String::new();
+    };
+    let now = clock.now();
+    let seconds = (now - date.timestamp()).max(0);
+    if seconds < 60 {
+        return "just now".into();
+    }
+    if seconds < 3600 {
+        return format!("{}m", seconds / 60);
+    }
+    if seconds < 86400 {
+        return format!("{}h", seconds / 3600);
+    }
+    let days = ((now + clock.utc_offset).div_euclid(86400)
+        - (date.timestamp() + clock.utc_offset).div_euclid(86400))
+    .max(1);
+    if days < 7 {
+        format!("{days}d")
+    } else if days < 30 {
+        format!("{}w", days / 7)
+    } else if days < 365 {
+        format!("{}mo", days / 30)
+    } else {
+        format!("{}y", days / 365)
+    }
+}
+
+fn media_spans(body: &str) -> Vec<(std::ops::Range<usize>, String)> {
+    pulldown_cmark::Parser::new(body)
+        .into_offset_iter()
+        .filter_map(|(event, span)| {
+            let url = match event {
+                pulldown_cmark::Event::Start(pulldown_cmark::Tag::Image { dest_url, .. }) => {
+                    dest_url.into_string()
+                }
+                pulldown_cmark::Event::Html(html) | pulldown_cmark::Event::InlineHtml(html) => {
+                    html_image_source(&html)?.replace("&amp;", "&")
+                }
+                _ => return None,
+            };
+            (url.starts_with("https://github.com/user-attachments/assets/")
+                || url.starts_with("https://user-images.githubusercontent.com/")
+                || url.starts_with("https://private-user-images.githubusercontent.com/"))
+            .then_some((span, url))
+        })
+        .collect()
+}
+
+fn html_image_source(html: &str) -> Option<&str> {
+    let tag = html.trim_start().strip_prefix('<')?;
+    let name_end = tag.find(|c: char| c.is_whitespace() || c == '>')?;
+    if !tag[..name_end].eq_ignore_ascii_case("img") {
+        return None;
+    }
+    let mut attributes = &tag[name_end..];
+    loop {
+        attributes = attributes.trim_start();
+        if attributes.is_empty() || attributes.starts_with(['>', '/']) {
+            return None;
+        }
+        let end = attributes
+            .find(|c: char| c.is_whitespace() || matches!(c, '=' | '>' | '/'))
+            .unwrap_or(attributes.len());
+        let name = &attributes[..end];
+        attributes = attributes[end..].trim_start();
+        let Some(value) = attributes.strip_prefix('=') else {
+            continue;
+        };
+        attributes = value.trim_start();
+        let quote = attributes.chars().next()?;
+        let value = if matches!(quote, '\'' | '"') {
+            attributes = &attributes[1..];
+            let end = attributes.find(quote)?;
+            let value = &attributes[..end];
+            attributes = &attributes[end + 1..];
+            value
+        } else {
+            let end = attributes
+                .find(|c: char| c.is_whitespace() || c == '>')
+                .unwrap_or(attributes.len());
+            let value = &attributes[..end];
+            attributes = &attributes[end..];
+            value
+        };
+        if name.eq_ignore_ascii_case("src") {
+            return Some(value);
+        }
+    }
+}
+
+fn status_icon(item: &model::Item, t: &theme::Theme) -> Div {
+    let dark = t.appearance == theme::Appearance::Dark;
+    let (glyph, color) = match item.state.as_str() {
+        "closed" => ("pull-request-closed", t.text_error),
+        "merged" => (
+            "pull-request-merged",
+            gpui::rgb(if dark { 0xad7bf9 } else { 0x924ff7 }).into(),
+        ),
+        _ if item.is_draft => ("pull-request-draft", t.text_secondary),
+        _ => ("pull-request-status", t.text_secondary),
+    };
+    let mut icon_box = div()
+        .relative()
+        .size(px(20.))
+        .flex_none()
+        .child(icon(glyph, 20., color));
+    if item.state == "open" && !item.is_draft {
+        let color =
+            if item.merge_blocker.as_deref() == Some("conflicts") || item.ci_status == "failing" {
+                t.text_error
+            } else if item.can_merge || item.ci_status == "passing" {
+                t.text_success
+            } else {
+                gpui::rgb(if dark { 0xffd240 } else { 0xffc300 }).into()
+            };
+        icon_box = icon_box.child(
+            div()
+                .absolute()
+                .left(px(12.))
+                .top(px(12.))
+                .size(px(6.282))
+                .rounded_full()
+                .bg(color),
+        );
+    }
+    icon_box
+}
+
+fn loading_rows(label: &'static str, cx: &Context<Page>) -> Div {
+    let mut rows = div().flex().flex_col().gap(px(2.));
+    for (title, subtitle) in [
+        (2. / 3., 0.5),
+        (0.5, 0.4),
+        (0.75, 0.6),
+        (5. / 12., 1. / 3.),
+        (7. / 12., 0.5),
+    ] {
+        rows = rows.child(
+            div()
+                .w_full()
+                .px(px(12.))
+                .py(px(10.))
+                .flex()
+                .flex_col()
+                .child(
+                    div().h(px(24.)).flex().items_center().child(
+                        div()
+                            .w(gpui::relative(title))
+                            .h(px(16.))
+                            .rounded(px(4.))
+                            .bg(cx.theme().text_alpha_10),
+                    ),
+                )
+                .child(
+                    div().h(px(16.)).flex().items_center().child(
+                        div()
+                            .w(gpui::relative(subtitle))
+                            .h(px(12.))
+                            .rounded(px(4.))
+                            .bg(cx.theme().text_alpha_10),
+                    ),
+                ),
+        );
+    }
+    div().child(div().id(label).aria_label(label).child(rows))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compact_age_uses_the_original_units_and_capture_clock() {
+        let date = "2026-10-20T00:00:00Z";
+        let base = chrono::DateTime::parse_from_rfc3339(date)
+            .unwrap()
+            .timestamp();
+        for (seconds, expected) in [
+            (0, "just now"),
+            (60, "1m"),
+            (3600, "1h"),
+            (86400, "1d"),
+            (604800, "1w"),
+            (2592000, "1mo"),
+            (31536000, "1y"),
+        ] {
+            let clock = Clock {
+                utc_offset: 0,
+                pinned_now: Some(base + seconds),
+                elapsed_since: None,
+            };
+            assert_eq!(relative_age(date, clock), expected);
+        }
+    }
+
+    #[test]
+    fn github_media_keeps_its_markdown_position_and_ignores_code_blocks() {
+        let body = "Before ![image](https://github.com/user-attachments/assets/one) after.\n\n`![code](https://github.com/user-attachments/assets/two)`";
+        let spans = media_spans(body);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(
+            &body[spans[0].0.clone()],
+            "![image](https://github.com/user-attachments/assets/one)"
+        );
+        assert_eq!(spans[0].1, "https://github.com/user-attachments/assets/one");
+    }
+
+    #[test]
+    fn html_image_attributes_keep_quoted_boundaries_and_validate_the_host() {
+        let body = r#"<img alt="before > after" width=400 src='https://github.com/user-attachments/assets/one?a=1&amp;b=2' />"#;
+        let spans = media_spans(body);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(
+            spans[0].1,
+            "https://github.com/user-attachments/assets/one?a=1&b=2"
+        );
+        assert!(media_spans("<img src='https://example.com/image.png'>").is_empty());
+    }
+}

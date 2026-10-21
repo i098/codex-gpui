@@ -11,6 +11,7 @@ mod features;
 pub mod host;
 pub mod host_settings;
 pub mod native_menus;
+mod pull_requests;
 pub mod qa;
 mod routes;
 pub use routes::Route;
@@ -159,6 +160,7 @@ pub fn init(cx: &mut App) {
 pub fn menus() -> Vec<gpui::Menu> {
     native_menus::menus()
 }
+
 
 /// The thread route's side panel tab.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -361,6 +363,7 @@ pub struct Root {
     /// The Mobile route's setup page.
     mobile_page: Option<Entity<mobile::MobileSetupPage>>,
     cloud: Option<cloud_task::Session>,
+    pull_requests_page: Option<Entity<ui::screens::pull_requests::Page>>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
     settings_page: Option<Entity<settings::SettingsPage>>,
@@ -655,6 +658,7 @@ impl Root {
             archive_page: None,
             mobile_page: None,
             cloud: None,
+            pull_requests_page: None,
             settings_section: None,
             settings_page: None,
             command_menu: None,
@@ -1007,6 +1011,7 @@ impl Root {
         }
         self.host = host;
         self.bind_context_files(cx);
+        self.reset_pull_requests(cx);
         self.automations = None;
         self.load_projects(cx);
         if self.scheduled_route() {
@@ -2049,6 +2054,7 @@ impl Root {
         }
     }
 
+
     /// HC-033: a printable key (no ⌘/⌃, not Space) typed outside an editable, with no
     /// dialog, menu or popover open, goes to the route's composer and focuses it.
     /// Content ancestors can hold plain focus handles without being popovers.
@@ -2483,6 +2489,7 @@ impl Root {
                         this.diff = None;
                         this.file = None;
                         this.split = None;
+                        this.pull_requests_page = None;
                         this.tabs.clear();
                         this.side = None;
                         this.loaded.clear();
@@ -5229,6 +5236,7 @@ impl Render for Root {
             .capture_action(cx.listener(|this, _: &Undo, window, cx| {
                 this.undo_queued(window, cx);
             }))
+
             .on_action(cx.listener(|this, _: &GoBack, window, cx| this.step(true, window, cx)))
             .on_action(cx.listener(|this, _: &GoForward, window, cx| this.step(false, window, cx)))
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
