@@ -17,7 +17,7 @@ pub(super) struct History {
     undo: Vec<EditState>,
     redo: Vec<EditState>,
     /// When the last edit happened and where it ended.
-    last: Option<(Instant, usize)>,
+    pub(super) last: Option<(Instant, usize)>,
 }
 
 const NEW_GROUP_DELAY: Duration = Duration::from_millis(500);
@@ -115,6 +115,7 @@ impl Composer {
     }
 
     fn restore(&mut self, (content, selection, mentions): EditState, cx: &mut Context<Self>) {
+        self.cancel_dictation(cx);
         self.history.last = None;
         self.content = content;
         self.mentions = mentions;
@@ -406,6 +407,7 @@ impl Composer {
         window.focus(&self.focus_handle, cx);
         self.menu = None;
         self.context_spelling = None;
+        self.context_image = None;
         let at = self.index_for_point(e.position);
         if !self.selected_range.contains(&at) {
             self.move_to(at, cx);
@@ -484,6 +486,13 @@ impl Composer {
         cx: &mut Context<Self>,
     ) {
         match id {
+            crate::image_context::COPY
+            | crate::image_context::SAVE
+            | crate::image_context::REVEAL => {
+                if let Some(image) = self.context_image.take() {
+                    image.activate(id, window, cx);
+                }
+            }
             "dictionarySuggestions" => {
                 if let Some((range, _)) = self.take_spelling() {
                     self.selected_range = range;

@@ -448,9 +448,8 @@ pub fn open_primary(state: State, cwd: String, cx: &mut App) -> Result<WindowHan
 
 fn primary_bounds(state: &State, cx: &App) -> WindowBounds {
     let fallback = Bounds::centered(None, size(px(state.width), px(state.height)), cx);
-    let stored = cx
-        .global::<host_settings::Settings>()
-        .read_all()
+    let settings = cx.global::<host_settings::Settings>().read_all();
+    let stored = settings
         .get("electron-main-window-bounds")
         .unwrap_or(&serde_json::Value::Null);
     let parse = || {
@@ -505,9 +504,8 @@ fn remember_bounds(window: &Window, cx: &mut App) {
     });
     if cx.has_global::<host_settings::Settings>() {
         let settings = cx.global_mut::<host_settings::Settings>();
-        if settings.read_all().get("electron-main-window-bounds") != Some(&value)
-            && let Err(error) = settings.write("electron-main-window-bounds", value)
-        {
+        let changed = settings.read_all().get("electron-main-window-bounds") != Some(&value);
+        if changed && let Err(error) = settings.write("electron-main-window-bounds", value) {
             eprintln!("codex-gpui: cannot save window bounds: {error:#}");
         }
     }

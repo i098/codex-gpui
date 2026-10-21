@@ -50,8 +50,12 @@ mod items;
 mod markdown;
 #[path = "thread/menu.rs"]
 pub(crate) mod menu;
+#[path = "thread/recovery.rs"]
+mod recovery;
 #[path = "thread/select.rs"]
 mod select;
+
+pub use recovery::{History, RetryHistory, UsageLimitNotice};
 
 use actions::action_row;
 pub use actions::{EditMessage, ForkThread, RevertTurn};
@@ -128,8 +132,12 @@ pub struct ThreadView {
     terminal_item: Option<String>,
     pub terminals_stopping: bool,
     turns: Vec<Turn>,
+    render_errors: RefCell<HashMap<String, String>>,
+    stream_errors: HashMap<String, Vec<(bridge::types::TurnError, bool)>>,
+    usage_limit_notice: UsageLimitNotice,
     clock: Clock,
     composer: AnyView,
+    embedded: bool,
     _tick: Option<Task<()>>,
     stream_fades: HashMap<String, Vec<StreamSegment>>,
     mcp_images: items::McpImages,
@@ -149,6 +157,7 @@ pub struct ThreadView {
     find: Option<FindState>,
     /// The link menu (`menu.rs`): `subject` is the right-clicked link.
     menu: Option<menu::ContextMenu>,
+    context_image: Option<crate::image_context::ImageContext>,
 }
 
 struct StreamSegment {
@@ -578,8 +587,12 @@ impl ThreadView {
             summary_open: false,
             clip_right: false,
             turns: thread.turns,
+            render_errors: RefCell::default(),
+            stream_errors: HashMap::new(),
+            usage_limit_notice: UsageLimitNotice::RetryLater,
             clock,
             composer,
+            embedded: false,
             _tick: None,
             stream_fades: HashMap::new(),
             mcp_images: RefCell::default(),
@@ -592,7 +605,20 @@ impl ThreadView {
             press_focus: None,
             find: None,
             menu: None,
+            context_image: None,
         }
+    }
+
+    pub fn embedded(thread: Thread, clock: Clock, cx: &mut Context<Self>) -> Self {
+        let empty = cx.new(|_| crate::EmptyMain).into();
+        let mut view = Self::new(thread, clock, empty);
+        view.embedded = true;
+        view
+    }
+
+    pub fn set_embedded_turns(&mut self, turns: Vec<Turn>, cx: &mut Context<Self>) {
+        self.turns = turns;
+        cx.notify();
     }
 
     pub fn id(&self) -> &str {
@@ -1026,6 +1052,9 @@ impl ThreadView {
     /// Only the last user message is editable, and only when its later turns have stopped.
     /// Non-text content stays read-only because `UserInput::Other` cannot retain attachments.
     pub fn can_edit(&self, turn_id: &str) -> bool {
+        if self.embedded {
+            return false;
+        }
         for turn in self.turns.iter().rev() {
             if turn.status == TurnStatus::InProgress {
                 return false;
@@ -1408,6 +1437,7 @@ impl ThreadView {
                 match self.turns.iter_mut().find(|t| t.id == n.turn.id) {
                     Some(turn) => {
                         turn.status = n.turn.status;
+                        turn.started_at = n.turn.started_at.or(turn.started_at);
                         turn.completed_at = n.turn.completed_at;
                         turn.duration_ms = n.turn.duration_ms;
                         turn.error = n.turn.error;
@@ -1535,6 +1565,18 @@ impl ThreadView {
                     _ => {}
                 }
             }
+            "error" => {
+                let Ok(error) =
+                    serde_json::from_value::<bridge::types::ErrorNotification>(params.clone())
+                else {
+                    return;
+                };
+                let errors = self.stream_errors.entry(error.turn_id).or_default();
+                match errors.last_mut() {
+                    Some((last, true)) if error.will_retry => *last = error.error,
+                    _ => errors.push((error.error, error.will_retry)),
+                }
+            }
             _ => return,
         }
         cx.notify();
@@ -1614,6 +1656,9 @@ impl ThreadView {
             });
         }
         let (work, final_answer) = work(turn);
+        let has_work = work
+            .iter()
+            .any(|item| !matches!(item, ThreadItem::UserMessage { .. }));
         if self.pending_question.as_deref() == Some(turn.id.as_str()) {
             col = col
                 .child(div().h(px(16.)))
@@ -1652,6 +1697,15 @@ impl ThreadView {
             return col;
         }
         if let Some((item, answer)) = final_answer {
+            if self.embedded && !has_work {
+                return col.child(div().h(px(16.))).child(markdown::with_find(
+                    answer,
+                    window,
+                    t,
+                    self.find_paint(item).as_ref(),
+                    self.fades(item),
+                ));
+            }
             let secs = turn.duration_ms.unwrap_or(0) / 1000;
             let open = self.expanded.contains(&turn.id)
                 || self.find.as_ref().is_some_and(|find| {
@@ -1744,9 +1798,11 @@ impl ThreadView {
             if let Some(card) = diff_card(&turn.id, &turn.items, window, t) {
                 col = col.child(div().mt(px(12.)).pb(px(8.)).child(card));
             }
-            return col.child(action_row(last, &group, &turn.id, answer, t));
+            return col.when(!self.embedded, |col| {
+                col.child(action_row(last, &group, &turn.id, answer, t))
+            });
         }
-        if turn.status == TurnStatus::InProgress {
+        if turn.status == TurnStatus::InProgress && (!self.embedded || has_work) {
             let secs = self.clock.now() - turn.started_at.unwrap_or(self.clock.now());
             col = col
                 .child(div().h(px(16.)))
@@ -1884,11 +1940,43 @@ impl Render for ThreadView {
                     .filter(|&&(top, h)| far(top + offset, h, view));
                 match stand_in {
                     Some(&(_, h)) => div().h(h),
-                    None => self.turn(turn, i + 1 == n, window, &t, cx),
+                    None => {
+                        let errors = self.render_errors.borrow();
+                        if let Some(error) = errors.get(&turn.id) {
+                            self.render_failure(&turn.id, error, window, cx)
+                        } else {
+                            drop(errors);
+                            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                self.turn(turn, i + 1 == n, window, &t, cx)
+                            })) {
+                                Ok(body) => body.children(self.turn_errors(turn, window, cx)),
+                                Err(error) => {
+                                    let error = error
+                                        .downcast_ref::<String>()
+                                        .cloned()
+                                        .or_else(|| {
+                                            error.downcast_ref::<&str>().map(|s| (*s).to_owned())
+                                        })
+                                        .unwrap_or_else(|| "Unknown render error".to_owned());
+                                    eprintln!(
+                                        "codex-gpui: thread {} turn {}: {error}",
+                                        self.thread_id, turn.id
+                                    );
+                                    self.render_errors
+                                        .borrow_mut()
+                                        .insert(turn.id.clone(), error.clone());
+                                    self.render_failure(&turn.id, &error, window, cx)
+                                }
+                            }
+                        }
+                    }
                 }
             })
             .collect();
         drop(laid_out);
+        if self.embedded {
+            return div().w_full().children(turns);
+        }
         let ids: Vec<String> = self.turns.iter().map(|t| t.id.clone()).collect();
         let (laid_out, scroll) = (self.laid_out.clone(), self.scroll.clone());
         let find_scroll = self

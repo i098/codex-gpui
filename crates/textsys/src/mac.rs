@@ -438,6 +438,21 @@ impl PlatformTextSystem for SkiaMatchedTextSystem {
         ))
     }
 
+    fn advance_at_size(
+        &self,
+        font_id: FontId,
+        glyph_id: GlyphId,
+        font_size: Pixels,
+    ) -> Result<Size<Pixels>> {
+        // CSS character units use untracked font advances, not CoreText's tracked widths.
+        let width = self
+            .0
+            .lock()
+            .hb(font_id, f32::from(font_size))
+            .advance(glyph_id.0, DEVICE_SCALE as f32);
+        Ok(size(px(width), px(0.)))
+    }
+
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
         let font = self.0.lock().font(font_id, METRICS_SIZE as f32);
         let mut utf16 = [0u16; 2];
@@ -700,5 +715,17 @@ mod tests {
             definition_baseline(bounds, false, baseline),
             NSPoint::new(28.5, 109.75)
         );
+    }
+
+    #[test]
+    fn css_character_width_excludes_optical_tracking() -> anyhow::Result<()> {
+        let system = gpui::TextSystem::new(std::sync::Arc::new(SkiaMatchedTextSystem::default()));
+        let font = system.resolve_font(&gpui::Font {
+            weight: gpui::FontWeight(430.),
+            ..gpui::font(".SystemUIFont")
+        });
+        let width = system.ch_advance(font, px(14.))?;
+        assert_eq!((f32::from(width) * 64.).round() / 64., 8.890625);
+        Ok(())
     }
 }
