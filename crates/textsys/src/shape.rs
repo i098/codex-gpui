@@ -76,6 +76,11 @@ impl HbFont {
         }
     }
 
+    /// The CSS glyph advance before AAT tracking and letter spacing.
+    pub fn advance(&self, glyph: u32, device_scale: f32) -> f32 {
+        unsafe { hb::hb_font_get_glyph_h_advance(self.0, glyph) as f32 / 65536. / device_scale }
+    }
+
     /// Glyphs and the total advance, CSS px. `features` are OpenType (tag, value) pairs.
     /// `letter_spacing` (CSS px) goes after every cluster, and optional ligatures are off when
     /// it is set, as in Blink. Glyphs are (id, x, y down, byte cluster), CSS px relative to the

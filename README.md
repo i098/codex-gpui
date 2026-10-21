@@ -336,6 +336,10 @@ Native sprite state retains four nested layer devices within Metal's eight color
 Each device restores into its parent before a parent opacity mask is applied.
 Deeper alpha is combined in the innermost device.
 
+Character-unit widths use the raw glyph advance at the requested font size.
+They exclude tracking; text layout still includes it.
+Use `TextSystem::ch_advance` for CSS `ch` columns, not glyph ink bounds.
+
 Canvas callbacks honor their `opacity`, `layer`, and `top_layer` styles.
 These styles use the same compositor boundary as other elements.
 
