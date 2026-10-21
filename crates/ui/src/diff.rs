@@ -2542,6 +2542,41 @@ fn word_mark(line: &Line, layout: gpui::TextLayout, t: &Theme) -> Option<gpui::A
     )
 }
 
+fn change_marker(kind: Kind, split: bool, t: &Theme) -> Div {
+    let color = if kind == Kind::Added {
+        t.git_added
+    } else {
+        t.git_deleted
+    };
+    let marker = div().absolute().left_0().top_0().w(px(4.)).h_full();
+    if kind != Kind::Removed || split {
+        return marker.child(shapes::decoration(Decoration {
+            fill: Some(color),
+            ..Default::default()
+        }));
+    }
+    // Keep the original Lab background mix unrounded for the gradient raster.
+    let [r, g, b] = if t.appearance == Appearance::Dark {
+        [0.232724, 0.120283, 0.103232]
+    } else {
+        [0.986266, 0.90291, 0.885396]
+    };
+    let colors = [gpui::Rgba { r, g, b, a: 1. }, color.into()];
+    marker.child(
+        gpui::canvas(
+            |_, _, _| (),
+            move |bounds, (), window, cx| {
+                let scale = window.scale_factor();
+                let line = (CODE_LINE * scale * 64.).floor() / (scale * 64.);
+                let period = px(line / (line / 2.).round());
+                shapes::paint_horizontal_stripes(period, colors, bounds, window, cx);
+            },
+        )
+        .absolute()
+        .size_full(),
+    )
+}
+
 fn hunk(
     h: &Hunk,
     plain_text: bool,
@@ -2583,7 +2618,7 @@ fn hunk(
                bg: Hsla,
                content: StyledText,
                mark: Option<gpui::AnyElement>,
-               bar: Option<Hsla>| {
+               bar: Option<Kind>| {
         div()
             .h(px(CODE_LINE))
             .when(panel.wrap, |d| d.h_auto().min_h(px(CODE_LINE)))
@@ -2605,14 +2640,7 @@ fn hunk(
                         fill: Some(number_bg),
                         ..Default::default()
                     }))
-                    .when_some(bar, |d, color| {
-                        d.child(div().absolute().left_0().top_0().w(px(4.)).h_full().child(
-                            shapes::decoration(Decoration {
-                                fill: Some(color),
-                                ..Default::default()
-                            }),
-                        ))
-                    })
+                    .when_some(bar, |d, kind| d.child(change_marker(kind, split, t)))
                     .text_color(number_fg)
                     .when_some(number, |d, n| d.child(n.to_string())),
             )
@@ -2699,7 +2727,7 @@ fn hunk(
             bg,
             content,
             mark,
-            (l.kind != Kind::Context).then_some(number_fg),
+            (l.kind != Kind::Context).then_some(l.kind),
         )
         .cursor_pointer()
         .on_mouse_down(
