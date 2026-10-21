@@ -463,7 +463,12 @@ pub(crate) fn transcription_request(
     );
     ensure!(!audio.is_empty(), "Dictation recording has no audio");
     let boundary = format!("----codex-transcribe-{}", host::device_id());
-    let mut body=format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"codex.webm\"\r\nContent-Type: {mime_type}\r\n\r\n").into_bytes();
+    let extension = mime_type
+        .split(['/', ';'])
+        .nth(1)
+        .unwrap_or("webm")
+        .replace('"', "");
+    let mut body=format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"codex.{extension}\"\r\nContent-Type: {mime_type}\r\n\r\n").into_bytes();
     body.extend_from_slice(audio);
     body.extend_from_slice(b"\r\n");
     if let Some(language) = language {

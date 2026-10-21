@@ -9,9 +9,17 @@ pub enum Shortcut {
     ScreenshotCurrent,
     ScreenshotNew,
     Popout,
+    DictationHold,
+    DictationToggle,
 }
 
-pub type Binding = (Shortcut, u32, u32);
+pub type Binding = (Shortcut, Option<u32>, u32);
+
+#[derive(Clone, Copy)]
+pub struct ShortcutEvent {
+    pub shortcut: Shortcut,
+    pub pressed: bool,
+}
 
 pub fn binding(shortcut: Shortcut, accelerator: &str) -> Result<Binding> {
     let mut modifiers = 0;
@@ -22,6 +30,7 @@ pub fn binding(shortcut: Shortcut, accelerator: &str) -> Result<Binding> {
             "ctrl" | "control" => modifiers |= 0x1000,
             "cmd" | "command" | "cmdorctrl" => modifiers |= 0x0100,
             "shift" => modifiers |= 0x0200,
+            "fn" | "function" => modifiers |= 1 << 23,
             other => {
                 ensure!(key.is_none(), "A shortcut must contain only one key");
                 key = Some(match other {
@@ -70,10 +79,16 @@ pub fn binding(shortcut: Shortcut, accelerator: &str) -> Result<Binding> {
         }
     }
     ensure!(modifiers != 0, "A global shortcut needs a modifier");
-    Ok((shortcut, key.context("A shortcut needs a key")?, modifiers))
+    ensure!(
+        key.is_some()
+            || matches!(
+                shortcut,
+                Shortcut::DictationHold | Shortcut::DictationToggle
+            ),
+        "A shortcut needs a key"
+    );
+    Ok((shortcut, key, modifiers))
 }
-
-use anyhow::Context as _;
 
 #[cfg(target_os = "macos")]
 #[repr(C)]
@@ -93,6 +108,7 @@ struct EventType {
 #[link(name = "Carbon", kind = "framework")]
 unsafe extern "C" {
     fn GetApplicationEventTarget() -> *mut c_void;
+    fn GetEventKind(event: *mut c_void) -> u32;
     fn InstallEventHandler(
         target: *mut c_void,
         handler: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> i32,
@@ -128,28 +144,40 @@ pub struct Native {
     #[cfg(target_os = "macos")]
     handler: *mut c_void,
     #[cfg(target_os = "macos")]
-    callback: Box<(Sender<Shortcut>, Vec<Shortcut>)>,
+    callback: Box<(Sender<ShortcutEvent>, Vec<Shortcut>)>,
+    #[cfg(target_os = "macos")]
+    modifiers: Option<super::desktop::Monitor>,
 }
 
 impl Native {
-    pub fn new(bindings: &[Binding], sender: Sender<Shortcut>) -> Result<Self> {
+    pub fn new(bindings: &[Binding], sender: Sender<ShortcutEvent>) -> Result<Self> {
         #[cfg(target_os = "macos")]
         unsafe {
             let mut state = Self {
                 registrations: Vec::new(),
                 handler: std::ptr::null_mut(),
-                callback: Box::new((sender, bindings.iter().map(|binding| binding.0).collect())),
+                callback: Box::new((
+                    sender.clone(),
+                    bindings.iter().map(|binding| binding.0).collect(),
+                )),
+                modifiers: None,
             };
-            let event_type = EventType {
-                class: u32::from_be_bytes(*b"keyb"),
-                kind: 6,
-            };
+            let event_types = [
+                EventType {
+                    class: u32::from_be_bytes(*b"keyb"),
+                    kind: 6,
+                },
+                EventType {
+                    class: u32::from_be_bytes(*b"keyb"),
+                    kind: 7,
+                },
+            ];
             let result = InstallEventHandler(
                 GetApplicationEventTarget(),
                 receive,
-                1,
-                &event_type,
-                (&mut *state.callback as *mut (Sender<Shortcut>, Vec<Shortcut>)).cast(),
+                event_types.len() as u32,
+                event_types.as_ptr(),
+                (&mut *state.callback as *mut (Sender<ShortcutEvent>, Vec<Shortcut>)).cast(),
                 &mut state.handler,
             );
             ensure!(
@@ -157,9 +185,10 @@ impl Native {
                 "Cannot install global shortcut handler ({result})"
             );
             for (id, binding) in bindings.iter().enumerate() {
+                let Some(key) = binding.1 else { continue };
                 let mut registration = std::ptr::null_mut();
                 let result = RegisterEventHotKey(
-                    binding.1,
+                    key,
                     binding.2,
                     HotkeyId {
                         signature: u32::from_be_bytes(*b"CGXH"),
@@ -175,6 +204,14 @@ impl Native {
                     binding.0
                 );
                 state.registrations.push(registration);
+            }
+            let modifiers: Vec<_> = bindings
+                .iter()
+                .filter(|binding| binding.1.is_none())
+                .map(|binding| (binding.0, binding.2))
+                .collect();
+            if !modifiers.is_empty() {
+                state.modifiers = Some(super::desktop::Monitor::modifiers(modifiers, sender)?);
             }
             Ok(state)
         }
@@ -206,9 +243,12 @@ unsafe extern "C" fn receive(_: *mut c_void, event: *mut c_void, data: *mut c_vo
     if result != 0 || id.signature != u32::from_be_bytes(*b"CGXH") {
         return -9874;
     }
-    let (sender, shortcuts) = unsafe { &*data.cast::<(Sender<Shortcut>, Vec<Shortcut>)>() };
+    let (sender, shortcuts) = unsafe { &*data.cast::<(Sender<ShortcutEvent>, Vec<Shortcut>)>() };
     if let Some(shortcut) = shortcuts.get(id.id as usize) {
-        let _ = sender.try_send(*shortcut);
+        let _ = sender.try_send(ShortcutEvent {
+            shortcut: *shortcut,
+            pressed: unsafe { GetEventKind(event) } == 6,
+        });
     }
     0
 }
@@ -236,7 +276,8 @@ mod tests {
         assert!(binding(Shortcut::Popout, "Alt+K+C").is_err());
         assert!(binding(Shortcut::Popout, "Alt+").is_err());
         let screenshot = binding(Shortcut::ScreenshotNew, "Control+Alt+Shift+4").unwrap();
-        assert_eq!(screenshot.1, 21);
+        assert_eq!(screenshot.1, Some(21));
         assert_eq!(screenshot.2, 0x1a00);
+        assert_eq!(binding(Shortcut::DictationHold, "Fn").unwrap().1, None);
     }
 }

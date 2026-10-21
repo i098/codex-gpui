@@ -3,8 +3,8 @@
 //! plus the key bindings and menu bar. `main.rs` only opens the window;
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
-mod cloud_task;
 mod cloud;
+mod cloud_task;
 pub use cloud::{CloudTaskRequest, create_cloud_task};
 pub mod computer_use_requests;
 mod features;
@@ -191,7 +191,6 @@ pub fn menus() -> Vec<Menu> {
         ]),
     ]
 }
-
 
 /// The thread route's side panel tab.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -891,6 +890,7 @@ impl Root {
                 this.skills = skills;
                 this.models = models;
                 this.ready = true;
+                hotkey::policy::refresh(this, cx);
                 this.select_route(cx);
                 this.sync(window, cx);
                 if bridge.is_acp() {
@@ -1034,6 +1034,7 @@ impl Root {
             thread.update(cx, |view, cx| view.set_git_repository(None, cx));
         }
         self.host = host;
+        hotkey::policy::refresh(self, cx);
         self.automations = None;
         self.load_projects(cx);
         if self.scheduled_route() {
@@ -2087,8 +2088,6 @@ impl Root {
         }
     }
 
-
-
     /// HC-033: a printable key (no ⌘/⌃, not Space) typed outside an editable, with no
     /// dialog, menu or popover open, goes to the route's composer and focuses it.
     /// Content ancestors can hold plain focus handles without being popovers.
@@ -2516,6 +2515,7 @@ impl Root {
                         this.login = Some(cx.new(Login::new));
                         this.account_email = None;
                         this.chatgpt_account = false;
+                        hotkey::policy::clear(cx);
                         let host = this.host.clone();
                         cx.background_spawn(async move { host.invalidate_identity() })
                             .detach();
@@ -2887,7 +2887,6 @@ impl Root {
             self.navigate(route, window, cx);
         }
     }
-
 
     /// Thread composer: `turn/start` on the open thread, resuming it first if needed. While a
     /// turn runs (CP-108), `Follow-up behavior` decides: `Queue` adds the message to the
@@ -4173,6 +4172,9 @@ impl Root {
     /// Every server message: streamed into the open thread and the sign-in view, plus
     /// Recents updates and approval prompts.
     pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        if matches!(&event, Event::Notification { method, .. } if method == "account/updated") {
+            hotkey::policy::refresh(self, cx);
+        }
         if let Some(login) = &self.login {
             login.update(cx, |login, cx| login.apply(&event, cx));
             if matches!(&event, Event::Notification { method, params }

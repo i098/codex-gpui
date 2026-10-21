@@ -74,9 +74,9 @@ The separate page owners still owe their original-versus-native appearance check
 ## Popout and Spotlight controller
 
 `app::hotkey::open(owner, target, cx)` opens the local popout or Spotlight without changing the primary window's route or draft.
-The controller accepts `/hotkey-window`, `/hotkey-window/new-thread`, `/hotkey-window/thread/:id`, and `/spotlight`.
+The controller accepts `/hotkey-window`, `/hotkey-window/new-thread`, `/hotkey-window/thread/:id`, `/hotkey-window/remote/:id`, and `/spotlight`.
 The popout uses the existing composer, thread renderer, app-server connection, and window manager.
-Its settings menu selects a project, local or worktree execution, a branch, an environment, and permissions.
+Its settings menu selects a project, local, worktree or cloud execution, a branch, an environment, and permissions.
 Worktree execution uses the existing `create-worktree` and `set-worktree-owner-thread` host calls.
 The window expands for a thread and collapses for a new chat.
 Open in Main Window transfers navigation to the owning primary window.
@@ -89,8 +89,14 @@ Screenshot selection attaches the captured image without sending the chat.
 Shortcut registration failures remain errors.
 Other platforms reject native shortcut registration.
 
+Global dictation uses the saved shortcut map and the existing voice settings store.
+It requires the account rollout and workspace permission checks before registration.
+The controller records through the selected native microphone, retains recoverable audio, and calls the existing transcription request.
+It restores the clipboard only if another application has not changed it.
+Recovery exposes Copy, the Accessibility settings link, and saved recordings.
+
 Run `cargo test -p app --lib hotkey -- --nocapture --test-threads=1` for the local regression checks.
 The checks exercise real temporary worktree creation, environment parsing, route boundaries, and separate primary and popout drafts.
-Set `CGX_HOTKEY_EVIDENCE` to save the native headless popout frame.
+Set `CGX_HOTKEY_EVIDENCE` to save native home, settings and Spotlight frames from the recorded backend.
 These checks do not activate a microphone or screen capture.
 Strict original-versus-native appearance checks remain separate from these behavior checks.

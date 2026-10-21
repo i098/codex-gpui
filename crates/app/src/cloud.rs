@@ -178,9 +178,18 @@ fn access(host: &dyn host::Host, plan: &str) -> Result<Access> {
     let Some(identity) = host.identity() else {
         return Ok(Access::default());
     };
+    let (gates, policy, consumer) = policy_inputs(host, &identity, plan)?;
+    Ok(evaluate_access(&gates, &policy, consumer))
+}
+
+pub(crate) fn policy_inputs(
+    host: &dyn host::Host,
+    identity: &host::Identity,
+    plan: &str,
+) -> Result<(Value, Value, bool)> {
     let bootstrap = request(
         host,
-        &identity,
+        identity,
         "POST",
         "/wham/statsig/bootstrap",
         Some(json!({
@@ -201,13 +210,13 @@ fn access(host: &dyn host::Host, plan: &str) -> Result<Access> {
     } else {
         request(
             host,
-            &identity,
+            identity,
             "GET",
             &path(&["accounts", &identity.account_id, "settings"]),
             None,
         )?
     };
-    Ok(evaluate_access(&gates, &policy, consumer))
+    Ok((gates, policy, consumer))
 }
 
 fn evaluate_access(gates: &Value, policy: &Value, consumer: bool) -> Access {

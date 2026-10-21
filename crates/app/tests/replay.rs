@@ -422,6 +422,11 @@ fn check_state(fx: &mut Fx, state: &Value) -> Result<()> {
             "route" => match fx.route() {
                 Route::Home => "home".to_owned(),
                 Route::Thread(id) => format!("thread:{id}"),
+                Route::Remote { task_id, hotkey } => format!(
+                    "{}remote:{task_id}",
+                    if hotkey { "hotkey-window/" } else { "" }
+                ),
+                Route::CloudEnvironments(path) => path,
                 Route::Settings => "settings".to_owned(),
                 Route::Scheduled => "scheduled".to_owned(),
                 Route::Automation(id) => format!("scheduled?automationId={id}"),

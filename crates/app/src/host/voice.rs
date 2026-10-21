@@ -67,6 +67,57 @@ impl Settings {
         crate::host_settings::Settings::load(self.preferences.clone())?.write(key, value)
     }
 
+    pub fn begin_capture(&self, recording: &Recording) -> Result<PathBuf> {
+        use std::os::unix::fs::PermissionsExt as _;
+        Self::validate_recording(recording)?;
+        ensure!(
+            recording.status == "recording",
+            "A new capture must be recording"
+        );
+        ensure!(!recording.id.is_empty(), "Invalid recording identifier");
+        let root = self.root();
+        fs::create_dir_all(&root)?;
+        ensure!(
+            !fs::symlink_metadata(&root)?.file_type().is_symlink(),
+            "Invalid recording store"
+        );
+        ensure!(
+            root.canonicalize()?.starts_with(self.home.canonicalize()?),
+            "Recording store escapes CODEX_HOME"
+        );
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700))?;
+        let directory = root.join(format!("{:x}", Sha256::digest(recording.id.as_bytes())));
+        fs::create_dir(&directory)?;
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
+        Self::write_metadata(&directory, &serde_json::to_value(recording)?)?;
+        Ok(directory.join("0000000000.chunk"))
+    }
+
+    pub fn finish_capture(&self, id: &str, status: &str) -> Result<()> {
+        ensure!(
+            matches!(status, "completed" | "cancelled" | "interrupted"),
+            "Invalid final recording status"
+        );
+        let (directory, mut value, _) = self.metadata(id)?;
+        value["status"] = status.into();
+        value["sizeBytes"] = self
+            .chunks(&directory)?
+            .iter()
+            .try_fold(0u64, |size, path| {
+                Ok::<_, anyhow::Error>(size + fs::metadata(path)?.len())
+            })?
+            .into();
+        Self::write_metadata(&directory, &value)
+    }
+
+    fn write_metadata(directory: &Path, value: &Value) -> Result<()> {
+        let mut file = tempfile::NamedTempFile::new_in(directory)?;
+        file.write_all(&serde_json::to_vec(value)?)?;
+        file.as_file().sync_all()?;
+        file.persist(directory.join("metadata.json"))?;
+        Ok(())
+    }
+
     fn root(&self) -> PathBuf {
         self.home.join("dictation-history")
     }
@@ -311,11 +362,7 @@ impl Settings {
             "Dictation recording returned an empty transcript"
         );
         value["text"] = text.trim().into();
-        let mut file = tempfile::NamedTempFile::new_in(&directory)?;
-        file.write_all(&serde_json::to_vec(&value)?)?;
-        file.as_file().sync_all()?;
-        file.persist(directory.join("metadata.json"))?;
-        Ok(())
+        Self::write_metadata(&directory, &value)
     }
 
     pub fn download(&self, id: &str, directory: &Path) -> Result<PathBuf> {
@@ -497,5 +544,40 @@ mod core_audio {
             }
         }
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod capture_tests {
+    use super::*;
+
+    #[test]
+    fn completed_capture_can_retry_until_a_transcript_is_saved() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let settings = Settings::new(
+            directory.path().to_owned(),
+            directory.path().join("preferences.json"),
+        );
+        let recording = Recording {
+            id: "owned-capture".into(),
+            created_at_ms: 1,
+            mime_type: "audio/wav".into(),
+            size_bytes: 0,
+            status: "recording".into(),
+            text: String::new(),
+            language: None,
+        };
+        let chunk = settings.begin_capture(&recording)?;
+        fs::write(chunk, b"RIFF\\0\\0\\0\\0WAVEfmt ")?;
+        assert!(!settings.recordings()?[0].can_retry(true));
+        settings.finish_capture(&recording.id, "completed")?;
+        assert!(settings.recordings()?[0].can_retry(true));
+        settings.set_transcript(&recording.id, "captured text")?;
+        let saved = settings.recordings()?.remove(0);
+        assert_eq!(saved.text, "captured text");
+        assert!(!saved.can_retry(true));
+        assert!(settings.begin_capture(&recording).is_err());
+        assert_eq!(settings.recordings()?[0].text, "captured text");
+        Ok(())
     }
 }

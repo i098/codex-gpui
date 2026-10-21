@@ -1931,6 +1931,7 @@ pub struct CommandMenu {
     file_search: Option<FileSearch>,
     standalone: bool,
     open_error: bool,
+    recent_cycle: bool,
 }
 
 struct FileSearch {
@@ -2564,6 +2565,15 @@ impl CommandMenu {
             ("Settings", settings.into()),
         ];
         groups.extend(GROUPS.into_iter().map(group));
+        Self::with_groups(groups, thread_open, query, cx)
+    }
+
+    fn with_groups(
+        groups: Vec<(&'static str, Vec<Item>)>,
+        thread_open: bool,
+        query: &str,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self {
             groups,
             retry_item: Item {
@@ -2593,6 +2603,7 @@ impl CommandMenu {
             file_search: None,
             standalone: false,
             open_error: false,
+            recent_cycle: false,
         }
     }
 
@@ -2612,11 +2623,33 @@ impl CommandMenu {
         unread: &[String],
         cx: &mut Context<Self>,
     ) {
-        if self.query.is_empty() && self.file_search.is_none() {
+        if self.query.is_empty() && self.file_search.is_none() && !self.recent_cycle {
             self.groups[0].1 = threads
                 .iter()
                 .map(|thread| Item::chat(thread, None, unread.contains(&thread.id)))
                 .collect();
+            cx.notify();
+        }
+    }
+
+    pub fn recent_chats(threads: &[&Thread], direction: isize, cx: &mut Context<Self>) -> Self {
+        let groups = vec![(
+            "Recently viewed",
+            threads
+                .iter()
+                .map(|thread| Item::chat(thread, None, false))
+                .collect(),
+        )];
+        let mut menu = Self::with_groups(groups, true, "", cx);
+        menu.recent_cycle = true;
+        menu.cycle_recent(direction, cx);
+        menu
+    }
+
+    pub fn cycle_recent(&mut self, direction: isize, cx: &mut Context<Self>) {
+        if self.recent_cycle && !self.groups[0].1.is_empty() {
+            let count = self.groups[0].1.len() as isize;
+            self.select((self.selected as isize + direction).rem_euclid(count) as usize);
             cx.notify();
         }
     }
@@ -2925,6 +2958,9 @@ impl CommandMenu {
 
     /// Keep registered groups; rank matches within each group.
     fn visible(&self) -> Vec<(&'static str, Vec<&Item>)> {
+        if self.recent_cycle {
+            return vec![("Recently viewed", self.groups[0].1.iter().collect())];
+        }
         if let Some(search) = &self.file_search {
             return vec![(
                 if search.rows.iter().all(|row| row.file.is_none()) {
@@ -3035,12 +3071,11 @@ impl CommandMenu {
                         )];
                         parts.extend(item.description.map(|d| format!("desc:{d}")));
                         parts.extend(item.project.as_ref().map(|p| p.to_string()));
-                        parts.extend(
-                            item.keys
-                                .as_ref()
-                                .map(|k| k.to_string())
-                                .or_else(|| item.is_chat().then(|| format!("⌃{index}"))),
-                        );
+                        parts.extend(item.keys.as_ref().map(|k| k.to_string()).or_else(|| {
+                            (item.is_chat() && !self.recent_cycle).then(|| {
+                                format!("{}{index}", if self.standalone { "⌘" } else { "⌃" })
+                            })
+                        }));
                         let mut text = parts.join(" | ");
                         if let Some(s) = &item.snippet {
                             text += &format!(" || {}", bracket(s, highlight(s, query, false)));
@@ -3247,6 +3282,8 @@ impl CommandMenu {
         let entity = cx.entity();
         let placeholder = if self.file_search.is_some() {
             "Search files"
+        } else if self.standalone {
+            "Search chats or run a command"
         } else {
             "Search chats"
         };
@@ -3574,7 +3611,7 @@ impl Render for CommandMenu {
         // `.command-menu-dialog` / `.global-command-menu-dialog` sizing.
         let list_height = (0.9 * h - 64.).clamp(120., 440.);
         let width = 520f32.min(0.92 * w);
-        let input = self.query_input(width - 30., window, cx);
+        let input = (!self.recent_cycle).then(|| self.query_input(width - 30., window, cx));
         let top = ((h - list_height - 64.) / 2.).max(16.);
         let surface = t.surface_elevated_secondary;
         // `border-color: var(--color-border)` in dark, transparent in light (still a 1 px
@@ -3617,7 +3654,17 @@ impl Render for CommandMenu {
                             .flex()
                             .items_center()
                             .gap(px(8.))
-                            .child(text(heading, 13., 18.5, 430., t.text_tertiary))
+                            .child(text(
+                                if self.standalone && query.is_empty() && heading == "Chats" {
+                                    "Recent chats"
+                                } else {
+                                    heading
+                                },
+                                13.,
+                                18.5,
+                                430.,
+                                t.text_tertiary,
+                            ))
                             .when(searching, |d| {
                                 d.child(icon("sidebar-cmd-spinner", 12., t.text_tertiary))
                             }),
@@ -3635,7 +3682,14 @@ impl Render for CommandMenu {
                             menu_row(
                                 item,
                                 if retry { "" } else { query },
-                                index,
+                                (
+                                    index,
+                                    (!self.recent_cycle).then_some(if self.standalone {
+                                        "⌘"
+                                    } else {
+                                        "⌃"
+                                    }),
+                                ),
                                 selected,
                                 text_width,
                                 t,
@@ -3674,6 +3728,18 @@ impl Render for CommandMenu {
                     .when(!self.recent_cycle, |d| d.key_context("Editable"))
                     .track_focus(&self.focus)
                     .on_key_down(cx.listener(Self::on_key))
+                    .on_key_up(cx.listener(|this, event: &gpui::KeyUpEvent, _, cx| {
+                        if this.recent_cycle && !event.keystroke.modifiers.control {
+                            this.confirm(cx);
+                        }
+                    }))
+                    .on_modifiers_changed(cx.listener(
+                        |this, event: &gpui::ModifiersChangedEvent, _, cx| {
+                            if this.recent_cycle && !event.modifiers.control {
+                                this.confirm(cx);
+                            }
+                        },
+                    ))
                     .on_action(cx.listener(|this, _: &crate::SelectAll, _, cx| {
                         this.query_anchor = 0;
                         this.query_cursor = this.query.len();
@@ -3722,7 +3788,9 @@ impl Render for CommandMenu {
                                     .flex_col()
                                     .gap(px(4.))
                                     .overflow_hidden()
-                                    .child(div().h(px(33.)).px(px(10.)).py(px(6.)).child(input))
+                                    .children(input.map(|input| {
+                                        div().h(px(33.)).px(px(10.)).py(px(6.)).child(input)
+                                    }))
                                     .child(
                                         div()
                                             .id("command-menu-list")
@@ -3812,7 +3880,7 @@ fn layered(color: Hsla, opacities: &[f32], bottom: Hsla) -> Hsla {
 fn menu_row(
     item: &Item,
     query: &str,
-    ordinal: usize,
+    (ordinal, numeric_modifier): (usize, Option<&str>),
     selected: bool,
     text_width: f32,
     t: &Theme,
@@ -3904,9 +3972,12 @@ fn menu_row(
             )
         })
         .when_some(
-            item.keys
-                .clone()
-                .or_else(|| item.is_chat().then(|| format!("⌃{ordinal}").into())),
+            item.keys.clone().or_else(|| {
+                item.is_chat()
+                    .then_some(numeric_modifier)
+                    .flatten()
+                    .map(|modifier| format!("{modifier}{ordinal}").into())
+            }),
             |d, keys| {
                 let kbd_bg = layered(t.text_alpha_10, &[0.8, row_opacity], bottom);
                 // `kbd` sits on the 21 px line's baseline, 3 px below its top.

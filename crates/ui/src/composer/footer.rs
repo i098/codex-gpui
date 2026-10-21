@@ -71,6 +71,7 @@ fn loading_model(color: Hsla) -> impl IntoElement {
 impl Composer {
     pub(super) fn footer(&self, window: &Window, t: &Theme, cx: &mut Context<Self>) -> Div {
         let open = matches!(self.menu, Some(Menu::Effort | Menu::Models));
+        let hotkey_home = self.hotkey_controls.is_some();
         let model = self.current_model();
         let loading = model.is_none();
         let model_label = model.map_or("Loading model…".into(), |m| m.label.clone());
@@ -218,50 +219,47 @@ impl Composer {
                 // The 1 px trigger border leaves a 4 px visible gap with this content-edge offset.
                 .side_offset(px(5.)),
             )
-            .when(self.hotkey_controls.is_none(), |left| {
-                left.child(
-                    div()
-                        .relative()
-                        .child(
-                            pill("permissions", t)
-                                .track_focus(&self.permissions_focus)
-                                .focus_visible(menu::trigger_focus)
-                                .on_hover(cx.listener(|this, hovered: &bool, _, _| {
-                                    this.menu_trigger_hovered = *hovered
-                                }))
-                                .on_key_down(cx.listener(|this, event, window, cx| {
-                                    this.trigger_key(Menu::Permissions, event, window, cx)
-                                }))
-                                .px(px(6.))
-                                .gap(px(4.))
-                                .child(footer_icon("permissions", t.text_tertiary))
-                                .when(self.footer_width > SM_WIDTH, |d| {
-                                    d.child(
-                                        text(
-                                            self.permission.short_label(),
-                                            13.,
-                                            18.,
-                                            400.,
-                                            t.text_tertiary,
-                                        )
-                                        .when(self.docked, |d| d.top_layer()),
+            .child(
+                div()
+                    .relative()
+                    .child(
+                        pill("permissions", t)
+                            .track_focus(&self.permissions_focus)
+                            .focus_visible(menu::trigger_focus)
+                            .on_hover(cx.listener(|this, hovered: &bool, _, _| {
+                                this.menu_trigger_hovered = *hovered
+                            }))
+                            .on_key_down(cx.listener(|this, event, window, cx| {
+                                this.trigger_key(Menu::Permissions, event, window, cx)
+                            }))
+                            .px(px(6.))
+                            .gap(px(4.))
+                            .child(footer_icon("permissions", t.text_tertiary))
+                            .when(self.footer_width > SM_WIDTH, |d| {
+                                d.child(
+                                    text(
+                                        self.permission.short_label(),
+                                        13.,
+                                        18.,
+                                        400.,
+                                        t.text_tertiary,
                                     )
-                                })
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.toggle_menu(Menu::Permissions, window, cx)
-                                })),
-                        )
-                        .when(self.menu == Some(Menu::Permissions), |d| {
-                            d.child(self.anchored_menu(self.permissions_menu(t, cx), None, cx))
-                        }),
-                )
-            })
-            .children(self.hotkey_controls.clone());
+                                    .when(self.docked, |d| d.top_layer()),
+                                )
+                            })
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.toggle_menu(Menu::Permissions, window, cx)
+                            })),
+                    )
+                    .when(self.menu == Some(Menu::Permissions), |d| {
+                        d.child(self.anchored_menu(self.permissions_menu(t, cx), None, cx))
+                    }),
+            );
         let send = div()
             .id("send")
             .role(gpui::Role::Button)
             .aria_label(self.send_label())
-            .aria_disabled(waiting_for_model)
+            .aria_disabled(waiting_for_model || (hotkey_home && !has_input))
             .tab_index(0)
             .rounded(Theme::RADIUS_FULL)
             .focus_visible(move |style| {
@@ -276,6 +274,9 @@ impl Composer {
             .ml(px(8.))
             .size(px(28.))
             .p(px(2.))
+            .when(hotkey_home && !has_input, |button| {
+                button.opacity(0.5).layer()
+            })
             .flex()
             .items_center()
             .justify_center()
@@ -300,7 +301,7 @@ impl Composer {
             .when(!stopping && !waiting_for_model, |d| {
                 d.child(
                     icon(
-                        if has_input {
+                        if has_input || hotkey_home {
                             "composer-arrow-up"
                         } else {
                             "voice"
@@ -328,6 +329,7 @@ impl Composer {
             .flex()
             .items_center()
             .child(model_button)
+            .children(self.hotkey_controls.clone())
             .child(
                 pill("dictate", t)
                     .tab_index(0)

@@ -153,8 +153,14 @@ impl Root {
             self.shell.clone()
         };
         window.focus(&self.route_focus(cx), cx);
-        let home = matches!(self.state.route, Route::Home | Route::Thread(_) | Route::Remote { .. });
-        let header_actions = self.cloud.as_ref().map(|session| session.header.clone().into());
+        let home = matches!(
+            self.state.route,
+            Route::Home | Route::Thread(_) | Route::Remote { .. }
+        );
+        let header_actions = self
+            .cloud
+            .as_ref()
+            .map(|session| session.header.clone().into());
         shell.update(cx, |shell, cx| {
             shell.header_actions = header_actions;
             shell.selected_rail = if self.sidebar_automation.is_some() {
@@ -192,7 +198,9 @@ impl Root {
         let open = |id: &str| self.thread.as_ref().is_some_and(|v| v.read(cx).id() == id);
         match &self.state.route {
             _ if self.login.is_some() => self.focus.clone(),
-            Route::Remote { .. } => self.cloud.as_ref()
+            Route::Remote { .. } => self
+                .cloud
+                .as_ref()
                 .map(|session| session.page.read(cx).composer.focus_handle(cx))
                 .unwrap_or_else(|| self.focus.clone()),
             Route::Thread(id) if open(id) => self.thread_composer.focus_handle(cx),

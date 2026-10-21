@@ -767,11 +767,7 @@ impl Composer {
         self.on_settings_paste = Some(Rc::new(handler));
     }
 
-    pub fn settings_secret(
-        placeholder: &'static str,
-        value: &str,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn settings_secret(placeholder: &'static str, value: &str, cx: &mut Context<Self>) -> Self {
         let mut editor = Self::settings_field(placeholder, value, false, cx);
         editor.secret = true;
         editor
@@ -2020,7 +2016,11 @@ impl Render for Composer {
                     .flex()
                     .flex_col()
                     .when(self.docked, |d| d.layer())
-                    .when(!editing, |d| d.child(self.attachments_row(&t, cx)))
+                    .when(
+                        !editing
+                            && (self.hotkey_controls.is_none() || !self.attachments.is_empty()),
+                        |d| d.child(self.attachments_row(&t, cx)),
+                    )
                     .when_some(self.attachment_error, |d, error| {
                         d.child(label(error, t.text))
                     })

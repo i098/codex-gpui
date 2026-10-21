@@ -1062,7 +1062,10 @@ impl Host for LocalHost {
     }
 
     fn voice_settings(&self) -> Result<voice::Settings> {
-        Ok(voice::Settings::new(self.home.clone(), self.host_settings_path.clone()))
+        Ok(voice::Settings::new(
+            self.home.clone(),
+            self.host_settings_path.clone(),
+        ))
     }
     fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
         self.computer_use_settings
@@ -1408,7 +1411,12 @@ impl CloudHost {
     }
 
     /// The original's `performDesktopFetch` for one request, with its single 401 retry.
-    fn send(&self, url: &str, request: &Value, body: Option<&[u8]>) -> std::result::Result<Value, Refusal> {
+    fn send(
+        &self,
+        url: &str,
+        request: &Value,
+        body: Option<&[u8]>,
+    ) -> std::result::Result<Value, Refusal> {
         self.send_response(url, request, None, body)
             .and_then(|response| wire(response, request["returnErrorResponse"] == true))
     }
@@ -1426,9 +1434,14 @@ impl CloudHost {
             .to_ascii_uppercase();
         let binary_body = request["bodyBase64"]
             .as_str()
-            .map(|body| STANDARD.decode(body).map_err(|error| (400, error.to_string())))
+            .map(|body| {
+                STANDARD
+                    .decode(body)
+                    .map_err(|error| (400, error.to_string()))
+            })
             .transpose()?;
-        let body = raw_body.or(binary_body.as_deref())
+        let body = raw_body
+            .or(binary_body.as_deref())
             .or_else(|| request["body"].as_str().map(str::as_bytes));
         let mut headers: Headers = request["headers"]
             .as_object()

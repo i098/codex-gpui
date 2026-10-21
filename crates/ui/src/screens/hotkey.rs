@@ -40,6 +40,7 @@ pub enum Change {
 pub struct Options {
     pub projects: Vec<(SharedString, String)>,
     pub root: Option<String>,
+    pub projectless: bool,
     pub loading: bool,
     pub git_root: Option<String>,
     pub branches: Vec<String>,
@@ -53,18 +54,22 @@ pub struct Options {
 
 impl Options {
     pub fn placeholder(&self) -> String {
-        let Some(root) = &self.root else {
+        if self.projectless {
             return "Ask ChatGPT anything locally".into();
-        };
+        }
         let project = self
-            .projects
-            .iter()
-            .find(|(_, path)| path == root)
-            .map(|(name, _)| name.as_ref())
-            .or_else(|| {
-                std::path::Path::new(root)
-                    .file_name()
-                    .and_then(|name| name.to_str())
+            .root
+            .as_ref()
+            .and_then(|root| {
+                self.projects
+                    .iter()
+                    .find(|(_, path)| path == root)
+                    .map(|(name, _)| name.as_ref())
+                    .or_else(|| {
+                        std::path::Path::new(root)
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                    })
             })
             .unwrap_or("this project");
         match self.mode {
@@ -77,7 +82,7 @@ impl Options {
     pub fn start_in_disabled(&self) -> Option<&'static str> {
         if self.loading {
             Some("Loading project")
-        } else if self.root.is_none() {
+        } else if self.projectless {
             Some("Standalone chats run in a local folder")
         } else if self.git_root.is_none() {
             Some("Initialize a git repo to start in cloud or worktree mode")
@@ -101,7 +106,7 @@ pub struct Controls {
     options: Options,
     composer: gpui::WeakEntity<Composer>,
     open: Option<Menu>,
-    selected: usize,
+    selected: Option<usize>,
     focus: FocusHandle,
 }
 
@@ -118,7 +123,7 @@ impl Controls {
             options,
             composer: composer.downgrade(),
             open: None,
-            selected: 0,
+            selected: None,
             focus: cx.focus_handle(),
         }
     }
@@ -151,7 +156,7 @@ impl Controls {
                     .root
                     .as_ref()
                     .and_then(|root| self.options.projects.iter().find(|(_, path)| path == root))
-                    .map_or("Standalone".into(), |(name, _)| name.to_string());
+                    .map_or("New chat".into(), |(name, _)| name.to_string());
                 let mode = match self.options.mode {
                     Mode::Local => "Local project",
                     Mode::Worktree => "Worktree",
@@ -311,7 +316,7 @@ impl Controls {
         }
         if let Some(menu) = submenu {
             self.open = Some(menu);
-            self.selected = 0;
+            self.selected = None;
             cx.notify();
         } else if let Some(change) = change {
             cx.emit(change);
@@ -325,19 +330,22 @@ impl Controls {
             "escape" => self.close(window, cx),
             "left" if self.open != Some(Menu::Settings) => {
                 self.open = Some(Menu::Settings);
-                self.selected = 0;
+                self.selected = None;
             }
             "down" => {
-                if let Some(next) = (self.selected + 1..rows.len()).find(|&i| rows[i].3.is_none()) {
-                    self.selected = next;
-                }
+                self.selected = (self.selected.map_or(0, |index| index + 1)..rows.len())
+                    .find(|&index| rows[index].3.is_none());
             }
             "up" => {
-                if let Some(previous) = (0..self.selected).rev().find(|&i| rows[i].3.is_none()) {
-                    self.selected = previous;
+                self.selected = (0..self.selected.unwrap_or(rows.len()))
+                    .rev()
+                    .find(|&index| rows[index].3.is_none());
+            }
+            "enter" | "space" | "right" => {
+                if let Some(index) = self.selected {
+                    self.activate(index, window, cx);
                 }
             }
-            "enter" | "space" | "right" => self.activate(self.selected, window, cx),
             _ => return,
         }
         cx.stop_propagation();
@@ -355,14 +363,16 @@ impl Render for Controls {
             .focusable()
             .tab_index(0)
             .w(px(28.))
+            .rounded(px(9.375))
+            .when(self.open.is_some(), |button| button.bg(t.ghost_hover))
             .justify_center()
-            .child(icon("settings-general", 16., t.text_tertiary))
+            .child(icon("thread-chat-actions", 16., t.text_tertiary))
             .on_click(cx.listener(|this, _, window, cx| {
                 if this.open.is_some() {
                     this.close(window, cx);
                 } else {
                     this.open = Some(Menu::Settings);
-                    this.selected = 0;
+                    this.selected = None;
                     window.focus(&this.focus, cx);
                     cx.notify();
                 }
@@ -370,61 +380,125 @@ impl Render for Controls {
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 if matches!(event.keystroke.key.as_str(), "enter" | "space" | "down") {
                     this.open = Some(Menu::Settings);
-                    this.selected = 0;
+                    this.selected = Some(0);
                     window.focus(&this.focus, cx);
                     cx.notify();
                     cx.stop_propagation();
                 }
             }));
-        let mut root = div().relative().child(button);
+        let mut root = div().relative().ml(px(4.)).child(button);
         if self.open.is_some() {
-            let rows = self.entries(cx);
-            let menu = popover(&t, 320., |menu| {
-                menu.gap(px(4.))
-                    .p(px(8.))
-                    .children(rows.into_iter().enumerate().map(
-                        |(index, (label, _, _, disabled))| {
-                            let (title, value) = label.split_once('\t').unwrap_or((&label, ""));
-                            let row = div()
-                                .id(("hotkey-setting", index))
-                                .role(gpui::Role::MenuItem)
-                                .aria_label(label.clone())
-                                .aria_disabled(disabled.is_some())
-                                .h(px(28.))
-                                .px(px(4.))
-                                .rounded(px(6.))
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .gap(px(16.))
-                                .when(index == self.selected, |row| row.bg(t.ghost_hover))
-                                .opacity(if disabled.is_some() { 0.5 } else { 1. })
-                                .child(text(title.to_owned(), 13., 18., 500., t.text))
-                                .child(text(value.to_owned(), 13., 18., 400., t.text_tertiary))
-                                .on_mouse_move(cx.listener(move |this, _, _, cx| {
-                                    this.selected = index;
-                                    cx.notify();
-                                }))
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.activate(index, window, cx)
-                                }));
-                            if let Some(reason) = disabled {
-                                crate::tooltip::tooltip(
-                                    row,
-                                    reason,
-                                    None,
-                                    crate::tooltip::Side::Top,
-                                )
-                                .into_any_element()
+            let settings = self.open == Some(Menu::Settings);
+            let rows =
+                self.entries(cx)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, (label, _, _, disabled))| {
+                        let (title, value) = label.split_once('\t').unwrap_or((&label, ""));
+                        let icon_size = if title == "Start in" { 14. } else { 16. };
+                        let value_icon = match title {
+                            "Project" => Some(if self.options.root.is_some() {
+                                "folder"
                             } else {
-                                row.into_any_element()
-                            }
-                        },
-                    ))
-            });
+                                "new-chat"
+                            }),
+                            "Start in" => Some("laptop"),
+                            "Permissions" => Some("permissions"),
+                            "Branch" => Some("settings-git"),
+                            _ => None,
+                        };
+                        let color = if settings && title == "Project" {
+                            t.text
+                        } else {
+                            t.text_tertiary
+                        };
+                        let choice = pill("hotkey-choice", &t)
+                            .role(gpui::Role::MenuItem)
+                            .aria_label(label.clone())
+                            .aria_disabled(disabled.is_some())
+                            .gap(px(4.))
+                            .px(px(if title == "Project" { 8. } else { 6. }))
+                            .when(!settings, |choice| choice.w_full())
+                            .when(self.selected == Some(index), |choice| {
+                                choice.bg(t.ghost_hover)
+                            })
+                            .opacity(if disabled.is_some() { 0.4 } else { 1. })
+                            .when_some(value_icon.filter(|_| settings), |choice, name| {
+                                choice.child(icon(name, icon_size, color))
+                            })
+                            .child(text(
+                                if settings { value } else { title }.to_owned(),
+                                13.,
+                                18.,
+                                if title == "Start in" { 430. } else { 400. },
+                                color,
+                            ))
+                            .when(settings && title != "Permissions", |choice| {
+                                choice.child(icon("chevron-down", icon_size, color))
+                            })
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.activate(index, window, cx)
+                            }));
+                        let row = div()
+                            .id(("hotkey-setting", index))
+                            .h(px(28.))
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap(px(16.))
+                            .when(settings, |row| {
+                                row.child(text(title.to_owned(), 13., 18.571_428, 500., t.text))
+                            })
+                            .child(choice);
+                        if let Some(reason) = disabled {
+                            crate::tooltip::tooltip(row, reason, None, crate::tooltip::Side::Top)
+                                .into_any_element()
+                        } else {
+                            row.into_any_element()
+                        }
+                    })
+                    .collect::<Vec<_>>();
+            let menu = if settings {
+                div()
+                    .relative()
+                    .w(px(320.))
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: gpui::Corners::all(Theme::RADIUS_XL),
+                        fill: Some(t.menu_background),
+                        shadows: vec![
+                            shapes::Shadow {
+                                color: t.border,
+                                offset: gpui::point(px(0.), px(0.)),
+                                blur: px(0.),
+                                spread: px(0.5),
+                                inset: false,
+                            },
+                            shapes::Shadow {
+                                color: gpui::rgba(0x0000001a).into(),
+                                offset: gpui::point(px(0.), px(4.)),
+                                blur: px(8.),
+                                spread: px(-2.),
+                                inset: false,
+                            },
+                        ],
+                        ..Default::default()
+                    }))
+                    .child(
+                        div()
+                            .relative()
+                            .flex()
+                            .flex_col()
+                            .p(px(16.))
+                            .gap(px(16.))
+                            .children(rows),
+                    )
+            } else {
+                popover(&t, 320., |menu| menu.p(px(8.)).gap(px(4.)).children(rows))
+            };
             root = root.child(gpui::deferred(
                 gpui::anchored()
                     .anchor(gpui::Anchor::BottomLeft)
+                    .snap_to_window_with_margin(gpui::Edges::all(px(6.)))
                     .offset(gpui::point(px(0.), px(-38.)))
                     .child(
                         div()
@@ -460,13 +534,30 @@ pub fn home(composer: Entity<Composer>, t: &Theme) -> Div {
         .child(
             div()
                 .relative()
-                .rounded(px(32.))
-                .border_1()
-                .border_color(t.border.opacity(0.72))
-                .bg(t.surface_elevated_secondary.opacity(0.94))
-                .pt(px(17.))
-                .px(px(15.))
-                .pb(px(13.))
-                .child(composer),
+                .rounded(Theme::RADIUS_4XL)
+                .pt(px(18.))
+                .px(px(16.))
+                .pb(px(14.))
+                .child(shapes::decoration(shapes::Decoration {
+                    radius: gpui::Corners::all(Theme::RADIUS_4XL),
+                    fill: Some(t.surface_secondary.opacity(0.94)),
+                    border: Some((px(1.), t.border.opacity(0.72))),
+                    shadows: vec![shapes::Shadow {
+                        color: gpui::rgba(0xffffff1a).into(),
+                        offset: gpui::point(px(0.), px(1.)),
+                        blur: px(0.),
+                        spread: px(0.),
+                        inset: true,
+                    }],
+                    ..Default::default()
+                }))
+                .child(div().absolute().inset(px(1.)).child(shapes::decoration(
+                    shapes::Decoration {
+                        radius: gpui::Corners::all(Theme::RADIUS_4XL),
+                        fill: Some(t.surface_secondary.opacity(0.94)),
+                        ..Default::default()
+                    },
+                )))
+                .child(div().relative().child(composer)),
         )
 }

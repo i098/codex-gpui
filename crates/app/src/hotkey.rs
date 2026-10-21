@@ -1,7 +1,7 @@
 use crate::{Root, Route, host, windows};
 use anyhow::{Context as _, Result, bail};
 use gpui::{
-    AnyElement, App, AppContext as _, Context, Div, Entity, Focusable as _,
+    AnyElement, App, AppContext as _, BorrowAppContext as _, Context, Div, Entity, Focusable as _,
     InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
     StatefulInteractiveElement as _, Styled as _, Window, WindowHandle, actions, div,
     prelude::FluentBuilder as _, px,
@@ -10,15 +10,42 @@ use serde_json::{Value, json};
 use std::{collections::BTreeMap, path::Path, sync::Arc};
 use theme::ActiveTheme as _;
 use ui::screens::hotkey::{Change, Controls, Mode, Options};
+use ui::screens::settings::keyboard_shortcuts::KeyboardState;
+use ui::screens::settings::voice::Policy as VoicePolicy;
 
+#[cfg(target_os = "macos")]
+mod audio;
+#[cfg(target_os = "macos")]
+mod desktop;
+#[cfg(target_os = "macos")]
+mod dictation;
 mod platform;
-use platform::{Native, Shortcut};
+pub(crate) mod policy;
+use platform::{Native, Shortcut, ShortcutEvent};
+
+const GLOBAL_COMMANDS: [(&str, Shortcut, Option<&str>); 6] = [
+    ("spotlightSearch", Shortcut::Spotlight, Some("Alt+K")),
+    (
+        "screenshotToCurrentChat",
+        Shortcut::ScreenshotCurrent,
+        Some("Control+Shift+4"),
+    ),
+    (
+        "screenshotToNewChat",
+        Shortcut::ScreenshotNew,
+        Some("Control+Alt+Shift+4"),
+    ),
+    ("hotkeyWindow", Shortcut::Popout, None),
+    ("globalDictationHold", Shortcut::DictationHold, None),
+    ("globalDictationSingleTap", Shortcut::DictationToggle, None),
+];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Target {
     Home,
     NewThread,
     Thread(String),
+    Remote(String),
     Spotlight,
 }
 
@@ -29,6 +56,13 @@ impl Target {
             .next()
             .unwrap_or(path)
             .trim_end_matches('/');
+        if let Some(Route::Remote {
+            task_id,
+            hotkey: true,
+        }) = Route::remote_path(path)
+        {
+            return Ok(Self::Remote(task_id));
+        }
         match path {
             "/hotkey-window" => Ok(Self::Home),
             "/hotkey-window/new-thread" => Ok(Self::NewThread),
@@ -90,13 +124,20 @@ struct Runtime {
     native: Option<Native>,
     listener: Option<gpui::Task<()>>,
     bindings: Vec<platform::Binding>,
-    sender: Option<async_channel::Sender<Shortcut>>,
+    sender: Option<async_channel::Sender<ShortcutEvent>>,
     initialized: bool,
+    requested: Option<(Vec<platform::Binding>, bool)>,
+    policy_generation: u64,
+    policy_task: Option<gpui::Task<()>>,
+    #[cfg(target_os = "macos")]
+    dictation: Option<Entity<dictation::Controller>>,
 }
 impl gpui::Global for Runtime {}
 
 pub(crate) fn init(cx: &mut App) {
     cx.set_global(Runtime::default());
+    cx.observe_global::<KeyboardState>(sync_keyboard).detach();
+    cx.observe_global::<VoicePolicy>(sync_keyboard).detach();
     cx.bind_keys([gpui::KeyBinding::new("escape", Dismiss, Some("Popout"))]);
     ui::screens::hotkey::init(cx);
     cx.on_action(|_: &OpenPopout, cx| launch(Target::Home, cx));
@@ -107,22 +148,9 @@ pub(crate) fn init(cx: &mut App) {
 
 pub(crate) fn primary(handle: WindowHandle<Root>, cx: &mut App) {
     cx.global_mut::<Runtime>().primary = Some(handle);
-    if !crate::qa::ENABLED && cfg!(target_os = "macos") && !cx.global::<Runtime>().initialized {
+    if !cx.global::<Runtime>().initialized {
         cx.global_mut::<Runtime>().initialized = true;
-        let overrides = cx
-            .try_global::<crate::host_settings::Settings>()
-            .and_then(|settings| settings.read_all().get("codex-command-keybindings"))
-            .cloned()
-            .map(serde_json::from_value)
-            .transpose();
-        match overrides {
-            Ok(overrides) => {
-                if let Err(error) = replace_global_bindings(&overrides.unwrap_or_default(), cx) {
-                    eprintln!("codex-gpui: {error:#}");
-                }
-            }
-            Err(error) => eprintln!("codex-gpui: invalid global shortcuts: {error}"),
-        }
+        sync_keyboard(cx);
     }
 }
 
@@ -146,27 +174,93 @@ pub fn suspend_global_bindings(cx: &mut App) {
     runtime.initialized = true;
     runtime.native = None;
     runtime.listener = None;
+    #[cfg(target_os = "macos")]
+    if let Err(error) = dictation::registration_changed(cx) {
+        eprintln!("codex-gpui: cannot suspend dictation: {error:#}");
+    }
+}
+
+fn sync_keyboard(cx: &mut App) {
+    if crate::qa::ENABLED || !cfg!(target_os = "macos") || cx.global::<Runtime>().primary.is_none()
+    {
+        return;
+    }
+    let Some(state) = cx
+        .try_global::<KeyboardState>()
+        .filter(|state| state.loaded)
+    else {
+        return;
+    };
+    let suspended = state.capture_owner.is_some();
+    let bindings = if suspended {
+        Ok(Vec::new())
+    } else {
+        gated_bindings(&state.preferences.bindings, cx)
+    };
+    let bindings = match bindings {
+        Ok(bindings) => bindings,
+        Err(error) => {
+            let message = error.to_string();
+            if cx.global::<KeyboardState>().error.as_deref() != Some(message.as_str()) {
+                cx.update_global::<KeyboardState, _>(|state, _| state.error = Some(message));
+            }
+            return;
+        }
+    };
+    if cx
+        .global::<Runtime>()
+        .requested
+        .as_ref()
+        .is_some_and(|(current, capture)| current == &bindings && *capture == suspended)
+    {
+        publish_active_commands(cx);
+        return;
+    }
+    cx.global_mut::<Runtime>().requested = Some((bindings.clone(), suspended));
+    if suspended {
+        suspend_global_bindings(cx);
+    } else if let Err(error) = install_bindings(bindings, cx) {
+        cx.update_global::<KeyboardState, _>(|state, _| state.error = Some(error.to_string()));
+    }
+    publish_active_commands(cx);
+}
+
+fn publish_active_commands(cx: &mut App) {
+    let runtime = cx.global::<Runtime>();
+    let active = GLOBAL_COMMANDS.map(|(id, shortcut, _)| {
+        (
+            id,
+            runtime.native.is_some()
+                && runtime.bindings.iter().any(|binding| binding.0 == shortcut),
+        )
+    });
+    if cx.try_global::<KeyboardState>().is_some_and(|state| {
+        active
+            .iter()
+            .any(|(id, enabled)| state.active_commands.contains(*id) != *enabled)
+    }) {
+        cx.update_global::<KeyboardState, _>(|state, _| {
+            for (id, enabled) in active {
+                if enabled {
+                    state.active_commands.insert(id);
+                } else {
+                    state.active_commands.remove(id);
+                }
+            }
+        });
+    }
 }
 
 fn configured_bindings(
     overrides: &BTreeMap<String, Vec<String>>,
 ) -> Result<Vec<platform::Binding>> {
     let mut bindings = Vec::new();
-    for (id, shortcut, fallback) in [
-        ("spotlightSearch", Shortcut::Spotlight, Some("Alt+K")),
-        (
-            "screenshotToCurrentChat",
-            Shortcut::ScreenshotCurrent,
-            Some("Control+Shift+4"),
-        ),
-        (
-            "screenshotToNewChat",
-            Shortcut::ScreenshotNew,
-            Some("Control+Alt+Shift+4"),
-        ),
-        ("hotkeyWindow", Shortcut::Popout, None),
-    ] {
+    for (id, shortcut, fallback) in GLOBAL_COMMANDS {
         if let Some(values) = overrides.get(id) {
+            anyhow::ensure!(
+                values.len() <= 1,
+                "OS-global shortcuts support one keybinding"
+            );
             for value in values {
                 bindings.push(platform::binding(shortcut, value)?);
             }
@@ -177,11 +271,35 @@ fn configured_bindings(
     Ok(bindings)
 }
 
+fn gated_bindings(
+    overrides: &BTreeMap<String, Vec<String>>,
+    cx: &App,
+) -> Result<Vec<platform::Binding>> {
+    let mut bindings = configured_bindings(overrides)?;
+    if !cx
+        .try_global::<VoicePolicy>()
+        .is_some_and(|policy| policy.global_dictation)
+    {
+        bindings.retain(|binding| {
+            !matches!(
+                binding.0,
+                Shortcut::DictationHold | Shortcut::DictationToggle
+            )
+        });
+    }
+    Ok(bindings)
+}
+
 pub fn replace_global_bindings(
     overrides: &BTreeMap<String, Vec<String>>,
     cx: &mut App,
 ) -> Result<()> {
-    let bindings = configured_bindings(overrides)?;
+    let result = install_bindings(gated_bindings(overrides, cx)?, cx);
+    publish_active_commands(cx);
+    result
+}
+
+fn install_bindings(bindings: Vec<platform::Binding>, cx: &mut App) -> Result<()> {
     let (sender, receiver) = async_channel::unbounded();
     let previous = cx.global_mut::<Runtime>().native.take();
     let was_active = previous.is_some();
@@ -198,12 +316,17 @@ pub fn replace_global_bindings(
         }
     };
     let listener = cx.spawn(async move |cx| {
-        while let Ok(shortcut) = receiver.recv().await {
-            let _ = cx.update(|cx| match shortcut {
-                Shortcut::Spotlight => launch(Target::Spotlight, cx),
-                Shortcut::Popout => launch(Target::Home, cx),
-                Shortcut::ScreenshotCurrent => screenshot(false, cx),
-                Shortcut::ScreenshotNew => screenshot(true, cx),
+        while let Ok(event) = receiver.recv().await {
+            let _ = cx.update(|cx| match event.shortcut {
+                Shortcut::Spotlight if event.pressed => launch(Target::Spotlight, cx),
+                Shortcut::Popout if event.pressed => launch(Target::Home, cx),
+                Shortcut::ScreenshotCurrent if event.pressed => screenshot(false, cx),
+                Shortcut::ScreenshotNew if event.pressed => screenshot(true, cx),
+                Shortcut::DictationHold | Shortcut::DictationToggle => {
+                    #[cfg(target_os = "macos")]
+                    dictation::event(event, cx);
+                }
+                _ => {}
             });
         }
     });
@@ -213,6 +336,8 @@ pub fn replace_global_bindings(
     runtime.bindings = bindings;
     runtime.sender = Some(sender);
     runtime.initialized = true;
+    #[cfg(target_os = "macos")]
+    dictation::registration_changed(cx)?;
     Ok(())
 }
 
@@ -297,6 +422,10 @@ pub fn open(owner: WindowHandle<Root>, target: Target, cx: &mut App) -> Result<W
     })?;
     state.route = match &target {
         Target::Thread(id) => Route::Thread(id.clone()),
+        Target::Remote(task_id) => Route::Remote {
+            task_id: task_id.clone(),
+            hotkey: true,
+        },
         _ => Route::Home,
     };
     state.path = None;
@@ -347,6 +476,7 @@ fn attach(
         root: (!projectless)
             .then(|| root.state.project_root.clone())
             .flatten(),
+        projectless,
         ..Default::default()
     };
     let controls = cx.new(|cx| Controls::new(composer.clone(), options, cx));
@@ -504,6 +634,7 @@ fn changed(root: &mut Root, change: &Change, window: &mut Window, cx: &mut Conte
     match change {
         Change::Project(project) => {
             options.root = project.clone();
+            options.projectless = project.is_none();
             options.mode = Mode::Local;
             root.state.project_root = project.clone();
             if let Some(path) = project {
@@ -726,12 +857,30 @@ pub(crate) fn content(root: &Root, cx: &App) -> Option<AnyElement> {
             ui::screens::hotkey::home(root.home.read(cx).composer.clone(), t).into_any_element(),
         );
     }
-    let title: SharedString = root
-        .thread
-        .as_ref()
-        .filter(|_| matches!(root.state.route, Route::Thread(_)))
-        .map(|thread| thread.read(cx).header_title())
-        .unwrap_or_else(|| "New chat".into());
+    let remote = root
+        .remote_page()
+        .filter(|_| matches!(root.state.route, Route::Remote { .. }));
+    let title: SharedString = remote
+        .and_then(|page| {
+            page.read(cx)
+                .data
+                .as_ref()
+                .map(|data| data.title.clone().into())
+        })
+        .or_else(|| {
+            root.thread
+                .as_ref()
+                .filter(|_| matches!(root.state.route, Route::Thread(_)))
+                .map(|thread| thread.read(cx).header_title())
+        })
+        .unwrap_or_else(|| {
+            if popout.target == Target::NewThread {
+                "New chat"
+            } else {
+                "Codex"
+            }
+            .into()
+        });
     let header = div()
         .h(px(44.))
         .px(px(12.))
@@ -757,7 +906,13 @@ pub(crate) fn content(root: &Root, cx: &App) -> Option<AnyElement> {
             OpenInMainWindow,
             t,
         ));
-    let body = if matches!(root.state.route, Route::Thread(_)) {
+    let body = if let Some(remote) = remote {
+        div()
+            .flex_1()
+            .min_h_0()
+            .child(remote.clone())
+            .into_any_element()
+    } else if matches!(root.state.route, Route::Thread(_)) {
         div()
             .flex_1()
             .min_h_0()
@@ -849,7 +1004,13 @@ pub(crate) fn actions(view: Div, active: bool, cx: &mut Context<Root>) -> Div {
         .on_action(cx.listener(|root, _: &OpenInMainWindow, window, cx| {
             let Some(popout) = &root.popout else { return };
             let owner = popout.owner;
-            let route = root.state.route.clone();
+            let route = match root.state.route.clone() {
+                Route::Remote { task_id, .. } => Route::Remote {
+                    task_id,
+                    hotkey: false,
+                },
+                route => route,
+            };
             if owner
                 .update(cx, |root, window, cx| root.navigate(route, window, cx))
                 .is_ok()
@@ -890,7 +1051,7 @@ mod tests {
                 .iter()
                 .any(|binding| binding.0 == Shortcut::Spotlight)
         );
-        assert!(bindings.contains(&(Shortcut::Popout, 35, 0x1800)));
+        assert!(bindings.contains(&(Shortcut::Popout, Some(35), 0x1800)));
         assert!(
             bindings
                 .iter()
@@ -1044,7 +1205,10 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         let recording = tempfile::NamedTempFile::new()?;
-        std::fs::write(recording.path(), format!("{recorded}\n{repeated}\n"))?;
+        std::fs::write(
+            recording.path(),
+            format!("{recorded}\n{repeated}\n{repeated}\n"),
+        )?;
         let home = tempfile::tempdir()?;
         let source = home.path().to_string_lossy().into_owned();
         let (bridge, events) = bridge::Bridge::replay(recording.path())?;
@@ -1084,6 +1248,9 @@ mod tests {
                 root
             })
         })?;
+        app.update_window(popup.into(), |_, window, _| {
+            window.set_background_appearance(gpui::WindowBackgroundAppearance::Transparent);
+        })?;
         app.run_until_parked();
         let popup_root = app.read_window(&popup, |root, _| root)?;
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
@@ -1095,6 +1262,16 @@ mod tests {
             app.run_until_parked();
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
+        if popup_root.read_with(&app, |root, _| root.dialog.is_some()) {
+            app.test_window(popup.into())
+                .simulate_input(gpui::PlatformInput::KeyDown(gpui::KeyDownEvent {
+                    keystroke: gpui::Keystroke::parse("escape")?,
+                    is_held: false,
+                    prefer_character_input: false,
+                }));
+            app.run_until_parked();
+            assert!(popup_root.read_with(&app, |root, _| root.dialog.is_none()));
+        }
         if let Some(directory) = std::env::var_os("CGX_HOTKEY_EVIDENCE") {
             std::fs::create_dir_all(&directory)?;
             app.update_window(popup.into(), |_, window, cx| {
@@ -1104,6 +1281,30 @@ mod tests {
             app.run_until_parked();
             app.capture_screenshot(popup.into())?
                 .save(Path::new(&directory).join("native-hotkey-home-empty.png"))?;
+            for event in [
+                gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
+                    button: gpui::MouseButton::Left,
+                    position: gpui::point(px(372.), px(258.)),
+                    ..Default::default()
+                }),
+                gpui::PlatformInput::MouseUp(gpui::MouseUpEvent {
+                    button: gpui::MouseButton::Left,
+                    position: gpui::point(px(372.), px(258.)),
+                    ..Default::default()
+                }),
+            ] {
+                app.test_window(popup.into()).simulate_input(event);
+            }
+            app.run_until_parked();
+            app.capture_screenshot(popup.into())?
+                .save(Path::new(&directory).join("native-hotkey-settings.png"))?;
+            app.test_window(popup.into())
+                .simulate_input(gpui::PlatformInput::KeyDown(gpui::KeyDownEvent {
+                    keystroke: gpui::Keystroke::parse("escape")?,
+                    is_held: false,
+                    prefer_character_input: false,
+                }));
+            app.run_until_parked();
         }
         app.update_window(popup.into(), |_, window, cx| {
             popup_root.update(cx, |root, cx| {
@@ -1130,6 +1331,20 @@ mod tests {
             std::fs::create_dir_all(&directory)?;
             app.capture_screenshot(popup.into())?
                 .save(Path::new(&directory).join("native-hotkey-home.png"))?;
+            let spotlight = app.update(|cx| open(owner, Target::Spotlight, cx))?;
+            app.run_until_parked();
+            let spotlight_root = app.read_window(&spotlight, |root, _| root)?;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while !spotlight_root.read_with(&app, |root, _| root.ready()) {
+                anyhow::ensure!(
+                    std::time::Instant::now() < deadline,
+                    "Spotlight startup timed out"
+                );
+                app.run_until_parked();
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            app.capture_screenshot(spotlight.into())?
+                .save(Path::new(&directory).join("native-spotlight-home.png"))?;
         }
         Ok(())
     }
