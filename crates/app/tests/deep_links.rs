@@ -49,16 +49,7 @@ fn local_links_preserve_prefill_and_reject_foreign_hosts() {
     });
     let handle = cx
         .open_window(size(px(1280.), px(832.)), |window, cx| {
-            cx.new(|cx| {
-                Root::new(
-                    State::default(),
-                    bridge,
-                    events,
-                    "/owned".into(),
-                    window,
-                    cx,
-                )
-            })
+            cx.new(|cx| Root::new(State::load(), bridge, events, "/owned".into(), window, cx))
         })
         .unwrap();
     let root = cx.read_window(&handle, |root, _| root).unwrap();
@@ -78,6 +69,33 @@ fn local_links_preserve_prefill_and_reject_foreign_hosts() {
         assert_eq!(root.route(), &Route::Home);
         assert_eq!(root.composer(cx).read(cx).field_text(), "Review λ");
     });
+
+    let project = tempfile::tempdir().unwrap();
+    let project_path = project.path().canonicalize().unwrap();
+    let url = url::Url::parse_with_params(
+        "codex://threads/new",
+        [
+            ("prompt", "Inspect this project"),
+            ("path", project_path.to_str().unwrap()),
+        ],
+    )
+    .unwrap();
+    assert!(
+        handle
+            .update(&mut cx, |root, window, cx| {
+                root.receive_deep_link(url.as_str(), window, cx)
+            })
+            .unwrap()
+    );
+    wait(&cx, || {
+        root.read_with(&cx, |root, cx| {
+            root.composer(cx).read(cx).field_text() == "Inspect this project"
+        })
+    });
+    assert_eq!(
+        State::load().project_root.as_deref().map(Path::new),
+        Some(project_path.as_path())
+    );
 
     let url = format!(
         "codex://threads/{}?prompt=Keep+this+draft",
