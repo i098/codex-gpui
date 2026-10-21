@@ -5974,6 +5974,7 @@ dependencies = [
  "textsys",
  "theme",
  "unicode-width",
+ "url",
  "uuid",
 ]
 

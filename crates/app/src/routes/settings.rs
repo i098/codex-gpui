@@ -7,6 +7,14 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             this.navigate(Route::Settings, window, cx)
         }),
     )
+    .on_action(cx.listener(|this, _: &FindInThread, window, cx| {
+        if this.state.route == Route::Settings {
+            if let Some(page) = &this.settings_page {
+                page.update(cx, |page, cx| page.focus_search(window, cx));
+            }
+            cx.stop_propagation();
+        }
+    }))
     .on_action(cx.listener(|this, _: &LogOut, window, cx| {
         if !this.logout_pending {
             let email = this.account_email.clone();
@@ -31,8 +39,11 @@ pub(super) fn page(root: &mut Root, cx: &mut Context<Root>) -> Entity<Shell> {
     let (store, key) = settings::THEME.split_once('.').expect("store.key");
     config[store][key] = json!(root.state.theme);
     config["host"]["confirm-before-close"] = json!(root.state.confirm_before_close);
-    let section = root.settings_section.take();
+    let section = root.settings_section.as_ref().map(|route| route.section);
     let (shell, page) = settings::shell(&config, &root.skills, section, cx);
+    if let Some(route) = &root.settings_section {
+        page.update(cx, |page, cx| page.navigate(&route.path, cx));
+    }
     root.settings_page = Some(page.clone());
     cx.subscribe(&page, |this, page, e: &SettingChanged, cx| {
         this.write_setting(e, cx);
@@ -47,5 +58,6 @@ pub(super) fn page(root: &mut Root, cx: &mut Context<Root>) -> Entity<Shell> {
         }
     })
     .detach();
+    root.bind_general_settings(&page, cx);
     shell
 }

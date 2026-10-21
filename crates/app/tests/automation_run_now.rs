@@ -85,7 +85,9 @@ fn host_with(home: &Path, log: &Path, slow: bool, env: &[(&str, &str)]) -> Resul
         .env("STATE", home.join(".codex-global-state.json"))
         .env("SLOW", if slow { "1" } else { "" });
     let (bridge, _events) = Bridge::spawn(server)?;
-    Ok(LocalHost::new(home).with_bridge(Arc::new(bridge)))
+    Ok(LocalHost::new(home)
+        .with_host_settings_path(home.join("host-settings.json"))
+        .with_bridge(Arc::new(bridge)))
 }
 
 fn create(host: &LocalHost, home: &Path, prompt: &str) -> Result<String> {

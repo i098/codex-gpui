@@ -607,22 +607,21 @@ impl Composer {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((parent, identity, index)) = &self.request_parent else {
-            return;
-        };
-        let Some(parent) = parent.upgrade() else {
-            return;
-        };
-        let Some((minimum, maximum)) = parent.read(cx).approval.as_ref().and_then(|approval| {
-            if approval.identity != *identity {
-                return None;
-            }
-            let field = approval.form.as_ref()?.fields.get(*index)?;
-            Some((
-                field["minimum"].as_f64().unwrap_or(f64::NEG_INFINITY),
-                field["maximum"].as_f64().unwrap_or(f64::INFINITY),
-            ))
-        }) else {
+        let bounds = self.field_number_bounds.or_else(|| {
+            let (parent, identity, index) = self.request_parent.as_ref()?;
+            let parent = parent.upgrade()?;
+            parent.read(cx).approval.as_ref().and_then(|approval| {
+                if approval.identity != *identity {
+                    return None;
+                }
+                let field = approval.form.as_ref()?.fields.get(*index)?;
+                Some((
+                    field["minimum"].as_f64().unwrap_or(f64::NEG_INFINITY),
+                    field["maximum"].as_f64().unwrap_or(f64::INFINITY),
+                ))
+            })
+        });
+        let Some((minimum, maximum)) = bounds else {
             return;
         };
         if minimum > maximum {

@@ -13,6 +13,8 @@ mod routes;
 pub use routes::Route;
 mod search;
 mod section_actions;
+mod settings_audio;
+mod settings_general;
 pub mod windows;
 
 use anyhow::{Context as _, Result, ensure};
@@ -320,6 +322,7 @@ pub struct Root {
     navigation_epoch: u64,
     sidebar_automation: Option<String>,
     thread_run_settings: HashMap<String, host::run_now::heartbeat::RendererState>,
+    context_usage: HashMap<String, ui::composer::ContextUsage>,
     shell: Entity<Shell>,
     sidebar: Entity<HomeSidebar>,
     /// Recents in sidebar order, for `⌘1`…`⌘9`, Previous/Next Chat and the command menu.
@@ -354,8 +357,10 @@ pub struct Root {
     /// The Mobile route's setup page.
     mobile_page: Option<Entity<mobile::MobileSetupPage>>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
-    settings_section: Option<&'static str>,
+    settings_section: Option<settings::SettingsRoute>,
     settings_page: Option<Entity<settings::SettingsPage>>,
+    audio_capture: Option<settings_audio::Capture>,
+    audio_generation: u64,
     /// `⌘K` command menu over the window.
     command_menu: Option<Entity<CommandMenu>>,
     dialog: Option<Entity<Dialog>>,
@@ -617,6 +622,7 @@ impl Root {
             navigation_epoch: 0,
             sidebar_automation: None,
             thread_run_settings: HashMap::new(),
+            context_usage: HashMap::new(),
             shell,
             sidebar,
             threads: Vec::new(),
@@ -642,6 +648,8 @@ impl Root {
             mobile_page: None,
             settings_section: None,
             settings_page: None,
+            audio_capture: None,
+            audio_generation: 0,
             command_menu: None,
             dialog: None,
             dialog_to_composer: false,
@@ -833,6 +841,7 @@ impl Root {
                     });
                 }
                 this.config = config.config;
+                this.refresh_general_preferences(cx);
                 this.config["host"]["confirm-before-close"] =
                     serde_json::to_value(this.state.confirm_before_close)
                         .expect("close preference");
@@ -2471,6 +2480,7 @@ impl Root {
                         this.navigation_epoch += 1;
                         this.sidebar_automation = None;
                         this.thread_run_settings.clear();
+                        this.context_usage.clear();
                         this.state.route = Route::Home;
                         this.toaster = cx.new(|_| Toaster::new());
                         for composer in [
@@ -2496,6 +2506,12 @@ impl Root {
     /// `⌘W`: Electron main runs `closeTab` (`close-active-app-shell-tab`) while the thread
     /// route's panel shows a tab, else the window closes.
     fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.settings_dirty(cx) {
+            self.confirm_settings_leave(window, cx, |root, window, cx| {
+                root.close_window(window, cx)
+            });
+            return;
+        }
         if self.dialog.is_some() {
             return;
         }
@@ -3798,7 +3814,7 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.settings_section = Some(section);
+        self.settings_section = settings::SettingsRoute::for_section(section);
         if self.state.route == Route::Settings {
             self.sync(window, cx);
         } else {
@@ -3862,140 +3878,6 @@ impl Root {
                 self.write_setting(&change, cx);
             }
         }
-    }
-
-    /// Window preferences keep their state storage; other host settings use the desktop service.
-    fn write_setting(&mut self, e: &SettingChanged, cx: &mut Context<Self>) {
-        if e.path == settings::THEME {
-            return;
-        }
-        if e.path == "host.confirm-before-close" {
-            if let Ok(value) = serde_json::from_value(e.value.clone()) {
-                self.state.confirm_before_close = value;
-                self.config["host"]["confirm-before-close"] = e.value.clone();
-                self.state.save();
-            }
-            return;
-        }
-        if e.path == "desktop.followUpQueueMode" {
-            let queue = e.value == "queue";
-            self.thread_composer
-                .update(cx, |c, cx| c.set_queue_mode(queue, cx));
-        }
-        let (store, key) = e.path.split_once('.').unwrap_or((e.path, ""));
-        if store == "host" {
-            let result = if cx.has_global::<host_settings::Settings>() {
-                cx.global_mut::<host_settings::Settings>()
-                    .write(key, e.value.clone())
-            } else {
-                Err(anyhow::anyhow!("host settings could not be loaded"))
-            };
-            if let Err(error) = result {
-                eprintln!("codex-gpui: settings.write({key}): {error:#}");
-                let message = match key {
-                    "git-branch-prefix" => "Failed to save branch prefix",
-                    "git-pull-request-merge-method" => "Failed to save pull request merge method",
-                    "git-always-force-push" => "Failed to save force push setting",
-                    "git-create-pull-request-as-draft" => {
-                        "Failed to save draft pull request setting"
-                    }
-                    "git-review-mode" => "Could not save Git diff setting",
-                    "git-pr-watch-auto-merge" => "Failed to save automatic PR merging",
-                    "git-commit-instructions"
-                    | "git-pr-instructions"
-                    | "git-pr-watch-instructions" => "Failed to save instructions",
-                    _ => "Couldn't save your changes. Try again",
-                };
-                self.toast(Toast::danger(message), cx);
-            } else {
-                let message = match key {
-                    "git-branch-prefix" => Some("Saved branch prefix".to_owned()),
-                    "git-pull-request-merge-method" => {
-                        Some("Saved pull request merge method".to_owned())
-                    }
-                    "git-always-force-push" => Some(format!(
-                        "Always force push {}",
-                        if e.value == true {
-                            "enabled"
-                        } else {
-                            "disabled"
-                        }
-                    )),
-                    "git-create-pull-request-as-draft" => Some(format!(
-                        "Create draft pull requests {}",
-                        if e.value == true {
-                            "enabled"
-                        } else {
-                            "disabled"
-                        }
-                    )),
-                    "git-pr-watch-auto-merge" => Some(format!(
-                        "Automatic PR merging {}",
-                        if e.value == true {
-                            "enabled"
-                        } else {
-                            "disabled"
-                        }
-                    )),
-                    _ => None,
-                };
-                if let Some(message) = message {
-                    self.toast(Toast::info(message), cx);
-                }
-            }
-            return;
-        }
-        let value = e.value.clone();
-        let apply = move |config: &mut Value| config[store][key] = value;
-        if !matches!(store, "desktop" | "features") {
-            return apply(&mut self.config);
-        }
-        let params = json!({
-            "keyPath": e.path,
-            "value": e.value,
-            "mergeStrategy": "upsert",
-            "filePath": null,
-            "expectedVersion": null,
-        });
-        self.write_config("config/value/write", params, cx, apply);
-    }
-
-    /// Sends a config write and, once the server took it, applies it to the kept config.
-    fn write_config(
-        &mut self,
-        method: &'static str,
-        params: Value,
-        cx: &mut Context<Self>,
-        apply: impl FnOnce(&mut Value) + 'static,
-    ) {
-        self.qa_work_started = true;
-        let bridge = self.bridge.clone();
-        let review_delivery = params["keyPath"] == "desktop.reviewDelivery";
-        let queue_mode = params["keyPath"] == "desktop.followUpQueueMode";
-        let task = cx.spawn(async move |this, cx| -> Result<()> {
-            if let Err(error) = bridge.request::<_, Value>(method, params).await {
-                if review_delivery {
-                    this.update(cx, |this, cx| {
-                        this.toast(
-                            Toast::danger("Could not save review delivery preference"),
-                            cx,
-                        );
-                    })?;
-                }
-                if queue_mode {
-                    // The composer shows the behavior that still applies.
-                    this.update(cx, |this, cx| {
-                        let queue = this.config["desktop"]["followUpQueueMode"] == "queue";
-                        this.thread_composer
-                            .update(cx, |c, cx| c.set_queue_mode(queue, cx));
-                        this.toast(Toast::danger("Couldn’t save your changes. Try again"), cx);
-                    })?;
-                }
-                return Err(error);
-            }
-            this.update(cx, |this, _| apply(&mut this.config))
-        });
-        log_err(task, cx);
     }
 
     /// Settles only the request whose card produced the answer.
@@ -4204,6 +4086,7 @@ impl Root {
         }
         match event {
             Event::Notification { method, params } => match method.as_str() {
+                "thread/tokenUsage/updated" => self.update_context_usage(&params, cx),
                 "thread/started" if params["thread"]["ephemeral"] != true => {
                     if let Ok(n) = serde_json::from_value::<ThreadStartedNotification>(params) {
                         self.add_thread(&n.thread, cx);
@@ -5150,6 +5033,12 @@ impl Render for Root {
             .child(content)
             .children(self.command_menu.clone())
             .child(self.toaster.clone())
+            .children(
+                self.settings_page
+                    .as_ref()
+                    .filter(|_| self.state.route == Route::Settings)
+                    .and_then(|page| page.read(cx).modal()),
+            )
             .children(self.dialog.clone());
         let root = routes::actions(root, cx);
         native_menus::actions(

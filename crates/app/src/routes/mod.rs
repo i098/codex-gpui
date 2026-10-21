@@ -45,6 +45,12 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.settings_dirty(cx) {
+            self.confirm_settings_leave(window, cx, move |root, window, cx| {
+                root.navigate_with_sidebar(route.clone(), automation.clone(), window, cx);
+            });
+            return;
+        }
         if route != self.state.route || automation != self.sidebar_automation {
             self.remember_thread_settings(cx);
             self.back.push((
@@ -59,6 +65,12 @@ impl Root {
     }
 
     pub(crate) fn step(&mut self, back: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.settings_dirty(cx) {
+            self.confirm_settings_leave(window, cx, move |root, window, cx| {
+                root.step(back, window, cx);
+            });
+            return;
+        }
         self.remember_thread_settings(cx);
         let (from, to) = if back {
             (&mut self.back, &mut self.forward)
@@ -82,6 +94,9 @@ impl Root {
             _ => None,
         };
         self.sidebar.update(cx, |s, cx| s.select(id, cx));
+        self.thread_composer.update(cx, |composer, cx| {
+            composer.set_context_usage(id.and_then(|id| self.context_usage.get(id)).copied(), cx);
+        });
     }
 
     /// Shows the route (loading its thread if needed), pushes history into the shell and

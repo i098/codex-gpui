@@ -320,39 +320,45 @@ impl Composer {
                 400.,
                 t.text_tertiary,
             )))
-            .children(Permission::ALL.into_iter().enumerate().map(|(i, p)| {
-                div()
-                    .id(p.short_label())
-                    .track_focus(&self.menu_focus.items[i])
-                    .focus(move |s| s.bg(hover))
-                    .on_mouse_move(cx.listener(move |this, _, window, cx| {
-                        this.menu_focus.items[i].focus(window, cx);
-                        cx.stop_propagation();
-                    }))
-                    .hover_listener_mode(gpui::HoverListenerMode::InputModalityIndependent)
-                    .on_hover(cx.listener(move |this, hovered: &bool, window, cx| {
-                        if !hovered && this.menu_focus.items[i].is_focused(window) {
-                            this.menu_focus.content.focus(window, cx);
-                        }
-                    }))
-                    .px(px(8.))
-                    .py(px(6.))
-                    .flex()
-                    .flex_col()
-                    .rounded(px(12.))
-                    .hover(move |s| s.bg(hover))
-                    .child(text(p.option_label(), 14., 20., 430., t.text))
-                    .child(
+            .children(
+                Permission::visible(cx)
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .map(|(i, p)| {
                         div()
-                            .text_size(px(12.))
-                            .line_height(px(16.))
-                            .text_color(t.text_tertiary)
-                            .child(p.description()),
-                    )
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.activate_menu_item(i, window, cx)
-                    }))
-            }))
+                            .id(p.short_label())
+                            .track_focus(&self.menu_focus.items[i])
+                            .focus(move |s| s.bg(hover))
+                            .on_mouse_move(cx.listener(move |this, _, window, cx| {
+                                this.menu_focus.items[i].focus(window, cx);
+                                cx.stop_propagation();
+                            }))
+                            .hover_listener_mode(gpui::HoverListenerMode::InputModalityIndependent)
+                            .on_hover(cx.listener(move |this, hovered: &bool, window, cx| {
+                                if !hovered && this.menu_focus.items[i].is_focused(window) {
+                                    this.menu_focus.content.focus(window, cx);
+                                }
+                            }))
+                            .px(px(8.))
+                            .py(px(6.))
+                            .flex()
+                            .flex_col()
+                            .rounded(px(12.))
+                            .hover(move |s| s.bg(hover))
+                            .child(text(p.option_label(), 14., 20., 430., t.text))
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .line_height(px(16.))
+                                    .text_color(t.text_tertiary)
+                                    .child(p.description()),
+                            )
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.activate_menu_item(i, window, cx)
+                            }))
+                    }),
+            )
         })
     }
 

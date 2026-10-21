@@ -4,7 +4,7 @@
 
 use crate::{
     MONO, SANS, SetTheme, Shell,
-    composer::{Composer, popover, shadow},
+    composer::{Composer, shadow},
     fixture, focus,
     icon::icon,
     in_layer, layout_color,
@@ -14,12 +14,11 @@ use crate::{
 use bridge::Bridge;
 use bridge::types::{AccountReadResponse, ConfigReadResponse};
 use gpui::{
-    Anchor, AnyElement, AnyView, App, AppContext as _, Bounds, Context, Corners, Div, Entity,
-    EventEmitter, FocusHandle, Focusable, Font, FontWeight, Global, HighlightStyle, Hsla,
-    InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Pixels, Point, Render,
-    RenderImage, SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun,
-    Window, anchored, canvas, deferred, div, font, img, point, prelude::FluentBuilder as _, px,
-    size,
+    AnyElement, AnyView, App, AppContext as _, Bounds, Context, Corners, Div, Entity, EventEmitter,
+    FocusHandle, Focusable, Font, FontWeight, Global, HighlightStyle, Hsla, InteractiveElement,
+    IntoElement, KeyDownEvent, ParentElement, Pixels, Point, Render, RenderImage, SharedString,
+    Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun, Window, canvas, div, font,
+    img, point, prelude::FluentBuilder as _, px, size,
 };
 use serde_json::{Value, json};
 use shapes::Corner::{self, Round, Squircle};
@@ -32,6 +31,15 @@ use theme::{ActiveTheme as _, Theme};
 
 #[path = "computer_use.rs"]
 pub mod computer_use;
+#[path = "settings_general.rs"]
+mod general;
+#[path = "settings_route.rs"]
+mod routing;
+pub use routing::SettingsRoute;
+#[path = "settings_profile.rs"]
+mod profile;
+#[path = "settings_search.rs"]
+mod search;
 
 /// The app's theme setting (`ThemeSetting`): `system`, `light` or `dark`.
 pub const THEME: &str = "host.appearance-theme";
@@ -49,17 +57,38 @@ pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
     }
     let config: ConfigReadResponse = fixture::response("readback.jsonl", "config/read", 0);
     let skills: Value = fixture::response("readback.jsonl", "skills/list", 0);
-    let (shell, _) = shell(&config.config, &skills, None, cx);
+    let (shell, page) = shell(&config.config, &skills, None, cx);
+    page.update(cx, |page, cx| {
+        page.targets = crate::screens::computer_use::Load::Ready(fixture::response(
+            "settings-general.jsonl",
+            "openIn.getTargets",
+            0,
+        ));
+        page.set_requirements(
+            Ok(fixture::response(
+                "readback.jsonl",
+                "configRequirements/read",
+                0,
+            )),
+            matches!(
+                account.account,
+                Some(bridge::types::Account::Chatgpt { .. })
+            ),
+            cx,
+        );
+        page.root_loading = false;
+        cx.notify();
+    });
     shell.update(cx, |shell, _| shell.can_go_back = true);
     shell.into()
 }
 
 /// The settings nav item `label` if it opens a page here (not in the browser).
 pub fn section(label: &str) -> Option<&'static str> {
-    NAV.iter()
-        .flat_map(|(_, items)| items.iter())
-        .map(|&(l, _)| l)
-        .find(|&l| l == label && l != EXTERNAL)
+    routing::SECTIONS
+        .iter()
+        .find(|(slug, title)| *slug == label || *title == label)
+        .map(|(_, title)| *title)
 }
 
 /// The Settings route's shell for a `config/read` config and `skills/list` result: settings
@@ -73,18 +102,32 @@ pub fn shell(
 ) -> (Entity<Shell>, Entity<SettingsPage>) {
     let mut page = SettingsPage::new(config, skills);
     if let Some(label) = section {
-        page.section = label;
+        page.route = SettingsRoute::for_section(label).unwrap_or_else(|| page.route.clone());
+        page.section = page.route.section;
     }
     let page = cx.new(|_| page);
     let nav = cx.new(|cx| SettingsNav::new(page.clone(), cx)).into();
     let pane = cx.new(|cx| SettingsPane::new(page.clone(), cx)).into();
+    let mut profile = page.read(cx).section == "Profile";
     let shell = cx.new(|_| {
         let mut shell = Shell::new(nav, pane);
         shell.selected_rail = None;
         shell.chat_chrome = false;
         shell.new_tab = false;
         shell.main_backgrounds = 1;
+        shell.sidebar_open = !profile;
         shell
+    });
+    shell.update(cx, |_, cx| {
+        cx.observe(&page, move |shell, page, cx| {
+            let next = page.read(cx).section == "Profile";
+            if next != profile {
+                profile = next;
+                shell.sidebar_open = !profile;
+                cx.notify();
+            }
+        })
+        .detach();
     });
     (shell, page)
 }
@@ -172,7 +215,24 @@ pub struct SettingsPage {
     values: Value,
     /// `projectlessWorkspaceRoot` default: `~/Documents/Codex`.
     projectless_root: String,
+    root_loading: bool,
     pending_instructions: Vec<SettingChanged>,
+    route: SettingsRoute,
+    folder_pending: bool,
+    modal: Option<Entity<crate::confirmation::Confirmation>>,
+    targets: crate::screens::computer_use::Load<Value>,
+    notices: crate::screens::computer_use::Load<SharedString>,
+    notices_requested: bool,
+    pending: std::collections::HashSet<&'static str>,
+    failed: std::collections::HashSet<String>,
+    search_focus: Option<FocusHandle>,
+    profile: crate::screens::computer_use::Load<Option<Value>>,
+    profile_requested: bool,
+    audio_available: bool,
+    unsaved: bool,
+    requirements: crate::screens::computer_use::Load<(Value, bool)>,
+    search_select_all: bool,
+    search_target: Option<(u64, String)>,
 }
 
 impl SettingsPage {
@@ -186,22 +246,39 @@ impl SettingsPage {
             .map(|(home, _)| home.to_string())
             .next()
             .unwrap_or_default();
-        let projectless_root = config["desktop"]["projectlessWorkspaceRoot"]
-            .as_str()
-            .map_or_else(|| format!("{home}/Documents/Codex"), str::to_string);
+        let projectless_root = format!("{home}/Documents/Codex");
         let values = config.clone();
         Self {
             section: "General",
             query: String::new(),
             values,
             projectless_root,
+            root_loading: true,
             pending_instructions: Vec::new(),
+            route: SettingsRoute::for_section("General").expect("General route"),
+            folder_pending: false,
+            modal: None,
+            targets: crate::screens::computer_use::Load::Loading,
+            notices: crate::screens::computer_use::Load::Loading,
+            notices_requested: false,
+            pending: std::collections::HashSet::new(),
+            failed: std::collections::HashSet::new(),
+            search_focus: None,
+            profile: crate::screens::computer_use::Load::Loading,
+            profile_requested: false,
+            audio_available: false,
+            unsaved: false,
+            requirements: crate::screens::computer_use::Load::Loading,
+            search_select_all: false,
+            search_target: None,
         }
     }
 
     fn get(&self, path: &str) -> &Value {
-        let (store, key) = path.split_once('.').unwrap_or((path, ""));
-        &self.values[store][key]
+        match path.split_once('.') {
+            Some((store, key)) => &self.values[store][key],
+            None => &self.values[path],
+        }
     }
 
     fn flag(&self, path: &str, default: bool) -> bool {
@@ -214,11 +291,17 @@ impl SettingsPage {
 
     /// Stores a setting and reports it to the app's config or host settings service.
     fn set(&mut self, path: &'static str, value: Value, cx: &mut Context<Self>) {
+        if self.pending.contains(path) {
+            return;
+        }
         self.pending_instructions
             .retain(|change| change.path != path);
-        let (store, key) = path.split_once('.').unwrap_or((path, ""));
-        // `IndexMut` makes a missing store an object on its first key.
-        self.values[store][key] = value.clone();
+        match path.split_once('.') {
+            Some((store, key)) => self.values[store][key] = value.clone(),
+            None => self.values[path] = value.clone(),
+        }
+        self.pending.insert(path);
+        self.failed.remove(path);
         cx.emit(SettingChanged { path, value });
         cx.notify();
     }
@@ -242,6 +325,193 @@ impl SettingsPage {
     pub fn take_pending_instructions(&mut self) -> Vec<SettingChanged> {
         std::mem::take(&mut self.pending_instructions)
     }
+
+    pub fn navigate(&mut self, path: &str, cx: &mut Context<Self>) -> bool {
+        let Some(route) = SettingsRoute::parse(path) else {
+            return false;
+        };
+        self.section = route.section;
+        self.route = route;
+        cx.notify();
+        true
+    }
+
+    pub fn route(&self) -> &SettingsRoute {
+        &self.route
+    }
+
+    pub fn modal(&self) -> Option<Entity<crate::confirmation::Confirmation>> {
+        self.modal.clone()
+    }
+
+    fn notify_error(&mut self, message: &'static str, cx: &mut Context<Self>) {
+        cx.emit(SettingsNotice(message));
+    }
+
+    pub fn set_targets(&mut self, result: Result<Value, String>, cx: &mut Context<Self>) {
+        self.targets = match result {
+            Ok(value) => crate::screens::computer_use::Load::Ready(value),
+            Err(error) => crate::screens::computer_use::Load::Failed(error),
+        };
+        cx.notify();
+    }
+
+    pub fn set_projectless_root(&mut self, result: Result<String, String>, cx: &mut Context<Self>) {
+        if let Ok(root) = result {
+            self.projectless_root = root;
+            self.root_loading = false;
+            cx.notify();
+        }
+    }
+
+    pub fn request_notices(&mut self) -> bool {
+        if self.section != "Open source licenses" || self.notices_requested {
+            return false;
+        }
+        self.notices_requested = true;
+        true
+    }
+
+    pub fn set_notices(&mut self, result: Result<String, String>, cx: &mut Context<Self>) {
+        self.notices = match result {
+            Ok(value) => crate::screens::computer_use::Load::Ready(value.into()),
+            Err(error) => crate::screens::computer_use::Load::Failed(error),
+        };
+        cx.notify();
+    }
+
+    pub fn set_requirements(
+        &mut self,
+        result: Result<Value, String>,
+        chatgpt: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.requirements = match result {
+            Ok(value) => crate::screens::computer_use::Load::Ready((value, chatgpt)),
+            Err(error) => crate::screens::computer_use::Load::Failed(error),
+        };
+        cx.notify();
+    }
+
+    pub fn set_audio_available(&mut self, available: bool, cx: &mut Context<Self>) {
+        self.audio_available = available;
+        cx.notify();
+    }
+
+    pub fn audio_pending(&mut self, cx: &mut Context<Self>) {
+        self.values["host"]["toys-audio-visualizer-enabled"] = json!(false);
+        self.pending.insert("host.toys-audio-visualizer-enabled");
+        cx.notify();
+    }
+
+    pub fn finish_write(&mut self, path: &str, value: Value, failed: bool, cx: &mut Context<Self>) {
+        match path.split_once('.') {
+            Some((store, key)) => self.values[store][key] = value,
+            None => self.values[path] = value,
+        }
+        self.pending.remove(path);
+        if failed {
+            self.failed.insert(path.to_owned());
+        } else {
+            self.failed.remove(path);
+        }
+        cx.notify();
+    }
+
+    pub fn focus_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.search_select_all = true;
+        if let Some(focus) = &self.search_focus {
+            focus.focus(window, cx);
+            cx.notify();
+        }
+    }
+
+    pub fn request_profile(&mut self) -> bool {
+        if self.section != "Profile" || self.profile_requested {
+            return false;
+        }
+        self.profile_requested = true;
+        true
+    }
+
+    pub fn set_profile(&mut self, result: Result<Option<Value>, String>, cx: &mut Context<Self>) {
+        self.profile = match result {
+            Ok(profile) => crate::screens::computer_use::Load::Ready(profile),
+            Err(error) => crate::screens::computer_use::Load::Failed(error),
+        };
+        cx.notify();
+    }
+
+    pub fn set_unsaved(&mut self, unsaved: bool, cx: &mut Context<Self>) {
+        self.unsaved = unsaved;
+        cx.notify();
+    }
+
+    pub fn has_unsaved_changes(&self) -> bool {
+        self.unsaved
+    }
+
+    pub fn ask_discard(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        proceed: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) {
+        if !self.unsaved {
+            proceed(self, window, cx);
+            return;
+        }
+        if self.modal.is_some() {
+            return;
+        }
+        let dialog = cx.new(|cx| {
+            crate::confirmation::Confirmation::new(
+                "Discard changes?",
+                "You have unsaved changes. If you leave now, your changes will be lost.",
+                "Discard changes",
+                window,
+                cx,
+            )
+            .destructive()
+            .cancel_label("Keep editing")
+        });
+        cx.subscribe_in(&dialog, window, move |page, _, outcome, window, cx| {
+            page.modal = None;
+            if *outcome == crate::confirmation::Outcome::Confirm {
+                page.unsaved = false;
+                page.pending_instructions.clear();
+                cx.emit(SettingsDiscarded);
+                proceed(page, window, cx);
+            }
+            cx.notify();
+        })
+        .detach();
+        self.modal = Some(dialog);
+        cx.notify();
+    }
+
+    fn request_navigation(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.ask_discard(window, cx, move |page, _, cx| {
+            page.search_target = None;
+            page.navigate(&path, cx);
+        });
+    }
+
+    fn request_search(
+        &mut self,
+        result: search::SearchResult,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.ask_discard(window, cx, move |page, _, cx| {
+            let serial = page
+                .search_target
+                .as_ref()
+                .map_or(1, |(serial, _)| serial.wrapping_add(1));
+            page.search_target = Some((serial, result.target.clone()));
+            page.navigate(&result.route.path, cx);
+        });
+    }
 }
 
 /// A settings row changed `path` (`store.key`, see [`SettingsPage`]) to `value`.
@@ -249,6 +519,12 @@ pub struct SettingChanged {
     pub path: &'static str,
     pub value: Value,
 }
+
+pub struct SettingsNotice(pub &'static str);
+impl EventEmitter<SettingsNotice> for SettingsPage {}
+
+pub struct SettingsDiscarded;
+impl EventEmitter<SettingsDiscarded> for SettingsPage {}
 
 impl EventEmitter<SettingChanged> for SettingsPage {}
 
@@ -263,32 +539,89 @@ pub struct SettingsNav {
     focus: FocusHandle,
     /// Chromium's composited layer of the scrolling section list.
     list: Layer,
+    rows: Vec<(&'static str, FocusHandle)>,
+    results: Vec<search::SearchResult>,
+    query_key: String,
+    highlighted: Option<usize>,
+    autofocused: bool,
 }
 
 impl SettingsNav {
     fn new(page: Entity<SettingsPage>, cx: &mut Context<Self>) -> Self {
         cx.observe(&page, |_, _, cx| cx.notify()).detach();
+        let focus = cx.focus_handle().tab_stop(true);
+        page.update(cx, |page, _| page.search_focus = Some(focus.clone()));
+        let rows = NAV
+            .iter()
+            .flat_map(|(_, items)| items.iter())
+            .map(|(label, _)| (*label, cx.focus_handle().tab_stop(true)))
+            .collect();
         Self {
             page,
-            focus: cx.focus_handle(),
+            focus,
             list: Layer::default(),
+            rows,
+            results: Vec::new(),
+            query_key: String::new(),
+            highlighted: None,
+            autofocused: false,
         }
     }
 
-    fn key_down(&mut self, e: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn key_down(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let k = &e.keystroke;
-        if k.modifiers.platform || k.modifiers.control {
+        if k.modifiers.platform || k.modifiers.control || k.modifiers.alt {
             return;
         }
         let mut query = self.page.read(cx).query.clone();
+        if !query.trim().is_empty() && matches!(k.key.as_str(), "up" | "down" | "enter") {
+            self.refresh_search(&query);
+            match k.key.as_str() {
+                "enter" => {
+                    if let Some(index) = self.highlighted {
+                        self.activate_search(index, window, cx);
+                    }
+                }
+                "down" if !self.results.is_empty() => {
+                    self.highlighted = Some(
+                        self.highlighted
+                            .map_or(0, |index| (index + 1).min(self.results.len() - 1)),
+                    )
+                }
+                "up" if !self.results.is_empty() => {
+                    self.highlighted = Some(
+                        self.highlighted
+                            .map_or(self.results.len() - 1, |index| index.saturating_sub(1)),
+                    )
+                }
+                _ => {}
+            }
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
+        let selected = self.page.read(cx).search_select_all;
         match (k.key.as_str(), &k.key_char) {
-            ("backspace", _) => _ = query.pop(),
+            ("backspace", _) => {
+                if selected {
+                    query.clear();
+                } else {
+                    query.pop();
+                }
+            }
             ("escape", _) => query.clear(),
-            (_, Some(c)) => query.push_str(c),
+            (_, Some(c)) => {
+                if selected {
+                    query.clear();
+                }
+                query.push_str(c);
+            }
             _ => return,
         }
-        self.page.update(cx, |p, cx| {
-            p.query = query;
+        self.refresh_search(&query);
+        self.page.update(cx, |page, cx| {
+            page.query = query;
+            page.search_select_all = false;
             cx.notify();
         });
         cx.stop_propagation();
@@ -303,6 +636,16 @@ impl SettingsNav {
         div()
             .id("settings-search")
             .track_focus(&self.focus)
+            .role(gpui::Role::SearchInput)
+            .aria_label("Search settings")
+            .aria_value(query.to_owned())
+            .on_action(cx.listener(|this, _: &crate::SelectAll, _, cx| {
+                this.page.update(cx, |page, cx| {
+                    page.search_select_all = true;
+                    cx.notify();
+                });
+                cx.stop_propagation();
+            }))
             .on_key_down(cx.listener(Self::key_down))
             .on_click(cx.listener(|this, _, window, cx| this.focus.focus(window, cx)))
             .h(px(36.))
@@ -317,7 +660,36 @@ impl SettingsNav {
                 ..Default::default()
             }))
             .child(icon("search", 16., t.text_secondary))
-            .child(text(s, 14., 18., 430., color))
+            .child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .child(text(s, 14., 18., 430., color).when(
+                        self.page.read(cx).search_select_all && !query.is_empty(),
+                        |d| d.bg(t.text_selection),
+                    )),
+            )
+            .when(!query.is_empty(), |d| {
+                d.child(
+                    div()
+                        .id("settings-search-clear")
+                        .size(px(16.))
+                        .role(gpui::Role::Button)
+                        .aria_label("Clear settings search")
+                        .focusable()
+                        .tab_index(0)
+                        .child(icon("close", 12., t.text_secondary))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.page.update(cx, |page, cx| {
+                                page.query.clear();
+                                page.search_select_all = false;
+                                cx.notify();
+                            });
+                            this.highlighted = None;
+                            this.focus.focus(window, cx);
+                        })),
+                )
+            })
     }
 
     /// A nav row: `overflow: hidden`, so Skia draws a runtime icon (the viewport cuts the last
@@ -357,14 +729,22 @@ impl SettingsNav {
             .when(label == EXTERNAL, |d| {
                 d.child(icon("arrow-up-right", 16., t.text_secondary).opacity(0.5))
             })
-            .when(label != EXTERNAL, |d| {
-                d.on_click(cx.listener(move |this, _, _, cx| {
-                    this.page.update(cx, |p, cx| {
-                        p.section = label;
-                        cx.notify();
-                    })
-                }))
-            });
+            .track_focus(
+                &self
+                    .rows
+                    .iter()
+                    .find(|(name, _)| *name == label)
+                    .expect("registered navigation row")
+                    .1,
+            )
+            .focus_visible(|style| style.border_2().border_color(t.focus_ring))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if let Some(route) = SettingsRoute::for_section(label) {
+                    this.page.update(cx, |page, cx| {
+                        page.request_navigation(route.path, window, cx)
+                    });
+                }
+            }));
         div()
             .relative()
             .flex()
@@ -374,35 +754,91 @@ impl SettingsNav {
             })
             .child(rounded_clip(Theme::RADIUS_LG, Squircle, row))
     }
+
+    fn nav_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let key = &event.keystroke;
+        if key.modifiers.platform && key.key == "f" {
+            self.page
+                .update(cx, |page, cx| page.focus_search(window, cx));
+        } else if !key.modifiers.platform && !key.modifiers.control && !key.modifiers.alt {
+            let query = self.page.read(cx).query.to_lowercase();
+            let visible = self
+                .rows
+                .iter()
+                .filter(|(label, _)| label.to_lowercase().contains(&query))
+                .collect::<Vec<_>>();
+            let current = visible
+                .iter()
+                .position(|(_, focus)| focus.is_focused(window));
+            match key.key.as_str() {
+                "up" | "down" if !visible.is_empty() => {
+                    let index = match (current, key.key.as_str()) {
+                        (Some(index), "up") => index.saturating_sub(1),
+                        (Some(index), _) => (index + 1).min(visible.len() - 1),
+                        (None, "up") => visible.len() - 1,
+                        _ => 0,
+                    };
+                    visible[index].1.focus(window, cx);
+                    if let Some(route) = SettingsRoute::for_section(visible[index].0) {
+                        self.page.update(cx, |page, cx| {
+                            page.request_navigation(route.path, window, cx)
+                        });
+                    }
+                }
+                "enter" | "space" => {
+                    let Some(index) = current else {
+                        return;
+                    };
+                    let label = visible[index].0;
+                    if let Some(route) = SettingsRoute::for_section(label) {
+                        self.page.update(cx, |page, cx| {
+                            page.request_navigation(route.path, window, cx)
+                        });
+                    }
+                }
+                _ => return,
+            }
+        } else {
+            return;
+        }
+        cx.stop_propagation();
+    }
 }
 
 impl Render for SettingsNav {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !self.autofocused {
+            self.autofocused = true;
+            self.focus.focus(window, cx);
+        }
         let t = cx.theme().clone();
         let page = self.page.read(cx);
         let (section, query) = (page.section, page.query.clone());
-        let needle = query.to_lowercase();
+        self.refresh_search(&query);
         let mut sections = Vec::new();
-        for (heading, items) in NAV {
-            let rows: Vec<_> = items
-                .iter()
-                .filter(|(label, _)| label.to_lowercase().contains(&needle))
-                .map(|&(label, glyph)| self.item(label, glyph, label == section, &t, cx))
-                .collect();
-            if rows.is_empty() {
-                continue;
+        if query.trim().is_empty() {
+            for (heading, items) in NAV {
+                let rows = items
+                    .iter()
+                    .map(|&(label, glyph)| self.item(label, glyph, label == section, &t, cx))
+                    .collect::<Vec<_>>();
+                let rows = div().flex().flex_col().gap(px(1.)).children(rows);
+                sections.push(sidebar_section(*heading, rows, cx));
             }
-            sections.push(sidebar_section(
-                *heading,
-                div().flex().flex_col().gap(px(1.)).children(rows),
-                cx,
-            ));
+        } else {
+            sections.extend(
+                self.results
+                    .iter()
+                    .enumerate()
+                    .map(|(index, result)| self.search_row(index, result, &t, cx)),
+            );
         }
         let empty = sections.is_empty();
         div()
             .size_full()
             .flex()
             .flex_col()
+            .on_key_down(cx.listener(Self::nav_key))
             .child(
                 div()
                     .flex_none()
@@ -456,11 +892,11 @@ pub struct SettingsPane {
     page: Entity<SettingsPage>,
     /// The composited contents layer of the page's scroll container.
     layer: Layer,
-    /// Key of the select whose options menu is open.
-    open_select: Option<&'static str>,
-    /// Pointer over that menu: a press there is not a click outside.
-    menu_hovered: bool,
+    selects: std::collections::HashMap<&'static str, Entity<crate::settings_kit::Select>>,
     git_fields: Vec<(&'static str, Entity<Composer>)>,
+    scroll: gpui::ScrollHandle,
+    rendered_route: String,
+    search_flash: Rc<RefCell<Option<search::Flash>>>,
 }
 
 /// `Confirm before closing a window` options, default first.
@@ -473,7 +909,7 @@ const CLOSE_OPTIONS: &[(&str, &str)] = &[
 const SEND_OPTIONS: &[(&str, &str)] = &[
     ("enter", "Enter"),
     ("cmdIfMultiline", "⌘ + Enter for multiline prompts"),
-    ("cmdEnter", "⌘ + Enter always"),
+    ("cmdAlways", "⌘ + Enter always"),
 ];
 
 impl SettingsPane {
@@ -492,76 +928,112 @@ impl SettingsPane {
         Self {
             page,
             layer: Layer::default(),
-            open_select: None,
-            menu_hovered: false,
+            selects: std::collections::HashMap::new(),
             git_fields: Vec::new(),
+            scroll: gpui::ScrollHandle::new(),
+            rendered_route: String::new(),
+            search_flash: Rc::default(),
         }
     }
 
     /// A select for `key` with its options menu `(value, label)`; the first option is the
     /// default. A click outside closes the menu.
     fn select_menu(
-        &self,
+        &mut self,
         key: &'static str,
         options: &'static [(&'static str, &'static str)],
-        t: &Theme,
+        _t: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let current = self.page.read(cx).choice(key, options[0].0).to_string();
-        let label = options
-            .iter()
-            .find(|(value, _)| *value == current)
-            .map_or(options[0].1, |(_, label)| label);
-        let open = self.open_select == Some(key);
-        let hover = t.menu_item_hover;
-        let menu = open.then(|| {
-            let rows = options.iter().map(|&(value, label)| {
-                div()
-                    .id(value)
-                    .px(px(8.))
-                    .py(px(6.))
-                    .rounded(px(12.))
-                    .when(value == current, |d| d.bg(hover))
-                    .hover(move |s| s.bg(hover))
-                    .child(text(label, 14., 20., 430., t.text))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.page.update(cx, |p, cx| p.set(key, json!(value), cx));
-                        this.open_select = None;
-                        this.menu_hovered = false;
-                        cx.notify();
-                    }))
+        let choices = if self.selects.contains_key(key) {
+            Vec::new()
+        } else {
+            options
+                .iter()
+                .map(|&(value, label)| (value.to_owned(), label.to_owned()))
+                .collect()
+        };
+        self.choose(key, choices, false, cx)
+    }
+
+    fn choose(
+        &mut self,
+        key: &'static str,
+        options: Vec<(String, String)>,
+        searchable: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let page = self.page.read(cx);
+        let default = self
+            .selects
+            .get(key)
+            .map(|select| select.read(cx).default_value())
+            .unwrap_or_else(|| options.first().map_or("", |(value, _)| value));
+        let current = if key == "host.open-in-target-preferences" {
+            page.get(key)["global"]
+                .as_str()
+                .or_else(|| match &page.targets {
+                    crate::screens::computer_use::Load::Ready(value) => {
+                        value["preferredTarget"].as_str()
+                    }
+                    _ => None,
+                })
+                .unwrap_or("")
+        } else {
+            page.choice(key, default)
+        }
+        .to_owned();
+        let select = self.selects.entry(key).or_insert_with(|| {
+            let choices = options
+                .into_iter()
+                .map(|(value, label)| crate::settings_kit::Choice {
+                    value: value.into(),
+                    label: label.into(),
+                    checked: false,
+                    disabled: false,
+                })
+                .collect();
+            let select = cx.new(|cx| {
+                general::present_select(
+                    key,
+                    crate::settings_kit::Select::new(
+                        current.clone(),
+                        choices,
+                        searchable.then_some(if key == "desktop.localeOverride" {
+                            "Search languages"
+                        } else {
+                            "Search…"
+                        }),
+                        cx,
+                    ),
+                )
             });
-            // Below the trigger, or above it when the window's bottom edge is in the way.
-            deferred(
-                div().absolute().top_0().right_0().child(
-                    anchored()
-                        .anchor(Anchor::TopRight)
-                        .offset(point(px(0.), px(32.)))
-                        .child(
-                            div()
-                                .id("select-menu")
-                                .on_hover(cx.listener(|this, hovered: &bool, _, _| {
-                                    this.menu_hovered = *hovered
-                                }))
-                                .child(popover(t, 280., |d| d.children(rows))),
-                        ),
-                ),
+            let page = self.page.clone();
+            cx.subscribe(
+                &select,
+                move |_, _, selected: &crate::settings_kit::Selected, cx| {
+                    let value = if selected.0.is_empty() {
+                        Value::Null
+                    } else {
+                        json!(selected.0.as_ref())
+                    };
+                    page.update(cx, |page, cx| {
+                        let value = if key == "host.open-in-target-preferences" {
+                            let mut preference = page.get(key).clone();
+                            preference["global"] = value;
+                            preference
+                        } else {
+                            value
+                        };
+                        page.set(key, value, cx);
+                    });
+                },
             )
+            .detach();
+            select
         });
-        select(label, None, false, false, t)
-            .id(key)
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.open_select = (!open).then_some(key);
-                cx.notify();
-            }))
-            .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
-                if open && !this.menu_hovered {
-                    this.open_select = None;
-                    cx.notify();
-                }
-            }))
-            .children(menu)
-            .into_any_element()
+        select.update(cx, |select, cx| select.set_value(current, cx));
+        select.clone().into_any_element()
     }
 
     fn toggle(
@@ -579,7 +1051,7 @@ impl SettingsPane {
         };
         let focus = focus::handle(key, 0, window, cx);
         focus::ring(
-            switch(key, on, false, t).relative(),
+            switch(key, on, self.page.read(cx).pending.contains(key), t).relative(),
             &focus,
             Theme::RADIUS_FULL,
             px(2.),
@@ -619,6 +1091,16 @@ impl SettingsPane {
                 let selected = current == value;
                 div()
                     .id(label)
+                    .role(gpui::Role::RadioButton)
+                    .aria_label(label)
+                    .aria_toggled(if selected {
+                        gpui::Toggled::True
+                    } else {
+                        gpui::Toggled::False
+                    })
+                    .focusable()
+                    .tab_index(0)
+                    .focus_visible(crate::focus::trigger_focus)
                     .h(px(24.))
                     .px(px(9.))
                     .flex()
@@ -645,7 +1127,11 @@ impl SettingsPane {
     /// Appearance ▸ Theme: the app applies and keeps the choice (`SetTheme`).
     /// ponytail: the chrome theme, font size and motion rows are not here; add them with the
     /// settings they drive.
-    fn appearance(&self, t: &Theme, cx: &mut Context<Self>) -> Vec<(&'static str, Vec<Div>)> {
+    fn appearance(
+        &self,
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Vec<(&'static str, Vec<SettingsRow>)> {
         let options = &[("light", "Light"), ("dark", "Dark"), ("system", "System")];
         let theme = self.segmented(THEME, "system", options, t, cx);
         vec![("Theme", vec![settings_row("Theme", None, theme, t)])]
@@ -656,7 +1142,7 @@ impl SettingsPane {
         t: &Theme,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Vec<(&'static str, Vec<Div>)> {
+    ) -> Vec<(&'static str, Vec<SettingsRow>)> {
         const FIELDS: &[(&str, &str, &str)] = &[
             ("host.git-branch-prefix", "Branch prefix", "codex/"),
             (
@@ -795,6 +1281,10 @@ impl SettingsPane {
                             t,
                         )
                         .id(key)
+                        .role(gpui::Role::Button)
+                        .focusable()
+                        .tab_index(0)
+                        .focus_visible(crate::focus::trigger_focus)
                         .on_click(
                             cx.listener(move |this, _, _, cx| this.save_git_field(key, &field, cx)),
                         ),
@@ -809,7 +1299,11 @@ impl SettingsPane {
                     t,
                 ));
             }
-            rows.push(row);
+            rows.push(SettingsRow {
+                title,
+                detail: None,
+                body: row,
+            });
             groups.push((title, rows));
         }
         groups
@@ -832,316 +1326,26 @@ impl SettingsPane {
                 .update(cx, |page, cx| page.set(key, json!(value), cx));
         }
     }
-
-    fn general(
-        &self,
-        t: &Theme,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Vec<(&'static str, Vec<Div>)> {
-        let page = self.page.read(cx);
-        // The `w-48` path span middle-truncates to the width it has (`zLi`).
-        let mono = Font {
-            weight: FontWeight(430.),
-            ..font(MONO)
-        };
-        let root = middle_truncate(&page.projectless_root, |s| {
-            let run = TextRun {
-                len: s.len(),
-                font: mono.clone(),
-                color: t.text_secondary,
-                background_color: None,
-                underline: None,
-                strikethrough: None,
-            };
-            let line = window
-                .text_system()
-                .shape_line(s.to_string().into(), px(12.), &[run], None);
-            line.width <= px(192.)
-        });
-        let path = div()
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .child(
-                div()
-                    .w(px(192.))
-                    .overflow_hidden()
-                    .child(text(root, 12., 16., 430., t.text_secondary).font_family(MONO)),
-            )
-            .child(button("Change", t.text_alpha_5, None, t))
-            .into_any_element();
-        let hotkey = div()
-            .flex()
-            .items_center()
-            .gap(px(4.))
-            .child(text("Off", 13., 18.571_428, 430., t.text_secondary))
-            .child(
-                div()
-                    .size(px(28.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(icon("pencil", 16., t.text_tertiary)),
-            )
-            .into_any_element();
-        let row = |title, description, control| settings_row(title, description, control, t);
-        vec![
-            (
-                "Permissions",
-                vec![
-                    row(
-                        "Default permissions",
-                        Some(
-                            "By default, ChatGPT can read and edit files in its workspace. It can ask for additional access when needed",
-                        ),
-                        // Default permissions are always shown.
-                        switch("default-permissions", true, true, t).into_any_element(),
-                    ),
-                    row(
-                        "Full access",
-                        Some(
-                            "When ChatGPT runs with full access, it can edit any file on your computer and run commands with network, without your approval. This significantly increases the risk of data loss, leaks, or unexpected behavior. <a>Learn more</a> about elevated risks.",
-                        ),
-                        self.toggle("session.fullAccess", true, t, window, cx),
-                    ),
-                ],
-            ),
-            (
-                "General",
-                vec![
-                    row(
-                        "Projectless task folder",
-                        Some(
-                            "The location where tasks started outside of projects store their data by default.",
-                        ),
-                        path,
-                    ),
-                    row(
-                        "Default file open destination",
-                        Some("Where files and folders open by default"),
-                        select(
-                            "Zed",
-                            Some(app_icon(over(t.primary_soft_alpha, t.background_panel))),
-                            false,
-                            false,
-                            t,
-                        )
-                        .into_any_element(),
-                    ),
-                    row(
-                        "Language",
-                        Some("Language for the app UI"),
-                        select("Auto detect", None, false, false, t).into_any_element(),
-                    ),
-                    row(
-                        "Show in menu bar",
-                        Some("Keep ChatGPT in the macOS menu bar when the main window is closed"),
-                        self.toggle("host.mac-menu-bar-enabled", true, t, window, cx),
-                    ),
-                    row(
-                        "Confirm before closing a window",
-                        Some("Warn when a tab-close shortcut would close the window"),
-                        self.select_menu("host.confirm-before-close", CLOSE_OPTIONS, t, cx),
-                    ),
-                    row(
-                        "Full view by default",
-                        Some("Start new tasks with Chat and content in a single tab strip"),
-                        self.toggle("host.default-workspace-full-view", false, t, window, cx),
-                    ),
-                    row(
-                        "Bottom panel",
-                        Some("Show the bottom panel control in the app header"),
-                        self.toggle("session.bottomPanel", true, t, window, cx),
-                    ),
-                    row(
-                        "Default terminal location",
-                        Some(
-                            "Choose where the terminal shortcut and environment actions open terminal tabs",
-                        ),
-                        self.segmented(
-                            "desktop.defaultTerminalLocation",
-                            "bottom",
-                            &[("bottom", "Bottom"), ("right", "Right")],
-                            t,
-                            cx,
-                        ),
-                    ),
-                    row(
-                        "Prevent sleep while running",
-                        Some("Keep your computer awake while ChatGPT is running a task"),
-                        self.toggle("desktop.preventSleepWhileRunning", false, t, window, cx),
-                    ),
-                    row(
-                        "Compress local chat history",
-                        Some(
-                            "Save disk space by compressing older local chat history. Restart ChatGPT to apply changes.",
-                        ),
-                        self.toggle(
-                            "features.local_thread_store_compression",
-                            false,
-                            t,
-                            window,
-                            cx,
-                        ),
-                    ),
-                    row(
-                        "Speed",
-                        Some(
-                            "Choose how quickly ChatGPT runs across chats, subagents, and compaction",
-                        ),
-                        select("Standard", None, false, false, t).into_any_element(),
-                    ),
-                    row(
-                        "Suggested prompts",
-                        Some(
-                            "Suggest what to do next by searching project files and connected apps",
-                        ),
-                        self.toggle("host.ambient-suggestions-enabled", true, t, window, cx),
-                    ),
-                    row(
-                        "Open source licenses",
-                        Some("Third-party notices for bundled dependencies"),
-                        button("View", t.text_alpha_5, None, t).into_any_element(),
-                    ),
-                    row(
-                        "Plugins",
-                        Some("Allow ChatGPT to use installed plugins"),
-                        self.toggle("features.plugins", true, t, window, cx),
-                    ),
-                ],
-            ),
-            (
-                "Composer",
-                vec![
-                    row(
-                        "Show predictions",
-                        Some("Predict your next message based on the conversation"),
-                        self.toggle("session.messagePredictions", true, t, window, cx),
-                    ),
-                    row(
-                        "Plain text composer",
-                        Some(
-                            "Keep code, Markdown, and links as literal text while writing messages",
-                        ),
-                        self.toggle("desktop.composerPlainTextMode", false, t, window, cx),
-                    ),
-                    row(
-                        "Show context window usage",
-                        None,
-                        self.toggle("host.show-context-window-usage", false, t, window, cx),
-                    ),
-                    row(
-                        "Send shortcut",
-                        Some("Choose when Enter sends a prompt or inserts a new line"),
-                        self.select_menu("desktop.composerEnterBehavior", SEND_OPTIONS, t, cx),
-                    ),
-                    row(
-                        "Follow-up behavior",
-                        Some(
-                            "Queue follow-ups while ChatGPT runs or steer the current run. Press Ctrl+⏎ to do the opposite for one message",
-                        ),
-                        self.segmented(
-                            "desktop.followUpQueueMode",
-                            "steer",
-                            &[("queue", "Queue"), ("steer", "Steer")],
-                            t,
-                            cx,
-                        ),
-                    ),
-                ],
-            ),
-            (
-                "Popout Window",
-                vec![
-                    row(
-                        "Popout Window hotkey",
-                        Some(
-                            "Set a global shortcut for Popout Window. Leave unset to keep it off.",
-                        ),
-                        hotkey,
-                    ),
-                    row(
-                        "Default to standalone chat",
-                        Some("Start new chats outside of any project"),
-                        self.toggle(
-                            "host.hotkey-window-projectless-default-enabled",
-                            false,
-                            t,
-                            window,
-                            cx,
-                        ),
-                    ),
-                ],
-            ),
-            (
-                "Notifications",
-                vec![
-                    row(
-                        "Notifications are off",
-                        Some("Turn on notifications in System Settings to use the options below"),
-                        button(
-                            "Open System Settings",
-                            t.primary_soft_alpha,
-                            Some(t.border),
-                            t,
-                        )
-                        .into_any_element(),
-                    ),
-                    row(
-                        "Turn completion notifications",
-                        Some("Set when ChatGPT alerts you that it's finished"),
-                        select("Only when unfocused", None, true, false, t).into_any_element(),
-                    ),
-                    row(
-                        "Enable permission notifications",
-                        Some("Show alerts when notification permissions are required"),
-                        switch("permissions-notifications", true, true, t).into_any_element(),
-                    ),
-                    row(
-                        "Enable question notifications",
-                        Some("Show alerts when input is needed to continue"),
-                        switch("question-notifications", true, true, t).into_any_element(),
-                    ),
-                    row(
-                        "Enable dot notifications",
-                        Some("Show alerts when your dot sends you a message"),
-                        switch("dot-notifications", true, true, t).into_any_element(),
-                    ),
-                    row(
-                        "Notification sound",
-                        Some("Sound for task completion, permission requests, and questions"),
-                        select("Default", None, true, false, t).into_any_element(),
-                    ),
-                ],
-            ),
-            (
-                "Toys",
-                vec![
-                    row(
-                        "Confetti cannon",
-                        Some("Let Codex fire confetti in the app when you ask!"),
-                        self.toggle("host.toys-confetti-enabled", false, t, window, cx),
-                    ),
-                    row(
-                        "Audio visualizer",
-                        Some(
-                            "Animate conversation rails with system audio. Audio is processed on your device, never saved or uploaded.",
-                        ),
-                        self.toggle("host.toys-audio-visualizer-enabled", false, t, window, cx),
-                    ),
-                ],
-            ),
-        ]
-    }
 }
 
 impl Render for SettingsPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let section = self.page.read(cx).section;
+        let route = &self.page.read(cx).route.path;
+        if self.rendered_route != *route {
+            self.rendered_route = route.clone();
+            self.scroll.set_offset(point(px(0.), px(0.)));
+            self.selects.clear();
+        }
         if section == "Computer use" {
             return super::computer_use::render(window, cx);
+        }
+        if section == "Open source licenses" {
+            return self.licenses(&t, cx);
+        }
+        if section == "Profile" {
+            return self.profile(&t, cx);
         }
         // Unimplemented sections retain their title-only surface.
         let groups = match section {
@@ -1150,9 +1354,17 @@ impl Render for SettingsPane {
             "Git" => self.git(&t, window, cx),
             _ => Vec::new(),
         };
+        self.sync_search_flash(cx);
+        let target_group = groups
+            .iter()
+            .position(|(_, rows)| self.target_row_index(rows).is_some());
         let card_border = over(t.border, t.background_panel);
         let groups = groups.into_iter().map(|(title, rows)| {
-            let last = rows.len() - 1;
+            let last = rows.len().saturating_sub(1);
+            let target_row = self.target_row_index(&rows);
+            let target_level = target_row.map_or(search::TargetLevel::Group, |index| {
+                self.row_target(&rows[index])
+            });
             div()
                 .flex()
                 .flex_col()
@@ -1182,24 +1394,28 @@ impl Render for SettingsPane {
                         .child(rounded_clip(
                             px(19.),
                             Squircle,
-                            div()
-                                .flex()
-                                .flex_col()
-                                .children(rows.into_iter().enumerate().map(|(i, r)| {
-                                    r.when(i < last, |d| {
-                                        // `after:inset-x-4 after:bottom-0 after:h-px
-                                        // after:bg-border`
-                                        d.child(
-                                            div()
-                                                .absolute()
-                                                .left(px(16.))
-                                                .right(px(16.))
-                                                .bottom_0()
-                                                .h(px(1.))
-                                                .bg(card_border),
-                                        )
-                                    })
-                                })),
+                            self.track_search_layout(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .children(rows.into_iter().enumerate().map(|(i, r)| {
+                                        self.highlight_row(r, &t).when(i < last, |d| {
+                                            // `after:inset-x-4 after:bottom-0 after:h-px
+                                            // after:bg-border`
+                                            d.child(
+                                                div()
+                                                    .absolute()
+                                                    .left(px(16.))
+                                                    .right(px(16.))
+                                                    .bottom_0()
+                                                    .h(px(1.))
+                                                    .bg(card_border),
+                                            )
+                                        })
+                                    })),
+                                target_row,
+                                target_level,
+                            ),
                         )),
                 )
         });
@@ -1215,6 +1431,7 @@ impl Render for SettingsPane {
                     .id("settings-page")
                     .flex_1()
                     .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
                     .layer()
                     .child(probe(&self.layer))
                     .child(
@@ -1238,12 +1455,16 @@ impl Render for SettingsPane {
                     )
                     .child(
                         div().flex().flex_col().items_center().child(
-                            column(div())
-                                .p(px(20.))
-                                .flex()
-                                .flex_col()
-                                .gap(px(40.))
-                                .children(groups),
+                            self.track_search_layout(
+                                column(div())
+                                    .p(px(20.))
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(40.))
+                                    .children(groups),
+                                target_group,
+                                search::TargetLevel::Group,
+                            ),
                         ),
                     ),
             )
@@ -1274,6 +1495,16 @@ fn middle_truncate(s: &str, fits: impl Fn(&str) -> bool) -> String {
     best
 }
 
+const ROW_PADDING: f32 = 12.;
+const ROW_TEXT_GAP: f32 = 2.;
+const ROW_LABEL_LINE_HEIGHT: f32 = 18.571_428;
+
+struct SettingsRow {
+    title: &'static str,
+    detail: Option<&'static str>,
+    body: Div,
+}
+
 /// One settings row: title, optional description (an `<a>…</a>` span renders as the inline
 /// link) and the trailing control.
 fn settings_row(
@@ -1281,23 +1512,23 @@ fn settings_row(
     detail: Option<&'static str>,
     control: AnyElement,
     t: &Theme,
-) -> Div {
-    div()
+) -> SettingsRow {
+    let body = div()
         .relative()
         .flex()
         .items_center()
         .justify_between()
         .gap(px(24.))
         .px(px(16.))
-        .py(px(12.))
+        .py(px(ROW_PADDING))
         .child(
             div()
                 .flex_1()
                 .min_w_0()
                 .flex()
                 .flex_col()
-                .gap(px(2.))
-                .child(text(title, 13., 18.571_428, 500., t.text))
+                .gap(px(ROW_TEXT_GAP))
+                .child(text(title, 13., ROW_LABEL_LINE_HEIGHT, 500., t.text))
                 .children(detail.map(|s| description(s, t))),
         )
         .child(
@@ -1309,10 +1540,15 @@ fn settings_row(
                 .justify_end()
                 .gap(px(8.))
                 .child(control),
-        )
+        );
+    SettingsRow {
+        title,
+        detail,
+        body,
+    }
 }
 
-fn description(s: &'static str, t: &Theme) -> Div {
+fn description(s: &'static str, t: &Theme) -> impl IntoElement {
     let (plain, link) = match s.split_once("<a>") {
         Some((before, rest)) => {
             let (label, after) = rest.split_once("</a>").unwrap_or((rest, ""));
@@ -1324,22 +1560,39 @@ fn description(s: &'static str, t: &Theme) -> Div {
         }
         None => (s.to_string(), None),
     };
-    // `text()` without its string child.
+    let ranges = link.clone().into_iter().collect();
+    let styled = StyledText::new(plain).with_highlights(link.clone().map(|range| {
+        (
+            range,
+            HighlightStyle {
+                color: Some(t.text_accent),
+                ..Default::default()
+            },
+        )
+    }));
     div()
+        .id(s)
         .text_size(px(12.))
         .line_height(px(16.))
         .font_weight(FontWeight(430.))
         .text_color(t.text_secondary)
-        .child(StyledText::new(plain).with_highlights(link.map(|r| {
-            let color = Some(t.text_accent);
-            (
-                r,
-                HighlightStyle {
-                    color,
-                    ..Default::default()
-                },
-            )
-        })))
+        .when(link.is_some(), |d| {
+            d.role(gpui::Role::Link)
+                .aria_label("Learn more")
+                .focusable()
+                .tab_index(0)
+                .on_key_down(|event, _, cx| {
+                    if event.keystroke.key == "enter" {
+                        cx.open_url("https://developers.openai.com/codex/config-basic");
+                        cx.stop_propagation();
+                    }
+                })
+        })
+        .child(
+            gpui::InteractiveText::new(s, styled).on_click(ranges, |_, _, cx| {
+                cx.open_url("https://developers.openai.com/codex/config-basic");
+            }),
+        )
 }
 
 /// `Switch`: 32×20 track, 16 px thumb. `disabled` is the control's `opacity: .6`: Chromium
@@ -1355,47 +1608,65 @@ pub(super) fn switch(id: &'static str, on: bool, disabled: bool, t: &Theme) -> S
         shadows: vec![shadow(t.shadow_sm, 1., 2., -1., false)],
         ..Default::default()
     };
-    div().id(id).flex_none().w(px(32.)).h(px(20.)).child(
-        canvas(
-            move |_, window, cx| {
-                let state = window.use_keyed_state("switch-motion", cx, |_, cx| {
-                    (
-                        cx.background_executor().now(),
-                        HoverFade::settled(on as u8 as f32),
-                    )
-                });
-                let (progress, animating) = state.update(cx, |(epoch, fade), cx| {
-                    let now = cx.background_executor().now() - *epoch;
-                    fade.transition(on as u8 as f32, now, motion::BASIC, motion::EASE_OUT);
-                    (fade.value(now), fade.is_animating(now))
-                });
-                if animating {
-                    window.request_animation_frame();
-                }
-                progress
-            },
-            move |b, progress, window, cx| {
-                let fill = match progress {
-                    p if p <= 0. => track_off,
-                    p if p >= 1. => track_on,
-                    p => motion::mix_oklab(track_off.into(), track_on.into(), p).into(),
-                };
-                let track = surface(9999., Round, fill, None);
-                let x = 2. + 12. * progress;
-                let paint = |window: &mut Window| {
-                    shapes::paint(&track, None, b, window, cx);
-                    let at = Bounds::new(b.origin + point(px(x), px(2.)), size(px(16.), px(16.)));
-                    shapes::paint(&thumb, None, at, window, cx);
-                };
-                if disabled {
-                    shapes::with_layer(153, b, window, paint)
-                } else {
-                    paint(window)
-                }
-            },
+    div()
+        .id(id)
+        .role(gpui::Role::Switch)
+        .aria_label(if id == "default-permissions" {
+            "Default permissions are always shown"
+        } else {
+            id
+        })
+        .aria_toggled(if on {
+            gpui::Toggled::True
+        } else {
+            gpui::Toggled::False
+        })
+        .aria_disabled(disabled)
+        .flex_none()
+        .w(px(32.))
+        .h(px(20.))
+        .child(
+            canvas(
+                move |_, window, cx| {
+                    let state = window.use_keyed_state("switch-motion", cx, |_, cx| {
+                        (
+                            cx.background_executor().now(),
+                            HoverFade::settled(on as u8 as f32),
+                        )
+                    });
+                    let (progress, animating) = state.update(cx, |(epoch, fade), cx| {
+                        let now = cx.background_executor().now() - *epoch;
+                        fade.transition(on as u8 as f32, now, motion::BASIC, motion::EASE_OUT);
+                        (fade.value(now), fade.is_animating(now))
+                    });
+                    if animating {
+                        window.request_animation_frame();
+                    }
+                    progress
+                },
+                move |b, progress, window, cx| {
+                    let fill = match progress {
+                        p if p <= 0. => track_off,
+                        p if p >= 1. => track_on,
+                        p => motion::mix_oklab(track_off.into(), track_on.into(), p).into(),
+                    };
+                    let track = surface(9999., Round, fill, None);
+                    let x = 2. + 12. * progress;
+                    let paint = |window: &mut Window| {
+                        shapes::paint(&track, None, b, window, cx);
+                        let at =
+                            Bounds::new(b.origin + point(px(x), px(2.)), size(px(16.), px(16.)));
+                        shapes::paint(&thumb, None, at, window, cx);
+                    };
+                    if disabled {
+                        shapes::with_layer(153, b, window, paint)
+                    } else {
+                        paint(window)
+                    }
+                },
+            )
+            .size_full(),
         )
-        .size_full(),
-    )
 }
 
 /// A settings surface through `shapes`: CSS `radius`, corner shape, fill and 1 px border.
@@ -1438,6 +1709,7 @@ fn probe(l: &Layer) -> impl IntoElement {
 /// Settings`: outlined).
 fn button(label: &'static str, fill: Hsla, border: Option<Hsla>, t: &Theme) -> Div {
     div()
+        .rounded(px(12.5))
         .h(px(28.))
         .px(px(9.))
         .flex()
@@ -1862,5 +2134,103 @@ mod tests {
             "/Users/user/D…uments/Codex"
         );
         assert_eq!(super::middle_truncate("/Users/user", fits), "/Users/user");
+    }
+
+    #[test]
+    fn search_reveals_an_offscreen_row_and_navigation_resets_the_scroll() {
+        use super::*;
+        use gpui::{HeadlessAppContext, point, px, size};
+        use std::sync::Arc;
+        #[cfg(target_os = "macos")]
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        let mut cx = HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        let page = cx.update(|cx| {
+            cx.set_global(Theme::dark());
+            let page = cx.new(|_| SettingsPage::new(&json!({}), &json!({})));
+            page.update(cx, |page, cx| {
+                page.set_requirements(
+                    Ok(json!({"requirements": null, "supportsIndependentSpeedModes": true})),
+                    true,
+                    cx,
+                );
+                page.search_target = Some((1, "Speed".into()));
+            });
+            page
+        });
+        let window = cx
+            .open_window(size(px(900.), px(600.)), |_, cx| {
+                cx.new(|cx| SettingsPane::new(page.clone(), cx))
+            })
+            .unwrap();
+        for _ in 0..6 {
+            cx.advance_clock(std::time::Duration::from_millis(16));
+            cx.test_window(window.into())
+                .simulate_frame_request(gpui::RequestFrameOptions {
+                    require_presentation: true,
+                    ..Default::default()
+                });
+            cx.run_until_parked();
+        }
+        cx.update(|cx| {
+            window
+                .update(cx, |pane, _, _| {
+                    let row = pane
+                        .search_flash
+                        .borrow()
+                        .as_ref()
+                        .and_then(|flash| flash.row_bounds)
+                        .expect("the search target must have measured bounds");
+                    let viewport = pane.scroll.bounds();
+                    assert!(
+                        row.top() >= viewport.top() && row.bottom() <= viewport.bottom(),
+                        "the whole target row must be visible: row={row:?}, viewport={viewport:?}",
+                    );
+                })
+                .unwrap()
+        });
+        #[cfg(target_os = "macos")]
+        if let Some(path) = std::env::var_os("CGX_GENERAL_EVIDENCE") {
+            let path = std::path::Path::new(&path);
+            std::fs::create_dir_all(path).unwrap();
+            let metrics = cx.update(|cx| {
+                window
+                    .update(cx, |pane, _, _| {
+                        json!({
+                            "scrollY": f32::from(pane.scroll.offset().y),
+                            "maxScrollY": f32::from(pane.scroll.max_offset().y),
+                            "viewportY": f32::from(pane.scroll.bounds().origin.y),
+                            "viewportHeight": f32::from(pane.scroll.bounds().size.height),
+                            "rowBounds": pane.search_flash.borrow().as_ref().and_then(|flash| flash.row_bounds)
+                                .map(|bounds| [f32::from(bounds.top()), f32::from(bounds.bottom())])
+                        })
+                    })
+                    .unwrap()
+            });
+            std::fs::write(path.join("scroll-layout.json"), metrics.to_string()).unwrap();
+            cx.capture_screenshot(window.into())
+                .unwrap()
+                .save(path.join("scroll-layout.png"))
+                .unwrap();
+        }
+        cx.update(|cx| {
+            page.update(cx, |page, cx| {
+                page.navigate("/settings/notifications", cx);
+            })
+        });
+        cx.run_until_parked();
+        cx.update(|cx| {
+            window
+                .update(cx, |pane, _, _| {
+                    assert_eq!(pane.scroll.offset(), point(px(0.), px(0.)));
+                })
+                .unwrap()
+        });
     }
 }

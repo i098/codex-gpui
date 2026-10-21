@@ -27,11 +27,57 @@ use serde_json::{Value, json};
 use std::{ops::Range, path::PathBuf, rc::Rc, time::Duration};
 use theme::{ActiveTheme as _, Appearance, Theme};
 
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub enum EnterBehavior {
+    #[default]
+    Enter,
+    CmdIfMultiline,
+    CmdAlways,
+}
+
+impl EnterBehavior {
+    pub fn from_setting(value: &str) -> Self {
+        match value {
+            "cmdIfMultiline" => Self::CmdIfMultiline,
+            "cmdAlways" => Self::CmdAlways,
+            _ => Self::Enter,
+        }
+    }
+
+    fn sends(self, multiline: bool, modifier: bool) -> bool {
+        match self {
+            Self::Enter => !modifier,
+            Self::CmdIfMultiline => modifier || !multiline,
+            Self::CmdAlways => modifier,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct Preferences {
+    pub enter: EnterBehavior,
+    pub show_full_access: bool,
+    pub show_context_usage: bool,
+}
+
+impl Default for Preferences {
+    fn default() -> Self {
+        Self {
+            enter: EnterBehavior::Enter,
+            show_full_access: true,
+            show_context_usage: false,
+        }
+    }
+}
+
+impl gpui::Global for Preferences {}
+
 actions!(
     composer,
     [
         /// Send the prompt (Enter).
         Submit,
+        ModifiedSubmit,
         Stop,
         RequestFullAccess,
         /// Insert a line break (Shift+Enter).
@@ -67,8 +113,10 @@ actions!(
 
 mod attach;
 pub mod computer_use;
+mod context_usage;
 mod editor;
 mod footer;
+pub use context_usage::ContextUsage;
 mod requests;
 mod menu {
     //! Focus rules for the recorded Radix menus: arrows stop at the ends, Escape returns
@@ -180,6 +228,7 @@ pub fn bind_keys(cx: &mut App) {
     let c = Some(KEY_CONTEXT);
     cx.bind_keys([
         KeyBinding::new("enter", Submit, c),
+        KeyBinding::new("cmd-enter", ModifiedSubmit, c),
         KeyBinding::new("escape", Dismiss, Some(REQUEST_CONTEXT)),
         KeyBinding::new("cmd-enter", Submit, Some(REQUEST_FORM_CONTEXT)),
         KeyBinding::new("ctrl-enter", Submit, Some(REQUEST_FORM_CONTEXT)),
@@ -313,6 +362,33 @@ impl Permission {
         Self::FullAccess,
         Self::Custom,
     ];
+
+    fn visible(cx: &App) -> &'static [Self] {
+        if cx
+            .try_global::<Preferences>()
+            .is_none_or(|prefs| prefs.show_full_access)
+        {
+            &Self::ALL
+        } else {
+            &[Self::Ask, Self::ApproveForMe, Self::Custom]
+        }
+    }
+
+    fn visible_labels(cx: &App) -> &'static [&'static str] {
+        if cx
+            .try_global::<Preferences>()
+            .is_none_or(|prefs| prefs.show_full_access)
+        {
+            &[
+                "Ask for approval",
+                "Approve for me",
+                "Full access",
+                "Custom (config.toml)",
+            ]
+        } else {
+            &["Ask for approval", "Approve for me", "Custom (config.toml)"]
+        }
+    }
 
     /// The preset `config/read` matches; anything else is `Custom (config.toml)`.
     fn from_config(config: &Value) -> Self {
@@ -607,6 +683,7 @@ pub struct Composer {
     speed_timer: Option<Task<()>>,
     permissions_focus: FocusHandle,
     model_focus: FocusHandle,
+    context_focus: FocusHandle,
     /// The card's (`composer-footer` container's) width, CSS px: see `SM_WIDTH`, `XS_WIDTH`.
     footer_width: f32,
     menu_trigger_hovered: bool,
@@ -637,6 +714,9 @@ pub struct Composer {
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
     search_field: bool,
+    field_number_bounds: Option<(f64, f64)>,
+    context_usage: Option<ContextUsage>,
+    context_indicator: std::cell::RefCell<Option<context_usage::Indicator>>,
 }
 
 impl Composer {
@@ -656,6 +736,8 @@ impl Composer {
     }
 
     fn new(placeholder: &'static str, docked: bool, cx: &mut Context<Self>) -> Self {
+        cx.observe_global::<Preferences>(|_, cx| cx.notify())
+            .detach();
         Self {
             focus_handle: cx.focus_handle().tab_stop(true),
             placeholder: placeholder.into(),
@@ -691,6 +773,7 @@ impl Composer {
             speed_timer: None,
             permissions_focus: cx.focus_handle().tab_stop(true),
             model_focus: cx.focus_handle().tab_stop(true),
+            context_focus: cx.focus_handle().tab_stop(true),
             footer_width: f32::INFINITY,
             menu_trigger_hovered: false,
             approval: None,
@@ -715,6 +798,9 @@ impl Composer {
             on_model: None,
             plain_field: None,
             search_field: false,
+            field_number_bounds: None,
+            context_usage: None,
+            context_indicator: Default::default(),
         }
     }
 
@@ -735,6 +821,19 @@ impl Composer {
         editor.search_field = true;
         editor.request_compact = true;
         editor
+    }
+
+    pub fn settings_number(value: f64, minimum: f64, maximum: f64, cx: &mut Context<Self>) -> Self {
+        let mut editor = Self::settings_field("", &value.to_string(), false, cx);
+        editor.request_number = true;
+        editor.field_number_bounds = Some((minimum, maximum));
+        editor
+    }
+
+    pub fn number_value(&self) -> Option<f64> {
+        let value = self.content.trim().parse::<f64>().ok()?;
+        let (minimum, maximum) = self.field_number_bounds?;
+        (value.is_finite() && (minimum..=maximum).contains(&value)).then_some(value)
     }
 
     pub fn field_text(&self) -> &str {
@@ -1227,7 +1326,29 @@ impl Composer {
                 return;
             }
         }
-        self.submit(&Submit, window, cx);
+        let behavior = cx
+            .try_global::<Preferences>()
+            .map_or(EnterBehavior::Enter, |prefs| prefs.enter);
+        if self.slash.open || behavior.sends(self.content.contains('\n'), false) {
+            self.submit(&Submit, window, cx);
+        } else {
+            self.newline(&Newline, window, cx);
+        }
+    }
+
+    fn modified_enter(&mut self, _: &ModifiedSubmit, window: &mut Window, cx: &mut Context<Self>) {
+        if self.plain_field.is_some() {
+            self.enter(&Submit, window, cx);
+            return;
+        }
+        let behavior = cx
+            .try_global::<Preferences>()
+            .map_or(EnterBehavior::Enter, |prefs| prefs.enter);
+        if behavior.sends(self.content.contains('\n'), true) {
+            self.submit(&Submit, window, cx);
+        } else {
+            self.newline(&Newline, window, cx);
+        }
     }
 
     fn submit(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
@@ -1326,7 +1447,7 @@ impl Composer {
         } else {
             self.menu = Some(menu);
             let count = match menu {
-                Menu::Permissions => Permission::ALL.len(),
+                Menu::Permissions => Permission::visible(cx).len(),
                 Menu::Models => self.models.len(),
                 Menu::Effort => 3,
             };
@@ -1440,12 +1561,8 @@ impl Composer {
                 self.menu_focus.items[SPEED_ITEM].focus(window, cx);
             }
             "space" if self.menu == Some(Menu::Permissions) && self.menu_focus.searching() => {
-                self.menu_focus.typeahead(
-                    " ",
-                    &Permission::ALL.map(|p| p.option_label()),
-                    window,
-                    cx,
-                );
+                self.menu_focus
+                    .typeahead(" ", Permission::visible_labels(cx), window, cx);
             }
             "escape" => self.dismiss(&Dismiss, window, cx),
             "enter" | "space" if self.speed_open => {
@@ -1464,12 +1581,8 @@ impl Composer {
                 && !modifiers.platform
                 && !modifiers.alt =>
             {
-                self.menu_focus.typeahead(
-                    key,
-                    &Permission::ALL.map(|p| p.option_label()),
-                    window,
-                    cx,
-                );
+                self.menu_focus
+                    .typeahead(key, Permission::visible_labels(cx), window, cx);
             }
             _ => return,
         }
@@ -1538,7 +1651,9 @@ impl Composer {
     fn activate_menu_item(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         match self.menu {
             Some(Menu::Permissions) => {
-                let permission = Permission::ALL[index];
+                let Some(&permission) = Permission::visible(cx).get(index) else {
+                    return;
+                };
                 self.dismiss(&Dismiss, window, cx);
                 if permission == Permission::FullAccess {
                     window.dispatch_action(Box::new(RequestFullAccess), cx);
@@ -1864,6 +1979,7 @@ impl Render for Composer {
             })
             .track_focus(&self.focus_handle)
             .on_action(self.request_listener(cx, Self::enter))
+            .on_action(self.request_listener(cx, Self::modified_enter))
             .on_action(cx.listener(Self::newline))
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))

@@ -43,7 +43,7 @@ fn real_directory(path: &Path) -> Result<()> {
 }
 
 impl LocalHost {
-    pub(super) fn create_projectless_workspace(&self, prompt: &str) -> Result<Workspace> {
+    pub(super) fn projectless_root(&self) -> Result<PathBuf> {
         let bridge = self
             .bridge
             .as_ref()
@@ -67,6 +67,11 @@ impl LocalHost {
             root.is_absolute(),
             "Projectless chat folder must be absolute on the execution host"
         );
+        Ok(root)
+    }
+
+    pub(super) fn create_projectless_workspace(&self, prompt: &str) -> Result<Workspace> {
+        let root = self.projectless_root()?;
         fs::create_dir_all(&root).context("create projectless workspace root")?;
         real_directory(&root)?;
         let date = root.join(chrono::Local::now().format("%Y-%m-%d").to_string());

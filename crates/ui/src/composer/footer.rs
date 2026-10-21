@@ -155,7 +155,7 @@ impl Composer {
             .child(
                 trigger
                     .track_focus(&self.model_focus)
-                    .focus_visible(menu::trigger_focus)
+                    .focus_visible(crate::focus::trigger_focus)
                     .when(!loading, |d| {
                         d.on_hover(cx.listener(|this, hovered: &bool, _, _| {
                             this.menu_trigger_hovered = *hovered
@@ -195,7 +195,7 @@ impl Composer {
                         .aria_label("Add files and more")
                         .aria_expanded(self.slash.open && self.slash.mention)
                         .tab_index(0)
-                        .focus_visible(menu::trigger_focus)
+                        .focus_visible(crate::focus::trigger_focus)
                         .w(px(28.))
                         .justify_center()
                         .child(footer_icon("plus", t.text))
@@ -218,13 +218,14 @@ impl Composer {
                 // The 1 px trigger border leaves a 4 px visible gap with this content-edge offset.
                 .side_offset(px(5.)),
             )
+            .children(self.context_control(window, t, cx))
             .child(
                 div()
                     .relative()
                     .child(
                         pill("permissions", t)
                             .track_focus(&self.permissions_focus)
-                            .focus_visible(menu::trigger_focus)
+                            .focus_visible(crate::focus::trigger_focus)
                             .on_hover(cx.listener(|this, hovered: &bool, _, _| {
                                 this.menu_trigger_hovered = *hovered
                             }))
@@ -328,7 +329,7 @@ impl Composer {
             .child(
                 pill("dictate", t)
                     .tab_index(0)
-                    .focus_visible(menu::trigger_focus)
+                    .focus_visible(crate::focus::trigger_focus)
                     .w(px(28.))
                     .justify_center()
                     .child(footer_icon("mic", t.text)),

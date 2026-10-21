@@ -47,6 +47,7 @@ pub mod git_pr;
 mod projectless;
 pub use projectless::Workspace;
 pub(crate) mod run_now;
+mod settings;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "transport", content = "request", rename_all = "kebab-case")]
@@ -474,6 +475,7 @@ pub struct LocalHost {
     /// process holds the same connection.
     bridge: Option<Arc<Bridge>>,
     opener: PathBuf,
+    host_settings_path: PathBuf,
     computer_use_settings: Option<computer_use::ComputerUseSettings>,
     native_computer_use: Arc<computer_use_native::NativeComputerUse>,
 }
@@ -487,11 +489,18 @@ impl LocalHost {
             home,
             bridge: None,
             opener: "/usr/bin/open".into(),
+            host_settings_path: PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
+                .join("Library/Application Support/codex-gpui/host-settings.json"),
         }
     }
 
     pub fn with_bridge(mut self, bridge: Arc<Bridge>) -> Self {
         self.bridge = Some(bridge);
+        self
+    }
+
+    pub fn with_host_settings_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.host_settings_path = path.into();
         self
     }
 
@@ -1132,7 +1141,10 @@ impl Host for LocalHost {
                     .context("Failed to set thread worktree owner")?;
                 json!({"success": true})
             }
-            "open-file" => open_file(&self.opener, &params)?,
+            "open-file" => self.open_with_preference(&params)?,
+            "open-in-targets" => self.open_in_targets()?,
+            "third-party-notices" => settings::notices(),
+            "projectless-task-folder" => json!({"path": self.projectless_root()?}),
             "paths-exist" => {
                 let paths: Vec<String> =
                     serde_json::from_value(params.get("paths").cloned().unwrap_or(json!([])))?;
@@ -1152,21 +1164,6 @@ impl Host for LocalHost {
         )
     }
 }
-
-/// The original's editor targets (`openIn.getTargets` ids) and their macOS application names.
-const EDITORS: [(&str, &str); 11] = [
-    ("vscode", "Visual Studio Code"),
-    ("vscodeInsiders", "Visual Studio Code - Insiders"),
-    ("cursor", "Cursor"),
-    ("devin", "Devin Desktop"),
-    ("bbedit", "BBEdit"),
-    ("emacs", "Emacs"),
-    ("sublimeText", "Sublime Text"),
-    ("zed", "Zed"),
-    ("windsurf", "Windsurf"),
-    ("antigravity", "Antigravity"),
-    ("xcode", "Xcode"),
-];
 
 /// `open-file`: opens `path`, a file inside the project of `cwd`, in the editor `target` (the
 /// default app without one). The path must resolve, symlinks included, to a regular file under
@@ -1200,10 +1197,10 @@ fn open_file(opener: &Path, params: &Value) -> Result<Value> {
     match params["target"].as_str() {
         None | Some("systemDefault") => {}
         Some(id) => {
-            let app = EDITORS
+            let app = settings::TARGETS
                 .iter()
-                .find(|(known, _)| *known == id)
-                .map(|(_, app)| *app)
+                .find(|(known, _, _)| *known == id)
+                .map(|(_, _, app)| *app)
                 .with_context(|| format!("unsupported editor target: {id}"))?;
             command.args(["-a", app]);
         }

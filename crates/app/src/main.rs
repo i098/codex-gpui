@@ -7,6 +7,10 @@ use gpui::{
 use std::path::PathBuf;
 
 fn main() {
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("{info}");
+        std::process::exit(101);
+    }));
     if std::env::args().nth(1).as_deref() == Some("--qa-build-info") {
         println!("{}", app::qa::build_info());
         return;
@@ -73,6 +77,12 @@ fn main() {
         .to_string_lossy()
         .into_owned();
     let application = gpui_platform::application().with_assets(theme::Assets);
+    let (open_urls, pending_urls) = async_channel::unbounded();
+    application.on_open_urls(move |urls| {
+        for url in urls {
+            let _ = open_urls.try_send(url);
+        }
+    });
     application.on_reopen(|cx| {
         if let Err(error) = app::windows::reopen(cx) {
             eprintln!("codex-gpui: cannot reopen the window: {error:#}");
@@ -87,6 +97,21 @@ fn main() {
             eprintln!("codex-gpui: cannot open the primary window: {error:#}");
             std::process::exit(1)
         });
+        if let Some(path) = std::env::args().nth(1) {
+            let _ = handle.update(cx, |root, window, cx| {
+                root.open_settings_path(&path, window, cx);
+            });
+        }
+        cx.spawn(async move |cx| {
+            while let Ok(path) = pending_urls.recv().await {
+                let _ = handle.update(cx, |root, window, cx| {
+                    if root.open_settings_path(&path, window, cx) {
+                        window.activate_window();
+                    }
+                });
+            }
+        })
+        .detach();
         app::qa::monitor(handle, cx);
         if !app::qa::ENABLED {
             cx.activate(true);
