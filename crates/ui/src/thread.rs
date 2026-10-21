@@ -153,7 +153,6 @@ pub struct ThreadView {
     laid_out: Rc<RefCell<LaidOut>>,
     /// Focused while the transcript holds the text selection: `Copy` then copies it.
     focus: Option<gpui::FocusHandle>,
-    read_on_focus: Option<gpui::Subscription>,
     carets: Carets,
     /// What was focused when the current press began (the inline message editor keeps a
     /// press that focuses it).
@@ -607,7 +606,6 @@ impl ThreadView {
             scroll: ScrollHandle::new(),
             laid_out: Rc::default(),
             focus: None,
-            read_on_focus: None,
             carets: Carets::default(),
             press_focus: None,
             find: None,
@@ -1645,6 +1643,7 @@ impl ThreadView {
                 .clone()
         };
         let focus = TurnFocus::new(
+            self.thread_id.clone(),
             button_focus("undo"),
             button_focus("view"),
             button_focus("copy"),
@@ -2144,12 +2143,6 @@ impl Render for ThreadView {
         .h(px(32.))
         .top_layer();
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
-        // The original marks the open thread read once focus enters its conversation.
-        if self.read_on_focus.is_none() {
-            self.read_on_focus = Some(cx.on_focus_in(&focus, window, |view, window, cx| {
-                window.dispatch_action(Box::new(ThreadPressed(view.thread_id.clone())), cx);
-            }));
-        }
         let drag_focus = focus.clone();
         let this = cx.entity().downgrade();
         // While a drag runs, every move and release in the window reaches the view, also past
@@ -2224,10 +2217,6 @@ impl Render for ThreadView {
                     .on_mouse_down(
                         gpui::MouseButton::Left,
                         cx.listener(move |view, e: &gpui::MouseDownEvent, window, cx| {
-                            window.dispatch_action(
-                                Box::new(ThreadPressed(view.thread_id.clone())),
-                                cx,
-                            );
                             if window.focused(cx) != view.press_focus {
                                 return;
                             }

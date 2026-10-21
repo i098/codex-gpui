@@ -412,6 +412,7 @@ pub struct ThreadPressed(pub String);
 /// UI (action row time, diff card subtitle) while any of them has focus.
 #[derive(Clone)]
 pub(super) struct TurnFocus {
+    pub thread_id: String,
     pub undo: FocusHandle,
     pub view: FocusHandle,
     pub copy: FocusHandle,
@@ -422,6 +423,7 @@ pub(super) struct TurnFocus {
 
 impl TurnFocus {
     pub(super) fn new(
+        thread_id: String,
         undo: FocusHandle,
         view: FocusHandle,
         copy: FocusHandle,
@@ -432,6 +434,7 @@ impl TurnFocus {
             .iter()
             .any(|handle| handle.is_focused(window));
         Self {
+            thread_id,
             undo,
             view,
             copy,
