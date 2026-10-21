@@ -354,6 +354,9 @@ impl Composer {
                 }
             }
         } else if let Some(text) = item.text() {
+            if self.on_settings_paste.as_ref().is_some_and(|handler| handler(&text, cx)) {
+                return;
+            }
             if attach && text.encode_utf16().take(5000).count() == 5000 {
                 self.save_paste(attach::Content::Text(text), cx);
             } else {

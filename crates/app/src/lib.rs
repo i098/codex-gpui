@@ -3,6 +3,8 @@
 //! plus the key bindings and menu bar. `main.rs` only opens the window;
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
+mod cloud;
+pub use cloud::{CloudTaskRequest, create_cloud_task};
 pub mod computer_use_requests;
 mod features;
 pub mod host;
@@ -205,6 +207,7 @@ pub fn menus() -> Vec<Menu> {
         ]),
     ]
 }
+
 
 /// The thread route's side panel tab.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -2069,6 +2072,7 @@ impl Root {
             });
         }
     }
+
 
     /// HC-033: a printable key (no ⌘/⌃, not Space) typed outside an editable, with no
     /// dialog, menu or popover open, goes to the route's composer and focuses it.

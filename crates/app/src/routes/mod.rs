@@ -14,6 +14,7 @@ pub enum Route {
     Home,
     Thread(String),
     Settings,
+    CloudEnvironments(String),
     /// Rail `Scheduled` (`/scheduled`): the Automations page.
     Scheduled,
     /// A sidebar task row (`/scheduled?automationId=<id>`): the task's thread.
@@ -94,6 +95,7 @@ impl Root {
         self.archive_page = None;
         self.mobile_page = None;
         self.page = match self.state.route.clone() {
+            Route::CloudEnvironments(path) => Some(crate::cloud::shell(self, &path, cx)),
             Route::Settings => Some(settings::page(self, cx)),
             Route::Scheduled => Some(automations::scheduled(self, cx)),
             Route::Automation(id) => Some(automations::automation(self, id, window, cx)),
