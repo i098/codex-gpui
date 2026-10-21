@@ -172,6 +172,10 @@ fn account_completion_is_checked_after_a_previous_local_completion() -> Result<(
     let mut lines = script(None, |_| {})?;
     let account = ui::fixture::response("readback.jsonl", "account/read", 0);
     for line in &mut lines {
+        if line["dir"] == "send" && line["msg"]["method"] == "account/read" {
+            // Match both reads identically so startup consumes the signed-out response first.
+            line["msg"]["params"] = json!({});
+        }
         if line["dir"] == "recv" && line["msg"]["result"].get("requiresOpenaiAuth").is_some() {
             line["msg"]["result"] = json!({"account":null,"requiresOpenaiAuth":true});
         }

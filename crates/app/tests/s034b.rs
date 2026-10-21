@@ -26,6 +26,10 @@ fn recorded_chatgpt_sign_in() -> anyhow::Result<()> {
     let config = ui::fixture::response("readback.jsonl", "config/read", 0);
     let account = ui::fixture::response("readback.jsonl", "account/read", 0);
     for line in &mut lines {
+        if line["dir"] == "send" && line["msg"]["method"] == "account/read" {
+            // Match both reads identically so startup consumes the signed-out response first.
+            line["msg"]["params"] = json!({});
+        }
         if line["dir"] == "recv" && line["msg"]["result"].get("requiresOpenaiAuth").is_some() {
             line["msg"]["result"] = json!({"account":null,"requiresOpenaiAuth":true});
         }
