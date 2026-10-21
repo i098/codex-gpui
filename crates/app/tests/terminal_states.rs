@@ -463,7 +463,8 @@ fn background_depth_retains_selection_scrollback_and_completed_output() -> Resul
         .context("selected terminal text")?;
     ensure!(selected == "ANSI indexed\nANSI RGB\n", "{selected:?}");
     fx.click((left - 21., 22.))?;
-    fx.drag((left + 14., 80.), (left + 114., 112.), 4)?;
+    // The original's press at xterm x + 2, y + 80 lands on the panel resizer, not the terminal.
+    fx.click((left + 15., 136.))?;
     fx.hover((768., 6.))?;
     append(&mut fx, 1);
     shot(&mut fx, "scrollback-bottom")?;
