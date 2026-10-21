@@ -646,6 +646,7 @@ pub struct Composer {
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
     hotkey_controls: Option<AnyView>,
+    on_settings_paste: Option<Rc<dyn Fn(&str, &mut App) -> bool>>,
 }
 
 impl Composer {
@@ -723,6 +724,7 @@ impl Composer {
             on_model: None,
             plain_field: None,
             hotkey_controls: None,
+            on_settings_paste: None,
         }
     }
 
@@ -756,6 +758,20 @@ impl Composer {
         let mut editor = Self::new(placeholder, false, cx);
         editor.plain_field = Some(multiline);
         editor.set_text(value, cx);
+        editor
+    }
+
+    pub fn on_settings_paste(&mut self, handler: impl Fn(&str, &mut App) -> bool + 'static) {
+        self.on_settings_paste = Some(Rc::new(handler));
+    }
+
+    pub fn settings_secret(
+        placeholder: &'static str,
+        value: &str,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut editor = Self::settings_field(placeholder, value, false, cx);
+        editor.secret = true;
         editor
     }
 

@@ -18,6 +18,7 @@ pub enum Route {
         hotkey: bool,
     },
     Settings,
+    CloudEnvironments(String),
     /// Rail `Scheduled` (`/scheduled`): the Automations page.
     Scheduled,
     /// A sidebar task row (`/scheduled?automationId=<id>`): the task's thread.
@@ -104,6 +105,7 @@ impl Root {
                 None
             }
             Route::Settings => Some(settings::page(self, cx)),
+            Route::CloudEnvironments(path) => Some(crate::cloud::shell(self, &path, cx)),
             Route::Scheduled => Some(automations::scheduled(self, cx)),
             Route::Automation(id) => Some(automations::automation(self, id, window, cx)),
             Route::Archive => Some(archive::page(self, cx)),
