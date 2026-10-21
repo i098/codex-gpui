@@ -515,7 +515,7 @@ impl ToTaffy<taffy::style::Style> for Style {
             overflow: self.overflow.into(),
             scrollbar_width: self.scrollbar_width.to_taffy(rem_size, scale_factor),
             position: self.position.into(),
-            inset: self.inset.to_taffy(rem_size, scale_factor),
+            inset: inset_to_taffy(&self.inset, rem_size, scale_factor),
             size: self.size.to_taffy(rem_size, scale_factor),
             min_size: self.min_size.to_taffy(rem_size, scale_factor),
             max_size: self.max_size.to_taffy(rem_size, scale_factor),
@@ -527,7 +527,10 @@ impl ToTaffy<taffy::style::Style> for Style {
             align_self: self.align_self.map(|x| x.into()),
             align_content: self.align_content.map(|x| x.into()),
             justify_content: self.justify_content.map(|x| x.into()),
-            gap: self.gap.to_taffy(rem_size, scale_factor),
+            gap: TaffySize {
+                width: truncated(&self.gap.width, rem_size, scale_factor),
+                height: truncated(&self.gap.height, rem_size, scale_factor),
+            },
             flex_direction: self.flex_direction.into(),
             flex_wrap: self.flex_wrap.into(),
             flex_basis: self.flex_basis.to_taffy(rem_size, scale_factor),
@@ -550,25 +553,50 @@ impl ToTaffy<taffy::style::Style> for Style {
     }
 }
 
-/// Blink resolves padding with `MinimumValueForLength`, whose `LayoutUnit(float)` truncates:
-/// at a fractional zoom that is up to 1/64 device px less than rounding (16 px at 110% is
-/// 35.1875, not 35.203125).
+/// Blink resolves padding and gaps with `MinimumValueForLength`, whose `LayoutUnit(float)`
+/// truncates: at a fractional zoom that is up to 1/64 device px less than rounding (16 px at
+/// 110% is 35.1875, not 35.203125).
+fn truncated(
+    length: &DefiniteLength,
+    rem_size: Pixels,
+    scale_factor: f32,
+) -> taffy::style::LengthPercentage {
+    match length {
+        DefiniteLength::Absolute(length) => taffy::style::LengthPercentage::length(
+            (length.to_pixels(rem_size).0 * scale_factor * 64.).trunc() / 64.,
+        ),
+        DefiniteLength::Fraction(fraction) => taffy::style::LengthPercentage::percent(*fraction),
+    }
+}
+
 fn padding_to_taffy(
     padding: &Edges<DefiniteLength>,
     rem_size: Pixels,
     scale_factor: f32,
 ) -> TaffyRect<taffy::style::LengthPercentage> {
-    let side = |length: &DefiniteLength| match length {
-        DefiniteLength::Absolute(length) => taffy::style::LengthPercentage::length(
-            (length.to_pixels(rem_size).0 * scale_factor * 64.).trunc() / 64.,
-        ),
-        DefiniteLength::Fraction(fraction) => taffy::style::LengthPercentage::percent(*fraction),
+    TaffyRect {
+        top: truncated(&padding.top, rem_size, scale_factor),
+        right: truncated(&padding.right, rem_size, scale_factor),
+        bottom: truncated(&padding.bottom, rem_size, scale_factor),
+        left: truncated(&padding.left, rem_size, scale_factor),
+    }
+}
+
+/// Insets (`top`, `left`, …) resolve like padding: truncated to LayoutUnit.
+fn inset_to_taffy(
+    inset: &Edges<Length>,
+    rem_size: Pixels,
+    scale_factor: f32,
+) -> TaffyRect<taffy::style::LengthPercentageAuto> {
+    let side = |length: &Length| match length {
+        Length::Definite(length) => truncated(length, rem_size, scale_factor).into(),
+        Length::Auto => taffy::style::LengthPercentageAuto::auto(),
     };
     TaffyRect {
-        top: side(&padding.top),
-        right: side(&padding.right),
-        bottom: side(&padding.bottom),
-        left: side(&padding.left),
+        top: side(&inset.top),
+        right: side(&inset.right),
+        bottom: side(&inset.bottom),
+        left: side(&inset.left),
     }
 }
 
