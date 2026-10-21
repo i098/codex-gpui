@@ -360,6 +360,11 @@ The original recordings, masks and strict gates stay unchanged; remaining toolti
 | 20 | Account load failure | error | `We couldn’t load your account`, `Reload`, `Sign out`. | An `account/read` error stops `Root::connect`; the window stays empty. | FAIL (`crates/app/src/lib.rs` `connect`; no error page in `crates/ui`) |
 | 21 | Resize | resize | Below 768 px the sidebar is an overlay; below 40rem the composer stacks. | Sidebar hides (row 14.2/23); composer does not stack. | FAIL (`crates/ui/src/composer.rs`: only the 475 px compact footer) |
 
+The shared Composer session API includes `finish_dictation(window, cx)` and `Completion` events.
+Success follows transcript processing; failure and cancellation remain distinct.
+Consumers can wait before submitting a draft. A closed event stream fails instead of leaving the session active.
+`cargo test -p ui --lib composer::dictation` checks completion order, cancellation, and closed streams without microphone access.
+
 ## 14.4 Thread view
 
 | # | Item | Kind | Original | Port | Status |

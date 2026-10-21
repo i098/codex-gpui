@@ -16,6 +16,16 @@ pub enum Event {
     Finished(Result<String, String>),
 }
 
+/// Reports an active session's result after transcript processing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Completion {
+    Succeeded,
+    Failed,
+    Cancelled,
+}
+
+impl gpui::EventEmitter<Completion> for Composer {}
+
 pub struct Session {
     pub commands: mpsc::Sender<Command>,
     pub events: async_channel::Receiver<Event>,
@@ -84,12 +94,8 @@ impl Composer {
             self.cancel_dictation(cx);
             return;
         }
-        if let Some(active) = &mut self.dictation {
-            if !active.transcribing {
-                active.transcribing = true;
-                let _ = active.session.commands.send(Command::Finish);
-                cx.notify();
-            }
+        if self.dictation.is_some() {
+            self.finish_dictation(window, cx);
             return;
         }
         if self.secret || self.edit_pending || !self.dictation_target_current(cx) {
@@ -135,9 +141,18 @@ impl Composer {
                     .is_err()
                     || finished
                 {
-                    break;
+                    return;
                 }
             }
+            let _ = this.update_in(cx, |this, window, cx| {
+                if this.dictation.is_some() {
+                    this.dictation_event(
+                        Event::Finished(Err("Unable to transcribe audio".into())),
+                        window,
+                        cx,
+                    );
+                }
+            });
         });
         self.dictation = Some(Active {
             starting: true,
@@ -149,10 +164,37 @@ impl Composer {
         cx.notify();
     }
 
+    /// Requests transcription while retaining the active session and its selection.
+    pub fn finish_dictation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(active) = &mut self.dictation else {
+            return;
+        };
+        if active.transcribing {
+            return;
+        }
+        active.transcribing = true;
+        if active.session.commands.send(Command::Finish).is_err() {
+            self.dictation_event(
+                Event::Finished(Err("Unable to transcribe audio".into())),
+                window,
+                cx,
+            );
+        } else {
+            cx.notify();
+        }
+    }
+
+    pub fn has_active_dictation(&self) -> bool {
+        self.dictation.is_some()
+    }
+
     pub fn cancel_dictation(&mut self, cx: &mut Context<Self>) {
-        self.dictation = None;
+        let cancelled = self.dictation.take().is_some();
         for field in &self.request_draft.fields {
             field.update(cx, |field, cx| field.cancel_dictation(cx));
+        }
+        if cancelled {
+            cx.emit(Completion::Cancelled);
         }
         cx.notify();
     }
@@ -192,17 +234,23 @@ impl Composer {
                 let Some(active) = self.dictation.take() else {
                     return;
                 };
-                match result {
-                    Ok(text) if !text.trim().is_empty() => {
-                        self.selected_range = active.selection;
-                        self.history.last = None;
-                        self.replace_text_in_range(None, text.trim(), window, cx);
-                        self.history.last = None;
-                        self.focus_handle.focus(window, cx);
+                let completion = match result {
+                    Ok(text) => {
+                        if !text.trim().is_empty() {
+                            self.selected_range = active.selection;
+                            self.history.last = None;
+                            self.replace_text_in_range(None, text.trim(), window, cx);
+                            self.history.last = None;
+                            self.focus_handle.focus(window, cx);
+                        }
+                        Completion::Succeeded
                     }
-                    Ok(_) => {}
-                    Err(error) => self.dictation_error = Some(error),
-                }
+                    Err(error) => {
+                        self.dictation_error = Some(error);
+                        Completion::Failed
+                    }
+                };
+                cx.emit(completion);
             }
         }
         cx.notify();
@@ -331,5 +379,81 @@ mod tests {
                 assert_eq!(composer.dictation_error(), None);
             })
             .unwrap();
+    }
+
+    #[test]
+    fn a_closed_event_stream_clears_the_session_and_preserves_the_draft() {
+        let mut cx = gpui::TestAppContext::single();
+        let receiver = cx.update(install);
+        let window = cx.add_window(Composer::home);
+        window
+            .update(&mut cx, |composer, window, cx| {
+                composer.set_text("keep", cx);
+                composer.dictate(window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(&mut cx, |composer, _, _| {
+                assert!(!composer.has_active_dictation());
+                assert_eq!(composer.field_text(), "keep");
+                assert_eq!(
+                    composer.dictation_error(),
+                    Some("Unable to transcribe audio")
+                );
+            })
+            .unwrap();
+        assert!(matches!(receiver.try_recv(), Ok(Command::Cancel)));
+    }
+
+    #[test]
+    fn completion_observers_see_inserted_text_and_terminal_outcomes() {
+        use std::{cell::RefCell, rc::Rc};
+        let mut cx = gpui::TestAppContext::single();
+        let commands = cx.update(install);
+        let window = cx.add_window(Composer::home);
+        let editor = window.update(&mut cx, |_, _, cx| cx.entity()).unwrap();
+        let results = Rc::new(RefCell::new(Vec::new()));
+        let observed = results.clone();
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&editor, move |editor, completion: &Completion, cx| {
+                observed
+                    .borrow_mut()
+                    .push((*completion, editor.read(cx).field_text().to_owned()));
+            })
+        });
+        window
+            .update(&mut cx, |editor, window, cx| {
+                editor.set_text("before ", cx);
+                editor.dictate(window, cx);
+                editor.finish_dictation(window, cx);
+                editor.dictation_event(Event::Finished(Ok("after".into())), window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert!(matches!(commands.try_recv(), Ok(Command::Finish)));
+        window
+            .update(&mut cx, |editor, window, cx| {
+                editor.dictate(window, cx);
+                editor.cancel_dictation(cx);
+                editor.dictation_event(Event::Finished(Ok("late".into())), window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(&mut cx, |editor, window, cx| {
+                editor.dictate(window, cx);
+                editor.dictation_event(Event::Finished(Err("failure".into())), window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            *results.borrow(),
+            vec![
+                (Completion::Succeeded, "before after".to_owned()),
+                (Completion::Cancelled, "before after".to_owned()),
+                (Completion::Failed, "before after".to_owned()),
+            ]
+        );
     }
 }
