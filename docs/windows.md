@@ -45,7 +45,7 @@ QA builds never request foreground presentation.
 The AppKit adapter supplies work-area bounds, background presentation, hiding, and overlay policies.
 Unsupported background presentation returns an error instead of claiming success on other platforms.
 The page controllers retain responsibility for hotkey registration, browser transfer, overlay input transitions, and permissions.
-This change does not trigger those permissions or implement those separate pages.
+The window manager does not trigger permissions.
 
 The existing command-menu entry `Open in new window` now opens the selected local thread in another primary window.
 Each root retains its own composer and backend connection.
@@ -55,10 +55,13 @@ If the retained window is fullscreen, the manager waits for fullscreen exit befo
 A dock reopen displays the retained primary before creating another one.
 The manager stores primary geometry through the existing host settings store.
 Page and auxiliary windows do not overwrite that geometry.
+Shared `Bridge` clients serialize initialization and reuse the first successful handshake.
+`Host::prepare_projectless` and `Host::record_projectless` expose the existing standalone workspace allocation and metadata writes.
 
 ## Verification
 
 Run the geometry regression with `cargo test -p app --lib windows::tests`.
+Run `cargo test -p bridge concurrent_windows_initialize_the_shared_server_once` for concurrent initialization.
 Run `native_windows` on macOS with `CODEX_GPUI_QA=1` and an owned recorded `CODEX_BIN` executable.
 Pass `--qa-smoke-profile /tmp/cgx-qa-smoke-<owned-name>` to isolate all profile state.
 The smoke opens two actual native primary windows, checks independent drafts, closes one, hides the last, and restores it without activation.
@@ -67,3 +70,4 @@ The example installs a panic hook before initialization so failures exit with co
 It does not require microphone, accessibility, screen recording, account access, or a live turn.
 No page painting code changes in this slice.
 The separate page owners still owe their original-versus-native appearance checks.
+
