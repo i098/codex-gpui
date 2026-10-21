@@ -418,7 +418,7 @@ The `native_menus` and `s013` tests check the edit actions and Find navigation o
 About shows this build's version in a separate window; Escape closes it.
 The Window menu has Bring All to Front, and Control+Command+F toggles the active window's fullscreen state.
 The fullscreen replay checks command dispatch and window state without bringing a native window to the front.
-The spelling menu routes corrections and Learn Spelling to the native text service.
+The spelling menu replaces the selected misspelling and sends Learn Spelling to the native service.
 Headless tests check these actions without relying on the system dictionary's suggestions.
 The Speech submenu uses the native speech synthesizer; its service test sets the volume to zero.
 

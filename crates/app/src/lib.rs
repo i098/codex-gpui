@@ -149,7 +149,7 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
 }
 
-/// Registers the menu supplied by the native menu family.
+/// Builds the application menu through the native menu family.
 pub fn menus() -> Vec<gpui::Menu> {
     native_menus::menus()
 }
