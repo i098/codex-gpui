@@ -77,6 +77,7 @@ They expose their current size and limits to accessibility tools.
 The close shortcut closes a side tab only when the pane or its tab strip has focus.
 Otherwise, the window close preference controls the confirmation.
 Quit warns about running local chats and enabled scheduled tasks.
+Quit reads window state after the current input dispatch returns, so a borrowed window cannot hide its scheduled work.
 
 The titlebar menu supports pointer and keyboard entry.
 Content-tab creation remains gated while in-app browser pages are excluded.

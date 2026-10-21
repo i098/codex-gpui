@@ -68,6 +68,11 @@ pub(crate) fn request_quit(cx: &mut App) {
     {
         return;
     }
+    cx.set_global(QuitPending(true));
+    cx.defer(begin_quit);
+}
+
+fn begin_quit(cx: &mut App) {
     let handles = windows::handles(windows::Kind::Primary, cx);
     let Some(first) = handles.first().copied() else {
         cx.quit();
@@ -86,7 +91,6 @@ pub(crate) fn request_quit(cx: &mut App) {
             });
         }
     }
-    cx.set_global(QuitPending(true));
     let read = cx.background_spawn(async move {
         let mut scheduled = false;
         for host in hosts {
@@ -139,10 +143,10 @@ pub(crate) fn request_quit(cx: &mut App) {
                 None
             }
         });
-        if let Some(answer) = answer {
-            if answer.await == Ok(0) {
-                cx.update(|cx| cx.quit());
-            }
+        if let Some(answer) = answer
+            && answer.await == Ok(0)
+        {
+            cx.update(|cx| cx.quit());
         }
         cx.update(|cx| cx.set_global(QuitPending(false)));
     })
