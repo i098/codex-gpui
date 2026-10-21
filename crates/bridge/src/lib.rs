@@ -73,6 +73,19 @@ type Pending = Arc<Mutex<Option<HashMap<i64, Sender<Reply>>>>>;
 type Subscribers = Arc<Mutex<Vec<std::sync::mpsc::Sender<Event>>>>;
 type EventSubscribers = Arc<Mutex<Vec<Sender<Event>>>>;
 
+struct PendingRequest<'a> {
+    id: i64,
+    pending: &'a Pending,
+}
+
+impl Drop for PendingRequest<'_> {
+    fn drop(&mut self) {
+        if let Some(pending) = self.pending.lock().as_mut() {
+            pending.remove(&self.id);
+        }
+    }
+}
+
 /// Where a [`Bridge`] sends the client's requests, notifications and answers.
 trait Backend: Send {
     fn send(&mut self, msg: &Value) -> Result<()>;
@@ -314,12 +327,11 @@ impl Bridge {
             .as_mut()
             .context("app-server closed")?
             .insert(id, tx);
-        if let Err(err) = self.write(&msg) {
-            if let Some(map) = self.pending.lock().as_mut() {
-                map.remove(&id);
-            }
-            return Err(err);
-        }
+        let _pending = PendingRequest {
+            id,
+            pending: &self.pending,
+        };
+        self.write(&msg)?;
         let result = rx
             .recv()
             .await
@@ -473,6 +485,29 @@ fn read_loop(reader: impl BufRead, sink: &Sink) {
 #[cfg(test)]
 mod event_tests {
     use super::*;
+
+    #[test]
+    fn dropping_a_request_releases_its_pending_reply() {
+        use std::{
+            future::Future,
+            pin::pin,
+            task::{Context, Poll, Waker},
+        };
+        let (input, producer) = std::io::pipe().unwrap();
+        let (bridge, _) = Bridge::from_io(input, std::io::sink(), None);
+        {
+            let mut request = pin!(bridge.request::<_, Value>("process/spawn", json!({})));
+            assert!(matches!(
+                request
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop())),
+                Poll::Pending
+            ));
+            assert_eq!(bridge.pending.lock().as_ref().unwrap().len(), 1);
+        }
+        assert!(bridge.pending.lock().as_ref().unwrap().is_empty());
+        drop(producer);
+    }
 
     #[test]
     fn closing_one_window_preserves_other_event_subscribers() {
