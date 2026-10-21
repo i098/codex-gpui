@@ -271,6 +271,7 @@ impl Composer {
                 }])
             })
             .ml(px(8.))
+            .flex_none()
             .size(px(28.))
             .p(px(2.))
             .flex()
@@ -321,12 +322,21 @@ impl Composer {
                     this.submit(&Submit, window, cx);
                 }
             }));
+        // The model picker has no room below the width that holds both control groups
+        // (8 + 8 padding, 63 + 10 left, 28 picker, 64 microphone and send); it then drops out
+        // and the microphone and send overflow to the left of the footer's end.
         let right = div()
             .flex()
+            .flex_1()
+            .min_w_0()
+            .justify_end()
             .items_center()
-            .child(model_button)
+            .when(self.footer_width >= MODEL_FIT_WIDTH, |d| {
+                d.child(model_button)
+            })
             .child(
                 pill("dictate", t)
+                    .flex_none()
                     .tab_index(0)
                     .focus_visible(menu::trigger_focus)
                     .w(px(28.))
@@ -334,13 +344,14 @@ impl Composer {
                     .child(footer_icon("mic", t.text)),
             )
             .child(send);
+        // Grid columns: controls, an empty column, then the right group, 5 px apart.
         div()
             .flex()
             .items_center()
-            .justify_between()
+            .gap(px(10.))
             .px(px(8.))
             .pb(px(8.))
-            .child(left)
+            .child(left.min_w_0().flex_shrink(1.))
             .child(right)
     }
 }
