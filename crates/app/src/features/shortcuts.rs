@@ -1,5 +1,5 @@
 use crate::*;
-use gpui::{MouseButton, NavigationDirection};
+use gpui::{MouseButton, NavigationDirection, prelude::FluentBuilder as _};
 use ui::confirmation::{Confirmation, Outcome as ConfirmationOutcome};
 
 actions!(
@@ -70,7 +70,7 @@ pub(super) fn init(cx: &mut App) {
     ]);
 }
 
-pub(super) fn actions(root: gpui::Div, cx: &mut Context<Root>) -> gpui::Div {
+pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> gpui::Div {
     root.on_action(cx.listener(|this, _: &NextRecentChat, window, cx| {
         this.cycle_recent_chat(1, window, cx);
     }))
@@ -102,11 +102,11 @@ pub(super) fn actions(root: gpui::Div, cx: &mut Context<Root>) -> gpui::Div {
     .on_action(cx.listener(|this, _: &NewStandaloneChat, window, cx| {
         this.new_special_chat(NewChatMode::Standalone, window, cx);
     }))
-    .on_action(cx.listener(|this, _: &NewTemporaryChat, window, cx| {
-        if !this.bridge.is_acp() {
+    .when(!owner.bridge.is_acp(), |root| {
+        root.on_action(cx.listener(|this, _: &NewTemporaryChat, window, cx| {
             this.new_special_chat(NewChatMode::Temporary, window, cx);
-        }
-    }))
+        }))
+    })
     .on_action(
         cx.listener(|this, _: &ToggleBottomPanel, window, cx| this.toggle_bottom_panel(window, cx)),
     )

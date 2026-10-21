@@ -143,6 +143,7 @@ pub fn menus() -> Vec<Menu> {
         ]),
         Menu::new("File").items([
             MenuItem::action("New Chat", NewChat),
+            MenuItem::action("New Temporary Chat", features::shortcuts::NewTemporaryChat),
             MenuItem::action(
                 "New standalone chat",
                 features::shortcuts::NewStandaloneChat,
@@ -5560,7 +5561,7 @@ impl Render for Root {
             .children(self.dialog.clone())
             .children(self.shortcut_state.confirmation.clone())
             .children(self.shortcut_state.zoom_banner.clone());
-        section_actions::actions(features::actions(root, cx), cx).into_any_element()
+        section_actions::actions(features::actions(root, self, cx), cx).into_any_element()
     }
 }
 

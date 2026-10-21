@@ -53,7 +53,7 @@ fn standalone_menu_allocates_and_records_its_own_workspace() -> Result<()> {
 }
 
 #[test]
-fn temporary_chat_starts_ephemeral_and_never_enters_recents() -> Result<()> {
+fn temporary_menu_starts_ephemeral_and_never_enters_recents() -> Result<()> {
     const TEMPORARY: &str = "11111111-1111-4111-8111-111111111111";
     let mut recording = script(None, |_| {})?;
     let original_length = recording.len();
@@ -73,7 +73,7 @@ fn temporary_chat_starts_ephemeral_and_never_enters_recents() -> Result<()> {
     }
     let mut fx = Fx::captured("dark", (1280., 832.), recording)?;
     let recents = fx.read(|root, _| root.recents());
-    fx.keys("cmd-shift-n")?;
+    fx.menu("File", "New Temporary Chat")?;
     fx.type_text(GREETING_PROMPT)?;
     fx.keys("enter")?;
     fx.wait_thread(TEMPORARY)?;
