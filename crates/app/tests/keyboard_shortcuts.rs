@@ -300,6 +300,9 @@ mod native {
         fx.keys("cmd-,")?;
         fx.click(fx.at("settings", "Keyboard shortcuts")?)?;
         capture(&mut fx, "list")?;
+        fx.click((1090.7, 278.3))?;
+        capture(&mut fx, "number-menu-default")?;
+        fx.click((1090.7, 278.3))?;
         fx.click((825.24, 378.57))?;
         capture(&mut fx, "capture")?;
         fx.keys("cmd-k")?;
@@ -401,7 +404,7 @@ mod native {
         fx.click(fx.at("settings", "Keyboard shortcuts")?)?;
         fx.click((1100., 278.))?;
         capture(&mut fx, "number-menu")?;
-        fx.click((1020., 350.))?;
+        fx.click((1100., 341.))?;
         ensure!(fx.cx.update(|cx| {
             cx.global::<KeyboardState>()
                 .preferences
@@ -412,7 +415,7 @@ mod native {
         fx.type_text("Open web link in default browser")?;
         fx.click((1100., 286.))?;
         capture(&mut fx, "link-menu")?;
-        fx.click((1020., 386.))?;
+        fx.click((1100., 377.))?;
         ensure!(fx.cx.update(|cx| {
             cx.global::<KeyboardState>()
                 .preferences

@@ -1142,6 +1142,7 @@ impl KeyboardPage {
                 self.link_menu,
             )
         };
+        let current = label;
         let conflict = number && preferences.number_conflict();
         let kind = if number {
             PreferenceKind::Number
@@ -1174,7 +1175,11 @@ impl KeyboardPage {
             .child(on_card(
                 12.5,
                 Squircle,
-                t.primary_soft_alpha,
+                if open {
+                    t.text.opacity(0.08)
+                } else {
+                    t.primary_soft_alpha
+                },
                 Some(t.border),
             ))
             .child(trigger);
@@ -1192,33 +1197,63 @@ impl KeyboardPage {
             ]
         };
         let menu = if open {
-            let mut menu = div()
-                .id("shortcut-preference-menu")
-                .on_hover(cx.listener(|this, hovered: &bool, _, _| this.menu_hovered = *hovered))
-                .absolute()
-                .right_0()
-                .top(px(32.))
-                .w(px(210.))
-                .p(px(5.))
-                .rounded(px(12.))
-                .bg(t.menu_background)
-                .border_1()
-                .border_color(t.border);
-            for (index, (label, action)) in options.into_iter().enumerate() {
-                menu = menu.child(
+            // Rows are the widest label, 6 px and an 18 px check slot, in 8 px padding inside the
+            // popover's 4 px padding.
+            let widest = options
+                .iter()
+                .map(|(label, _)| label_width(window, label))
+                .fold(0., f32::max);
+            let rows: Vec<_> = options
+                .into_iter()
+                .enumerate()
+                .map(|(index, (label, action))| {
                     self.control(
                         format!("shortcut-option-{number}-{index}"),
                         label.into(),
-                        text(label, 14., 20., 430., t.text).into_any_element(),
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .child(div().w(px(widest)).child(text(label, 13., 18.571_428, 500., t.text)))
+                            .child(
+                                div()
+                                    .size(px(18.))
+                                    .flex_none()
+                                    .children((label == current).then(|| icon("menu-check", 18., t.text))),
+                            )
+                            .into_any_element(),
                         action,
                         window,
                         cx,
                     )
-                    .px(px(8.))
-                    .py(px(6.)),
-                );
-            }
-            Some(gpui::deferred(menu).into_any_element())
+                    .rounded(px(15.))
+                    .pl(px(8.29))
+                    .pr(px(7.71))
+                    .py(px(5.))
+                })
+                .collect();
+            Some(
+                gpui::deferred(
+                    div().absolute().top_0().right_0().child(
+                        gpui::anchored()
+                            .anchor(gpui::Anchor::TopRight)
+                            .offset(gpui::point(px(-1.62), px(30.22)))
+                            .child(
+                                div()
+                                    .id("shortcut-preference-menu")
+                                    .on_hover(cx.listener(|this, hovered: &bool, _, _| {
+                                        this.menu_hovered = *hovered
+                                    }))
+                                    .child(div().relative().left(px(0.5)).child(
+                                        crate::composer::popover(&t, widest + 48., |d| {
+                                            d.children(rows)
+                                        }),
+                                    )),
+                            ),
+                    ),
+                )
+                .into_any_element(),
+            )
         } else {
             None
         };
@@ -1539,6 +1574,7 @@ impl Render for KeyboardPage {
                 .py(px(5.)),
             )
         };
+        let scrolls = self.scroll.bounds().size.height <= px(0.) || self.scroll.max_offset().y > px(0.);
         div()
             .size_full()
             .relative()
@@ -1561,7 +1597,8 @@ impl Render for KeyboardPage {
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll)
                     .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.notify()))
-                    .layer()
+                    // Chromium composites a scroller only while its content overflows.
+                    .when(scrolls, |d| d.layer())
                     .child(probe(&self.layer))
                     .child(
                         div().pt(px(16.)).pb(px(1.)).flex().justify_center().child(
@@ -1606,4 +1643,20 @@ impl Render for KeyboardPage {
             )
             .children(self.confirmation.clone())
     }
+}
+
+/// Width of a 13 px, weight-500 menu label.
+fn label_width(window: &Window, label: &str) -> f32 {
+    let run = gpui::TextRun {
+        len: label.len(),
+        font: gpui::Font {
+            weight: gpui::FontWeight(500.),
+            ..gpui::font(crate::SANS)
+        },
+        color: gpui::black(),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    f32::from(window.text_system().layout_line(label, px(13.), &[run], None).width)
 }
