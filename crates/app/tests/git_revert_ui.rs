@@ -125,7 +125,7 @@ fn confirmed_reverts_preserve_unselected_changes_and_report_partial_results() ->
     fs::write(root.join("a.txt"), &edited)?;
     let settings_path = scratch.join(format!("host-settings-{}.json", std::process::id()));
     let mut settings = Settings::load(settings_path.clone())?;
-    for (key, value) in recorded_host_settings()?.read_all() {
+    for (key, value) in recorded_host_settings()?.read_all().iter() {
         settings.write(key, value.clone())?;
     }
     let mut fx = open(root, settings)?;

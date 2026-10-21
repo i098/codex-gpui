@@ -38,7 +38,8 @@ pub(super) fn is_maximized(window: &Window) -> bool {
     {
         native::with_window(window, |window| unsafe {
             objc2::msg_send![window, isZoomed]
-        }).unwrap_or(false)
+        })
+        .unwrap_or(false)
     }
     #[cfg(not(target_os = "macos"))]
     {

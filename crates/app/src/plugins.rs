@@ -304,8 +304,8 @@ impl Root {
                             settings
                                 .read_all()
                                 .get("has-opened-skill-creator-prefill-v1")
+                                .and_then(Value::as_bool)
                         })
-                        .and_then(Value::as_bool)
                         .unwrap_or(false);
                     if !seen {
                         let result =
@@ -678,23 +678,22 @@ mod tests {
         let host = host::LocalHost::new(root.path()).with_opener("/usr/bin/true");
         let request = |path: &std::path::Path| {
             host::Request::post(
-                "open-file",
+                "open-in",
                 Some(json!({
+                    "hostId":"local", "target":"systemDefault",
                     "cwd":root.path(), "path":path,
                 })),
             )
         };
-        let opened = host::Host::fetch(&host, &request(&plugin))?;
-        let body: Value =
-            serde_json::from_str(opened["bodyJsonString"].as_str().context("open response")?)?;
-        assert_eq!(body["path"], json!(plugin.canonicalize()?));
+        assert_eq!(
+            host::json_body(&host::Host::fetch(&host, &request(&plugin))?)?["success"],
+            true
+        );
         let escape = root.path().join("escape");
         symlink(outside.path(), &escape)?;
-        assert!(
-            host::Host::fetch(&host, &request(&escape))
-                .unwrap_err()
-                .to_string()
-                .contains("outside the project")
+        assert_eq!(
+            host::json_body(&host::Host::fetch(&host, &request(&escape))?)?["success"],
+            false
         );
         Ok(())
     }

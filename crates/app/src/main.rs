@@ -23,7 +23,13 @@ fn main() {
         }
         return;
     }
-    let state = State::load();
+    let mut state = State::load();
+    if let Some(route) = std::env::args()
+        .nth(1)
+        .and_then(|path| app::Route::remote_path(&path))
+    {
+        state.route = route;
+    }
     if std::env::args().nth(1).as_deref() == Some("/diff") {
         let path = std::env::args_os().nth(2).unwrap_or_else(|| {
             eprintln!("usage: codex-gpui /diff <patch-file>");

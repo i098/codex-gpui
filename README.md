@@ -190,6 +190,23 @@ The app opens that thread after a successful start, unless you navigate away whi
 Run `cargo test -p app --test task_create -- --test-threads=1` on macOS for the native creation and reload proof.
 Run `cargo test -p app --test automation_run_now` for the `Run now` requests over a stdio app-server stub.
 
+### Legacy Codex Cloud threads
+
+Open an existing task with `cargo run -p app -- /remote/<task-id>`.
+The `/hotkey-window/remote/<task-id>` path selects the compact content variant.
+The page uses the app-server's ChatGPT identity for the original `/wham/tasks` API.
+It reads task turns, streams setup logs and thread events, and supports image previews and follow-up image uploads.
+A log download failure does not hide the task's setup error.
+Applying changes selects a configured local project with the same Git remote.
+Apply and Revert use a temporary Git index, so they do not change the user's staged files.
+The result dialog lists applied, conflicted, and skipped paths.
+`Root::open_remote_task` and `Root::remote_page` provide the same page to native window hosts.
+This route is separate from the durable `codex_cloud` thread service.
+Run `cargo test -p app -p ui --lib cloud` and `cargo test -p app --test host` for the protocol and native state checks.
+Run `cargo test -p app --test cloud_task_native -- --test-threads=1` on macOS for the native state and action checks.
+Those checks use constructed responses from the original schema and exercise real Git apply and revert operations.
+They do not certify live Cloud access or original pixel parity.
+
 ## Managed update policy
 
 General settings shows the read-only `In-app updates` row with `Managed` when the app-server disables `in_app_updates`.
@@ -297,6 +314,24 @@ On macOS, the adapter reads Spotlight metadata, applies the original app exclusi
 It returns each app's path, bundle ID, and display name without launching the app.
 Linux returns an empty native app list, as the original host does.
 
+`open-in-targets` returns the original editor and terminal catalog, installed targets, and the preferred target.
+It reads `open-in-target-preferences` from the same shared host settings store as the UI.
+Saving one project's preference preserves entries for other projects.
+It reads `custom_file_handlers` from enabled raw app-server configuration layers because the typed configuration omits this desktop setting.
+Set `deferEnrichment` without a path to read the catalog without application detection.
+Path queries include native file handlers and their icons; discovery does not launch an application.
+Alacritty is a Linux fallback for the `terminal` target, not a separate target ID in this original build.
+Cloned `host_settings::Settings` handles share updates; release `read_all()` guards before writing.
+
+`open-in` launches a selected target and returns its success state.
+Local paths must resolve inside the project, including symlink targets.
+Existing relative paths take precedence over Git diff prefixes.
+Editor locations and terminal commands follow the original platform rules.
+Custom handlers receive a path argument, a JSON argument, or JSON on standard input.
+The native UI reports failed launches and keeps the current diff.
+Command text sent to an interactive terminal rejects control characters.
+ACP connections use built-in targets without requesting Codex-only configuration.
+
 On macOS, `textsys::show_definition(window, selection, baseline)` opens AppKit's native Look Up popover.
 The baseline uses window-local logical pixels from the top left; the adapter handles both view orientations.
 Call it on the main thread with the unchanged selection.
@@ -339,6 +374,9 @@ An extra layer changes glyph edge bytes even when its opacity is one.
 
 `shapes` links Skia binaries built with Chromium's `SkUserConfig.h` legacy defines.
 `.cargo/config.toml` points `SKIA_BINARIES_URL` to these binaries.
+
+Raster output buffers stop at the visible viewport.
+Compositor tiles keep their original size, so long scrollers preserve edge rasterization.
 
 On macOS, popup backdrops capture the current frame's scene before the popup.
 The capture includes text, images, clipping, and opacity.
