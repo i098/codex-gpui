@@ -554,27 +554,31 @@ impl Composer {
 
     pub(super) fn editor(&self, cx: &mut Context<Self>) -> Div {
         div()
-            .px(px(
-                if self.request_parent.is_some() && self.request_compact && !self.secret {
-                    10.
+            .px(px(if self.bare_field_weight.is_some() {
+                0.
+            } else if self.request_parent.is_some() && self.request_compact && !self.secret {
+                10.
+            } else {
+                12.
+            }))
+            .pb(px(
+                if self.request_parent.is_some() || self.bare_field_weight.is_some() {
+                    0.
                 } else {
-                    12.
+                    4.
                 },
             ))
-            .pb(px(if self.request_parent.is_some() {
-                0.
-            } else {
-                4.
-            }))
-            .min_h(px(if self.request_parent.is_some() {
-                20.
-            } else {
-                48.
-            }))
+            .min_h(px(
+                if self.request_parent.is_some() || self.bare_field_weight.is_some() {
+                    20.
+                } else {
+                    48.
+                },
+            ))
             .cursor(CursorStyle::IBeam)
             .text_size(FONT_SIZE)
             .line_height(LINE_HEIGHT)
-            .font_weight(gpui::FontWeight(430.))
+            .font_weight(gpui::FontWeight(self.bare_field_weight.unwrap_or(430.)))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_click))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -585,7 +589,10 @@ impl Composer {
             // `overflow-y: auto` contents), then composited onto the card.
             .child(
                 div()
-                    .when(self.content.is_empty(), |d| d.opacity(0.5))
+                    .when(
+                        self.content.is_empty() && self.bare_field_weight.is_none(),
+                        |d| d.opacity(0.5),
+                    )
                     .layer()
                     .child(Editor(cx.entity())),
             )

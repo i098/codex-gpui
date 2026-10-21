@@ -364,3 +364,153 @@ fn head_start_records_the_synced_branch_and_failures_clean_up_only_safe_worktree
     assert!(remote_ref.is_err());
     Ok(())
 }
+
+#[test]
+fn handoff_round_trip_preserves_local_edits_and_untracked_files() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let (source, _, _) = fixture(dir.path())?;
+    let before = snapshot(&source)?;
+    let host = LocalHost::new(dir.path().join("codex"));
+    let created = call(&host, "create-worktree", json!({"cwd": source.join("sub")}))?;
+    let root = PathBuf::from(created["worktreeGitRoot"].as_str().unwrap());
+    let workspace = PathBuf::from(created["worktreeWorkspaceRoot"].as_str().unwrap());
+    let moved = call(
+        &host,
+        "move-thread-to-worktree",
+        json!({
+            "localCwd": source, "sourceBranch": "feature", "localCheckoutBranch": "main",
+            "worktreeGitRoot": root, "worktreeWorkspaceRoot": workspace,
+            "worktreeCheckoutBranch": "feature", "defaultBranch": "main",
+        }),
+    )?;
+    assert_eq!(moved["status"], "success", "{moved}");
+    assert_eq!(git(&source, &["symbolic-ref", "--short", "HEAD"])?, "main");
+    assert_eq!(
+        fs::read_to_string(workspace.join("tracked.txt"))?,
+        "user edit\n"
+    );
+    assert_eq!(
+        fs::read_to_string(workspace.join("draft.txt"))?,
+        "untracked user work\n"
+    );
+    assert!(!source.join("sub/draft.txt").exists());
+    let returned = call(
+        &host,
+        "move-thread-to-local",
+        json!({
+            "sourceWorktreeCwd": workspace, "sourceWorktreeRoot": root,
+            "localGitRoot": source, "sourceBranch": "feature",
+        }),
+    )?;
+    assert_eq!(returned["status"], "success", "{returned}");
+    assert_eq!(snapshot(&source)?, before);
+    assert!(git(&root, &["symbolic-ref", "-q", "HEAD"]).is_err());
+    Ok(())
+}
+
+#[test]
+fn failed_local_handoff_restores_the_source_worktree() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let (source, _, _) = fixture(dir.path())?;
+    let host = LocalHost::new(dir.path().join("codex"));
+    let created = call(&host, "create-worktree", json!({"cwd": source.join("sub")}))?;
+    let root = PathBuf::from(created["worktreeGitRoot"].as_str().unwrap());
+    git(&root, &["checkout", "-qb", "review"])?;
+    write(&root.join("sub/tracked.txt"), "worktree edit\n")?;
+    let before = snapshot(&source)?;
+    let result = call(
+        &host,
+        "move-thread-to-local",
+        json!({
+            "sourceWorktreeCwd": root.join("sub"), "sourceWorktreeRoot": root,
+            "localGitRoot": source, "sourceBranch": "review",
+        }),
+    )?;
+    assert_eq!(result["status"], "error");
+    assert_eq!(result["error"], "local-destination-has-tracked-changes");
+    assert_eq!(result["rollbackErrors"], json!([]));
+    assert_eq!(git(&root, &["symbolic-ref", "--short", "HEAD"])?, "review");
+    assert_eq!(
+        fs::read_to_string(root.join("sub/tracked.txt"))?,
+        "worktree edit\n"
+    );
+    assert_eq!(snapshot(&source)?, before);
+    Ok(())
+}
+
+#[test]
+fn archived_worktree_restores_its_saved_files_and_owner() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let (source, _, _) = fixture(dir.path())?;
+    git(&source, &["config", "user.name", "Snapshot proof"])?;
+    git(
+        &source,
+        &["config", "user.email", "snapshot@example.invalid"],
+    )?;
+    let before = snapshot(&source)?;
+    let host = LocalHost::new(dir.path().join("codex"));
+    let created = call(&host, "create-worktree", json!({"cwd": source.join("sub")}))?;
+    let root = PathBuf::from(created["worktreeGitRoot"].as_str().unwrap());
+    let workspace = PathBuf::from(created["worktreeWorkspaceRoot"].as_str().unwrap());
+    write(&workspace.join("tracked.txt"), "recover this edit\n")?;
+    write(&workspace.join("new.txt"), "recover this file\n")?;
+    let kept = call(
+        &host,
+        "delete-worktree",
+        json!({"worktree": root, "reason": "archive-cleanup"}),
+    )?;
+    assert_eq!(kept, json!({"success": false, "reason": "deletion-failed"}));
+    assert!(root.is_dir());
+    let removed = call(
+        &host,
+        "delete-worktree",
+        json!({"worktree": root, "reason": "archive-cleanup", "force": true}),
+    )?;
+    assert_eq!(removed["success"], true);
+    assert!(!root.exists());
+    let saved = call(
+        &host,
+        "worktree-snapshot-ref",
+        json!({
+            "worktreePath": root, "candidateRoots": [dir.path().join("missing"), source],
+        }),
+    )?;
+    assert_eq!(saved["exists"], true);
+    let restored = call(
+        &host,
+        "restore-worktree",
+        json!({
+            "repoRoot": source, "worktreePath": root, "cwd": workspace, "conversationId": "recovered-thread",
+        }),
+    )?;
+    assert_eq!(restored["success"], true);
+    assert_eq!(
+        fs::read_to_string(workspace.join("tracked.txt"))?,
+        "recover this edit\n"
+    );
+    assert_eq!(
+        fs::read_to_string(workspace.join("new.txt"))?,
+        "recover this file\n"
+    );
+    let owner = root.join(git(
+        &root,
+        &["rev-parse", "--git-path", "codex-thread.json"],
+    )?);
+    let owner: Value = serde_json::from_slice(&fs::read(owner)?)?;
+    assert_eq!(owner["ownerThreadId"], "recovered-thread");
+    assert_eq!(snapshot(&source)?, before);
+    let nested = root.join("embedded");
+    fs::create_dir(&nested)?;
+    git(&nested, &["init", "-q"])?;
+    let refused = call(
+        &host,
+        "delete-worktree",
+        json!({"worktree": root, "reason": "archive-cleanup", "force": true}),
+    )?;
+    assert_eq!(
+        refused,
+        json!({"success": false, "reason": "unsupported-nested-repository"})
+    );
+    assert!(nested.join(".git").is_dir());
+    Ok(())
+}

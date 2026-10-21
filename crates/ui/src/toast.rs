@@ -38,6 +38,13 @@ pub enum Kind {
     Success,
 }
 
+struct TitleLink {
+    before: SharedString,
+    label: SharedString,
+    after: SharedString,
+    url: SharedString,
+}
+
 /// A toast: an optional icon (`assets/icons/<name>.svg`, 16 px), one line of title and
 /// buttons; the last button is the primary one, earlier ones are secondary.
 pub struct Toast {
@@ -46,6 +53,7 @@ pub struct Toast {
     title: SharedString,
     description: Option<SharedString>,
     actions: Vec<(SharedString, Click)>,
+    title_link: Option<TitleLink>,
 }
 
 impl Toast {
@@ -56,6 +64,7 @@ impl Toast {
             title: title.into(),
             description: None,
             actions: Vec::new(),
+            title_link: None,
         }
     }
 
@@ -85,6 +94,18 @@ impl Toast {
 
     pub fn description(mut self, description: impl Into<SharedString>) -> Self {
         self.description = Some(description.into());
+        self
+    }
+
+    pub fn link(mut self, label: &str, url: impl Into<SharedString>) -> Self {
+        if let Some(start) = self.title.find(label) {
+            self.title_link = Some(TitleLink {
+                before: self.title[..start].to_owned().into(),
+                label: label.to_owned().into(),
+                after: self.title[start + label.len()..].to_owned().into(),
+                url: url.into(),
+            });
+        }
         self
     }
 
@@ -300,6 +321,37 @@ fn button(
 }
 
 impl Toaster {
+    fn title(&self, e: &Entry, color: Hsla) -> gpui::AnyElement {
+        let Some(link) = &e.toast.title_link else {
+            return crate::text(e.toast.title.clone(), 14., 21., 500., color)
+                .flex()
+                .items_center()
+                .min_h(px(24.))
+                .into_any_element();
+        };
+        let url = link.url.clone();
+        div()
+            .flex()
+            .items_center()
+            .min_h(px(24.))
+            .child(crate::text(link.before.clone(), 14., 21., 500., color))
+            .child(
+                div()
+                    .id(("toast-title-link", e.id))
+                    .role(gpui::Role::Link)
+                    .aria_label(link.label.clone())
+                    .cursor_pointer()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(move |_, _, cx| {
+                        cx.stop_propagation();
+                        cx.open_url(&url);
+                    })
+                    .child(crate::text(link.label.clone(), 14., 21., 500., color).underline()),
+            )
+            .child(crate::text(link.after.clone(), 14., 21., 500., color))
+            .into_any_element()
+    }
+
     fn toast(&self, e: &Entry, cx: &mut Context<Self>) -> impl IntoElement {
         let t = &cx.theme().clone();
         let (bg, border, fg) = match e.toast.kind {
@@ -399,12 +451,7 @@ impl Toaster {
                             .when(e.toast.description.is_some(), |d| {
                                 d.flex_col().items_start().max_w(px(360.))
                             })
-                            .child(
-                                crate::text(e.toast.title.clone(), 14., 21., 500., fg)
-                                    .flex()
-                                    .items_center()
-                                    .min_h(px(24.)),
-                            )
+                            .child(self.title(e, fg))
                             .when_some(e.toast.description.clone(), |d, description| {
                                 d.child(
                                     crate::text(description, 14., 21., 430., fg)

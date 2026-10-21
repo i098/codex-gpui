@@ -633,7 +633,8 @@ The queued-state check uses native input and captures the rendered disabled UI b
 It then drains real host work and checks the owned commit and remote refs.
 It does not park Git or fake a host response.
 Matched capture fixtures use the retained Subtract thread and an owned `+5 -1` checkout.
-The `codex_git_commit` attribution trailer and `Create PR` remain separate work.
+The attribution resolver and Create PR workflow live in `app::git_pr`.
+Original screenshot pairs and live GitHub mutation proof remain pending.
 
 ### Native Create branch and Switch branch
 
@@ -684,6 +685,43 @@ The transport disables Git and GitHub prompts and does not run a local shell.
 These trusted UI commands run without a Codex sandbox.
 Connection failures and process-spawn failures remain errors.
 The original bundled app-server smoke checked concurrent handles, separate stdout and stderr, and a nonzero exit code.
+
+### PR creation, metadata, and attribution
+
+`Create PR` and `Create draft PR` open the source-shaped title, description, local-changes checkbox, and action rows.
+The form retains the chat draft, supports native text input, and closes on Escape.
+Unavailable GitHub providers leave creation disabled.
+`git_pr_ui::pr_fields_keep_the_chat_draft_and_block_an_unavailable_provider` exercises those controls on macOS.
+
+Commit and PR message generation share the existing ephemeral app-server thread and structured-result handling.
+PR title/body generation uses the original 45-second timeout and source prompt bounds.
+The combined generator supplies a commit message, PR title, and PR body before commit, push, and creation.
+Existing nonempty title and body values take precedence over generated values.
+Creation attaches the returned PR URL and branch to the originating thread.
+
+The attribution resolver reads the source user preference before applying `features.codex_git_commit` and `commit_attribution`.
+The host keeps explicit opt-outs and existing trailers, and appends a missing co-author to the final trailer paragraph.
+GitHub updates, reviewer search, and branch PR discovery use the shared app-server process transport.
+Updates reject account/host mismatches before command execution.
+
+### Worktree transfer and recovery
+
+`move-thread-to-worktree` and `move-thread-to-local` preserve tracked and untracked edits through Git stashes.
+Stash commands do not inherit `--literal-pathspecs`; Git uses the magic `:/` pathspec while removing saved untracked files.
+Destination failures restore the source checkout and report rollback failures.
+The existing worktree fixture checks transfer in both directions and refusal of a dirty local destination.
+
+Managed deletion saves a recovery ref before removing a worktree.
+`restore-worktree` restores that ref and the owner metadata without changing the source checkout.
+Recovery rejects initialized nested repositories during automatic archive cleanup.
+`prepare-worktree-snapshot` archives the selected commit or the working files without ignored files.
+`upload-worktree-snapshot` streams the owned archive and removes it on success or failure.
+An unrelated file cannot be uploaded or removed through that endpoint.
+
+PR watch helpers reuse heartbeat definitions, the existing automation store, and a ten-minute recurrence.
+Preference updates replace guidance only in active PR watchers.
+The watch/progress panel, remote-host handoff, and PR detail-control composition still require integration.
+Original captures remain on hold; no pixel-parity claim is made for these new surfaces.
 
 ## 14.7 Settings, login and onboarding
 

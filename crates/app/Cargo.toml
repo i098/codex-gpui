@@ -26,6 +26,7 @@ gpui_platform.workspace = true
 iana-time-zone = "0.1"
 pollster = "0.4"
 rrule = { path = "../../vendor/rrule", features = ["exrule"] }
+ring = "0.17"
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

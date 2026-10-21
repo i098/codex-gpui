@@ -645,6 +645,7 @@ pub struct Composer {
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
+    bare_field_weight: Option<f32>,
 }
 
 impl Composer {
@@ -721,6 +722,7 @@ impl Composer {
             on_approval: None,
             on_model: None,
             plain_field: None,
+            bare_field_weight: None,
         }
     }
 
@@ -734,6 +736,22 @@ impl Composer {
         editor.plain_field = Some(multiline);
         editor.set_text(value, cx);
         editor
+    }
+
+    pub fn bare_field(
+        placeholder: &'static str,
+        value: &str,
+        multiline: bool,
+        weight: f32,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut editor = Self::settings_field(placeholder, value, multiline, cx);
+        editor.bare_field_weight = Some(weight);
+        editor
+    }
+
+    pub fn set_field_label(&mut self, label: &'static str) {
+        self.request_label = Some(label.into());
     }
 
     pub fn field_text(&self) -> &str {
@@ -1342,6 +1360,10 @@ impl Composer {
         if self.marked_range.is_some() {
             return;
         }
+        if self.bare_field_weight.is_some() {
+            cx.propagate();
+            return;
+        }
         if self.answer_request_parent(ApprovalDecision::Cancel, window, cx) {
             return;
         }
@@ -1896,13 +1918,16 @@ impl Render for Composer {
         if self.plain_field.is_some() {
             return div().w_full().child(
                 card.key_context(KEY_CONTEXT)
-                    .when(self.request_parent.is_none(), |d| {
-                        d.border_1()
-                            .border_color(t.border)
-                            .rounded(px(8.))
-                            .bg(t.background_panel)
-                            .py(px(8.))
-                    })
+                    .when(
+                        self.request_parent.is_none() && self.bare_field_weight.is_none(),
+                        |d| {
+                            d.border_1()
+                                .border_color(t.border)
+                                .rounded(px(8.))
+                                .bg(t.background_panel)
+                                .py(px(8.))
+                        },
+                    )
                     .when(self.request_parent.is_some(), |d| {
                         d.px(px(1.))
                             .py(px(if self.secret {
@@ -1923,21 +1948,24 @@ impl Render for Composer {
                                 ..Default::default()
                             }))
                     })
-                    .when(self.request_parent.is_some(), |d| {
-                        d.role(if self.secret {
-                            gpui::Role::PasswordInput
-                        } else {
-                            gpui::Role::TextInput
-                        })
-                        .aria_label(
-                            self.request_label
-                                .as_ref()
-                                .unwrap_or(&self.placeholder)
-                                .clone(),
-                        )
-                        .aria_placeholder(self.placeholder.clone())
-                        .when(!self.secret, |d| d.aria_value(self.content.clone()))
-                    })
+                    .when(
+                        self.request_parent.is_some() || self.bare_field_weight.is_some(),
+                        |d| {
+                            d.role(if self.secret {
+                                gpui::Role::PasswordInput
+                            } else {
+                                gpui::Role::TextInput
+                            })
+                            .aria_label(
+                                self.request_label
+                                    .as_ref()
+                                    .unwrap_or(&self.placeholder)
+                                    .clone(),
+                            )
+                            .aria_placeholder(self.placeholder.clone())
+                            .when(!self.secret, |d| d.aria_value(self.content.clone()))
+                        },
+                    )
                     .child(self.editor(cx).when(self.request_number, |d| d.pr(px(30.))))
                     .when(self.request_number, |d| {
                         d.child(self.request_number_stepper(&t, cx))

@@ -9,6 +9,10 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
+pub(super) mod archives;
+pub(super) mod handoff;
+pub(super) mod snapshots;
+
 /// Git in `root` without pathspec options: `check-ignore` rejects `--literal-pathspecs`, and
 /// the original's `ls-files` calls use pathspec magic.
 fn plain_command(root: &Path) -> Command {
@@ -23,7 +27,11 @@ fn plain_command(root: &Path) -> Command {
 
 fn command(root: &Path, args: &[&str]) -> Command {
     let mut command = plain_command(root);
-    command.arg("--literal-pathspecs").args(args);
+    // Git stash uses the magic `:/` pathspec when cleaning saved untracked files.
+    if args.first() != Some(&"stash") {
+        command.arg("--literal-pathspecs");
+    }
+    command.args(args);
     command
 }
 
@@ -564,11 +572,40 @@ fn commit_flow(endpoint: &str, root: &Path, params: &Value) -> Option<Result<Val
     Some(match endpoint {
         "git-commit-status" => status(root),
         "git-commit-diff" => commit_diff(root, include),
+        "git-pr-context" => pull_request_context(root),
         "git-commit" => commit(root, include, params),
         "git-push" => push(root, params),
         "git-checkout" => checkout(root, params),
         _ => return None,
     })
+}
+
+fn pull_request_context(root: &Path) -> Result<Value> {
+    let mut context = status(root)?;
+    let base = default_branch(root)?;
+    context["defaultBranch"] = json!(base);
+    context["originUrl"] = json!(answer(root, &["config", "--get", "remote.origin.url"])?);
+    if let Some(base) = base {
+        let mut reference = base.clone();
+        for remote in remotes(root)? {
+            let candidate = format!("{remote}/{base}");
+            if has_commit(root, &candidate)? {
+                reference = candidate;
+                break;
+            }
+        }
+        if has_commit(root, &reference)? && has_commit(root, "HEAD")? {
+            let range = format!("{reference}...HEAD");
+            let diff = checked(run(
+                root,
+                &["diff", "--no-ext-diff", "--no-color", &range, "--"],
+            )?)?;
+            context["branchDiff"] = String::from_utf8(diff)?.into();
+            let files = checked(run(root, &["diff", "--name-only", &range, "--"])?)?;
+            context["branchFiles"] = json!(String::from_utf8(files)?.lines().collect::<Vec<_>>());
+        }
+    }
+    Ok(context)
 }
 
 fn current_branch(root: &Path) -> Result<Option<String>> {
@@ -866,6 +903,7 @@ fn commit(root: &Path, include: bool, params: &Value) -> Result<Value> {
         .map(str::trim)
         .filter(|message| !message.is_empty())
         .context("missing commit message")?;
+    let message = crate::git_pr::commit_message(message, params.get("commitAttribution"))?;
     if let Some(failure) = create_branch(root, params)? {
         return Ok(failure);
     }
@@ -880,7 +918,7 @@ fn commit(root: &Path, include: bool, params: &Value) -> Result<Value> {
         nothing["errorType"] = "nothing-to-commit".into();
         return Ok(nothing);
     }
-    let committed = git(root, &["commit", "-m", message])?;
+    let committed = git(root, &["commit", "-m", &message])?;
     if !committed.success {
         return Ok(failed("commit", committed.failure()));
     }
@@ -1111,6 +1149,15 @@ pub(super) fn remove_unstarted_worktree(worktrees_root: &Path, worktree: &Worktr
         "refusing to remove {}: not an unstarted automation worktree",
         root.display()
     );
+    cleanup_worktree_environment(root)?;
+    let removed = git(root, &["worktree", "remove", &root.to_string_lossy()])?;
+    ensure!(removed.success, "{}", removed.failure());
+    fs::remove_file(reserved.join(MARKER))?;
+    let _ = fs::remove_dir(reserved);
+    Ok(())
+}
+
+fn cleanup_worktree_environment(root: &Path) -> Result<()> {
     let selected = answer(
         root,
         &[
@@ -1134,10 +1181,6 @@ pub(super) fn remove_unstarted_worktree(worktrees_root: &Path, worktree: &Worktr
             )?;
         }
     }
-    let removed = git(root, &["worktree", "remove", &root.to_string_lossy()])?;
-    ensure!(removed.success, "{}", removed.failure());
-    fs::remove_file(reserved.join(MARKER))?;
-    let _ = fs::remove_dir(reserved);
     Ok(())
 }
 

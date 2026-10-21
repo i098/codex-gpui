@@ -468,6 +468,7 @@ pub struct LocalHost {
     host_settings_path: PathBuf,
     computer_use_settings: Option<computer_use::ComputerUseSettings>,
     native_computer_use: Arc<computer_use_native::NativeComputerUse>,
+    worktree_uploads: git::snapshots::Uploads,
 }
 
 impl LocalHost {
@@ -476,6 +477,7 @@ impl LocalHost {
         Self {
             computer_use_settings: None,
             native_computer_use: Arc::new(computer_use_native::NativeComputerUse::new(&home)),
+            worktree_uploads: Default::default(),
             home,
             bridge: None,
             opener: "/usr/bin/open".into(),
@@ -889,7 +891,7 @@ impl LocalHost {
                      ?16, ?17, ?18, ?19, ?20, ?21, ?22)
              ON CONFLICT(id) DO UPDATE SET status=excluded.status, next_run_at=excluded.next_run_at,
               next_run_nominal_at=excluded.next_run_nominal_at, updated_at=excluded.updated_at,
-              rrule=excluded.rrule",
+              rrule=excluded.rrule, prompt=excluded.prompt",
             params![
                 id,
                 item["name"].as_str(),
@@ -1112,7 +1114,34 @@ impl Host for LocalHost {
             "inbox-items" => self.inbox(&params)?,
             "git-changes" | "git-stage" | "git-unstage" | "git-revert" | "git-init-repo"
             | "git-commit-status" | "git-commit-diff" | "git-commit" | "git-push"
-            | "git-checkout" => git::fetch(endpoint, &params)?,
+            | "git-checkout" | "git-pr-context" => git::fetch(endpoint, &params)?,
+            "github-request" | "gh-pr-create" | "gh-pr-update" | "gh-pr-for-branch"
+            | "gh-pr-local-state" | "gh-user-search" => git_pr::fetch(self, endpoint, &params)?,
+            "git-pr-watch-start" => self.start_pr_watcher(&params)?,
+            "git-pr-watch-preferences" => self.refresh_pr_watchers(&params)?,
+            "git-pr-watch-pause" => {
+                self.update_automation(&json!({"id": params["id"], "status": "PAUSED"}))?
+            }
+            "prepare-worktree-snapshot" => self.prepare_worktree_snapshot(&params)?,
+            "upload-worktree-snapshot" => self.upload_worktree_snapshot(&params)?,
+            "move-thread-to-worktree" => {
+                let root = params["worktreesRoot"]
+                    .as_str()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| self.home.join("worktrees"));
+                git::handoff::to_worktree(&params, &root)?
+            }
+            "move-thread-to-local" => git::handoff::to_local(&params)?,
+            "worktree-delete"
+            | "delete-worktree"
+            | "restore-worktree"
+            | "worktree-snapshot-ref" => {
+                let root = params["worktreesRoot"]
+                    .as_str()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| self.home.join("worktrees"));
+                git::archives::fetch(endpoint, &params, &root)?
+            }
             "create-worktree" => self.create_worktree(&params)?,
             "set-worktree-owner-thread" | "worktree-set-owner-thread" => {
                 let worktree = params["worktree"].as_str().context("missing worktree")?;

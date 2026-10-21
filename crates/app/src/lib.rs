@@ -5,6 +5,7 @@
 
 pub mod computer_use_requests;
 mod features;
+mod git_pr;
 pub mod host;
 pub mod host_settings;
 pub mod qa;
@@ -423,6 +424,7 @@ pub struct Root {
     /// `⌘K` command menu over the window.
     command_menu: Option<Entity<CommandMenu>>,
     dialog: Option<Entity<Dialog>>,
+    pull_request_form: Option<Entity<ui::screens::git_pr::CreatePullRequest>>,
     /// The open dialog came from the composer: its close returns focus there.
     dialog_to_composer: bool,
     /// Signed out: replaces the whole window.
@@ -470,6 +472,7 @@ pub struct Root {
     commit_cwd: Option<String>,
     /// `Include unstaged changes`, kept from one commit form to the next.
     commit_include_unstaged: bool,
+    commit_attribution: Arc<git_pr::Attribution>,
     /// The ephemeral thread that writes a commit message.
     generation: Option<Generation>,
     /// The `Notifications` region over the window.
@@ -708,6 +711,7 @@ impl Root {
             settings_page: None,
             command_menu: None,
             dialog: None,
+            pull_request_form: None,
             dialog_to_composer: false,
             login: None,
             logout_pending: false,
@@ -745,6 +749,7 @@ impl Root {
             git_status_load: None,
             commit_cwd: None,
             commit_include_unstaged: true,
+            commit_attribution: Arc::default(),
             generation: None,
             toaster: cx.new(|_| Toaster::new()),
             _events,
@@ -1039,7 +1044,9 @@ impl Root {
         if let Some(thread) = &self.thread {
             thread.update(cx, |view, cx| view.set_git_repository(None, cx));
         }
+        self.commit_attribution = Arc::default();
         self.host = host;
+        self.pull_request_form = None;
         self.automations = None;
         self.load_projects(cx);
         if self.scheduled_route() {
@@ -1548,6 +1555,7 @@ impl Root {
             model: generation_model(&self.models),
             cwd: request.cwd.clone(),
             instructions: git_setting(cx, "git-commit-instructions").unwrap_or_default(),
+            attribution: self.commit_attribution.clone(),
         };
         let continuation = self.dialog.clone().filter(|dialog| {
             dialog.read(cx).kind() == DialogKind::Commit
@@ -2728,6 +2736,7 @@ impl Root {
                             .detach();
                         this.command_menu = None;
                         this.dialog = None;
+                        this.pull_request_form = None;
                         this.thread = None;
                         this.diff = None;
                         this.file = None;
@@ -2856,6 +2865,8 @@ impl Root {
                 "New tab" => window.dispatch_action(Box::new(ToggleChangesPanel), cx),
                 "Open terminal" => window.dispatch_action(Box::new(OpenBackgroundTerminal), cx),
                 "Commit or push" => self.open_git_form(DialogKind::Commit, window, cx),
+                "Create PR" => self.open_pull_request(false, window, cx),
+                "Create draft PR" => self.open_pull_request(true, window, cx),
                 "Manage scheduled tasks" => window.dispatch_action(Box::new(OpenScheduled), cx),
                 "Log out" => window.dispatch_action(Box::new(LogOut), cx),
                 label => {
@@ -4189,6 +4200,9 @@ impl Root {
                 };
                 self.toast(Toast::danger(message), cx);
             } else {
+                if matches!(key, "git-pr-watch-auto-merge" | "git-pr-watch-instructions") {
+                    self.update_pr_watch_preferences(cx);
+                }
                 let message = match key {
                     "git-branch-prefix" => Some("Saved branch prefix".to_owned()),
                     "git-pull-request-merge-method" => {
@@ -4882,7 +4896,7 @@ async fn read_queue(bridge: &Bridge, thread_id: &str) -> Result<Vec<QueuedSubmis
     }
 }
 
-/// The ephemeral app-server thread that writes a commit message, and what it has said.
+/// The ephemeral app-server thread for structured Git messages.
 struct Generation {
     thread: String,
     text: Option<String>,
@@ -4921,6 +4935,7 @@ struct GitRun {
     model: String,
     cwd: String,
     instructions: String,
+    attribution: Arc<git_pr::Attribution>,
 }
 
 enum GitOutcome {
@@ -5117,11 +5132,13 @@ async fn commit_workflow(
         };
         this.update(cx, |this, cx| this.set_git_phase(Some("Committing…"), cx))
             .ok();
+        let attribution = git_pr::attribution(run, cx).await;
         let params = json!({
             "cwd": run.cwd,
             "message": message,
             "includeUnstaged": include_unstaged,
             "newBranch": new_branch,
+            "commitAttribution": attribution,
         });
         match run.call(cx, "git-commit", params).await {
             Ok(done) => match git_result(&done) {
@@ -5154,8 +5171,6 @@ async fn commit_workflow(
         (_, None) => "Pushed your branch".into(),
     })
 }
-
-const COMMIT_MESSAGE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The model the original generates commit messages with (`ephemeralGenerationModel`), else
 /// the default model that supports low reasoning effort.
@@ -5197,115 +5212,15 @@ async fn generate_message(
         .ok()
         .and_then(|diff| diff["unifiedDiff"].as_str().map(str::to_owned));
     let prompt = generation_prompt(&run.instructions, diff.as_deref());
-    let prompt = prompt.trim();
-    if prompt.is_empty() {
-        return Ok(None);
-    }
-    let prompt: String = prompt.chars().take(20_000).collect();
-    let started: Value = run
-        .bridge
-        .request(
-            "thread/start",
-            json!({
-                "model": run.model,
-                "modelProvider": null,
-                "allowProviderModelFallback": true,
-                "cwd": run.cwd,
-                "approvalPolicy": "never",
-                "permissions": ":read-only",
-                "runtimeWorkspaceRoots": [],
-                "config": {
-                    "features.enable_fanout": false,
-                    "features.multi_agent": false,
-                    "features.multi_agent_v2": false,
-                    "web_search": "disabled",
-                    "mcp_servers.codex_app": {"enabled": false, "command": ""},
-                    "model_reasoning_effort": "low",
-                },
-                "personality": null,
-                "ephemeral": true,
-                "threadSource": "commit_message",
-                "experimentalRawEvents": false,
-                "dynamicTools": null,
-                "serviceTier": null,
+    Ok(
+        git_pr::generation::generate(this, cx, run, git_pr::generation::Kind::Commit, &prompt)
+            .await?
+            .and_then(|mut result| result.get_mut("message").map(Value::take))
+            .and_then(|message| match message {
+                Value::String(message) => Some(message),
+                _ => None,
             }),
-        )
-        .await
-        .map_err(|error| format!("{error:#}"))?;
-    let thread = started["thread"]["id"]
-        .as_str()
-        .ok_or("the app-server started no thread")?
-        .to_owned();
-    let (done, answer) = async_channel::bounded(1);
-    this.update(cx, |this, _| {
-        this.generation = Some(Generation {
-            thread: thread.clone(),
-            text: None,
-            done: done.clone(),
-        });
-    })
-    .map_err(|error| error.to_string())?;
-    let executor = cx.background_executor().clone();
-    let timeout = executor.spawn({
-        let (executor, done) = (executor.clone(), done.clone());
-        async move {
-            executor.timer(COMMIT_MESSAGE_TIMEOUT).await;
-            done.try_send(Err("Timed out waiting for structured result.".into()))
-                .ok();
-        }
-    });
-    let turn = run
-        .bridge
-        .request::<_, Value>(
-            "turn/start",
-            json!({
-                "threadId": thread,
-                "input": [{"type": "text", "text": generation_instructions(&prompt), "text_elements": []}],
-                "outputSchema": COMMIT_MESSAGE_SCHEMA.clone(),
-            }),
-        )
-        .await;
-    let result = match turn {
-        Ok(_) => answer
-            .recv()
-            .await
-            .unwrap_or_else(|_| Err("the app-server closed".into())),
-        Err(error) => Err(format!("{error:#}")),
-    };
-    drop(timeout);
-    this.update(cx, |this, _| this.generation = None).ok();
-    run.bridge
-        .request::<_, Value>("thread/unsubscribe", json!({"threadId": thread}))
-        .await
-        .ok();
-    Ok(parse_commit_message(result?.as_deref()))
-}
-
-static COMMIT_MESSAGE_SCHEMA: std::sync::LazyLock<Value> = std::sync::LazyLock::new(|| {
-    json!({
-        "type": "object",
-        "properties": {"message": {
-            "type": "string",
-            "minLength": 8,
-            "maxLength": 4000,
-            "pattern": "^[^\\r\\n]{1,72}(?:\\r?\\n[\\s\\S]*)?$",
-        }},
-        "required": ["message"],
-        "additionalProperties": false,
-    })
-});
-
-/// The structured answer's `message` when it meets the original's bounds.
-fn parse_commit_message(text: Option<&str>) -> Option<String> {
-    let answer: Value = serde_json::from_str(text?.trim()).ok()?;
-    let message = answer["message"].as_str()?;
-    let subject = message.split('\n').next()?;
-    let subject = subject.strip_suffix('\r').unwrap_or(subject);
-    let length = message.chars().count();
-    let valid = (8..=4000).contains(&length)
-        && (1..=72).contains(&subject.chars().count())
-        && !subject.contains('\r');
-    valid.then(|| message.trim().to_owned())
+    )
 }
 
 /// The original's context for generation: custom instructions, then the changed tracked
@@ -5583,7 +5498,8 @@ impl Render for Root {
             .child(content)
             .children(self.command_menu.clone())
             .child(self.toaster.clone())
-            .children(self.dialog.clone());
+            .children(self.dialog.clone())
+            .children(self.pull_request_form.clone());
         section_actions::actions(features::actions(root, cx), cx).into_any_element()
     }
 }

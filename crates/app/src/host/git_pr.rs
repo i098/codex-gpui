@@ -1,3 +1,7 @@
+mod actions;
+mod watchers;
+pub(super) use actions::fetch;
+
 use super::device_id;
 use anyhow::{Context as _, Result, ensure};
 use bridge::{Bridge, Event};
