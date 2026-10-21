@@ -151,6 +151,12 @@ It ignores a final LF or CRLF and returns no highlights above 1,000 UTF-16 units
 The API preserves the original edit-path order and final-span boundaries. It does not change rendered controls.
 Run `cargo test -p ui --lib screens::diff::panel::word` for its boundary checks.
 
+`ui::screens::diff::panel::patch::file_path` reads the target path from one Git file patch.
+It decodes quoted names and handles rename, copy, binary, empty-file, and deleted-file metadata.
+Complete file headers preserve filenames under no-prefix and mnemonic-prefix settings. Hunk contents never supply a path.
+The parser does not access or authorize filesystem paths. Rendered controls remain unchanged.
+Run `cargo test -p ui --lib screens::diff::panel::patch` for its boundary checks.
+
 `ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.
 The multi-select emits `SelectionChanged`; the caller saves the value and can restore it with `set_checked` if saving fails.
 `ui::confirmation::Confirmation` emits one confirm or cancel result and returns focus to the previous control.
