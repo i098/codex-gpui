@@ -14,6 +14,7 @@ pub use routes::Route;
 mod search;
 mod security;
 mod section_actions;
+pub(crate) mod settings_integrations;
 pub mod windows;
 
 use anyhow::{Context as _, Result, ensure};
@@ -448,6 +449,7 @@ impl Root {
                 Err(error) => eprintln!("codex-gpui: cannot load host settings: {error:#}"),
             }
         }
+        cx.set_global(settings::integrations::State::default());
         let this = cx.weak_entity();
         let computer_use = this.clone();
         cx.set_global(ComputerUseState {
@@ -2019,6 +2021,7 @@ impl Root {
             });
         }
     }
+
 
 
     /// HC-033: a printable key (no ⌘/⌃, not Space) typed outside an editable, with no
@@ -4133,6 +4136,7 @@ impl Root {
     /// Every server message: streamed into the open thread and the sign-in view, plus
     /// Recents updates and approval prompts.
     pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        self.settings_integration_event(&event, cx);
         if let Some(login) = &self.login {
             login.update(cx, |login, cx| login.apply(&event, cx));
             if matches!(&event, Event::Notification { method, params }

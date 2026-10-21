@@ -7,6 +7,11 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             this.navigate(Route::Settings, window, cx)
         }),
     )
+    .on_action(cx.listener(
+        |this, _: &settings::integrations::OpenPluginManager, window, cx| {
+            this.open_settings_section("Plugins", window, cx)
+        },
+    ))
     .on_action(cx.listener(|this, _: &LogOut, window, cx| {
         if !this.logout_pending {
             let email = this.account_email.clone();
@@ -22,6 +27,7 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
 
 pub(super) fn page(root: &mut Root, cx: &mut Context<Root>) -> Entity<Shell> {
     root.load_computer_use(cx);
+    root.load_settings_integrations(cx);
     // The Appearance page shows the theme the app keeps.
     let mut config = root.config.clone();
     config["host"] = cx
