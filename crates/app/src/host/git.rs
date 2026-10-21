@@ -9,6 +9,23 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
+#[path = "worktrees.rs"]
+mod worktrees;
+pub(super) use worktrees::{managed_worktrees, remove_managed_worktree};
+
+pub(super) fn refresh_upstream(root: &Path) -> Result<()> {
+    checked(run(root, &["fetch", "--all", "--prune"])?)?;
+    Ok(())
+}
+
+pub(super) fn select_worktree_environment(root: &Path, path: &str) -> Result<bool> {
+    if !linked_root(root)? {
+        return Ok(false);
+    }
+    store_environment(root, path)?;
+    Ok(true)
+}
+
 /// Git in `root` without pathspec options: `check-ignore` rejects `--literal-pathspecs`, and
 /// the original's `ls-files` calls use pathspec magic.
 fn plain_command(root: &Path) -> Command {
