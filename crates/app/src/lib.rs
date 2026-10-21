@@ -5620,7 +5620,8 @@ impl Render for Root {
             .child(content)
             .children(self.command_menu.clone())
             .child(self.toaster.clone())
-            .children(self.dialog.clone());
+            .children(self.dialog.clone())
+            .children(self.connection.feedback.clone());
         error_shell::actions(window_shell::actions(section_actions::actions(features::actions(root, cx), cx), cx), cx).into_any_element()
     }
 }

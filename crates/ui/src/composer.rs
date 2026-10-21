@@ -645,6 +645,7 @@ pub struct Composer {
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
+    editor_min_height: Pixels,
 }
 
 impl Composer {
@@ -721,6 +722,7 @@ impl Composer {
             on_approval: None,
             on_model: None,
             plain_field: None,
+            editor_min_height: px(48.),
         }
     }
 
@@ -734,6 +736,11 @@ impl Composer {
         editor.plain_field = Some(multiline);
         editor.set_text(value, cx);
         editor
+    }
+
+    pub fn with_field_rows(mut self, rows: u32) -> Self {
+        self.editor_min_height = LINE_HEIGHT * rows.max(1) as f32;
+        self
     }
 
     pub fn field_text(&self) -> &str {
@@ -1752,6 +1759,10 @@ pub fn drop_target(target: Div, composer: &Entity<Composer>, cx: &App) -> Div {
 /// ink as cc bounds it, 3 sigma (`0 8px 16px -4px`: 20 px left of the box, 12 px above;
 /// CDP `LayerTree`).
 pub(crate) fn popover(t: &Theme, width: f32, content: impl FnOnce(Div) -> Div) -> Div {
+    surface(t, width, px(8.), content)
+}
+
+pub(crate) fn surface(t: &Theme, width: f32, blur: Pixels, content: impl FnOnce(Div) -> Div) -> Div {
     // `bg-surface-elevated-secondary/90` mixes in oklab: white's sRGB lands just outside
     // [0, 1] (red and blue above 1: the popup's edge px keep blue at red), so Skia blits it
     // with its float pipeline (theme `white_mix`).
@@ -1785,7 +1796,7 @@ pub(crate) fn popover(t: &Theme, width: f32, content: impl FnOnce(Div) -> Div) -
         .flex()
         .flex_col()
         .child(shapes::backdrop_blur(
-            px(8.),
+            blur,
             shapes::Fill::Color,
             false,
             shapes::Decoration {

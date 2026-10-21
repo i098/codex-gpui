@@ -55,6 +55,36 @@ If the retained window is fullscreen, the manager waits for fullscreen exit befo
 A dock reopen displays the retained primary before creating another one.
 The manager stores primary geometry through the existing host settings store.
 Page and auxiliary windows do not overwrite that geometry.
+The geometry check uses the display work area, not the full screen bounds.
+Fullscreen does not replace the saved windowed bounds.
+Each new process starts on Home; saved geometry does not restore the last route.
+
+## Shell controls
+
+Below 768 logical pixels, the sidebar opens as a floating panel.
+The narrow panel does not change the saved wide-window preference.
+When the wide sidebar is hidden, a rail hover opens a preview after 100 milliseconds.
+Switching the preview waits 300 milliseconds; leaving it waits 100 milliseconds.
+Escape closes the preview before the composer handles its dismiss action.
+
+The resize separators support arrow keys in 10-pixel steps and Home/End for their limits.
+They expose their current size and limits to accessibility tools.
+The close shortcut closes a side tab only when the pane or its tab strip has focus.
+Otherwise, the window close preference controls the confirmation.
+Quit warns about running local chats and enabled scheduled tasks.
+
+The titlebar menu supports pointer and keyboard entry.
+Content-tab creation remains gated while in-app browser pages are excluded.
+
+## Loading and recovery
+
+The loading view remains until initialization and the startup reads finish.
+A disconnected app-server keeps the window open and shows recovery controls.
+Try again starts a new connection and reloads the route without clearing the composer draft.
+Invalid route and tab content have separate retry controls.
+Feedback checks the account and feedback policy before opening its form.
+Submission uses `feedback/upload`; a failed upload keeps the entered details.
+
 
 ## Verification
 
@@ -65,5 +95,6 @@ The smoke opens two actual native primary windows, checks independent drafts, cl
 The smoke reads AppKit visibility, not screen occlusion, and waits for deferred window actions.
 The example installs a panic hook before initialization so failures exit with code 101 without a crash dialog.
 It does not require microphone, accessibility, screen recording, account access, or a live turn.
-No page painting code changes in this slice.
-The separate page owners still owe their original-versus-native appearance checks.
+Run `cargo test -p app --test window_shell` for fullscreen, preview, floating-panel, and close-focus behavior.
+Run `cargo test -p app --test recovery` for draft preservation across connection recovery.
+Original-versus-native pixel checks remain separate from these interaction checks.

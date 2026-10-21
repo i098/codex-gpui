@@ -1,3 +1,6 @@
+mod feedback;
+pub use feedback::{Event as FeedbackEvent, Feedback};
+
 use crate::{SANS, focus, icon, text};
 use gpui::{
     Action, Context, Div, Hsla, Image, ImageFormat, InteractiveElement as _, IntoElement,
@@ -69,11 +72,17 @@ impl Render for Recovery {
         let root = div().size_full().relative().font_family(SANS).on_key_down(focus::tab);
         if self.state == State::Loading {
             let elapsed = cx.background_executor().now().saturating_duration_since(self.started);
-            window.request_animation_frame();
+            let reduced = crate::motion::reduced(cx);
+            if !reduced || elapsed < Duration::from_millis(400) {
+                window.request_animation_frame();
+            }
+            let angle = if reduced { 0. } else {
+                (elapsed.as_secs_f32() * 30.).floor() * std::f32::consts::TAU / 60.
+            };
             return root.bg(theme.background_surface_under).flex().items_center().justify_center()
                 .when(elapsed >= Duration::from_millis(400), |root| root.child(
                     icon("sidebar-cmd-spinner", 20., theme.text_secondary)
-                        .with_transformation(Transformation::rotate(radians(elapsed.as_secs_f32() * std::f32::consts::TAU))),
+                        .with_transformation(Transformation::rotate(radians(angle))),
                 )).into_any_element();
         }
         if self.state == State::TabError {

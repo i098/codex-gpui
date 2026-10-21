@@ -569,7 +569,7 @@ impl Composer {
             .min_h(px(if self.request_parent.is_some() {
                 20.
             } else {
-                48.
+                self.editor_min_height.into()
             }))
             .cursor(CursorStyle::IBeam)
             .text_size(FONT_SIZE)
