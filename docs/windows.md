@@ -99,7 +99,7 @@ Each page family retains its own availability and permission gates.
 
 Run the geometry regression with `cargo test -p app --lib windows::tests`.
 Run `native_windows` on macOS with `CODEX_GPUI_QA=1` and an owned recorded `CODEX_BIN` executable.
-Pass `--qa-smoke-profile /tmp/cgx-qa-smoke-<owned-name>` to isolate all profile state.
+Create an owned `/tmp/cgx-qa-smoke-<name>` directory, then pass it with `--qa-smoke-profile` to isolate all profile state.
 The smoke opens two actual native primary windows, checks independent drafts, closes one, hides the last, and restores it without activation.
 The smoke reads AppKit visibility, not screen occlusion, and waits for deferred window actions.
 The example installs a panic hook before initialization so failures exit with code 101 without a crash dialog.

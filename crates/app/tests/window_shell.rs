@@ -85,7 +85,10 @@ fn a_narrow_sidebar_floats_and_an_outside_press_closes_it() -> Result<()> {
     fx.advance(Duration::from_millis(350))?;
     assert!(!fx.sidebar_open());
     fx.resize(1280., 832.)?;
-    assert!(fx.sidebar_open(), "the narrow overlay must not replace the wide-window preference");
+    assert!(
+        fx.sidebar_open(),
+        "the narrow overlay must not replace the wide-window preference"
+    );
     Ok(())
 }
 
@@ -95,7 +98,9 @@ fn close_shortcut_uses_panel_focus_instead_of_panel_visibility() -> Result<()> {
     fx.action(Box::new(app::GoToChat(0)))?;
     fx.wait("thread", |fx| fx.thread_id().is_some())?;
     fx.action(Box::new(ui::OpenChangesPanel))?;
-    fx.wait("changes", |fx| fx.read(|root, _| root.side_panel().is_some()))?;
+    fx.wait("changes", |fx| {
+        fx.read(|root, _| root.side_panel().is_some())
+    })?;
     fx.focus_composer()?;
     fx.keys("cmd-w")?;
     assert!(fx.read(|root, _| root.dialog().is_some()));

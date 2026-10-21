@@ -402,8 +402,15 @@ pub fn reopen(cx: &mut App) -> Result<()> {
 
 fn last_primary(cx: &App) -> Option<AnyWindowHandle> {
     cx.try_global::<Windows>().and_then(|windows| {
-        windows.last_primary.and_then(|id| windows.entries.get(&id))
-            .or_else(|| windows.entries.values().find(|entry| entry.kind == Kind::Primary))
+        windows
+            .last_primary
+            .and_then(|id| windows.entries.get(&id))
+            .or_else(|| {
+                windows
+                    .entries
+                    .values()
+                    .find(|entry| entry.kind == Kind::Primary)
+            })
             .map(|entry| entry.handle)
     })
 }

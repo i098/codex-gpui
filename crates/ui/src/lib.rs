@@ -8,10 +8,10 @@
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, Bounds, ClickEvent, ContentMask, Context,
     Corners, CursorStyle, DispatchPhase, Div, FontWeight, Hsla, Image, ImageFormat,
-    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, Pixels, Point, Render, Rgba, SharedString, Stateful, StatefulInteractiveElement,
-    Styled, Svg, Window, actions, canvas, div, fill, img, point, prelude::FluentBuilder as _, px,
-    size, svg,
+    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement, Pixels, Point, Render, Rgba, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, Svg, Window, actions, canvas, div, fill, img, point,
+    prelude::FluentBuilder as _, px, size, svg,
 };
 use std::sync::{Arc, LazyLock};
 use std::time::Instant;
@@ -785,8 +785,13 @@ impl Shell {
                     move || list,
                 ))
         };
-        let rail_tip = |item: Stateful<Div>, label: &'static str, destination: &'static str, cx: &Context<Self>| {
-            div().id(destination).size(px(36.))
+        let rail_tip = |item: Stateful<Div>,
+                        label: &'static str,
+                        destination: &'static str,
+                        cx: &Context<Self>| {
+            div()
+                .id(destination)
+                .size(px(36.))
                 .on_hover(cx.listener(move |this, entered, window, cx| {
                     this.hover_rail(destination, *entered, window, cx);
                 }))
@@ -839,11 +844,21 @@ impl Shell {
                         "scheduled",
                         cx,
                     ))
-                    .child(rail_tip(item("plugins", window, cx).on_click(dispatch::<OpenPlugins>), "Plugins", "plugins", cx))
+                    .child(rail_tip(
+                        item("plugins", window, cx).on_click(dispatch::<OpenPlugins>),
+                        "Plugins",
+                        "plugins",
+                        cx,
+                    ))
                     // Explore with its unread dot; it shows no tooltip.
                     .child(item("explore", window, cx).child(dot(4.)))
                     .child(div().w(px(24.)).h(px(1.)).bg(t.border))
-                    .child(rail_tip(item("rail-code-review", window, cx), "Code Review", "rail-code-review", cx))
+                    .child(rail_tip(
+                        item("rail-code-review", window, cx),
+                        "Code Review",
+                        "rail-code-review",
+                        cx,
+                    ))
                     .child(rail_tip(item("sites", window, cx), "Sites", "sites", cx))
                     .child(shapes::top_fade(px(16.))),
             )
@@ -1017,8 +1032,18 @@ impl Shell {
             })
     }
 
-    fn titlebar(&self, t: &Theme, window: &mut Window, cx: &mut Context<Self>, new_tab: bool) -> Div {
-        let fullscreen_shift = if window.is_fullscreen() { px(84.) } else { px(0.) };
+    fn titlebar(
+        &self,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        new_tab: bool,
+    ) -> Div {
+        let fullscreen_shift = if window.is_fullscreen() {
+            px(84.)
+        } else {
+            px(0.)
+        };
         // The header is the window drag region (`-webkit-app-region: drag`, macOS hiddenInset);
         // its buttons are `no-drag`: each stops the press before the move handler below.
         // Disabled history controls do not participate in keyboard navigation.
@@ -1073,13 +1098,16 @@ impl Shell {
                 }
             })
             .child(tooltip(
-                back.left(px(88.) - fullscreen_shift).on_click(dispatch::<GoBack>),
+                back.left(px(88.) - fullscreen_shift)
+                    .on_click(dispatch::<GoBack>),
                 "Back",
                 Some("⌘["),
                 Side::Bottom,
             ))
             .child(tooltip(
-                forward.left(px(122.) - fullscreen_shift).on_click(dispatch::<GoForward>),
+                forward
+                    .left(px(122.) - fullscreen_shift)
+                    .on_click(dispatch::<GoForward>),
                 "Forward",
                 Some("⌘]"),
                 Side::Bottom,
@@ -1121,7 +1149,9 @@ impl Shell {
                     focus::ring(div().id("new-tab"), &new_tab_focus, px(8.), px(2.), cx)
                         .role(gpui::Role::Button)
                         .aria_label("New tab")
-                        .on_hover(cx.listener(|this, entered, window, cx| this.hover_new_tab(*entered, window, cx)))
+                        .on_hover(cx.listener(|this, entered, window, cx| {
+                            this.hover_new_tab(*entered, window, cx)
+                        }))
                         .on_key_down(cx.listener(Self::new_tab_key))
                         .absolute()
                         .top(px(8.))
@@ -1441,7 +1471,10 @@ impl Render for Shell {
         )
         .absolute()
         .size_full();
-        let new_tab_menu = self.window_state.menu_open.then(|| self.new_tab_menu(window, cx));
+        let new_tab_menu = self
+            .window_state
+            .menu_open
+            .then(|| self.new_tab_menu(window, cx));
         let resize_focus = focus::handle("sidebar-resize", 0, window, cx);
         let resize_handle = resize_focus.read(cx).handle.clone();
         // The rail and titlebar do not overlap the panels, so they paint after the frame.
@@ -1476,7 +1509,13 @@ impl Render for Shell {
                         .w(px(16.))
                         .cursor(CursorStyle::ResizeLeftRight)
                         .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                            if let Some(width) = window_shell::resized(&event.keystroke.key, this.sidebar_width, px(290.), px(520.), false) {
+                            if let Some(width) = window_shell::resized(
+                                &event.keystroke.key,
+                                this.sidebar_width,
+                                px(290.),
+                                px(520.),
+                                false,
+                            ) {
                                 this.sidebar_width = width;
                                 cx.stop_propagation();
                                 cx.notify();
@@ -1491,7 +1530,10 @@ impl Render for Shell {
                                 cx.notify();
                             }),
                         ),
-                    &resize_focus, px(2.), px(-2.), cx,
+                    &resize_focus,
+                    px(2.),
+                    px(-2.),
+                    cx,
                 ))
             })
             .when_some(self.sidebar_drag_offset, |d, offset| {
@@ -1522,10 +1564,24 @@ impl Render for Shell {
             .child(self.rail(&t, window, cx))
             .child(self.titlebar(&t, window, cx, self.new_tab))
             .child(skip_link)
-            .when(self.is_peeking() || (narrow && floating_progress > 0.), |d| {
-                d.child(gpui::deferred(self.floating_sidebar(narrow, floating_progress, &t, window, cx)).with_priority(42))
+            .when(
+                self.is_peeking() || (narrow && floating_progress > 0.),
+                |d| {
+                    d.child(
+                        gpui::deferred(self.floating_sidebar(
+                            narrow,
+                            floating_progress,
+                            &t,
+                            window,
+                            cx,
+                        ))
+                        .with_priority(42),
+                    )
+                },
+            )
+            .when_some(new_tab_menu, |d, menu| {
+                d.child(gpui::deferred(menu).with_priority(43))
             })
-            .when_some(new_tab_menu, |d, menu| d.child(gpui::deferred(menu).with_priority(43)))
             .when(self.profile_menu, |d| d.child(self.profile_menu(&t, cx)))
     }
 }
