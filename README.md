@@ -286,6 +286,9 @@ Inline-code backgrounds use both snapped label edges, so fractional text widths 
 Monochrome glyphs and SVGs keep their paint alpha.
 Element opacity is applied once when the enclosing layer is restored.
 
+Canvas callbacks honor their `opacity`, `layer`, and `top_layer` styles.
+These styles use the same compositor boundary as other elements.
+
 Home composer permission and model labels paint directly into their parent.
 Docked composers retain the composited label path. The animated effort label keeps its filter layer.
 An extra layer changes glyph edge bytes even when its opacity is one.
