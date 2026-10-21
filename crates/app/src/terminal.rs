@@ -279,6 +279,7 @@ pub struct TerminalPanel {
     active: usize,
     hovered: Option<usize>,
     strip_width: f32,
+    strip_left: f32,
     cwd: String,
     roots: Vec<String>,
     shell: String,
@@ -298,6 +299,7 @@ impl TerminalPanel {
             active: 0,
             hovered: None,
             strip_width: 0.,
+            strip_left: 0.,
             cwd: cwd.clone(),
             roots: vec![cwd],
             shell,
@@ -649,6 +651,11 @@ impl Render for TerminalPanel {
             move |bounds, _, cx| {
                 measure.update(cx, |panel, cx| {
                     let width = f32::from(bounds.size.width);
+                    let left = f32::from(bounds.origin.x);
+                    if (panel.strip_left - left).abs() > 0.01 {
+                        panel.strip_left = left;
+                        cx.notify();
+                    }
                     if (panel.strip_width - width).abs() > 0.1 {
                         panel.strip_width = width;
                         cx.notify();
@@ -740,6 +747,8 @@ impl Render for TerminalPanel {
                     )),
                 );
             }
+            let slot_origin = self.strip_left + 8. + slot_width * index as f32;
+            let slot_snap = (slot_origin * 2. + 0.5).floor() / 2. - slot_origin;
             if index + 1 < self.sessions.len()
                 && !selected
                 && !hovered
@@ -749,7 +758,9 @@ impl Render for TerminalPanel {
                 tab = tab.child(
                     div()
                         .absolute()
-                        .right(px(-2.))
+                        // Chromium snaps the slot's origin to the device grid, then adds the
+                        // divider's offset inside it.
+                        .right(px(-2. - slot_snap))
                         .top(px(10.))
                         .w(px(1.))
                         .h(px(12.))
