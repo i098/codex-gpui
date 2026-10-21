@@ -83,9 +83,9 @@ impl Render for Licenses {
                 .px(px(9.))
                 .flex()
                 .items_center()
-                .gap(px(8.))
-                .child(icon("arrow-left", 16., t.text))
-                .child(text("Back", 13., 18., 430., t.text)),
+                .gap(px(4.))
+                .child(icon("arrow-left", 16., t.text_tertiary))
+                .child(text("Back", 13., 18., 430., t.text_tertiary)),
             &back_focus,
             px(12.5),
             px(2.),
@@ -119,17 +119,17 @@ impl Render for Licenses {
             if index == 0 {
                 return column(
                     div()
-                        .pt(px(20.))
-                        .pb(px(32.))
+                        .pt(px(28.))
+                        .pb(px(33.))
                         .flex()
                         .flex_col()
-                        .gap(px(6.))
-                        .child(text("Open source licenses", 24., 28.8, 400., t.text))
+                        .gap(px(4.))
+                        .child(text("Open source licenses", 28., 33.6, 500., t.text))
                         .child(text(
                             "Third-party notices for dependencies included in this app",
                             14.,
-                            20.,
-                            400.,
+                            24.,
+                            430.,
                             t.text_secondary,
                         )),
                 )
@@ -180,17 +180,16 @@ impl Render for Licenses {
 fn column(content: Div) -> Div {
     div()
         .w_full()
-        .px(px(20.))
         .flex()
         .justify_center()
-        .child(div().w_full().max_w(px(768.)).child(content))
+        .child(div().w_full().max_w(px(768.)).px(px(20.)).child(content))
 }
 
 fn notice_row(line: SharedString, first: bool, last: bool, monospace: bool, theme: &Theme) -> Div {
     let fill = theme.background_panel;
     let border = theme.border;
     let content = if monospace {
-        text(line, 12., 19.5, 400., theme.text)
+        text(line, 12., 19.5, 430., theme.text)
             .font_family(MONO)
             .whitespace_normal()
     } else {
