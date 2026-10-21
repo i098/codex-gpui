@@ -167,7 +167,7 @@ impl DetectedItem {
                 && selection
                     .get(&format!("projects:{}", self.key()))
                     .copied()
-                    .unwrap_or(false);
+                    .unwrap_or_else(|| !selection.keys().any(|key| key.starts_with("projects:")));
         }
         selection.get(&self.key()).copied().unwrap_or(false)
     }
@@ -275,42 +275,18 @@ impl SyncState {
 
     pub fn merge_import(
         &mut self,
-        detected: &[DetectedItem],
         selected: &[DetectedItem],
+        selection: BTreeMap<String, bool>,
         now_ms: i64,
     ) {
         let existing = std::mem::take(&mut self.selection);
+        self.selection = selection;
         self.version = 1;
         self.last_sync_started_at_ms = Some(now_ms);
         for item in selected {
             if !self.provider_ids.contains(&item.provider_id) {
                 self.provider_ids.push(item.provider_id);
             }
-            if item.item.item_type == ItemType::Sessions {
-                self.selection.insert("chats".into(), true);
-            } else if item.project().is_some() {
-                self.selection.insert("projects".into(), true);
-                self.selection
-                    .insert(format!("projects:{}", item.key()), true);
-            } else {
-                self.selection.insert(item.key(), true);
-            }
-        }
-        for item in detected.iter().filter(|item| {
-            !selected.contains(item)
-                && selected
-                    .iter()
-                    .any(|selected| selected.provider_id == item.provider_id)
-        }) {
-            let key = if item.item.item_type == ItemType::Sessions {
-                "chats".into()
-            } else if item.project().is_some() {
-                self.selection.entry("projects".into()).or_insert(false);
-                format!("projects:{}", item.key())
-            } else {
-                item.key()
-            };
-            self.selection.entry(key).or_insert(false);
         }
         self.selection.extend(existing);
     }
@@ -404,7 +380,11 @@ mod tests {
         let foreign = item(Provider::Cursor, ItemType::Skills, None, "new");
         let mut state = SyncState::default();
         let selected = [original.clone(), project.clone()];
-        state.merge_import(&selected, &selected, 1_000);
+        state.merge_import(
+            &selected,
+            BTreeMap::from([(original.key(), true), ("projects".into(), true)]),
+            1_000,
+        );
         assert!(Preferences::Original.allows(&original, &state));
         assert!(Preferences::Original.allows(&project, &state));
         assert!(!Preferences::Original.allows(&future, &state));
@@ -432,16 +412,17 @@ mod tests {
         let mut state = SyncState::default();
         state.merge_import(
             std::slice::from_ref(&claude_chat),
-            std::slice::from_ref(&claude_chat),
+            BTreeMap::from([("chats".into(), true)]),
             1_000,
         );
         state.merge_import(
-            &[cursor_chat, cursor_skill.clone()],
             std::slice::from_ref(&cursor_skill),
+            BTreeMap::from([("chats".into(), false), (cursor_skill.key(), true)]),
             2_000,
         );
         assert_eq!(state.selection.get("chats"), Some(&true));
         assert!(Preferences::Original.allows(&claude_chat, &state));
+        assert!(Preferences::Original.allows(&cursor_chat, &state));
         assert_eq!(state.provider_ids, [Provider::ClaudeCode, Provider::Cursor]);
     }
 

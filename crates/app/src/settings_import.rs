@@ -410,7 +410,9 @@ impl Root {
         }
         match action {
             ImportAction::Refresh => self.refresh_imports(cx),
-            ImportAction::Import(items) => self.start_import(items, false, cx),
+            ImportAction::Import { items, selection } => {
+                self.start_import(items, selection, false, cx)
+            }
             ImportAction::AuthenticateMcp(name) => self.authenticate_imported_mcp(name, cx),
             ImportAction::SetSync(enabled) => {
                 if !cx.global::<ImportState>().policy.sync {
@@ -514,7 +516,12 @@ impl Root {
                         if selected.is_empty() {
                             root.finish_import_sync(cx);
                         } else {
-                            root.start_import(selected, true, cx);
+                            root.start_import(
+                                selected,
+                                std::collections::BTreeMap::new(),
+                                true,
+                                cx,
+                            );
                         }
                     }
                     Err(error) => {
@@ -536,7 +543,13 @@ impl Root {
         }
     }
 
-    fn start_import(&self, items: Vec<DetectedItem>, automatic: bool, cx: &mut Context<Self>) {
+    fn start_import(
+        &self,
+        items: Vec<DetectedItem>,
+        selection: std::collections::BTreeMap<String, bool>,
+        automatic: bool,
+        cx: &mut Context<Self>,
+    ) {
         let state = cx.global::<ImportState>();
         if !state.policy.enabled
             || state.pending
@@ -557,21 +570,15 @@ impl Root {
         }
         let mut sync = state.sync_state.clone();
         let preferences = if !sync.connected()
-            && detected
-                .iter()
-                .filter(|item| {
-                    items
-                        .iter()
-                        .any(|selected| selected.provider_id == item.provider_id)
-                })
-                .all(|item| items.contains(item))
+            && !selection.is_empty()
+            && selection.values().all(|checked| *checked)
         {
             Preferences::All
         } else {
             state.preferences.clone()
         };
         if !automatic {
-            sync.merge_import(detected, &items, chrono::Utc::now().timestamp_millis());
+            sync.merge_import(&items, selection, chrono::Utc::now().timestamp_millis());
         }
         if let Err(error) = persist(cx, imports::SYNC_STATE, json!(sync)) {
             cx.update_global::<ImportState, _>(|state, _| {
