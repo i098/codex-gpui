@@ -7,6 +7,7 @@ pub mod computer_use_requests;
 mod features;
 pub mod host;
 pub mod host_settings;
+pub mod notifications;
 pub mod qa;
 mod search;
 mod section_actions;
@@ -512,6 +513,7 @@ impl Root {
             }
         }
         let this = cx.weak_entity();
+        notifications::install(this.clone(), cx);
         let computer_use = this.clone();
         cx.set_global(ComputerUseState {
             available: cfg!(target_os = "macos") && !bridge.is_acp(),
@@ -2145,6 +2147,7 @@ impl Root {
         self.page = match self.state.route.clone() {
             Route::Settings => {
                 self.load_computer_use(cx);
+                self.load_notifications(cx);
                 // The Appearance page shows the theme the app keeps.
                 let mut config = self.config.clone();
                 config["host"] = cx

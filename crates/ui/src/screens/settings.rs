@@ -33,6 +33,9 @@ use theme::{ActiveTheme as _, Theme};
 #[path = "computer_use.rs"]
 pub mod computer_use;
 
+#[path = "notifications.rs"]
+pub mod notifications;
+
 /// The app's theme setting (`ThemeSetting`): `system`, `light` or `dark`.
 pub const THEME: &str = "host.appearance-theme";
 
@@ -461,6 +464,9 @@ pub struct SettingsPane {
     /// Pointer over that menu: a press there is not a click outside.
     menu_hovered: bool,
     git_fields: Vec<(&'static str, Entity<Composer>)>,
+    notification_menu: Option<notifications::Menu>,
+    notifications_observed: bool,
+    notifications_page_active: bool,
 }
 
 /// `Confirm before closing a window` options, default first.
@@ -478,6 +484,8 @@ const SEND_OPTIONS: &[(&str, &str)] = &[
 
 impl SettingsPane {
     fn new(page: Entity<SettingsPage>, cx: &mut Context<Self>) -> Self {
+        cx.observe_global::<notifications::State>(|_, cx| cx.notify())
+            .detach();
         cx.observe(&page, |_, page, cx| {
             if page.read(cx).section != "Git" {
                 page.update(cx, |page, cx| {
@@ -495,6 +503,9 @@ impl SettingsPane {
             open_select: None,
             menu_hovered: false,
             git_fields: Vec::new(),
+            notification_menu: None,
+            notifications_observed: false,
+            notifications_page_active: false,
         }
     }
 
@@ -1073,47 +1084,7 @@ impl SettingsPane {
                     ),
                 ],
             ),
-            (
-                "Notifications",
-                vec![
-                    row(
-                        "Notifications are off",
-                        Some("Turn on notifications in System Settings to use the options below"),
-                        button(
-                            "Open System Settings",
-                            t.primary_soft_alpha,
-                            Some(t.border),
-                            t,
-                        )
-                        .into_any_element(),
-                    ),
-                    row(
-                        "Turn completion notifications",
-                        Some("Set when ChatGPT alerts you that it's finished"),
-                        select("Only when unfocused", None, true, t).into_any_element(),
-                    ),
-                    row(
-                        "Enable permission notifications",
-                        Some("Show alerts when notification permissions are required"),
-                        switch("permissions-notifications", true, true, t).into_any_element(),
-                    ),
-                    row(
-                        "Enable question notifications",
-                        Some("Show alerts when input is needed to continue"),
-                        switch("question-notifications", true, true, t).into_any_element(),
-                    ),
-                    row(
-                        "Enable dot notifications",
-                        Some("Show alerts when your dot sends you a message"),
-                        switch("dot-notifications", true, true, t).into_any_element(),
-                    ),
-                    row(
-                        "Notification sound",
-                        Some("Sound for task completion, permission requests, and questions"),
-                        select("Default", None, true, t).into_any_element(),
-                    ),
-                ],
-            ),
+            ("Notifications", self.desktop_notifications(t, window, cx)),
             (
                 "Toys",
                 vec![
@@ -1137,6 +1108,7 @@ impl SettingsPane {
 
 impl Render for SettingsPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.observe_notifications(window, cx);
         let t = cx.theme().clone();
         let section = self.page.read(cx).section;
         if section == "Computer use" {
@@ -1147,61 +1119,65 @@ impl Render for SettingsPane {
             "General" => self.general(&t, window, cx),
             "Appearance" => self.appearance(&t, cx),
             "Git" => self.git(&t, window, cx),
+            "Notifications" => self.chatgpt_notifications(&t, window, cx),
             _ => Vec::new(),
         };
         let card_border = over(t.border, t.background_panel);
-        let groups = groups.into_iter().map(|(title, rows)| {
-            let last = rows.len() - 1;
-            div()
-                .flex()
-                .flex_col()
-                .child(
-                    div()
-                        .h(px(46.))
-                        .pb(px(6.))
-                        .flex()
-                        .items_center()
-                        .child(text(title, 14., 21., 500., t.text)),
-                )
-                .child(
+        let groups =
+            groups
+                .into_iter()
+                .filter(|(_, rows)| !rows.is_empty())
+                .map(|(title, rows)| {
+                    let last = rows.len() - 1;
                     div()
                         .flex()
                         .flex_col()
-                        .relative()
-                        // The 1 px border's box (the border itself is in the decoration).
-                        .p(px(1.))
-                        .child(deco(
-                            &self.layer,
-                            20.,
-                            Squircle,
-                            t.background_panel,
-                            Some(t.border),
-                        ))
-                        // `overflow: hidden`: the rows draw under the card's rounded clip.
-                        .child(rounded_clip(
-                            px(19.),
-                            Squircle,
+                        .child(
+                            div()
+                                .h(px(46.))
+                                .pb(px(6.))
+                                .flex()
+                                .items_center()
+                                .child(text(title, 14., 21., 500., t.text)),
+                        )
+                        .child(
                             div()
                                 .flex()
                                 .flex_col()
-                                .children(rows.into_iter().enumerate().map(|(i, r)| {
-                                    r.when(i < last, |d| {
-                                        // `after:inset-x-4 after:bottom-0 after:h-px
-                                        // after:bg-border`
-                                        d.child(
-                                            div()
-                                                .absolute()
-                                                .left(px(16.))
-                                                .right(px(16.))
-                                                .bottom_0()
-                                                .h(px(1.))
-                                                .bg(card_border),
-                                        )
-                                    })
-                                })),
-                        )),
-                )
-        });
+                                .relative()
+                                // The 1 px border's box (the border itself is in the decoration).
+                                .p(px(1.))
+                                .child(deco(
+                                    &self.layer,
+                                    20.,
+                                    Squircle,
+                                    t.background_panel,
+                                    Some(t.border),
+                                ))
+                                // `overflow: hidden`: the rows draw under the card's rounded clip.
+                                .child(rounded_clip(
+                                    px(19.),
+                                    Squircle,
+                                    div().flex().flex_col().children(
+                                        rows.into_iter().enumerate().map(|(i, r)| {
+                                            r.when(i < last, |d| {
+                                                // `after:inset-x-4 after:bottom-0 after:h-px
+                                                // after:bg-border`
+                                                d.child(
+                                                    div()
+                                                        .absolute()
+                                                        .left(px(16.))
+                                                        .right(px(16.))
+                                                        .bottom_0()
+                                                        .h(px(1.))
+                                                        .bg(card_border),
+                                                )
+                                            })
+                                        }),
+                                    ),
+                                )),
+                        )
+                });
         let column = |d: Div| d.w_full().max_w(px(768.));
         div()
             .size_full()
@@ -1276,8 +1252,8 @@ fn middle_truncate(s: &str, fits: impl Fn(&str) -> bool) -> String {
 /// One settings row: title, optional description (an `<a>…</a>` span renders as the inline
 /// link) and the trailing control.
 fn settings_row(
-    title: &'static str,
-    detail: Option<&'static str>,
+    title: impl Into<SharedString>,
+    detail: Option<&str>,
     control: AnyElement,
     t: &Theme,
 ) -> Div {
@@ -1311,7 +1287,7 @@ fn settings_row(
         )
 }
 
-fn description(s: &'static str, t: &Theme) -> Div {
+fn description(s: &str, t: &Theme) -> Div {
     let (plain, link) = match s.split_once("<a>") {
         Some((before, rest)) => {
             let (label, after) = rest.split_once("</a>").unwrap_or((rest, ""));
@@ -1446,7 +1422,7 @@ fn button(label: &'static str, fill: Hsla, border: Option<Hsla>, t: &Theme) -> D
         .child(text(label, 13., 18., 430., t.text))
 }
 /// Dropdown trigger: value (with an optional leading app icon) and a chevron.
-fn select(label: &'static str, leading: Option<AnyElement>, disabled: bool, t: &Theme) -> Div {
+fn select(label: &str, leading: Option<AnyElement>, disabled: bool, t: &Theme) -> Div {
     div()
         .h(px(28.))
         .px(px(13.))
@@ -1468,7 +1444,7 @@ fn select(label: &'static str, leading: Option<AnyElement>, disabled: bool, t: &
                 .items_center()
                 .gap(px(6.))
                 .children(leading)
-                .child(text(label, 13., 18., 430., t.text)),
+                .child(text(label.to_owned(), 13., 18., 430., t.text)),
         )
         .child(icon("chevron-down", 14., t.text_tertiary))
 }

@@ -124,6 +124,15 @@ Branch prefix saves on blur or Enter; multiline instructions save after three id
 The focused `cargo test -p app --test git_settings -- --test-threads=1` native replay verifies saved values after reopening Git settings.
 This page does not implement Git operations or active pull request watchers, and it does not complete other settings pages.
 
+General > Notifications stores desktop preferences in `host-settings.json`.
+The controls remain disabled until macOS permits notifications.
+Reading permission status does not request permission.
+Sound selection previews the selected sound.
+Custom imports accept MP3, WAV, FLAC, and Ogg files under 30 seconds and 10 MB.
+Settings > Notifications loads ChatGPT channels only for an authenticated personal account.
+Failed channel writes restore the last confirmed value and show an error.
+Run `cargo test -p app --test notification_settings` for preference validation and the native permission/write check.
+
 `ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.
 The multi-select emits `SelectionChanged`; the caller saves the value and can restore it with `set_checked` if saving fails.
 `ui::confirmation::Confirmation` emits one confirm or cancel result and returns focus to the previous control.
