@@ -278,9 +278,9 @@ async function mcpRequest(s, msg) {
     s.emit({ type: "mcp-response", hostId: msg.hostId, message: { id, error: { code: -32000, message: `route1: ${method} is not allowed` } } });
     return;
   }
-  // thread/resume goes to the live app too: its app-server holds the fixture threads' writer
-  // locks, so a second server answers "This is open in another app".
-  if (msg.hostId !== "local" || method === "thread/resume") {
+  // Live resumes use the original process, which owns the fixture writer locks.
+  // Offline resumes use the recorded adapter and match the thread, not transient view options.
+  if (msg.hostId !== "local" || (method === "thread/resume" && !process.env.R1_OFFLINE)) {
     const key = `mcp ${msg.hostId} ${method} ${keyOf(msg.request.params ?? null)}`;
     const res = await recall(key, () => {
       const rid = `r1-${crypto.randomUUID()}`;

@@ -31,14 +31,14 @@ The rows were not clicked again on the original through `tools/route1`: its `ser
 | 14.1 Left rail | 12 | 4 | 1 | 7 |
 | 14.2 Sidebar | 23 | 12 | 4 | 7 |
 | 14.3 Home | 21 | 10 | 3 | 8 |
-| 14.4 Thread view | 20 | 6 | 3 | 11 |
+| 14.4 Thread view | 20 | 11 | 2 | 7 |
 | 14.5 Composer | 20 | 6 | 5 | 9 |
 | 14.6 Diff view | 20 | 14 | 5 | 1 |
 | 14.7 Settings, login and onboarding | 20 | 7 | 8 | 5 |
 | 15.1 Automations | 16 | 2 | 2 | 12 |
 | 15.2 Background terminal | 10 | 10 | 0 | 0 |
 | 15.3 Mobile setup | 10 | 3 | 2 | 5 |
-| **All** | **192** | **75** | **32** | **85** |
+| **All** | **192** | **92** | **35** | **65** |
 
 Before round 5 (F2Flows): 57 PASS, 33 FAIL, 102 NOT WIRED. Before round 4 (F1Flows): 42 PASS, 25 FAIL, 125 NOT WIRED.
 
@@ -360,14 +360,19 @@ The original recordings, masks and strict gates stay unchanged; remaining toolti
 | 20 | Account load failure | error | `We couldn’t load your account`, `Reload`, `Sign out`. | An `account/read` error stops `Root::connect`; the window stays empty. | FAIL (`crates/app/src/lib.rs` `connect`; no error page in `crates/ui`) |
 | 21 | Resize | resize | Below 768 px the sidebar is an overlay; below 40rem the composer stacks. | Sidebar hides (row 14.2/23); composer does not stack. | FAIL (`crates/ui/src/composer.rs`: only the 475 px compact footer) |
 
+The shared Composer session API includes `finish_dictation(window, cx)` and `Completion` events.
+Success follows transcript processing; failure and cancellation remain distinct.
+Consumers can wait before submitting a draft. A closed event stream fails instead of leaving the session active.
+`cargo test -p ui --lib composer::dictation` checks completion order, cancellation, and closed streams without microphone access.
+
 ## 14.4 Thread view
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Open `/local/:conversationId` | entry | `thread/resume`, turns render, scroll to bottom. | `thread/read` with turns (resume on the first send); parity: see `parity_thread`. | PASS (`thread_row_opens_thread`, `parity_thread`) |
-| 2 | History loading | loading | `Loading task…`. | The main panel is empty while `thread/read` runs. | NOT WIRED (`crates/ui/src/thread.rs`: no loading view; `crates/app/src/lib.rs` `sync` shows `EmptyMain`) |
-| 3 | History failure | error | `Couldn't load messages` + `Retry`. | The error is logged; the panel stays empty. | FAIL (`crates/app/src/lib.rs` `load_thread` only logs; no error view in `crates/ui/src/thread.rs`) |
-| 4 | Turn render failure | error | `This turn couldn't render`. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
+| 2 | History loading | loading | Spinner; `Loading task…` for assistive technology. | The loading view remains visible during `thread/read`. The spinner uses the original SVG in its own raster layer and retains its rotation timing. The composer stays unmounted, so hidden bindings cannot send or approve in another chat. | PASS (`thread_recovery`: hidden-composer regression and zero differences over the 3600-pixel spinner region; `native_icon_rotation_preserves_its_raster`) |
+| 3 | History failure | error | `Couldn't load messages` + `Retry`. | The squircle warning shares its opaque footer's compositor layer above the original fade. Its Retry tooltip and accessibility label retain the source error. Retry reads the same thread again. Late responses cannot replace another route. | PASS (`thread_recovery`: button-bound retry and route change; complete 123984-pixel warning comparison: zero differences) |
+| 4 | Turn render failure | error | `This turn couldn't render`. | A failed turn leaves other turns visible. Try again rebuilds that turn from current data. Its tooltip and accessibility label retain the source error. The squircle card and Retry fill use the original viewport layer; Retry keeps its hover behavior and border-box size. | PASS (`thread_recovery`: Linux render failure and retry without a graphics adapter; original-context component: zero differences over 233208 pixels, hover and restoration checked without a Mac panic) |
 | 5 | Streaming agent message | loading | Text grows by deltas; new segments fade over 700 ms; `Working` shimmer. | New glyphs use the recorded adaptive fade. Later deltas do not restart older glyphs. Reduced motion shows the end state immediately. Shimmer belongs to S5. | PASS (`submit_enter_starts_thread`, `stream_fade`) |
 | 6 | Reasoning item | click | Toggles `Thought for {elapsed}`. | No handler. | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 7 | Command card | click | Expands output; copy buttons. | No handler. | NOT WIRED (`crates/ui/src/thread.rs`) |
@@ -380,8 +385,8 @@ The original recordings, masks and strict gates stay unchanged; remaining toolti
 | 14 | `⌘⇧A` | shortcut | Archives the chat. | `ArchiveChat`: `thread/archive`, the row leaves Recents, the route goes to Home. | PASS (`archive_chat`) |
 | 15 | `⌘⌥R` | shortcut | Rename dialog. | — | NOT WIRED (`crates/ui`: no rename dialog) |
 | 16 | Approval card | click | Approve, Allow similar, Allow all edits, Deny. | `Root::on_event` keeps each pending request by its request id and thread. The open thread shows its oldest request. Command, file-change, permission, user-input, standard MCP elicitation, and supported dynamic-tool forms use this queue. Responses retain the displayed card's identity. Explicit resolution removes requests without answering them. Turn completion removes only turn-bound requests. | PASS (`approval_queue.rs`: command/file-change queue order, withdrawal, thread isolation and turn end; non-command release gates remain open below) |
-| 17 | Stream error | error | `Reconnecting {progress}`. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
-| 18 | Usage limit | error | Usage limit banner. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
+| 17 | Stream error | error | `Reconnecting {progress}`. | Thread-bound notices show reconnect progress or busy status for `serverOverloaded` and HTTP 429 stream disconnects. Each digit uses the original character width and a separate layer. The suffix keeps its fractional position. Progress updates replace the current retry count. Later activity and completion retain source notices with their turn. | PASS (`thread_recovery`: thread and turn isolation, progress, busy status, retained notices, and zero pixel differences in both counter regions) |
+| 18 | Usage limit | error | Usage limit banner. | `usageLimitExceeded` shows the divider and the advice for the plan reported by `account/read`. Unknown plans use the retry-later fallback. Source details remain available, and completion retains terminal errors. | PASS (`thread_recovery`: account-plan advice and source-error retention) |
 | 19 | Focus ring on cards | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 20 | Resize | resize | The side panel yields width before the chat column. | `panel_width` keeps 320 px for the chat; no flow checks the 3 widths with the panel open. | FAIL (no flow; `crates/ui/src/diff.rs` `panel_width` assumes the sidebar open) |
 
@@ -406,6 +411,11 @@ The icon rasterizes during paint in the active compositor layer; the footer reco
 MCP responses use `action`, optional empty `content`, and the selected `_meta.persist`; they never use a command-approval `decision`.
 The host retains the disclosure choice only after an accepted response enters the bridge.
 Run `cargo test -p app --test computer_use_approvals`; the native replay and captures require macOS.
+
+The native recovery replay runs with `cargo test -p app --test thread_recovery -- --test-threads=1`.
+It exercises Root, ThreadView, the replayed JSON-RPC bridge and the Metal renderer on macOS.
+The deliberate render-panic case runs only on Linux. The Mac suite exits on unexpected panics to prevent system crash dialogs.
+Set `CGX_THREAD_RECOVERY_PROOF` to an output directory to retain native captures.
 
 MO-36 uses `refs/interactions/ms4.json`, recorded with the original CSS classes in an isolated route1 Chrome context.
 The recording appends synthetic markdown spans and seeks their animations; it does not measure live model segmentation.
@@ -573,6 +583,10 @@ Paired replacement lines mark the changed text range.
 The header and context menu share the same word-wrap state.
 The file viewer handles `⌘L`, clamps line numbers, and counts negative numbers from the end.
 The line input stays closed until file contents are available.
+The `git-file-url` host read uses the current branch for a GitHub origin, as in the original.
+It encodes path segments and can include a line anchor.
+Other origins return no link.
+A detached HEAD returns no link.
 The parser stops above 2,000,000 input bytes, 20,000 input lines, or 10,000 bytes per input line.
 Invalid hunk numbers show `Diff failed to render` instead of overflowing a line counter.
 File boundaries must start a line; a `diff --git` string inside changed code does not split the file.
