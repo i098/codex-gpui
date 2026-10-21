@@ -342,6 +342,10 @@ Inline-code backgrounds use both snapped label edges, so fractional text widths 
 Monochrome glyphs and SVGs keep their paint alpha.
 Element opacity is applied once when the enclosing layer is restored.
 
+Native sprite state retains four nested layer devices within Metal's eight color targets.
+Each device restores into its parent before a parent opacity mask is applied.
+Deeper alpha is combined in the innermost device.
+
 Canvas callbacks honor their `opacity`, `layer`, and `top_layer` styles.
 These styles use the same compositor boundary as other elements.
 
