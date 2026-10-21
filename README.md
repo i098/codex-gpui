@@ -284,6 +284,15 @@ On macOS, the adapter reads Spotlight metadata, applies the original app exclusi
 It returns each app's path, bundle ID, and display name without launching the app.
 Linux returns an empty native app list, as the original host does.
 
+`open-in-targets` returns the original editor and terminal catalog, installed targets, and the preferred target.
+It reads `open-in-target-preferences` from the same shared host settings store as the UI.
+It reads `custom_file_handlers` from the app-server configuration.
+Set `deferEnrichment` without a path to read the catalog without application detection.
+Path queries include native file handlers and their icons; discovery does not launch an application.
+Alacritty is a Linux fallback for the `terminal` target, not a separate target ID in this original build.
+Cloned `host_settings::Settings` handles share updates; release `read_all()` guards before writing.
+
+
 On macOS, `textsys::show_definition(window, selection, baseline)` opens AppKit's native Look Up popover.
 The baseline uses window-local logical pixels from the top left; the adapter handles both view orientations.
 Call it on the main thread with the unchanged selection.
