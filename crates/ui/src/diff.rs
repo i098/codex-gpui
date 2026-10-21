@@ -112,6 +112,8 @@ pub struct FileDiff {
     /// Workspace-relative directory part (tertiary) and file name of the header path.
     pub dir: SharedString,
     pub name: SharedString,
+    display_dir: SharedString,
+    display_name: SharedString,
     pub added: usize,
     pub removed: usize,
     hunks: Vec<Hunk>,
@@ -297,15 +299,22 @@ impl DiffPanel {
                     f.removed += removed;
                     f.hunks.extend(hunks);
                 }
-                None => files.push(FileDiff {
-                    dir: dir.to_string().into(),
-                    name: name.to_string().into(),
-                    added,
-                    removed,
-                    hunks,
-                    open: true,
-                    problem,
-                }),
+                None => {
+                    let dir: SharedString = dir.to_owned().into();
+                    let name: SharedString = name.to_owned().into();
+                    let (display_dir, display_name) = controls::display_parts(&shown, &dir, &name);
+                    files.push(FileDiff {
+                        dir,
+                        name,
+                        display_dir,
+                        display_name,
+                        added,
+                        removed,
+                        hunks,
+                        open: true,
+                        problem,
+                    });
+                }
             }
         }
         Self {
@@ -1072,6 +1081,7 @@ impl Render for DiffPanel {
                 .flex()
                 .flex_col()
                 .flex_none()
+                .pb(px(2.))
                 .when(self.standalone, |d| {
                     d.relative()
                         .overflow_hidden()
@@ -1096,16 +1106,7 @@ impl Render for DiffPanel {
                 )))
                 .map(|d| {
                     if file.open && file.problem.is_some() {
-                        d.child(
-                            text(
-                                file.problem.unwrap_or_default(),
-                                13.,
-                                20.,
-                                400.,
-                                t.text_tertiary,
-                            )
-                            .p(px(12.)),
-                        )
+                        d.child(controls::problem_body(file.problem.unwrap_or_default(), &t))
                     } else if file.open {
                         d.children(file.hunks.iter().enumerate().map(|(index, h)| {
                             let controls =
@@ -1180,6 +1181,7 @@ impl Render for DiffPanel {
                                 })
                                 .child(hunk(
                                     h,
+                                    file.name.ends_with(".txt"),
                                     &t,
                                     &line_index,
                                     self,
@@ -2223,10 +2225,6 @@ fn file_header(
         return panel.standalone_file_header(i, file, t, cx);
     }
     let small = |name| round_icon(name, 20., t);
-    let python = match t.appearance {
-        Appearance::Dark => rgb(0x69b1ff),
-        Appearance::Light => rgb(0x1a85d4),
-    };
     div()
         .id(("diff-file", i))
         .flex_none()
@@ -2247,16 +2245,19 @@ fn file_header(
                 .items_center()
                 .pl(px(4.))
                 .gap(px(8.))
-                .when(file.name.ends_with(".py"), |d| {
-                    // `#file-tree-builtin-python` sprite.
-                    d.child(icon("diff-file-python", 16., python.into()))
-                })
+                .child(controls::file_icon(&file.name, t))
                 .child(
                     div()
                         .flex()
                         .overflow_hidden()
-                        .child(text(file.dir.clone(), 14., 21., 430., t.text_tertiary))
-                        .child(text(file.name.clone(), 14., 21., 430., t.text)),
+                        .child(text(
+                            file.display_dir.clone(),
+                            14.,
+                            21.,
+                            430.,
+                            t.text_tertiary,
+                        ))
+                        .child(text(file.display_name.clone(), 14., 21., 430., t.text)),
                 ),
         )
         .child(
@@ -2541,8 +2542,44 @@ fn word_mark(line: &Line, layout: gpui::TextLayout, t: &Theme) -> Option<gpui::A
     )
 }
 
+fn change_marker(kind: Kind, split: bool, t: &Theme) -> Div {
+    let color = if kind == Kind::Added {
+        t.git_added
+    } else {
+        t.git_deleted
+    };
+    let marker = div().absolute().left_0().top_0().w(px(4.)).h_full();
+    if kind != Kind::Removed || split {
+        return marker.child(shapes::decoration(Decoration {
+            fill: Some(color),
+            ..Default::default()
+        }));
+    }
+    // Keep the original Lab background mix unrounded for the gradient raster.
+    let [r, g, b] = if t.appearance == Appearance::Dark {
+        [0.232724, 0.120283, 0.103232]
+    } else {
+        [0.986266, 0.90291, 0.885396]
+    };
+    let colors = [gpui::Rgba { r, g, b, a: 1. }, color.into()];
+    marker.child(
+        gpui::canvas(
+            |_, _, _| (),
+            move |bounds, (), window, cx| {
+                let scale = window.scale_factor();
+                let line = (CODE_LINE * scale * 64.).floor() / (scale * 64.);
+                let period = px(line / (line / 2.).round());
+                shapes::paint_horizontal_stripes(period, colors, bounds, window, cx);
+            },
+        )
+        .absolute()
+        .size_full(),
+    )
+}
+
 fn hunk(
     h: &Hunk,
+    plain_text: bool,
     t: &Theme,
     line_index: &Cell<usize>,
     panel: &DiffPanel,
@@ -2550,6 +2587,13 @@ fn hunk(
     cx: &Context<DiffPanel>,
 ) -> Div {
     let syntax = Syntax::of(t);
+    let foreground: Hsla = rgb(match (t.appearance, plain_text) {
+        (Appearance::Dark, false) => 0xfcfcfc,
+        (Appearance::Dark, true) => 0xffffff,
+        (_, false) => 0x0d0d0d,
+        (_, true) => 0x1a1c1f,
+    })
+    .into();
     let digits = h
         .lines
         .iter()
@@ -2574,7 +2618,7 @@ fn hunk(
                bg: Hsla,
                content: StyledText,
                mark: Option<gpui::AnyElement>,
-               bar: Option<Hsla>| {
+               bar: Option<Kind>| {
         div()
             .h(px(CODE_LINE))
             .when(panel.wrap, |d| d.h_auto().min_h(px(CODE_LINE)))
@@ -2596,14 +2640,7 @@ fn hunk(
                         fill: Some(number_bg),
                         ..Default::default()
                     }))
-                    .when_some(bar, |d, color| {
-                        d.child(div().absolute().left_0().top_0().w(px(4.)).h_full().child(
-                            shapes::decoration(Decoration {
-                                fill: Some(color),
-                                ..Default::default()
-                            }),
-                        ))
-                    })
+                    .when_some(bar, |d, kind| d.child(change_marker(kind, split, t)))
                     .text_color(number_fg)
                     .when_some(number, |d, n| d.child(n.to_string())),
             )
@@ -2667,13 +2704,18 @@ fn hunk(
             (
                 range,
                 HighlightStyle {
-                    color: Some(t.text),
+                    color: Some(if plain_text { foreground } else { t.text }),
                     ..Default::default()
                 },
             )
         });
+        let tokens = if plain_text {
+            Vec::new()
+        } else {
+            highlight(&l.text, &syntax)
+        };
         let content = StyledText::new(l.text.clone()).with_highlights(combine_highlights(
-            combine_highlights(combine_highlights(highlight(&l.text, &syntax), word), found),
+            combine_highlights(combine_highlights(tokens, word), found),
             selection,
         ));
         let down_layout = content.layout().clone();
@@ -2685,7 +2727,7 @@ fn hunk(
             bg,
             content,
             mark,
-            (l.kind != Kind::Context).then_some(number_fg),
+            (l.kind != Kind::Context).then_some(l.kind),
         )
         .cursor_pointer()
         .on_mouse_down(
@@ -2731,11 +2773,7 @@ fn hunk(
         .font_weight(FontWeight(430.))
         .text_size(px(CODE_SIZE))
         .line_height(px(CODE_LINE))
-        .text_color(rgb(if t.appearance == Appearance::Dark {
-            0xfcfcfc
-        } else {
-            0x0d0d0d
-        }))
+        .text_color(foreground)
         .when_some(h.separator.clone(), |d, label| {
             let len = label.len();
             d.child(row(

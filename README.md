@@ -154,7 +154,11 @@ Run `cargo test -p ui --lib screens::diff::panel::word` for its boundary checks.
 `ui::screens::diff::panel::patch::file_path` reads the target path from one Git file patch.
 It decodes quoted names and handles rename, copy, binary, empty-file, and deleted-file metadata.
 Complete file headers preserve filenames under no-prefix and mnemonic-prefix settings. Hunk contents never supply a path.
-The parser does not access or authorize filesystem paths. Rendered controls remain unchanged.
+The parser does not access or authorize filesystem paths.
+Changes uses it for aggregate patches, preserving quoted names and metadata-only file entries through the file headers and Copy path action.
+File headers collapse display whitespace and show rename sources. Copy path keeps the decoded path unchanged.
+Metadata-only files show notices instead of raw Git headers.
+Unified deletions use source-sized striped markers. Split deletions keep solid markers.
 Run `cargo test -p ui --lib screens::diff::panel::patch` for its boundary checks.
 
 `ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.
