@@ -89,6 +89,20 @@ It does not use optional agent capabilities (`loadSession`, session list, image 
 An unsupported method gets the JSON-RPC error `<method> is not supported by the ACP backend`, and the app shows its usual failure state.
 The client offers no file system or terminal capability, so the agent uses its own tools.
 
+## Durable cloud transport
+
+`Bridge::connect_cloud(endpoint, token, account_id)` connects to the durable cloud app-server.
+Use `bridge::CLOUD_ENDPOINT` for the original service and call `initialize` before sending requests.
+Run the blocking connection step off the UI thread.
+The bridge sends the token through the original WebSocket subprotocol and preserves the existing request, response, and event APIs.
+Remote endpoints require TLS; plain WebSocket connections are limited to loopback.
+The caller owns authentication changes and reconnects.
+Closing the socket fails pending requests, and dropping the bridge closes its connection.
+TLS uses an explicit Ring provider with standard and system trust roots.
+The vendored Tungstenite 0.28 package omits raw handshake-request trace output because it contains the authentication token.
+
+Run `cargo test -p bridge` for real loopback WebSocket exchanges, disconnect handling, and credential checks.
+
 ## Native Computer Use service
 
 The host keeps one managed native helper at `$CODEX_HOME/computer-use/Codex Computer Use.app`.
@@ -228,7 +242,7 @@ That command does not close QA or any normal app.
 
 | Crate | Role |
 |---|---|
-| `bridge` | Client for `codex app-server`: newline-delimited JSON-RPC over stdio, hand-written protocol types, replay of recorded sessions, and the ACP backend. |
+| `bridge` | JSON-RPC client for `codex app-server` over stdio or durable cloud WebSocket, protocol types, recorded sessions, and the ACP backend. |
 | `ui` | The window shell (titlebar, navigation rail, sidebar, main panel), the 9 screens in `screens/`, the composer, the thread view, the diff view and the icons. |
 | `shapes` | Box decorations that land on Chromium's pixels: rounded and squircle corners, borders, `box-shadow`, backdrop blur, SVG icon paths. It links Skia. |
 | `textsys` | A GPUI text system that puts glyphs on the same pixels as Chromium on macOS. It also holds the vendored `gpui` and `gpui_apple`. |
