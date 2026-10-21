@@ -118,6 +118,11 @@ fn rebind(previous: Option<&Preferences>, next: &Preferences, cx: &mut App) {
     let mapper = gpui::DummyKeyboardMapper;
     let mut bindings = Vec::new();
     let mut enabled = Vec::new();
+    let close_tab_keys: Vec<String> = keyboard::commands()
+        .iter()
+        .find(|command| command.id == "closeTab")
+        .map(|command| next.keys(command).map(keyboard::canonical).collect())
+        .unwrap_or_default();
     for command in keyboard::commands() {
         let Some(action) = action(command.id) else {
             continue;
@@ -137,9 +142,15 @@ fn rebind(previous: Option<&Preferences>, next: &Preferences, cx: &mut App) {
             if key.starts_with("mouse") {
                 continue;
             }
-            // Their keys are chat navigation's too: only focus inside a side tab's view takes
-            // them, anywhere else the chat commands keep them.
-            let context = if matches!(command.id, "nextTab" | "previousTab") {
+            // An accelerator of `closeTab` routes to the shell tab first (`CloseWindow`); only
+            // one that `closeWindow` alone has closes the window outright.
+            if command.id == "closeWindow" && close_tab_keys.contains(&key) {
+                continue;
+            }
+            // Tab commands act only with focus inside a side tab's view (the original's
+            // focused panel). Next/Previous tab share their keys with chat navigation, so
+            // anywhere else those keys keep the chat commands.
+            let context = if matches!(command.id, "nextTab" | "previousTab" | "closeOtherTabs") {
                 Some("SideTabs")
             } else if command.id.starts_with("composer.") {
                 Some("Composer")
@@ -173,6 +184,8 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
         "settings" => Box::new(OpenSettings),
         "keyboardShortcuts" => Box::new(shortcuts::OpenShortcutSettings),
         "copyDeeplink" => Box::new(shortcuts::CopyDeeplink),
+        "closeOtherTabs" => Box::new(shortcuts::CloseOtherSideTabs),
+        "copyWorkingDirectory" | "copyConversationPath" => Box::new(super::CopyWorkingDirectory),
         "nextTab" => Box::new(shortcuts::NextSideTab),
         "previousTab" => Box::new(shortcuts::PreviousSideTab),
         "toggleThreadPin" => Box::new(shortcuts::ToggleThreadPin),
@@ -199,7 +212,8 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
         "nextThreadNeedingAttention" => Box::new(shortcuts::NextAttentionChat),
         "manageTasks" => Box::new(OpenScheduled),
         "openThreadInNewWindow" => Box::new(super::OpenThreadInNewWindow),
-        "closeWindow" | "closeTab" => Box::new(CloseWindow),
+        "closeTab" => Box::new(CloseWindow),
+        "closeWindow" => Box::new(shortcuts::CloseWholeWindow),
         "composer.submit" => Box::new(ui::composer::Submit),
         id => {
             if let Some(number) = id

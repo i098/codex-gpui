@@ -2516,14 +2516,23 @@ impl Root {
         log_err(task, cx);
     }
 
-    /// `⌘W`: Electron main runs `closeTab` (`close-active-app-shell-tab`) while the thread
-    /// route's panel shows a tab, else the window closes.
+    /// `⌘W` (an accelerator of `closeTab`): Electron main closes the focused window's active
+    /// shell tab when it can (`close-active-app-shell-tab`; the main focus area counts as the
+    /// right panel), else the window.
     fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.dialog.is_some() {
             return;
         }
         if let Some(side) = self.side.filter(|_| self.split.is_some()) {
             return self.close_side(side, window, cx);
+        }
+        self.close_whole_window(window, cx);
+    }
+
+    /// An accelerator that only `closeWindow` has: no tab routing, the window closes.
+    fn close_whole_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dialog.is_some() {
+            return;
         }
         if self.state.confirm_before_close == ConfirmBeforeClose::Never {
             self.flush_settings(cx);

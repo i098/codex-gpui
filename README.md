@@ -572,3 +572,4 @@ Settings > Keyboard shortcuts lists the original command registry in one flat ca
 The `⌘/` dialog lists the shortcuts the app really binds (registry order, persisted overrides applied) and updates while it is open when a binding changes.
 `⌥⌘P` toggles the open chat's pin, `⌥⌘R` renames it and `⌘F` finds in it, all through the keymap; the `⌘/` dialog lists them in the original's recorded row order.
 `⌥⌘L` copies the open chat's `codex://threads/{id}` link, and `Next tab`/`Previous tab` step the side tabs when focus is inside one.
+`⌘W` closes the open side tab first (a `closeWindow`-only key closes the window), `⌥⌘W` closes the other side tabs with focus in one, and `⇧⌘C`/`⌥⇧⌘C` copy the chat's newest managed worktree root (else its working directory).

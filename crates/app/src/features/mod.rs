@@ -14,9 +14,11 @@ use crate::Root;
 use gpui::{App, Context, Div};
 
 mod command_destinations;
+mod copy_directory;
 mod keymap;
 pub(crate) mod shortcuts;
 pub(crate) use command_destinations::OpenThreadInNewWindow;
+pub(crate) use copy_directory::CopyWorkingDirectory;
 
 /// Called by [`crate::init`], after the app's own bindings.
 pub(crate) fn init(cx: &mut App) {
@@ -31,7 +33,10 @@ pub(crate) fn install_shortcuts(cx: &mut App) {
 /// Called by `Root::render` on the root element, after the app's own actions.
 pub(crate) fn actions(root: Div, owner: &Root, cx: &mut Context<Root>) -> Div {
     shortcuts::actions(
-        command_destinations::actions(crate::windows::actions(root, cx), cx),
+        copy_directory::actions(
+            command_destinations::actions(crate::windows::actions(root, cx), cx),
+            cx,
+        ),
         owner,
         cx,
     )

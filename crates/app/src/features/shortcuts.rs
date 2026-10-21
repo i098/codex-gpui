@@ -16,7 +16,9 @@ actions!(
         RenameOpenChat,
         NextSideTab,
         PreviousSideTab,
-        CopyDeeplink
+        CopyDeeplink,
+        CloseWholeWindow,
+        CloseOtherSideTabs
     ]
 );
 
@@ -105,6 +107,15 @@ pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> 
     .on_action(cx.listener(|this, _: &CopyDeeplink, _, cx| {
         if let Route::Thread(id) = &this.state.route {
             cx.write_to_clipboard(ClipboardItem::new_string(format!("codex://threads/{id}")));
+        }
+    }))
+    .on_action(
+        cx.listener(|this, _: &CloseWholeWindow, window, cx| this.close_whole_window(window, cx)),
+    )
+    .on_action(cx.listener(|this, _: &CloseOtherSideTabs, window, cx| {
+        if let Some(side) = this.side {
+            this.tabs.retain(|tab| *tab == side);
+            this.sync(window, cx);
         }
     }))
     .on_action(cx.listener(|this, _: &NextSideTab, window, cx| this.step_side(1, window, cx)))
