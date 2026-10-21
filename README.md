@@ -138,6 +138,12 @@ Branch prefix saves on blur or Enter; multiline instructions save after three id
 The focused `cargo test -p app --test git_settings -- --test-threads=1` native replay verifies saved values after reopening Git settings.
 This page does not implement Git operations or active pull request watchers, and it does not complete other settings pages.
 
+`Host` reads, lists, and saves `.codex/environments/*.toml` files and persists workspace selections in `.codex-global-state.json`.
+Saving uses SHA-256 revisions to reject stale edits and keeps existing symlinks and file permissions.
+Worktree setup uses the same environment schema, including platform scripts and action validation.
+Run `cargo test -p app --lib host::local_environments` to check file edits, selections, inherited files, and invalid-file handling.
+This service does not add the local environment settings page.
+
 `ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.
 The multi-select emits `SelectionChanged`; the caller saves the value and can restore it with `set_checked` if saving fails.
 `ui::confirmation::Confirmation` emits one confirm or cancel result and returns focus to the previous control.

@@ -364,3 +364,26 @@ fn head_start_records_the_synced_branch_and_failures_clean_up_only_safe_worktree
     assert!(remote_ref.is_err());
     Ok(())
 }
+
+#[test]
+fn invalid_action_platform_rejects_setup_like_the_original_schema() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let (source, _, _) = fixture(dir.path())?;
+    let environment = source.join(".codex/environments/invalid.toml");
+    write(
+        &environment,
+        "version=1\nname='Invalid action'\n[setup]\nscript='exit 0'\n[[actions]]\nname='Run'\ncommand='echo run'\nplatform='macos'\n",
+    )?;
+    let before = snapshot(&source)?;
+    let home = dir.path().join("codex");
+    let host = LocalHost::new(&home);
+    let result = call(
+        &host,
+        "create-worktree",
+        json!({"cwd": source, "localEnvironmentConfigPath": environment}),
+    );
+    assert!(result.is_err());
+    assert_eq!(snapshot(&source)?, before);
+    assert!(reservations(&home.join("worktrees"))?.is_empty());
+    Ok(())
+}
