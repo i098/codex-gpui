@@ -2462,6 +2462,9 @@ struct IconPath {
     color: Option<Rgba>,
     opacity: f32,
     layer: f32,
+    /// A white `<mask>`'s paths (`mask="url(#…)"`): Chromium draws the element into a layer
+    /// and the mask's paths into a `DstIn` layer over it.
+    mask: Vec<(Path, Matrix)>,
 }
 
 impl IconPath {
@@ -2586,10 +2589,13 @@ fn paint_color(v: &str) -> Option<Option<Rgba>> {
 }
 
 /// The subset of SVG the icon assets use: nested `<g transform>`, `<path>` with fill/stroke
-/// attributes inherited from `<svg>`/`<g>`. `None` for anything else (masks).
+/// attributes inherited from `<svg>`/`<g>`, and a `mask` of white paths. `None` for anything
+/// else.
 fn parse_icon(src: &str) -> Option<IconSvg> {
     let mut view_box = None;
     let mut paths = Vec::new();
+    let mut masks: std::collections::HashMap<&str, Vec<(Path, Matrix)>> = Default::default();
+    let mut in_mask = None;
     // Inherited (transform, fill, stroke, stroke-width, linecap, linejoin) per open element.
     type Style<'a> = (
         Matrix,
@@ -2610,8 +2616,11 @@ fn parse_icon(src: &str) -> Option<IconSvg> {
     for tag in src.split('<').skip(1) {
         let tag = &tag[..tag.find('>')?];
         if let Some(end) = tag.strip_prefix('/') {
-            if end.starts_with('g') || end.starts_with("svg") {
+            if end.starts_with('g') || end.starts_with("svg") || end.starts_with("mask") {
                 stack.pop();
+            }
+            if end.starts_with("mask") {
+                in_mask = None;
             }
             continue;
         }
@@ -2630,14 +2639,29 @@ fn parse_icon(src: &str) -> Option<IconSvg> {
         match name {
             "svg" => view_box = Some(numbers(attr(tag, "viewBox")?)),
             "g" => {}
+            "mask" => in_mask = Some(attr(tag, "id")?),
             "path" => {
-                if attr(tag, "mask").is_some() || attr(tag, "clip-path").is_some() {
+                if attr(tag, "clip-path").is_some() {
                     return None;
                 }
                 let mut path = Path::from_svg(attr(tag, "d")?)?;
                 if attr(tag, "fill-rule") == Some("evenodd") {
                     path.set_fill_type(PathFillType::EvenOdd);
                 }
+                if let Some(id) = in_mask {
+                    // A white mask path's coverage is the mask's alpha.
+                    if style.1 != Some("white") || style.2.is_some_and(|s| s != "none") {
+                        return None;
+                    }
+                    masks.entry(id).or_default().push((path, style.0));
+                    continue;
+                }
+                let mask = match attr(tag, "mask") {
+                    Some(url) => masks
+                        .get(url.strip_prefix("url(#")?.strip_suffix(')')?)?
+                        .clone(),
+                    None => Vec::new(),
+                };
                 let opacity = |a: &str| attr(tag, a).map_or(Ok(1.), str::parse::<f32>).ok();
                 let element = opacity("opacity")?;
                 if let Some(color) = style.1.and_then(paint_color) {
@@ -2649,6 +2673,7 @@ fn parse_icon(src: &str) -> Option<IconSvg> {
                         color,
                         opacity: fill,
                         layer: element,
+                        mask: mask.clone(),
                     });
                 }
                 if let Some(color) = style.2.and_then(paint_color) {
@@ -2671,12 +2696,13 @@ fn parse_icon(src: &str) -> Option<IconSvg> {
                         color,
                         opacity: stroke_opacity,
                         layer: element,
+                        mask,
                     });
                 }
                 continue;
             }
-            "mask" | "clipPath" | "circle" | "rect" | "ellipse" | "line" | "polyline"
-            | "polygon" | "use" => return None,
+            "clipPath" | "circle" | "rect" | "ellipse" | "line" | "polyline" | "polygon"
+            | "use" => return None,
             _ => continue,
         }
         if !tag.ends_with('/') {
@@ -2840,8 +2866,27 @@ pub(crate) fn paint_icon(
         c.concat(&view);
     };
     let draw_path = |c: &Canvas, p: &IconPath, col: Color4f| {
+        if p.mask.is_empty() {
+            c.concat(&p.transform);
+            c.draw_path(&p.path, &p.paint(col));
+            return;
+        }
+        c.save_layer(&skia_safe::canvas::SaveLayerRec::default());
+        c.save();
         c.concat(&p.transform);
         c.draw_path(&p.path, &p.paint(col));
+        c.restore();
+        let mut dst_in = Paint::default();
+        dst_in.set_blend_mode(BlendMode::DstIn);
+        c.save_layer(&skia_safe::canvas::SaveLayerRec::default().paint(&dst_in));
+        for (path, transform) in &p.mask {
+            c.save();
+            c.concat(transform);
+            c.draw_path(path, &fill_paint(Color4f::new(1., 1., 1., 1.)));
+            c.restore();
+        }
+        c.restore();
+        c.restore();
     };
     if layer.composited && !wide(color) {
         let rgba = Rgba::from(color);

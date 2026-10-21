@@ -14,9 +14,9 @@
 
 use gpui::{
     App, Bounds, Corners, Element, ElementId, GlobalElementId, Hitbox, Hsla, Image, ImageFormat,
-    InspectorElementId, InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, Point,
-    RenderImage, Rgba, SharedString, StyleRefinement, Styled, Transformation, Window, point, px,
-    size,
+    InspectorElementId, InteractiveElement, Interactivity, IntoElement, LayoutId, Length, Pixels,
+    Point, RenderImage, Rgba, SharedString, Size, StyleRefinement, Styled, Transformation, Window,
+    point, px, size,
 };
 use std::{
     collections::HashMap,
@@ -69,6 +69,16 @@ pub struct Icon {
 }
 
 impl Icon {
+    /// The CSS box: an authored size truncated to LayoutUnit (`authored`).
+    fn css_size(&self, scale: f32) -> Size<Pixels> {
+        let css = size(px(self.width), px(self.height));
+        if !self.authored {
+            return css;
+        }
+        let unit = scale * 64.;
+        css.map(|v| px((f32::from(v) * unit).trunc() / unit))
+    }
+
     /// Mirrored horizontally, like the original's `-scale-x-100` (Forward = Back mirrored).
     pub fn flip_x(mut self) -> Self {
         self.flip_x = true;
@@ -153,12 +163,20 @@ impl Element for Icon {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, ()) {
+        let (authored, given) = (self.authored, size(px(self.width), px(self.height)));
+        let css = self.css_size(window.scale_factor());
         let layout_id = self.interactivity.request_layout(
             global_id,
             inspector_id,
             window,
             cx,
-            |style, window, cx| window.request_layout(style, None, cx),
+            |mut style, window, cx| {
+                // The box Blink lays out, unless the caller sized the icon otherwise.
+                if authored && style.size == given.map(Length::from) {
+                    style.size = css.map(Length::from);
+                }
+                window.request_layout(style, None, cx)
+            },
         );
         (layout_id, ())
     }
@@ -199,13 +217,7 @@ impl Element for Icon {
         let (name, flip_x, own_layer) = (self.name.clone(), self.flip_x, self.own_layer);
         let (composited, runtime) = (self.composited, self.runtime);
         let transformation = self.transformation;
-        let css = size(px(self.width), px(self.height));
-        let css = if self.authored {
-            let unit = window.scale_factor() * 64.;
-            css.map(|v| px((f32::from(v) * unit).trunc() / unit))
-        } else {
-            css
-        };
+        let css = self.css_size(window.scale_factor());
         self.interactivity.paint(
             global_id,
             inspector_id,

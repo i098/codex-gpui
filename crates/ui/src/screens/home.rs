@@ -222,7 +222,8 @@ impl Render for HomeMain {
             .flex_col()
             .items_center()
             .gap(px(24.))
-            .child(icon("codex-logo", 56., Hsla { a: 0.3, ..t.text }))
+            // `opacity-30` on the logo's box.
+            .child(icon("codex-logo", 56., t.text).opacity(0.3))
             .child(
                 div()
                     .id("home-project-title")
