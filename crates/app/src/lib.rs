@@ -11,6 +11,7 @@ mod features;
 pub mod host;
 pub mod host_settings;
 pub mod native_menus;
+pub mod oauth;
 pub mod qa;
 mod routes;
 pub use routes::Route;
@@ -400,6 +401,7 @@ pub struct Root {
     usage_limit_notice: UsageLimitNotice,
     bridge: Arc<Bridge>,
     host: Arc<dyn host::Host>,
+    oauth: oauth::Connections,
     project_load: Option<Task<()>>,
     picking_project: bool,
     automations: Option<Result<Value, String>>,
@@ -695,6 +697,7 @@ impl Root {
                     .with_bridge(bridge.clone())
                     .with_settings(cx.try_global::<host_settings::Settings>().cloned()),
             ),
+            oauth: oauth::Connections::default(),
             bridge,
             automations: None,
             automation_load: None,
@@ -1031,6 +1034,7 @@ impl Root {
 
     /// Replaces the desktop host and cancels pending UI callbacks for its reads and updates.
     pub fn set_host(&mut self, host: Arc<dyn host::Host>, cx: &mut Context<Self>) {
+        self.invalidate_oauth(cx);
         self.cloud = None;
         self.automation_load = None;
         self.project_load = None;
@@ -2519,6 +2523,7 @@ impl Root {
                     Ok(_) => {
                         this.login = Some(this.new_login(window, cx));
                         this.set_account(None, cx);
+                        this.invalidate_oauth(cx);
                         let host = this.host.clone();
                         cx.background_spawn(async move { host.invalidate_identity() })
                             .detach();
@@ -4454,6 +4459,7 @@ impl Root {
     /// Recents updates and approval prompts.
     pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
         self.plugins_event(&event, cx);
+        self.oauth_account_event(&event, cx);
         if let Some(login) = &self.login {
             login.update(cx, |login, cx| login.apply(&event, cx));
             return;
@@ -5473,6 +5479,11 @@ impl Render for Root {
             (None, Some(split)) => split.clone().into_any_element(),
             (None, None) => self.shell.clone().into_any_element(),
         };
+        let content = self
+            .oauth
+            .page
+            .as_ref()
+            .map_or(content, |page| page.clone().into_any_element());
         let root = div()
             .size_full()
             .relative()

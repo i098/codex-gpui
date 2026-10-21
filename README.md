@@ -90,6 +90,25 @@ This service does not enable the Plugin or Skill directory UI.
 
 Run `cargo test -p app --lib host::skills::tests` for the catalog and installation checks.
 
+## Connector OAuth callbacks
+
+Use `Root::start_app_connection` with `oauth::ConnectRequest` to start a connector connection.
+The existing authenticated `CloudHost` sends the original start or reauthentication request.
+The provider returns through `codex://connector/oauth_callback`; pass that URL to `Root::receive_oauth_redirect`.
+The root checks the pending state, account, connector, and optional reauthentication link before it reports success.
+Duplicate callbacks do not send a second request, and failed callbacks can retry.
+Provider URLs, authorization codes, and pending OAuth state never enter saved window settings.
+
+`ConnectionEvent` reports provider opening, connection completion, failure, replacement, and cancellation to the originating control.
+That control owns its plugin resume action and connected-app refresh.
+Call `Root::cancel_app_connection` when the originating connection is cancelled.
+Health, Plaid, and mobile app-specific-password callback URLs remain gated as excluded ChatGPT or mobile products.
+OS URL delivery and scheme registration belong to the window-shell family; this module provides the in-process callback lifecycle.
+
+Run `cargo test -p app --lib oauth::model::tests` for URL and identity boundaries.
+Run `cargo test -p app --test oauth -- --test-threads=1` for native root lifecycle checks with schema-level responses.
+These checks do not sign in or change a real provider account.
+
 ## ACP backend
 
 Set `CODEX_GPUI_ACP` to the command line of an [Agent Client Protocol](https://agentclientprotocol.com) agent to use that agent instead of `codex app-server`:
