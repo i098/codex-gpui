@@ -42,6 +42,9 @@ pub(super) struct RowDecorations {
     pub selection: Option<((usize, usize), (usize, usize))>,
     pub cursor: Option<(usize, usize)>,
     pub link: Option<(usize, Range<usize>)>,
+    /// A selection that ends above the viewport: xterm draws it over the first visible row,
+    /// from column 0 to its end column, and the text under it is hidden.
+    pub above: Option<(usize, usize)>,
 }
 
 pub struct TerminalSurface {
@@ -306,7 +309,17 @@ impl Render for TerminalSurface {
         .left_0()
         .size_full();
         let rows_entity = cx.entity();
+        let first_visible = (-f32::from(self.scroll.0.borrow().base_handle.offset().y)
+            / f32::from(self.row_height)
+            + 0.001)
+            .floor()
+            .max(0.) as usize;
+        let above = self.selection.and_then(|(a, b)| {
+            let end = a.max(b);
+            (end.0 < first_visible).then_some((first_visible, end.1))
+        });
         let decorations = RowDecorations {
+            above,
             selection: self.selection,
             cursor: (!self.buffer.cursor_hidden && self.focus.is_focused(window))
                 .then_some(self.buffer.cursor),
@@ -567,6 +580,33 @@ pub(super) fn row_element(
         }
     }
     line = line.child(StyledText::new(content).with_runs(runs));
+    if let Some((row, columns)) = decorations.above
+        && row == index
+    {
+        let fill = if dark {
+            gpui::rgba(0xffffff1b)
+        } else {
+            gpui::rgba(0x00000019)
+        };
+        let under = gpui::Rgba::from(t.surface);
+        let over = |s: f32, u: f32| s * fill.a + u * (1. - fill.a);
+        let opaque: Hsla = gpui::Rgba {
+            r: over(fill.r, under.r),
+            g: over(fill.g, under.g),
+            b: over(fill.b, under.b),
+            a: 1.,
+        }
+        .into();
+        line = line.child(
+            div()
+                .absolute()
+                .left_0()
+                .top_0()
+                .w(cell_width * columns as f32)
+                .h(row_height)
+                .bg(opaque),
+        );
+    }
     if let Some((cursor_row, col)) = decorations.cursor
         && cursor_row == index
     {
