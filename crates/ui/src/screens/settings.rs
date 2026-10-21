@@ -225,13 +225,9 @@ impl SettingsPage {
         cx.notify();
     }
 
-    pub fn set_cloud(
-        &mut self,
-        cloud: Entity<super::cloud::CloudPage>,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn set_cloud(&mut self, cloud: Entity<super::cloud::CloudPage>, cx: &mut Context<Self>) {
         if matches!(self.section, "Codex Cloud" | "Legacy Codex Cloud") {
-            cloud.update(cx, |cloud,cx| cloud.open_section(self.section,cx));
+            cloud.update(cx, |cloud, cx| cloud.open_section(self.section, cx));
         }
         self.cloud = Some(cloud);
         cx.notify();
@@ -378,7 +374,7 @@ impl SettingsNav {
                         if matches!(label, "Codex Cloud" | "Legacy Codex Cloud")
                             && let Some(cloud) = &p.cloud
                         {
-                            cloud.update(cx, |cloud,cx| cloud.open_section(label,cx));
+                            cloud.update(cx, |cloud, cx| cloud.open_section(label, cx));
                         }
                         cx.notify();
                     })
@@ -401,7 +397,11 @@ impl Render for SettingsNav {
         let page = self.page.read(cx);
         let (section, query) = (page.section, page.query.clone());
         let needle = query.to_lowercase();
-        let cloud_access = page.cloud.as_ref().map(|cloud| cloud.read(cx).access()).unwrap_or_default();
+        let cloud_access = page
+            .cloud
+            .as_ref()
+            .map(|cloud| cloud.read(cx).access())
+            .unwrap_or_default();
         let mut sections = Vec::new();
         for (heading, items) in NAV {
             let rows: Vec<_> = items
@@ -1439,7 +1439,7 @@ fn deco(l: &Layer, radius: f32, corner: Corner, fill: Hsla, border: Option<Hsla>
 
 /// A control's surface on a settings card: Chromium blits it onto the card's opaque pixels in
 /// the scroller's layer, as on the page (`shapes` takes the `.layer()` origin for its tiles).
-fn on_card(radius: f32, corner: Corner, fill: Hsla, border: Option<Hsla>) -> AnyElement {
+pub(crate) fn on_card(radius: f32, corner: Corner, fill: Hsla, border: Option<Hsla>) -> AnyElement {
     shapes::decoration(surface(radius, corner, fill, border)).into_any_element()
 }
 
