@@ -716,9 +716,11 @@ The shared host reads the original Statsig bootstrap and caches its parsed evalu
 
 `cargo test -p ui --lib screens::settings::integrations` checks key collisions, form preservation, skill precedence, read-only origins, and hook trust.
 `cargo test -p app --lib settings_integrations` checks the OAuth URL boundary.
-An owned-profile application smoke exercises Root dispatch against the real app-server for toggling, saving, trusting, invalid-save preservation, and deletion.
+An owned-profile application smoke checked Root dispatch against the real app-server on Linux and macOS.
+It covered MCP toggling, saving, trust, invalid-save preservation, deletion, marketplace add/remove, and directory navigation.
+The native renderer produced a manager screenshot without a new crash report.
 These checks do not establish appearance parity.
-Directory navigation and strict original/native pairs remain pending their shared integration and capture handoffs.
+Strict original/native pairs remain blocked on capture recovery.
 ST-155 remains gated while the native MCP app sandbox is absent; the manager never reports a synthetic data-clear success.
 
 

@@ -8,8 +8,8 @@ mod features;
 pub mod host;
 pub mod host_settings;
 pub mod oauth;
-pub mod qa;
 mod plugins;
+pub mod qa;
 mod search;
 mod section_actions;
 pub(crate) mod settings_integrations;
@@ -5465,6 +5465,16 @@ impl Render for Root {
             .on_action(cx.listener(
                 |this, _: &settings::integrations::OpenPluginManager, window, cx| {
                     this.open_settings_section("Plugins", window, cx)
+                },
+            ))
+            .on_action(cx.listener(
+                |this, action: &settings::integrations::OpenExtensionDirectory, window, cx| {
+                    this.open_plugins(action.0, window, cx);
+                },
+            ))
+            .on_action(cx.listener(
+                |this, _: &settings::integrations::OpenPluginCreator, window, cx| {
+                    this.open_plugin_creator(window, cx);
                 },
             ))
             .on_action(cx.listener(|this, _: &LogOut, window, cx| {

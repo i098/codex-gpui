@@ -24,6 +24,9 @@ impl Root {
             let root = cx.weak_entity();
             cx.set_global(State {
                 configuration: Arc::new(json!({"config":self.config})),
+                plugin_creator: ui::screens::settings::integrations::plugin_creator_path(
+                    &self.skills,
+                ),
                 dispatch: Some(Arc::new(move |action, cx| {
                     root.update(cx, |root, cx| root.settings_integration_action(action, cx))
                         .ok();
@@ -32,6 +35,40 @@ impl Root {
             });
         }
         self.settings_integration_action(Action::Refresh, cx);
+    }
+
+    pub(crate) fn open_plugin_creator(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(path) = cx.global::<State>().plugin_creator.clone() else {
+            self.toast(
+                Toast::danger("The plugin-creator skill is not available"),
+                cx,
+            );
+            return;
+        };
+        let key = "has-opened-skill-creator-prefill-v1";
+        let Some(settings) = cx.try_global::<crate::host_settings::Settings>() else {
+            self.toast(Toast::danger("Host settings are unavailable"), cx);
+            return;
+        };
+        let seen = settings
+            .read_all()
+            .get(key)
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if !seen
+            && let Err(error) = cx
+                .global_mut::<crate::host_settings::Settings>()
+                .write(key, json!(true))
+        {
+            self.toast(Toast::danger(error.to_string()), cx);
+            return;
+        }
+        let starter = if seen { "" } else { "help me create a plugin" };
+        self.plugin_prefill(&format!("[$plugin-creator]({path}) {starter}"), window, cx);
     }
 
     fn settings_integration_action(&mut self, action: Action, cx: &mut Context<Self>) {
@@ -107,6 +144,7 @@ impl Root {
                                     state.reload_required = false;
                                     state.suppressed_servers.clear();
                                 }
+                                Action::AddMarketplace(_) => state.marketplace_added += 1,
                                 Action::RemoveMarketplace(name) => {
                                     state.removal_completed = Some(name.clone())
                                 }
@@ -137,6 +175,7 @@ impl Root {
                                 Action::TrustHooks(_)
                                     | Action::SetHookEnabled { .. }
                                     | Action::RemoveMarketplace(_)
+                                    | Action::AddMarketplace(_)
                                     | Action::RemovePlugin(_)
                             ) {
                                 state.operation_error = Some(error.to_string());
@@ -211,6 +250,11 @@ impl Snapshot {
         state.marketplaces = loaded(self.marketplaces);
         state.hooks = loaded(self.hooks);
         state.apps = loaded(self.apps);
+        if let Ok(skills) = &self.skills
+            && !skills.is_null()
+        {
+            state.plugin_creator = ui::screens::settings::integrations::plugin_creator_path(skills);
+        }
         state.skills = loaded(self.skills);
         state.roots = Arc::new(self.roots);
         state.evaluations = self.evaluations;
@@ -531,6 +575,17 @@ async fn execute(
         }
         Action::RemovePlugin(plugin) => uninstall_plugin(bridge, plugin).await?,
         Action::RemoveMarketplace(name) => remove_marketplace(bridge, name, roots).await?,
+        Action::AddMarketplace(params) => {
+            ensure!(
+                params["source"]
+                    .as_str()
+                    .is_some_and(|source| !source.trim().is_empty()),
+                "Enter a marketplace source"
+            );
+            bridge
+                .request::<_, Value>("marketplace/add", params)
+                .await?;
+        }
         Action::UpgradeMarketplace(name) => {
             bridge
                 .request::<_, Value>("marketplace/upgrade", json!({"marketplaceName":name}))
