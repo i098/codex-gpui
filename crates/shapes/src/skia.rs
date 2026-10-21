@@ -2622,7 +2622,7 @@ pub(crate) fn paint_icon(
     flip_x: bool,
     color: Hsla,
     composited: Option<gpui::Point<Pixels>>,
-    transformation: TransformationMatrix,
+    transformation: Option<TransformationMatrix>,
     window: &mut Window,
     cx: &App,
 ) -> bool {
@@ -2634,17 +2634,38 @@ pub(crate) fn paint_icon(
         return false;
     };
     let s = window.scale_factor();
-    let layer = Layer::new(window, composited);
-    // The svg root snaps to the nearest device px (half up); the viewBox maps onto its
-    // unsnapped CSS size (`xMidYMid meet`), in doubles like Blink's AffineTransform.
+    let transformed = transformation.is_some();
+    let transformation = transformation.unwrap_or_default();
     let snap = |v: Pixels| (f32::from(v) * s + 0.5).floor();
-    // In layer space, like the decorations.
-    let b = layer.local(bounds, s);
-    let origin = [snap(b.origin.x), snap(b.origin.y)];
     let (w, h) = (
         f64::from(f32::from(bounds.size.width) * s),
         f64::from(f32::from(bounds.size.height) * s),
     );
+    let layer = if transformed {
+        Layer {
+            origin: [0, 0],
+            tile_origin: [0, 0],
+            window: [w.ceil() as i32, h.ceil() as i32],
+            tile: [TILE; 2],
+            composited: true,
+            device: None,
+            recorded: None,
+        }
+    } else {
+        Layer::new(window, composited)
+    };
+    let paint_origin = if transformed {
+        [snap(bounds.left()) as i32, snap(bounds.top()) as i32]
+    } else {
+        layer.origin
+    };
+    // A transformed SVG is rasterized in its own viewport before scene clipping.
+    let b = if transformed {
+        Bounds::new(point(px(0.), px(0.)), bounds.size)
+    } else {
+        layer.local(bounds, s)
+    };
+    let origin = [snap(b.origin.x), snap(b.origin.y)];
     let [vx, vy, vw, vh] = icon.view_box.map(f64::from);
     let scale = (w / vw).min(h / vh);
     let (tx, ty) = (
@@ -2670,14 +2691,18 @@ pub(crate) fn paint_icon(
         snap(b.origin.x + bounds.size.width),
         snap(b.origin.y + bounds.size.height),
     );
-    let clips = clips(window, layer);
+    let clips = if transformed {
+        Vec::new()
+    } else {
+        clips(window, layer)
+    };
     let bbox = [
         origin[0] as i32 - 2,
         origin[1] as i32 - 2,
         (origin[0] as f64 + w).ceil() as i32 + 2,
         (origin[1] as f64 + h).ceil() as i32 + 2,
     ];
-    if transformation == TransformationMatrix::unit() && !shown(bbox, layer, window) {
+    if !transformed && !shown(bbox, layer, window) {
         return true;
     }
     let prepare = |c: &Canvas| {
@@ -2717,7 +2742,7 @@ pub(crate) fn paint_icon(
                 })
             },
         );
-        paint_transformed_sprites(&sprites, color, layer.origin, transformation, window, cx);
+        paint_transformed_sprites(&sprites, color, paint_origin, transformation, window, cx);
         return true;
     }
     for (n, p) in icon.paths.iter().enumerate() {
@@ -2740,7 +2765,7 @@ pub(crate) fn paint_icon(
             ),
             || raster(bbox, layer, a, black, wide, &clips, &draw),
         );
-        paint_transformed_sprites(&sprites, color, layer.origin, transformation, window, cx);
+        paint_transformed_sprites(&sprites, color, paint_origin, transformation, window, cx);
     }
     true
 }
