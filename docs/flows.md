@@ -1249,13 +1249,13 @@ It has zero outside-text differences and 45 differing pixels inside 147631 text 
 ## Keyboard preferences and app actions
 
 The Keyboard shortcuts page uses the original Codex command registry and flat-card layout.
-Text search and keystroke search filter effective bindings.
+Text search includes commands and the browser-link preference. Keystroke search filters effective bindings.
 The existing host settings store saves bindings, the number target, and the browser-link modifier.
 Conflicts and failed writes leave the previous bindings active.
 Reset restores default bindings and the link modifier without changing the number target.
 App bindings update immediately, including menu and sidebar labels.
 Unmodified app shortcuts do not intercept editable text.
-Focused binding capture suspends app-key dispatch through `KeyboardState.capture_owner`.
+Focused binding capture blocks normal key dispatch and publishes `KeyboardState.capture_owner` for the global-shortcut owner.
 
 Standalone chats use the existing projectless workspace allocator and app-server requests.
 Temporary chats send `ephemeral: true` and stay out of recents and saved route state.
@@ -1266,5 +1266,10 @@ Clear all unreads uses a confirmation dialog and saves the optional confirmation
 The interactive terminal keeps its real PTY process when the bottom panel hides.
 UI zoom keeps layout, painting, pointer input, and IME bounds in the same coordinate system.
 The zoom banner waits two seconds and remains visible while the pointer is over it.
+Reopening a saved window restores its zoom.
 Original-versus-native visual approval remains separate from the Linux functional checks.
 
+
+Native checks cover reset confirmation, number/link menus, and modifier-only capture in `keyboard_shortcuts`.
+The `project_picker` scenario checks folder selection, cancellation, and the directory used by new chats.
+The `shortcut_actions` checks cover attention navigation, undo/redo, unread confirmation, and live terminal retention.

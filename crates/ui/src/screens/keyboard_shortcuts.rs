@@ -36,6 +36,10 @@ pub fn commands() -> &'static [Command] {
     COMMANDS
 }
 
+const LINK_TITLE: &str = "Open web link in default browser";
+const LINK_DESCRIPTION: &str =
+    "Hold the assigned keys while clicking a web link to open it in your default system browser";
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Preferences {
@@ -1131,8 +1135,8 @@ impl KeyboardPage {
             )
         } else {
             (
-                "Open web link in default browser",
-                "Hold the assigned keys while clicking a web link to open it in your default system browser",
+                LINK_TITLE,
+                LINK_DESCRIPTION,
                 preferences.external_browser_link_shortcut.label(),
                 Control::LinkMenu,
                 self.link_menu,
@@ -1233,7 +1237,7 @@ impl KeyboardPage {
                     .flex_col()
                     .gap(px(2.))
                     .child(text(title, 13., 18.571_428, 500., t.text))
-                    .child(text(detail, 12., 16., 430., t.text_secondary))
+                    .child(text(detail, 12., 16., 430., t.text_secondary).whitespace_normal())
                     .when(error, |d| {
                         d.child(text(
                             "Could not save shortcut preference",
@@ -1300,6 +1304,16 @@ impl Render for KeyboardPage {
                             .any(|value| pattern.score(value) > 0)
                     })
         };
+        let mut pending_link = loaded
+            && !search_by_key
+            && (query.trim().is_empty()
+                || [
+                    LINK_TITLE,
+                    LINK_DESCRIPTION,
+                    preferences.external_browser_link_shortcut.label(),
+                ]
+                .iter()
+                .any(|text| pattern.score(text) > 0));
         let mut rows = Vec::new();
         let mut dictation = Vec::new();
         for command in COMMANDS.iter().filter(matches) {
@@ -1310,10 +1324,14 @@ impl Render for KeyboardPage {
                 dictation.push(self.row(command, window, cx));
             } else {
                 rows.push(self.row(command, window, cx));
-                if command.id == "openBrowserTab" && !self.search_by_key && query.is_empty() {
+                if command.id == "openBrowserTab" && pending_link {
                     rows.push(self.preference(false, window, cx));
+                    pending_link = false;
                 }
             }
+        }
+        if pending_link {
+            rows.push(self.preference(false, window, cx));
         }
         let number = loaded
             && !self.search_by_key
@@ -1485,6 +1503,7 @@ impl Render for KeyboardPage {
                     div().w_full().max_w(px(768.)).px(px(20.)).child(
                         div()
                             .relative()
+                            .top_layer()
                             .bg(t.surface)
                             .pt(px(20.))
                             .pb(px(8.))
