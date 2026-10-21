@@ -337,6 +337,10 @@ Inline-code backgrounds use both snapped label edges, so fractional text widths 
 Monochrome glyphs and SVGs keep their paint alpha.
 Element opacity is applied once when the enclosing layer is restored.
 
+Native sprite state retains four nested layer devices within Metal's eight color targets.
+Each device restores into its parent before a parent opacity mask is applied.
+Deeper alpha is combined in the innermost device.
+
 Character-unit widths use the raw glyph advance at the requested font size.
 They exclude tracking; text layout still includes it.
 Use `TextSystem::ch_advance` for CSS `ch` columns, not glyph ink bounds.

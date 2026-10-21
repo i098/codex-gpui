@@ -133,7 +133,7 @@ pub struct MetalRenderer {
     path_intermediate_texture: Option<metal::Texture>,
     path_intermediate_msaa_texture: Option<metal::Texture>,
     path_sample_count: u32,
-    /// The monochrome sprite shader's per-pixel layer state, color attachments 1 to 4.
+    /// The sprite shader's four layer pixels, backdrop, identifiers, and alphas.
     layer_textures: Vec<metal::Texture>,
     /// Offscreen render target reused across `render_scene` calls when
     /// rendering headlessly without reading pixels back.
@@ -863,7 +863,7 @@ impl MetalRenderer {
                         command_encoder,
                     ),
                 PrimitiveBatch::PolychromeSprites { texture_id, range } => {
-                    let layered = scene.polychrome_sprites[range.start].layers != 0;
+                    let layered = scene.polychrome_sprites[range.start].layers != [0; 4];
                     self.draw_polychrome_sprites(
                         texture_id,
                         range,
@@ -1499,8 +1499,8 @@ fn build_pipeline_state(
         .expect("could not create render pipeline state")
 }
 
-/// Color attachments 1 to 4 of the main pass hold the layer-aware sprite state.
-const LAYER_TARGETS: u64 = 4;
+/// Seven state attachments plus the output use Metal's eight color targets.
+const LAYER_TARGETS: u64 = 7;
 const LAYER_FORMAT: MTLPixelFormat = MTLPixelFormat::RGBA8Unorm;
 
 fn set_layer_targets(descriptor: &metal::RenderPipelineDescriptorRef, write: bool) {
