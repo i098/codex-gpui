@@ -106,6 +106,24 @@ fn reconnect_reloads_the_server_without_discarding_the_draft() {
     });
 }
 
+#[test]
+fn failed_thread_read_returns_home_on_retry() -> anyhow::Result<()> {
+    let mut fx = common::Fx::with("dark", (1280., 832.), None, |line| {
+        if line["msg"]["result"]["thread"]["id"] == common::GREETING {
+            line["msg"]["result"]["thread"]["turns"] = serde_json::json!(false);
+        }
+    })?;
+    fx.action(Box::new(app::GoToChat(0)))?;
+    fx.wait("route error", |fx| {
+        fx.read(|root, cx| matches!(root.recovery_state(cx), Some(RecoveryState::RouteError(_))))
+    })?;
+    fx.capture_evidence("CGX_RECOVERY_PROOF", "route-error")?;
+    fx.action(Box::new(Retry))?;
+    assert_eq!(fx.route(), app::Route::Home);
+    assert!(fx.read(|root, cx| root.recovery_state(cx).is_none()));
+    Ok(())
+}
+
 fn transcript() -> String {
     common::script(None, |_| {})
         .unwrap()
