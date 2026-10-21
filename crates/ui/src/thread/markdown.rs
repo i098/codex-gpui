@@ -3,6 +3,7 @@
 //! HTTP(S) links open the system browser on left or middle click. File links keep their existing action.
 
 use super::*;
+use crate::code_font;
 use crate::tooltip::{Side, tooltip};
 use gpui::{AnyElement, FocusHandle, MouseButton, PathBuilder, StyledText, canvas, point};
 use syntect::easy::HighlightLines;
@@ -685,25 +686,26 @@ impl Markdown<'_> {
             .absolute()
             .size_full(),
         );
-        let space = width(self.window, " ", 12.88, 430., Some(MONO));
+        let space = width(self.window, " ", 12.88, 430., Some(code_font()));
         let mut offset = at;
         let mut parts = Vec::with_capacity(count);
         for (index, word) in code.split_inclusive(' ').enumerate() {
             let fades = self.fades(word);
-            let word_width = width(self.window, word, 12.88, 430., Some(MONO));
+            let word_width = width(self.window, word, 12.88, 430., Some(code_font()));
             let label = match self.find {
                 Some(find) => div().flex_none().w(word_width).child(
                     run_style(12.88, 15., 430., self.theme.text)
-                        .font_family(MONO)
+                        .font_family(code_font())
                         .child(find.text(word, offset)),
                 ),
                 None if !fades.is_empty() => div().flex_none().w(word_width).child(
                     run_style(12.88, 15., 430., self.theme.text)
-                        .font_family(MONO)
+                        .font_family(code_font())
                         .child(StyledText::new(word.to_owned()).with_highlights(fades)),
                 ),
                 None => div().flex_none().w(word_width).child(
-                    text(word.to_owned(), 12.88, 15., 430., self.theme.text).font_family(MONO),
+                    text(word.to_owned(), 12.88, 15., 430., self.theme.text)
+                        .font_family(code_font()),
                 ),
             };
             let measured = positions.clone();
@@ -722,12 +724,18 @@ impl Markdown<'_> {
                             .px(px(6.))
                             .children(background.take())
                             .child(
-                                highlight(word.to_owned().into(), 12.88, 430., Some(MONO), 6.)
-                                    .absolute()
-                                    .left_0()
-                                    .right_0()
-                                    .top(px(-3.5))
-                                    .bottom(px(-3.25)),
+                                highlight(
+                                    word.to_owned().into(),
+                                    12.88,
+                                    430.,
+                                    Some(code_font()),
+                                    6.,
+                                )
+                                .absolute()
+                                .left_0()
+                                .right_0()
+                                .top(px(-3.5))
+                                .bottom(px(-3.25)),
                             )
                             .child(label)
                             .on_children_prepainted(move |bounds, _, _| {
@@ -900,7 +908,7 @@ impl RenderOnce for CodeBlock {
                                             } else {
                                                 gpui::FontStyle::Normal
                                             },
-                                            ..font(MONO)
+                                            ..font(code_font())
                                         },
                                         color: rgb((u32::from(style.foreground.r) << 16)
                                             | (u32::from(style.foreground.g) << 8)
@@ -919,7 +927,7 @@ impl RenderOnce for CodeBlock {
                                 len: line.len(),
                                 font: gpui::Font {
                                     weight: FontWeight(430.),
-                                    ..font(MONO)
+                                    ..font(code_font())
                                 },
                                 color: foreground,
                                 background_color: None,
@@ -1011,7 +1019,7 @@ impl RenderOnce for CodeBlock {
                     .min_h(px(20.))
                     .text_size(px(12.))
                     .line_height(px(20.))
-                    .font_family(MONO)
+                    .font_family(code_font())
                     .font_weight(FontWeight(430.))
                     .when(!wrap, |d| d.whitespace_nowrap())
                     .child(StyledText::new(line.clone()).with_runs(runs.clone()))
