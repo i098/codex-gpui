@@ -573,6 +573,9 @@ Edit supports plain-text Paste and Match Style and selection-only Delete, includ
 View contains Find; Help opens the Codex changelog, troubleshooting guide, and service status page.
 View > Toggle Pinned Summary opens and closes the current thread summary.
 Home, sign-in, and pending thread loads keep this command disabled.
+View zoom controls change the UI scale from 50% to 300% in ten-point steps.
+Actual Size resets the scale to 100%; new windows restore the saved scale.
+Zoom keeps pointer input and text-input geometry in the same coordinate space.
 The `native_menus` and `s013` tests check the edit actions and Find navigation on macOS.
 About shows this build's version in a separate window; Escape closes it.
 The Window menu has Bring All to Front, and Control+Command+F toggles the active window's fullscreen state.

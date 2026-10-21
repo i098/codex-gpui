@@ -205,6 +205,7 @@ pub struct State {
     pub theme: ThemeSetting,
     pub confirm_before_close: ConfirmBeforeClose,
     pub project_root: Option<String>,
+    pub zoom: f32,
     #[serde(skip)]
     pub path: Option<PathBuf>,
 }
@@ -220,6 +221,7 @@ impl Default for State {
             theme: ThemeSetting::System,
             confirm_before_close: ConfirmBeforeClose::default(),
             project_root: None,
+            zoom: 1.,
             path: None,
         }
     }
@@ -366,6 +368,7 @@ pub struct Root {
     settings_page: Option<Entity<settings::SettingsPage>>,
     /// `⌘K` command menu over the window.
     command_menu: Option<Entity<CommandMenu>>,
+    zoom_banner: Option<Entity<native_menus::zoom::ZoomBanner>>,
     dialog: Option<Entity<Dialog>>,
     /// The open dialog came from the composer: its close returns focus there.
     dialog_to_composer: bool,
@@ -439,13 +442,14 @@ impl Root {
     }
 
     fn with_connection(
-        state: State,
+        mut state: State,
         bridge: Arc<Bridge>,
         events: Receiver<Event>,
         cwd: String,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        native_menus::zoom::initialize_window(&mut state, window);
         cx.set_global(AppServer(bridge.clone()));
         if !cx.has_global::<host_settings::Settings>() {
             let settings = match state.path.as_ref() {
@@ -658,6 +662,7 @@ impl Root {
             settings_section: None,
             settings_page: None,
             command_menu: None,
+            zoom_banner: None,
             dialog: None,
             dialog_to_composer: false,
             login: None,

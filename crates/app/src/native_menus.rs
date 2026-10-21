@@ -1,5 +1,9 @@
 mod about;
+<<<<<<< HEAD
 pub(crate) mod context_files;
+=======
+pub(crate) mod zoom;
+>>>>>>> bf3b8370 (feat(menus): add per-window zoom controls)
 
 use crate::{
     CloseWindow, FindInThread, GoBack, GoForward, Hide, HideOthers, LogOut, Minimize, NewChat,
@@ -27,6 +31,7 @@ actions!(
 );
 
 pub(crate) fn init(cx: &mut App) {
+    zoom::init(cx);
     cx.on_action(|_: &ShowAbout, cx| cx.defer(about::open));
     cx.bind_keys([
         KeyBinding::new("cmd-shift-v", PasteAndMatchStyle, None),
@@ -68,6 +73,7 @@ pub(crate) fn actions(root: Div, owner: &crate::Root, cx: &mut Context<crate::Ro
     } else {
         root
     };
+    let root = zoom::actions(root, owner, cx);
     if ui::native_text::is_speaking(cx) {
         root.on_action(|_: &ui::StopSpeaking, _, cx| ui::native_text::stop_speaking(cx))
     } else {
@@ -153,6 +159,10 @@ pub(crate) fn menus() -> Vec<Menu> {
             MenuItem::action("Next Chat", NextChat),
             MenuItem::action("Back", GoBack),
             MenuItem::action("Forward", GoForward),
+            MenuItem::separator(),
+            MenuItem::action("Zoom In", zoom::ZoomIn),
+            MenuItem::action("Zoom Out", zoom::ZoomOut),
+            MenuItem::action("Actual Size", zoom::ActualSize),
         ]),
         Menu::new("Window").items([
             MenuItem::action("Minimize", Minimize),
