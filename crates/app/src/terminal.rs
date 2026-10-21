@@ -170,6 +170,11 @@ impl Root {
                 (size, face)
             })
             .unwrap_or_default();
+        ui::set_code_font(
+            face.as_deref()
+                .filter(|name| !name.is_empty() && !matches!(*name, "monospace" | "ui-monospace"))
+                .unwrap_or(ui::MONO),
+        );
         let mut style = TerminalStyle::default();
         if let Some(value) = size
             && value.is_finite()

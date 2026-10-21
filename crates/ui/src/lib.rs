@@ -99,6 +99,21 @@ pub const SANS: &str = ".SystemUIFont";
 /// `ui-monospace`, which Chromium on macOS resolves to Menlo.
 pub const MONO: &str = "Menlo";
 
+static CODE_FONT: std::sync::RwLock<&'static str> = std::sync::RwLock::new(MONO);
+
+/// The code font of the appearance settings (`fonts.code`); `MONO` until one is set.
+pub fn code_font() -> &'static str {
+    *CODE_FONT.read().unwrap_or_else(|error| error.into_inner())
+}
+
+/// Follows the appearance setting. A changed name is leaked once so callers keep `&'static str`.
+pub fn set_code_font(name: &str) {
+    if name != code_font() {
+        *CODE_FONT.write().unwrap_or_else(|error| error.into_inner()) =
+            Box::leak(name.to_owned().into_boxed_str());
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct SidePanelVisibility {
     pub compact: bool,
