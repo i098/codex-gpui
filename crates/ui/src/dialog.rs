@@ -26,7 +26,7 @@ fn contains_ignore_ascii_case(text: &str, query: &str) -> bool {
             .any(|part| part.eq_ignore_ascii_case(query.as_bytes()))
 }
 
-type Shortcut = (&'static str, &'static str, &'static [&'static str]);
+type Shortcut = crate::screens::settings::keyboard_shortcuts::Shortcut;
 
 type AnnouncementArtworkCache = Rc<RefCell<Option<(Bounds<Pixels>, f32, Arc<RenderImage>, bool)>>>;
 
@@ -183,6 +183,7 @@ pub struct Dialog {
     announcement: Option<ModelAnnouncement>,
     commit: Option<CommitForm>,
     branch: Option<BranchForm>,
+    shortcuts: Vec<Shortcut>,
 }
 impl EventEmitter<Outcome> for Dialog {}
 impl Focusable for Dialog {
@@ -192,6 +193,16 @@ impl Focusable for Dialog {
 }
 impl Dialog {
     pub fn new(kind: Kind, cx: &mut Context<Self>) -> Self {
+        if kind == Kind::Shortcuts {
+            cx.observe_global::<crate::screens::settings::keyboard_shortcuts::KeyboardState>(
+                |this, cx| {
+                    this.shortcuts =
+                        crate::screens::settings::keyboard_shortcuts::active_shortcuts(cx);
+                    cx.notify();
+                },
+            )
+            .detach();
+        }
         Self {
             kind,
             controls: std::array::from_fn(|_| cx.focus_handle()),
@@ -213,6 +224,11 @@ impl Dialog {
             archive_section: None,
             commit: None,
             branch: None,
+            shortcuts: if kind == Kind::Shortcuts {
+                crate::screens::settings::keyboard_shortcuts::active_shortcuts(cx)
+            } else {
+                Vec::new()
+            },
         }
     }
     /// `Log out?` for the signed-in account `email`.
@@ -857,9 +873,9 @@ impl Dialog {
     pub fn saving(&self) -> bool {
         self.saving
     }
-    fn visible(&self) -> impl Iterator<Item = &'static Shortcut> + '_ {
+    fn visible(&self) -> impl Iterator<Item = &Shortcut> + '_ {
         let query = self.query.trim();
-        SHORTCUTS
+        self.shortcuts
             .iter()
             .filter(move |(_, title, _)| contains_ignore_ascii_case(title, query))
     }
@@ -2170,7 +2186,7 @@ impl Dialog {
     fn shortcuts_content(&self, visible: &[&Shortcut], t: &Theme, cx: &Context<Self>) -> Div {
         let mut list = div().flex().flex_col().pr(px(22.));
         let mut heading = "";
-        for (index, &&(section, title, keys)) in visible.iter().enumerate() {
+        for (index, &&(section, title, ref keys)) in visible.iter().enumerate() {
             if section != heading {
                 list = list.child(
                     div()
@@ -2201,7 +2217,7 @@ impl Dialog {
                             .px(px(6.))
                             .py(px(2.))
                             .bg(t.list_hover)
-                            .child(text(*key, 12., 12., 400., t.text))
+                            .child(text(key.clone(), 12., 12., 400., t.text))
                     }))),
             );
         }
@@ -2971,6 +2987,7 @@ impl Render for Dialog {
             .child(
                 div()
                     .id("modal-dialog")
+                    .key_context("Editable")
                     .role(gpui::Role::Dialog)
                     .aria_label(match self.kind {
                         Kind::Shortcuts => "Keyboard shortcuts".into(),
@@ -3146,80 +3163,3 @@ impl Render for Dialog {
             )
     }
 }
-
-const SHORTCUTS: &[(&str, &str, &[&str])] = &[
-    ("Chat", "New chat", &["⌘N", "⇧⌘O"]),
-    ("Chat", "Archive chat", &["⇧⌘A"]),
-    ("Chat", "New standalone chat", &["⌥⌘O"]),
-    ("Chat", "Toggle pin", &["⌥⌘P"]),
-    ("Navigation", "Find", &["⌘F"]),
-    ("Navigation", "Focus tab 1", &["⌘1"]),
-    ("Navigation", "Focus tab 2", &["⌘2"]),
-    ("Navigation", "Focus tab 3", &["⌘3"]),
-    ("Navigation", "Focus tab 4", &["⌘4"]),
-    ("Navigation", "Focus tab 5", &["⌘5"]),
-    ("Navigation", "Focus tab 6", &["⌘6"]),
-    ("Navigation", "Focus tab 7", &["⌘7"]),
-    ("Navigation", "Focus tab 8", &["⌘8"]),
-    ("Navigation", "Focus tab 9", &["⌘9"]),
-    ("Navigation", "Back", &["⌘[", "Mouse Back"]),
-    ("Navigation", "Forward", &["⌘]", "Mouse Forward"]),
-    ("Navigation", "Next recently viewed chat", &["⌃Tab"]),
-    ("Navigation", "Next tab", &["⌃Tab", "⇧⌘]", "⌥⌘→"]),
-    ("Navigation", "Next chat", &["⇧⌘]", "⌥⌘→"]),
-    ("Navigation", "Next chat needing attention", &["⌥⌘A"]),
-    ("Navigation", "Open your dot", &["⌘."]),
-    ("Navigation", "Previous recently viewed chat", &["⌃⇧Tab"]),
-    ("Navigation", "Previous tab", &["⌃⇧Tab", "⇧⌘[", "⌥⌘←"]),
-    ("Navigation", "Previous chat", &["⇧⌘[", "⌥⌘←"]),
-    ("Navigation", "Go to recent chat 1", &["⌥⌘1"]),
-    ("Navigation", "Go to recent chat 2", &["⌥⌘2"]),
-    ("Navigation", "Go to recent chat 3", &["⌥⌘3"]),
-    ("Navigation", "Go to recent chat 4", &["⌥⌘4", "⇧⌘9"]),
-    ("Navigation", "Go to recent chat 5", &["⌥⌘5", "⇧⌘8"]),
-    ("Navigation", "Go to recent chat 6", &["⌥⌘6"]),
-    ("Navigation", "Toggle activity view", &["⌥⌘U"]),
-    ("Panels", "Open browser tab", &["⌘T"]),
-    ("Panels", "Reopen closed tab", &["⇧⌘T"]),
-    ("Panels", "New tab in full view", &["⇧⌘F"]),
-    ("Panels", "Cycle workspace layout", &["⇧⌘B"]),
-    ("Panels", "Toggle bottom panel", &["⌘J"]),
-    ("Panels", "Toggle navigation panel", &["⇧⌘E"]),
-    ("Panels", "Toggle sidebar", &["⇧⌘S", "⌘B"]),
-    ("Panels", "New tab", &["⌥⌘B"]),
-    ("Panels", "Open terminal", &["⌃`"]),
-    ("Project", "Open folder", &["⌘O"]),
-    ("App", "Clear all unreads", &["⇧Esc"]),
-    ("App", "Show Mini", &["⌥Space"]),
-    ("App", "Settings", &["⌘,"]),
-    ("General", "Close other tabs", &["⌥⌘W"]),
-    ("General", "Close Tab", &["⌘W"]),
-    ("General", "Close", &["⌘W"]),
-    ("General", "Select effort", &["⌃⇧M"]),
-    ("General", "Open project picker", &["⌥⇧⌘O"]),
-    ("General", "Open recent models", &["⌃⌘M"]),
-    ("General", "Toggle voice chat", &["⌃⇧V"]),
-    ("General", "Send message in background", &["⌘⏎"]),
-    ("General", "Copy conversation path", &["⌥⇧⌘C"]),
-    ("General", "Copy deeplink", &["⌥⌘L"]),
-    ("General", "Copy working directory", &["⇧⌘C"]),
-    ("General", "Force Reload Browser Page", &["⇧⌘R"]),
-    ("General", "Voice in Mini", &["⌥V"]),
-    ("General", "Open command menu", &["⌘K", "⇧⌘P"]),
-    ("General", "Reload Browser Page", &["⌘R"]),
-    ("General", "Rename chat", &["⌥⌘R"]),
-    ("General", "Screenshot selection to current chat", &["⌃⇧4"]),
-    ("General", "Screenshot selection to new chat", &["⌃⌥⇧4"]),
-    ("General", "Search Files…", &["⌘P"]),
-    ("General", "Show keyboard shortcuts", &["⌘/"]),
-    ("General", "Go to chat 1", &["⌃1"]),
-    ("General", "Go to chat 2", &["⌃2"]),
-    ("General", "Go to chat 3", &["⌃3"]),
-    ("General", "Go to chat 4", &["⌃4"]),
-    ("General", "Go to chat 5", &["⌃5"]),
-    ("General", "Go to chat 6", &["⌃6"]),
-    ("General", "Go to chat 7", &["⌃7"]),
-    ("General", "Go to chat 8", &["⌃8"]),
-    ("General", "Go to chat 9", &["⌃9"]),
-    ("General", "Toggle Notch", &["⌥C"]),
-];

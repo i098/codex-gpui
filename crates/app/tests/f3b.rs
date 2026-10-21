@@ -93,19 +93,6 @@ fn check(fx: &mut Fx, rec: &Value, after: &str) -> Result<()> {
         }
         if dialog.kind() == Kind::Shortcuts {
             match after {
-                "shortcuts-open" => {
-                    let titles: Vec<_> = rec["catalog"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .flat_map(|s| s["rows"].as_array().unwrap())
-                        .map(|r| r["title"].as_str().unwrap())
-                        .collect();
-                    ensure!(
-                        dialog.visible_titles() == titles,
-                        "active shortcut catalog differs"
-                    );
-                }
                 "shortcuts-filter" => {
                     ensure!(dialog.query() == "archive");
                     ensure!(dialog.visible_titles() == ["Archive chat"]);

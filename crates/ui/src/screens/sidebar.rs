@@ -1428,14 +1428,14 @@ impl Item {
 }
 
 /// The original `_4o`/`k2` score uses the first matching fragments, not the highest-scoring path.
-struct MatchPattern {
+pub(crate) struct MatchPattern {
     main: WordPattern,
     fallback: Option<WordPattern>,
     paths: bool,
 }
 
 impl MatchPattern {
-    fn new(query: &str) -> Self {
+    pub(crate) fn new(query: &str) -> Self {
         let mut lower = String::with_capacity(query.len());
         for c in query.trim().chars() {
             let folded = c.to_lowercase();
@@ -1466,7 +1466,7 @@ impl MatchPattern {
         }
     }
 
-    fn score(&self, value: &str) -> i32 {
+    pub(crate) fn score(&self, value: &str) -> i32 {
         let text: Vec<_> = value
             .encode_utf16()
             .map(|unit| {
@@ -2474,6 +2474,19 @@ impl CommandMenu {
             if *label == "Theme" {
                 item.search_value = "theme appearance Codex".into();
                 item.keywords = "color theme preset dark light night".into();
+            }
+            if let Some(state) =
+                cx.try_global::<crate::screens::settings::keyboard_shortcuts::KeyboardState>()
+                && let Some(definition) = crate::screens::settings::keyboard_shortcuts::commands()
+                    .iter()
+                    .find(|definition| definition.title == *label)
+            {
+                item.keys = state
+                    .preferences
+                    .keys(definition)
+                    .next()
+                    .map(crate::screens::settings::keyboard_shortcuts::key_label)
+                    .map(Into::into);
             }
             item
         };
@@ -3658,6 +3671,7 @@ impl Render for CommandMenu {
             .child(
                 div()
                     .id("command-menu")
+                    .when(!self.recent_cycle, |d| d.key_context("Editable"))
                     .track_focus(&self.focus)
                     .on_key_down(cx.listener(Self::on_key))
                     .on_action(cx.listener(|this, _: &crate::SelectAll, _, cx| {
