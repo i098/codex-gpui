@@ -46,7 +46,7 @@ impl Token {
 }
 
 pub(super) type Mark = (Range<usize>, Token);
-static SYNTAXES: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_nonewlines);
+static SYNTAXES: LazyLock<SyntaxSet> = LazyLock::new(two_face::syntax::extra_no_newlines);
 static TOKENS: [Token; 8] = [
     Token::Keyword,
     Token::Name,
@@ -115,11 +115,16 @@ fn highlighter(path: &str, first: Option<&str>) -> HighlightLines<'static> {
 
 pub(super) fn full_file(path: &str, contents: &str) -> Vec<Vec<Mark>> {
     let mut state = highlighter(path, super::controls::lines(contents).next());
-    super::controls::lines(contents).map(|text| line(&mut state, text)).collect()
+    super::controls::lines(contents)
+        .map(|text| line(&mut state, text))
+        .collect()
 }
 
 pub(super) fn apply(path: &str, hunks: &mut [Hunk]) {
-    let first = hunks.first().and_then(|hunk| hunk.lines.first()).map(|line| line.text.as_ref());
+    let first = hunks
+        .first()
+        .and_then(|hunk| hunk.lines.first())
+        .map(|line| line.text.as_ref());
     let mut old = highlighter(path, first);
     let mut new = highlighter(path, first);
     for hunk in hunks {
@@ -156,6 +161,26 @@ mod tests {
         let last = &rust.hunks[0].lines[2];
         assert!(last.syntax.iter().any(|(range, token)| *token == Token::Keyword && &last.text[range.clone()] == "fn"));
         assert!(last.syntax.iter().any(|(range, token)| *token == Token::Literal && &last.text[range.clone()] == "12"));
+        let typescript = FileDiff::patch(
+            "src/app.ts",
+            "@@ -0,0 +1,2 @@\n+interface State { ready: boolean }\n+const value: State = { ready: true };\n",
+        );
+        let declaration = &typescript.hunks[0].lines[0];
+        assert!(
+            declaration
+                .syntax
+                .iter()
+                .any(|(range, token)| *token == Token::Keyword
+                    && &declaration.text[range.clone()] == "interface")
+        );
+        let value = &typescript.hunks[0].lines[1];
+        assert!(
+            value
+                .syntax
+                .iter()
+                .any(|(range, token)| *token == Token::Literal
+                    && &value.text[range.clone()] == "true")
+        );
         let text = FileDiff::patch("notes.txt", "@@ -0,0 +1 @@\n+def return class 12\n");
         assert!(text.hunks[0].lines[0].syntax.is_empty());
     }
