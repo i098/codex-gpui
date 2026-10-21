@@ -8,6 +8,7 @@ pub mod diff;
 pub mod home;
 pub mod mobile;
 pub mod settings;
+pub mod security;
 pub mod sidebar;
 pub mod terminal;
 pub mod thread;

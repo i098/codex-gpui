@@ -121,6 +121,23 @@ Model-driven computer use stays on the LCU relay and original native sockets.
 Do not grant SSH Automation access to test the separate Appshots Apple Event path.
 These native operations require macOS; Linux checks cover policy, capture-file boundaries, and request state only.
 
+## Native Security workbench
+
+The Security page uses the installed `codex-security` plugin through the existing app-server connection.
+It does not embed the Security SDK or start a second MCP client.
+The published `@openai/codex-security` package includes the provider without native-port changes.
+
+The host supplies the original Statsig evaluation through `ui::screens::security::Access`.
+Gate `1598376` must be true before the page reads plugins or starts its ephemeral MCP host thread.
+Missing gate data leaves Security hidden and displays the original unavailable state on a direct route.
+An enabled, `AVAILABLE` plugin with an ID starting `codex-security@` enables the workbench.
+The page preserves remote-host, loading, administrator-disabled, and plugin-unavailable states.
+
+Scans, findings, repository history, scan setup, cancellation, context changes, triage, and remediation use plugin tools.
+Scan and remediation handoffs retain their claim tokens through the continuation thread.
+An unknown turn-delivery outcome does not release a claim that the accepted turn can still own.
+No scan or model request runs until the user starts that action.
+
 ## Build and run
 
 ```sh

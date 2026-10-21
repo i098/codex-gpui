@@ -47,6 +47,7 @@ actions!(
         OpenScheduled,
         /// Profile menu ▸ Help ▸ `Set up mobile`.
         OpenMobileSetup,
+        OpenSecurity,
         /// `⌥⌘B`: show or hide the Changes side panel.
         ToggleChangesPanel,
         /// A file change card's `View changes`, the thread summary's `Changes` row.
@@ -726,6 +727,8 @@ impl Shell {
     fn rail(&self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let (hover_bg, hover_fg) = (t.ghost_hover, t.text);
         let selected = self.selected_rail;
+        let security_enabled = cx.try_global::<screens::security::Access>()
+            .is_some_and(|access| access.gate_enabled);
         let home = self.main.entity_type() == std::any::TypeId::of::<screens::home::HomeMain>();
         // The list (`[6, 50, 40, 732]`) is a composited scroller: its items paint into the
         // layer's transparent tiles, which `vertical-scroll-fade-mask` fades over the top 16 px
@@ -749,7 +752,7 @@ impl Shell {
             let fg = if on { t.text } else { t.text_tertiary };
             let id = SharedString::from(format!("rail-{name}"));
             let focus = focus::handle(id.clone(), 0, window, cx);
-            let glyph = if on {
+            let glyph = if on && name != "security" {
                 format!("{name}-filled")
             } else {
                 name.to_string()
@@ -840,6 +843,10 @@ impl Shell {
                         "Scheduled",
                     ))
                     .child(rail_tip(item("plugins"), "Plugins"))
+                    .when(security_enabled, |rail| rail.child(rail_tip(
+                        item("security").on_click(dispatch::<OpenSecurity>),
+                        "Security",
+                    )))
                     // Explore with its unread dot; it shows no tooltip.
                     .child(item("explore").child(dot(4.)))
                     .child(div().w(px(24.)).h(px(1.)).bg(t.border))
