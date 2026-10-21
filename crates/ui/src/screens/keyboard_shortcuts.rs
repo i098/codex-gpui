@@ -1440,11 +1440,8 @@ impl Render for KeyboardPage {
             .flex()
             .items_center()
             .gap(px(8.))
-            .px(px(10.))
+            .px(px(11.))
             .relative()
-            .rounded_full()
-            .border_1()
-            .border_color(gpui::transparent_black())
             .child(on_card(
                 9999.,
                 Round,
