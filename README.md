@@ -167,6 +167,11 @@ The multi-select emits `SelectionChanged`; the caller saves the value and can re
 Use `Composer::settings_field` for multiline text and `Toast` for existing information, error, and success messages.
 Run `cargo test -p ui --test settings_kit` for the keyboard and locked-choice check.
 
+`app::diff_content::read_full_file` loads typed before/after data through the existing Git object host.
+It preserves line endings and the host's working-file fallback policy, with a 5 MiB object limit.
+Missing or oversized objects return `FullError::Unavailable`; invalid disk-fallback paths or reply structures return `FullError::Failed`.
+Run `cargo test -p app --test diff_content` for real Git object and repository-boundary checks.
+
 Scheduled > New task accepts instructions, a daily or weekly repeat, and a local time in `HH:MM` format.
 Create saves the definition through `create-automation` to `CODEX_HOME/automations/<id>/automation.toml`.
 The app reloads the task list after a successful write and retains the draft if the write fails.

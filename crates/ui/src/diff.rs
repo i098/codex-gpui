@@ -29,6 +29,10 @@ mod menu;
 mod controls;
 pub use controls::DiffLayout;
 
+#[path = "diff/content.rs"]
+mod content;
+pub use content::{BlobError, BlobReply, BlobRequest, FullError, FullFileRequest, FullText};
+
 #[path = "diff/word.rs"]
 pub mod word;
 

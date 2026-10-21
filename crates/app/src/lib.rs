@@ -6,6 +6,7 @@
 mod cloud_task;
 pub use cloud_task::parse_task_response;
 pub mod computer_use_requests;
+pub mod diff_content;
 mod features;
 pub mod host;
 pub mod host_settings;
