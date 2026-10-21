@@ -204,19 +204,21 @@ pub(super) fn disclosure(label: String, angle: f32, window: &Window, t: &Theme) 
         .h(px(14.))
         .into_any_element()
     };
+    // In a column narrower than the label and chevron the chevron wraps under the label (the
+    // button's `flex-wrap`, `gap-1` both ways) and the label overflows the column. Beside the
+    // label the row sits 1.3 px below its line box's top (the button's inline baseline).
+    let line = markdown::line_width();
+    let wraps = line > 0. && f32::from(width(window, &label, 14., 430., None)) + 4. + 14. > line;
     div()
         .flex()
         .flex_col()
         .child(
-            // In a column narrower than the label the chevron wraps under it and the label
-            // overflows the column (`flex-wrap`).
-            div().min_h(px(22.3)).pt(px(1.3)).child(
+            div().when(!wraps, |d| d.min_h(px(22.3)).pt(px(1.3))).child(
                 div()
                     .flex()
                     .flex_wrap()
                     .items_center()
-                    .gap_x(px(4.))
-                    .gap_y(px(2.7))
+                    .gap(px(4.))
                     .child(measured(window, label, 14., 21., 430., color, None))
                     .child(chevron),
             ),
