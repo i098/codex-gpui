@@ -627,6 +627,17 @@ pub fn recorded_thread(id: &str) -> Result<Value> {
         .with_context(|| format!("no thread/read of {id}"))
 }
 
+pub fn recorded_resume(id: &str) -> Result<Value> {
+    script(None, |_| {})?
+        .into_iter()
+        .find_map(|mut line| {
+            let result = line.pointer_mut("/msg/result")?.take();
+            (result["thread"]["id"] == id && result["collaborationMode"].is_object())
+                .then_some(result)
+        })
+        .with_context(|| format!("no thread/resume of {id}"))
+}
+
 /// Device pixels that differ inside the CSS-px `rect` (the window is 2x).
 pub fn changed(a: &RgbaImage, b: &RgbaImage, [x, y, w, h]: [f32; 4]) -> usize {
     let (x0, y0) = ((x * 2.) as u32, (y * 2.) as u32);
