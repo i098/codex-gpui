@@ -1976,7 +1976,7 @@ fn heartbeat_row_run_navigates_only_on_success_at_the_original_location() -> Res
         );
         add(
             "thread/resume",
-            json!({"threadId": "heartbeat-thread", "cwd": project, "path": null}),
+            json!({"threadId": "heartbeat-thread", "cwd": project, "path": thread["path"]}),
             json!({"thread": thread}),
         );
         let mut resumed = common::recorded_resume(common::GREETING)?;
