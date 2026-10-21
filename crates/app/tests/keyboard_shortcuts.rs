@@ -238,7 +238,8 @@ mod native {
         if let Some(path) = std::env::var_os("CGX_SHORTCUT_PROOF") {
             let path = std::path::Path::new(&path);
             std::fs::create_dir_all(path)?;
-            fx.shot()?.save(path.join(format!("keyboard-{name}.png")))?;
+            fx.reference_shot()?
+                .save(path.join(format!("keyboard-{name}.png")))?;
         }
         Ok(())
     }

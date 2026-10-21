@@ -855,7 +855,11 @@ impl KeyboardPage {
         let focus = crate::focus::handle(SharedString::from(id.clone()), 0, window, cx);
         let handle = focus.read(cx).handle.clone();
         let keyboard_action = action.clone();
-        let hover = cx.theme().list_hover;
+        let hover = if matches!(&action, Control::ClearSearch) {
+            gpui::transparent_black()
+        } else {
+            cx.theme().list_hover
+        };
         let control = div()
             .id(SharedString::from(id))
             .role(gpui::Role::Button)
@@ -1411,7 +1415,6 @@ impl Render for KeyboardPage {
             .flex()
             .items_center()
             .justify_center()
-            .hover(|style| style.bg(gpui::transparent_black()))
         });
         let search = div()
             .id("shortcut-search")
@@ -1420,10 +1423,16 @@ impl Render for KeyboardPage {
             .items_center()
             .gap(px(8.))
             .px(px(10.))
+            .relative()
             .rounded_full()
             .border_1()
-            .border_color(t.border_strong)
-            .bg(t.control_background)
+            .border_color(gpui::transparent_black())
+            .child(on_card(
+                9999.,
+                Round,
+                t.control_background,
+                Some(t.border_strong),
+            ))
             .child(icon("search", 18., t.text_secondary))
             .child(if self.search_by_key {
                 div()
@@ -1463,6 +1472,9 @@ impl Render for KeyboardPage {
             .child(toggle);
         let search_bar = loaded.then(|| {
             div()
+                .tab_group()
+                .tab_index(1)
+                .tab_stop(false)
                 .absolute()
                 .top(px(77_f32.max(-f32::from(self.scroll.offset().y))))
                 .left_0()
@@ -1514,6 +1526,8 @@ impl Render for KeyboardPage {
         div()
             .size_full()
             .relative()
+            .tab_group()
+            .tab_stop(false)
             .flex()
             .flex_col()
             .capture_key_down(cx.listener(Self::key))
@@ -1549,22 +1563,28 @@ impl Render for KeyboardPage {
                         ),
                     )
                     .child(
-                        div().flex().justify_center().child(
-                            div()
-                                .w_full()
-                                .max_w(px(768.))
-                                .px(px(20.))
-                                .pb(px(20.))
-                                .flex()
-                                .flex_col()
-                                .when(loaded, |d| d.child(div().h(px(60.))))
-                                .child(div().pt(px(20.)).child(cards))
-                                .children(
-                                    error
-                                        .filter(|_| preference_error.is_none())
-                                        .map(|error| text(error, 12., 16., 430., t.text_error)),
-                                ),
-                        ),
+                        div()
+                            .tab_group()
+                            .tab_index(2)
+                            .tab_stop(false)
+                            .flex()
+                            .justify_center()
+                            .child(
+                                div()
+                                    .w_full()
+                                    .max_w(px(768.))
+                                    .px(px(20.))
+                                    .pb(px(20.))
+                                    .flex()
+                                    .flex_col()
+                                    .when(loaded, |d| d.child(div().h(px(60.))))
+                                    .child(div().pt(px(20.)).child(cards))
+                                    .children(
+                                        error
+                                            .filter(|_| preference_error.is_none())
+                                            .map(|error| text(error, 12., 16., 430., t.text_error)),
+                                    ),
+                            ),
                     )
                     .children(search_bar),
             )
