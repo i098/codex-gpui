@@ -214,7 +214,7 @@ impl DiffSource {
     }
 
     fn mutable(self) -> bool {
-        matches!(self, Self::Uncommitted | Self::Unstaged | Self::Staged)
+        matches!(self, Self::Unstaged | Self::Staged)
     }
 }
 
@@ -1132,7 +1132,26 @@ impl DiffPanel {
                 .justify_center()
                 .layer()
                 .child(lens())
-                .child(icon(name, 16., t.text_tertiary))
+                .when(self.show_tree, |d| {
+                    d.child(shapes::decoration(Decoration {
+                        radius: Corners::all(px(14.)),
+                        fill: Some(over(t.accent.opacity(0.1), t.surface)),
+                        ..Default::default()
+                    }))
+                })
+                .child(icon(
+                    name,
+                    16.,
+                    if self.show_tree {
+                        if t.appearance == Appearance::Dark {
+                            over(t.accent.opacity(0.61), gpui::white())
+                        } else {
+                            t.text_accent
+                        }
+                    } else {
+                        t.text_tertiary
+                    },
+                ))
         };
         div()
             .h(px(48.))
@@ -1443,7 +1462,7 @@ impl Render for DiffPanel {
                     .when(file.open, |d| d.children(self.full_error_notice(i, cx)))
                     .map(|d| {
                         if file.open
-                            && let Some(preview) = self.preview(i, code_width, cx)
+                            && let Some(preview) = self.preview(i, code_width, window, cx)
                         {
                             d.child(preview)
                         } else if file.open && file.problem.is_some() {
@@ -1652,9 +1671,9 @@ impl Render for DiffPanel {
                     .relative()
                     .flex_none()
                     .overflow_hidden()
-                    .when(!self.standalone, |d| d.pb(px(1.)))
+                    .when(!self.standalone && notices.is_none(), |d| d.pb(px(1.)))
                     // Skia blends it like Chromium (a GPUI quad rounds apart).
-                    .when(!self.standalone, |d| {
+                    .when(!self.standalone && notices.is_none(), |d| {
                         d.child(
                             div()
                                 .absolute()
@@ -2607,14 +2626,16 @@ pub fn stats(added: usize, removed: usize, size: f32, t: &Theme) -> Div {
     let mut features = vec![("tnum".into(), 1), ("cv01".into(), 1), ("cv02".into(), 1)];
     features.extend(textsys::letter_spacing(-0.025 * size).0.iter().cloned());
     let features = FontFeatures(Arc::new(features));
-    let tracked =
-        |s: String, color: Hsla| text(s, size, size, 430., color).font_features(features.clone());
+    let tracked = |count, sign, color| {
+        text(states::signed_count(count, sign), size, size, 430., color)
+            .font_features(features.clone())
+    };
     div()
         .flex()
         .items_center()
         .gap(px(4.))
-        .child(tracked(format!("+{added}"), t.git_added))
-        .child(tracked(format!("-{removed}"), t.git_deleted))
+        .child(tracked(added, '+', t.git_added))
+        .child(tracked(removed, '-', t.git_deleted))
 }
 
 fn file_header(
@@ -2628,10 +2649,6 @@ fn file_header(
         return panel.standalone_file_header(i, file, t, cx);
     }
     let small = |name| round_icon(name, 20., t);
-    let python = match t.appearance {
-        Appearance::Dark => rgb(0x69b1ff),
-        Appearance::Light => rgb(0x1a85d4),
-    };
     div()
         .id(("diff-file", i))
         .flex_none()
@@ -2652,10 +2669,7 @@ fn file_header(
                 .items_center()
                 .pl(px(4.))
                 .gap(px(8.))
-                .when(file.name.ends_with(".py"), |d| {
-                    // `#file-tree-builtin-python` sprite.
-                    d.child(icon("diff-file-python", 16., python.into()))
-                })
+                .child(controls::file_icon(&file.name, t))
                 .child(
                     div()
                         .flex()

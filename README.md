@@ -145,6 +145,9 @@ Line wrapping, word differences, and full-file loading use the existing host set
 Run `cargo test -p app --test diff_file_reads` for file boundaries and `cargo test -p app --test diff_content` on macOS for expansion and retry.
 Image and PDF previews read bytes from each selected Git version or working file.
 PDF previews use macOS rendering and keep separate page controls for each side.
+The controls appear when the pointer or keyboard focus enters the PDF preview.
+The file tree omits zero change counts and groups thousands in large totals.
+Stage and Unstage actions apply only to the separate Unstaged and Staged sources, not the combined Uncommitted view.
 Use the Rich preview option to switch SVG files between rendered previews and text.
 Run `cargo test -p app --test diff_preview` on macOS for image version and PDF page checks.
 
