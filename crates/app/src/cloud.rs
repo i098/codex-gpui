@@ -174,7 +174,7 @@ fn gate(gates: &Value, name: &str) -> bool {
     gates["feature_gates"][name]["value"] == true
 }
 
-fn access(host: &dyn host::Host, plan: &str) -> Result<Access> {
+pub(crate) fn access(host: &dyn host::Host, plan: &str) -> Result<Access> {
     let Some(identity) = host.identity() else {
         return Ok(Access::default());
     };
@@ -247,7 +247,7 @@ fn path(parts: &[&str]) -> String {
     url.path().to_owned()
 }
 
-fn execute(host: &dyn host::Host, operation: &Operation) -> Result<Value> {
+pub(crate) fn execute(host: &dyn host::Host, operation: &Operation) -> Result<Value> {
     let identity = host
         .identity()
         .context("Cloud authentication is unavailable")?;
