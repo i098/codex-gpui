@@ -807,6 +807,8 @@ impl Shell {
             .top(Theme::TITLEBAR_HEIGHT)
             .bottom(PAGE_INSET)
             .w(RAIL_WIDTH)
+            // `#app-shell-sidebar` (`[contain:layout_paint]`) starts at the rail's origin.
+            .snap_origin()
             .flex()
             .flex_col()
             .items_center()
@@ -955,8 +957,8 @@ impl Shell {
             .tab_stop(false)
             .absolute()
             .left(RAIL_WIDTH)
-            .top(Theme::TITLEBAR_HEIGHT)
-            .bottom(PAGE_INSET)
+            .top_0()
+            .bottom_0()
             .w(self.sidebar_width - RAIL_WIDTH)
             .flex()
             .flex_col()
@@ -1481,7 +1483,20 @@ impl Render for Shell {
             .font_family(SANS)
             .bg(under)
             .child(page)
-            .when(progress > 0., |d| d.child(self.sidebar_panel(&t, progress)))
+            // `#app-shell-sidebar`, around the rail too, is `[contain:layout_paint]`: its
+            // content drops a fractional (zoomed) top.
+            .when(progress > 0., |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .top(Theme::TITLEBAR_HEIGHT)
+                        .bottom(PAGE_INSET)
+                        .w(self.sidebar_width)
+                        .snap_origin()
+                        .child(self.sidebar_panel(&t, progress)),
+                )
+            })
             .child(self.main_panel(main_left, open, &main_focus))
             .when(composited || self.main_backgrounds > 0, |d| {
                 d.child(corners)
