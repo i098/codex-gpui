@@ -289,6 +289,9 @@ Element opacity is applied once when the enclosing layer is restored.
 Canvas callbacks honor their `opacity`, `layer`, and `top_layer` styles.
 These styles use the same compositor boundary as other elements.
 
+Linear gradients interpolate premultiplied colors in the selected color space.
+Their ordered RGB dither leaves alpha unchanged, so transparent fades do not add opacity noise.
+
 Home composer permission and model labels paint directly into their parent.
 Docked composers retain the composited label path. The animated effort label keeps its filter layer.
 An extra layer changes glyph edge bytes even when its opacity is one.
