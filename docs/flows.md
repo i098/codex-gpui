@@ -1333,3 +1333,25 @@ Control-Shift-G opens the existing Changes tab.
 `crates/app/tests/shortcut_navigation.rs` checks these paths on recorded threads.
 The [original/native picker pair](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/9a2941014013a3237d6c7389b13d9c4a3a00e15a0eba9abb/report.html) uses a 520×134 CSS-pixel crop at scale 2.
 It has zero outside-text differences and 45 differing pixels inside 147631 text pixels (0.0305%).
+## Storage settings (ST-159, ST-160, ST-161)
+
+`Settings > Storage` measures the app-server's Codex home without following file symlinks.
+The usage bar separates chats, subagents, archived chats, unclassified chats, worktrees, and other files.
+Refresh reports completed categories separately from a failed or active scan.
+The page uses actual file lengths and app-server thread metadata.
+
+`Clean up old chats` requires descendant discovery support.
+The review starts with archived chats last updated more than 90 days ago.
+The age filter also offers 30, 180, and 365 days; the scope filter also offers all chats.
+Only inactive, non-ephemeral roots and complete, inactive descendant trees can enter the selection.
+The final confirmation warns that deletion is permanent.
+Before deleting, the app reloads the inventory, discovers descendants, and checks each thread's update time and active state.
+It skips changed trees and reports deleted, skipped, and failed root counts.
+The deletion request goes through `thread/delete`; the UI never removes rollout files directly.
+
+The management controls open Worktrees and Archived chats.
+Their destination pages remain owned by their separate settings families.
+The focused checks run with `cargo test -p bridge -p ui --lib storage -- --test-threads=1`.
+They cover measured file categories, symlink exclusion, descendant safety, version eligibility, and keyboard cancellation.
+Native test captures use synthetic interaction data and do not establish pixel parity with the original.
+Strict original comparison remains pending while the shared capture service is unavailable.

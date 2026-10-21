@@ -23,6 +23,7 @@ mod signin;
 pub mod updater;
 mod usage;
 mod window_shell;
+mod storage;
 pub mod windows;
 
 use anyhow::{Context as _, Result, ensure};
@@ -2124,6 +2125,7 @@ impl Root {
             });
         }
     }
+
 
     /// HC-033: a printable key (no ⌘/⌃, not Space) typed outside an editable, with no
     /// dialog, menu or popover open, goes to the route's composer and focuses it.
@@ -4547,6 +4549,11 @@ impl Root {
                 "thread/started" if params["thread"]["ephemeral"] != true => {
                     if let Ok(n) = serde_json::from_value::<ThreadStartedNotification>(params) {
                         self.add_thread(&n.thread, cx);
+                    }
+                }
+                "thread/deleted" => {
+                    if let Some(id) = params["threadId"].as_str() {
+                        storage::thread_deleted(self, id, cx);
                     }
                 }
                 // The row's spinner follows the thread status.
