@@ -326,7 +326,7 @@ impl Permission {
     ];
 
     /// The preset `config/read` matches; anything else is `Custom (config.toml)`.
-    fn from_config(config: &Value) -> Self {
+    pub fn from_config(config: &Value) -> Self {
         match (
             config["approval_policy"].as_str(),
             config["sandbox_mode"].as_str(),
@@ -375,7 +375,7 @@ pub struct Submission {
     /// File references added as context, not image uploads.
     pub context_files: Vec<PathBuf>,
     pub model: String,
-    pub effort: String,
+    pub effort: Option<String>,
     pub permission: Permission,
     /// Fast mode (bolt toggle in the model picker).
     pub fast: bool,
@@ -607,8 +607,8 @@ pub struct Composer {
     drag_active: bool,
     models: Vec<ModelOption>,
     model: usize,
-    effort: String,
-    default_selection: (usize, String),
+    effort: Option<String>,
+    default_selection: (usize, Option<String>),
     fast: bool,
     permission: Permission,
     menu: Option<Menu>,
@@ -695,8 +695,8 @@ impl Composer {
             drag_active: false,
             models: Vec::new(),
             model: 0,
-            effort: "medium".into(),
-            default_selection: (0, "medium".into()),
+            effort: Some("medium".into()),
+            default_selection: (0, Some("medium".into())),
             fast: false,
             permission: Permission::Custom,
             menu: None,
@@ -810,8 +810,7 @@ impl Composer {
                 let id = &self.models.get(self.model)?.id;
                 let m = models.iter().find(|m| &m.id == id)?;
                 Some(m.default_reasoning_effort.clone())
-            })
-            .unwrap_or_else(|| "medium".into());
+            });
         self.default_selection = (self.model, self.effort.clone());
         self.permission = Permission::from_config(config);
         self.queue_mode = config["desktop"]["followUpQueueMode"] == "queue";
@@ -824,9 +823,13 @@ impl Composer {
     pub fn set_model_and_effort(&mut self, model: &str, effort: &str, cx: &mut Context<Self>) {
         if let Some(index) = self.models.iter().position(|option| option.id == model) {
             self.model = index;
-            self.effort = effort.into();
+            self.effort = Some(effort.into());
             cx.notify();
         }
+    }
+
+    fn displayed_effort(&self) -> &str {
+        self.effort.as_deref().unwrap_or("medium")
     }
 
     pub fn on_submit(&mut self, f: impl Fn(&Submission, &mut Window, &mut App) + 'static) {
@@ -1205,17 +1208,18 @@ impl Composer {
     fn select_model(&mut self, index: usize) {
         self.model = index;
         let efforts = &self.models[index].efforts;
-        if !efforts.contains(&self.effort)
+        let effort = self.effort.get_or_insert_with(|| "medium".into());
+        if !efforts.contains(effort)
             && let Some(first) = efforts.first()
         {
-            self.effort = first.clone();
+            *effort = first.clone();
         }
     }
 
     /// Reports the picked model and effort to [`Self::on_model`].
     fn picked(&self, cx: &mut App) {
         if let (Some(f), Some(model)) = (self.on_model.clone(), self.current_model()) {
-            f(&model.id, &self.effort, cx);
+            f(&model.id, self.displayed_effort(), cx);
         }
     }
 
@@ -1634,14 +1638,13 @@ impl Composer {
         permission: Permission,
         cx: &mut Context<Self>,
     ) {
-        if let Some(model) = mode["settings"]["model"].as_str() {
-            self.set_model_and_effort(
-                model,
-                mode["settings"]["reasoning_effort"]
-                    .as_str()
-                    .unwrap_or("medium"),
-                cx,
-            );
+        if let Some(model) = mode["settings"]["model"].as_str()
+            && let Some(index) = self.models.iter().position(|option| option.id == model)
+        {
+            self.model = index;
+            self.effort = mode["settings"]["reasoning_effort"]
+                .as_str()
+                .map(str::to_owned);
         }
         self.permission = permission;
         cx.notify();
@@ -2185,14 +2188,42 @@ mod tests {
                 composer.set_text("Keep this draft", cx);
                 composer.set_model_and_effort("announced", "high", cx);
                 assert_eq!(composer.current_model().unwrap().id, "announced");
-                assert_eq!(composer.effort, "high");
+                assert_eq!(composer.effort.as_deref(), Some("high"));
                 composer.set_model_and_effort("missing", "low", cx);
                 assert_eq!(composer.current_model().unwrap().id, "announced");
-                assert_eq!(composer.effort, "high");
+                assert_eq!(composer.effort.as_deref(), Some("high"));
                 assert_eq!(composer.permission, Permission::FullAccess);
                 assert!(composer.queue_mode);
-                assert_eq!(composer.default_selection, (0, "medium".into()));
+                assert_eq!(composer.default_selection, (0, Some("medium".into())));
                 assert_eq!(composer.content, "Keep this draft");
+            });
+        });
+    }
+
+    #[test]
+    fn restored_effort_stays_unset_while_displaying_medium() {
+        use gpui::{AppContext as _, HeadlessAppContext};
+        let mut app = HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            std::sync::Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        app.update(|cx| {
+            let composer = cx.new(|cx| Composer::new("Do anything", false, cx));
+            composer.update(cx, |composer, cx| {
+                composer.models = vec![ModelOption {
+                    id: "gpt-6.1-sol".into(),
+                    label: "GPT-6.1 Sol".into(),
+                    efforts: vec!["low".into(), "medium".into()],
+                }];
+                composer.restore_run_settings(
+                    &json!({"settings":{"model":"gpt-6.1-sol","reasoning_effort":null}}),
+                    Permission::Ask,
+                    cx,
+                );
+                assert!(composer.effort.is_none());
+                assert_eq!(composer.displayed_effort(), "medium");
+                assert!(composer.run_settings().0["settings"]["reasoning_effort"].is_null());
             });
         });
     }
