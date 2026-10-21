@@ -494,21 +494,6 @@ impl Composer {
                             .overflow_hidden()
                             .text_ellipsis(),
                     ),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .group_hover(group.clone(), |s| s.opacity(0.))
-                    .child(surface_decoration(t.border, None)),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .opacity(0.)
-                    .group_hover(group.clone(), |s| s.opacity(1.))
-                    .child(surface_decoration(t.border_strong, Some(t.text_alpha_5))),
             );
         div()
             .id(("context-file", i))
@@ -524,6 +509,21 @@ impl Composer {
                 shapes::Corner::Squircle,
                 surface,
             ))
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .group_hover(group.clone(), |s| s.opacity(0.))
+                    .child(surface_decoration(t.border, None)),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .opacity(0.)
+                    .group_hover(group.clone(), |s| s.opacity(1.))
+                    .child(surface_decoration(t.border_strong, Some(t.text_alpha_5))),
+            )
             .child(
                 self.remove_paste_button(i, t, cx)
                     .role(gpui::Role::Button)
