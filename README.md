@@ -136,6 +136,7 @@ The page preserves remote-host, loading, administrator-disabled, and plugin-unav
 Scans, findings, repository history, scan setup, cancellation, context changes, triage, and remediation use plugin tools.
 Scan and remediation handoffs retain their claim tokens through the continuation thread.
 An unknown turn-delivery outcome does not release a claim that the accepted turn can still own.
+Source and artifact links use the native read-only file viewer, not the operating system's file associations.
 No scan or model request runs until the user starts that action.
 
 ## Build and run

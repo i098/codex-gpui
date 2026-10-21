@@ -728,7 +728,7 @@ impl Shell {
         let (hover_bg, hover_fg) = (t.ghost_hover, t.text);
         let selected = self.selected_rail;
         let security_enabled = cx.try_global::<screens::security::Access>()
-            .is_some_and(|access| access.gate_enabled);
+            .is_some_and(|access| access.gate_enabled && access.plugin_available && !access.remote_host);
         let home = self.main.entity_type() == std::any::TypeId::of::<screens::home::HomeMain>();
         // The list (`[6, 50, 40, 732]`) is a composited scroller: its items paint into the
         // layer's transparent tiles, which `vertical-scroll-fade-mask` fades over the top 16 px

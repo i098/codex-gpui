@@ -10,11 +10,19 @@ pub(super) fn actions(root: gpui::Div, cx: &mut Context<Root>) -> gpui::Div {
 pub(super) fn bind(cx: &mut Context<Root>) {
     cx.observe_global::<settings::integrations::State>(|root, cx| {
         let state = cx.global::<settings::integrations::State>();
-        let access = if state.gates_loaded && !root.bridge.is_acp() {
+        let mut access = if state.gates_loaded && !root.bridge.is_acp() {
             security::Access::from_evaluations(&state.evaluations, false, true)
         } else {
             security::Access::default()
         };
+        if let Load::Ready(plugins) = &state.plugins {
+            access.plugin_available = plugins["marketplaces"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .flat_map(|marketplace| marketplace["plugins"].as_array().into_iter().flatten())
+                .any(bridge::security::Gate::plugin_ready);
+        }
         if cx.try_global::<security::Access>() != Some(&access) {
             cx.set_global(access);
             root.shell.update(cx, |_, cx| cx.notify());
@@ -58,20 +66,7 @@ pub(super) fn shell(root: &mut Root, window: &mut Window, cx: &mut Context<Root>
         |this, page, action, window, cx| match action {
             Action::ViewThread(id) => this.navigate(Route::Thread(id.clone()), window, cx),
             Action::PickFolder => pick_folder(page.clone(), cx),
-            Action::OpenPath(path) => {
-                let path = std::path::Path::new(path);
-                let path = if path.is_absolute() {
-                    path.to_owned()
-                } else {
-                    page.read(cx).target_path().join(path)
-                };
-                match url::Url::from_file_path(&path) {
-                    Ok(url) => cx.open_url(url.as_str()),
-                    Err(()) => page.update(cx, |page, cx| {
-                        page.show_error("Could not open the selected file", cx)
-                    }),
-                }
-            }
+            Action::OpenPath(path) => open_source(page, path, cx),
             _ => {}
         },
     )
@@ -102,6 +97,28 @@ pub(super) fn shell(root: &mut Root, window: &mut Window, cx: &mut Context<Root>
     })
     .detach();
     shell
+}
+
+fn open_source(page: &Entity<SecurityPage>, path: &str, cx: &mut Context<Root>) {
+    let workspace = page.read(cx).target_path();
+    let path = workspace.join(path);
+    let file = cx.new(|_| {
+        FileView::new(
+            &workspace.to_string_lossy(),
+            path.to_string_lossy().into_owned(),
+            None,
+        )
+    });
+    page.update(cx, |page, cx| page.show_file(file.clone(), cx));
+    cx.spawn(async move |_, cx| {
+        let contents = cx
+            .background_spawn(async move {
+                std::fs::read_to_string(path).map_err(|error| error.to_string())
+            })
+            .await;
+        file.update(cx, |file, cx| file.set_contents(contents, cx));
+    })
+    .detach();
 }
 
 fn pick_folder(page: Entity<SecurityPage>, cx: &mut Context<Root>) {

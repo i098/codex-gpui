@@ -13,6 +13,7 @@ mod view;
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Access {
     pub gate_enabled: bool,
+    pub plugin_available: bool,
     pub remote_host: bool,
     pub host_connected: bool,
 }
@@ -27,6 +28,7 @@ impl Access {
         let payload = decoded.as_ref().unwrap_or(payload);
         Self {
             gate_enabled: payload["feature_gates"][bridge::security::ROLLOUT_GATE]["value"] == true,
+            plugin_available: false,
             remote_host,
             host_connected,
         }
@@ -67,6 +69,7 @@ pub enum Action {
     DetailTab(&'static str),
     ViewThread(String),
     OpenPath(String),
+    CloseFile,
     UseLocal,
 }
 
@@ -88,6 +91,7 @@ pub struct SecurityPage {
     findings: Option<Findings>,
     scan: Option<Scan>,
     history: Option<Vec<Scan>>,
+    file: Option<Entity<crate::screens::diff::panel::FileView>>,
     projects: Vec<Project>,
     models: Vec<bridge::types::Model>,
     model: String,
@@ -175,13 +179,24 @@ impl SecurityPage {
     }
 
     pub fn set_projects(&mut self, projects: Vec<Project>, cx: &mut Context<Self>) {
-        if self.target.is_empty() {
-            self.target = projects
-                .first()
-                .map(|project| project.path.clone())
-                .unwrap_or_default();
-        }
+        let initial = self
+            .target
+            .is_empty()
+            .then(|| projects.first().map(|project| project.path.clone()))
+            .flatten();
         self.projects = projects;
+        if let Some(path) = initial {
+            self.set_target(path, cx);
+        }
+        cx.notify();
+    }
+
+    pub fn show_file(
+        &mut self,
+        file: Entity<crate::screens::diff::panel::FileView>,
+        cx: &mut Context<Self>,
+    ) {
+        self.file = Some(file);
         cx.notify();
     }
 
@@ -208,6 +223,7 @@ impl SecurityPage {
                 let query = this.query.read(cx).field_text().to_owned();
                 if this.finding_filter.query != query {
                     this.finding_filter.query = query;
+                    this.findings = None;
                     this.reload(cx);
                 }
             }
@@ -229,6 +245,7 @@ impl SecurityPage {
             findings: None,
             scan: None,
             history: None,
+            file: None,
             projects,
             models,
             model,
@@ -357,9 +374,13 @@ impl SecurityPage {
                 if self.busy {
                     return;
                 }
+                if self.location != location {
+                    self.history = None;
+                }
                 self.location = location;
                 self.error = None;
                 self.dialog = None;
+                self.file = None;
                 self.detail_tab = "summary";
                 self.query.update(cx, |input, cx| input.set_text("", cx));
                 self.finding_filter.query.clear();
@@ -386,6 +407,7 @@ impl SecurityPage {
             Action::DetailTab(tab) => self.detail_tab = tab,
             Action::Choose(kind, id) => self.choose(kind, id, cx),
             Action::InspectTarget => self.inspect_target(cx),
+            Action::CloseFile => self.file = None,
             Action::LoadMore => self.load_more(cx),
             Action::PickFolder | Action::ViewThread(_) | Action::OpenPath(_) => cx.emit(action),
             Action::UseLocal => {
@@ -404,6 +426,7 @@ impl SecurityPage {
         }
         match kind {
             "mode" => self.mode = id,
+            "depth" if self.mode != "diff" => self.mode = id,
             "area" => self.area = id,
             "diff" => self.diff_kind = id,
             "model" => {
@@ -424,14 +447,17 @@ impl SecurityPage {
             "repository-status" => self.repository_status = id,
             "finding-status" => {
                 self.finding_filter.status = (id != "all").then_some(id);
+                self.findings = None;
                 self.reload(cx);
             }
             "severity" => {
                 self.finding_filter.severity = (id != "all").then_some(id);
+                self.findings = None;
                 self.reload(cx);
             }
             "finding-repository" => {
                 self.finding_filter.target_id = (id != "all").then_some(id);
+                self.findings = None;
                 self.reload(cx);
             }
             _ => {}
@@ -462,10 +488,15 @@ impl SecurityPage {
         self.loading = true;
         let location = self.location.clone();
         let filter = self.finding_filter.clone();
+        let loaded_findings = self
+            .findings
+            .as_ref()
+            .map_or(20, |page| page.findings.len().max(20));
         self.request = Some(cx.spawn(async move |this, cx| {
             let result = match &location {
                 Location::Scans => client.scans(None).await.map(Loaded::Scans),
-                Location::Findings => match client.findings(&filter, 0).await {
+                Location::Findings => match client.findings_through(&filter, loaded_findings).await
+                {
                     Ok(findings) => {
                         Ok(Loaded::Findings(findings, client.repositories().await.ok()))
                     }
@@ -857,8 +888,7 @@ mod tests {
     use super::*;
     use gpui::{HeadlessAppContext, px, size};
 
-    #[test]
-    fn closed_rollout_gate_blocks_privileged_actions() {
+    fn page() -> (HeadlessAppContext, Entity<SecurityPage>) {
         #[cfg(target_os = "macos")]
         std::panic::set_hook(Box::new(|info| {
             eprintln!("{info}");
@@ -887,6 +917,12 @@ mod tests {
                 )
             })
         });
+        (cx, page)
+    }
+
+    #[test]
+    fn closed_rollout_gate_blocks_privileged_actions() {
+        let (mut cx, page) = page();
         let window = cx
             .open_window(size(px(840.), px(650.)), |_, _| page.clone())
             .unwrap();
@@ -903,6 +939,74 @@ mod tests {
         });
         cx.run_until_parked();
         cx.update_window(window.into(), |_, _, _| {}).unwrap();
+    }
+
+    #[test]
+    fn selecting_depth_cannot_change_a_changes_scan_scope() {
+        let (mut cx, page) = page();
+        cx.update(|cx| {
+            page.update(cx, |page, cx| {
+                page.mode = "diff".into();
+                page.diff_kind = "range".into();
+                page.target = "/repo".into();
+                page.target_metadata = Some(json!({"reviewChangesSupported":true}));
+                page.model = "model".into();
+                page.models.push(bridge::types::Model {
+                    id: "model".into(),
+                    model: "model".into(),
+                    display_name: "Model".into(),
+                    description: String::new(),
+                    hidden: false,
+                    default_reasoning_effort: "medium".into(),
+                    supported_reasoning_efforts: Vec::new(),
+                    is_default: true,
+                });
+                page.base_revision
+                    .update(cx, |input, cx| input.set_text("base", cx));
+                page.choose("depth", "standard".into(), cx);
+                let setup = page.setup(cx).unwrap();
+                assert_eq!(setup.mode, "diff");
+                assert_eq!(
+                    setup.diff_target,
+                    Some(json!({"kind":"range","headRevision":"HEAD","baseRevision":"base"}))
+                );
+            })
+        });
+    }
+
+    #[test]
+    fn repository_navigation_clears_the_previous_history_before_loading() {
+        let (mut cx, page) = page();
+        cx.update(|cx| {
+            page.update(cx, |page, cx| {
+                page.gate = Gate::Ready;
+                page.location = Location::Repository("A".into());
+                page.history = Some(Vec::new());
+                page.activate(Action::Navigate(Location::Repository("B".into())), cx);
+                assert!(page.history.is_none());
+            })
+        });
+    }
+
+    #[test]
+    fn a_late_default_repository_invalidates_unrelated_target_metadata() {
+        let (mut cx, page) = page();
+        cx.update(|cx| {
+            page.update(cx, |page, cx| {
+                page.location = Location::NewScan;
+                page.target_metadata = Some(json!({"reviewChangesSupported":true}));
+                page.set_projects(
+                    vec![Project {
+                        id: "repo".into(),
+                        name: "Repo".into(),
+                        path: "/repo".into(),
+                    }],
+                    cx,
+                );
+                assert_eq!(page.target, "/repo");
+                assert!(page.target_metadata.is_none());
+            })
+        });
     }
 
     #[test]

@@ -31,7 +31,10 @@ impl SecurityPage {
                     cx,
                 ));
             }
-            return page.child(empty).into_any_element();
+            return page
+                .child(div().h(px(46.)).flex_none())
+                .child(div().flex_1().min_h_0().child(empty))
+                .into_any_element();
         }
         let active = match self.location {
             Location::Findings | Location::Finding { .. } => "Findings",
@@ -123,42 +126,59 @@ impl SecurityPage {
                     .child(text(error.clone(), 13., 20., 430., t.text_error)),
             );
         }
-        let content = match &self.location {
-            Location::NewScan => self.setup_view(window, cx),
-            Location::Scans => self.scan_list(window, cx),
-            Location::Scan(_) | Location::Finding { .. } => div()
+        let content = if let Some(file) = &self.file {
+            div()
                 .size_full()
                 .flex()
-                .child(
-                    div()
-                        .w(px(340.))
-                        .flex_none()
-                        .border_r_1()
-                        .border_color(t.border_subtle)
-                        .child(self.scan_list(window, cx)),
-                )
-                .child(div().flex_1().min_w_0().child(self.detail_view(window, cx)))
-                .into_any_element(),
-            Location::Findings => self.findings_list(window, cx),
-            Location::Repositories => self.repositories_list(window, cx),
-            Location::Repository(_) => div()
-                .size_full()
-                .flex()
-                .child(
-                    div()
-                        .w(px(340.))
-                        .flex_none()
-                        .border_r_1()
-                        .border_color(t.border_subtle)
-                        .child(self.repositories_list(window, cx)),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .child(self.repository_detail(window, cx)),
-                )
-                .into_any_element(),
+                .flex_col()
+                .child(self.action(
+                    "security-file-back",
+                    "Back",
+                    Action::CloseFile,
+                    false,
+                    window,
+                    cx,
+                ))
+                .child(div().flex_1().min_h_0().child(file.clone()))
+                .into_any_element()
+        } else {
+            match &self.location {
+                Location::NewScan => self.setup_view(window, cx),
+                Location::Scans => self.scan_list(window, cx),
+                Location::Scan(_) | Location::Finding { .. } => div()
+                    .size_full()
+                    .flex()
+                    .child(
+                        div()
+                            .w(px(340.))
+                            .flex_none()
+                            .border_r_1()
+                            .border_color(t.border_subtle)
+                            .child(self.scan_list(window, cx)),
+                    )
+                    .child(div().flex_1().min_w_0().child(self.detail_view(window, cx)))
+                    .into_any_element(),
+                Location::Findings => self.findings_list(window, cx),
+                Location::Repositories => self.repositories_list(window, cx),
+                Location::Repository(_) => div()
+                    .size_full()
+                    .flex()
+                    .child(
+                        div()
+                            .w(px(340.))
+                            .flex_none()
+                            .border_r_1()
+                            .border_color(t.border_subtle)
+                            .child(self.repositories_list(window, cx)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(self.repository_detail(window, cx)),
+                    )
+                    .into_any_element(),
+            }
         };
         page = page.child(div().flex_1().min_h_0().child(content));
         if self.rendered_dialog != self.dialog {
@@ -238,20 +258,41 @@ impl SecurityPage {
             .flex_col()
             .items_center()
             .justify_center()
-            .gap(px(12.))
-            .p(px(24.))
-            .child(icon(
-                if self.loading {
-                    "sidebar-cmd-spinner"
-                } else {
-                    "security"
-                },
-                32.,
-                t.text_tertiary,
-            ))
-            .child(text(title.to_owned(), 18., 24., 500., t.text))
-            .children(
-                description.map(|value| text(value.to_owned(), 14., 21., 430., t.text_secondary)),
+            .px(px(12.))
+            .py(px(24.))
+            .child(
+                div()
+                    .max_w(px(576.))
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(12.))
+                    .child(icon(
+                        if self.loading {
+                            "sidebar-cmd-spinner"
+                        } else {
+                            "security"
+                        },
+                        32.,
+                        t.text.opacity(0.65),
+                    ))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(text(title.to_owned(), 16., 24., 500., t.text))
+                            .children(description.map(|value| {
+                                text(
+                                    value.to_owned(),
+                                    13.,
+                                    18.571_428,
+                                    430.,
+                                    t.text.opacity(0.65),
+                                )
+                            })),
+                    ),
             )
     }
 
@@ -659,17 +700,19 @@ impl SecurityPage {
                 ));
         }
         form = form
-            .child(self.choice_row(
-                "Scan type",
-                "depth",
-                if self.mode == "deep" {
-                    "Deep scan"
-                } else {
-                    "Standard scan"
-                },
-                window,
-                cx,
-            ))
+            .when(self.mode != "diff", |form| {
+                form.child(self.choice_row(
+                    "Scan type",
+                    "depth",
+                    if self.mode == "deep" {
+                        "Deep scan"
+                    } else {
+                        "Standard scan"
+                    },
+                    window,
+                    cx,
+                ))
+            })
             .child(self.choice_row(
                 "Model and reasoning",
                 "model",
@@ -1364,14 +1407,21 @@ impl SecurityPage {
                 .child(self.option("mode", "diff", "Changes", self.mode == "diff", window, cx)),
             "depth" => content
                 .child(self.option(
-                    "mode",
+                    "depth",
                     "standard",
                     "Standard scan",
                     self.mode == "standard",
                     window,
                     cx,
                 ))
-                .child(self.option("mode", "deep", "Deep scan", self.mode == "deep", window, cx)),
+                .child(self.option(
+                    "depth",
+                    "deep",
+                    "Deep scan",
+                    self.mode == "deep",
+                    window,
+                    cx,
+                )),
             "area" if self.mode == "diff" => content
                 .child(self.option(
                     "diff",

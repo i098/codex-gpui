@@ -19,6 +19,13 @@ pub enum Gate {
 }
 
 impl Gate {
+    pub fn plugin_ready(plugin: &Value) -> bool {
+        plugin["id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("codex-security@"))
+            && plugin["enabled"] == true
+            && plugin["availability"] == "AVAILABLE"
+    }
     pub fn resolve(enabled: bool, remote: bool, loading: bool, plugins: &[Value]) -> Self {
         if !enabled {
             return Self::Disabled;
@@ -35,8 +42,9 @@ impl Gate {
                     .then_some(plugin)
             })
         };
-        if security()
-            .any(|plugin| plugin["enabled"] == true && plugin["availability"] == "AVAILABLE")
+        if plugins
+            .iter()
+            .any(|entry| Self::plugin_ready(&entry["plugin"]))
         {
             Self::Ready
         } else if loading {
@@ -381,6 +389,19 @@ impl Client {
         Ok(page)
     }
 
+    pub async fn findings_through(&self, filter: &FindingFilter, count: usize) -> Result<Findings> {
+        let mut findings = self.findings(filter, 0).await?;
+        while findings.findings.len() < count {
+            let Some(offset) = findings.next_offset else {
+                break;
+            };
+            let page = self.findings(filter, offset).await?;
+            findings.findings.extend(page.findings);
+            findings.next_offset = page.next_offset;
+        }
+        Ok(findings)
+    }
+
     pub async fn scan(&self, id: &str, occurrence: Option<&str>) -> Result<Scan> {
         let mut args = json!({"scanId": id});
         if let Some(occurrence) = occurrence {
@@ -520,7 +541,7 @@ impl Client {
                 .bridge
                 .request::<_, Value>("thread/archive", json!({"threadId": thread}))
                 .await;
-            return Err((error, false));
+            return Err((error, true));
         }
         Ok(())
     }
@@ -960,5 +981,192 @@ mod tests {
         );
         assert!(validate_response("set_codex_security_finding_triage", &json!({})).is_err());
         assert!(decode_result(json!({"structuredContent":{"scans":[]}})).is_ok());
+    }
+
+    #[derive(Clone, Copy)]
+    enum DeliveryFault {
+        LostReply,
+        Attachment,
+    }
+
+    #[derive(Default)]
+    struct Claims {
+        scan: Option<String>,
+        remediation: Option<String>,
+        turn_accepted: bool,
+    }
+
+    fn scan_value() -> Value {
+        json!({
+            "scanId":"scan", "mode":"standard", "targetPath":"/repo", "scope":".",
+            "findingCount":1, "updatedAt":"2026-10-21T00:00:00Z", "findings":[],
+            "progress":{"phase":"discovery","status":"running",
+                "coverage":{"closedRows":0,"worklistRows":1}}
+        })
+    }
+
+    fn delivery_client(
+        fault: DeliveryFault,
+    ) -> (
+        Client,
+        Arc<std::sync::Mutex<Claims>>,
+        std::thread::JoinHandle<()>,
+    ) {
+        use std::io::{BufRead, Write};
+        let (read, mut output) = std::io::pipe().unwrap();
+        let (input, write) = std::io::pipe().unwrap();
+        let (bridge, _) = Bridge::from_io(read, write, None);
+        let claims = Arc::new(std::sync::Mutex::new(Claims::default()));
+        let observed = claims.clone();
+        let server = std::thread::spawn(move || {
+            for line in std::io::BufReader::new(input).lines() {
+                let request: Value = serde_json::from_str(&line.unwrap()).unwrap();
+                let params = &request["params"];
+                let mut state = observed.lock().unwrap();
+                let response = match request["method"].as_str().unwrap() {
+                    "thread/start" => json!({"thread":{"id":"worker"}}),
+                    "turn/start" => {
+                        state.turn_accepted = true;
+                        if matches!(fault, DeliveryFault::LostReply) {
+                            break;
+                        }
+                        json!({"turn":{"id":"turn","items":[],"status":"inProgress"}})
+                    }
+                    "turn/interrupt" | "thread/archive" => {
+                        writeln!(output, "{}", json!({"id":request["id"],"error":{"code":-32000,"message":"cannot stop"}})).unwrap();
+                        continue;
+                    }
+                    "mcpServer/tool/call" => {
+                        let args = &params["arguments"];
+                        let tool = params["tool"].as_str().unwrap();
+                        let workspace = || json!({"workspace":{"id":"workspace"}});
+                        let content = match tool {
+                            "inspect_codex_security_setup" => json!({"setup":{"scope":"."}}),
+                            "open_codex_security_workspace" | "submit_codex_security_setup" => {
+                                workspace()
+                            }
+                            "start_codex_security_scan" => {
+                                json!({"workspace":{"id":"workspace","results":{"scanId":"scan","mode":"standard"}}})
+                            }
+                            "claim_codex_security_scan_handoff_delivery" => {
+                                state.scan = args["claimToken"].as_str().map(str::to_owned);
+                                json!({"workspace":{"id":"workspace","results":{"scanId":"scan","handoffClaimToken":args["claimToken"]}}})
+                            }
+                            "request_codex_security_finding_remediation" => {
+                                state.remediation = args["actionToken"].as_str().map(str::to_owned);
+                                let mut scan = scan_value();
+                                scan["findings"] = json!([{"occurrenceId":"finding","remediationState":{
+                                    "state":"requested","actionClaimToken":args["actionToken"],
+                                    "requestId":args["requestId"],"pendingAction":"generate","version":1
+                                }}]);
+                                json!({"scan":scan})
+                            }
+                            "attach_codex_security_scan_continuation_thread" => {
+                                writeln!(output, "{}", json!({"id":request["id"],"error":{"code":-32000,"message":"attachment failed"}})).unwrap();
+                                continue;
+                            }
+                            "cancel_codex_security_scan_from_app"
+                            | "release_codex_security_scan_handoff_delivery" => {
+                                state.scan = None;
+                                workspace()
+                            }
+                            "cancel_codex_security_finding_remediation_request"
+                            | "release_codex_security_finding_remediation_claim" => {
+                                state.remediation = None;
+                                json!({"scan":scan_value()})
+                            }
+                            "list_codex_security_global_findings" => {
+                                let offset = args["offset"].as_u64().unwrap();
+                                json!({"findings":(offset..offset+20).map(|id| json!({"findingId":id})).collect::<Vec<_>>(),"nextOffset":offset+20})
+                            }
+                            other => panic!("Unexpected tool: {other}"),
+                        };
+                        json!({"structuredContent":content})
+                    }
+                    other => panic!("Unexpected request: {other}"),
+                };
+                writeln!(output, "{}", json!({"id":request["id"],"result":response})).unwrap();
+            }
+        });
+        (
+            Client {
+                bridge: Arc::new(bridge),
+                thread_id: "host".into(),
+                tools: None,
+            },
+            claims,
+            server,
+        )
+    }
+
+    fn setup_value() -> Setup {
+        Setup {
+            target_path: "/repo".into(),
+            mode: "standard".into(),
+            scope: ".".into(),
+            diff_target: None,
+            model: "model".into(),
+            reasoning_effort: "medium".into(),
+            user_context: String::new(),
+        }
+    }
+
+    #[test]
+    fn lost_delivery_reply_preserves_scan_and_remediation_ownership() {
+        for remediation in [false, true] {
+            let (client, claims, server) = delivery_client(DeliveryFault::LostReply);
+            let result = futures_lite::future::block_on(async {
+                if remediation {
+                    let scan: Scan = decode(scan_value()).unwrap();
+                    client
+                        .remediate(
+                            &scan,
+                            &json!({"occurrenceId":"finding"}),
+                            "generate",
+                            "model",
+                            "medium",
+                        )
+                        .await
+                } else {
+                    client.start(&setup_value()).await
+                }
+            });
+            assert!(result.is_err());
+            let state = claims.lock().unwrap();
+            assert!(state.turn_accepted);
+            assert!(if remediation {
+                state.remediation.is_some()
+            } else {
+                state.scan.is_some()
+            });
+            drop(state);
+            drop(client);
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn failed_attachment_and_failed_stop_preserve_scan_ownership() {
+        let (client, claims, server) = delivery_client(DeliveryFault::Attachment);
+        assert!(futures_lite::future::block_on(client.start(&setup_value())).is_err());
+        let state = claims.lock().unwrap();
+        assert!(state.turn_accepted);
+        assert!(state.scan.is_some());
+        drop(state);
+        drop(client);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn refresh_keeps_the_loaded_findings_range() {
+        let (client, _, server) = delivery_client(DeliveryFault::LostReply);
+        let page =
+            futures_lite::future::block_on(client.findings_through(&FindingFilter::default(), 40))
+                .unwrap();
+        assert_eq!(page.findings.first().unwrap()["findingId"], 0);
+        assert_eq!(page.findings.last().unwrap()["findingId"], 39);
+        assert_eq!(page.next_offset, Some(40));
+        drop(client);
+        server.join().unwrap();
     }
 }
