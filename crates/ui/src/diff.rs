@@ -1243,7 +1243,6 @@ impl Render for DiffPanel {
                                         })
                                         .child(hunk(
                                             h,
-                                            file.name.ends_with(".txt"),
                                             &t,
                                             &line_index,
                                             self,
@@ -2646,7 +2645,6 @@ fn change_marker(kind: Kind, split: bool, t: &Theme) -> Div {
 
 fn hunk(
     h: &Hunk,
-    plain_text: bool,
     t: &Theme,
     line_index: &Cell<usize>,
     panel: &DiffPanel,
@@ -2655,6 +2653,10 @@ fn hunk(
     cx: &Context<DiffPanel>,
 ) -> Div {
     let syntax = Syntax::of(t);
+    let plain_text = panel
+        .files
+        .get(location.0)
+        .is_some_and(|file| file.name.ends_with(".txt"));
     let foreground: Hsla = rgb(match (t.appearance, plain_text) {
         (Appearance::Dark, false) => 0xfcfcfc,
         (Appearance::Dark, true) => 0xffffff,
