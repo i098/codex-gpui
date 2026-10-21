@@ -324,7 +324,7 @@ pub fn canonical(accelerator: &str) -> String {
         .join(" ")
 }
 
-fn capture(stroke: &Keystroke) -> Option<String> {
+pub(super) fn capture(stroke: &Keystroke) -> Option<String> {
     if matches!(
         stroke.key.as_str(),
         "shift" | "control" | "alt" | "cmd" | "fn"
@@ -339,7 +339,7 @@ fn capture(stroke: &Keystroke) -> Option<String> {
     Some(key)
 }
 
-fn modifier_accelerator(modifiers: Modifiers) -> String {
+pub(super) fn modifier_accelerator(modifiers: Modifiers) -> String {
     [
         (modifiers.function, "Fn"),
         (modifiers.control, "Control"),
@@ -453,6 +453,7 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
 #[derive(Clone)]
 enum Control {
     SearchMode,
+    ClearSearch,
     Edit(&'static str, usize),
     Remove(&'static str, usize),
     ResetCommand(&'static str),
@@ -474,6 +475,7 @@ struct Editing {
 
 struct KeyboardPage {
     search: Entity<Composer>,
+    scroll: gpui::ScrollHandle,
     strokes: String,
     search_by_key: bool,
     editing: Option<Editing>,
@@ -548,6 +550,7 @@ impl KeyboardPage {
         });
         Self {
             search,
+            scroll: gpui::ScrollHandle::default(),
             strokes: String::new(),
             search_by_key: false,
             editing: None,
@@ -619,6 +622,10 @@ impl KeyboardPage {
                 } else {
                     self.search.focus_handle(cx).focus(window, cx);
                 }
+            }
+            Control::ClearSearch => {
+                self.search.update(cx, |search, cx| search.set_text("", cx));
+                self.search.focus_handle(cx).focus(window, cx);
             }
             Control::Edit(command, index) => {
                 self.return_focus = window.focused(cx);
@@ -854,7 +861,7 @@ impl KeyboardPage {
             .role(gpui::Role::Button)
             .aria_label(SharedString::from(label))
             .relative()
-            .rounded(px(8.))
+            .rounded(Theme::RADIUS_LG)
             .hover(move |s| s.bg(hover))
             .on_key_down(cx.listener(move |this, e: &KeyDownEvent, window, cx| {
                 if matches!(e.keystroke.key.as_str(), "enter" | "space") {
@@ -872,7 +879,7 @@ impl KeyboardPage {
                 this.activate(action.clone(), e.modifiers().shift, window, cx);
             }))
             .child(content);
-        crate::focus::ring(control, &focus, px(8.), px(0.), cx)
+        crate::focus::ring(control, &focus, Theme::RADIUS_LG, px(0.), cx)
     }
 
     fn icon_control(
@@ -1039,16 +1046,19 @@ impl KeyboardPage {
             .flex()
             .flex_col()
             .gap(px(2.))
-            .child(text(command.title, 13., 18.571_428, 500., t.text))
-            .child(text(command.detail, 12., 16., 430., t.text_secondary));
+            .child(text(command.title, 13., 18.571_428, 500., t.text).truncate())
+            .child(text(command.detail, 12., 16., 430., t.text_secondary).whitespace_normal());
         if command.id == "toggleSidebar" && keys.iter().any(|key| canonical(key) == "cmd-b") {
-            description = description.child(text(
-                "⌘B applies bold, except at the start of the composer where it toggles the sidebar",
-                12.,
-                16.,
-                430.,
-                t.text_secondary,
-            ));
+            description = description.child(
+                text(
+                    "⌘B applies bold, except at the start of the composer where it toggles the sidebar",
+                    12.,
+                    16.,
+                    430.,
+                    t.text_secondary,
+                )
+                .whitespace_normal(),
+            );
         }
         div()
             .relative()
@@ -1316,13 +1326,19 @@ impl Render for KeyboardPage {
             }
         } else if rows.is_empty() && dictation.is_empty() && !number {
             cards = cards.child(self.card(
-                vec![div().p(px(16.)).child(text(
-                    "No matching shortcuts",
-                    13.,
-                    20.,
-                    430.,
-                    t.text_secondary,
-                ))],
+                vec![div()
+                    .min_h(px(64.))
+                    .px(px(16.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(text(
+                        "No matching shortcuts",
+                        13.,
+                        18.571_428,
+                        430.,
+                        t.text_secondary,
+                    ))],
                 &t,
             ));
         } else if !rows.is_empty() {
@@ -1362,7 +1378,16 @@ impl Render for KeyboardPage {
             .control(
                 "shortcut-search-mode".into(),
                 "Search by keystrokes".into(),
-                icon("settings-keyboard-shortcuts", 16., t.text_tertiary).into_any_element(),
+                icon(
+                    "settings-keyboard-shortcuts",
+                    18.,
+                    if self.search_by_key {
+                        t.text
+                    } else {
+                        t.text_tertiary
+                    },
+                )
+                .into_any_element(),
                 Control::SearchMode,
                 window,
                 cx,
@@ -1372,6 +1397,22 @@ impl Render for KeyboardPage {
             .items_center()
             .justify_center()
             .when(self.search_by_key, |d| d.bg(t.list_hover));
+        let clear = (!self.search_by_key && !query.is_empty()).then(|| {
+            self.control(
+                "clear-shortcut-search".into(),
+                "Clear search".into(),
+                icon("shortcut-clear", 16., t.text_secondary).into_any_element(),
+                Control::ClearSearch,
+                window,
+                cx,
+            )
+            .size(px(16.))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .hover(|style| style.bg(gpui::transparent_black()))
+        });
         let search = div()
             .id("shortcut-search")
             .h(px(32.))
@@ -1381,9 +1422,9 @@ impl Render for KeyboardPage {
             .px(px(10.))
             .rounded_full()
             .border_1()
-            .border_color(t.border)
-            .bg(t.list_hover)
-            .child(icon("search", 16., t.text_tertiary))
+            .border_color(t.border_strong)
+            .bg(t.control_background)
+            .child(icon("search", 18., t.text_secondary))
             .child(if self.search_by_key {
                 div()
                     .id("shortcut-keystroke-input")
@@ -1404,7 +1445,11 @@ impl Render for KeyboardPage {
                         14.,
                         18.,
                         430.,
-                        t.text_secondary,
+                        if query.is_empty() {
+                            t.text_tertiary
+                        } else {
+                            t.text
+                        },
                     ))
                     .into_any_element()
             } else {
@@ -1414,7 +1459,40 @@ impl Render for KeyboardPage {
                     .child(self.search.clone())
                     .into_any_element()
             })
+            .children(clear)
             .child(toggle);
+        let search_bar = loaded.then(|| {
+            div()
+                .absolute()
+                .top(px(77_f32.max(-f32::from(self.scroll.offset().y))))
+                .left_0()
+                .w_full()
+                .flex()
+                .justify_center()
+                .child(
+                    div().w_full().max_w(px(768.)).px(px(20.)).child(
+                        div()
+                            .relative()
+                            .bg(t.surface)
+                            .pt(px(20.))
+                            .pb(px(8.))
+                            .child(search)
+                            .child(
+                                div()
+                                    .absolute()
+                                    .left_0()
+                                    .right_0()
+                                    .top(px(60.))
+                                    .h(px(32.))
+                                    .bg(gpui::linear_gradient(
+                                        180.,
+                                        gpui::linear_color_stop(t.surface, 0.),
+                                        gpui::linear_color_stop(t.surface.opacity(0.), 1.),
+                                    )),
+                            ),
+                    ),
+                )
+        });
         let reset = if preferences.bindings.is_empty()
             && preferences.external_browser_link_shortcut == LinkModifier::default()
         {
@@ -1448,8 +1526,11 @@ impl Render for KeyboardPage {
             .child(
                 div()
                     .id("keyboard-shortcuts-page")
+                    .relative()
                     .flex_1()
                     .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
+                    .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.notify()))
                     .layer()
                     .child(probe(&self.layer))
                     .child(
@@ -1476,9 +1557,7 @@ impl Render for KeyboardPage {
                                 .pb(px(20.))
                                 .flex()
                                 .flex_col()
-                                .when(loaded, |d| {
-                                    d.child(div().pt(px(20.)).pb(px(8.)).child(search))
-                                })
+                                .when(loaded, |d| d.child(div().h(px(60.))))
                                 .child(div().pt(px(20.)).child(cards))
                                 .children(
                                     error
@@ -1486,7 +1565,8 @@ impl Render for KeyboardPage {
                                         .map(|error| text(error, 12., 16., 430., t.text_error)),
                                 ),
                         ),
-                    ),
+                    )
+                    .children(search_bar),
             )
             .children(self.confirmation.clone())
     }

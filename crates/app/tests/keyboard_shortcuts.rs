@@ -278,13 +278,23 @@ mod native {
                     .get("newTask")
                     .is_some_and(|keys| canonical(&keys[0]) == "cmd-shift-y")
         }));
+        fx.keys("cmd-shift-y")?;
+        ensure!(fx.route() == Route::Home);
+        fx.keys("cmd-,")?;
+        fx.click(fx.at("settings", "Keyboard shortcuts")?)?;
+        change(&mut fx, Change::Reset);
         fx.click((550., 203.))?;
-        fx.type_text("zzzz-no-shortcut")?;
+        fx.type_text("chat")?;
+        capture(&mut fx, "search-chat")?;
+        fx.click((1117.25, 203.))?;
+        fx.type_text("zzzzzz")?;
         capture(&mut fx, "no-matches")?;
         fx.keys("escape")?;
         capture(&mut fx, "query-cleared")?;
-        fx.keys("cmd-shift-y")?;
-        ensure!(fx.route() == Route::Home);
+        fx.click((1147.25, 203.))?;
+        fx.keys("cmd-k")?;
+        ensure!(fx.read(|root, _| root.command_menu().is_none()));
+        capture(&mut fx, "search-keystrokes")?;
         Ok(())
     }
 
@@ -297,7 +307,7 @@ mod native {
         fx.click((550., 203.))?;
         fx.type_text("Dictation shortcut")?;
         capture(&mut fx, "dictation-search")?;
-        fx.keys("tab tab space")?;
+        fx.keys("tab tab tab space")?;
         ensure!(
             fx.cx
                 .update(|cx| cx.global::<KeyboardState>().capture_owner.is_some())

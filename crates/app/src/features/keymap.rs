@@ -97,7 +97,7 @@ fn change(change: Change, cx: &mut App) {
     }
     cx.update_global::<KeyboardState, _>(|state, _| {
         state.error = result.err().map(|error| error.to_string());
-        state.preference_error = state.error.as_ref().and_then(|_| match change {
+        state.preference_error = state.error.as_ref().and(match change {
             Change::NumberTarget(_) => Some(PreferenceKind::Number),
             Change::LinkModifier(_) => Some(PreferenceKind::Link),
             _ => None,
@@ -208,14 +208,12 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
                 .filter(|n| (1..=9).contains(n))
             {
                 Box::new(GoToChat(number - 1))
-            } else if let Some(number) = id
-                .strip_prefix("focusTab")
-                .and_then(|n| n.parse::<usize>().ok())
-                .filter(|n| (1..=9).contains(n))
-            {
-                Box::new(ActivateSideTab(number - 1))
             } else {
-                return None;
+                let number = id
+                    .strip_prefix("focusTab")
+                    .and_then(|n| n.parse::<usize>().ok())
+                    .filter(|n| (1..=9).contains(n))?;
+                Box::new(ActivateSideTab(number - 1))
             }
         }
     };

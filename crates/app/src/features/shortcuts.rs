@@ -55,7 +55,7 @@ pub(crate) enum AppEdit {
         after: Option<String>,
     },
     Archive {
-        thread: Thread,
+        thread: Box<Thread>,
         index: usize,
     },
 }
@@ -317,7 +317,7 @@ impl Root {
                                 .and_then(|value| {
                                     serde_json::from_value::<Thread>(value["thread"].clone()).ok()
                                 })
-                                .unwrap_or_else(|| thread.clone());
+                                .unwrap_or_else(|| thread.as_ref().clone());
                             this.threads
                                 .insert((*index).min(this.threads.len()), restored);
                             if let Some(page) = &this.archive_page {

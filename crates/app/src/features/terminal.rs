@@ -355,15 +355,15 @@ impl Terminal {
             return;
         }
         self.parser.set_size(rows, columns);
-        if let Some(session) = &self.session {
-            if let Err(error) = session.master.resize(PtySize {
+        if let Some(session) = &self.session
+            && let Err(error) = session.master.resize(PtySize {
                 rows,
                 cols: columns,
-                pixel_width: u16::from(columns).saturating_mul(f32::from(cell).ceil() as u16),
+                pixel_width: columns.saturating_mul(f32::from(cell).ceil() as u16),
                 pixel_height: rows.saturating_mul(17),
-            }) {
-                self.error = Some(error.to_string());
-            }
+            })
+        {
+            self.error = Some(error.to_string());
         }
         self.update_lines();
         cx.notify();
@@ -575,11 +575,11 @@ impl Render for Terminal {
                         }),
                     )
                     .on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, _, cx| {
-                        if event.pressed_button == Some(MouseButton::Left) {
-                            if let Some((start, _)) = this.selection {
-                                this.selection = Some((start, this.cell_at(event.position)));
-                                cx.notify();
-                            }
+                        if event.pressed_button == Some(MouseButton::Left)
+                            && let Some((start, _)) = this.selection
+                        {
+                            this.selection = Some((start, this.cell_at(event.position)));
+                            cx.notify();
                         }
                     }))
                     .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
@@ -620,7 +620,7 @@ impl Render for Terminal {
                     .child(
                         canvas(
                             move |bounds, _, cx| {
-                                let _ = entity.update(cx, |this, cx| this.resize(bounds, cell, cx));
+                                entity.update(cx, |this, cx| this.resize(bounds, cell, cx));
                             },
                             {
                                 let entity = cx.entity();

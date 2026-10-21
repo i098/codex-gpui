@@ -3755,7 +3755,7 @@ impl Root {
                 Ok(_) => {
                     if let Some(thread) = thread {
                         this.record_app_edit(features::shortcuts::AppEdit::Archive {
-                            thread,
+                            thread: Box::new(thread),
                             index: at.unwrap_or(0),
                         });
                     }
