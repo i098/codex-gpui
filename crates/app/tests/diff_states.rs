@@ -22,6 +22,8 @@ fn repository(root: &Path) -> Result<()> {
 
 #[test]
 fn untracked_limit_keeps_tracked_changes_and_never_changes_the_worktree() -> Result<()> {
+    #[cfg(target_os = "macos")]
+    common::install_panic_hook();
     let repo = tempfile::tempdir()?;
     repository(repo.path())?;
     fs::write(repo.path().join("tracked.txt"), "before\n")?;

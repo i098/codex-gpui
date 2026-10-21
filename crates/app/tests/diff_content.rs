@@ -1,0 +1,177 @@
+#![cfg(target_os = "macos")]
+#[path = "common/mod.rs"]
+mod common;
+
+use anyhow::{Context as _, Result, ensure};
+use common::{Fx, SUBTRACT};
+use serde_json::json;
+use std::{
+    fs,
+    os::unix::fs::PermissionsExt as _,
+    path::{Path, PathBuf},
+    process::Command,
+};
+use ui::screens::diff::panel::FullError;
+
+fn git(root: &Path, args: &[&str]) -> Result<String> {
+    let output = Command::new("git").current_dir(root).args(args).output()?;
+    ensure!(
+        output.status.success(),
+        "Git: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(String::from_utf8(output.stdout)?)
+}
+
+fn output() -> Result<PathBuf> {
+    let path = std::env::var_os("CGX_DIFF_REVIEW_EVIDENCE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("cgx-diff-content"));
+    fs::create_dir_all(&path)?;
+    Ok(path)
+}
+
+fn prepare(unreadable: bool) -> Result<(tempfile::TempDir, Fx)> {
+    common::install_panic_hook();
+    let repo = tempfile::tempdir_in(output()?)?;
+    git(repo.path(), &["init", "-q"])?;
+    git(repo.path(), &["config", "user.name", "Full-file proof"])?;
+    git(
+        repo.path(),
+        &["config", "user.email", "proof@example.invalid"],
+    )?;
+    let before = (1..=60)
+        .map(|line| format!("line {line}\n"))
+        .collect::<String>();
+    fs::write(repo.path().join("file.txt"), &before)?;
+    git(repo.path(), &["add", "."])?;
+    git(repo.path(), &["commit", "-qm", "base"])?;
+    fs::write(
+        repo.path().join("file.txt"),
+        before.replace("line 40\n", "changed 40\n"),
+    )?;
+    let patch = git(repo.path(), &["diff", "--full-index", "--unified=0", "--"])?;
+    fs::write(output()?.join("full-file.patch"), &patch)?;
+    if unreadable {
+        fs::set_permissions(
+            repo.path().join("file.txt"),
+            fs::Permissions::from_mode(0o000),
+        )?;
+    }
+    let mut recording = common::script(None, |_| {})?;
+    for row in &mut recording {
+        if let Some(thread) = row.pointer_mut("/msg/result/thread") {
+            thread["cwd"] = repo.path().to_string_lossy().into_owned().into();
+        }
+    }
+    let mut fx = Fx::scripted(recording)?;
+    fx.keys("cmd-2")?;
+    fx.wait_thread(SUBTRACT)?;
+    fx.keys("alt-cmd-b")?;
+    let turn = fx.read(|root, cx| {
+        root.thread()
+            .unwrap()
+            .read(cx)
+            .turns()
+            .last()
+            .unwrap()
+            .id
+            .clone()
+    });
+    fx.root.update(&mut fx.cx, |root, cx| {
+        root.on_event(
+            bridge::Event::Notification {
+                method: "turn/diff/updated".into(),
+                params: json!({"threadId":SUBTRACT,"turnId":turn,"diff":patch}),
+            },
+            cx,
+        )
+    });
+    fx.cx.run_until_parked();
+    Ok((repo, fx))
+}
+
+fn find_count(fx: &Fx) -> usize {
+    fx.read(|root, cx| {
+        root.diff_panel()
+            .unwrap()
+            .read(cx)
+            .search()
+            .map_or(0, |(_, count)| count)
+    })
+}
+
+fn choose(fx: &mut Fx, label: &str) -> Result<()> {
+    let index = fx
+        .read(|root, cx| {
+            root.diff_panel()?
+                .read(cx)
+                .menu_items()
+                .position(|(item, enabled)| item == label && enabled)
+        })
+        .context("diff option")?;
+    fx.keys("home")?;
+    for _ in 0..index {
+        fx.keys("down")?;
+    }
+    fx.keys("enter")
+}
+
+#[test]
+fn full_file_context_expands_twenty_lines_and_collapses_to_the_patch() -> Result<()> {
+    let (_repo, mut fx) = prepare(false)?;
+    fx.reference_shot()?
+        .save(output()?.join("full-partial.png"))?;
+    fx.click((1236., 143.))?;
+    fx.keys("cmd-f")?;
+    fx.type_text("line ")?;
+    fx.wait("twenty context lines", |fx| find_count(fx) == 21)?;
+    fx.reference_shot()?
+        .save(output()?.join("full-twenty-lines.png"))?;
+    fx.keys("escape")?;
+    fx.click((900., 143.))?;
+    fx.keys("cmd-f")?;
+    fx.type_text("line ")?;
+    fx.wait("all leading context", |fx| find_count(fx) == 40)?;
+    fx.reference_shot()?
+        .save(output()?.join("full-expanded.png"))?;
+    fx.keys("escape")?;
+    fx.click((1192., 68.))?;
+    choose(&mut fx, "Load full files")?;
+    ensure!(
+        !fx.read(|root, cx| root.diff_panel().unwrap().read(cx).loads_full_files()),
+        "full-file mode stayed enabled"
+    );
+    fx.click((1000., 177.))?;
+    fx.keys("cmd-f")?;
+    fx.type_text("line ")?;
+    ensure!(
+        find_count(&fx) == 1,
+        "turning off full files kept expanded context"
+    );
+    Ok(())
+}
+
+#[test]
+fn full_file_read_failure_can_retry_without_losing_the_patch() -> Result<()> {
+    let (repo, mut fx) = prepare(true)?;
+    let path = repo.path().join("file.txt");
+    fx.reference_shot()?;
+    fx.wait("full-file read error", |fx| {
+        fx.read(|root, cx| {
+            root.diff_panel().unwrap().read(cx).full_file_error(0) == Some(FullError::Failed)
+        })
+    })?;
+    fx.reference_shot()?
+        .save(output()?.join("full-read-error.png"))?;
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o644))?;
+    fx.click((1240., 154.))?;
+    fx.reference_shot()?;
+    fx.click((900., 143.))?;
+    fx.keys("cmd-f")?;
+    fx.type_text("line ")?;
+    fx.wait("full-file retry", |fx| find_count(fx) == 40)?;
+    fx.reference_shot()?
+        .save(output()?.join("full-read-recovered.png"))?;
+    Ok(())
+}
