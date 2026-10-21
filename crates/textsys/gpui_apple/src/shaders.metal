@@ -1361,6 +1361,8 @@ GradientColor prepare_fill_color(uint tag, uint color_space, Hsla solid,
       out.color0 = srgb_to_oklab(out.color0);
       out.color1 = srgb_to_oklab(out.color1);
     }
+    out.color0.rgb *= out.color0.a;
+    out.color1.rgb *= out.color1.a;
   }
 
   return out;
@@ -1413,28 +1415,23 @@ float4 fill_color(Background background,
         - background.colors[0].percentage);
       t = clamp(t, 0.0, 1.0);
 
-      switch (background.color_space) {
-        case 0:
-          color = mix(color0, color1, t);
-          break;
-        case 1: {
-          float4 oklab_color = mix(color0, color1, t);
-          color = oklab_to_srgb(oklab_color);
-          break;
-        }
+      color = mix(color0, color1, t);
+      if (color.a > 0.0) {
+        color.rgb /= color.a;
+      }
+      if (background.color_space == 1) {
+        color = oklab_to_srgb(color);
       }
 
-      // Dither to reduce banding in gradients (especially dark/alpha).
-      // Triangular-distributed noise breaks up 8-bit quantization steps.
-      // ±2/255 for RGB (enough for dark-on-dark compositing),
-      // ±3/255 for alpha (needs more because alpha × dark color = tiny steps).
-      {
-        float2 seed = position * 0.6180339887; // golden ratio spread
-        float r1 = fract(sin(dot(seed, float2(12.9898, 78.233))) * 43758.5453);
-        float r2 = fract(sin(dot(seed, float2(39.3460, 11.135))) * 24634.6345);
-        float tri = r1 + r2 - 1.0; // triangular PDF, range [-1, +1]
-        color.rgb += tri * 2.0 / 255.0;
-        color.a   += tri * 3.0 / 255.0;
+      // Skia dithers premultiplied RGB with its ordered 8x8 matrix, not alpha.
+      uint2 pixel = uint2(position);
+      uint row = pixel.y ^ pixel.x;
+      uint value = ((row & 1) << 5) | ((pixel.x & 1) << 4) |
+                   ((row & 2) << 2) | ((pixel.x & 2) << 1) |
+                   ((row & 4) >> 1) | ((pixel.x & 4) >> 2);
+      float dither = (float(value) / 64.0 - 63.0 / 128.0) / 255.0;
+      if (color.a > 0.0) {
+        color.rgb = clamp(color.rgb * color.a + dither, float3(0.0), float3(color.a)) / color.a;
       }
 
       break;

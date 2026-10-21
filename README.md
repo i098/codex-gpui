@@ -256,6 +256,11 @@ Home, Thread, Settings, Automations, Mobile, and Archive each own their action r
 `app::Route` and its saved values stay unchanged.
 Shared RPC handlers and state remain on `Root` in `lib.rs`.
 
+`LocalHost` serves `native-desktop-apps` and `native-desktop-app-by-bundle-id` through the desktop fetch boundary.
+On macOS, the adapter reads Spotlight metadata, applies the original app exclusions, and supports usage or display-name ordering.
+It returns each app's path, bundle ID, and display name without launching the app.
+Linux returns an empty native app list, as the original host does.
+
 On macOS, `textsys::show_definition(window, selection, baseline)` opens AppKit's native Look Up popover.
 The baseline uses window-local logical pixels from the top left; the adapter handles both view orientations.
 Call it on the main thread with the unchanged selection.
@@ -285,6 +290,12 @@ Inline-code backgrounds use both snapped label edges, so fractional text widths 
 
 Monochrome glyphs and SVGs keep their paint alpha.
 Element opacity is applied once when the enclosing layer is restored.
+
+Canvas callbacks honor their `opacity`, `layer`, and `top_layer` styles.
+These styles use the same compositor boundary as other elements.
+
+Linear gradients interpolate premultiplied colors in the selected color space.
+Their ordered RGB dither leaves alpha unchanged, so transparent fades do not add opacity noise.
 
 Home composer permission and model labels paint directly into their parent.
 Docked composers retain the composited label path. The animated effort label keeps its filter layer.
@@ -437,6 +448,10 @@ The fullscreen replay checks command dispatch and window state without bringing 
 The spelling menu replaces the selected misspelling and sends Learn Spelling to the native service.
 Headless tests check these actions without relying on the system dictionary's suggestions.
 The Speech submenu uses the native speech synthesizer; its service test sets the volume to zero.
+Images in the composer and tool output support Copy Image and Save Image As.
+Images with a local source also support Reveal in Finder.
+Saving writes the original bytes and replaces the destination only after the write succeeds.
+The headless Save-dialog hook allows tests to select a destination without opening a native window.
 
 ```sh
 tools/mac.sh -l cgx-command-dispatch 'cargo test -p app --test command_dispatch --test s025 --test s025_rank --test s026 -- --test-threads=1'

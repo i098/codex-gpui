@@ -46,6 +46,7 @@ pub mod computer_use_native;
 mod diff_files;
 mod git;
 pub mod git_pr;
+mod native_apps;
 mod projectless;
 pub use projectless::Workspace;
 pub(crate) mod run_now;
@@ -1140,6 +1141,10 @@ impl Host for LocalHost {
             "read-file" => diff_files::text(&params)?,
             "read-file-binary" => diff_files::binary(&params)?,
             "read-git-file-binary" => diff_files::git_binary(&params)?,
+            "native-desktop-apps" => json!({"apps": native_apps::list(&params)?}),
+            "native-desktop-app-by-bundle-id" => {
+                json!({"app": native_apps::by_bundle_id(&params)?})
+            }
             "paths-exist" => {
                 let paths: Vec<String> =
                     serde_json::from_value(params.get("paths").cloned().unwrap_or(json!([])))?;
