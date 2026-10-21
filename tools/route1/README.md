@@ -179,11 +179,16 @@ await navigate(page, "/hotkey-window");
 ```
 
 Pass `{ state, replace, timeoutMs }` as the optional third argument.
-The default handler-readiness timeout is 90 seconds.
+The default deadline is 90 seconds, including loading the original router module.
 After navigation, wait for the target page's controls before capturing.
 Route data can still show a loading or permission state until its recorded responses arrive.
 Keep the page in the existing capture lease and close its owned context in `finally`.
-Run `node tools/route1/test_navigation.mjs` for local-route and readiness-deadline checks.
+Run `node --experimental-vm-modules tools/route1/test_navigation.mjs` for local-route, startup, and stalled-import checks.
+With the fixture server running, verify a real route transition:
+
+```sh
+R1_SERVER=http://127.0.0.1:35583 tools/route1/lease.sh node tools/route1/test_navigation_live.mjs
+```
 
 ## Background runner
 

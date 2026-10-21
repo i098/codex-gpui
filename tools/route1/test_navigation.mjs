@@ -16,4 +16,16 @@ await assert.rejects(
   navigate(uninitializedPage, "/pull-requests", { timeoutMs: 0 }),
   /Original route handler did not become ready/,
 );
-console.log("navigation: local routes and missing-bootstrap deadline passed");
+const stalledImportPage = {
+  evaluate: expression => new vm.Script(expression, {
+    importModuleDynamically: () => new Promise(() => {}),
+  }).runInNewContext({
+    window: { __R1__: { appShared: "stalled-module" } },
+    performance, setTimeout, clearTimeout,
+  }),
+};
+await assert.rejects(
+  navigate(stalledImportPage, "/pull-requests", { timeoutMs: 5 }),
+  /Original module exceeded the navigation timeout/,
+);
+console.log("navigation: local routes and bootstrap/import deadlines passed");

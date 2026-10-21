@@ -56,7 +56,13 @@ export async function navigate(page, path, { state, replace = false, timeoutMs =
       }
     };
     await wait(() => window.__R1__?.appShared);
-    const shared = await import(window.__R1__.appShared);
+    let importTimer;
+    const shared = await Promise.race([
+      import(window.__R1__.appShared),
+      new Promise((_, reject) => {
+        importTimer = setTimeout(() => reject(new Error("Original module exceeded the navigation timeout")), Math.max(0, deadline - performance.now()));
+      }),
+    ]).finally(() => clearTimeout(importTimer));
     if (!("Nvn" in shared)) throw new Error("Pinned original host-message bus is unavailable");
     await wait(() => shared.Nvn?.handlers.get("navigate-to-route")?.size);
     shared.Nvn.dispatchHostMessage(${JSON.stringify({ type: "navigate-to-route", path, state, replace })});
