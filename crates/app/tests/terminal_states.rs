@@ -274,17 +274,6 @@ fn background_ansi_output_supports_selection_and_copy() -> Result<()> {
             event["params"].clone(),
         );
     }
-    let append = |fx: &mut Fx, part: usize| {
-        emit(
-            fx,
-            "item/commandExecution/outputDelta",
-            json!({
-                "threadId":SUBTRACT, "turnId":payload["turnId"], "itemId":payload["itemId"],
-                "delta":payload["parts"][part]
-            }),
-        );
-    };
-    append(&mut fx, 0);
     emit(
         &mut fx,
         "turn/completed",
@@ -298,6 +287,14 @@ fn background_ansi_output_supports_selection_and_copy() -> Result<()> {
     fx.click((1217., 22.))?;
     fx.click((1078., 179.7))?;
     ensure!(fx.read(|root, _| root.side_panel() == Some(SidePanel::Terminal)));
+    emit(
+        &mut fx,
+        "item/commandExecution/outputDelta",
+        json!({
+            "threadId":SUBTRACT, "turnId":payload["turnId"], "itemId":payload["itemId"],
+            "delta":payload["parts"][0]
+        }),
+    );
     let left = fx.cx.update_window(fx.window, |_, window, cx| {
         1280. - 4. - f32::from(ui::screens::diff::panel::panel_width(window, cx))
     })?;
@@ -317,6 +314,6 @@ fn background_ansi_output_supports_selection_and_copy() -> Result<()> {
         .cx
         .update(|cx| cx.read_from_clipboard().and_then(|item| item.text()))
         .context("selected terminal text")?;
-    ensure!(selected.contains("ANSI"), "{selected:?}");
+    ensure!(selected == "ANSI indexed\nANSI RGB\n", "{selected:?}");
     Ok(())
 }

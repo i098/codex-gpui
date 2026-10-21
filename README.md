@@ -59,6 +59,7 @@ Run `cargo test -p app --test computer_use_lifecycle` on macOS for native Stop a
 
 Background command output displays ANSI colors and supports text selection.
 Copy preserves the selected text without ANSI control bytes.
+Like the original app, the view keeps 1,000 scrollback rows plus the visible screen.
 The terminal fixture in `fixtures/terminal-depth.json` contains recorded `thread/shellCommand` output.
 
 Run `cargo test -p ui --lib terminal` for parser and command-label checks.

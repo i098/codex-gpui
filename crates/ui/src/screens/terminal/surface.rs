@@ -490,6 +490,7 @@ pub(super) fn row_element(
             } else {
                 foreground
             },
+            t.surface,
         );
         if cell.dim() {
             color.a *= 0.5;
@@ -504,7 +505,7 @@ pub(super) fn row_element(
             font: face,
             color,
             background_color: (bg != vt100::Color::Default || cell.inverse())
-                .then(|| terminal_color(bg, dark, foreground)),
+                .then(|| terminal_color(bg, dark, foreground, t.surface)),
             underline: (cell.underline()
                 || decorations
                     .link
@@ -567,7 +568,7 @@ pub(super) fn row_element(
     line
 }
 
-fn terminal_color(color: vt100::Color, dark: bool, default: Hsla) -> Hsla {
+fn terminal_color(color: vt100::Color, dark: bool, default: Hsla, background: Hsla) -> Hsla {
     match color {
         vt100::Color::Default => default,
         vt100::Color::Rgb(r, g, b) => {
@@ -590,7 +591,11 @@ fn terminal_color(color: vt100::Color, dark: bool, default: Hsla) -> Hsla {
             if index == 8 {
                 color.a = if dark { 0.71 } else { 0.695 };
             }
-            color
+            if color.a < 1. {
+                crate::over(color, background)
+            } else {
+                color
+            }
         }
         vt100::Color::Idx(index) if index >= 232 => {
             let c = u32::from(8 + (index - 232) * 10);
@@ -677,5 +682,21 @@ impl EntityInputHandler for TerminalSurface {
         _: &mut Context<Self>,
     ) -> Option<usize> {
         Some(0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ansi_black_stays_visible_on_white_backgrounds() {
+        let background = rgb(0x181818).into();
+        let black: gpui::Rgba =
+            terminal_color(vt100::Color::Idx(0), true, background, background).into();
+        let white: gpui::Rgba =
+            terminal_color(vt100::Color::Idx(7), true, background, background).into();
+        assert_eq!(black.a, 1.);
+        assert!(black.r < white.r && black.g < white.g && black.b < white.b);
     }
 }

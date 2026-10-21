@@ -89,8 +89,16 @@ impl Xterm {
             output
         };
         let normalized = delta.replace("\r\n", "\n").replace('\n', "\r\n");
-        self.selected = id.to_owned();
-        self.output = output.to_owned();
+        if self.selected != id {
+            self.selected.clear();
+            self.selected.push_str(id);
+        }
+        if append {
+            self.output.push_str(delta);
+        } else {
+            self.output.clear();
+            self.output.push_str(output);
+        }
         self.surface.update(cx, |surface, cx| {
             if append {
                 surface.append(normalized.as_bytes(), cx);
