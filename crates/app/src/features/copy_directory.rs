@@ -4,6 +4,7 @@
 //! workspace root (minus worktrees with a pending archive), else the cwd. A failed refresh
 //! copies nothing.
 
+use super::path_identity::same_path;
 use crate::*;
 use gpui::ClipboardItem;
 use std::cmp::Ordering;
@@ -154,10 +155,6 @@ fn compare_versions(a: &str, b: &str) -> Option<Ordering> {
         }
     }
     Some(Ordering::Equal)
-}
-
-fn same_path(a: &str, b: &str) -> bool {
-    a.trim_end_matches('/') == b.trim_end_matches('/')
 }
 
 /// `u2`'s select over the attachment pages: worktree attachments whose `identityKey` is their

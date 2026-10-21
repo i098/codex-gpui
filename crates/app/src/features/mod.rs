@@ -16,6 +16,7 @@ use gpui::{App, Context, Div};
 mod command_destinations;
 mod copy_directory;
 mod keymap;
+mod path_identity;
 pub(crate) mod shortcuts;
 pub(crate) use command_destinations::OpenThreadInNewWindow;
 pub(crate) use copy_directory::CopyWorkingDirectory;
