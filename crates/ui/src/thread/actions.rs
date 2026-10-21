@@ -399,6 +399,11 @@ pub struct ForkThread(pub String);
 #[action(namespace = thread, no_json)]
 pub struct RevertTurn(pub String);
 
+/// A press inside the conversation of thread `id`: the original marks the open thread read.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = thread, no_json)]
+pub struct ThreadPressed(pub String);
+
 /// Copy, Read aloud, Rate response, Fork chat from here: shown under the latest turn; earlier
 /// turns (group `group`) show them on hover.
 /// ponytail: Read aloud (ChatGPT voice playback) and Rate response (feedback menu) have no
@@ -407,6 +412,7 @@ pub struct RevertTurn(pub String);
 /// UI (action row time, diff card subtitle) while any of them has focus.
 #[derive(Clone)]
 pub(super) struct TurnFocus {
+    pub thread_id: String,
     pub undo: FocusHandle,
     pub view: FocusHandle,
     pub copy: FocusHandle,
@@ -417,6 +423,7 @@ pub(super) struct TurnFocus {
 
 impl TurnFocus {
     pub(super) fn new(
+        thread_id: String,
         undo: FocusHandle,
         view: FocusHandle,
         copy: FocusHandle,
@@ -427,6 +434,7 @@ impl TurnFocus {
             .iter()
             .any(|handle| handle.is_focused(window));
         Self {
+            thread_id,
             undo,
             view,
             copy,

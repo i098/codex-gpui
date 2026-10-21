@@ -57,7 +57,7 @@ mod select;
 
 pub use recovery::{History, RetryHistory, UsageLimitNotice};
 
-pub use actions::{EditMessage, ForkThread, RevertTurn};
+pub use actions::{EditMessage, ForkThread, RevertTurn, ThreadPressed};
 use actions::{TurnFocus, action_row};
 pub enum GitAction {
     Refresh,
@@ -1643,6 +1643,7 @@ impl ThreadView {
                 .clone()
         };
         let focus = TurnFocus::new(
+            self.thread_id.clone(),
             button_focus("undo"),
             button_focus("view"),
             button_focus("copy"),
