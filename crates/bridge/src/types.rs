@@ -106,6 +106,8 @@ pub enum ThreadItem {
     AgentMessage {
         id: String,
         text: String,
+        #[serde(default)]
+        phase: Option<String>,
     },
     Plan {
         id: String,

@@ -411,7 +411,7 @@ impl Composer {
             at = m.range.end;
         }
         out.push_str(&self.content[at..]);
-        out
+        self.with_diff_comments(out)
     }
 
     /// The chips in order: `(label, icon)`, for the tests.

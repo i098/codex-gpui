@@ -359,7 +359,7 @@ pub(super) fn activities<'a>(items: &'a [ThreadItem], running: bool) -> Vec<Acti
             ThreadItem::CommandExecution { .. } | ThreadItem::FileChange { .. } => {
                 group.push(item);
             }
-            ThreadItem::AgentMessage { id, text } if !text.is_empty() => {
+            ThreadItem::AgentMessage { id, text, .. } if !text.is_empty() => {
                 flush(&mut out, &mut group);
                 out.push(Activity::Markdown(id, text));
             }

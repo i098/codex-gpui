@@ -723,17 +723,7 @@ impl ThreadView {
         for turn in &self.turns {
             for item in &turn.items {
                 let (id, text) = match item {
-                    ThreadItem::UserMessage { id, content } => (
-                        id,
-                        content
-                            .iter()
-                            .filter_map(|part| match part {
-                                UserInput::Text { text } => Some(text.as_str()),
-                                _ => None,
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n"),
-                    ),
+                    ThreadItem::UserMessage { id, content } => (id, user_text(content)),
                     ThreadItem::AgentMessage { id, text, .. } => (id, markdown::plain(text)),
                     _ => continue,
                 };
@@ -1467,7 +1457,9 @@ impl ThreadView {
                 {
                     Some(item) => {
                         if let (
-                            ThreadItem::AgentMessage { id, text: before },
+                            ThreadItem::AgentMessage {
+                                id, text: before, ..
+                            },
                             ThreadItem::AgentMessage { text: after, .. },
                         ) = (&*item, &n.item)
                             && before != after
@@ -1608,17 +1600,7 @@ impl ThreadView {
         let group = SharedString::from(format!("turn-{}", turn.id));
         let mut col = div().group(group.clone()).flex().flex_col();
         let user = turn.items.iter().find_map(|i| match i {
-            ThreadItem::UserMessage { id, content } => Some((
-                id,
-                content
-                    .iter()
-                    .filter_map(|c| match c {
-                        UserInput::Text { text } => Some(text.as_str()),
-                        UserInput::Other => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            )),
+            ThreadItem::UserMessage { id, content } => Some((id, user_text(content))),
             _ => None,
         });
         if let Some((item, user)) = user {
@@ -2189,6 +2171,25 @@ impl Render for ThreadView {
             d.child(self.menu_overlay(window, cx))
         })
     }
+}
+
+pub(crate) fn render_markdown(source: &str, window: &Window, theme: &Theme) -> Div {
+    markdown::markdown(source, window, theme, &[])
+}
+
+fn user_text(content: &[UserInput]) -> String {
+    let mut joined = String::new();
+    for part in content {
+        if let UserInput::Text { text } = part {
+            if !joined.is_empty() {
+                joined.push('\n');
+            }
+            joined.push_str(text);
+        }
+    }
+    let start = joined.len() - crate::screens::diff::panel::comments::prompt_body(&joined).len();
+    joined.drain(..start);
+    joined
 }
 
 fn item_id(item: &ThreadItem) -> Option<&str> {

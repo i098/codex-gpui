@@ -67,7 +67,9 @@ actions!(
 
 mod attach;
 pub mod computer_use;
+mod diff_comments;
 mod editor;
+pub use diff_comments::DiffCommentsChanged;
 mod footer;
 mod requests;
 mod menu {
@@ -595,6 +597,8 @@ pub struct Composer {
     /// The attachments of the last submission, until the next one: [`Self::restore_submission`]
     /// puts them back when starting the chat failed.
     submitted: Vec<attach::Attachment>,
+    diff_comments: Vec<crate::screens::diff::panel::comments::Comment>,
+    submitted_diff_comments: Vec<crate::screens::diff::panel::comments::Comment>,
     pending_attachments: usize,
     attachment_generation: u64,
     attachment_error: Option<&'static str>,
@@ -680,6 +684,8 @@ impl Composer {
             bounds: None,
             attachments: Vec::new(),
             submitted: Vec::new(),
+            diff_comments: Vec::new(),
+            submitted_diff_comments: Vec::new(),
             pending_attachments: 0,
             attachment_generation: 0,
             attachment_error: None,
@@ -847,6 +853,7 @@ impl Composer {
 
     pub fn restart_ready(&self) -> bool {
         self.content.is_empty()
+            && self.diff_comments.is_empty()
             && self.attachments.is_empty()
             && self.pending_attachments == 0
             && self.marked_range.is_none()
@@ -1119,7 +1126,9 @@ impl Composer {
     /// turn runs and the composer is empty, else the follow-up mode (`Queue` or `Steer`) while
     /// a turn runs, else `Send`. The original shows no tooltip on this button.
     pub fn send_label(&self) -> &'static str {
-        let has_input = !self.content.is_empty() || !self.attachments.is_empty();
+        let has_input = !self.content.is_empty()
+            || !self.attachments.is_empty()
+            || !self.diff_comments.is_empty();
         match (self.running, has_input, self.queue_mode) {
             (false, _, _) => "Send",
             (true, false, _) => "Stop",
@@ -1143,6 +1152,8 @@ impl Composer {
     pub fn clear_session(&mut self, cx: &mut Context<Self>) {
         self.attachment_generation = self.attachment_generation.wrapping_add(1);
         self.attachments.clear();
+        self.diff_comments.clear();
+        self.submitted_diff_comments.clear();
         self.pending_attachments = 0;
         self.attachment_error = None;
         self.context_menu = None;
@@ -1168,7 +1179,11 @@ impl Composer {
         let mut restored = std::mem::take(&mut self.submitted);
         restored.append(&mut self.attachments);
         self.attachments = restored;
-        self.restore_text(text, cx);
+        let mut comments = std::mem::take(&mut self.submitted_diff_comments);
+        comments.append(&mut self.diff_comments);
+        self.diff_comments = comments;
+        cx.emit(DiffCommentsChanged(self.diff_comments.clone()));
+        self.restore_text(crate::screens::diff::panel::comments::prompt_body(text), cx);
     }
 
     /// Open the model picker (`Select effort`), as `⌘⇧M`-style commands and the menu do.
@@ -1236,12 +1251,17 @@ impl Composer {
         if self.edit_pending
             || (!self.running && self.current_model().is_none())
             || self.pending_attachments > 0
-            || (self.content.trim().is_empty() && self.attachments.is_empty())
+            || (self.content.trim().is_empty()
+                && self.attachments.is_empty()
+                && self.diff_comments.is_empty())
         {
             return;
         }
         let submission = Submission {
-            text: if self.mentions.is_empty() && self.on_cancel_edit.is_none() {
+            text: if self.mentions.is_empty()
+                && self.on_cancel_edit.is_none()
+                && self.diff_comments.is_empty()
+            {
                 std::mem::take(&mut self.content)
             } else {
                 self.prompt()
@@ -1263,6 +1283,7 @@ impl Composer {
         } else {
             self.content.clear();
             self.mentions.clear();
+            self.take_diff_comments(cx);
             self.selected_range = 0..0;
             self.marked_range = None;
             self.menu = None;
@@ -1972,6 +1993,7 @@ impl Render for Composer {
                     .flex_col()
                     .when(self.docked, |d| d.layer())
                     .when(!editing, |d| d.child(self.attachments_row(&t, cx)))
+                    .when(!editing, |d| d.child(self.diff_comment_chips(&t, cx)))
                     .when_some(self.attachment_error, |d, error| {
                         d.child(label(error, t.text))
                     })
