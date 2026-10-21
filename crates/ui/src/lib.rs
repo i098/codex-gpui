@@ -808,6 +808,7 @@ impl Shell {
         } else {
             under
         };
+        let scale = window.scale_factor();
         let mut item = |name: &'static str| {
             let on = selected == Some(name);
             let fg = if on { t.text } else { t.text_tertiary };
@@ -874,13 +875,16 @@ impl Shell {
             .flex()
             .flex_col()
             .items_center()
-            .pt(px(6.))
+            .pt(px(8.))
             .pb(px(4.))
             .child(
+                // `-m-0.5 p-0.5`: the list keeps 2 px for its items' focus rings. Blink
+                // truncates the padding and the margin to LayoutUnits on their own.
                 div()
                     .flex_1()
                     .w(px(40.))
-                    .pt(px(2.))
+                    .m(px(-2.))
+                    .p(px(2.))
                     .flex()
                     .flex_col()
                     .items_center()
@@ -908,7 +912,14 @@ impl Shell {
                     .child(rail_tip(item("plugins"), "Plugins"))
                     // Explore with its unread dot; it shows no tooltip.
                     .child(item("explore").child(dot(4.)))
-                    .child(div().w(px(24.)).h(px(1.)).bg(t.border))
+                    // A 1 px `border-t` on an empty box: Blink paints it rounded down to whole
+                    // device px (at least 1), and the box is that tall.
+                    .child(
+                        div()
+                            .w(px(24.))
+                            .h(px(scale.floor().max(1.) / scale))
+                            .bg(t.border),
+                    )
                     .child(rail_tip(item("rail-code-review"), "Code Review"))
                     .child(rail_tip(item("sites"), "Sites"))
                     .child(shapes::top_fade(px(16.))),
