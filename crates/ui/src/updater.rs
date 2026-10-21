@@ -45,7 +45,10 @@ actions!(updater, [CheckForUpdates, InstallUpdate]);
 
 fn glyph(status: Status) -> gpui::AnyElement {
     match status {
-        Status::Ready => icon("updater-download", 16., gpui::white()).into_any_element(),
+        Status::Ready => crate::icon::icon("updater-download", 16., gpui::white())
+            .runtime()
+            .composited(Some(gpui::point(px(0.), Theme::TITLEBAR_HEIGHT)))
+            .into_any_element(),
         Status::Downloading(Some(percent)) => {
             let length = std::f64::consts::TAU * 7.;
             let src = format!(
@@ -88,6 +91,7 @@ pub fn rail<T: 'static>(
     let handle = focus::handle("rail-update", 0, window, cx);
     let button = focus::ring(div().id("rail-update"), &handle, px(12.5), px(1.), cx)
         .size(px(36.))
+        .mb(px(8.))
         .flex_none()
         .flex()
         .items_center()
@@ -128,11 +132,14 @@ pub fn rail<T: 'static>(
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(shapes::decoration(shapes::Decoration {
-                    radius: gpui::Corners::all(px(9999.)),
-                    fill: Some(gpui::rgb(0x339cff).into()),
-                    ..Default::default()
-                }))
+                .child(crate::in_layer(
+                    shapes::Decoration {
+                        radius: gpui::Corners::all(px(9999.)),
+                        fill: Some(t.info_solid),
+                        ..Default::default()
+                    },
+                    || gpui::point(px(0.), Theme::TITLEBAR_HEIGHT),
+                ))
                 .child(glyph(status)),
         );
     Some(tooltip(button, label, None, Side::Right).into_any_element())
