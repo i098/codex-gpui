@@ -3,6 +3,8 @@
 //! plus the key bindings and menu bar. `main.rs` only opens the window;
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
+mod cloud_task;
+pub use cloud_task::parse_task_response;
 pub mod computer_use_requests;
 mod features;
 pub mod host;
@@ -354,6 +356,7 @@ pub struct Root {
     archive_page: Option<Entity<ArchivedChats>>,
     /// The Mobile route's setup page.
     mobile_page: Option<Entity<mobile::MobileSetupPage>>,
+    cloud: Option<cloud_task::Session>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
     settings_page: Option<Entity<settings::SettingsPage>>,
@@ -642,6 +645,7 @@ impl Root {
             page: None,
             archive_page: None,
             mobile_page: None,
+            cloud: None,
             settings_section: None,
             settings_page: None,
             command_menu: None,
@@ -949,6 +953,11 @@ impl Root {
     /// The composer of the route: Home's, or the one docked under the open thread.
     pub fn composer(&self, cx: &App) -> Entity<Composer> {
         match self.state.route {
+            Route::Remote { .. } => self
+                .cloud
+                .as_ref()
+                .map(|session| session.page.read(cx).composer.clone())
+                .unwrap_or_else(|| self.home.read(cx).composer.clone()),
             Route::Thread(_) => self.thread_composer.clone(),
             _ => self.home.read(cx).composer.clone(),
         }
@@ -966,6 +975,7 @@ impl Root {
 
     /// Replaces the desktop host and cancels pending UI callbacks for its reads and updates.
     pub fn set_host(&mut self, host: Arc<dyn host::Host>, cx: &mut Context<Self>) {
+        self.cloud = None;
         self.automation_load = None;
         self.project_load = None;
         self.suggestion_load = None;
@@ -5152,6 +5162,15 @@ impl Render for Root {
             .on_action(|_: &Minimize, window, _| window.minimize_window())
             .on_action(|_: &Zoom, window, _| window.zoom_window())
             .child(content)
+            .children(self.cloud.as_ref().map(|session| {
+                div()
+                    .absolute()
+                    .top(px(8.))
+                    .right(px(44.))
+                    .h(px(28.))
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(session.header.clone())
+            }))
             .children(self.command_menu.clone())
             .child(self.toaster.clone())
             .children(self.dialog.clone());
