@@ -116,7 +116,6 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-c", Copy, None),
         KeyBinding::new("cmd-v", Paste, None),
         KeyBinding::new("cmd-a", SelectAll, None),
-        KeyBinding::new("cmd-f", FindInThread, None),
         KeyBinding::new("cmd-g", FindNext, None),
         KeyBinding::new("cmd-shift-g", FindPrevious, None),
         KeyBinding::new("cmd-m", Minimize, None),

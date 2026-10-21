@@ -411,6 +411,84 @@ pub fn dialog_title(command: &Command) -> &'static str {
     }
 }
 
+/// The original dialog's row order within each section, recorded from the app
+/// (`original-pool5/dialog-home.txt`). Titles the original does not list keep registry order
+/// after it.
+const DIALOG_ORDER: &[&str] = &[
+    "New chat",
+    "Archive chat",
+    "New standalone chat",
+    "Toggle pin",
+    "Find",
+    "Focus tab 1",
+    "Focus tab 2",
+    "Focus tab 3",
+    "Focus tab 4",
+    "Focus tab 5",
+    "Focus tab 6",
+    "Focus tab 7",
+    "Focus tab 8",
+    "Focus tab 9",
+    "Back",
+    "Forward",
+    "Next recently viewed chat",
+    "Next tab",
+    "Next chat",
+    "Next chat needing attention",
+    "Open your dot",
+    "Previous recently viewed chat",
+    "Previous tab",
+    "Previous chat",
+    "Go to recent chat 1",
+    "Go to recent chat 2",
+    "Go to recent chat 3",
+    "Go to recent chat 4",
+    "Go to recent chat 5",
+    "Go to recent chat 6",
+    "Toggle activity view",
+    "Open browser tab",
+    "Reopen closed tab",
+    "New tab in full view",
+    "Cycle workspace layout",
+    "Toggle bottom panel",
+    "Toggle navigation panel",
+    "Toggle sidebar",
+    "New tab",
+    "Open terminal",
+    "Open folder",
+    "Clear all unreads",
+    "Show Mini",
+    "Settings",
+    "Close other tabs",
+    "Close Tab",
+    "Close",
+    "Open project picker",
+    "Toggle voice chat",
+    "Send message in background",
+    "Copy conversation path",
+    "Copy deeplink",
+    "Copy working directory",
+    "Force Reload Browser Page",
+    "Voice in Mini",
+    "Open command menu",
+    "Reload Browser Page",
+    "Rename chat",
+    "Screenshot selection to current chat",
+    "Screenshot selection to new chat",
+    "Search Files…",
+    "Show keyboard shortcuts",
+    "Go to chat 1",
+    "Go to chat 2",
+    "Go to chat 3",
+    "Go to chat 4",
+    "Go to chat 5",
+    "Go to chat 6",
+    "Go to chat 7",
+    "Go to chat 8",
+    "Go to chat 9",
+    "Toggle Notch",
+];
+
 pub fn active_shortcuts(cx: &App) -> Vec<Shortcut> {
     let Some(state) = cx.try_global::<KeyboardState>() else {
         return Vec::new();
@@ -426,11 +504,21 @@ pub fn active_shortcuts(cx: &App) -> Vec<Shortcut> {
         "app",
         "general",
     ] {
-        for command in COMMANDS.iter().filter(|c| {
-            c.section == section
-                && state.active_commands.contains(c.id)
-                && !DIALOG_HIDDEN.contains(&c.id)
-        }) {
+        let mut commands: Vec<_> = COMMANDS
+            .iter()
+            .filter(|c| {
+                c.section == section
+                    && state.active_commands.contains(c.id)
+                    && !DIALOG_HIDDEN.contains(&c.id)
+            })
+            .collect();
+        commands.sort_by_key(|c| {
+            DIALOG_ORDER
+                .iter()
+                .position(|title| *title == dialog_title(c))
+                .unwrap_or(usize::MAX)
+        });
+        for command in commands {
             let keys: Vec<_> = state.preferences.keys(command).map(key_label).collect();
             if !keys.is_empty() {
                 shortcuts.push((section_title(section), dialog_title(command), keys));

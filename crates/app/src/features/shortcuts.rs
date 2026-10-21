@@ -11,7 +11,9 @@ actions!(
         NewTemporaryChat,
         ClearAllUnreads,
         NextAttentionChat,
-        OpenShortcutSettings
+        OpenShortcutSettings,
+        ToggleThreadPin,
+        RenameOpenChat
     ]
 );
 
@@ -82,6 +84,22 @@ pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> 
             .map(str::to_owned);
         if let Some(next) = next {
             this.navigate(Route::Thread(next), window, cx);
+        }
+    }))
+    .on_action(cx.listener(|this, _: &ToggleThreadPin, window, cx| {
+        if let Route::Thread(id) = this.state.route.clone() {
+            let pinned = this
+                .threads
+                .iter()
+                .find(|thread| thread.id == id)
+                .and_then(|thread| thread.section.as_ref())
+                .is_some_and(|section| section.id == PINNED_SECTION_ID);
+            this.set_pinned(id, !pinned, window, cx);
+        }
+    }))
+    .on_action(cx.listener(|this, _: &RenameOpenChat, window, cx| {
+        if let Route::Thread(id) = this.state.route.clone() {
+            this.open_rename(id, false, window, cx);
         }
     }))
     .on_action(cx.listener(|this, _: &OpenShortcutSettings, window, cx| {
