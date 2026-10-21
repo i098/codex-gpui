@@ -44,6 +44,8 @@ mod automation_schedule;
 pub mod computer_use;
 pub mod computer_use_native;
 mod diff_files;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod directories;
 mod git;
 pub mod git_pr;
 mod native_apps;
@@ -1168,6 +1170,8 @@ impl Host for LocalHost {
             "read-file" => diff_files::text(&params)?,
             "read-file-binary" => diff_files::binary(&params)?,
             "read-git-file-binary" => diff_files::git_binary(&params)?,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            "workspace-directory-entries" => directories::read(&params)?,
             "native-desktop-apps" => json!({"apps": native_apps::list(&params)?}),
             "native-desktop-app-by-bundle-id" => {
                 json!({"app": native_apps::by_bundle_id(&params)?})
