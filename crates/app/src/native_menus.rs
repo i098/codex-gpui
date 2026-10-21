@@ -9,9 +9,7 @@ use gpui::{
     App, Context, Div, InteractiveElement as _, KeyBinding, Menu, MenuItem, OsAction,
     SystemMenuType, actions,
 };
-use ui::{
-    Copy, Cut, DeleteSelection, Paste, PasteAndMatchStyle, Redo, SelectAll, Undo,
-};
+use ui::{Copy, Cut, DeleteSelection, Paste, PasteAndMatchStyle, Redo, SelectAll, Undo};
 
 actions!(
     native_menus,
