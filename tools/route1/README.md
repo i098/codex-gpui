@@ -3,16 +3,17 @@
 The page renders in `chrome-headless-shell` on the Mac (CoreText text, the Mac's system fonts,
 native 2x), driven over CDP from Linux. The server runs on Linux.
 
-Use the existing pinned Mac browser on port 9467.
-Do not restart it or use the global page selection on the shared Linux browser.
+Use the three pinned Mac capture instances on ports 9468, 9469, and 9470.
+Each instance has an owned profile under `/tmp/cgx-capture-service/pool-<port>`.
+Do not restart the pool or use the global page selection on the shared Linux browser.
 Each `chrome.mjs` connection creates an owned context and disposes it on close or disconnect.
 Run the full capture command through the shared lease, including navigation and screenshots.
-Set `TASK_ID`, `R1_PORT`, and `R1_CDP_PORT` in each shell.
+Set `TASK_ID` and `R1_PORT` in each shell.
 
 ```sh
-# Choose unused local CDP and server ports before starting this tunnel.
+# Choose an unused server port before starting this tunnel.
 ssh -N -o ControlMaster=no -o ControlPath=none -o ExitOnForwardFailure=yes \
-  -L "$R1_CDP_PORT":127.0.0.1:9467 -R "$R1_PORT":127.0.0.1:"$R1_PORT" mac
+  -R "$R1_PORT":127.0.0.1:"$R1_PORT" mac
 
 # In another shell, keep the writable oracle and logs outside the checkout.
 scratch=/sdc-disk/tmp/cgx/"$TASK_ID"
@@ -23,8 +24,7 @@ env -u R1_SF_FONTS R1_OFFLINE=1 R1_ORACLE="$scratch/oracle.json" \
 
 # In another shell, capture with the pinned renderer and native Mac fonts.
 scratch=/sdc-disk/tmp/cgx/"$TASK_ID"
-R1_CDP="http://127.0.0.1:$R1_CDP_PORT" R1_SERVER="http://127.0.0.1:$R1_PORT" \
-  R1_OUT="$scratch/refs" tools/route1/lease.sh \
+R1_SERVER="http://127.0.0.1:$R1_PORT" R1_OUT="$scratch/refs" tools/route1/lease.sh \
   node tools/route1/capture.mjs home dark 1280 832
 ```
 
@@ -33,10 +33,14 @@ The server needs the extracted 26.1007.30912 renderer at `/tmp/cgx/asar-x/webvie
 Keep `R1_SF_FONTS` unset on the Mac capture route; even `R1_SF_FONTS=0` enables font aliases.
 Close only owned contexts and stop only owned server and tunnel PIDs.
 
-The lease uses `flock` on Linux, shared by all workers on that host.
-Its default lock is `/sdc-disk/tmp/cgx/cgx-capture-service/capture.lock`.
-`R1_CAPTURE_LOCK` overrides the path; every worker must use the same path.
-The default wait is 300 seconds, and the command limit is 180 seconds.
+The lease uses `flock` on Linux and tries all three slots, starting at a rotating slot.
+It waits only while every slot is busy.
+Its default lock prefix is `/sdc-disk/tmp/cgx/cgx-capture-service/capture.lock`.
+`R1_CAPTURE_LOCK` overrides the prefix; every worker must use the same prefix.
+The lease sets `R1_CDP` to the selected slot's endpoint.
+The default endpoints are `http://127.0.0.1:29484`, `http://127.0.0.1:29485`, and `http://127.0.0.1:29486`.
+The pool owner can override them with the comma-separated `R1_CAPTURE_CDP_URLS` variable.
+The default wait is 1800 seconds, and the command limit is 180 seconds.
 Set `R1_CAPTURE_WAIT` or `R1_CAPTURE_TIMEOUT` to change these limits.
 Exit 75 means the lease wait expired; exit 124 means the capture timed out.
 The lease releases after command exit, including a timeout.
@@ -71,6 +75,10 @@ Set `R1_RPC_MODULE` to the installed app's RPC entry; its default is the pinned 
 Use `R1_ORACLE` to select the writable oracle when serving these recordings.
 In offline mode, the server runs the existing recorded app-server adapter directly.
 It does not open the shared Mac profile or need an SSH wrapper.
+Offline `thread/resume` uses the recorded adapter.
+The adapter also imports successful local resume responses from the oracle and matches their thread IDs.
+An unrecorded thread returns an error instead of another thread's data.
+See [the Git fixture](../../fixtures/README.md#owned-git-fixture) for the new owned resume and read recordings.
 
 The bootstrap transport was recorded with the installed 26.1013.40934 main process.
 Its read-state response matches the retained 26.1007 service contract.
@@ -82,6 +90,7 @@ Run the regression checks without a browser or an account:
 ```sh
 TMPDIR="$scratch" python3 tools/route1/test_lease.py
 node --experimental-vm-modules tools/route1/test_preload.mjs
+TMPDIR="$scratch" node tools/route1/test_resume.mjs
 ```
 
 For a renderer without the Mac fonts (Linux Chrome), start the server with `R1_SF_FONTS=1`:
@@ -108,8 +117,8 @@ For a renderer without the Mac fonts (Linux Chrome), start the server with `R1_S
     requests, git worker, app-host service calls) comes from `oracle.json`.
     A miss is asked from the live scratch app only outside offline mode.
     Only reading calls reach that app; writes answer locally.
-  - `thread/resume` is answered by the live app (recorded): its app-server holds the fixture
-    threads' writer locks, so a second app-server would show "This is open in another app".
+  - Live `thread/resume` calls use the original app process because it owns the fixture writer locks.
+    Offline resumes use the recorded adapter, including retained oracle responses.
   - Background terminal (`terminal` screen): no fixture thread has a running command and starting
     one is a write, so `/__r1/replay-running-command` replays the subtract session's recorded
     `python3` check (fixtures/sessions/subtract.jsonl) for a new turn that completes while the
