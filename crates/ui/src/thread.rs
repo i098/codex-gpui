@@ -121,6 +121,9 @@ pub struct ThreadView {
     /// The view fills the main surface (no side panel): it draws its px at the surface's
     /// rounded right corners through the clip (`Shell::main_clips_right`).
     pub clip_right: bool,
+    /// A bottom panel (the terminal) shares the main surface below the view, so the page's
+    /// composited layer is one tile tall.
+    pub docked_below: bool,
     title: SharedString,
     chat_actions: Option<gpui::FocusHandle>,
     chat_actions_trigger: Option<gpui::FocusHandle>,
@@ -587,6 +590,7 @@ impl ThreadView {
             cwd: thread.cwd,
             summary_open: false,
             clip_right: false,
+            docked_below: false,
             turns: thread.turns,
             render_errors: RefCell::default(),
             stream_errors: HashMap::new(),
@@ -2094,10 +2098,10 @@ impl Render for ThreadView {
         // Fade above the composer's surface band (`-top-8`, `to top`).
         let surface_color = t.surface;
         // The band's gradient is rastered into the thread page's layer. Beside a docked bottom
-        // panel that layer is shorter than the main panel and the original shows no 510 px tile
-        // wrap (one captured state: the 280 px terminal panel, gradient at y 402).
+        // panel that layer is one tile tall: the original shows no 510 px row wrap (one captured
+        // state: the 280 px terminal panel, gradient at y 402).
         // ponytail: one data point for the layer height at which tiling stops.
-        let page_is_one_tile = f32::from(view) < f32::from(window.viewport_size().height) - 49.;
+        let tiled = !self.docked_below;
         let bottom_fade = canvas(
             move |bounds, window, _| {
                 gradient_image(
@@ -2106,7 +2110,7 @@ impl Render for ThreadView {
                     (f32::from(bounds.size.width), f32::from(bounds.size.height)),
                     (0., f32::from(bounds.top()) - 44.),
                     true,
-                    !page_is_one_tile,
+                    tiled,
                     window.scale_factor(),
                 )
             },

@@ -214,6 +214,10 @@ impl Root {
         let bottom = panel
             .filter(|panel| self.terminal.visible && !panel.read(cx).sessions.is_empty())
             .map(Into::into);
+        let docked = bottom.is_some();
+        if let Some(thread) = &self.thread {
+            thread.update(cx, |thread, _| thread.docked_below = docked);
+        }
         let shell = if self.sidebar_automation.is_some() {
             self.page.as_ref().unwrap_or(&self.shell)
         } else {
