@@ -208,3 +208,79 @@ fn file_reads_preserve_text_and_identify_image_formats() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn whitespace_filtered_review_still_exports_the_complete_patch() -> Result<()> {
+    #[cfg(target_os = "macos")]
+    common::install_panic_hook();
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    git(root, &["init", "-q"])?;
+    git(root, &["config", "user.name", "Patch proof"])?;
+    git(root, &["config", "user.email", "proof@example.invalid"])?;
+    fs::write(root.join("spacing.txt"), "value = 1\n")?;
+    fs::write(root.join("value.txt"), "value = 1\n")?;
+    fs::write(root.join("bytes.bin"), [0, 1, 2, 3])?;
+    git(root, &["add", "."])?;
+    git(root, &["commit", "-qm", "base"])?;
+    fs::write(root.join("spacing.txt"), "value  =  1\n")?;
+    git(root, &["add", "spacing.txt"])?;
+    fs::write(root.join("value.txt"), "value = 2\n")?;
+    fs::write(root.join("bytes.bin"), [0, 9, 8, 7])?;
+    let host = LocalHost::new(root);
+    let review = json_body(&host.fetch(&Request::post(
+        "git-changes",
+        Some(json!({
+            "cwd":root, "reviewSource":"uncommitted", "hideWhitespace":true,
+        })),
+    ))?)?;
+    ensure!(
+        review["staged"]
+            .as_array()
+            .context("staged files")?
+            .is_empty()
+    );
+    let names = review["review"]
+        .as_array()
+        .context("review files")?
+        .iter()
+        .map(|file| {
+            Path::new(file["path"].as_str().unwrap())
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    ensure!(
+        names
+            == ["bytes.bin".to_owned(), "value.txt".to_owned()]
+                .into_iter()
+                .collect()
+    );
+    let exported = json_body(&host.fetch(&Request::post(
+        "git-review-patch",
+        Some(json!({
+            "cwd":root, "reviewSource":"uncommitted",
+        })),
+    ))?)?;
+    let destination = tempfile::tempdir()?;
+    let clone = destination.path().join("copy");
+    git(
+        root,
+        &[
+            "clone",
+            "--quiet",
+            "--no-hardlinks",
+            root.to_str().unwrap(),
+            clone.to_str().unwrap(),
+        ],
+    )?;
+    let patch = destination.path().join("change.patch");
+    fs::write(&patch, exported["diff"].as_str().context("exported diff")?)?;
+    git(&clone, &["apply", "--3way", patch.to_str().unwrap()])?;
+    ensure!(fs::read(clone.join("bytes.bin"))? == [0, 9, 8, 7]);
+    ensure!(fs::read_to_string(clone.join("spacing.txt"))? == "value  =  1\n");
+    ensure!(fs::read_to_string(clone.join("value.txt"))? == "value = 2\n");
+    Ok(())
+}

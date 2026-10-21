@@ -255,6 +255,8 @@ Chunks: thread-side-panel-tab-content-e9ce64182d53.js (`ReviewThreadSidePanelTab
 - Turn diff arrives in `turn/diff/updated` (`threadId`, `turnId`, `diff`) and `item/fileChange/patchUpdated` (`changes`).
 - Working tree data comes from the git worker over `codex_desktop:worker:git:*`: `status-summary`, `review-summary`, `review-diff`, `review-patch`, `branch-diff-stats`, `base-branch`, `current-branch`, `apply-patch`, `apply-changes`, `apply-review-section-changes`, `revert` (full list in `/tmp/cgx/e1-out/git-worker-cases.txt`, source `.vite/build/worker.js`).
 - `update-diff-if-open` is posted from local-conversation-turn-632904a8790c.js to refresh an open diff window.
+- The native `git-changes` adapter applies `hideWhitespace` through Git. The native `git-review-patch` adapter exports the unfiltered binary patch.
+- Patch records follow `--numstat -z`, not raw status entries. Apple Git can retain raw status rows for hidden whitespace-only changes.
 
 ## 9. Screen: Settings, login and onboarding
 

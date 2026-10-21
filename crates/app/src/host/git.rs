@@ -12,6 +12,8 @@ use std::time::{Duration, Instant};
 #[path = "git/contents.rs"]
 mod contents;
 pub(super) use contents::read_file_version;
+#[path = "git/review_patch.rs"]
+mod review_patch;
 
 /// Git in `root` without pathspec options: `check-ignore` rejects `--literal-pathspecs`, and
 /// the original's `ls-files` calls use pathspec magic.
@@ -115,6 +117,7 @@ fn diffs(root: &Path, staged: bool) -> Result<Vec<CapturedDiff>> {
         if staged { &["--cached"] } else { &[] },
         true,
         &untracked,
+        false,
     )
 }
 
@@ -123,10 +126,11 @@ fn review_diffs(
     revisions: &[&str],
     binary: bool,
     untracked: &[String],
+    ignore_whitespace: bool,
 ) -> Result<Vec<CapturedDiff>> {
     let mut args = vec![
         "diff",
-        "--raw",
+        "--numstat",
         "--patch",
         "-z",
         "--no-ext-diff",
@@ -137,13 +141,16 @@ fn review_diffs(
         "--full-index",
     ];
     args.extend_from_slice(revisions);
+    if ignore_whitespace {
+        args.push("--ignore-all-space");
+    }
     if binary {
         args.push("--binary");
     }
     args.push("--");
     let output = checked(run(root, &args)?)?;
     let mut files = Vec::new();
-    if !output.is_empty() {
+    if !output.is_empty() && output.as_slice() != b"\0" {
         let separator = output
             .windows(2)
             .position(|bytes| bytes == b"\0\0")
@@ -167,8 +174,10 @@ fn review_diffs(
             .chain(std::iter::once(patch.len()))
             .collect::<Vec<_>>();
         for range in starts.windows(2) {
-            records.next().context("missing Git diff metadata")?;
-            let path = records.next().context("missing Git diff path")?;
+            let path = records
+                .next()
+                .and_then(|record| record.splitn(3, '\t').nth(2))
+                .context("missing Git diff path")?;
             let mut diff = patch[range[0]..range[1]].to_vec();
             if !diff.ends_with(b"\n") {
                 diff.push(b'\n');
@@ -194,6 +203,9 @@ fn review_diffs(
         ];
         if binary {
             args.push("--binary");
+        }
+        if ignore_whitespace {
+            args.push("--ignore-all-space");
         }
         args.extend(["--", "/dev/null", path]);
         let output = run(root, &args)?;
@@ -393,6 +405,7 @@ fn patch_changes(root: &Path, endpoint: &str, params: &Value) -> Result<&'static
 }
 
 fn changes(root: &Path, params: &Value) -> Result<Value> {
+    let ignore_whitespace = params["hideWhitespace"].as_bool().unwrap_or(false);
     let untracked = untracked_paths(root)?;
     let omitted = untracked.len() > MAX_REVIEW_UNTRACKED_FILES;
     let visible = if omitted {
@@ -402,8 +415,9 @@ fn changes(root: &Path, params: &Value) -> Result<Value> {
     };
     let mut body = json!({
         "root": root,
-        "unstaged": review_diffs(root, &[], false, visible)?,
-        "staged": review_diffs(root, &["--cached"], false, &[])?,
+        "hideWhitespace": ignore_whitespace,
+        "unstaged": review_diffs(root, &[], false, visible, ignore_whitespace)?,
+        "staged": review_diffs(root, &["--cached"], false, &[], ignore_whitespace)?,
         "untrackedFilesOmitted": omitted.then(|| json!({"count": untracked.len(), "limit": MAX_REVIEW_UNTRACKED_FILES})),
     });
     let head = commit_id(root, "HEAD")?;
@@ -444,7 +458,13 @@ fn changes(root: &Path, params: &Value) -> Result<Value> {
     let base = head.as_deref().unwrap_or(empty.trim());
     let source = params["reviewSource"].as_str().unwrap_or("unstaged");
     body["review"] = match source {
-        "uncommitted" => json!(review_diffs(root, &[base], false, visible)?),
+        "uncommitted" => json!(review_diffs(
+            root,
+            &[base],
+            false,
+            visible,
+            ignore_whitespace
+        )?),
         "branch" | "commits" if head.is_none() => json!([]),
         "branch" => {
             let branch = params["baseBranch"]
@@ -463,7 +483,13 @@ fn changes(root: &Path, params: &Value) -> Result<Value> {
             body["base_branch"] = branch.into();
             body["before_ref"] = merge.clone().into();
             body["after_ref"] = head.clone().into();
-            json!(review_diffs(root, &[&merge, "HEAD"], false, &[])?)
+            json!(review_diffs(
+                root,
+                &[&merge, "HEAD"],
+                false,
+                &[],
+                ignore_whitespace
+            )?)
         }
         "commits" => {
             let id = params["commit"]
@@ -480,7 +506,8 @@ fn changes(root: &Path, params: &Value) -> Result<Value> {
                 root,
                 &[parent.as_deref().unwrap_or(empty.trim()), &id],
                 false,
-                &[]
+                &[],
+                ignore_whitespace,
             )?)
         }
         _ => json!([]),
@@ -521,6 +548,9 @@ pub(super) fn fetch(endpoint: &str, params: &Value) -> Result<Value> {
     let root = Path::new(root.strip_suffix('\n').unwrap_or(&root));
     if endpoint == "git-cat-file" {
         return contents::cat_file(root, params);
+    }
+    if endpoint == "git-review-patch" {
+        return review_patch::read(root, params);
     }
     if let Some(result) = commit_flow(endpoint, root, params) {
         return result;
