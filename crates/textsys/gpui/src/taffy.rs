@@ -556,9 +556,10 @@ impl ToTaffy<f32> for AbsoluteLength {
     /// pixels in `layout_bounds`; text keeps the fraction.
     fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> f32 {
         let units = self.to_pixels(rem_size).0 * scale_factor * 64.;
-        // Truncated as Blink's `LayoutUnit(float)`; the tolerance keeps values already on the
-        // grid (measured run widths, `ui::run_width`) where they are.
-        (units + 0.001f32.copysign(units)).trunc() / 64.
+        // Truncated as Blink's `LayoutUnit(float)`. The tolerance, a few f32 ulps of `units`,
+        // keeps values already on the grid (measured run widths, `ui::run_width`) there.
+        let tolerance = units.abs() * f32::EPSILON * 4.;
+        (units + tolerance.copysign(units)).trunc() / 64.
     }
 }
 

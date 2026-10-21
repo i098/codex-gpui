@@ -648,12 +648,8 @@ impl TextLayout {
         // lines and glyphs snap when painted.
         let units = window.scale_factor() * 64.;
         let line_height = match text_style.line_height {
-            // A unitless `line-height` is a percentage of the font size: Blink holds the size
-            // as a LayoutUnit (`ComputedFontSizeAsFixed`, rounded) and resolves the percentage
-            // with `MinimumValueForLength`, whose `LayoutUnit(float)` truncates.
             DefiniteLength::Fraction(fraction) => {
-                let size = (font_size.0 * units).round() / 64.;
-                Pixels((size * (fraction * 100.) / 100. * 64.).trunc() / units)
+                percent_line_height(font_size, fraction, window.scale_factor())
             }
             line_height => {
                 let line_height = line_height.to_pixels(font_size.into(), window.rem_size());
@@ -1335,9 +1331,31 @@ impl IntoElement for InteractiveText {
     }
 }
 
+/// A unitless `line-height` is a percentage of the font size: Blink holds the size as a
+/// LayoutUnit (`ComputedFontSizeAsFixed`, rounded) and resolves the percentage with
+/// `MinimumValueForLength`, whose `LayoutUnit(float)` truncates.
+fn percent_line_height(font_size: Pixels, fraction: f32, scale_factor: f32) -> Pixels {
+    let units = scale_factor * 64.;
+    let size = (font_size.0 * units).round() / 64.;
+    Pixels((size * (fraction * 100.) / 100. * 64.).trunc() / units)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unitless_line_heights_truncate_like_blink_percentages() {
+        // `.heading-xl`: 28 px with `line-height: 1.2`. At 110% zoom on a 2x display the font
+        // size is 61.59375 device px (rounded) and the line 73.90625 (4730 units, truncated);
+        // a fixed 33.6 px line would be 73.921875.
+        assert_eq!(
+            percent_line_height(Pixels(28.), 1.2, 2.2),
+            Pixels(4730. / (2.2 * 64.))
+        );
+        // At 2x: 56 px times 1.2 is 67.2 device px, truncated to 67.1875 (4300 units).
+        assert_eq!(percent_line_height(Pixels(28.), 1.2, 2.), Pixels(4300. / 128.));
+    }
 
     #[test]
     fn test_into_element_for() {

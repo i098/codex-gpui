@@ -325,7 +325,7 @@ pub fn text(
 /// A measured inline-run advance, kept on the LayoutUnit (1/64 device px) grid by rounding:
 /// Blink positions inline runs from their advances, so authored-size truncation must not
 /// apply to it.
-pub fn run_width(width: Pixels, window: &Window) -> Pixels {
+pub(crate) fn run_width(width: Pixels, window: &Window) -> Pixels {
     let unit = window.scale_factor() * 64.;
     px((f32::from(width) * unit).round() / unit)
 }
