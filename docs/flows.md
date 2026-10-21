@@ -724,7 +724,6 @@ It covered MCP toggling, saving, trust, invalid-save preservation, deletion, mar
 The native renderer produced a manager screenshot without a new crash report.
 These checks do not establish appearance parity.
 Strict form comparisons use the original renderer at the same state and size.
-The current form pairs meet the text limit but still differ outside text.
 ST-155 remains gated while the native MCP app sandbox is absent; the manager never reports a synthetic data-clear success.
 
 

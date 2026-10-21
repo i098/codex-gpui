@@ -1184,7 +1184,11 @@ fn open_file(opener: &Path, params: &Value) -> Result<Value> {
         .canonicalize()
         .with_context(|| format!("{} no longer exists", path.display()))?;
     ensure!(file.starts_with(&root), "file is outside the project");
-    ensure!(file.is_file() || file.is_dir(), "{} is not a file or directory", file.display());
+    ensure!(
+        file.is_file() || file.is_dir(),
+        "{} is not a file or directory",
+        file.display()
+    );
     let mut command = std::process::Command::new(opener);
     match params["target"].as_str() {
         None | Some("systemDefault") => {}

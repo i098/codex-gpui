@@ -331,7 +331,8 @@ impl Form {
                         }),
                 )
         });
-        let muted = t.text_secondary.opacity(0.9);
+        let mut muted = t.text_alpha_60;
+        muted.a = 0.65 * 0.9;
         div()
             .relative()
             .px(px(12.))

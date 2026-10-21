@@ -151,7 +151,7 @@ impl Root {
         let params = plugin_params(&plugin);
         cx.spawn(async move |_, cx| {
             let result = bridge.request::<_, Value>("plugin/read", params).await;
-            let _ = page.update(cx, |page, cx| {
+            page.update(cx, |page, cx| {
                 if page
                     .detail
                     .as_ref()
@@ -180,7 +180,7 @@ impl Root {
         });
         cx.spawn(async move |_, cx| {
             let result = read.await;
-            let _ = view.update(cx, |view, cx| view.set_contents(result, cx));
+            view.update(cx, |view, cx| view.set_contents(result, cx));
         })
         .detach();
     }

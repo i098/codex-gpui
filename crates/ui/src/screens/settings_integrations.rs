@@ -619,8 +619,7 @@ impl Manager {
 
     fn server_row(
         &self,
-        key: &str,
-        config: Option<&Value>,
+        (key, config): (&str, Option<&Value>),
         status: Option<&Value>,
         state: &State,
         t: &Theme,
@@ -769,8 +768,7 @@ impl Manager {
             })
             .map(|(key, config)| {
                 self.server_row(
-                    key,
-                    Some(config),
+                    (key, Some(config)),
                     statuses.iter().find(|s| s["name"] == *key),
                     state,
                     t,
@@ -792,8 +790,7 @@ impl Manager {
             })
             .map(|status| {
                 self.server_row(
-                    status["name"].as_str().unwrap_or(""),
-                    None,
+                    (status["name"].as_str().unwrap_or(""), None),
                     Some(status),
                     state,
                     t,
@@ -941,7 +938,9 @@ impl Manager {
             });
             let name_for_menu = id.clone();
             let mut logo = div()
+                .relative()
                 .size(px(40.))
+                .p(px(1.))
                 .flex_none()
                 .flex()
                 .items_center()
@@ -954,15 +953,22 @@ impl Manager {
                     cx,
                 )
             {
-                logo = logo.child(gpui::img(image).size_full());
+                logo = logo
+                    .child(on_card(
+                        12.5,
+                        Squircle,
+                        t.background_panel.opacity(0.),
+                        Some(t.border),
+                    ))
+                    .child(gpui::img(image).size_full().rounded(px(11.5)));
             } else {
                 logo = logo.child(icon("settings-plugins", 28., t.text_secondary));
             }
             div()
                 .id(SharedString::from(format!("plugin-{id}")))
-                .min_h(px(68.))
+                .min_h(px(60.125))
                 .px(px(8.))
-                .py(px(12.))
+                .py(px(8.))
                 .flex()
                 .items_center()
                 .gap(px(12.))
@@ -973,17 +979,17 @@ impl Manager {
                         .min_w_0()
                         .flex()
                         .flex_col()
-                        .gap(px(4.))
-                        .child(text(name.clone(), 14., 20., 500., t.text))
+                        .gap(px(2.))
+                        .child(text(name.clone(), 14., 21., 500., t.text))
                         .child(text(
                             plugin["interface"]["shortDescription"]
                                 .as_str()
                                 .unwrap_or("")
                                 .to_owned(),
                             13.,
-                            18.,
+                            21.125,
                             430.,
-                            t.text_secondary,
+                            t.text_tertiary,
                         )),
                 )
                 .child(toggle)
@@ -997,7 +1003,7 @@ impl Manager {
                     }),
                 )
         });
-        div().flex().flex_col().children(rows)
+        div().flex().flex_col().gap(px(8.)).children(rows)
     }
 
     fn app_list(
@@ -1701,11 +1707,11 @@ impl Manager {
         title: String,
         content: Div,
         controls: Vec<gpui::FocusHandle>,
-        pending: bool,
         t: &Theme,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let pending = cx.global::<State>().pending;
         gpui::deferred(
             div()
                 .absolute()
@@ -1782,7 +1788,6 @@ impl Manager {
                 "Add plugin marketplace".into(),
                 div().child(form.clone()),
                 controls,
-                state.pending,
                 t,
                 window,
                 cx,
@@ -1794,7 +1799,6 @@ impl Manager {
                 hook_source_title(source, state),
                 content,
                 control_handles(controls, window, cx),
-                state.pending,
                 t,
                 window,
                 cx,
@@ -1858,7 +1862,6 @@ impl Manager {
                     window,
                     cx,
                 ),
-                pending,
                 t,
                 window,
                 cx,
