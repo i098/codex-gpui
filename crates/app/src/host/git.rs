@@ -293,6 +293,12 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
+#[path = "git/contents.rs"]
+mod contents;
+pub(super) use contents::read_file_version;
+#[path = "git/file_url.rs"]
+mod file_url;
+
 /// Git in `root` without pathspec options: `check-ignore` rejects `--literal-pathspecs`, and
 /// the original's `ls-files` calls use pathspec magic.
 fn plain_command(root: &Path) -> Command {
@@ -721,6 +727,8 @@ fn changes(root: &Path, params: &Value) -> Result<Value> {
             let merge = answer(root, &["merge-base", &target, "HEAD"])?
                 .context("branches have no common ancestor")?;
             body["base_branch"] = branch.into();
+            body["before_ref"] = merge.clone().into();
+            body["after_ref"] = head.clone().into();
             json!(review_diffs(root, &[&merge, "HEAD"], false, false)?)
         }
         "commits" => {
@@ -732,6 +740,8 @@ fn changes(root: &Path, params: &Value) -> Result<Value> {
             let id = commit_id(root, id)?.context("commit no longer exists")?;
             let parent = commit_id(root, &format!("{id}^"))?;
             body["commit"] = id.clone().into();
+            body["before_ref"] = parent.clone().into();
+            body["after_ref"] = id.clone().into();
             json!(review_diffs(
                 root,
                 &[parent.as_deref().unwrap_or(empty.trim()), &id],
@@ -775,6 +785,12 @@ pub(super) fn fetch(endpoint: &str, params: &Value) -> Result<Value> {
     let root = checked(run(cwd, &["rev-parse", "--show-toplevel"])?)?;
     let root = String::from_utf8(root).context("Git root must be UTF-8")?;
     let root = Path::new(root.strip_suffix('\n').unwrap_or(&root));
+    if endpoint == "git-cat-file" {
+        return contents::cat_file(root, params);
+    }
+    if endpoint == "git-file-url" {
+        return file_url::read(root, params);
+    }
     if let Some(result) = commit_flow(endpoint, root, params) {
         return result;
     }
