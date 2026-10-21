@@ -1947,6 +1947,7 @@ impl Render for ThreadView {
         let (view, offset) = (self.scroll.bounds().size.height, self.scroll.offset().y);
         let following_bottom = offset <= -self.scroll.max_offset().y + px(1.);
         let laid_out = self.laid_out.borrow();
+        markdown::set_line_width(laid_out.width);
         let turns: Vec<Div> = self
             .turns
             .iter()
