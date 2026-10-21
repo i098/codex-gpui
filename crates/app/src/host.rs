@@ -13,7 +13,7 @@
 //! (`getAuthStatus` with `includeToken`) plus the account route from `account/read`, retries once
 //! after a 401 with a refreshed token, and answers the original wire shapes, including errors.
 //! The token never reaches logs, errors, or `Debug` output.
-//! Local fetches support automations, Git, native app discovery, and open-in requests.
+//! Local fetches support automations, Git, scoped file reads, native app discovery, and open-in requests.
 //! Unsupported endpoints return errors.
 //! `Root` loads the automation list off the UI thread when the Scheduled route opens.
 //! Consumers read the result through `Root::automations`; this service slice does not change the static screens.
@@ -43,6 +43,7 @@ use url::Url;
 mod automation_schedule;
 pub mod computer_use;
 pub mod computer_use_native;
+mod diff_files;
 mod git;
 pub mod git_pr;
 mod native_apps;
@@ -74,6 +75,8 @@ impl Request {
 
 pub trait Host: Send + Sync {
     /// Returns the original wire response. Call this off the UI thread for a local host.
+    /// Only trusted native UI code calls this service.
+    /// Derive `cwd` from the active workspace, never from model-provided input.
     fn fetch(&self, request: &Request) -> Result<Value>;
 
     fn stream(
@@ -1149,7 +1152,7 @@ impl Host for LocalHost {
             "apply-patch" => git::apply_cloud_patch(&params)?,
             "git-changes" | "git-stage" | "git-unstage" | "git-revert" | "git-init-repo"
             | "git-commit-status" | "git-commit-diff" | "git-commit" | "git-push"
-            | "git-checkout" => git::fetch(endpoint, &params)?,
+            | "git-checkout" | "git-cat-file" => git::fetch(endpoint, &params)?,
             "create-worktree" => self.create_worktree(&params)?,
             "set-worktree-owner-thread" | "worktree-set-owner-thread" => {
                 let worktree = params["worktree"].as_str().context("missing worktree")?;
@@ -1162,6 +1165,9 @@ impl Host for LocalHost {
             }
             "open-in" => self.open_in(&params)?,
             "open-in-targets" => self.open_in_targets(&params)?,
+            "read-file" => diff_files::text(&params)?,
+            "read-file-binary" => diff_files::binary(&params)?,
+            "read-git-file-binary" => diff_files::git_binary(&params)?,
             "native-desktop-apps" => json!({"apps": native_apps::list(&params)?}),
             "native-desktop-app-by-bundle-id" => {
                 json!({"app": native_apps::by_bundle_id(&params)?})
