@@ -142,6 +142,7 @@ pub fn init(cx: &mut App) {
     );
     ui::composer::bind_keys(cx);
     features::init(cx);
+    updater::init(cx);
     cx.on_action(|_: &Quit, cx| cx.quit());
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
@@ -152,20 +153,23 @@ pub fn init(cx: &mut App) {
 }
 
 /// Menu bar of the original (docs/inventory.md §13), limited to commands with a handler.
-pub fn menus() -> Vec<Menu> {
+pub fn menus(cx: &App) -> Vec<Menu> {
     vec![
-        Menu::new("Codex").items([
-            MenuItem::action("Settings…", OpenSettings),
-            MenuItem::action("Log Out", LogOut),
-            MenuItem::separator(),
-            MenuItem::os_submenu("Services", SystemMenuType::Services),
-            MenuItem::separator(),
-            MenuItem::action("Hide Codex", Hide),
-            MenuItem::action("Hide Others", HideOthers),
-            MenuItem::action("Show All", ShowAll),
-            MenuItem::separator(),
-            MenuItem::action("Quit Codex", Quit),
-        ]),
+        Menu::new("Codex").items(updater::menu(
+            vec![
+                MenuItem::action("Settings…", OpenSettings),
+                MenuItem::action("Log Out", LogOut),
+                MenuItem::separator(),
+                MenuItem::os_submenu("Services", SystemMenuType::Services),
+                MenuItem::separator(),
+                MenuItem::action("Hide Codex", Hide),
+                MenuItem::action("Hide Others", HideOthers),
+                MenuItem::action("Show All", ShowAll),
+                MenuItem::separator(),
+                MenuItem::action("Quit Codex", Quit),
+            ],
+            cx,
+        )),
         Menu::new("File").items([
             MenuItem::action("New Chat", NewChat),
             MenuItem::action("Open Folder…", OpenFolder),
