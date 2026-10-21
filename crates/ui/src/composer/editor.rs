@@ -637,19 +637,19 @@ impl Composer {
 
     pub(super) fn editor(&self, cx: &mut Context<Self>) -> Div {
         div()
-            .px(px(
-                if self.request_parent.is_some() && self.request_compact && !self.secret {
-                    10.
-                } else {
-                    12.
-                },
-            ))
-            .pb(px(if self.request_parent.is_some() {
+            .px(px(if self.search_field {
+                0.
+            } else if self.request_parent.is_some() && self.request_compact && !self.secret {
+                10.
+            } else {
+                12.
+            }))
+            .pb(px(if self.search_field || self.request_parent.is_some() {
                 0.
             } else {
                 4.
             }))
-            .min_h(px(if self.request_parent.is_some() {
+            .min_h(px(if self.search_field || self.request_parent.is_some() {
                 20.
             } else {
                 48.
@@ -668,8 +668,10 @@ impl Composer {
             // `overflow-y: auto` contents), then composited onto the card.
             .child(
                 div()
-                    .when(self.content.is_empty(), |d| d.opacity(0.5))
-                    .layer()
+                    .when(self.content.is_empty() && !self.search_field, |d| {
+                        d.opacity(0.5)
+                    })
+                    .when(!self.search_field, |d| d.layer())
                     .child(Editor(cx.entity())),
             )
     }

@@ -10,7 +10,8 @@ actions!(
         NewStandaloneChat,
         NewTemporaryChat,
         ClearAllUnreads,
-        NextAttentionChat
+        NextAttentionChat,
+        OpenShortcutSettings
     ]
 );
 
@@ -82,6 +83,9 @@ pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> 
         if let Some(next) = next {
             this.navigate(Route::Thread(next), window, cx);
         }
+    }))
+    .on_action(cx.listener(|this, _: &OpenShortcutSettings, window, cx| {
+        this.open_settings_section("Keyboard shortcuts", window, cx);
     }))
     .on_action(cx.listener(|this, _: &NewStandaloneChat, window, cx| {
         this.new_special_chat(NewChatMode::Standalone, window, cx);

@@ -167,6 +167,7 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
         "newProjectlessTask" => Box::new(shortcuts::NewStandaloneChat),
         "temporaryChat" => Box::new(shortcuts::NewTemporaryChat),
         "settings" => Box::new(OpenSettings),
+        "keyboardShortcuts" => Box::new(shortcuts::OpenShortcutSettings),
         "showKeyboardShortcuts" => Box::new(ShowKeyboardShortcuts),
         "toggleSidebar" => Box::new(ToggleSidebar),
         "navigateBack" => Box::new(GoBack),

@@ -267,7 +267,7 @@ fn shared_context(left: &str, right: &str, key: &str) -> bool {
             .any(|group| group.contains(&left) && group.contains(&right))
 }
 
-fn allows_bare(id: &str) -> bool {
+pub fn allows_bare(id: &str) -> bool {
     matches!(id, "globalDictationHold" | "globalDictationSingleTap")
 }
 
