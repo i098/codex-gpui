@@ -17,7 +17,7 @@ pub(super) struct History {
     undo: Vec<EditState>,
     redo: Vec<EditState>,
     /// When the last edit happened and where it ended.
-    last: Option<(Instant, usize)>,
+    pub(super) last: Option<(Instant, usize)>,
 }
 
 const NEW_GROUP_DELAY: Duration = Duration::from_millis(500);
@@ -115,6 +115,7 @@ impl Composer {
     }
 
     fn restore(&mut self, (content, selection, mentions): EditState, cx: &mut Context<Self>) {
+        self.cancel_dictation(cx);
         self.history.last = None;
         self.content = content;
         self.mentions = mentions;

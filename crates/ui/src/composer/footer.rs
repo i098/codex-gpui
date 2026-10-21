@@ -69,6 +69,35 @@ fn loading_model(color: Hsla) -> impl IntoElement {
 }
 
 impl Composer {
+    pub(super) fn dictation_button(&self, t: &Theme, cx: &mut Context<Self>) -> Stateful<Div> {
+        let label = self.dictation_label();
+        pill("dictate", t)
+            .justify_center()
+            .child(if self.dictation.is_some() {
+                div()
+                    .size(px(8.8))
+                    .rounded(px(1.))
+                    .bg(t.text)
+                    .into_any_element()
+            } else {
+                icon("mic", 16., t.text)
+                    .when(self.docked, |i| i.own_layer(None))
+                    .into_any_element()
+            })
+            .role(gpui::Role::Button)
+            .aria_label(label)
+            .aria_disabled(label == "Transcribing")
+            .tab_index(0)
+            .focus_visible(menu::trigger_focus)
+            .size(px(28.))
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    this.dictate(window, cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .on_click(cx.listener(|this, _, window, cx| this.dictate(window, cx)))
+    }
     pub(super) fn footer(&self, window: &Window, t: &Theme, cx: &mut Context<Self>) -> Div {
         let open = matches!(self.menu, Some(Menu::Effort | Menu::Models));
         let model = self.current_model();
@@ -327,14 +356,7 @@ impl Composer {
             .flex()
             .items_center()
             .child(model_button)
-            .child(
-                pill("dictate", t)
-                    .tab_index(0)
-                    .focus_visible(menu::trigger_focus)
-                    .w(px(28.))
-                    .justify_center()
-                    .child(footer_icon("mic", t.text)),
-            )
+            .child(self.dictation_button(t, cx))
             .child(send);
         div()
             .flex()

@@ -350,7 +350,7 @@ The original recordings, masks and strict gates stay unchanged; remaining toolti
 | 10 | `+` Add files and more | click | Context menu (files, photos, @-mentions). | Opens the system file picker at once. | FAIL (`crates/ui/src/composer.rs` `add_files`: no context menu) |
 | 11 | `Custom` permissions | click | Permissions dropdown. | Opens; Escape closes. | PASS (`permissions_popover`) |
 | 12 | Model picker | click | Model and effort menu. | Opens; Escape closes. | PASS (`model_picker_popover`) |
-| 13 | `Dictate` | click | Starts dictation. | No handler. | NOT WIRED (`crates/ui/src/composer.rs`, `dictate`) |
+| 13 | `Dictate` | click | Starts dictation. | Uses native macOS capture and authenticated `/transcribe`; inserts at the initiating Composer selection. | WIRED; controlled-input proof passes. Live microphone acceptance remains open. |
 | 14 | `Start new voice chat` | click | Starts realtime voice. | With an empty draft the button calls `submit`, which does nothing. | NOT WIRED (`crates/ui/src/composer.rs`, `send`) |
 | 15 | Submit with Enter | shortcut | `thread/start`, `turn/start`, navigates to the thread. | Same; the turn streams in; the draft clears; also by clicking Send. | PASS (`submit_enter_starts_thread`, `submit_click_send`) |
 | 16 | Hover on every button | hover | Ghost background fades in. | Hover fill on composer buttons (checked on `Dictate`). | PASS (`composer_button_hover`) |
@@ -359,6 +359,18 @@ The original recordings, masks and strict gates stay unchanged; remaining toolti
 | 19 | Model list loading | loading | `Loading model…`. | Empty `model/list` shows `Loading model…` (the pill repaints). | PASS (`model_list_loading`) |
 | 20 | Account load failure | error | `We couldn’t load your account`, `Reload`, `Sign out`. | An `account/read` error stops `Root::connect`; the window stays empty. | FAIL (`crates/app/src/lib.rs` `connect`; no error page in `crates/ui`) |
 | 21 | Resize | resize | Below 768 px the sidebar is an overlay; below 40rem the composer stacks. | Sidebar hides (row 14.2/23); composer does not stack. | FAIL (`crates/ui/src/composer.rs`: only the 475 px compact footer) |
+
+The shared entry point is `Composer::dictate(window, cx)`.
+`cancel_dictation(cx)` cancels capture and pending insertion; `dictation_label()` and `dictation_error()` expose the state.
+Request text fields use the same dispatcher; secret and numeric fields do not expose Dictate.
+The comment editor owner calls this API on its own Composer entity.
+
+Run `cargo test -p app --features test-support --test dictation` and `cargo test -p ui --lib composer::dictation`.
+The controlled test sends generated WAV bytes through the production worker, `CloudHost`, and a loopback HTTP fixture into the rendered Composer.
+The fixture returns a known transcript; this checks transport and editing, not speech recognition.
+The macOS run uses the native renderer without opening a microphone, requesting permission, or activating the app.
+Live microphone capture, permission approval, and production transcription require separate acceptance.
+
 
 ## 14.4 Thread view
 
