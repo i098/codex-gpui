@@ -928,7 +928,19 @@ impl KeyboardPage {
         let state = cx.global::<KeyboardState>();
         let keys: Vec<_> = state.preferences.keys(command).map(str::to_owned).collect();
         let customized = state.preferences.bindings.contains_key(command.id);
-        let mut bindings = div().w(px(384.)).max_w_full().flex().flex_col();
+        let mut bindings = if allows_bare(command.id) {
+            // The dictation rows size to their content (at least 160 px), end-aligned, with the
+            // 8 px a hidden trash slot leaves.
+            div()
+                .min_w(px(160.))
+                .flex_none()
+                .pr(px(8.))
+                .flex()
+                .flex_col()
+                .items_end()
+        } else {
+            div().w(px(384.)).max_w_full().flex().flex_col()
+        };
         let count = keys.len().max(1)
             + usize::from(self.editing.as_ref().is_some_and(|e| {
                 e.command == command.id && e.index == keys.len() && !keys.is_empty()
@@ -1151,6 +1163,13 @@ impl KeyboardPage {
         };
         let error = cx.global::<KeyboardState>().preference_error == Some(kind)
             && cx.global::<KeyboardState>().error.is_some();
+        // The number select is a bordered button at the row's end; the link select is a bare
+        // chip that starts the 384 px control column.
+        let (chip_text, chip_icon, pad) = if number {
+            (t.text, 14., 13.)
+        } else {
+            (t.text_secondary, 12., 9.)
+        };
         let trigger = self
             .control(
                 format!("shortcut-pref-{number}"),
@@ -1159,29 +1178,26 @@ impl KeyboardPage {
                     .flex()
                     .items_center()
                     .gap(px(4.))
-                    .child(text(label, 13., 18., 430., t.text))
-                    .child(icon("chevron-down", 14., t.text_tertiary))
+                    .child(text(label, 13., 18., 430., chip_text))
+                    .child(icon("chevron-down", chip_icon, t.text_tertiary))
                     .into_any_element(),
                 action,
                 window,
                 cx,
             )
-            .px(px(13.))
+            .px(px(pad))
             .h(px(28.))
             .flex()
             .items_center();
+        let fill = if open {
+            Some(t.text.opacity(0.08))
+        } else {
+            number.then_some(t.primary_soft_alpha)
+        };
         let trigger = div()
             .relative()
-            .child(on_card(
-                12.5,
-                Squircle,
-                if open {
-                    t.text.opacity(0.08)
-                } else {
-                    t.primary_soft_alpha
-                },
-                Some(t.border),
-            ))
+            .when(!number, |d| d.ml(px(-9.)))
+            .children(fill.map(|fill| on_card(12.5, Squircle, fill, number.then_some(t.border))))
             .child(trigger);
         let options: Vec<(&str, Control)> = if number {
             vec![
@@ -1197,12 +1213,10 @@ impl KeyboardPage {
             ]
         };
         let menu = if open {
-            // Rows are the widest label, 6 px and an 18 px check slot, in 8 px padding inside the
+            // The original popup sizes to its widest label (Chromium's measure, "⌘1-9 for Chats"
+            // and "Unassigned"), 6 px and an 18 px check slot, in 8 px row padding inside the
             // popover's 4 px padding.
-            let widest = options
-                .iter()
-                .map(|(label, _)| label_width(window, label))
-                .fold(0., f32::max);
+            let widest = if number { 93.02 } else { 72.83 };
             let rows: Vec<_> = options
                 .into_iter()
                 .enumerate()
@@ -1228,8 +1242,8 @@ impl KeyboardPage {
                         cx,
                     )
                     .rounded(px(15.))
-                    .pl(px(8.29))
-                    .pr(px(7.71))
+                    .pl(px(if number { 8.29 } else { 8.18 }))
+                    .pr(px(if number { 7.71 } else { 7.82 }))
                     .py(px(5.))
                 })
                 .collect();
@@ -1245,11 +1259,21 @@ impl KeyboardPage {
                                     .on_hover(cx.listener(|this, hovered: &bool, _, _| {
                                         this.menu_hovered = *hovered
                                     }))
-                                    .child(div().relative().left(px(0.5)).child(
-                                        crate::composer::popover(&t, widest + 48., |d| {
-                                            d.children(rows)
-                                        }),
-                                    )),
+                                    // The popup's device-pixel snap differs by 1 px per menu:
+                                    // shift and extend it to the original's pixels.
+                                    .child(
+                                        div()
+                                            .relative()
+                                            .left(px(if number { 0.5 } else { 1. }))
+                                            .child(crate::composer::popover(
+                                                &t,
+                                                ((widest + 48.) * 2.).round() / 2.,
+                                                |d| {
+                                                    d.pb(px(if number { 4. } else { 4.5 }))
+                                                        .children(rows)
+                                                },
+                                            )),
+                                    ),
                             ),
                     ),
                 )
@@ -1267,8 +1291,8 @@ impl KeyboardPage {
             .gap(px(24.))
             .child(
                 div()
-                    .flex_1()
-                    .min_w_0()
+                    .when(number, |d| d.flex_1().min_w_0())
+                    .when(!number, |d| d.w(px(286.)).flex_none())
                     .flex()
                     .flex_col()
                     .gap(px(2.))
@@ -1296,6 +1320,7 @@ impl KeyboardPage {
             .child(
                 div()
                     .relative()
+                    .when(!number, |d| d.w(px(384.)).flex())
                     .when(open, |d| {
                         d.on_mouse_down_out(cx.listener(|this, _, _, cx| {
                             if !this.menu_hovered {
@@ -1305,8 +1330,7 @@ impl KeyboardPage {
                             }
                         }))
                     })
-                    .child(trigger)
-                    .children(menu),
+                    .child(trigger.children(menu)),
             )
     }
 }
@@ -1422,15 +1446,19 @@ impl Render for KeyboardPage {
                     .py(px(8.));
                 dictation.push(div().child(advanced));
             }
-            cards = cards.child(self.card(dictation, &t).child(
-                div().px(px(16.)).py(px(12.)).child(text(
-                    "Works in any app. Press Esc to cancel a recording.",
-                    12.,
-                    16.,
-                    430.,
-                    t.text_secondary,
-                )),
-            ));
+            cards = cards.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(self.card(dictation, &t))
+                    .child(div().px(px(16.)).pt(px(6.)).child(text(
+                        "Works in any app. Press Esc to cancel a recording.",
+                        12.,
+                        16.,
+                        430.,
+                        t.text_secondary,
+                    ))),
+            );
         }
         let toggle = self
             .control(
@@ -1645,25 +1673,4 @@ impl Render for KeyboardPage {
             )
             .children(self.confirmation.clone())
     }
-}
-
-/// Width of a 13 px, weight-500 menu label.
-fn label_width(window: &Window, label: &str) -> f32 {
-    let run = gpui::TextRun {
-        len: label.len(),
-        font: gpui::Font {
-            weight: gpui::FontWeight(500.),
-            ..gpui::font(crate::SANS)
-        },
-        color: gpui::black(),
-        background_color: None,
-        underline: None,
-        strikethrough: None,
-    };
-    f32::from(
-        window
-            .text_system()
-            .layout_line(label, px(13.), &[run], None)
-            .width,
-    )
 }

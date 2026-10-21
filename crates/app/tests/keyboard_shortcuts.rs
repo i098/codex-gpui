@@ -303,6 +303,13 @@ mod native {
         fx.click((1090.7, 278.3))?;
         capture(&mut fx, "number-menu-default")?;
         fx.click((1090.7, 278.3))?;
+        fx.click((550., 203.))?;
+        fx.type_text("Open web link in default browser")?;
+        capture(&mut fx, "search-link")?;
+        fx.click((804.3, 286.3))?;
+        capture(&mut fx, "link-menu-default")?;
+        fx.click((804.3, 286.3))?;
+        fx.click((1117.25, 203.))?;
         fx.click((825.24, 378.57))?;
         capture(&mut fx, "capture")?;
         fx.keys("cmd-k")?;
@@ -413,9 +420,9 @@ mod native {
         }));
         fx.click((550., 203.))?;
         fx.type_text("Open web link in default browser")?;
-        fx.click((1100., 286.))?;
+        fx.click((804.3, 286.3))?;
         capture(&mut fx, "link-menu")?;
-        fx.click((1100., 377.))?;
+        fx.click((790., 379.))?;
         ensure!(fx.cx.update(|cx| {
             cx.global::<KeyboardState>()
                 .preferences
