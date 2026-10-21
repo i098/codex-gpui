@@ -97,3 +97,21 @@ fn close_shortcut_uses_panel_focus_instead_of_panel_visibility() -> Result<()> {
     assert!(fx.read(|root, _| root.dialog().is_none()));
     Ok(())
 }
+
+#[test]
+fn cancelling_close_does_not_save_the_checkbox() -> Result<()> {
+    let mut fx = Fx::new()?;
+    fx.keys("cmd-w")?;
+    assert!(fx.read(|root, _| root.dialog().is_some()));
+    fx.capture_evidence("CGX_CLOSE_PROOF", "unchecked")?;
+    fx.keys("tab tab space")?;
+    assert!(fx.read(|root, cx| root.dialog().unwrap().read(cx).do_not_ask_again()));
+    fx.capture_evidence("CGX_CLOSE_PROOF", "checked")?;
+    fx.keys("escape")?;
+    assert!(fx.read(|root, _| root.dialog().is_none()));
+    assert_eq!(fx.cx.update(|cx| cx.windows().len()), 1);
+    fx.keys("cmd-w")?;
+    assert!(fx.read(|root, cx| !root.dialog().unwrap().read(cx).do_not_ask_again()));
+    fx.keys("escape")?;
+    Ok(())
+}
