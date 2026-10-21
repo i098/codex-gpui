@@ -16,6 +16,8 @@
 mod acp;
 mod automation;
 pub use automation::AutomationTurn;
+mod cloud;
+pub use cloud::CLOUD_ENDPOINT;
 mod replay;
 pub mod types;
 
@@ -138,6 +140,23 @@ impl Sink {
             method: method.into(),
             params,
         });
+    }
+
+    fn incoming(&self, msg: Incoming) {
+        match (msg.method, msg.id) {
+            (Some(method), Some(id)) => self.event(Event::Request {
+                id,
+                method,
+                params: msg.params,
+            }),
+            (Some(method), None) => self.notify(&method, msg.params),
+            (None, Some(id)) => {
+                if let Some(id) = id.as_i64() {
+                    self.reply(id, msg.error.map_or(Ok(msg.result), Err));
+                }
+            }
+            (None, None) => {}
+        }
     }
 
     /// Dropping the waiters wakes them with "closed"; later requests fail at once.
@@ -452,20 +471,7 @@ fn read_loop(reader: impl BufRead, sink: &Sink) {
                 continue;
             }
         };
-        match (msg.method, msg.id) {
-            (Some(method), Some(id)) => sink.event(Event::Request {
-                id,
-                method,
-                params: msg.params,
-            }),
-            (Some(method), None) => sink.notify(&method, msg.params),
-            (None, Some(id)) => {
-                if let Some(id) = id.as_i64() {
-                    sink.reply(id, msg.error.map_or(Ok(msg.result), Err));
-                }
-            }
-            (None, None) => {}
-        }
+        sink.incoming(msg);
     }
     sink.close();
 }
