@@ -245,6 +245,7 @@ struct Received {
     method: String,
     path: String,
     headers: Vec<(String, String)>,
+    body: Vec<u8>,
 }
 
 impl Received {
@@ -291,6 +292,7 @@ fn mock_backend(answers: Vec<(u16, &'static str, String)>) -> (String, Arc<Mutex
                 method,
                 path,
                 headers,
+                body: request_body,
             });
             let mut stream = reader.into_inner();
             write!(
@@ -302,6 +304,29 @@ fn mock_backend(answers: Vec<(u16, &'static str, String)>) -> (String, Arc<Mutex
         }
     });
     (base, received)
+}
+
+#[test]
+fn binary_upload_keeps_non_utf8_bytes_and_content_type() -> Result<()> {
+    use base64::Engine as _;
+    let (base, received) = mock_backend(vec![(200, "", "{}".into())]);
+    let home = tempfile::tempdir()?;
+    let cloud = CloudHost::new(LocalHost::new(home.path()), Box::new(|_| Ok(None)), &base);
+    let bytes = [0, 255, 13, 10, 128];
+    let response = cloud.fetch(&Request::Http(json!({
+        "url":format!("{}/upload", base.trim_end_matches("/backend-api")), "method":"PUT",
+        "headers":{"Content-Type":"application/octet-stream"},
+        "bodyBase64":base64::engine::general_purpose::STANDARD.encode(bytes),
+        "returnErrorResponse":true
+    })))?;
+    assert_eq!(json_body(&response)?, json!({}));
+    let requests = received.lock();
+    assert_eq!(requests[0].body, bytes);
+    assert_eq!(
+        requests[0].header("content-type"),
+        Some("application/octet-stream")
+    );
+    Ok(())
 }
 
 /// A ChatGPT-style token whose claims name `account` and `user`; the signature is fake.
