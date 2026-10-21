@@ -289,6 +289,13 @@ On macOS and Linux, `workspace-directory-entries` lists workspace children with 
 Directory requests reject lexical and symlink paths outside the workspace.
 Enumeration uses the validated directory handle, so replacing a symlink cannot redirect a listing.
 
+`add-context-file` sends a file reference to the host's bound view.
+The composer shows a file card without changing the draft text or selection.
+Repeated context files stay attached once; replacing the host disconnects its previous context channel.
+Submission lists these paths in the original `Files mentioned by the user` section, separate from image uploads.
+Editing a queued message restores its file cards and request text.
+Failed thread submissions restore the request and file cards.
+
 `open-in-targets` returns the original editor and terminal catalog, installed targets, and the preferred target.
 It reads `open-in-target-preferences` from the same shared host settings store as the UI.
 Saving one project's preference preserves entries for other projects.

@@ -371,6 +371,8 @@ impl Permission {
 pub struct Submission {
     pub text: String,
     pub attachments: Vec<PathBuf>,
+    /// File references added as context, not image uploads.
+    pub context_files: Vec<PathBuf>,
     pub model: String,
     pub effort: String,
     pub permission: Permission,
@@ -1246,16 +1248,24 @@ impl Composer {
         {
             return;
         }
+        self.submitted = std::mem::take(&mut self.attachments);
+        let mut attachments = Vec::new();
+        let mut context_files = Vec::new();
+        for attachment in &self.submitted {
+            if attachment.is_context_file() {
+                context_files.push(attachment.path.clone());
+            } else {
+                attachments.push(attachment.path.clone());
+            }
+        }
         let submission = Submission {
             text: if self.mentions.is_empty() && self.on_cancel_edit.is_none() {
                 std::mem::take(&mut self.content)
             } else {
                 self.prompt()
             },
-            attachments: {
-                self.submitted = std::mem::take(&mut self.attachments);
-                self.submitted.iter().map(|a| a.path.clone()).collect()
-            },
+            attachments,
+            context_files,
             model: self
                 .current_model()
                 .map(|m| m.id.clone())
