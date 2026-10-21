@@ -181,7 +181,7 @@ impl DiffSource {
     }
 
     fn mutable(self) -> bool {
-        matches!(self, Self::Uncommitted | Self::Unstaged | Self::Staged)
+        matches!(self, Self::Unstaged | Self::Staged)
     }
 }
 
@@ -3042,6 +3042,13 @@ fn relative(base: &str, path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn aggregate_changes_do_not_allow_staging() {
+        assert!(!DiffSource::Uncommitted.mutable());
+        assert!(DiffSource::Unstaged.mutable());
+        assert!(DiffSource::Staged.mutable());
+    }
 
     #[test]
     fn subtract_fixture() {
