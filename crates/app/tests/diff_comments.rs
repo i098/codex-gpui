@@ -2,9 +2,9 @@
 #[path = "common/mod.rs"]
 mod common;
 
-use anyhow::{Result, ensure};
+use anyhow::{Context as _, Result, ensure};
 use common::{Fx, SUBTRACT};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -53,7 +53,20 @@ fn prepare(model: bool) -> Result<(tempfile::TempDir, Fx)> {
         content.replace("value_5 = 5", "value_5 = 50"),
     )?;
     let patch = git(root, &["diff", "--full-index", "--"])?;
-    let mut recording = common::script(None, |_| {})?;
+    let mut recording = common::script(Some("sessions/subtract.jsonl"), |_| {})?;
+    let oracle: Value = serde_json::from_str(include_str!("../../../tools/route1/oracle.json"))?;
+    let resume = oracle
+        .as_object()
+        .context("Original oracle")?
+        .iter()
+        .find(|(key, value)| {
+            key.starts_with("mcp local thread/resume ")
+                && value["message"]["result"]["thread"]["id"] == SUBTRACT
+        })
+        .context("Original subtract resume")?
+        .1["message"]["result"]
+        .clone();
+    recording.extend(common::exchange("thread/resume", resume));
     for row in &mut recording {
         if let Some(thread) = row.pointer_mut("/msg/result/thread") {
             thread["cwd"] = root.to_string_lossy().into_owned().into();

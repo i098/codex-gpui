@@ -1921,8 +1921,8 @@ impl Render for SplitMain {
                     .absolute()
                     .top_0()
                     .bottom_0()
-                    .right(width - px(16.))
-                    .w(px(16.))
+                    .right(width - px(6.))
+                    .w(px(12.))
                     .cursor(CursorStyle::ResizeLeftRight)
                     .on_mouse_down(
                         MouseButton::Left,

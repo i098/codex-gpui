@@ -238,6 +238,9 @@ Chunks: thread-side-panel-tab-content-e9ce64182d53.js (`ReviewThreadSidePanelTab
 - Large diff mode: `This diff is large, showing one file at a time` with `Previous file` / `Next file`.
 - Diff renderer sets `data-diff-type="split"|"single"`, `data-indicators="bars"|"classic"`, `data-overflow`, `--diffs-min-number-column-width-default` (app-initial).
 - `/diff` window: `{fileCount} files changed`, `Switch to split diff` / `Switch to unified diff`, `Auto` mode, `Toggle rich preview`.
+- Panel divider: a centered 12 px drag handle (`split-view-b3740eb7ebfa.js`). Its drag area must leave the comment control reachable.
+- Inline comments support line ranges, creation, editing, cancellation, deletion, and submission with the next message.
+- Native comment controls expose tab stops. Tab moves from a new comment editor to `Cancel`, then `Comment`; empty submission controls do not receive focus.
 
 ### 8.2 States
 

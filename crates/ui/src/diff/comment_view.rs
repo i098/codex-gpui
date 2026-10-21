@@ -205,7 +205,7 @@ impl DiffPanel {
                         .focus(|d| d.opacity(1.))
                         .role(gpui::Role::Button)
                         .aria_label("Add a comment")
-                        .focusable()
+                        .tab_index(0)
                         .cursor_pointer()
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(cx.listener(move |this, _, window, cx| {
@@ -562,7 +562,7 @@ impl DiffPanel {
                         .cursor_pointer()
                         .role(gpui::Role::Button)
                         .aria_label("Edit comment")
-                        .focusable()
+                        .tab_index(0)
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.open_comment(file, side, line, Some(edit_key.clone()), window, cx);
                         }))
@@ -665,6 +665,7 @@ impl DiffPanel {
                                             Self::save_comment,
                                         )
                                         .aria_disabled(!enabled)
+                                        .tab_stop(enabled)
                                         .when(!enabled, |d| d.opacity(0.4)),
                                     ),
                             ),
@@ -688,7 +689,7 @@ fn comment_button(
         .id(SharedString::from(format!("comment-{label}")))
         .role(gpui::Role::Button)
         .aria_label(label)
-        .focusable()
+        .tab_index(0)
         .cursor_pointer()
         .px(px(8.))
         .h(px(28.))
