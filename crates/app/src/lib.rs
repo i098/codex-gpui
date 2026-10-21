@@ -3584,6 +3584,16 @@ impl Root {
                     }
                     this.sidebar
                         .update(cx, |s, cx| s.set_threads(&this.threads, cx));
+                } else {
+                    let before = old_section.map(|section| section.id);
+                    let after = pinned.then(|| PINNED_SECTION_ID.to_owned());
+                    if before != after {
+                        this.record_app_edit(features::shortcuts::AppEdit::Section {
+                            id: id.clone(),
+                            before,
+                            after,
+                        });
+                    }
                 }
             })?;
             done.map(drop)
@@ -3594,6 +3604,12 @@ impl Root {
     /// `Rename chat`'s Save: `thread/name/set`; the row (and the open chat's header) take the
     /// name once the write succeeds, else `Couldn't save your changes. Try again`.
     fn rename(&mut self, id: String, name: String, window: &mut Window, cx: &mut Context<Self>) {
+        let previous_name = self
+            .threads
+            .iter()
+            .find(|thread| thread.id == id)
+            .map(thread_title)
+            .map(|name| name.to_string());
         let bridge = self.bridge.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let done = bridge
@@ -3601,11 +3617,14 @@ impl Root {
                 .await;
             this.update(cx, |this, cx| match &done {
                 Ok(_) => {
-                    if let Some(thread) = this.threads.iter_mut().find(|thread| thread.id == id) {
-                        thread.name = Some(name);
+                    this.apply_thread_title(&id, &name, cx);
+                    if let Some(before) = previous_name.filter(|before| before != &name) {
+                        this.record_app_edit(features::shortcuts::AppEdit::Rename {
+                            id: id.clone(),
+                            before,
+                            after: name,
+                        });
                     }
-                    this.sidebar
-                        .update(cx, |s, cx| s.set_threads(&this.threads, cx));
                 }
                 Err(_) => this.toast(Toast::danger("Couldn't save your changes. Try again"), cx),
             })?;
@@ -3632,6 +3651,12 @@ impl Root {
                 .await;
             this.update(cx, |this, cx| match &done {
                 Ok(_) => {
+                    if let Some(thread) = thread {
+                        this.record_app_edit(features::shortcuts::AppEdit::Archive {
+                            thread: Box::new(thread),
+                            index: at.unwrap_or(0),
+                        });
+                    }
                     let (view, undo) = (cx.weak_entity(), cx.weak_entity());
                     let toast = Toast::info("Archived chat")
                         .icon("sidebar-archive")
@@ -3681,6 +3706,7 @@ impl Root {
                     .and_then(|r| serde_json::from_value::<Thread>(r["thread"].clone()).ok());
                 match thread {
                     Some(thread) => {
+                        this.forget_archive_edit(&thread.id);
                         if let Some(page) = &this.archive_page {
                             page.update(cx, |page, cx| page.unarchived(&thread.id, cx));
                         }
@@ -5247,8 +5273,19 @@ impl Render for Root {
             .font_family(ui::SANS)
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::type_anywhere))
-            .capture_action(cx.listener(|this, _: &Undo, window, cx| {
-                this.undo_queued(window, cx);
+            .on_action(cx.listener(|this, _: &Undo, window, cx| {
+                if this.deleted_queued.is_empty() {
+                    if !this.undo_app_edit(true, window, cx) {
+                        cx.propagate();
+                    }
+                } else {
+                    this.undo_queued(window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &Redo, window, cx| {
+                if !this.undo_app_edit(false, window, cx) {
+                    cx.propagate();
+                }
             }))
             .on_action(cx.listener(|this, _: &GoBack, window, cx| this.step(true, window, cx)))
             .on_action(cx.listener(|this, _: &GoForward, window, cx| this.step(false, window, cx)))

@@ -564,3 +564,5 @@ A hidden native menu item dispatches the shared `NewStandaloneChat` action and k
 Its first message creates a separate projectless workspace.
 File > New Temporary Chat (`⇧⌘N`) uses the existing ephemeral mode and does not add a Recents entry or restore on launch.
 The temporary action is unavailable for ACP backends.
+`⌘Z` and `⇧⌘Z` undo and redo the last chat rename, pin or archive when no text field or queued-message deletion owns the key.
+A refused undo keeps the edit available and shows `Could not undo action`.
