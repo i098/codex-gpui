@@ -2093,7 +2093,9 @@ fn heartbeat_row_run_navigates_only_on_success_at_the_original_location() -> Res
             .collect();
         ensure!(
             turns.len() == 1,
-            "duplicate Run now must not start another heartbeat"
+            "expected one heartbeat start, got {}; toasts: {:?}; requests: {sent:?}",
+            turns.len(),
+            fx.read(|root, cx| root.toasts(cx)),
         );
         ensure!(
             !sent
