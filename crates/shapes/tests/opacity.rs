@@ -231,8 +231,15 @@ impl Render for SavedDeviceScene {
                 |_, _, _| (),
                 |_, _, window, cx| {
                     let bounds = Bounds::new(point(px(987.), px(179.99)), size(px(16.), px(16.)));
-                    let device = Bounds::new(point(px(988.5), px(182.5)), size(px(12.5), px(11.)));
                     let source = include_bytes!("../../../assets/icons/diff-load-full-files.svg");
+                    let device = shapes::icon_paint_bounds(
+                        source,
+                        "saved-device-icon",
+                        bounds,
+                        false,
+                        window,
+                    )
+                    .expect("painted SVG bounds");
                     shapes::with_layer(191, device, window, |window| {
                         assert!(shapes::paint_icon(
                             source,
