@@ -156,6 +156,8 @@ It decodes quoted names and handles rename, copy, binary, empty-file, and delete
 Complete file headers preserve filenames under no-prefix and mnemonic-prefix settings. Hunk contents never supply a path.
 The parser does not access or authorize filesystem paths.
 Changes uses it for aggregate patches, preserving quoted names and metadata-only file entries through the file headers and Copy path action.
+File headers collapse display whitespace and show rename sources. Copy path keeps the decoded path unchanged.
+Metadata-only files show notices instead of raw Git headers.
 Run `cargo test -p ui --lib screens::diff::panel::patch` for its boundary checks.
 
 `ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.

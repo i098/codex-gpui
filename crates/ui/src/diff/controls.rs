@@ -1,4 +1,86 @@
 use super::*;
+use std::borrow::Cow;
+
+pub(super) fn file_icon(file_name: &str, t: &Theme) -> crate::icon::Icon {
+    let extension = std::path::Path::new(file_name)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("");
+    let dark = t.appearance == Appearance::Dark;
+    let (name, color) = if extension.eq_ignore_ascii_case("py") {
+        ("diff-file-python", if dark { 0x69b1ff } else { 0x1a85d4 })
+    } else if [
+        "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tif", "tiff",
+    ]
+    .iter()
+    .any(|suffix| extension.eq_ignore_ascii_case(suffix))
+    {
+        ("diff-file-image", if dark { 0xff678d } else { 0xd32a61 })
+    } else if extension.eq_ignore_ascii_case("txt") {
+        ("diff-file-text", if dark { 0xadadb1 } else { 0x84848a })
+    } else {
+        ("diff-file-default", if dark { 0xadadb1 } else { 0x84848a })
+    };
+    icon(name, 16., rgb(color).into())
+}
+
+fn header_text(text: &str) -> Cow<'_, str> {
+    let mut space = true;
+    let changed = text.bytes().any(|byte| {
+        let needs_change = matches!(byte, b'\t' | b'\n' | b'\r' | 12) || (byte == b' ' && space);
+        space = byte == b' ';
+        needs_change
+    }) || text.ends_with(' ');
+    if !changed {
+        return Cow::Borrowed(text);
+    }
+    let mut display = String::with_capacity(text.len());
+    for word in text
+        .split([' ', '\t', '\n', '\r', '\u{c}'])
+        .filter(|word| !word.is_empty())
+    {
+        if !display.is_empty() {
+            display.push(' ');
+        }
+        display.push_str(word);
+    }
+    Cow::Owned(display)
+}
+
+pub(super) fn display_parts(
+    path: &str,
+    dir: &SharedString,
+    name: &SharedString,
+) -> (SharedString, SharedString) {
+    match header_text(path) {
+        Cow::Borrowed(_) => (dir.clone(), name.clone()),
+        Cow::Owned(mut text) => {
+            let split = text.rfind('/').map_or(0, |index| index + 1);
+            let name = text.split_off(split);
+            (text.into(), name.into())
+        }
+    }
+}
+
+pub(super) fn problem_body(message: &'static str, t: &Theme) -> Div {
+    if !matches!(
+        message,
+        "Binary file not shown" | "File renamed without changes" | "No content"
+    ) {
+        return text(message, 13., 20., 400., t.text_tertiary).p(px(12.));
+    }
+    div()
+        .relative()
+        .p(px(16.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(shapes::decoration(Decoration {
+            fill: Some(t.surface_tertiary),
+            ..Default::default()
+        }))
+        .child(text(message, 13., 130. / 7., 430., t.text.opacity(0.65)))
+}
 
 #[derive(Default)]
 pub(super) struct TextField {
@@ -114,10 +196,24 @@ pub(super) fn split_rows(
 impl FileDiff {
     pub(super) fn patch(path: &str, diff: &str) -> Self {
         let split = path.rfind('/').map_or(0, |i| i + 1);
-        let (mut hunks, problem) = match parse(diff, None) {
+        let (mut hunks, mut problem) = match parse(diff, None) {
             Ok(hunks) => (hunks, None),
             Err(problem) => (Vec::new(), Some(problem)),
         };
+        if hunks.is_empty() && problem.is_none() && diff.starts_with("diff --git ") {
+            problem = Some(
+                if diff
+                    .lines()
+                    .any(|line| line.starts_with("Binary files ") || line == "GIT binary patch")
+                {
+                    "Binary file not shown"
+                } else if diff.lines().any(|line| line.starts_with("rename from ")) {
+                    "File renamed without changes"
+                } else {
+                    "No content"
+                },
+            );
+        }
         if hunks.is_empty() && problem.is_none() && !diff.is_empty() {
             hunks.push(Hunk {
                 separator: None,
@@ -141,9 +237,27 @@ impl FileDiff {
             added += usize::from(line.kind == Kind::Added);
             removed += usize::from(line.kind == Kind::Removed);
         }
+        let dir: SharedString = path[..split].to_owned().into();
+        let name: SharedString = path[split..].to_owned().into();
+        let (mut display_dir, mut display_name) = display_parts(path, &dir, &name);
+        if let Some(old) = diff
+            .lines()
+            .take_while(|line| !line.starts_with("@@ "))
+            .find_map(|line| line.strip_prefix("rename from "))
+            .and_then(super::patch::unquote)
+        {
+            let label = format!("{old} -> {path}");
+            display_name = match header_text(&label) {
+                Cow::Borrowed(_) => label.into(),
+                Cow::Owned(label) => label.into(),
+            };
+            display_dir = "".into();
+        }
         Self {
-            dir: path[..split].to_owned().into(),
-            name: path[split..].to_owned().into(),
+            dir,
+            name,
+            display_dir,
+            display_name,
             added,
             removed,
             hunks,
@@ -920,6 +1034,23 @@ mod tests {
         );
         assert_eq!((panel.files[0].added, panel.files[0].removed), (1, 1));
         assert_eq!(panel.files[0].hunks[0].lines[1].text.as_ref(), "new");
+        assert_eq!(
+            panel.files[1].display_name.as_ref(),
+            "old.txt -> new name.txt"
+        );
+        assert_eq!(panel.files[1].problem, Some("File renamed without changes"));
+        assert_eq!(panel.files[2].problem, Some("Binary file not shown"));
+        assert_eq!(panel.files[3].problem, Some("No content"));
+        assert!(panel.files[1..4].iter().all(|file| file.hunks.is_empty()));
+    }
+
+    #[test]
+    fn displayed_path_whitespace_does_not_change_the_action_path() {
+        let file = FileDiff::patch("dir space/é\tname.txt", "@@ -1 +1 @@\n-before\n+after\n");
+        assert_eq!(file.dir.as_ref(), "dir space/");
+        assert_eq!(file.name.as_ref(), "é\tname.txt");
+        assert_eq!(file.display_dir.as_ref(), "dir space/");
+        assert_eq!(file.display_name.as_ref(), "é name.txt");
     }
 
     #[test]

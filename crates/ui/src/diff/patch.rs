@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-fn unquote(path: &str) -> Option<Cow<'_, str>> {
+pub(super) fn unquote(path: &str) -> Option<Cow<'_, str>> {
     if !path.starts_with('"') {
         return Some(Cow::Borrowed(path));
     }
