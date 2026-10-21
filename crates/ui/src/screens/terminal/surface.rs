@@ -14,6 +14,7 @@ use theme::{ActiveTheme as _, Appearance};
 pub struct TerminalStyle {
     pub font: SharedString,
     pub size: f32,
+    pub letter_spacing: f32,
 }
 
 impl Default for TerminalStyle {
@@ -21,6 +22,7 @@ impl Default for TerminalStyle {
         Self {
             font: crate::MONO.into(),
             size: 12.,
+            letter_spacing: 0.,
         }
     }
 }
@@ -224,7 +226,7 @@ impl TerminalSurface {
 
 impl Render for TerminalSurface {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let style = cx
+        let mut style = cx
             .try_global::<TerminalStyle>()
             .cloned()
             .unwrap_or_default();
@@ -234,7 +236,7 @@ impl Render for TerminalSurface {
             .max(1.);
         let screen_height = px((rows * nominal_height).ceil());
         self.row_height = screen_height / rows;
-        self.cell_width = window
+        let measured_width = window
             .text_system()
             .shape_line(
                 "M".into(),
@@ -251,6 +253,17 @@ impl Render for TerminalSurface {
             )
             .width
             .max(px(1.));
+        // Xterm rounds the canvas width and measures character widths across 32 repeats.
+        let columns = if self.bounds.size.width > px(17.) {
+            ((f32::from(self.bounds.size.width) - 17.) / f32::from(measured_width))
+                .floor()
+                .max(1.)
+        } else {
+            f32::from(self.buffer.size.1)
+        };
+        self.cell_width = px((f32::from(measured_width) * columns).round() / columns);
+        style.letter_spacing =
+            f32::from(self.cell_width) - (f32::from(measured_width) * 32.).round() / 32.;
         let entity = cx.entity();
         let layout = entity.clone();
         let measure = canvas(
@@ -467,6 +480,7 @@ pub(super) fn row_element(
     let dark = t.appearance == Appearance::Dark;
     let mut content = String::new();
     let mut runs = Vec::new();
+    let features = textsys::letter_spacing(style.letter_spacing);
     for (column, cell) in row.cells.iter().enumerate() {
         if cell.is_wide_continuation() {
             continue;
@@ -495,6 +509,7 @@ pub(super) fn row_element(
             color.a *= 0.5;
         }
         let mut face = font(style.font.clone());
+        face.features = features.clone();
         face.weight = gpui::FontWeight(if cell.bold() { 700. } else { 400. });
         if cell.italic() {
             face.style = gpui::FontStyle::Italic;
