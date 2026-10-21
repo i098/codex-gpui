@@ -225,6 +225,7 @@ pub struct DiffPanel {
     repository: Option<RepositoryChanges>,
     pending: bool,
     error: Option<String>,
+    recovery: Option<Entity<crate::screens::recovery::Recovery>>,
     layout: DiffLayout,
     show_tree: bool,
     active_file: usize,
@@ -320,6 +321,7 @@ impl DiffPanel {
             repository: None,
             pending: false,
             error: None,
+            recovery: None,
             layout: DiffLayout::Auto,
             show_tree: false,
             active_file: 0,
@@ -1036,6 +1038,12 @@ impl DiffPanel {
 
 impl Render for DiffPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.files.iter().any(|file| file.problem == Some("Diff failed to render")) {
+            let recovery = self.recovery.get_or_insert_with(|| cx.new(|cx| {
+                crate::screens::recovery::Recovery::new(crate::screens::recovery::State::TabError, cx)
+            })).clone();
+            return div().size_full().child(recovery).into_any_element();
+        }
         let t = cx.theme().clone();
         let width = if self.standalone {
             window.viewport_size().width
@@ -1386,6 +1394,7 @@ impl Render for DiffPanel {
             .when(self.menu.is_some(), |d| {
                 d.child(self.menu_overlay(window, cx))
             })
+            .into_any_element()
     }
 }
 

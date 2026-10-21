@@ -7,6 +7,10 @@ use gpui::{
 use std::path::PathBuf;
 
 fn main() {
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("{info}");
+        std::process::exit(101);
+    }));
     if std::env::args().nth(1).as_deref() == Some("--qa-build-info") {
         println!("{}", app::qa::build_info());
         return;
@@ -83,11 +87,15 @@ fn main() {
         cx.set_global(state.theme.theme(cx.window_appearance()));
         app::init(cx);
         cx.set_menus(app::menus());
-        let handle = app::windows::open_primary(state, cwd, cx).unwrap_or_else(|error| {
-            eprintln!("codex-gpui: cannot open the primary window: {error:#}");
-            std::process::exit(1)
-        });
-        app::qa::monitor(handle, cx);
+        match app::windows::open_primary(state.clone(), cwd.clone(), cx) {
+            Ok(handle) => app::qa::monitor(handle, cx),
+            Err(error) => {
+                if let Err(error) = app::error_shell::open_startup_error(state, cwd, error, cx) {
+                    eprintln!("codex-gpui: cannot open the recovery window: {error:#}");
+                    std::process::exit(1);
+                }
+            }
+        }
         if !app::qa::ENABLED {
             cx.activate(true);
         }

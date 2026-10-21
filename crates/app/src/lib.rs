@@ -4,6 +4,7 @@
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
 pub mod computer_use_requests;
+pub mod error_shell;
 mod features;
 pub mod host;
 pub mod host_settings;
@@ -434,6 +435,7 @@ pub struct Root {
     account_email: Option<String>,
     chatgpt_account: bool,
     bridge: Arc<Bridge>,
+    connection: error_shell::Connection,
     host: Arc<dyn host::Host>,
     project_load: Option<Task<()>>,
     picking_project: bool,
@@ -667,16 +669,7 @@ impl Root {
             })
             .detach();
         }
-        let _events = cx.spawn(async move |this, cx| {
-            while let Ok(event) = events.recv().await {
-                if this
-                    .update(cx, |this, cx| this.on_event(event, cx))
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        });
+        let _events = error_shell::events(events, 0, cx);
         let mut root = Self {
             back: Vec::new(),
             forward: Vec::new(),
@@ -735,6 +728,7 @@ impl Root {
             skills: Value::Null,
             models: Vec::new(),
             ready: false,
+            connection: error_shell::Connection::new(cx),
             qa_work_started: false,
             loaded: HashSet::new(),
             queue_load: None,
@@ -791,7 +785,9 @@ impl Root {
     /// for Recents, and a toast says which features work (README `ACP backend`).
     fn connect(&self, window: &Window, cx: &mut Context<Self>) {
         let (bridge, cwd) = (self.bridge.clone(), self.cwd.clone());
+        let generation = self.connection.generation;
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let result = async {
             let server = bridge
                 .initialize("codex-gpui", env!("CARGO_PKG_VERSION"))
                 .await?;
@@ -836,6 +832,9 @@ impl Root {
                 (catalog, config, skills)
             };
             this.update_in(cx, |this, window, cx| {
+                if this.connection.generation != generation {
+                    return;
+                }
                 this.account_email = account.as_ref().and_then(chatgpt_email);
                 this.chatgpt_account = account.as_ref().is_some_and(|account| {
                     matches!(account.account, Some(Account::Chatgpt { .. }))
@@ -920,6 +919,11 @@ impl Root {
                     this.show_dialog(dialog, window, cx);
                 }
             })
+            }.await;
+            if let Err(error) = result {
+                this.update(cx, |this, cx| this.connection_failed(error, generation, cx))?;
+            }
+            Ok(())
         });
         log_err(task, cx);
     }
@@ -2096,6 +2100,7 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.clear_route_error(cx);
         if route != self.state.route || automation != self.sidebar_automation {
             self.remember_thread_settings(cx);
             self.back.push((
@@ -2981,7 +2986,22 @@ impl Root {
     fn load_thread(&self, id: String, window: &Window, cx: &mut Context<Self>) {
         let bridge = self.bridge.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            let read = bridge.thread_read(&id, true).await?;
+            let read = match bridge.thread_read(&id, true).await {
+                Ok(read) => read,
+                Err(error) => {
+                    if error.is::<serde_json::Error>() {
+                        this.update(cx, |this, cx| {
+                            if this.state.route == Route::Thread(id.clone()) {
+                                this.connection.view.update(cx, |view, cx| view.set_state(
+                                    ui::screens::recovery::State::RouteError(error.to_string()), cx,
+                                ));
+                                cx.notify();
+                            }
+                        })?;
+                    }
+                    return Err(error);
+                }
+            };
             this.update_in(cx, |this, window, cx| {
                 if this.state.route == Route::Thread(id) {
                     this.show_thread(read.thread, window, cx);
@@ -5374,6 +5394,9 @@ fn generation_instructions(context: &str) -> String {
 
 impl Render for Root {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(page) = error_shell::render(self, cx) {
+            return page;
+        }
         if let Some(login) = &self.login {
             return div()
                 .size_full()
@@ -5588,7 +5611,7 @@ impl Render for Root {
             .children(self.command_menu.clone())
             .child(self.toaster.clone())
             .children(self.dialog.clone());
-        window_shell::actions(section_actions::actions(features::actions(root, cx), cx), cx).into_any_element()
+        error_shell::actions(window_shell::actions(section_actions::actions(features::actions(root, cx), cx), cx), cx).into_any_element()
     }
 }
 
