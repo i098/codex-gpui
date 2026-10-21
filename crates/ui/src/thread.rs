@@ -150,6 +150,7 @@ pub struct ThreadView {
     find: Option<FindState>,
     /// The link menu (`menu.rs`): `subject` is the right-clicked link.
     menu: Option<menu::ContextMenu>,
+    context_image: Option<crate::image_context::ImageContext>,
 }
 
 struct StreamSegment {
@@ -594,6 +595,7 @@ impl ThreadView {
             press_focus: None,
             find: None,
             menu: None,
+            context_image: None,
         }
     }
 
@@ -646,6 +648,21 @@ impl ThreadView {
     fn copy_selection(&mut self, _: &crate::Copy, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = self.selected_text(window, cx) {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
+        } else {
+            cx.propagate();
+        }
+    }
+
+    fn speak_selection(
+        &mut self,
+        _: &crate::StartSpeaking,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(text) = self.selected_text(window, cx) {
+            if let Err(error) = crate::native_text::speak(&text, cx) {
+                eprintln!("codex-gpui: cannot speak selection: {error:#}");
+            }
         } else {
             cx.propagate();
         }
@@ -2086,6 +2103,10 @@ impl Render for ThreadView {
                     .track_scroll(&self.scroll)
                     .track_focus(&focus)
                     .on_action(cx.listener(Self::copy_selection))
+                    .when(
+                        cfg!(target_os = "macos") && self.carets.range().is_some(),
+                        |view| view.on_action(cx.listener(Self::speak_selection)),
+                    )
                     // A press on the transcript collapses the selection to a caret, takes the
                     // focus from the editor, and starts a drag (TH-127). Buttons stop it; a
                     // control that took the focus during the press (the inline editor) keeps it.

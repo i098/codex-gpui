@@ -24,11 +24,14 @@ pub mod dialog;
 pub mod fixture;
 pub mod focus;
 pub mod icon;
+mod image_context;
 pub mod motion;
+pub mod native_text;
 pub mod screens;
 pub mod settings_kit;
 pub mod toast;
 pub mod tooltip;
+pub mod updater;
 
 actions!(
     shell,
@@ -63,7 +66,21 @@ actions!(
 pub struct SetTheme(pub &'static str);
 
 // Edit menu commands; text inputs handle them.
-actions!(edit, [Undo, Redo, Cut, Copy, Paste, SelectAll]);
+actions!(
+    edit,
+    [
+        Undo,
+        Redo,
+        Cut,
+        Copy,
+        Paste,
+        PasteAndMatchStyle,
+        DeleteSelection,
+        SelectAll,
+        StartSpeaking,
+        StopSpeaking,
+    ]
+);
 
 /// `--app-shell-navigation-rail-width`
 pub const RAIL_WIDTH: Pixels = px(52.);
@@ -97,7 +114,6 @@ pub struct Shell {
     pub chat_chrome: bool,
     /// Titlebar `New tab` button (chat routes; Settings and Automations hide it).
     pub new_tab: bool,
-    pub header_actions: Option<AnyView>,
     /// Opaque background boxes the page paints under the main surface's clip that reach its
     /// rounded corners (Settings' `electron:bg-surface`): each blends the clip's anti-aliased
     /// edge once more. With any, the shell paints those corners itself, over what the main
@@ -157,7 +173,6 @@ impl Shell {
             selected_rail: Some("home"),
             chat_chrome: true,
             new_tab: true,
-            header_actions: None,
             main_backgrounds: 0,
             main_composited: false,
             main_layer: false,
@@ -1005,6 +1020,11 @@ impl Shell {
     }
 
     fn titlebar(&self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let fullscreen_shift = if window.is_fullscreen() {
+            px(80.)
+        } else {
+            px(0.)
+        };
         // The header is the window drag region (`-webkit-app-region: drag`, macOS hiddenInset);
         // its buttons are `no-drag`: each stops the press before the move handler below.
         // Disabled history controls do not participate in keyboard navigation.
@@ -1059,13 +1079,16 @@ impl Shell {
                 }
             })
             .child(tooltip(
-                back.left(px(88.)).on_click(dispatch::<GoBack>),
+                back.left(px(88.) - fullscreen_shift)
+                    .on_click(dispatch::<GoBack>),
                 "Back",
                 Some("⌘["),
                 Side::Bottom,
             ))
             .child(tooltip(
-                forward.left(px(122.)).on_click(dispatch::<GoForward>),
+                forward
+                    .left(px(122.) - fullscreen_shift)
+                    .on_click(dispatch::<GoForward>),
                 "Forward",
                 Some("⌘]"),
                 Side::Bottom,
@@ -1090,7 +1113,7 @@ impl Shell {
                         "Show sidebar"
                     })
                     .absolute()
-                    .left(px(156.))
+                    .left(px(156.) - fullscreen_shift)
                     .top(px(8.))
                     .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                         sidebar_focus.read(cx).handle.clone().focus(window, cx);
@@ -1117,17 +1140,6 @@ impl Shell {
                             cx.stop_propagation();
                         })
                         .child(icon::icon("new-tab", 16., t.text_tertiary)),
-                )
-            })
-            .when_some(self.header_actions.clone(), |bar, actions| {
-                bar.child(
-                    div()
-                        .absolute()
-                        .top(px(8.))
-                        .right(px(44.))
-                        .h(px(28.))
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .child(actions),
                 )
             })
     }

@@ -325,6 +325,17 @@ The existing replay checks the original colors, row actions, tooltips, canceled 
 
 ## 14.3 Home
 
+The retained native Home input capture reaches `Choose project` and `This computer` with Tab and Shift-Tab.
+Pointer movement keeps the keyboard ring; a pointer press clears it.
+Tab and Shift-Tab scroll an overflowing utility bar to the focused control.
+`Choose project` keeps the existing native folder picker; `This computer` still has no location-menu handler.
+The original `⌥⇧⌘O` shortcut and `⌘O` open that same picker.
+Home derives live fades from the scroll range and captures the finished-animation mask for static references.
+Both utility icons use the runtime path so the scroll masks affect their pixels.
+The capture regression checks live-state restoration, another window, a closed-window error, and the reduced-motion preference.
+The focused project-control crop now matches the original, including the tooltip shadow over the ring.
+The original recordings, masks and strict gates stay unchanged; remaining tooltip and rail differences are tracked separately.
+
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Launch to `/` | entry | Hero, announcement slot and composer. | Route Home, rail Home selected, composer focused, Recents loaded. | PASS (`launch_home`, `parity_home`) |
@@ -343,7 +354,7 @@ The existing replay checks the original colors, row actions, tooltips, canceled 
 | 14 | `Start new voice chat` | click | Starts realtime voice. | With an empty draft the button calls `submit`, which does nothing. | NOT WIRED (`crates/ui/src/composer.rs`, `send`) |
 | 15 | Submit with Enter | shortcut | `thread/start`, `turn/start`, navigates to the thread. | Same; the turn streams in; the draft clears; also by clicking Send. | PASS (`submit_enter_starts_thread`, `submit_click_send`) |
 | 16 | Hover on every button | hover | Ghost background fades in. | Hover fill on composer buttons (checked on `Dictate`). | PASS (`composer_button_hover`) |
-| 17 | Tab through controls | focus ring | 2 px ring. | No tab stops. | NOT WIRED (`crates/ui/src/composer.rs`, `crates/ui/src/screens/home.rs`) |
+| 17 | Tab through controls | focus ring | 2 px ring. | `Choose project` and `This computer` have tab stops; the native capture proves focus traversal, not menu activation. | NOT WIRED (remaining composer controls) |
 | 18 | No projects / no chats | empty | `No projects`, `No chats`, `What should we build?`. | Same with an empty `thread/list`. | PASS (`sidebar_empty_lists`) |
 | 19 | Model list loading | loading | `Loading model…`. | Empty `model/list` shows `Loading model…` (the pill repaints). | PASS (`model_list_loading`) |
 | 20 | Account load failure | error | `We couldn’t load your account`, `Reload`, `Sign out`. | An `account/read` error stops `Root::connect`; the window stays empty. | FAIL (`crates/app/src/lib.rs` `connect`; no error page in `crates/ui`) |
@@ -666,6 +677,25 @@ The scenario checks real branch refs, retained file contents, commit recovery, a
 It also checks an exact tag checkout followed by native reattachment, a real `heads/main` branch, and committing dirty detached work.
 Its thread data uses replay fixtures, not a live installed-account session.
 
+### Native worktree ownership and GitHub process transport
+
+`LocalHost` accepts the native `worktree-set-owner-thread` request and the Git worker's `set-worktree-owner-thread` request.
+Both persist the original `codex-thread.json` format in a linked worktree's Git directory.
+The main checkout is not a valid ownership target.
+`automation_worktree::creates_the_automation_worktree_at_the_remote_default_without_touching_the_source` checks both request names against the same fixture.
+
+`host::git_pr::execute` runs an argv vector through the connected app-server's `process/spawn` method.
+It subscribes before spawning, matches `process/exited` by handle, and returns the exit code, stdout, stderr, and capture-limit flags.
+The caller supplies an absolute working directory and a timeout in milliseconds.
+One deadline bounds the spawn reply and process exit.
+Timeout cleanup sends `process/kill` without waiting for its reply.
+Dropped requests release their pending reply slots.
+The deadline regression delays spawn and cleanup replies; neither delay extends the caller's timeout.
+The transport disables Git and GitHub prompts and does not run a local shell.
+These trusted UI commands run without a Codex sandbox.
+Connection failures and process-spawn failures remain errors.
+The original bundled app-server smoke checked concurrent handles, separate stdout and stderr, and a nonzero exit code.
+
 ## 14.7 Settings, login and onboarding
 
 A settings row reports its change to `Root`.
@@ -761,6 +791,7 @@ All native project-state writers use the same locked, atomic `.codex-global-stat
 An assignment failure archives the pending row and sends no turn; the started thread keeps its worktree.
 Legacy folder targets do not receive a project assignment, even when a saved project contains the folder.
 Projectless tasks use the original `nl`/`Ct` allocation under `projectlessWorkspaceRoot`, or `~/Documents/Codex` when that setting is absent.
+The host reads `desktop.projectlessWorkspaceRoot` through `config/read`, matching the General page's configuration write.
 Each run gets a local-date folder and a unique prompt-derived folder with `work` and `outputs` subfolders.
 The host rejects relative roots and symlinks at the root or local-date folder.
 It saves `projectless-thread-ids`, `thread-workspace-root-hints`, and `thread-projectless-output-directories` through the shared atomic global-state writer.
@@ -1124,7 +1155,7 @@ The [strict static report](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/f
 
 ## Native project selection and chat directories
 
-`Choose project`, the selected Home title, `⌘O`, File > Open Folder, and the `Open folder` command use GPUI's folder picker.
+`Choose project`, the selected Home title, `⌘O`, `⌥⇧⌘O`, File > Open Folder, and the `Open folder` command use GPUI's folder picker.
 The picker accepts one folder and does not change the selection or the current chat when canceled.
 The local host adds the folder to the existing `local-projects` and `project-order` records.
 It retains other projects and unrelated values in `.codex-global-state.json`.
