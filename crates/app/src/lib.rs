@@ -143,6 +143,11 @@ pub fn menus() -> Vec<Menu> {
         ]),
         Menu::new("File").items([
             MenuItem::action("New Chat", NewChat),
+            MenuItem::action(
+                "New standalone chat",
+                features::shortcuts::NewStandaloneChat,
+            ),
+            MenuItem::separator(),
             MenuItem::action("Open Folder…", OpenFolder),
             MenuItem::separator(),
             MenuItem::action("Close", CloseWindow),

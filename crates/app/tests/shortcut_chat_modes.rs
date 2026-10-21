@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 
 #[test]
-fn standalone_chat_allocates_and_records_its_own_workspace() -> Result<()> {
+fn standalone_menu_allocates_and_records_its_own_workspace() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let home = directory.path().join("codex");
     let workspaces = directory.path().join("standalone");
@@ -22,7 +22,7 @@ fn standalone_chat_allocates_and_records_its_own_workspace() -> Result<()> {
     )?;
     fx.root
         .update(&mut fx.cx, |root, cx| root.set_host(Arc::new(host), cx));
-    fx.keys("cmd-alt-o")?;
+    fx.menu("File", "New standalone chat")?;
     fx.type_text(GREETING_PROMPT)?;
     fx.keys("enter")?;
     fx.wait_thread(GREETING)?;
