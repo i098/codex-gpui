@@ -152,6 +152,19 @@ impl Fx {
         Self::with("dark", (1280., 832.), None, |_| {})
     }
 
+    pub fn with_route(route: Route) -> Result<Self> {
+        let lines = script(None, |_| {})?;
+        let (bridge, events) = Bridge::replay(&write_script(&lines)?)?;
+        Self::boot(
+            "dark",
+            (1280., 832.),
+            bridge,
+            events,
+            recorded_host_settings()?,
+            Some(route),
+        )
+    }
+
     /// `session` (under fixtures/) is appended to readback.jsonl; `edit` rewrites each
     /// recorded line first.
     pub fn with(
@@ -170,7 +183,7 @@ impl Fx {
 
     pub fn open(theme: &'static str, size: (f32, f32), lines: Vec<Value>) -> Result<Self> {
         let (bridge, events) = Bridge::replay(&write_script(&lines)?)?;
-        Self::boot(theme, size, bridge, events, recorded_host_settings()?)
+        Self::boot(theme, size, bridge, events, recorded_host_settings()?, None)
     }
 
     /// Like [`Fx::open`], but the app-server is this test binary again as a proxy
@@ -200,7 +213,7 @@ impl Fx {
             .env(PROXY_SCRIPT, &script)
             .env(PROXY_LOG, &log);
         let (bridge, events) = Bridge::spawn(cmd)?;
-        let mut fx = Self::boot(theme, size, bridge, events, settings)?;
+        let mut fx = Self::boot(theme, size, bridge, events, settings, None)?;
         fx.log = Some(log);
         Ok(fx)
     }
@@ -211,6 +224,7 @@ impl Fx {
         bridge: Bridge,
         events: async_channel::Receiver<Event>,
         settings: app::host_settings::Settings,
+        route: Option<Route>,
     ) -> Result<Self> {
         #[cfg(target_os = "macos")]
         install_panic_hook();
@@ -241,6 +255,7 @@ impl Fx {
             };
             let state = State {
                 theme,
+                route: route.unwrap_or_default(),
                 ..State::default()
             };
             cx.new(|cx| Root::new(state, bridge, events, CWD.into(), window, cx).with_clock(clock))

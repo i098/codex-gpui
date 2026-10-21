@@ -516,7 +516,7 @@ impl Root {
             cx.background_spawn(async move { host.invalidate_identity() })
                 .await;
             let account = bridge.account_read().await?;
-            this.update_in(cx, |this, _, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.account_email = crate::chatgpt_email(&account);
                 this.chatgpt_account = matches!(
                     account.account,
@@ -528,6 +528,7 @@ impl Root {
                 {
                     menu.update(cx, |menu, cx| menu.enable_cloud_search(cx));
                 }
+                this.maybe_onboard(window, cx);
             })
         });
         crate::log_err(task, cx);

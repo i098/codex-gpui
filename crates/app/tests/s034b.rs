@@ -23,15 +23,8 @@ fn recorded_chatgpt_sign_in() -> anyhow::Result<()> {
     let rec: Value = serde_json::from_str(include_str!("../../../refs/interactions/s034b.json"))?;
     let login = &rec["result"]["login"];
     let mut lines = script(None, |_| {})?;
-    let result_with = |key: &str| {
-        lines
-            .iter()
-            .find(|line| line["dir"] == "recv" && line["msg"]["result"].get(key).is_some())
-            .map(|line| line["msg"]["result"].clone())
-            .with_context(|| format!("Missing recorded {key} response"))
-    };
-    let config = result_with("config")?;
-    let account = result_with("requiresOpenaiAuth")?;
+    let config = ui::fixture::response("readback.jsonl", "config/read", 0);
+    let account = ui::fixture::response("readback.jsonl", "account/read", 0);
     for line in &mut lines {
         if line["dir"] == "recv" && line["msg"]["result"].get("requiresOpenaiAuth").is_some() {
             line["msg"]["result"] = json!({"account":null,"requiresOpenaiAuth":true});

@@ -21,6 +21,7 @@ pub enum Route {
     /// Profile menu ▸ `Set up mobile` (`/codex-mobile`).
     Mobile,
     Archive,
+    Onboarding(ui::screens::onboarding::Page),
 }
 
 pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
@@ -93,6 +94,7 @@ impl Root {
         let (can_back, can_forward) = (!self.back.is_empty(), !self.forward.is_empty());
         self.archive_page = None;
         self.mobile_page = None;
+        self.onboarding_page = None;
         self.page = match self.state.route.clone() {
             Route::Settings => Some(settings::page(self, cx)),
             Route::Scheduled => Some(automations::scheduled(self, cx)),
@@ -102,6 +104,10 @@ impl Root {
                 Some(automations::thread(self, cx))
             }
             Route::Mobile => Some(mobile::page(self, cx)),
+            Route::Onboarding(page) => {
+                self.open_onboarding(page, window, cx);
+                None
+            }
             Route::Home | Route::Thread(_) => None,
         };
         if let Some(sidebar) = &self.scheduled {
@@ -177,6 +183,7 @@ impl Root {
         match &self.state.route {
             _ if self.login.is_some() => self.focus.clone(),
             Route::Thread(id) if open(id) => self.thread_composer.focus_handle(cx),
+            Route::Onboarding(_) => self.focus.clone(),
             _ if self.page.is_some() => self.focus.clone(),
             Route::Thread(_) => self.focus.clone(),
             _ => self.home.read(cx).composer.focus_handle(cx),

@@ -8,6 +8,7 @@ mod features;
 pub mod host;
 pub mod host_settings;
 pub mod native_menus;
+pub mod onboarding;
 pub mod qa;
 mod routes;
 pub use routes::Route;
@@ -359,6 +360,9 @@ pub struct Root {
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
     settings_page: Option<Entity<settings::SettingsPage>>,
+    onboarding_page: Option<Entity<ui::screens::onboarding::Onboarding>>,
+    onboarding_load: Option<Task<()>>,
+    onboarding_context: Option<onboarding::ContextData>,
     /// `⌘K` command menu over the window.
     command_menu: Option<Entity<CommandMenu>>,
     dialog: Option<Entity<Dialog>>,
@@ -646,6 +650,9 @@ impl Root {
             mobile_page: None,
             settings_section: None,
             settings_page: None,
+            onboarding_page: None,
+            onboarding_load: None,
+            onboarding_context: None,
             command_menu: None,
             dialog: None,
             dialog_to_composer: false,
@@ -847,6 +854,7 @@ impl Root {
                 this.ready = true;
                 this.select_route(cx);
                 this.sync(window, cx);
+                this.maybe_onboard(window, cx);
                 if bridge.is_acp() {
                     let note = format!(
                         "{} over ACP: only chats, streaming, Stop and approvals work",
@@ -2446,6 +2454,9 @@ impl Root {
                 match result {
                     Ok(_) => {
                         this.login = Some(this.new_login(window, cx));
+                        this.onboarding_load = None;
+                        this.onboarding_context = None;
+                        this.onboarding_page = None;
                         this.account_email = None;
                         this.chatgpt_account = false;
                         let host = this.host.clone();
@@ -5063,7 +5074,9 @@ fn generation_instructions(context: &str) -> String {
 
 impl Render for Root {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if let Some(login) = &self.login {
+        let exclusive = self.login.as_ref().map(|view| view.clone().into_any_element())
+            .or_else(|| self.onboarding_page.as_ref().map(|view| view.clone().into_any_element()));
+        if let Some(exclusive) = exclusive {
             return native_menus::actions(
                 div()
                     .size_full()
@@ -5076,7 +5089,7 @@ impl Render for Root {
                     }))
                     .on_action(|_: &Minimize, window, _| window.minimize_window())
                     .on_action(|_: &Zoom, window, _| window.zoom_window())
-                    .child(login.clone())
+                    .child(exclusive)
                     .children(self.dialog.clone()),
                 cx,
             )
