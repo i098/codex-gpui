@@ -1280,3 +1280,11 @@ The default hover delay and `side_offset` geometry remain unchanged.
 This API does not complete Home focus behavior or add the separate F1d overflow predicate.
 The original Home inputs and edge probes remain unchanged.
 The scoped issue is [Add an opt-in focus API to the shared tooltip](https://github.com/i098/codex-gpui/issues/186).
+
+## Close confirmation
+
+The close dialog uses intrinsic-width, 32-pixel action buttons and a 14-pixel checkbox.
+Cancel receives the initial focus, with its focus ring outside the button.
+Cancelling the dialog does not save the `Do not ask me again` preference.
+The native `cancelling_close_does_not_save_the_checkbox` check covers both checkbox states and cancellation.
+

@@ -1490,8 +1490,8 @@ impl Dialog {
                     .flex()
                     .justify_end()
                     .gap(px(12.))
-                    .child(self.logout_button(0, "Cancel", t, cx))
-                    .child(self.logout_button(1, "Log out", t, cx)),
+                    .child(self.surface_button(0, "Cancel", t, cx))
+                    .child(self.surface_button(1, "Log out", t, cx)),
             )
             .child(
                 div()
@@ -1512,33 +1512,45 @@ impl Dialog {
             )
     }
 
-    /// `Cancel` is the ghost button and `Log out` the danger button: 32 px high, `px-4` and a
-    /// 1 px transparent border, radius 12.5, the 2 px ring outside the box when focused.
-    fn logout_button(
+    /// Uses the label width and draws the focus ring outside the border box.
+    fn surface_button(
         &self,
         index: usize,
         label: &'static str,
         t: &Theme,
         cx: &Context<Self>,
     ) -> Stateful<Div> {
-        let danger = index == 1;
+        let logout = self.kind == Kind::LogOut;
+        let primary = index == 1;
+        let background = match (logout, primary) {
+            (true, false) => None,
+            (true, true) => Some(t.text_error.opacity(0.1)),
+            (false, false) => Some(t.text_alpha_5),
+            (false, true) => Some(t.button_primary_solid),
+        };
+        let foreground = match (logout, primary) {
+            (true, false) => t.text_tertiary,
+            (true, true) => t.text_error,
+            (false, false) => t.text,
+            (false, true) => t.menu_background,
+        };
         div()
             .id(("dialog-button", index))
             .role(gpui::Role::Button)
             .aria_label(label)
             .track_focus(&self.controls[index])
             .h(px(32.))
-            // `px-4` plus the original's 1 px transparent border, so the painted box is the border box.
             .px(px(17.))
             .flex()
             .items_center()
             .justify_center()
             .relative()
-            .when(danger, |d| {
+            .when_some(background, |d, background| {
                 d.child(shapes::decoration(shapes::Decoration {
                     radius: Corners::all(px(12.5)),
                     corner: shapes::Corner::Squircle,
-                    fill: Some(t.text_error.opacity(0.1)),
+                    fill: Some(background),
+                    border: (!logout && primary).then_some((px(1.), t.border)),
                     ..Default::default()
                 }))
             })
@@ -1547,23 +1559,13 @@ impl Dialog {
                     shapes::Decoration {
                         radius: Corners::all(px(14.5)),
                         corner: shapes::Corner::Squircle,
-                        border: Some((px(2.), rgba(0x3a83f7ff).into())),
+                        border: Some((px(2.), t.focus_ring)),
                         ..Default::default()
                     },
                 )))
             })
             .hover(|s| s.opacity(0.85))
-            .child(text(
-                label,
-                14.,
-                18.,
-                430.,
-                if danger {
-                    t.text_error
-                } else {
-                    t.text_tertiary
-                },
-            ))
+            .child(text(label, 14., 18., 430., foreground))
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.selected = index;
                 this.controls[index].focus(window, cx);
@@ -1609,6 +1611,52 @@ impl Dialog {
             .child(div().absolute().bottom(px(20.)).right(px(20.)).flex().gap(px(12.))
                 .child(self.button(0, "Cancel", 88., t, cx))
                 .child(self.button(1, "Confirm", 115., t, cx)))
+    }
+
+    fn close_checkbox(&self, t: &Theme) -> Div {
+        div()
+            .relative()
+            .size(px(14.))
+            .child(shapes::decoration(shapes::Decoration {
+                radius: Corners::all(px(5.)),
+                fill: self
+                    .do_not_ask_again
+                    .then(|| t.control_background.opacity(0.96)),
+                border: Some((
+                    px(1.),
+                    if self.selected == 2 {
+                        t.focus_ring
+                    } else {
+                        t.border_strong
+                    },
+                )),
+                shadows: vec![crate::composer::shadow(
+                    gpui::black().opacity(0.08),
+                    1.,
+                    2.,
+                    -1.,
+                    false,
+                )],
+                ..Default::default()
+            }))
+            .when(self.selected == 2, |d| {
+                d.child(div().absolute().inset(px(-2.)).child(shapes::decoration(
+                    shapes::Decoration {
+                        radius: Corners::all(px(7.)),
+                        border: Some((px(2.), t.focus_ring)),
+                        ..Default::default()
+                    },
+                )))
+            })
+            .when(self.do_not_ask_again, |d| {
+                d.child(
+                    icon("menu-check", 12., t.text)
+                        .runtime()
+                        .absolute()
+                        .left(px(1.))
+                        .top(px(1.)),
+                )
+            })
     }
 
     fn close_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
@@ -1662,11 +1710,11 @@ impl Dialog {
                     })
                     .track_focus(&self.controls[2])
                     .mt(px(12.))
-                    .h(px(18.))
+                    .h(px(if revert { 18. } else { 18.571_428 }))
                     .flex()
                     .items_center()
                     .gap(px(8.))
-                    .child(
+                    .child(if revert {
                         div()
                             .size(px(14.))
                             .rounded(px(5.))
@@ -1676,9 +1724,17 @@ impl Dialog {
                             .when(self.do_not_ask_again, |d| {
                                 d.bg(t.text)
                                     .child(text("✓", 12., 12., 600., t.menu_background))
-                            }),
-                    )
-                    .child(text(checkbox, 13., 19., 430., t.text))
+                            })
+                    } else {
+                        self.close_checkbox(t)
+                    })
+                    .child(text(
+                        checkbox,
+                        13.,
+                        if revert { 19. } else { 18.571_428 },
+                        430.,
+                        t.text,
+                    ))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.selected = 2;
                         this.controls[2].focus(window, cx);
@@ -1691,14 +1747,16 @@ impl Dialog {
                     .flex()
                     .justify_end()
                     .gap(px(12.))
-                    .child(self.button(0, "Cancel", 80., t, cx))
-                    .child(self.button(
-                        1,
-                        if revert { "Confirm" } else { "Close Window" },
-                        128.,
-                        t,
-                        cx,
-                    )),
+                    .child(if revert {
+                        self.button(0, "Cancel", 80., t, cx)
+                    } else {
+                        self.surface_button(0, "Cancel", t, cx)
+                    })
+                    .child(if revert {
+                        self.button(1, "Confirm", 128., t, cx)
+                    } else {
+                        self.surface_button(1, "Close Window", t, cx)
+                    }),
             )
     }
     /// The multi-line text input of `Instructions…` and `Commit message`: lines with the
@@ -3061,14 +3119,15 @@ impl Render for Dialog {
                         20.
                     } else if schedule {
                         30.
-                    } else if self.kind == Kind::LogOut {
+                    } else if matches!(self.kind, Kind::LogOut | Kind::CloseWindow) {
                         25.
                     } else {
                         24.
                     }))
-                    .when(!commit && self.kind != Kind::LogOut, |d| {
-                        d.overflow_hidden()
-                    })
+                    .when(
+                        !commit && !matches!(self.kind, Kind::LogOut | Kind::CloseWindow),
+                        |d| d.overflow_hidden(),
+                    )
                     .map(|d| {
                         if announcement {
                             d.child(shapes::decoration(shapes::Decoration {
@@ -3111,12 +3170,15 @@ impl Render for Dialog {
                                 shapes::Fill::Color,
                                 false,
                                 shapes::Decoration {
-                                    radius: Corners::all(px(if self.kind == Kind::LogOut {
-                                        25.
-                                    } else {
-                                        24.
-                                    })),
-                                    corner: if self.kind == Kind::LogOut {
+                                    radius: Corners::all(px(
+                                        if matches!(self.kind, Kind::LogOut | Kind::CloseWindow) {
+                                            25.
+                                        } else {
+                                            24.
+                                        },
+                                    )),
+                                    corner: if matches!(self.kind, Kind::LogOut | Kind::CloseWindow)
+                                    {
                                         shapes::Corner::Squircle
                                     } else {
                                         shapes::Corner::default()
