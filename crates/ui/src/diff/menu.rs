@@ -879,6 +879,7 @@ impl DiffPanel {
                             data,
                             name,
                             t.text,
+                            // Refresh opacity belongs to its compositor, unlike the other SVG roots.
                             if index == 0 {
                                 GlyphOpacity::Compositor(opacity)
                             } else {
