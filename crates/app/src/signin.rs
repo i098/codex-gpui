@@ -4,15 +4,17 @@ mod browser {
     use anyhow::{Context as _, bail, ensure};
     #[cfg(any(target_os = "macos", test))]
     use std::collections::HashMap;
+    #[cfg(any(target_os = "macos", test))]
+    use std::io::Read;
     #[cfg(target_os = "macos")]
-    use std::io::{Read, Write};
+    use std::io::Write;
     #[cfg(target_os = "macos")]
     use std::net::{TcpListener, TcpStream};
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", test))]
     use std::time::{Duration, Instant};
     use ui::screens::signin::BrowserProfile;
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", test))]
     const LIMIT: usize = 16_384;
 
     #[cfg(target_os = "macos")]
@@ -25,26 +27,64 @@ mod browser {
             addon.is_file(),
             "Browser lookup native helper is unavailable"
         );
-        let output = std::process::Command::new(app.join("Contents/MacOS/ChatGPT"))
-        .env("ELECTRON_RUN_AS_NODE", "1")
-        .arg("-e")
-        .arg("process.stdout.write(JSON.stringify(require(process.argv[1]).getDefaultWebBrowserState()))")
-        .arg(addon).output().context("read default browser state")?;
-        ensure!(
-            output.status.success(),
-            "Browser lookup native helper failed"
-        );
-        let state: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        let mut command = std::process::Command::new(app.join("Contents/MacOS/ChatGPT"));
+        command.env("ELECTRON_RUN_AS_NODE", "1")
+            .arg("-e")
+            .arg("process.stdout.write(JSON.stringify(require(process.argv[1]).getDefaultWebBrowserState()))")
+            .arg(addon);
+        let Some(output) = bounded_output(&mut command, Duration::from_secs(5))? else {
+            return Ok(Vec::new());
+        };
+        let state: serde_json::Value = serde_json::from_slice(&output)?;
         if state["browserIsRunning"] != true || state["browserHasVisibleWindow"] != true {
             return Ok(Vec::new());
         }
         probe(all_accounts, |url| {
-            let status = std::process::Command::new("/usr/bin/open")
-                .args(["-g", url])
-                .status()?;
-            ensure!(status.success(), "Could not open browser lookup");
+            let mut command = std::process::Command::new("/usr/bin/open");
+            command.args(["-g", url]);
+            ensure!(
+                bounded_output(&mut command, Duration::from_secs(5))?.is_some(),
+                "Browser lookup launch timed out"
+            );
             Ok(())
         })
+    }
+
+    #[cfg(any(target_os = "macos", test))]
+    fn bounded_output(
+        command: &mut std::process::Command,
+        timeout: Duration,
+    ) -> Result<Option<Vec<u8>>> {
+        use std::process::Stdio;
+        let mut child = command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()?;
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Some(status) = child.try_wait()? {
+                ensure!(status.success(), "Browser lookup native helper failed");
+                let mut output = Vec::new();
+                child
+                    .stdout
+                    .take()
+                    .context("Browser helper stdout")?
+                    .take((LIMIT + 1) as u64)
+                    .read_to_end(&mut output)?;
+                ensure!(
+                    output.len() <= LIMIT,
+                    "Browser helper response is too large"
+                );
+                return Ok(Some(output));
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Ok(None);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -110,11 +150,11 @@ mod browser {
         state: &str,
         remaining: Duration,
     ) -> Result<Vec<BrowserProfile>> {
-        stream.set_read_timeout(Some(remaining.max(Duration::from_millis(1))))?;
+        let deadline = Instant::now() + remaining;
         let mut bytes = Vec::new();
         let header_end = loop {
             let mut buffer = [0u8; 1024];
-            let length = stream.read(&mut buffer)?;
+            let length = read_before_deadline(stream, &mut buffer, deadline)?;
             ensure!(
                 length != 0 && bytes.len() + length <= LIMIT + 4096,
                 "Invalid browser callback length"
@@ -147,11 +187,25 @@ mod browser {
         ensure!(length <= LIMIT, "Browser callback is too large");
         while bytes.len() < header_end + length {
             let mut buffer = [0u8; 1024];
-            let length = stream.read(&mut buffer)?;
+            let length = read_before_deadline(stream, &mut buffer, deadline)?;
             ensure!(length != 0, "Incomplete browser callback");
             bytes.extend_from_slice(&buffer[..length]);
         }
         parse(&bytes[header_end..header_end + length], state)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn read_before_deadline(
+        stream: &mut TcpStream,
+        buffer: &mut [u8],
+        deadline: Instant,
+    ) -> Result<usize> {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|duration| !duration.is_zero())
+            .context("Browser callback timed out")?;
+        stream.set_read_timeout(Some(remaining))?;
+        Ok(stream.read(buffer)?)
     }
 
     #[cfg(any(target_os = "macos", test))]
@@ -264,6 +318,17 @@ mod browser {
         use super::*;
 
         #[test]
+        fn stalled_lookup_helper_is_stopped() {
+            let mut command = std::process::Command::new("/bin/sleep");
+            command.arg("3600");
+            assert!(
+                bounded_output(&mut command, Duration::from_millis(10))
+                    .unwrap()
+                    .is_none()
+            );
+        }
+
+        #[test]
         fn callback_rejects_wrong_state_duplicate_fields_and_mixed_payloads() {
             for body in [
                 "state=other&email=a%40example.com",
@@ -288,6 +353,8 @@ use ui::screens::signin::bedrock::GovCloud;
 use ui::screens::signin::{Login, LoginEvent, Options, Provider};
 use url::Url;
 
+const ORIGINAL_APP_VERSION: &str = "26.1007.30912";
+
 impl Root {
     pub(crate) fn new_login(
         &mut self,
@@ -299,7 +366,7 @@ impl Root {
             &login,
             window,
             |this, source, event: &LoginEvent, window, cx| {
-                if this.login.as_ref() != Some(&source) {
+                if this.login.as_ref() != Some(source) {
                     return;
                 }
                 match event {
@@ -371,7 +438,7 @@ impl Root {
         let weak = login.downgrade();
         let request = host::Request::Http(json!({
             "url": "/wham/statsig/bootstrap", "method": "POST",
-            "body": json!({"app_session_id": host::device_id(), "app_version": "26.1007.30912", "brand_name": "chatgpt", "build_flavor": "prod", "locale": "en-US", "stable_id": stable_id, "system_name": std::env::consts::OS, "window_type": "electron"}).to_string(),
+            "body": json!({"app_session_id": host::device_id(), "app_version": ORIGINAL_APP_VERSION, "brand_name": "chatgpt", "build_flavor": "prod", "locale": "en-US", "stable_id": stable_id, "system_name": std::env::consts::OS, "window_type": "electron"}).to_string(),
             "headers": {"OAI-Language": "en", "X-OpenAI-Attach-Auth": "1", "X-OpenAI-Attach-Integrity-State": "1", "originator": "Codex Desktop"},
             "retry": false, "returnErrorResponse": true,
         }));
@@ -639,7 +706,7 @@ fn browser_url(
         url.query_pairs_mut().append_pair("login_hint", email);
     }
     url.query_pairs_mut()
-        .append_pair("codex_app_version", "26.1007.30912");
+        .append_pair("codex_app_version", ORIGINAL_APP_VERSION);
     if let Some(id) = stable_id {
         url.query_pairs_mut()
             .append_pair("source_surface_stable_id", id)
@@ -650,9 +717,10 @@ fn browser_url(
             .append_pair("codex_streamlined_login", "true");
     }
     if desktop.is_some() || options.desktop_auth {
-        let mut desktop = desktop
-            .take()
-            .unwrap_or(Url::parse("https://chatgpt.com/codex/desktop-auth")?);
+        let mut desktop = match desktop.take() {
+            Some(desktop) => desktop,
+            None => Url::parse("https://chatgpt.com/codex/desktop-auth")?,
+        };
         let query: Vec<_> = desktop
             .query_pairs()
             .filter(|(key, _)| key != "authorize_url" && key != "codex_streamlined_login")

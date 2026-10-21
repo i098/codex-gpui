@@ -4368,7 +4368,6 @@ impl Root {
     }
 
     /// Reads the first `thread/list` page again; threads of later loaded pages stay after it.
-
     fn refresh_threads(&self, cx: &mut Context<Self>) {
         let bridge = self.bridge.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {

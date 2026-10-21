@@ -371,7 +371,7 @@ mod snake {
 
 use self::policy::Policy;
 use super::settings::AppServer;
-use crate::{SANS, composer::Composer, focus, icon::icon, over, text};
+use crate::{SANS, composer::Composer, focus, icon::icon, text};
 use gpui::{
     App, AppContext as _, Context, Div, Entity, EventEmitter, Focusable, InteractiveElement,
     IntoElement, KeyDownEvent, ParentElement, Render, SharedString, Stateful,
@@ -386,7 +386,9 @@ fn login_theme(cx: &App) -> Theme {
         theme.text = gpui::rgb(0xdfdfdf).into();
         theme.button_primary_solid = theme.text;
         theme.text_inverse = gpui::rgb(0x2d2d2d).into();
-        theme.text_description = gpui::Hsla::from(gpui::rgb(0xffffff)).opacity(0.498);
+        let white = gpui::Hsla::from(gpui::rgb(0xffffff));
+        theme.text_description = white.opacity(0.498);
+        theme.border = white.opacity(0.084);
     }
     theme
 }
@@ -489,6 +491,7 @@ pub struct Login {
     bedrock: Option<bedrock::Bedrock>,
     supports_access_keys: bool,
     browser_loading: bool,
+    hovered_button: Option<&'static str>,
 }
 
 impl EventEmitter<LoginEvent> for Login {}
@@ -519,6 +522,7 @@ impl Login {
             bedrock: None,
             supports_access_keys: false,
             browser_loading: false,
+            hovered_button: None,
         };
         this.load_policy(cx);
         this
@@ -784,10 +788,30 @@ impl Login {
         let label = label.into();
         let api_form =
             self.stage == Stage::ApiKey && matches!(command, Command::Submit | Command::Back);
+        let hovered = self.hovered_button == Some(id);
         let color = match style {
             Style::Primary => t.text_inverse,
-            Style::Link => t.text_description,
+            Style::Link if !hovered => t.text_description,
+            Style::Link => t.text,
             Style::Outline => t.text,
+        };
+        let (fill, border) = match style {
+            Style::Primary => (
+                Some(if hovered {
+                    t.text.opacity(0.8)
+                } else {
+                    t.button_primary_solid
+                }),
+                api_form.then_some((px(1.), t.border)),
+            ),
+            Style::Outline if api_form => {
+                (Some(t.text.opacity(if hovered { 0.1 } else { 0.05 })), None)
+            }
+            Style::Outline => (
+                Some(if hovered { t.ghost_hover } else { t.surface }),
+                Some((px(1.), t.border)),
+            ),
+            Style::Link => (None, None),
         };
         let mut button = div()
             .id(id)
@@ -810,6 +834,19 @@ impl Login {
             .cursor_pointer()
             .text_color(color)
             .on_click(cx.listener(move |this, _, window, cx| this.command(command, window, cx)))
+            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                let next = if *hovered {
+                    Some(id)
+                } else if this.hovered_button == Some(id) {
+                    None
+                } else {
+                    return;
+                };
+                if this.hovered_button != next {
+                    this.hovered_button = next;
+                    cx.notify();
+                }
+            }))
             .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
                 let key = &event.keystroke;
                 if matches!(key.key.as_str(), "enter" | "space")
@@ -820,28 +857,17 @@ impl Login {
                     cx.stop_propagation();
                 }
             }));
-        button = match style {
-            Style::Primary => button
-                .when(api_form, |button| button.border_1().border_color(t.border))
-                .bg(t.button_primary_solid)
-                .hover(move |style| style.bg(t.text.opacity(0.8))),
-            Style::Outline if api_form => button
-                .bg(t.text_alpha_5)
-                .hover(move |style| style.bg(t.text_alpha_10)),
-            Style::Outline => {
-                let background = over(t.ghost_hover, t.surface);
-                button
-                    .border_1()
-                    .border_color(t.border)
-                    .bg(t.surface)
-                    .hover(move |style| style.bg(background))
-            }
-            Style::Link => button
-                .h(px(36.))
-                .w_auto()
-                .px(px(8.))
-                .hover(move |style| style.text_color(t.text)),
-        };
+        if matches!(style, Style::Link) {
+            button = button.h(px(36.)).w_auto().px(px(8.));
+        } else {
+            button = button.child(shapes::decoration(shapes::Decoration {
+                radius: gpui::Corners::all(Theme::RADIUS_FULL),
+                corner: shapes::Corner::Round,
+                fill,
+                border,
+                ..Default::default()
+            }));
+        }
         let label = div()
             .text_size(px(14.))
             .line_height(px(if api_form { 18. } else { 20. }))
@@ -892,7 +918,7 @@ impl Render for Login {
             .justify_center()
             .font_family(SANS)
             .bg(t.surface)
-            .on_key_down(|event, window, cx| focus::tab(event, window, cx));
+            .on_key_down(focus::tab);
         if self.snake.is_some() {
             return frame.child(self.snake_view(cx));
         }

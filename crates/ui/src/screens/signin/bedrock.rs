@@ -67,7 +67,7 @@ impl Bedrock {
             let field = cx.new(|cx| {
                 let mut field = Composer::settings_field("", "", false, cx);
                 field.set_compact_field(cx);
-                field.set_secret(matches!(index, 2 | 3 | 4), cx);
+                field.set_secret(matches!(index, 2..=4), cx);
                 field.set_field_label(
                     [
                         "AWS profile",

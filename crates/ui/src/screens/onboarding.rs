@@ -802,7 +802,7 @@ impl Render for Onboarding {
             .flex_col()
             .items_center()
             .justify_center()
-            .on_key_down(|event, window, cx| focus::tab(event, window, cx))
+            .on_key_down(focus::tab)
             .child(body)
             .children(self.error.clone().map(|error| {
                 text(error, 14., 20., 400., t.text_error)
