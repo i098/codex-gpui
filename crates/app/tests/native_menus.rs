@@ -98,3 +98,21 @@ fn about_reuses_its_window_and_escape_closes_only_about() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn control_command_f_dispatches_the_full_screen_action() -> Result<()> {
+    let mut fx = Fx::new()?;
+    let calls = std::rc::Rc::new(std::cell::Cell::new(0));
+    let received = calls.clone();
+    fx.cx.update(|cx| {
+        cx.on_action(move |_: &app::native_menus::ToggleFullScreen, cx| {
+            received.set(received.get() + 1);
+            cx.propagate();
+        });
+    });
+    fx.keys("ctrl-f")?;
+    assert_eq!(calls.get(), 0);
+    fx.keys("ctrl-cmd-f")?;
+    assert_eq!(calls.get(), 1);
+    Ok(())
+}
