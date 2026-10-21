@@ -146,6 +146,21 @@ The app opens that thread after a successful start, unless you navigate away whi
 Run `cargo test -p app --test task_create -- --test-threads=1` on macOS for the native creation and reload proof.
 Run `cargo test -p app --test automation_run_now` for the `Run now` requests over a stdio app-server stub.
 
+### Legacy Codex Cloud threads
+
+Open an existing task with `cargo run -p app -- /remote/<task-id>`.
+The `/hotkey-window/remote/<task-id>` path selects the compact content variant.
+The page uses the app-server's ChatGPT identity for the original `/wham/tasks` API.
+It reads task turns, streams setup logs and thread events, and supports image previews and follow-up image uploads.
+Applying changes selects a configured local project with the same Git remote.
+Apply and Revert use a temporary Git index, so they do not change the user's staged files.
+The result dialog lists applied, conflicted, and skipped paths.
+`Root::open_remote_task` and `Root::remote_page` provide the same page to native window hosts.
+This route is separate from the durable `codex_cloud` thread service.
+Run `cargo test -p app -p ui --lib cloud` and `cargo test -p app --test host` for the protocol and native state checks.
+Live-account and strict pixel validation remain pending for this page.
+
+
 ## Release bundle
 
 ```sh
@@ -229,7 +244,7 @@ That command does not close QA or any normal app.
 | Crate | Role |
 |---|---|
 | `bridge` | Client for `codex app-server`: newline-delimited JSON-RPC over stdio, hand-written protocol types, replay of recorded sessions, and the ACP backend. |
-| `ui` | The window shell (titlebar, navigation rail, sidebar, main panel), the 9 screens in `screens/`, the composer, the thread view, the diff view and the icons. |
+| `ui` | The window shell (titlebar, navigation rail, sidebar, main panel), the page modules in `screens/`, the composer, the thread view, the diff view and the icons. |
 | `shapes` | Box decorations that land on Chromium's pixels: rounded and squircle corners, borders, `box-shadow`, backdrop blur, SVG icon paths. It links Skia. |
 | `textsys` | A GPUI text system that puts glyphs on the same pixels as Chromium on macOS. It also holds the vendored `gpui` and `gpui_apple`. |
 | `theme` | Color tokens, metrics and the bundled fonts, extracted from the original renderer CSS. |

@@ -1,3 +1,7 @@
+#[path = "cloud_patch.rs"]
+mod cloud_patch;
+pub(super) use cloud_patch::apply_cloud_patch;
+
 use anyhow::{Context as _, Result, anyhow, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

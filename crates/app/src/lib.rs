@@ -3,6 +3,7 @@
 //! plus the key bindings and menu bar. `main.rs` only opens the window;
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
+mod cloud_task;
 pub mod computer_use_requests;
 mod features;
 pub mod host;
@@ -209,6 +210,10 @@ pub enum Route {
     #[default]
     Home,
     Thread(String),
+    Remote {
+        task_id: String,
+        hotkey: bool,
+    },
     Settings,
     /// Rail `Scheduled` (`/scheduled`): the Automations page.
     Scheduled,
@@ -417,6 +422,7 @@ pub struct Root {
     archive_page: Option<Entity<ArchivedChats>>,
     /// The Mobile route's setup page.
     mobile_page: Option<Entity<mobile::MobileSetupPage>>,
+    cloud: Option<cloud_task::Session>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
     settings_page: Option<Entity<settings::SettingsPage>>,
@@ -704,6 +710,7 @@ impl Root {
             page: None,
             archive_page: None,
             mobile_page: None,
+            cloud: None,
             settings_section: None,
             settings_page: None,
             command_menu: None,
@@ -1009,6 +1016,11 @@ impl Root {
     /// The composer of the route: Home's, or the one docked under the open thread.
     pub fn composer(&self, cx: &App) -> Entity<Composer> {
         match self.state.route {
+            Route::Remote { .. } => self
+                .cloud
+                .as_ref()
+                .map(|session| session.page.read(cx).composer.clone())
+                .unwrap_or_else(|| self.home.read(cx).composer.clone()),
             Route::Thread(_) => self.thread_composer.clone(),
             _ => self.home.read(cx).composer.clone(),
         }
@@ -1026,6 +1038,7 @@ impl Root {
 
     /// Replaces the desktop host and cancels pending UI callbacks for its reads and updates.
     pub fn set_host(&mut self, host: Arc<dyn host::Host>, cx: &mut Context<Self>) {
+        self.cloud = None;
         self.automation_load = None;
         self.project_load = None;
         self.suggestion_load = None;
@@ -2142,7 +2155,12 @@ impl Root {
         let (can_back, can_forward) = (!self.back.is_empty(), !self.forward.is_empty());
         self.archive_page = None;
         self.mobile_page = None;
+        self.cloud = None;
         self.page = match self.state.route.clone() {
+            Route::Remote { task_id, hotkey } => {
+                self.load_cloud_task(task_id, hotkey, window, cx);
+                None
+            }
             Route::Settings => {
                 self.load_computer_use(cx);
                 // The Appearance page shows the theme the app keeps.
@@ -2244,6 +2262,7 @@ impl Root {
             .clone()
             .filter(|v| Some(v.read(cx).id()) == thread_id.as_deref());
         let main: AnyView = match (&thread_id, &view) {
+            _ if self.cloud.is_some() => self.cloud.as_ref().unwrap().page.clone().into(),
             (Some(_), Some(view)) => view.clone().into(),
             (Some(id), None) => {
                 self.load_thread(id.clone(), window, cx);
@@ -2257,8 +2276,16 @@ impl Root {
             self.shell.clone()
         };
         window.focus(&self.route_focus(cx), cx);
-        let home = matches!(self.state.route, Route::Home | Route::Thread(_));
+        let home = matches!(
+            self.state.route,
+            Route::Home | Route::Thread(_) | Route::Remote { .. }
+        );
+        let header_actions = self
+            .cloud
+            .as_ref()
+            .map(|session| session.header.clone().into());
         shell.update(cx, |shell, cx| {
+            shell.header_actions = header_actions;
             shell.selected_rail = if self.sidebar_automation.is_some() {
                 Some("scheduled")
             } else {
@@ -2293,6 +2320,11 @@ impl Root {
         let open = |id: &str| self.thread.as_ref().is_some_and(|v| v.read(cx).id() == id);
         match &self.state.route {
             _ if self.login.is_some() => self.focus.clone(),
+            Route::Remote { .. } => self
+                .cloud
+                .as_ref()
+                .map(|session| session.page.read(cx).composer.focus_handle(cx))
+                .unwrap_or_else(|| self.focus.clone()),
             Route::Thread(id) if open(id) => self.thread_composer.focus_handle(cx),
             _ if self.page.is_some() => self.focus.clone(),
             Route::Thread(_) => self.focus.clone(),

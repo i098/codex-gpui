@@ -71,6 +71,19 @@ pub trait Host: Send + Sync {
     /// Returns the original wire response. Call this off the UI thread for a local host.
     fn fetch(&self, request: &Request) -> Result<Value>;
 
+    fn stream(
+        &self,
+        request: &Request,
+        cancelled: &std::sync::atomic::AtomicBool,
+        on_event: &mut dyn FnMut(Value) -> bool,
+    ) -> Result<()> {
+        let response = self.fetch(request)?;
+        let wire = response_wire(&response);
+        let status = wire["status"].as_u64().context("missing stream status")?;
+        ensure!((200..300).contains(&status), "stream HTTP status {status}");
+        let body = wire["body"].as_str().context("missing stream body")?;
+        event_stream(std::io::Cursor::new(body), cancelled, on_event)
+    }
     fn computer_use_native(&self) -> Option<Arc<computer_use_native::NativeComputerUse>> {
         None
     }
@@ -441,13 +454,17 @@ fn is_worktree_path(path: &str, managed_root: &str, windows: bool) -> bool {
     })
 }
 
+pub fn response_wire(response: &Value) -> &Value {
+    let response = response.get("value").unwrap_or(response);
+    response.pointer("/response/__response").unwrap_or(response)
+}
+
 /// Decodes a JSON response without turning HTTP errors or binary bodies into empty data.
 pub fn json_body(response: &Value) -> Result<Value> {
-    let response = response.get("value").unwrap_or(response);
+    let response = response_wire(response);
     if response["responseType"] == "error" {
         bail!("host error {}: {}", response["status"], response["error"]);
     }
-    let response = response.pointer("/response/__response").unwrap_or(response);
     let status = response["status"].as_u64().context("missing host status")?;
     ensure!((200..300).contains(&status), "host HTTP status {status}");
     let body = response
@@ -1109,6 +1126,7 @@ impl Host for LocalHost {
             "automation-update" => self.update_automation(&params)?,
             "automation-run-now" => self.automation_run_now(&params)?,
             "inbox-items" => self.inbox(&params)?,
+            "apply-patch" => git::apply_cloud_patch(&params)?,
             "git-changes" | "git-stage" | "git-unstage" | "git-revert" | "git-init-repo"
             | "git-commit-status" | "git-commit-diff" | "git-commit" | "git-push"
             | "git-checkout" => git::fetch(endpoint, &params)?,
@@ -1346,11 +1364,29 @@ impl CloudHost {
 
     /// The original's `performDesktopFetch` for one request, with its single 401 retry.
     fn send(&self, url: &str, request: &Value) -> std::result::Result<Value, Refusal> {
+        self.send_response(url, request, None)
+            .and_then(|response| wire(response, request["returnErrorResponse"] == true))
+    }
+
+    fn send_response(
+        &self,
+        url: &str,
+        request: &Value,
+        body_timeout: Option<Duration>,
+    ) -> std::result::Result<ureq::http::Response<ureq::Body>, Refusal> {
         let method = request["method"]
             .as_str()
             .unwrap_or("GET")
             .to_ascii_uppercase();
         let body = request["body"].as_str().map(str::to_owned);
+        let binary_body = request["bodyBase64"]
+            .as_str()
+            .map(|body| {
+                STANDARD
+                    .decode(body)
+                    .map_err(|error| (400, error.to_string()))
+            })
+            .transpose()?;
         let mut headers: Headers = request["headers"]
             .as_object()
             .map(|h| {
@@ -1414,7 +1450,6 @@ impl CloudHost {
                 set_header(&mut headers, "User-Agent", user_agent());
             }
         }
-        let return_error_response = request["returnErrorResponse"] == true;
         let expected_identity = request.get("expectedIdentity").filter(|v| v.is_object());
         let mut retry = request["retry"] != "never";
         let mut credentials = attach_auth.then(|| self.credentials(false)).transpose()?;
@@ -1478,9 +1513,14 @@ impl CloudHost {
                 builder = builder.header(name.as_str(), value.as_str());
             }
             let bad = |e: ureq::http::Error| (400, e.to_string());
-            let response = match &body {
-                Some(body) => self.agent.run(builder.body(body.clone()).map_err(bad)?),
-                None => self.agent.run(builder.body(()).map_err(bad)?),
+            let response = match (&binary_body, &body) {
+                (Some(body), _) => {
+                    self.run_request(builder.body(body.clone()).map_err(bad)?, body_timeout)
+                }
+                (None, Some(body)) => {
+                    self.run_request(builder.body(body.clone()).map_err(bad)?, body_timeout)
+                }
+                (None, None) => self.run_request(builder.body(()).map_err(bad)?, body_timeout),
             }
             .map_err(|e| (500, e.to_string()))?;
             if integrity {
@@ -1491,8 +1531,22 @@ impl CloudHost {
                 credentials = Some(self.credentials(true)?);
                 continue;
             }
-            return wire(response, return_error_response);
+            return Ok(response);
         }
+    }
+
+    fn run_request<B: ureq::AsSendBody>(
+        &self,
+        request: ureq::http::Request<B>,
+        body_timeout: Option<Duration>,
+    ) -> std::result::Result<ureq::http::Response<ureq::Body>, ureq::Error> {
+        use ureq::RequestExt as _;
+        request
+            .with_agent(&self.agent)
+            .configure()
+            .timeout_recv_body(body_timeout)
+            .build()
+            .run()
     }
 
     /// Keeps `X-OAI-IS-Update` only when the state it answers is the one this host sent.
@@ -1555,6 +1609,46 @@ impl Host for CloudHost {
         }
     }
 
+    fn stream(
+        &self,
+        request: &Request,
+        cancelled: &std::sync::atomic::AtomicBool,
+        on_event: &mut dyn FnMut(Value) -> bool,
+    ) -> Result<()> {
+        let Request::Http(request) = request else {
+            bail!("streams require HTTP transport");
+        };
+        let url = request["url"].as_str().context("HTTP request has no url")?;
+        let mut response = self
+            // ponytail: renew streams after 30 seconds; asynchronous I/O can replace this bounded blocking read.
+            .send_response(url, request, Some(Duration::from_secs(30)))
+            .map_err(|(status, message)| {
+                anyhow::anyhow!("stream HTTP status {status}: {message}")
+            })?;
+        ensure!(
+            response.status().is_success(),
+            "stream HTTP status {}",
+            response.status()
+        );
+        match event_stream(
+            std::io::BufReader::new(response.body_mut().as_reader()),
+            cancelled,
+            on_event,
+        ) {
+            Err(error)
+                if error.chain().any(|cause| {
+                    matches!(
+                        cause.downcast_ref::<ureq::Error>(),
+                        Some(ureq::Error::Timeout(ureq::Timeout::RecvBody))
+                    )
+                }) =>
+            {
+                Ok(())
+            }
+            result => result,
+        }
+    }
+
     fn supports_cloud_search(&self) -> bool {
         true
     }
@@ -1566,6 +1660,93 @@ impl Host for CloudHost {
             user_id: claims.user_id?,
             device_id: self.device_id.clone(),
         })
+    }
+}
+
+fn event_stream(
+    reader: impl std::io::BufRead,
+    cancelled: &std::sync::atomic::AtomicBool,
+    on_event: &mut dyn FnMut(Value) -> bool,
+) -> Result<()> {
+    if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+        return Ok(());
+    }
+    let mut data = String::new();
+    for line in reader.lines() {
+        if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            return Ok(());
+        }
+        let line = line?;
+        if line.is_empty() {
+            if !data.is_empty() {
+                if data.trim() == "[DONE]" {
+                    return Ok(());
+                }
+                let event = serde_json::from_str(data.trim_end())?;
+                if !on_event(event) {
+                    return Ok(());
+                }
+                data.clear();
+            }
+        } else if let Some(value) = line.strip_prefix("data:") {
+            data.push_str(value.strip_prefix(' ').unwrap_or(value));
+            data.push('\n');
+        }
+    }
+    if !data.is_empty() && data.trim() != "[DONE]" {
+        on_event(serde_json::from_str(data.trim_end())?);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod cloud_stream_tests {
+    use super::event_stream;
+    use serde_json::{Value, json};
+
+    #[test]
+    fn events_join_data_lines_and_stop_before_later_messages() {
+        let input = b": keepalive\r\ndata: {\"item_type\":\"log\",\r\ndata: \"line\":\"ready\"}\r\n\r\ndata: {\"line\":\"ignored\"}\n\n";
+        let mut received = Vec::<Value>::new();
+        event_stream(
+            std::io::Cursor::new(input),
+            &std::sync::atomic::AtomicBool::new(false),
+            &mut |event| {
+                received.push(event);
+                false
+            },
+        )
+        .unwrap();
+        assert_eq!(received, [json!({"item_type":"log","line":"ready"})]);
+    }
+
+    #[test]
+    fn invalid_event_is_an_error_not_a_successful_empty_stream() {
+        assert!(
+            event_stream(
+                std::io::Cursor::new(b"data: invalid\n\n"),
+                &std::sync::atomic::AtomicBool::new(false),
+                &mut |_| true
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn cancelled_stream_does_not_deliver_buffered_events() {
+        let cancelled = std::sync::atomic::AtomicBool::new(false);
+        let mut received = Vec::new();
+        event_stream(
+            std::io::Cursor::new(b"data: 1\n\n: keepalive\n\ndata: 2\n\n"),
+            &cancelled,
+            &mut |event| {
+                received.push(event);
+                cancelled.store(true, std::sync::atomic::Ordering::Release);
+                true
+            },
+        )
+        .unwrap();
+        assert_eq!(received, [json!(1)]);
     }
 }
 
