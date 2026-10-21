@@ -1,3 +1,7 @@
+//! Own one dictation session per Composer and keep its original selection.
+//! The app supplies the capture and transcription service through `Dispatcher`.
+//! Run `cargo test -p ui --lib composer::dictation` without microphone access.
+
 use super::*;
 use std::sync::{Arc, mpsc};
 
@@ -215,35 +219,6 @@ impl Composer {
 
     pub fn dictation_error(&self) -> Option<&str> {
         self.dictation_error.as_deref()
-    }
-    pub(super) fn dictation_button(&self, t: &Theme, cx: &mut Context<Self>) -> Stateful<Div> {
-        let label = self.dictation_label();
-        pill("dictate", t)
-            .justify_center()
-            .child(if self.dictation.is_some() {
-                div()
-                    .size(px(8.8))
-                    .rounded(px(1.))
-                    .bg(t.text)
-                    .into_any_element()
-            } else {
-                icon("mic", 16., t.text)
-                    .when(self.docked, |i| i.own_layer(None))
-                    .into_any_element()
-            })
-            .role(gpui::Role::Button)
-            .aria_label(label)
-            .aria_disabled(label == "Transcribing")
-            .tab_index(0)
-            .focus_visible(menu::trigger_focus)
-            .size(px(28.))
-            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
-                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                    this.dictate(window, cx);
-                    cx.stop_propagation();
-                }
-            }))
-            .on_click(cx.listener(|this, _, window, cx| this.dictate(window, cx)))
     }
 }
 
