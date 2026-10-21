@@ -145,6 +145,7 @@ impl FileDiff {
             full_error: None,
             full_loading: false,
             original_hunks: None,
+            imports: None,
             pending_expansion: None,
             preview: None,
         };
@@ -260,16 +261,12 @@ impl DiffPanel {
             .focus_visible(|s| s.border_2().border_color(rgb(0x3a83f7)))
             .cursor_pointer()
             .on_click(cx.listener(|this, _, _, cx| {
-                this.layout = this.layout.next();
-                this.selection = None;
-                cx.notify();
+                this.set_layout(this.layout.next(), cx);
             }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                    this.layout = this.layout.next();
-                    this.selection = None;
+                    this.set_layout(this.layout.next(), cx);
                     cx.stop_propagation();
-                    cx.notify();
                 }
             }))
     }
@@ -344,16 +341,14 @@ impl DiffPanel {
                                     }))
                                 })
                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.layout = layout;
-                                    cx.notify();
+                                    this.set_layout(layout, cx);
                                 }))
                                 .on_key_down(cx.listener(
                                     move |this, event: &KeyDownEvent, _, cx| {
                                         if matches!(event.keystroke.key.as_str(), "enter" | "space")
                                         {
-                                            this.layout = layout;
+                                            this.set_layout(layout, cx);
                                             cx.stop_propagation();
-                                            cx.notify();
                                         }
                                     },
                                 ))

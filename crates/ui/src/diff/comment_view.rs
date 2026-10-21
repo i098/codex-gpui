@@ -72,6 +72,28 @@ impl Annotations {
             collapsed,
         });
     }
+
+    pub(super) fn intersects(&self, dir: &str, name: &str, hunk: &Hunk) -> bool {
+        self.entries
+            .iter()
+            .filter(|entry| !self.dismissed.contains(&entry.key))
+            .map(|entry| &entry.comment.position)
+            .chain(self.draft.iter().map(|draft| &draft.position))
+            .any(|position| {
+                if position.path.strip_suffix(name) != Some(dir) {
+                    return false;
+                }
+                let start = position.start_line.unwrap_or(position.line).get();
+                hunk.lines.iter().any(|line| {
+                    let number = match position.side {
+                        Side::Right if line.kind != Kind::Removed => line.number,
+                        Side::Left if line.kind != Kind::Added => line.old_number,
+                        _ => 0,
+                    };
+                    number >= start && number <= position.line.get()
+                })
+            })
+    }
 }
 
 impl DiffPanel {
@@ -88,6 +110,10 @@ impl DiffPanel {
             self.annotations.add_model(comment);
         }
         self.set_user_comments(user, cx);
+        if self.hide_imports {
+            self.refresh_filtered_view();
+        }
+        cx.notify();
     }
 
     pub fn set_user_comments(&mut self, comments: Vec<Comment>, cx: &mut Context<Self>) {
@@ -110,6 +136,9 @@ impl DiffPanel {
                 model: false,
                 collapsed: false,
             }));
+        if self.hide_imports {
+            self.refresh_filtered_view();
+        }
         cx.notify();
     }
 
@@ -314,12 +343,18 @@ impl DiffPanel {
             _observe: observe,
         });
         self.annotations.selecting = false;
+        if self.hide_imports {
+            self.refresh_filtered_view();
+        }
         cx.notify();
     }
 
     fn abort_comment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.annotations.draft = None;
         self.annotations.selection = None;
+        if self.hide_imports {
+            self.refresh_filtered_view();
+        }
         if let Some(focus) = &self.focus {
             window.focus(focus, cx);
         }
@@ -351,6 +386,9 @@ impl DiffPanel {
             collapsed: false,
         });
         self.annotations.selection = None;
+        if self.hide_imports {
+            self.refresh_filtered_view();
+        }
         self.publish_comments(cx);
         if let Some(focus) = &self.focus {
             window.focus(focus, cx);
@@ -372,6 +410,9 @@ impl DiffPanel {
 
     pub fn hide_model_comment(&mut self, key: String, cx: &mut Context<Self>) {
         self.annotations.dismissed.insert(key);
+        if self.hide_imports {
+            self.refresh_filtered_view();
+        }
         cx.notify();
     }
 

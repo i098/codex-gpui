@@ -87,8 +87,19 @@ fn end(hunk: &Hunk) -> (u32, u32) {
     )
 }
 
+fn same_line(before: &str, after: &str, ignore_whitespace: bool) -> bool {
+    if !ignore_whitespace {
+        return before == after;
+    }
+    let visible = |byte: &u8| !matches!(*byte, b' ' | b'\t' | b'\r' | b'\n' | 0x0c | 0x0b);
+    before
+        .bytes()
+        .filter(visible)
+        .eq(after.bytes().filter(visible))
+}
+
 impl FullText {
-    pub(super) fn validate(&self, hunks: &[Hunk]) -> bool {
+    pub(super) fn validate(&self, hunks: &[Hunk], ignore_whitespace: bool) -> bool {
         for hunk in hunks {
             let (mut old, mut new) = (hunk.old_start, hunk.new_start);
             for line in &hunk.lines {
@@ -96,8 +107,9 @@ impl FullText {
                     if old
                         .checked_sub(1)
                         .and_then(|i| self.before.get(i as usize))
-                        .map(|s| line_text(s))
-                        != Some(line.text.as_ref())
+                        .is_none_or(|actual| {
+                            !same_line(line_text(actual), &line.text, ignore_whitespace)
+                        })
                     {
                         return false;
                     }
@@ -107,8 +119,9 @@ impl FullText {
                     if new
                         .checked_sub(1)
                         .and_then(|i| self.after.get(i as usize))
-                        .map(|s| line_text(s))
-                        != Some(line.text.as_ref())
+                        .is_none_or(|actual| {
+                            !same_line(line_text(actual), &line.text, ignore_whitespace)
+                        })
                     {
                         return false;
                     }
@@ -119,7 +132,13 @@ impl FullText {
         true
     }
 
-    fn context(&self, old: u32, new: u32, count: u32) -> Option<Vec<Line>> {
+    fn context(
+        &self,
+        old: u32,
+        new: u32,
+        count: u32,
+        ignore_whitespace: bool,
+    ) -> Option<Vec<Line>> {
         (0..count)
             .map(|offset| {
                 let before = self
@@ -128,7 +147,7 @@ impl FullText {
                 let after = self
                     .after
                     .get(new.checked_sub(1)? as usize + offset as usize)?;
-                if before != after {
+                if !same_line(before, after, ignore_whitespace) {
                     return None;
                 }
                 Some(Line {
@@ -146,7 +165,7 @@ impl FullText {
     }
 }
 
-fn label(count: u32) -> Option<SharedString> {
+pub(super) fn label(count: u32) -> Option<SharedString> {
     (count > 0).then(|| {
         format!(
             "{count} unmodified line{}",
@@ -181,7 +200,13 @@ pub(super) enum Expand {
     All,
 }
 
-pub(super) fn expand(hunks: &mut [Hunk], full: &FullText, index: usize, direction: Expand) -> bool {
+pub(super) fn expand(
+    hunks: &mut [Hunk],
+    full: &FullText,
+    index: usize,
+    direction: Expand,
+    ignore_whitespace: bool,
+) -> bool {
     let Some(current) = hunks.get(index) else {
         return false;
     };
@@ -207,7 +232,7 @@ pub(super) fn expand(hunks: &mut [Hunk], full: &FullText, index: usize, directio
     } else {
         (current.old_start - amount, current.new_start - amount)
     };
-    let Some(lines) = full.context(start_old, start_new, amount) else {
+    let Some(lines) = full.context(start_old, start_new, amount, ignore_whitespace) else {
         return false;
     };
     if append {
@@ -268,6 +293,22 @@ impl DiffPanel {
             .get("wrapCodeDiff.2")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
+        self.hide_whitespace = values
+            .get("hideDiffWhitespace")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        self.hide_imports = values
+            .get("hideDiffImports")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        self.layout = match values
+            .get("editorDiffViewMode")
+            .and_then(serde_json::Value::as_str)
+        {
+            Some("split") => DiffLayout::Split,
+            Some("unified") => DiffLayout::Unified,
+            _ => DiffLayout::Auto,
+        };
     }
 
     fn request_full_file(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -374,7 +415,12 @@ impl DiffPanel {
         file.full_loading = false;
         let pending = file.pending_expansion.take();
         match result {
-            Ok(full) if full.validate(file.original_hunks.as_deref().unwrap_or(&file.hunks)) => {
+            Ok(full)
+                if full.validate(
+                    file.original_hunks.as_deref().unwrap_or(&file.hunks),
+                    self.hide_whitespace,
+                ) =>
+            {
                 if self.full_files || pending.is_some() {
                     if file.original_hunks.is_none() {
                         file.original_hunks = Some(file.hunks.clone());
@@ -394,7 +440,7 @@ impl DiffPanel {
         } else {
             file.pending_expansion = pending;
         }
-        self.search_changed();
+        self.refresh_filtered_view();
         cx.notify();
     }
 
@@ -412,7 +458,7 @@ impl DiffPanel {
                 append_trailing_gap(&mut file.hunks, full);
             }
         }
-        self.search_changed();
+        self.refresh_filtered_view();
         self.request_visible_full_files(cx);
         cx.emit(DiffRequest::Preference(
             "host.load-full-files",
@@ -432,10 +478,16 @@ impl DiffPanel {
             return;
         };
         if let Some(full) = &entry.full {
-            if expand(&mut entry.hunks, full, hunk, direction) {
+            if expand(
+                &mut entry.hunks,
+                full,
+                hunk,
+                direction,
+                self.hide_whitespace,
+            ) {
                 syntax::apply(&entry.name, &mut entry.hunks);
                 self.selection = None;
-                self.search_changed();
+                self.refresh_filtered_view();
                 cx.notify();
             }
         } else {
@@ -604,16 +656,16 @@ mod tests {
         after[39] = "changed 40\n".into();
         let full = FullText { before, after };
         let mut hunks = parse("@@ -40 +40 @@\n-line 40\n+changed 40\n", None).unwrap();
-        assert!(full.validate(&hunks));
-        assert!(expand(&mut hunks, &full, 0, Expand::Before));
+        assert!(full.validate(&hunks, false));
+        assert!(expand(&mut hunks, &full, 0, Expand::Before, false));
         assert_eq!(hunks[0].new_start, 20);
         assert_eq!(hunks[0].lines.last().unwrap().number, 40);
         assert_eq!(hunks[0].separator.as_deref(), Some("19 unmodified lines"));
-        assert!(expand(&mut hunks, &full, 0, Expand::All));
+        assert!(expand(&mut hunks, &full, 0, Expand::All, false));
         assert_eq!(hunks[0].new_start, 1);
         assert!(hunks[0].separator.is_none());
         append_trailing_gap(&mut hunks, &full);
-        assert!(expand(&mut hunks, &full, 1, Expand::All));
+        assert!(expand(&mut hunks, &full, 1, Expand::All, false));
         assert_eq!(hunks[1].lines.last().unwrap().number, 60);
     }
 
@@ -624,7 +676,22 @@ mod tests {
             before: vec!["line\n".into(), "other\n".into()],
             after: vec!["changed\n".into(), "after\n".into()],
         };
-        assert!(!full.validate(&hunks));
-        assert!(!expand(&mut hunks, &full, 0, Expand::All));
+        assert!(!full.validate(&hunks, false));
+        assert!(!expand(&mut hunks, &full, 0, Expand::All, false));
+    }
+
+    #[test]
+    fn ignored_whitespace_does_not_hide_stale_context() {
+        let mut hunks = parse("@@ -2 +2 @@\n-old\n+new\n", None).unwrap();
+        let mut full = FullText {
+            before: vec!["let n = 1;\n".into(), "old\n".into()],
+            after: vec!["let n=1;\n".into(), "new\n".into()],
+        };
+        assert!(!expand(&mut hunks, &full, 0, Expand::All, false));
+        assert!(expand(&mut hunks, &full, 0, Expand::All, true));
+        assert!(full.validate(&hunks, true));
+        assert!(!full.validate(&hunks, false));
+        full.before[0] = "different();\n".into();
+        assert!(!full.validate(&hunks, true));
     }
 }

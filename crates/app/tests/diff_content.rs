@@ -68,25 +68,7 @@ fn prepare(unreadable: bool) -> Result<(tempfile::TempDir, Fx)> {
     fx.keys("cmd-2")?;
     fx.wait_thread(SUBTRACT)?;
     fx.keys("alt-cmd-b")?;
-    let turn = fx.read(|root, cx| {
-        root.thread()
-            .unwrap()
-            .read(cx)
-            .turns()
-            .last()
-            .unwrap()
-            .id
-            .clone()
-    });
-    fx.root.update(&mut fx.cx, |root, cx| {
-        root.on_event(
-            bridge::Event::Notification {
-                method: "turn/diff/updated".into(),
-                params: json!({"threadId":SUBTRACT,"turnId":turn,"diff":patch}),
-            },
-            cx,
-        )
-    });
+    update_patch(&mut fx, patch);
     fx.cx.run_until_parked();
     Ok((repo, fx))
 }
@@ -115,6 +97,28 @@ fn choose(fx: &mut Fx, label: &str) -> Result<()> {
         fx.keys("down")?;
     }
     fx.keys("enter")
+}
+
+fn update_patch(fx: &mut Fx, patch: String) {
+    let turn = fx.read(|root, cx| {
+        root.thread()
+            .unwrap()
+            .read(cx)
+            .turns()
+            .last()
+            .unwrap()
+            .id
+            .clone()
+    });
+    fx.root.update(&mut fx.cx, |root, cx| {
+        root.on_event(
+            bridge::Event::Notification {
+                method: "turn/diff/updated".into(),
+                params: json!({"threadId":SUBTRACT,"turnId":turn,"diff":patch}),
+            },
+            cx,
+        )
+    });
 }
 
 #[test]
@@ -173,5 +177,137 @@ fn full_file_read_failure_can_retry_without_losing_the_patch() -> Result<()> {
     fx.wait("full-file retry", |fx| find_count(fx) == 40)?;
     fx.reference_shot()?
         .save(output()?.join("full-read-recovered.png"))?;
+    Ok(())
+}
+
+#[test]
+fn import_filter_preserves_code_and_annotated_imports() -> Result<()> {
+    let (repo, mut fx) = prepare(false)?;
+    let mut before = String::from("use std::fmt;\n\n");
+    for index in 0..8 {
+        before.push_str(&format!("fn unchanged_{index}() {{}}\n"));
+    }
+    before.push_str("pub fn value() -> u32 { 1 }\n");
+    let path = repo.path().join("file.rs");
+    fs::write(&path, &before)?;
+    git(repo.path(), &["add", "file.rs"])?;
+    git(repo.path(), &["commit", "-qm", "Rust before"])?;
+    fs::write(
+        &path,
+        before
+            .replace("std::fmt", "std::io")
+            .replace("{ 1 }", "{ 2 }"),
+    )?;
+    update_patch(
+        &mut fx,
+        git(
+            repo.path(),
+            &["diff", "--full-index", "--unified=0", "--", "file.rs"],
+        )?,
+    );
+    fx.reference_shot()?;
+    fx.click((1000., 160.))?;
+    fx.keys("cmd-f")?;
+    fx.type_text("std::")?;
+    fx.wait("visible import change", |fx| find_count(fx) == 2)?;
+    fx.keys("escape")?;
+    fx.click((1192., 68.))?;
+    choose(&mut fx, "Hide imports")?;
+    fx.click((1000., 160.))?;
+    fx.keys("cmd-f cmd-a")?;
+    fx.type_text("std::")?;
+    fx.wait("hidden import change", |fx| find_count(fx) == 0)?;
+    fx.keys("cmd-a")?;
+    fx.type_text("value")?;
+    fx.wait("visible non-import change", |fx| find_count(fx) == 2)?;
+    fx.reference_shot()?
+        .save(output()?.join("imports-hidden.png"))?;
+    fx.keys("escape")?;
+    fx.click((1192., 68.))?;
+    choose(&mut fx, "Hide imports")?;
+    fx.click((671., 163.))?;
+    fx.type_text("Keep this import visible.")?;
+    fx.keys("tab tab enter")?;
+    fx.click((1192., 68.))?;
+    choose(&mut fx, "Hide imports")?;
+    fx.click((1000., 160.))?;
+    fx.keys("cmd-f cmd-a")?;
+    fx.type_text("std::")?;
+    fx.wait("annotated import stays visible", |fx| find_count(fx) == 2)?;
+    fx.reference_shot()?
+        .save(output()?.join("imports-annotated.png"))?;
+    Ok(())
+}
+
+#[test]
+fn copied_git_command_keeps_hidden_whitespace_changes() -> Result<()> {
+    let (repo, mut fx) = prepare(false)?;
+    fs::write(repo.path().join("spacing.txt"), "value = 1\n")?;
+    git(repo.path(), &["add", "spacing.txt"])?;
+    git(repo.path(), &["commit", "-qm", "spacing before"])?;
+    fs::write(repo.path().join("spacing.txt"), "value  =  1\n")?;
+    fx.reference_shot()?;
+    fx.click((715., 68.))?;
+    choose(&mut fx, "Uncommitted")?;
+    fx.wait("working tree diff", |fx| {
+        fx.read(|root, cx| {
+            root.diff_panel()
+                .is_some_and(|panel| !panel.read(cx).pending())
+        })
+    })?;
+    fx.click((1192., 68.))?;
+    choose(&mut fx, "Hide white space")?;
+    fx.wait("whitespace-only file hidden", |fx| {
+        fx.read(|root, cx| {
+            root.diff_panel().is_some_and(|panel| {
+                let panel = panel.read(cx);
+                !panel.pending()
+                    && panel.files.len() == 1
+                    && panel.files[0].name.as_ref() == "file.txt"
+            })
+        })
+    })?;
+    fx.click((1192., 68.))?;
+    fx.reference_shot()?
+        .save(output()?.join("options-working-tree.png"))?;
+    choose(&mut fx, "Copy git apply command")?;
+    fx.wait("copied patch toast", |fx| {
+        fx.read(|root, cx| {
+            root.toasts(cx)
+                .iter()
+                .any(|text| text.as_ref() == "Copied git apply command to the clipboard")
+        })
+    })?;
+    let command = fx
+        .cx
+        .update(|cx| cx.read_from_clipboard().and_then(|item| item.text()))
+        .context("copied command")?;
+    let destination = tempfile::tempdir_in(output()?)?;
+    let clone = destination.path().join("copy");
+    git(
+        repo.path(),
+        &[
+            "clone",
+            "--quiet",
+            "--no-hardlinks",
+            repo.path().to_str().unwrap(),
+            clone.to_str().unwrap(),
+        ],
+    )?;
+    let applied = Command::new("sh")
+        .arg("-c")
+        .arg(&command)
+        .current_dir(&clone)
+        .output()?;
+    ensure!(
+        applied.status.success(),
+        "Copied command failed: {}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    ensure!(
+        fs::read_to_string(clone.join("file.txt"))?
+            == fs::read_to_string(repo.path().join("file.txt"))?
+    );
+    ensure!(fs::read_to_string(clone.join("spacing.txt"))? == "value  =  1\n");
     Ok(())
 }

@@ -78,6 +78,24 @@ fn word_diff_toggle_and_nontext_files_use_native_controls() -> Result<()> {
     fx.keys("cmd-2")?;
     fx.wait_thread(SUBTRACT)?;
     fx.keys("alt-cmd-b")?;
+    if let Some(reference) = std::env::var_os("CGX_DIFF_OPTIONS_REFERENCE") {
+        fx.click((1192., 68.))?;
+        choose(&mut fx, "Collapse all diffs")?;
+        fx.click((1192., 68.))?;
+        let frame = fx.reference_shot()?;
+        let metrics = parity::diff_ref(Path::new(&reference), &out, "diffMenus", "dark", &frame)?;
+        fs::write(
+            out.join("options-metrics.json"),
+            serde_json::to_vec_pretty(&metrics)?,
+        )?;
+        ensure!(
+            metrics.pass,
+            "The options menu did not pass the strict original pair"
+        );
+        fx.keys("escape")?;
+        fx.click((1192., 68.))?;
+        choose(&mut fx, "Expand all diffs")?;
+    }
     if let Some(reference) = std::env::var_os("CGX_DIFF_REFERENCE") {
         let frame = fx.reference_shot()?;
         let metrics =

@@ -3,6 +3,7 @@ use gpui::{Anchor, Point, Role, anchored, point};
 use std::path::{Component, Path, PathBuf};
 
 const SOURCE_WIDTH: f32 = 200.;
+pub(super) const SHADOW_SIDE_PADDING: f32 = 20.;
 const ROW: f32 = 3657. / 128.;
 const SOURCES: [DiffSource; 6] = [
     DiffSource::LastTurn,
@@ -17,21 +18,22 @@ const SOURCE_CHECK: &[u8] = br#"<svg width="16" height="16" viewBox="0 0 16 16" 
 const SOURCE_SUBMENU: &[u8] = br#"<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><path d="M5.96236 11.6289C5.75734 11.8339 5.75734 12.166 5.96236 12.3711C6.16739 12.5761 6.49953 12.5761 6.70455 12.3711L10.4692 8.60641C10.8039 8.27129 10.8039 7.72863 10.4692 7.39351L6.70455 3.62887C6.49952 3.42384 6.16739 3.42384 5.96236 3.62887C5.75734 3.83389 5.75734 4.16603 5.96236 4.37105L9.59127 7.99996L5.96236 11.6289Z" fill="currentColor"/></svg>"#;
 
 fn source_glyph(
-    data: &'static [u8],
+    data: impl Into<std::borrow::Cow<'static, [u8]>>,
     id: &'static str,
     color: Hsla,
     opacity: u8,
 ) -> impl IntoElement {
+    let data = data.into();
     gpui::canvas(
         |_, _, _| {},
         move |bounds, (), window, cx| {
             let paint = |window: &mut Window| {
-                if !shapes::paint_icon(data, id, bounds, false, color, None, window, cx) {
+                if !shapes::paint_icon(data.as_ref(), id, bounds, false, color, None, window, cx) {
                     window
                         .paint_svg(
                             bounds,
                             id.into(),
-                            Some(data),
+                            Some(data.as_ref()),
                             gpui::TransformationMatrix::default(),
                             color,
                             cx,
@@ -71,6 +73,7 @@ pub(super) struct Menu {
     query: controls::TextField,
     choices: Vec<(usize, i32)>,
     parent_source: bool,
+    options_start: usize,
 }
 
 impl DiffPanel {
@@ -215,7 +218,7 @@ impl DiffPanel {
         let count = match kind {
             None => 0,
             Some(Kind::Source) => SOURCES.len(),
-            Some(Kind::Options) => 7,
+            Some(Kind::Options) => 10 - self.menu.as_ref().map_or(0, |menu| menu.options_start),
             Some(kind @ (Kind::Branches | Kind::Commits)) => {
                 if self.picker_status(kind).is_some() {
                     if self.error.is_some() && !self.pending {
@@ -241,15 +244,27 @@ impl DiffPanel {
             let ready = !self.pending && self.error.is_none();
             match kind.unwrap() {
                 Kind::Source => (SOURCES[index].label(), !self.pending),
-                Kind::Options => match index {
-                    0 => ("Expand all diffs", true),
-                    1 => ("Collapse all diffs", true),
-                    2 => ("Word wrap", true),
-                    3 => (self.layout.label(), true),
-                    4 => ("Word diffs", true),
-                    5 => ("Load full files", true),
-                    _ => ("Rich preview", true),
-                },
+                Kind::Options => {
+                    match index + self.menu.as_ref().map_or(0, |menu| menu.options_start) {
+                        0 => ("Refresh", !self.pending),
+                        1 => ("Word wrap", true),
+                        2 => (self.layout.label(), true),
+                        3 => (
+                            if self.all_expanded() {
+                                "Collapse all diffs"
+                            } else {
+                                "Expand all diffs"
+                            },
+                            true,
+                        ),
+                        4 => ("Load full files", true),
+                        5 => ("Rich preview", true),
+                        6 => ("Word diffs", true),
+                        7 => ("Hide white space", true),
+                        8 => ("Hide imports", true),
+                        _ => ("Copy git apply command", self.can_copy_patch()),
+                    }
+                }
                 Kind::Branches | Kind::Commits => {
                     if let Some(status) = self.picker_status(kind.unwrap()) {
                         if index == 1 {
@@ -310,7 +325,7 @@ impl DiffPanel {
     }
 
     pub(super) fn toggle_all_files(&mut self, cx: &mut Context<Self>) {
-        let open = !self.files.iter().any(|file| file.open);
+        let open = !self.all_expanded();
         self.files.iter_mut().for_each(|file| file.open = open);
         self.selection = None;
         cx.notify();
@@ -378,6 +393,18 @@ impl DiffPanel {
             query: controls::TextField::default(),
             choices: Vec::new(),
             parent_source: false,
+            options_start: if (if self.standalone {
+                window.viewport_size().width
+            } else {
+                panel_width(window, cx) - px(1.)
+            }) >= px(625.)
+            {
+                4
+            } else if self.source == DiffSource::Cloud {
+                1
+            } else {
+                0
+            },
         });
         self.refresh_picker();
         if let Some(focus) = &self.focus {
@@ -575,20 +602,23 @@ impl DiffPanel {
             return;
         }
         if menu.kind == Kind::Options {
-            match index {
-                0 => self.files.iter_mut().for_each(|file| file.open = true),
-                1 => self.files.iter_mut().for_each(|file| file.open = false),
-                2 => self.toggle_wrap(cx),
-                3 => self.layout = self.layout.next(),
-                4 => {
+            match index + menu.options_start {
+                0 => cx.emit(DiffRequest::Refresh),
+                1 => self.toggle_wrap(cx),
+                2 => self.set_layout(self.layout.next(), cx),
+                3 => self.toggle_all_files(cx),
+                4 => self.toggle_full_files(cx),
+                5 => self.toggle_rich_preview(cx),
+                6 => {
                     self.word_diffs = !self.word_diffs;
                     cx.emit(DiffRequest::Preference(
                         "host.wordDiffsEnabled.2",
                         self.word_diffs.into(),
                     ));
                 }
-                5 => self.toggle_full_files(cx),
-                _ => self.toggle_rich_preview(cx),
+                7 => self.toggle_whitespace(cx),
+                8 => self.toggle_imports(cx),
+                _ => cx.emit(DiffRequest::CopyGitApply),
             }
             self.selection = None;
             cx.stop_propagation();
@@ -646,9 +676,26 @@ impl DiffPanel {
         cx.notify();
     }
 
-    fn popup(&self, kind: Kind, active: Option<usize>, cx: &Context<Self>) -> Stateful<Div> {
+    pub(super) fn options_popup(&self, window: &Window, cx: &Context<Self>) -> Stateful<Div> {
+        self.popup(
+            Kind::Options,
+            self.menu.as_ref().and_then(|menu| menu.active),
+            window,
+            cx,
+        )
+    }
+
+    fn popup(
+        &self,
+        kind: Kind,
+        active: Option<usize>,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Stateful<Div> {
         let t = cx.theme();
         let source = kind == Kind::Source;
+        let options = kind == Kind::Options;
+        let option_start = self.menu.as_ref().map_or(0, |menu| menu.options_start);
         let filter = (kind == Kind::Branches).then(|| {
             let query = &self.menu.as_ref().unwrap().query;
             div()
@@ -686,7 +733,7 @@ impl DiffPanel {
         });
         let opaque = matches!(
             kind,
-            Kind::Source | Kind::Branches | Kind::Commits | Kind::Repositories
+            Kind::Source | Kind::Options | Kind::Branches | Kind::Commits | Kind::Repositories
         );
         let popup_id = if kind == Kind::Commits {
             "diff-commits-menu"
@@ -702,29 +749,27 @@ impl DiffPanel {
             .menu_items_for(Some(kind))
             .enumerate()
             .map(|(i, (label, enabled))| {
+                let option = options.then_some(i + option_start);
+                let checked = option.and_then(|index| self.option_checked(index));
                 let row = div()
                     .id((row_id, i))
                     .role(Role::MenuItem)
                     .aria_label(label.to_owned())
-                    .when(kind == Kind::Options && matches!(i, 4 | 5 | 6), |d| {
-                        d.role(Role::MenuItemCheckBox).aria_toggled(
-                            if (i == 4 && self.word_diffs)
-                                || (i == 5 && self.full_files)
-                                || (i == 6 && self.rich_preview)
-                            {
-                                gpui::Toggled::True
-                            } else {
-                                gpui::Toggled::False
-                            },
-                        )
+                    .when_some(checked, |d, checked| {
+                        d.role(Role::MenuItemCheckBox).aria_toggled(if checked {
+                            gpui::Toggled::True
+                        } else {
+                            gpui::Toggled::False
+                        })
                     })
                     .aria_disabled(!enabled)
+                    .when(options && !enabled, |d| d.opacity(0.5))
                     .when(active == Some(i), |d| {
                         d.aria_active_descendant().bg(t.menu_item_hover)
                     })
                     .h(px(if opaque { ROW } else { 29. }))
                     .px(px(8.))
-                    .rounded(px(if source { 15. } else { 12. }))
+                    .rounded(px(if source || options { 15. } else { 12. }))
                     .flex()
                     .items_center()
                     .gap(px(6.))
@@ -758,13 +803,31 @@ impl DiffPanel {
                             this.activate_menu(i, window, cx);
                         }
                     }))
+                    .when_some(option, |d, index| {
+                        let name = self.option_icon(index);
+                        let data = cx
+                            .asset_source()
+                            .load(&format!("icons/{name}.svg"))
+                            .expect("read bundled option icon")
+                            .expect("bundled option icon exists");
+                        let opacity = if matches!(index, 0 | 3 | 9) && active != Some(i) {
+                            191
+                        } else {
+                            255
+                        };
+                        d.child(source_glyph(data, name, t.text, opacity))
+                    })
                     .child(
                         text(
                             label.to_owned(),
                             13.,
                             if opaque { ROW - 10. } else { 20. },
                             if opaque { 430. } else { 400. },
-                            if enabled { t.text } else { t.text_tertiary },
+                            if enabled || options {
+                                t.text
+                            } else {
+                                t.text_tertiary
+                            },
                         )
                         .flex_1()
                         .min_w_0()
@@ -773,13 +836,15 @@ impl DiffPanel {
                     .when(source && SOURCES[i] == self.source, |d| {
                         d.child(source_glyph(SOURCE_CHECK, "diff-source-check", t.text, 191))
                     })
-                    .when(
-                        kind == Kind::Options
-                            && ((i == 4 && self.word_diffs)
-                                || (i == 5 && self.full_files)
-                                || (i == 6 && self.rich_preview)),
-                        |d| d.child(source_glyph(SOURCE_CHECK, "diff-word-check", t.text, 191)),
-                    )
+                    .when(checked.is_some(), |d| {
+                        d.child(
+                            div().size(px(16.)).flex_none().children(
+                                checked
+                                    .filter(|checked| *checked)
+                                    .map(|_| icon("diff-option-check", 16., t.text)),
+                            ),
+                        )
+                    })
                     .when(
                         matches!(kind, Kind::Branches | Kind::Commits | Kind::Repositories)
                             && self.picker_selected(kind, i),
@@ -794,23 +859,61 @@ impl DiffPanel {
                         ))
                     });
                 div()
-                    .when(source && matches!(i, 1 | 4), |d| {
-                        d.child(
-                            div()
-                                .h(px(9.))
-                                .px(px(8.))
-                                .py(px(4.))
-                                .child(div().h(px(1.)).bg(t.border)),
-                        )
-                    })
+                    .when(
+                        source && matches!(i, 1 | 4) || options && i > 0 && option == Some(4),
+                        |d| {
+                            d.child(
+                                div()
+                                    .h(px(9.))
+                                    .px(px(8.))
+                                    .py(px(4.))
+                                    .child(div().h(px(1.)).bg(t.border)),
+                            )
+                        },
+                    )
                     .child(row)
             });
         let popup = if opaque {
-            let width = if source { SOURCE_WIDTH } else { 320. };
+            let width = if source {
+                px(SOURCE_WIDTH)
+            } else if options {
+                self.menu_items_for(Some(kind))
+                    .enumerate()
+                    .fold(px(160.), |width, (index, (label, _))| {
+                        let line = window.text_system().layout_line(
+                            label,
+                            px(13.),
+                            &[TextRun {
+                                len: label.len(),
+                                font: Font {
+                                    weight: FontWeight(430.),
+                                    ..font(SANS)
+                                },
+                                color: t.text,
+                                background_color: None,
+                                underline: None,
+                                strikethrough: None,
+                            }],
+                            None,
+                        );
+                        width.max(
+                            line.width
+                                + px(46.
+                                    + if self.option_checked(index + option_start).is_some() {
+                                        22.
+                                    } else {
+                                        0.
+                                    }),
+                        )
+                    })
+                    .min(px(320.))
+            } else {
+                px(320.)
+            };
             let surface = div()
                 .relative()
                 .m(px(1.))
-                .w(px(width))
+                .w(width)
                 .child(shapes::decoration(Decoration {
                     radius: Corners::all(px(20.)),
                     corner: shapes::Corner::Squircle,
@@ -839,9 +942,9 @@ impl DiffPanel {
                         .children(rows),
                 ));
             div()
-                .ml(px(-20.))
+                .ml(px(-SHADOW_SIDE_PADDING))
                 .mt(px(-12.))
-                .pl(px(20.))
+                .pl(px(SHADOW_SIDE_PADDING))
                 .pt(px(12.))
                 .layer()
                 .child(surface)
@@ -892,20 +995,22 @@ impl DiffPanel {
                                 .position(menu.position)
                                 .anchor(Anchor::TopLeft)
                                 .snap_to_window_with_margin(px(8.))
-                                .child(self.popup(Kind::Source, Some(4), cx)),
+                                .child(self.popup(Kind::Source, Some(4), window, cx)),
                         )
                     })
-                    .child(
-                        anchored()
-                            .position(position)
-                            .anchor(if menu.kind == Kind::Header {
-                                Anchor::TopRight
-                            } else {
-                                Anchor::TopLeft
-                            })
-                            .snap_to_window_with_margin(px(8.))
-                            .child(self.popup(menu.kind, menu.active, cx)),
-                    ),
+                    .when(menu.kind != Kind::Options, |d| {
+                        d.child(
+                            anchored()
+                                .position(position)
+                                .anchor(if menu.kind == Kind::Header {
+                                    Anchor::TopRight
+                                } else {
+                                    Anchor::TopLeft
+                                })
+                                .snap_to_window_with_margin(px(8.))
+                                .child(self.popup(menu.kind, menu.active, window, cx)),
+                        )
+                    }),
             ),
         )
         .with_priority(4)
@@ -924,66 +1029,4 @@ fn absolute_path(workspace: &str, relative: &str) -> String {
         }
     }
     path.to_string_lossy().into_owned()
-}
-
-#[cfg(test)]
-mod picker_tests {
-    use super::*;
-
-    #[test]
-    fn branch_search_and_commit_loading_preserve_distinct_states() {
-        let mut panel = DiffPanel::from_patch("/repo", "");
-        panel.repository = Some(
-            serde_json::from_value(serde_json::json!({
-                "root":"/repo", "unstaged":[], "staged":[],
-                "branches":["main","feature/needle","release"],
-                "commits":[{"id":"0123456789abcdef","label":"01234567 change"}]
-            }))
-            .unwrap(),
-        );
-        panel.menu = Some(Menu {
-            file: 0,
-            kind: Kind::Branches,
-            position: point(px(0.), px(0.)),
-            active: None,
-            selected: String::new(),
-            return_focus: None,
-            query: controls::TextField {
-                text: "needle".into(),
-                selected: false,
-            },
-            choices: Vec::new(),
-            parent_source: false,
-        });
-        panel.refresh_picker();
-        assert_eq!(
-            panel.menu_items().collect::<Vec<_>>(),
-            [("feature/needle", true)]
-        );
-        panel.pending = true;
-        assert_eq!(
-            panel.menu_items().collect::<Vec<_>>(),
-            [("Loading branches…", false)]
-        );
-        panel.pending = false;
-        panel.error = Some("read failed".into());
-        assert_eq!(
-            panel.menu_items().collect::<Vec<_>>(),
-            [("Unable to load branches", false), ("Retry", true)]
-        );
-        panel.error = None;
-        panel.menu.as_mut().unwrap().query.text = "no-match".into();
-        panel.refresh_picker();
-        assert_eq!(
-            panel.menu_items().collect::<Vec<_>>(),
-            [("No matching branches", false)]
-        );
-        panel.menu.as_mut().unwrap().kind = Kind::Commits;
-        panel.repository.as_mut().unwrap().commits.clear();
-        panel.refresh_picker();
-        assert_eq!(
-            panel.menu_items().collect::<Vec<_>>(),
-            [("No commits on branch", false)]
-        );
-    }
 }

@@ -6,6 +6,7 @@
 pub mod computer_use_requests;
 mod diff_comments;
 mod diff_content;
+mod diff_options;
 mod diff_preview;
 mod diff_repositories;
 pub use diff_content::bind_standalone_diff;
@@ -1137,6 +1138,7 @@ impl Root {
             | DiffRequest::OpenTab(_)
             | DiffRequest::SourceChanged
             | DiffRequest::Notice(_)
+            | DiffRequest::CopyGitApply
             | DiffRequest::LoadFullFile(_)
             | DiffRequest::LoadPreview(_)
             | DiffRequest::CommentsChanged(_)
@@ -2822,6 +2824,7 @@ impl Root {
                 DiffRequest::SourceChanged => this.sync_diff_watch(cx),
                 DiffRequest::Notice(text) => this.toast(Toast::info(*text), cx),
                 DiffRequest::Refresh => this.refresh_diff(panel.clone(), &cwd, cx),
+                DiffRequest::CopyGitApply => this.copy_diff_patch(panel.clone(), cx),
                 DiffRequest::OpenTab(path) => this.open_file(
                     &OpenFile {
                         path: path.clone(),

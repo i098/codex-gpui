@@ -70,6 +70,11 @@ pub mod comments;
 mod repositories;
 pub use repositories::ReviewRepository;
 
+#[path = "diff/imports.rs"]
+mod imports;
+#[path = "diff/options.rs"]
+mod options;
+
 /// Panel width the capture had stored (`app-shell:right-panel-width:v3`) before clamping.
 const STORED_WIDTH: f32 = 664.17;
 /// Room the chat keeps beside the panel (`unified` layout), also the panel's minimum.
@@ -164,6 +169,7 @@ pub struct FileDiff {
     full_error: Option<FullError>,
     full_loading: bool,
     original_hunks: Option<Vec<Hunk>>,
+    imports: Option<imports::ImportFilter>,
     pending_expansion: Option<(usize, content::Expand)>,
     preview: Option<preview::Preview>,
 }
@@ -223,6 +229,7 @@ pub enum DiffRequest {
     OpenTab(String),
     SourceChanged,
     Notice(&'static str),
+    CopyGitApply,
     LoadFullFile(FullFileRequest),
     LoadPreview(PreviewRequest),
     Preference(&'static str, serde_json::Value),
@@ -263,6 +270,8 @@ pub struct RepositoryChanges {
     pub before_ref: Option<String>,
     #[serde(default)]
     pub after_ref: Option<String>,
+    #[serde(default, rename = "hideWhitespace")]
+    pub hide_whitespace: bool,
     #[serde(default)]
     pub not_repository: bool,
 }
@@ -314,6 +323,8 @@ pub struct DiffPanel {
     repositories: Vec<ReviewRepository>,
     selected_repository: Option<String>,
     word_diffs: bool,
+    hide_whitespace: bool,
+    hide_imports: bool,
     jump: Option<navigation::JumpToFile>,
     watch_limited: bool,
     last_turn_state: Option<LastTurnState>,
@@ -395,6 +406,7 @@ impl DiffPanel {
                     full_error: None,
                     full_loading: false,
                     original_hunks: None,
+                    imports: None,
                     pending_expansion: None,
                     preview: None,
                 }),
@@ -426,6 +438,8 @@ impl DiffPanel {
             error: None,
             layout: DiffLayout::Auto,
             word_diffs: true,
+            hide_whitespace: false,
+            hide_imports: false,
             show_tree: false,
             active_file: 0,
             filter: Default::default(),
@@ -459,7 +473,7 @@ impl DiffPanel {
     }
 
     pub fn review_params(&self) -> serde_json::Value {
-        serde_json::json!({"cwd": self.working_directory(), "reviewSource": self.source.key(), "baseBranch": self.base_branch, "commit": self.commit})
+        serde_json::json!({"cwd": self.working_directory(), "reviewSource": self.source.key(), "baseBranch": self.base_branch, "commit": self.commit, "hideWhitespace": self.hide_whitespace})
     }
 
     fn actionable_files(&self) -> &[RepositoryFile] {
@@ -565,6 +579,9 @@ impl DiffPanel {
         cx: &mut Context<Self>,
     ) {
         self.pending = false;
+        let refresh = result.as_ref().is_ok_and(|repository| {
+            !repository.not_repository && repository.hide_whitespace != self.hide_whitespace
+        });
         match result {
             Ok(repository) => {
                 self.base_branch = repository.base_branch.clone().or(self.base_branch.take());
@@ -580,6 +597,9 @@ impl DiffPanel {
             self.show_repository();
         }
         self.refresh_picker();
+        if refresh && !matches!(self.source, DiffSource::LastTurn | DiffSource::Cloud) {
+            cx.emit(DiffRequest::Refresh);
+        }
         cx.notify();
     }
 
@@ -743,6 +763,7 @@ impl DiffPanel {
                 file.open = old.open;
                 if file.raw == old.raw {
                     file.full = old.full.take();
+                    file.imports = old.imports.take();
                     file.full_error = old.full_error.take();
                     file.original_hunks = old.original_hunks.take();
                     if file.original_hunks.is_some() {
@@ -765,7 +786,7 @@ impl DiffPanel {
         {
             self.menu = None;
         }
-        self.search_changed();
+        self.refresh_filtered_view();
     }
 
     fn search_changed(&mut self) {
@@ -774,16 +795,26 @@ impl DiffPanel {
         self.match_total = 0;
         for file in &mut self.files {
             let before = self.matches;
-            for line in file.hunks.iter_mut().flat_map(|h| &mut h.lines) {
-                line.match_start = self.matches;
-                let (matches, total) = crate::screens::thread::view::find_ranges(
-                    &line.text,
-                    &query,
-                    250 - self.matches,
-                );
-                line.matches = matches;
-                self.matches += line.matches.len();
-                self.match_total += total;
+            for (index, hunk) in file.hunks.iter_mut().enumerate() {
+                let hidden = file
+                    .imports
+                    .as_ref()
+                    .is_some_and(|filter| filter.hidden.get(index) == Some(&true));
+                for line in &mut hunk.lines {
+                    line.match_start = self.matches;
+                    if hidden {
+                        line.matches.clear();
+                        continue;
+                    }
+                    let (matches, total) = crate::screens::thread::view::find_ranges(
+                        &line.text,
+                        &query,
+                        250 - self.matches,
+                    );
+                    line.matches = matches;
+                    self.matches += line.matches.len();
+                    self.match_total += total;
+                }
             }
             if self.matches > before {
                 file.open = true;
@@ -803,8 +834,7 @@ impl DiffPanel {
         for (i, line) in self
             .files
             .iter()
-            .flat_map(|f| &f.hunks)
-            .flat_map(|h| &h.lines)
+            .flat_map(|file| file.visible_hunks().flat_map(|(_, hunk)| &hunk.lines))
             .enumerate()
         {
             if i < start.0 || i > end.0 {
@@ -996,7 +1026,14 @@ impl DiffPanel {
         .with_priority(3)
     }
 
-    fn header(&self, t: &Theme, wide: bool, clamped: bool, cx: &Context<Self>) -> Div {
+    fn header(
+        &self,
+        t: &Theme,
+        wide: bool,
+        clamped: bool,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
         let added = self.files.iter().map(|f| f.added).sum();
         let removed = self.files.iter().map(|f| f.removed).sum();
         let tool = |name| round_icon(name, 28., t);
@@ -1053,7 +1090,7 @@ impl DiffPanel {
                             })
                             .aria_expanded(source_open)
                             .when(self.source != DiffSource::Cloud, |d| {
-                                d.focusable().cursor_pointer().on_click(cx.listener(
+                                d.tab_index(0).cursor_pointer().on_click(cx.listener(
                                     |this, event: &ClickEvent, window, cx| {
                                         this.open_menu(
                                             0,
@@ -1086,9 +1123,10 @@ impl DiffPanel {
                     .child(
                         tool("diff-more")
                             .id("diff-options")
+                            .relative()
                             .role(gpui::Role::Button)
                             .aria_label("Changes options")
-                            .focusable()
+                            .tab_index(0)
                             .cursor_pointer()
                             .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
                                 this.open_menu(
@@ -1113,14 +1151,36 @@ impl DiffPanel {
                                     );
                                     cx.stop_propagation();
                                 }
-                            })),
+                            }))
+                            .when(
+                                self.menu
+                                    .as_ref()
+                                    .is_some_and(|menu| menu.kind == menu::Kind::Options),
+                                |button| {
+                                    button.child(
+                                        deferred(
+                                            div().absolute().top_0().right_0().child(
+                                                gpui::anchored()
+                                                    .anchor(gpui::Anchor::TopRight)
+                                                    .offset(gpui::point(
+                                                        px(menu::SHADOW_SIDE_PADDING),
+                                                        px(29.),
+                                                    ))
+                                                    .snap_to_window_with_margin(px(8.))
+                                                    .child(self.options_popup(window, cx)),
+                                            ),
+                                        )
+                                        .with_priority(5),
+                                    )
+                                },
+                            ),
                     )
                     .child(
                         tool("diff-jump-to-file")
                             .id("diff-jump")
                             .role(gpui::Role::Button)
                             .aria_label("Jump to file")
-                            .focusable()
+                            .tab_index(0)
                             .cursor_pointer()
                             .on_click(cx.listener(|this, _, window, cx| this.open_jump(window, cx)))
                             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
@@ -1142,9 +1202,7 @@ impl DiffPanel {
                                             .id("diff-refresh")
                                             .cursor_pointer()
                                             .on_click(cx.listener(|this, _, _, cx| {
-                                                if this.source != DiffSource::LastTurn
-                                                    && !this.pending
-                                                {
+                                                if !this.pending {
                                                     cx.emit(DiffRequest::Refresh);
                                                 }
                                             })),
@@ -1160,7 +1218,7 @@ impl DiffPanel {
                                         } else {
                                             gpui::Toggled::False
                                         })
-                                        .focusable()
+                                        .tab_index(0)
                                         .cursor_pointer()
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.toggle_wrap(cx);
@@ -1180,30 +1238,34 @@ impl DiffPanel {
                                         )),
                                 )
                                 .child(
-                                    tool("diff-load-full-files")
-                                        .id("diff-expand-all")
-                                        .role(gpui::Role::Button)
-                                        .aria_label(if self.files.iter().any(|file| file.open) {
-                                            "Collapse all diffs"
-                                        } else {
-                                            "Expand all diffs"
-                                        })
-                                        .focusable()
-                                        .cursor_pointer()
-                                        .on_click(
-                                            cx.listener(|this, _, _, cx| this.toggle_all_files(cx)),
-                                        )
-                                        .on_key_down(cx.listener(
-                                            |this, event: &KeyDownEvent, _, cx| {
-                                                if matches!(
-                                                    event.keystroke.key.as_str(),
-                                                    "enter" | "space"
-                                                ) {
-                                                    this.toggle_all_files(cx);
-                                                    cx.stop_propagation();
-                                                }
-                                            },
-                                        )),
+                                    tool(if self.all_expanded() {
+                                        "diff-collapse-all"
+                                    } else {
+                                        "diff-expand-all"
+                                    })
+                                    .id("diff-expand-all")
+                                    .role(gpui::Role::Button)
+                                    .aria_label(if self.all_expanded() {
+                                        "Collapse all diffs"
+                                    } else {
+                                        "Expand all diffs"
+                                    })
+                                    .tab_index(0)
+                                    .cursor_pointer()
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.toggle_all_files(cx)),
+                                    )
+                                    .on_key_down(cx.listener(
+                                        |this, event: &KeyDownEvent, _, cx| {
+                                            if matches!(
+                                                event.keystroke.key.as_str(),
+                                                "enter" | "space"
+                                            ) {
+                                                this.toggle_all_files(cx);
+                                                cx.stop_propagation();
+                                            }
+                                        },
+                                    )),
                                 )
                                 .child(self.layout_button(t, cx)),
                         )
@@ -1318,7 +1380,7 @@ impl Render for DiffPanel {
                         } else if file.open && file.problem.is_some() {
                             d.child(self.file_placeholder(i, file, &t, cx))
                         } else if file.open {
-                            d.children(file.hunks.iter().enumerate().map(|(index, h)| {
+                            d.children(file.visible_hunks().map(|(index, h)| {
                                 let controls = matches!(
                                     self.source,
                                     DiffSource::Unstaged | DiffSource::Staged
@@ -1404,7 +1466,10 @@ impl Render for DiffPanel {
                         } else {
                             line_index.set(
                                 line_index.get()
-                                    + file.hunks.iter().map(|h| h.lines.len()).sum::<usize>(),
+                                    + file
+                                        .visible_hunks()
+                                        .map(|(_, hunk)| hunk.lines.len())
+                                        .sum::<usize>(),
                             );
                             d
                         }
@@ -1495,6 +1560,9 @@ impl Render for DiffPanel {
                 {
                     this.filter.selected = true;
                     cx.notify();
+                } else if this.query.is_some() {
+                    this.selected_query = true;
+                    cx.notify();
                 } else {
                     cx.propagate();
                 }
@@ -1534,7 +1602,7 @@ impl Render for DiffPanel {
                     .child(if self.standalone {
                         self.standalone_header(&t, cx)
                     } else {
-                        self.header(&t, wide, panel_clamped(window, cx), cx)
+                        self.header(&t, wide, panel_clamped(window, cx), window, cx)
                     }),
             )
             .children(status)

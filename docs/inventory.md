@@ -232,7 +232,7 @@ Chunks: thread-side-panel-tab-content-e9ce64182d53.js (`ReviewThreadSidePanelTab
 
 ### 8.1 Component outline
 
-- Header (`Changes controls`): source selector (`Uncommitted`, `Staged`, `Unstaged`, `Last Turn`, `Branch`, `Committed`, `Cloud changes`), `Show files` / `Hide files`, `Refresh`, `Changes options` (`Copy git apply command`, `Expand all diffs`, `Collapse all diffs`, `Load full files`, `Word wrap`, `Hide white space`, `Word diffs`, `Rich preview`).
+- Header (`Changes controls`): source selector (`Uncommitted`, `Staged`, `Unstaged`, `Last Turn`, `Branch`, `Committed`, `Cloud changes`), `Show files` / `Hide files`, `Refresh`, `Changes options` (`Refresh`, `Word wrap`, diff layout, `Expand all diffs` / `Collapse all diffs`, `Load full files`, `Rich preview`, `Word diffs`, `Hide white space`, `Hide imports`, `Copy git apply command`).
 - File tree pane: filter `Filter files…`, `Filter changed files`, `Filter generated files`, context menu `Copy path`, `Open in {target}`, `Open with`.
 - Diff list: per file header (`File actions`: `Copy path`, `Open in editor`, `Collapse file` / `Expand file`), `Mark as viewed`, hunks with `Revert`, `Stage` / `Unstage`.
 - Large diff mode: `This diff is large, showing one file at a time` with `Previous file` / `Next file`.
@@ -243,6 +243,9 @@ Chunks: thread-side-panel-tab-content-e9ce64182d53.js (`ReviewThreadSidePanelTab
 - Native comment controls expose tab stops. Tab moves from a new comment editor to `Cancel`, then `Comment`; empty submission controls do not receive focus.
 - Repository choices use the current project's roots and worktrees owned by the thread. `All repos` labels Last Turn mode, not a menu item.
 - The branch picker filters names. The commit picker and repository picker load data from the selected repository.
+- Wide review headers show refresh, wrap, layout, and expand controls outside the options menu.
+- Import filtering hides only complete, unannotated import-only hunks. It preserves new files, deleted files, and public Rust imports.
+- The import filter supports JavaScript, TypeScript, TSX, Python, Rust, Go, and Java up to 1,000,000 bytes per file.
 
 ### 8.2 States
 
