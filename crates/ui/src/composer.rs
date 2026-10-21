@@ -182,8 +182,6 @@ const REQUEST_FORM_CONTEXT: &str = "ComposerRequestForm";
 /// its `collapse=sm` labels (permissions) and its `collapse=xs` labels (model and effort).
 const SM_WIDTH: f32 = 440.;
 const XS_WIDTH: f32 = 300.;
-/// Narrowest card (CSS px) that keeps the model picker next to both control groups.
-const MODEL_FIT_WIDTH: f32 = 181.;
 const FONT_SIZE: Pixels = px(14.);
 const LINE_HEIGHT: Pixels = px(20.);
 
