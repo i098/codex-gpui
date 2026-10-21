@@ -175,17 +175,32 @@ mod tests {
     fn insertions_and_deletions_keep_utf8_boundaries() {
         assert_eq!(
             changes("α = value", "α = new_value + value"),
-            (vec![], vec![5..17])
+            (vec![], std::iter::once(5..17).collect::<Vec<_>>())
         );
-        assert_eq!(changes("αβ", "αxβ"), (vec![], vec![2..3]));
+        assert_eq!(
+            changes("αβ", "αxβ"),
+            (vec![], std::iter::once(2..3).collect::<Vec<_>>())
+        );
         assert_eq!(changes("same", "same"), (vec![], vec![]));
-        assert_eq!(changes("", "🙂"), (vec![], vec![0..4]));
-        assert_eq!(changes("🙂", ""), (vec![0..4], vec![]));
+        assert_eq!(
+            changes("", "🙂"),
+            (vec![], std::iter::once(0..4).collect::<Vec<_>>())
+        );
+        assert_eq!(
+            changes("🙂", ""),
+            (std::iter::once(0..4).collect::<Vec<_>>(), vec![])
+        );
     }
 
     #[test]
     fn word_alt_joins_single_character_gaps_and_caps_long_lines() {
-        assert_eq!(changes("a+x", "b+y"), (vec![0..3], vec![0..3]));
+        assert_eq!(
+            changes("a+x", "b+y"),
+            (
+                std::iter::once(0..3).collect::<Vec<_>>(),
+                std::iter::once(0..3).collect::<Vec<_>>()
+            )
+        );
         assert_eq!(
             changes(&"a".repeat(1001), &"b".repeat(1001)),
             (vec![], vec![])

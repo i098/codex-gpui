@@ -131,10 +131,10 @@ fn comment_text(fx: &Fx) -> Option<String> {
 #[test]
 fn gutter_comments_keep_ranges_and_support_edit_cancel_delete_and_send() -> Result<()> {
     let (_repo, mut fx) = prepare(false)?;
-    fx.drag((697., 184.), (697., 292.), 6)?;
+    fx.drag((686., 194.4), (686., 302.4), 6)?;
     fx.shot()?
         .save(output()?.join("comment-range-selected.png"))?;
-    fx.click((671., 292.))?;
+    fx.click((704., 302.4))?;
     fx.wait("range comment editor", |fx| draft(fx))?;
     fx.type_text("Check the complete range.")?;
     fx.reference_shot()?
@@ -151,7 +151,7 @@ fn gutter_comments_keep_ranges_and_support_edit_cancel_delete_and_send() -> Resu
     });
     fx.reference_shot()?
         .save(output()?.join("comment-saved.png"))?;
-    fx.click((850., 365.))?;
+    fx.click((850., 375.4))?;
     fx.wait("edit comment", |fx| draft(fx))?;
     fx.keys("cmd-a")?;
     fx.type_text("Discard this edit.")?;
@@ -160,7 +160,7 @@ fn gutter_comments_keep_ranges_and_support_edit_cancel_delete_and_send() -> Resu
         !draft(&fx) && comment_text(&fx).as_deref() == Some("Check the complete range."),
         "Cancel changed the saved comment"
     );
-    fx.click((850., 365.))?;
+    fx.click((850., 375.4))?;
     fx.keys("cmd-a")?;
     fx.type_text("Check overflow.")?;
     fx.keys("tab tab tab enter")?;
@@ -169,12 +169,12 @@ fn gutter_comments_keep_ranges_and_support_edit_cancel_delete_and_send() -> Resu
     })?;
     fx.reference_shot()?
         .save(output()?.join("comment-edited.png"))?;
-    fx.click((850., 365.))?;
+    fx.click((850., 375.4))?;
     fx.keys("tab enter")?;
     fx.wait("deleted comment", |fx| comment_text(fx).is_none())?;
     fx.reference_shot()?
         .save(output()?.join("comment-deleted.png"))?;
-    fx.click((671., 205.))?;
+    fx.click((704., 215.4))?;
     fx.type_text("Use checked arithmetic.")?;
     fx.keys("tab tab enter")?;
     fx.wait("new comment", |fx| comment_text(fx).is_some())?;
@@ -211,7 +211,7 @@ fn model_comment_dismissal_uses_confirmation_and_persists() -> Result<()> {
     let (repo, mut fx) = prepare(true)?;
     fx.reference_shot()?
         .save(output()?.join("model-comment.png"))?;
-    fx.click((1195., 246.))?;
+    fx.click((1195., 256.4))?;
     fx.wait("dismiss confirmation", |fx| {
         fx.read(|root, _| root.diff_comment_confirmation().is_some())
     })?;
@@ -222,7 +222,7 @@ fn model_comment_dismissal_uses_confirmation_and_persists() -> Result<()> {
         fx.read(|root, _| root.diff_comment_confirmation().is_none()),
         "Escape did not cancel dismissal"
     );
-    fx.click((1195., 246.))?;
+    fx.click((1195., 256.4))?;
     fx.wait("dismiss confirmation again", |fx| {
         fx.read(|root, _| root.diff_comment_confirmation().is_some())
     })?;

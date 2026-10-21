@@ -582,13 +582,16 @@ The standalone entry reads a Git-style unified patch from disk without starting 
 Auto uses split layout only when both sides change and the file pane is at least 800 px wide.
 The file tree filter changes the tree, not the displayed code.
 The Word diffs option toggles separate changed-word spans without changing the patch or line counts.
+Find highlights use rounded inline boxes and keep the current match visible.
 The tokenizer follows the original word-alt joining rule and keeps UTF-8 boundaries.
 It skips word spans above 1,000 UTF-16 units per line or 2,000 changed lines per file.
 Diffs and file tabs cache syntax tokens from the installed Syntect grammars.
 The old and new sides keep separate multiline parser state.
+Python function declarations use the original declaration color.
 Binary, empty, and unchanged rename entries stay in the file list with their original placeholder labels.
 Git-quoted paths retain spaces, newlines, and UTF-8 bytes.
 The header and context menu share the same word-wrap state.
+Unmodified-line controls use the original 32-pixel context row.
 Jump to file filters with the existing path matcher and keeps files with the same name as separate results.
 Selecting a result opens that file and scrolls its header into view.
 File headers stay at the top of the viewport while their diff scrolls.

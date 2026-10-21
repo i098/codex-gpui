@@ -236,7 +236,7 @@ fn import_filter_preserves_code_and_annotated_imports() -> Result<()> {
     fx.keys("escape")?;
     fx.click((1192., 68.))?;
     choose(&mut fx, "Hide imports")?;
-    fx.click((671., 163.))?;
+    fx.click((704., 163.))?;
     fx.type_text("Keep this import visible.")?;
     fx.keys("tab tab enter")?;
     fx.click((1192., 68.))?;

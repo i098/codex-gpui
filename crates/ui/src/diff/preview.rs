@@ -378,17 +378,7 @@ impl DiffPanel {
             } else {
                 "No image"
             };
-            let body = if value.loading || value.content.is_none() {
-                text(
-                    label,
-                    if value.loading { 12. } else { 14. },
-                    20.,
-                    400.,
-                    t.text_secondary,
-                )
-                .into_any_element()
-            } else {
-                let content = value.content.as_ref().unwrap();
+            let body = if let (false, Some(content)) = (value.loading, value.content.as_ref()) {
                 let original = content.pixels.dimensions();
                 let image_width = if preview.pdf || preview.svg {
                     available
@@ -433,6 +423,15 @@ impl DiffPanel {
                     }))
                     .child(picture)
                     .into_any_element()
+            } else {
+                text(
+                    label,
+                    if value.loading { 12. } else { 14. },
+                    20.,
+                    400.,
+                    t.text_secondary,
+                )
+                .into_any_element()
             };
             let pages = value.content.as_ref().map_or(0, |content| content.pages);
             div()

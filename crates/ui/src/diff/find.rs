@@ -122,7 +122,22 @@ pub(crate) fn find_scope_buttons(query: &str, diffs: bool, t: &Theme) -> Div {
                 Box::new(FindInChat(query.to_string()))
             };
             let key_action = action.boxed_clone();
-            round_icon(icon, 24., t)
+            div()
+                .size(px(24.))
+                .mx(px(-2.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(10.))
+                .child(crate::icon(
+                    icon,
+                    16.,
+                    if diff == diffs {
+                        t.text
+                    } else {
+                        t.text_tertiary
+                    },
+                ))
                 .id(label)
                 .role(gpui::Role::Button)
                 .aria_label(label)
@@ -133,7 +148,7 @@ pub(crate) fn find_scope_buttons(query: &str, diffs: bool, t: &Theme) -> Div {
                 })
                 .focusable()
                 .cursor_pointer()
-                .when(diff == diffs, |d| d.bg(t.text_alpha_10))
+                .hover(|style| style.bg(t.text_alpha_10))
                 .on_click(move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx))
                 .on_key_down(move |event, window, cx| {
                     if matches!(event.keystroke.key.as_str(), "enter" | "space") {

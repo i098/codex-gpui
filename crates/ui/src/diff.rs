@@ -14,7 +14,7 @@ use gpui::{
     Action, AnyView, App, AppContext as _, ClickEvent, ClipboardItem, Context, Corners,
     CursorStyle, Div, Entity, FocusHandle, Font, FontFeatures, FontWeight, Global, HighlightStyle,
     Hsla, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
-    ParentElement, Pixels, Render, Rgba, ScrollHandle, SharedString, Stateful,
+    ParentElement, Pixels, Render, ScrollHandle, SharedString, Stateful,
     StatefulInteractiveElement, Styled, StyledText, TextRun, Window, black, combine_highlights,
     deferred, div, font, prelude::FluentBuilder as _, px, rgb,
 };
@@ -955,12 +955,19 @@ impl DiffPanel {
             },
             self.match_total
         );
-        let button = |id, name, label| {
-            round_icon(name, 28., t)
+        let button = |id, name, label, size, color| {
+            div()
+                .size(px(size))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(10.))
+                .child(icon(name, 16., color))
                 .id(id)
                 .role(gpui::Role::Button)
                 .aria_label(label)
                 .cursor_pointer()
+                .hover(|style| style.bg(t.text_alpha_10))
         };
         deferred(
             div()
@@ -968,11 +975,16 @@ impl DiffPanel {
                 .top(px(-36.))
                 .right(px(12.))
                 .w(px(340.))
-                .h(px(82.))
+                .h(px(81.))
                 .rounded(px(20.))
-                .border(px(0.5))
-                .border_color(t.border)
-                .bg(t.surface_secondary)
+                .p(px(0.5))
+                .child(shapes::decoration(Decoration {
+                    fill: Some(t.surface_secondary),
+                    border: Some((px(0.5), t.border)),
+                    radius: Corners::all(px(20.)),
+                    shadows: vec![shadow(black().opacity(0.12), 8., 16., -4., false)],
+                    ..Default::default()
+                }))
                 .flex()
                 .flex_col()
                 .font_family(SANS)
@@ -981,42 +993,62 @@ impl DiffPanel {
                         .h(px(44.))
                         .flex()
                         .items_center()
-                        .pl(px(16.))
-                        .pr(px(12.))
-                        .gap(px(8.))
-                        .child(icon("search", 16., t.text))
                         .child(
                             div()
-                                .id("diff-find-input")
                                 .flex_1()
-                                .cursor_text()
-                                .role(gpui::Role::TextInput)
-                                .aria_label("Find in diff")
-                                .aria_placeholder("Search diff…")
-                                .aria_value(query.to_owned())
-                                .aria_active_descendant()
-                                .child(text(
-                                    if query.is_empty() {
-                                        "Search diff…"
-                                    } else {
-                                        query
-                                    },
-                                    14.,
-                                    24.,
-                                    400.,
-                                    if query.is_empty() {
-                                        t.text_tertiary
-                                    } else {
-                                        t.text
-                                    },
-                                )),
+                                .min_w_0()
+                                .flex()
+                                .items_center()
+                                .pl(px(16.))
+                                .gap(px(8.))
+                                .child(icon("diff-find-search", 16., t.text))
+                                .child(
+                                    div()
+                                        .id("diff-find-input")
+                                        .flex_1()
+                                        .cursor_text()
+                                        .role(gpui::Role::TextInput)
+                                        .aria_label("Find in diff")
+                                        .aria_placeholder("Search diff…")
+                                        .aria_value(query.to_owned())
+                                        .aria_active_descendant()
+                                        .child(text(
+                                            if query.is_empty() {
+                                                "Search diff…"
+                                            } else {
+                                                query
+                                            },
+                                            14.,
+                                            24.,
+                                            430.,
+                                            if query.is_empty() {
+                                                t.text_tertiary
+                                            } else {
+                                                t.text
+                                            },
+                                        )),
+                                ),
                         )
                         .when(!self.standalone, |d| {
                             d.child(find_scope_buttons(query, true, t))
                         })
                         .child(
-                            button("diff-find-close", "close", "Close find")
-                                .on_click(cx.listener(|this, _, _, cx| this.close_find(cx))),
+                            div()
+                                .flex()
+                                .items_center()
+                                .pr(px(16.))
+                                .child(div().mx(px(8.)).w(px(1.)).h(px(16.)).bg(t.border))
+                                .child(
+                                    button(
+                                        "diff-find-close",
+                                        "diff-find-close",
+                                        "Close find",
+                                        24.,
+                                        t.text,
+                                    )
+                                    .mx(px(-2.))
+                                    .on_click(cx.listener(|this, _, _, cx| this.close_find(cx))),
+                                ),
                         ),
                 )
                 .child(
@@ -1024,24 +1056,40 @@ impl DiffPanel {
                         .flex_1()
                         .flex()
                         .items_center()
-                        .px(px(8.))
+                        .px(px(16.))
+                        .gap(px(12.))
                         .border_t_1()
                         .border_color(t.border)
                         .child(
-                            button("diff-find-previous", "composer-arrow-up", "Previous result")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.next_find(true, cx);
-                                })),
+                            button(
+                                "diff-find-previous",
+                                "diff-find-previous",
+                                "Previous result",
+                                16.,
+                                t.text_tertiary,
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.next_find(true, cx);
+                            })),
                         )
                         .child(
-                            button("diff-find-next", "diff-chevron-down", "Next result").on_click(
-                                cx.listener(|this, _, _, cx| {
-                                    this.next_find(false, cx);
-                                }),
-                            ),
+                            button(
+                                "diff-find-next",
+                                "diff-find-next",
+                                "Next result",
+                                16.,
+                                t.text_tertiary,
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.next_find(false, cx);
+                            })),
                         )
                         .child(div().flex_1())
-                        .child(text(count, 12., 20., 400., t.text_tertiary).mr(px(8.))),
+                        .child(
+                            text(count, 14., 24., 430., t.text_tertiary)
+                                .self_start()
+                                .mt(px(7.)),
+                        ),
                 ),
         )
         .with_priority(3)
@@ -1476,7 +1524,6 @@ impl Render for DiffPanel {
                                     .child(hunk(
                                         h,
                                         (i, index),
-                                        &t,
                                         &line_index,
                                         self,
                                         self.layout.split(file, code_width),
@@ -2692,19 +2739,6 @@ fn file_header(
         )
 }
 
-/// `color-mix(in srgb, a (1 - w), b w)`.
-fn mix(a: Hsla, b: Hsla, w: f32) -> Hsla {
-    let (a, b) = (Rgba::from(a), Rgba::from(b));
-    let m = |x: f32, y: f32| x + (y - x) * w;
-    Rgba {
-        r: m(a.r, b.r),
-        g: m(a.g, b.g),
-        b: m(a.b, b.b),
-        a: 1.,
-    }
-    .into()
-}
-
 fn line_colors(kind: Kind, t: &Theme) -> (Hsla, Hsla, Hsla) {
     let color = |dark, light| {
         rgb(if t.appearance == Appearance::Dark {
@@ -2729,76 +2763,70 @@ fn line_colors(kind: Kind, t: &Theme) -> (Hsla, Hsla, Hsla) {
     }
 }
 
-fn word_mark(
+fn range_mark(
     line: &Line,
     range: Range<usize>,
     layout: gpui::TextLayout,
-    t: &Theme,
-) -> Option<gpui::AnyElement> {
+    color: Hsla,
+    radius: f32,
+) -> gpui::AnyElement {
     let text = line.text.clone();
-    let color = if line.kind == Kind::Added {
-        t.git_added
-    } else {
-        t.git_deleted
-    };
-    Some(
-        gpui::canvas(
-            |_, _, _| {},
-            move |_, (), window, cx| {
-                let Some(mut start) = layout.position_for_index(range.start) else {
-                    return;
+    gpui::canvas(
+        |_, _, _| {},
+        move |_, (), window, cx| {
+            let Some(mut start) = layout.position_for_index(range.start) else {
+                return;
+            };
+            let mut end = start;
+            let decoration = Decoration {
+                radius: Corners::all(px(radius)),
+                fill: Some(color),
+                ..Default::default()
+            };
+            let paint =
+                |start: gpui::Point<Pixels>, end: gpui::Point<Pixels>, window: &mut Window| {
+                    shapes::paint(
+                        &decoration,
+                        None,
+                        gpui::Bounds::new(
+                            start + gpui::point(px(0.), px(3.5)),
+                            gpui::size(end.x - start.x, px(14.)),
+                        ),
+                        window,
+                        cx,
+                    );
                 };
-                let mut end = start;
-                let decoration = Decoration {
-                    radius: Corners::all(px(3.)),
-                    fill: Some(color.opacity(0.2)),
-                    ..Default::default()
+            for (offset, ch) in text[range.clone()].char_indices() {
+                let Some(here) = layout.position_for_index(range.start + offset) else {
+                    continue;
                 };
-                let paint =
-                    |start: gpui::Point<Pixels>, end: gpui::Point<Pixels>, window: &mut Window| {
-                        shapes::paint(
-                            &decoration,
-                            None,
-                            gpui::Bounds::new(
-                                start + gpui::point(px(0.), px(3.5)),
-                                gpui::size(end.x - start.x, px(14.)),
-                            ),
-                            window,
-                            cx,
-                        );
-                    };
-                for (offset, ch) in text[range.clone()].char_indices() {
-                    let Some(here) = layout.position_for_index(range.start + offset) else {
-                        continue;
-                    };
-                    if here.y != start.y {
-                        paint(start, end, window);
-                        start = here;
-                    }
-                    let next = layout.position_for_index(range.start + offset + ch.len_utf8());
-                    end = next
-                        .filter(|p| p.y == here.y)
-                        .unwrap_or(here + gpui::point(px(CH), px(0.)));
+                if here.y != start.y {
+                    paint(start, end, window);
+                    start = here;
                 }
-                paint(start, end, window);
-            },
-        )
-        .absolute()
-        .size_full()
-        .into_any_element(),
+                let next = layout.position_for_index(range.start + offset + ch.len_utf8());
+                end = next
+                    .filter(|p| p.y == here.y)
+                    .unwrap_or(here + gpui::point(px(CH), px(0.)));
+            }
+            paint(start, end, window);
+        },
     )
+    .absolute()
+    .size_full()
+    .into_any_element()
 }
 
 fn hunk(
     h: &Hunk,
     location: (usize, usize),
-    t: &Theme,
     line_index: &Cell<usize>,
     panel: &DiffPanel,
     split: bool,
     window: &Window,
     cx: &Context<DiffPanel>,
 ) -> Div {
+    let t = cx.theme();
     let digits = h
         .lines
         .iter()
@@ -2878,7 +2906,6 @@ fn hunk(
                     .child(content),
             )
     };
-    let separator = mix(t.surface, t.info_solid, 0.06);
     let render_line = |l: &Line, index: usize, number: u32, side: comments::Side| {
         let (mut number_bg, bg, number_fg) = line_colors(l.kind, t);
         if panel.comment_selection_contains(location.0, side, number)
@@ -2888,20 +2915,11 @@ fn hunk(
         {
             number_bg = over(t.text_selection, number_bg);
         }
-        let found = l.matches.iter().enumerate().map(|(ordinal, range)| {
-            let index = l.match_start + ordinal;
+        let found = l.matches.iter().map(|range| {
             (
                 range.clone(),
                 HighlightStyle {
                     color: Some(t.text),
-                    background_color: Some(
-                        rgb(if index == panel.active_match {
-                            0xfb6a22
-                        } else {
-                            0xffd240
-                        })
-                        .into(),
-                    ),
                     ..Default::default()
                 },
             )
@@ -2949,11 +2967,32 @@ fn hunk(
         let down_layout = content.layout().clone();
         panel.find_scroll.track(l, panel.active_match, &down_layout);
         let move_layout = down_layout.clone();
+        let word_color = if l.kind == Kind::Added {
+            t.git_added
+        } else {
+            t.git_deleted
+        };
         let mark = l
             .word_changes
             .iter()
             .filter(|_| panel.word_diffs)
-            .filter_map(|range| word_mark(l, range.clone(), down_layout.clone(), t))
+            .map(|range| {
+                range_mark(
+                    l,
+                    range.clone(),
+                    down_layout.clone(),
+                    word_color.opacity(0.2),
+                    3.,
+                )
+            })
+            .chain(l.matches.iter().enumerate().map(|(ordinal, range)| {
+                let color = rgb(if l.match_start + ordinal == panel.active_match {
+                    0xfb6a22
+                } else {
+                    0xffd240
+                });
+                range_mark(l, range.clone(), down_layout.clone(), color.into(), 2.5)
+            }))
             .collect();
         let line = row(
             Some(number),
@@ -3040,26 +3079,7 @@ fn hunk(
             0x0d0d0d
         }))
         .when_some(h.separator.clone(), |d, label| {
-            let len = label.len();
-            d.child(panel.context_row(
-                row(
-                    None,
-                    (separator, t.text_tertiary),
-                    separator,
-                    StyledText::new(label).with_highlights([(
-                        0..len,
-                        HighlightStyle {
-                            color: Some(t.text_tertiary),
-                            ..Default::default()
-                        },
-                    )]),
-                    Vec::new(),
-                    None,
-                    None,
-                ),
-                location,
-                cx,
-            ))
+            d.child(panel.context_row(label, location, cx))
         })
         .map(|d| {
             if split {

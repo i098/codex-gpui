@@ -260,12 +260,19 @@ impl DiffPanel {
                         })),
                 )
                 .child(
-                    round_icon("plus", 20., t)
+                    div()
+                        .size(px(CODE_LINE))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(4.))
+                        .bg(t.text)
+                        .child(icon("diff-comment-add", 16., t.surface_secondary))
                         .id(SharedString::from(format!(
                             "comment-gutter-{file}-{side:?}-{line}"
                         )))
                         .absolute()
-                        .left(px(2.))
+                        .right(px(-2.))
                         .top_0()
                         .opacity(0.)
                         .group_hover("diff-comment-line", |d| d.opacity(1.))
@@ -274,6 +281,7 @@ impl DiffPanel {
                         .aria_label("Add a comment")
                         .tab_index(0)
                         .cursor_pointer()
+                        .hover(|style| style.bg(over(t.text.opacity(0.88), t.surface_secondary)))
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.open_comment(file, side, line, None, window, cx)
@@ -686,12 +694,8 @@ impl DiffPanel {
         {
             let editing = draft.editing.is_some();
             let enabled = !draft.editor.read(cx).field_text().trim().is_empty();
-            let title = if draft.position.start_line.is_some() {
-                format!(
-                    "Comment on lines {} to {}",
-                    draft.position.start_line.unwrap(),
-                    draft.position.line
-                )
+            let title = if let Some(start_line) = draft.position.start_line {
+                format!("Comment on lines {} to {}", start_line, draft.position.line)
             } else {
                 format!("Comment on line {}", draft.position.line)
             };

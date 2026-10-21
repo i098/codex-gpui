@@ -508,7 +508,7 @@ impl DiffPanel {
 
     pub(super) fn context_row(
         &self,
-        row: Div,
+        label: SharedString,
         location: (usize, usize),
         cx: &Context<Self>,
     ) -> gpui::AnyElement {
@@ -518,7 +518,45 @@ impl DiffPanel {
             .get(file)
             .is_some_and(|file| file.full_error != Some(FullError::Unavailable));
         let t = cx.theme();
-        row.id(SharedString::from(format!("diff-context-{file}-{hunk}")))
+        let background = rgb(if t.appearance == Appearance::Dark {
+            0x2f2f2f
+        } else {
+            0xf4f4f4
+        });
+        div()
+            .h(px(32.))
+            .w_full()
+            .px(px(8.))
+            .bg(t.surface)
+            .child(
+                div()
+                    .h_full()
+                    .w_full()
+                    .relative()
+                    .overflow_hidden()
+                    .flex()
+                    .items_center()
+                    .font_family(SANS)
+                    .px(px(7.624_2))
+                    .child(shapes::decoration(Decoration {
+                        fill: Some(background.into()),
+                        radius: Corners {
+                            top_left: px(6.),
+                            top_right: px(8.),
+                            bottom_right: px(8.),
+                            bottom_left: px(6.),
+                        },
+                        ..Default::default()
+                    }))
+                    .child(text(
+                        label,
+                        CODE_SIZE,
+                        CODE_LINE,
+                        430.,
+                        line_colors(Kind::Context, t).2,
+                    )),
+            )
+            .id(SharedString::from(format!("diff-context-{file}-{hunk}")))
             .group("diff-context-gap")
             .relative()
             .role(gpui::Role::Button)

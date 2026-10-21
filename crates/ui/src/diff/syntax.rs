@@ -65,7 +65,7 @@ static THEME: LazyLock<SyntaxTheme> = LazyLock::new(|| {
     },
     scopes: [
         ("keyword, storage", 1),
-        ("entity.name.function, entity.name.class, entity.name.type, storage.type.function.python, storage.type.class.python", 2),
+        ("entity.name.function, entity.name.class, entity.name.type, storage.type.function.python, keyword.declaration.function.python, storage.type.class.python", 2),
         ("string", 3),
         ("comment", 4),
         ("constant, support.function, support.type", 5),
@@ -181,6 +181,14 @@ mod tests {
                 .any(|(range, token)| *token == Token::Literal
                     && &value.text[range.clone()] == "true")
         );
+        let python = FileDiff::patch(
+            "math.py",
+            "@@ -0,0 +1,2 @@\n+def subtract(a, b):\n+    return a - b\n",
+        );
+        let definition = &python.hunks[0].lines[0];
+        assert!(definition.syntax.iter().any(
+            |(range, token)| *token == Token::Name && &definition.text[range.clone()] == "def"
+        ));
         let text = FileDiff::patch("notes.txt", "@@ -0,0 +1 @@\n+def return class 12\n");
         assert!(text.hunks[0].lines[0].syntax.is_empty());
     }
