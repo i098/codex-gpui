@@ -68,6 +68,7 @@ fn local_links_preserve_prefill_and_reject_foreign_hosts() {
     root.read_with(&cx, |root, cx| {
         assert_eq!(root.route(), &Route::Home);
         assert_eq!(root.composer(cx).read(cx).field_text(), "Review λ");
+        assert!(root.shell().read(cx).can_go_back);
     });
 
     let project = tempfile::tempdir().unwrap();
@@ -138,6 +139,50 @@ fn local_links_preserve_prefill_and_reject_foreign_hosts() {
         assert_eq!(root.route(), &Route::Thread(common::GREETING.into()));
         assert_eq!(root.composer(cx).read(cx).field_text(), "Keep this draft");
     });
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn native_links_show_the_requested_prefill() -> anyhow::Result<()> {
+    common::install_panic_hook();
+    let mut fx = common::Fx::new()?;
+    for (name, url, prompt) in [
+        (
+            "new-thread",
+            "codex://threads/new?prompt=Review+%CE%BB".to_owned(),
+            "Review λ",
+        ),
+        (
+            "thread",
+            format!(
+                "codex://threads/{}?prompt=Keep+this+draft",
+                common::SUBTRACT
+            ),
+            "Keep this draft",
+        ),
+    ] {
+        let root = fx.root.clone();
+        anyhow::ensure!(
+            fx.cx.update_window(fx.window, |_, window, cx| {
+                root.update(cx, |root, cx| root.receive_deep_link(&url, window, cx))
+            })?,
+            "the native URL handler rejected {url}"
+        );
+        fx.wait("deep-link prefill", |fx| {
+            fx.read(|root, cx| {
+                root.composer(cx).read(cx).field_text() == prompt
+                    && (name != "thread"
+                        || root
+                            .thread()
+                            .is_some_and(|thread| thread.read(cx).id() == common::SUBTRACT))
+            })
+        })?;
+        if name == "new-thread" {
+            assert!(fx.shell(|shell| shell.can_go_back));
+        }
+        fx.capture_evidence("CGX_DEEP_LINK_PROOF", name)?;
+    }
+    Ok(())
 }
 
 fn wait(cx: &HeadlessAppContext, ready: impl Fn() -> bool) {
