@@ -409,7 +409,7 @@ impl Root {
     ) -> Entity<Login> {
         self.ready = false;
         let login = cx.new(Login::new);
-        cx.subscribe_in(&login, window, |this, source, event: &LoginEvent, _, cx| {
+        cx.subscribe_in(&login, window, |this, source, event: &LoginEvent, window, cx| {
             if this.login.as_ref() != Some(source) {
                 return;
             }
@@ -459,7 +459,7 @@ impl Root {
                     this.ready = true;
                     cx.notify();
                 }
-                LoginEvent::Authenticated => this.finish_sign_in(cx),
+                LoginEvent::Authenticated => this.finish_sign_in(window, cx),
             }
         })
         .detach();

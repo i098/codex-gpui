@@ -12,6 +12,7 @@ pub mod hotkey;
 pub mod mini;
 pub mod mobile;
 pub mod oauth;
+pub mod onboarding;
 pub mod plugins;
 pub mod pull_requests;
 pub mod recovery;
