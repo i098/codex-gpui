@@ -107,9 +107,8 @@ impl ThreadView {
         .with_priority(1)
     }
 
-    /// The thread's part of the window titlebar (`Chat toolbar`): project icon and title, then
-    /// `Chat actions` and `Toggle summary`, laid over the shell's titlebar (open-sidebar
-    /// layout) from the main panel's left edge to the shell's `New tab` group.
+    /// The thread's titlebar: project icon, title, chat actions, and summary toggle.
+    /// The caller can replace its default left edge for a collapsed sidebar.
     pub fn titlebar_header(&self, cx: &Context<Self>) -> Div {
         div()
             .absolute()

@@ -15,6 +15,7 @@ use gpui::{
 };
 use std::sync::{Arc, LazyLock};
 use std::time::Instant;
+use std::{cell::Cell, rc::Rc};
 use theme::{ActiveTheme as _, Theme};
 use tooltip::{Side, tooltip};
 
@@ -98,6 +99,12 @@ pub const SANS: &str = ".SystemUIFont";
 /// `ui-monospace`, which Chromium on macOS resolves to Menlo.
 pub const MONO: &str = "Menlo";
 
+#[derive(Clone, Copy)]
+pub(crate) struct SidePanelVisibility {
+    pub compact: bool,
+    pub visible: bool,
+}
+
 pub struct Shell {
     pub sidebar_open: bool,
     /// The toggle's spring: its start and the progress it left from
@@ -139,6 +146,8 @@ pub struct Shell {
     avatar_hovered: bool,
     sidebar: AnyView,
     main: AnyView,
+    pub bottom: Option<AnyView>,
+    pub(crate) side_panel_visibility: Rc<Cell<SidePanelVisibility>>,
 }
 
 /// The fixture account's 24 px avatar with its circular clip baked into alpha. The two
@@ -182,6 +191,11 @@ impl Shell {
             avatar_hovered: false,
             sidebar,
             main,
+            bottom: None,
+            side_panel_visibility: Rc::new(Cell::new(SidePanelVisibility {
+                compact: false,
+                visible: true,
+            })),
         }
     }
 
@@ -989,8 +1003,16 @@ impl Shell {
             .top(Theme::TITLEBAR_HEIGHT)
             .right(PAGE_INSET)
             .bottom(PAGE_INSET)
-            .overflow_hidden()
-            .child(self.main.clone());
+            .overflow_hidden();
+        let panel = if let Some(bottom) = &self.bottom {
+            panel
+                .flex()
+                .flex_col()
+                .child(div().flex_1().min_h_0().child(self.main.clone()))
+                .child(bottom.clone())
+        } else {
+            panel.child(self.main.clone())
+        };
         if self.main_composited {
             return panel.left(if open { left + MAIN_HAIRLINE } else { left });
         }

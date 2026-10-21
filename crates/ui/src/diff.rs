@@ -19,7 +19,7 @@ use gpui::{
     deferred, div, font, prelude::FluentBuilder as _, px, rgb,
 };
 use shapes::Decoration;
-use std::{cell::Cell, ops::Range, sync::Arc};
+use std::{cell::Cell, ops::Range, rc::Rc, sync::Arc};
 use theme::{ActiveTheme as _, Appearance, Theme};
 
 #[path = "diff/menu.rs"]
@@ -1414,14 +1414,17 @@ pub struct ActivateSideTab(pub usize);
 #[action(namespace = ui, no_json)]
 pub struct CloseSideTab(pub usize);
 
+gpui::actions!(ui, [ToggleSidePanelVisibility]);
+
 impl SplitScreen {
-    /// Titlebar row over a side panel (`Task tabs`): every open tab in a 240 px slot (the
+    /// Titlebar row over a side panel (`Task tabs`): tabs use slots up to 240 px wide (the
     /// selected one on its surface, the others `text-tertiary`, surface and `×` on hover),
     /// `New tab`, and the `Enter full view` / `Hide tabs` buttons. The caller places it from
     /// the panel's left edge to the window's right edge, 44 px tall.
     fn tab_strip(&self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        /// Label box width and its `text-fade-truncate` distance.
-        const LABEL_WIDTH: f32 = 181.;
+        let slot_width = ((f32::from(panel_width(window, cx)) - 121.).round()
+            / self.tabs.len().max(1) as f32)
+            .clamp(90., 240.);
         const FADE: f32 = 16.;
         let layout = layout_color(t);
         let fill = match t.appearance {
@@ -1453,9 +1456,9 @@ impl SplitScreen {
             // `×` (and its `pe-5`) on hover only, so its label box is 20 px wider until then.
             let closable = selected || hovered;
             let label_width = if closable {
-                LABEL_WIDTH
+                slot_width - 59.
             } else {
-                LABEL_WIDTH + 20.
+                slot_width - 39.
             };
             let fade = width > px(label_width - FADE);
             let focus = crate::focus::handle(("side-tab", ix), 0, window, cx);
@@ -1471,7 +1474,7 @@ impl SplitScreen {
                     }
                 })
                 .relative()
-                .w(px(238.))
+                .w(px(slot_width - 2.))
                 .h(px(32.))
                 .flex()
                 .items_center()
@@ -1497,7 +1500,7 @@ impl SplitScreen {
                             .absolute()
                             .left(px(-1.))
                             .top_0()
-                            .w(px(240.))
+                            .w(px(slot_width))
                             .h(px(34.))
                             .layer()
                             .child(
@@ -1505,7 +1508,7 @@ impl SplitScreen {
                                     .absolute()
                                     .left(px(1.))
                                     .top_0()
-                                    .w(px(238.))
+                                    .w(px(slot_width - 2.))
                                     .h(px(32.))
                                     .child(shapes::decoration(Decoration {
                                         radius: Corners::all(Theme::RADIUS_MD),
@@ -1617,12 +1620,12 @@ impl SplitScreen {
                     .bg(over(t.border, layout)),
             )
             .children(self.tabs.iter().enumerate().map(|(ix, t)| {
-                // The tab's box clips its shadow (`overflow` on the 240 px tab slot).
+                // Each slot clips its tab shadow.
                 div()
                     .h_full()
                     .flex()
                     .items_center()
-                    .w(px(240.))
+                    .w(px(slot_width))
                     .pr(px(2.))
                     .overflow_hidden()
                     .child(tab(ix, t, cx))
@@ -1641,8 +1644,77 @@ impl SplitScreen {
                     .gap(px(6.))
                     .child(button("diff-full-view", t.text_tertiary, None))
                     // `bg-text/5` (dark: a float color, see `Theme::text_alpha_5`).
-                    .child(button("diff-hide-tabs", t.text, Some(t.text_alpha_5))),
+                    .child(
+                        button("diff-hide-tabs", t.text, Some(t.text_alpha_5))
+                            .id("hide-side-tabs")
+                            .aria_label("Hide tabs")
+                            .on_click(dispatch_action(ToggleSidePanelVisibility)),
+                    ),
             )
+    }
+
+    fn compact_controls(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let t = cx.theme().clone();
+        let focus = crate::focus::handle("compact-show-tabs", 0, window, cx);
+        let count = div()
+            .relative()
+            .size(px(16.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                icon("tab-count", 16., t.text_tertiary)
+                    .absolute()
+                    .top_0()
+                    .left_0(),
+            )
+            .child(text(
+                self.tabs.len().to_string(),
+                8.,
+                8.,
+                600.,
+                t.text_tertiary,
+            ));
+        let show = crate::icon_button("compact-show-tabs", count, &t)
+            .tab_index(0)
+            .aria_label("Show tabs")
+            .on_click(dispatch_action(ToggleSidePanelVisibility))
+            .on_key_down(|event, window, cx| {
+                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    window.dispatch_action(Box::new(ToggleSidePanelVisibility), cx);
+                    cx.stop_propagation();
+                }
+            });
+        div()
+            .absolute()
+            .right(px(8.))
+            .top(px(8.))
+            .flex()
+            .gap(px(6.))
+            .child(
+                div()
+                    .absolute()
+                    .left(px(-7.))
+                    .top(px(6.))
+                    .w(px(1.))
+                    .h(px(16.))
+                    .bg(over(t.border, layout_color(&t))),
+            )
+            .child(
+                crate::icon_button(
+                    "compact-full-view",
+                    icon("diff-full-view", 16., t.text_tertiary),
+                    &t,
+                )
+                .aria_label("Enter full view"),
+            )
+            .child(crate::focus::ring(
+                show,
+                &focus,
+                Theme::RADIUS_LG,
+                px(0.),
+                cx,
+            ))
     }
 }
 
@@ -1653,17 +1725,21 @@ fn dispatch_action(action: impl Action) -> impl Fn(&ClickEvent, &mut Window, &mu
 
 /// Main panel of a thread with a side panel open: the thread, then the panel behind its 1 px
 /// `border-l`, ending at the main panel's right edge. The divider (`Resize workspace panes`,
-/// a 16 px hit area on the panel side of the border) drags the panel's width live, edge
+/// a 16 px hit area centered on the border) drags the panel's width live, edge
 /// `left`: width = width at press - pointer travel, clamped so both panes keep `MIN_CHAT`.
 struct SplitMain {
     thread: AnyView,
     panel: AnyView,
+    visibility: Rc<Cell<crate::SidePanelVisibility>>,
     /// Width at press plus the pointer x at press, while the divider is dragged.
     drag_anchor: Option<Pixels>,
 }
 
 impl Render for SplitMain {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !self.visibility.get().visible {
+            return div().size_full().child(self.thread.clone());
+        }
         let t = cx.theme();
         let width = panel_width(window, cx);
         div()
@@ -1731,33 +1807,84 @@ pub struct SplitScreen {
     active: usize,
     /// The tab under the pointer.
     hovered: Option<usize>,
+    visibility: Rc<Cell<crate::SidePanelVisibility>>,
+    panel_layer: bool,
 }
 
 impl Render for SplitScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let compact = window.viewport_size().width <= px(960.);
+        let mut visibility = self.visibility.get();
+        if compact != visibility.compact {
+            visibility.compact = compact;
+            visibility.visible = !compact;
+            self.visibility.set(visibility);
+        }
+        let visible = !self.tabs.is_empty() && visibility.visible;
+        let hidden_tabs = !self.tabs.is_empty() && !visible;
+        self.thread.update(cx, |view, cx| {
+            if view.clip_right != !visible {
+                view.clip_right = !visible;
+                cx.notify();
+            }
+        });
+        self.shell.update(cx, |shell, cx| {
+            if shell.main_clips_right != !visible
+                || shell.main_layer != (visible && self.panel_layer)
+            {
+                shell.main_clips_right = !visible;
+                shell.main_layer = visible && self.panel_layer;
+                cx.notify();
+            }
+        });
         // The panel ends at the main panel's right edge, 4 px
         // (`--app-shell-page-inline-end-inset`) from the window's.
-        let left = (!self.tabs.is_empty())
-            .then(|| window.viewport_size().width - px(4.) - panel_width(window, cx));
-        // ponytail: like refs/thread, the header only follows the open-sidebar titlebar layout.
+        let left = visible.then(|| window.viewport_size().width - px(4.) - panel_width(window, cx));
         let open = self.shell.read(cx).sidebar_open;
         let sidebar_width = self.shell.read(cx).sidebar_width;
+        let header_left = if open {
+            sidebar_width
+        } else {
+            TITLEBAR_LAYER_X
+        };
         div()
             .size_full()
             .relative()
             .font_family(SANS)
             .on_key_down(crate::focus::tab)
+            .on_action(
+                cx.listener(|this, _: &ToggleSidePanelVisibility, window, cx| {
+                    let mut state = this.visibility.get();
+                    state.visible = !state.visible;
+                    this.visibility.set(state);
+                    window.refresh();
+                    cx.notify();
+                }),
+            )
             .child(self.shell.clone())
-            .when(open, |d| {
+            .child(
+                self.thread
+                    .update(cx, |view, cx| view.titlebar_header(cx))
+                    .left(header_left)
+                    .when_some(left, |h, left| h.w(left - header_left))
+                    .when(hidden_tabs, |h| {
+                        h.w(window.viewport_size().width - header_left - px(78.))
+                    }),
+            )
+            .when(!open, |d| {
+                let t = cx.theme();
                 d.child(
-                    self.thread
-                        .update(cx, |view, cx| view.titlebar_header(cx))
-                        .left(sidebar_width)
-                        .when_some(left, |h, left| h.w(left - sidebar_width)),
+                    crate::icon_button("new-chat", icon("new-chat", 16., t.text_tertiary), t)
+                        .aria_label("New chat")
+                        .tab_index(0)
+                        .absolute()
+                        .left(px(190.))
+                        .top(px(8.))
+                        .on_click(crate::dispatch::<crate::NewChat>),
                 )
             })
             // Without a panel the shell's `New tab` group follows the header behind a divider.
-            .when(open && left.is_none(), |d| {
+            .when(open && left.is_none() && !hidden_tabs, |d| {
                 let t = cx.theme();
                 d.child(
                     div()
@@ -1769,6 +1896,7 @@ impl Render for SplitScreen {
                         .bg(over(t.border, layout_color(t))),
                 )
             })
+            .when(hidden_tabs, |d| d.child(self.compact_controls(window, cx)))
             .when_some(left, |d, left| {
                 d.child(
                     // In the composited `group/titlebar`, like the thread's header: the
@@ -1792,21 +1920,22 @@ impl Render for SplitScreen {
             })
             .when_some(
                 self.hovered.filter(|ix| {
-                    *ix != self.active
+                    visible
+                        && *ix != self.active
                         && self
                             .tabs
                             .get(*ix)
                             .is_some_and(|tab| tab.0 == "thread-terminal")
                 }),
                 |d, ix| {
-                    let left = (left.unwrap_or_default() + px(8. + ix as f32 * 240.))
+                    let left = (left.unwrap_or_default() + px(9. + ix as f32 * 240.))
                         .min(window.viewport_size().width - px(328.))
                         .max(px(8.));
                     d.child(
                         deferred(
                             div()
                                 .absolute()
-                                .top(Theme::TITLEBAR_HEIGHT)
+                                .top(Theme::TITLEBAR_HEIGHT - px(3.5))
                                 .left(left)
                                 .child(crate::screens::terminal::thumbnail(
                                     self.thread.read(cx),
@@ -1860,11 +1989,16 @@ pub fn with_side_tabs(
     panel: Option<(AnyView, Vec<Tab>, usize)>,
     cx: &mut App,
 ) -> Entity<SplitScreen> {
+    let visibility = shell.read(cx).side_panel_visibility.clone();
+    let panel_layer = panel
+        .as_ref()
+        .is_some_and(|(view, ..)| view.clone().downcast::<DiffPanel>().is_ok());
     let main = match &panel {
         Some((panel, ..)) => cx
             .new(|_| SplitMain {
                 thread: thread.clone().into(),
                 panel: panel.clone(),
+                visibility: visibility.clone(),
                 drag_anchor: None,
             })
             .into(),
@@ -1895,6 +2029,8 @@ pub fn with_side_tabs(
             tabs,
             active,
             hovered: None,
+            visibility,
+            panel_layer,
         }
     })
 }
