@@ -1184,23 +1184,17 @@ impl Root {
     /// The header icon and `Open in editor`: the host opens the file in the editor chosen by the
     /// original's `open-in-target-preferences` (`perPath` for the project, else `global`).
     fn open_in_editor(&mut self, cwd: &str, path: &str, cx: &mut Context<Self>) {
-        let target = cx
-            .try_global::<host_settings::Settings>()
-            .and_then(|settings| {
-                let values = settings.read_all();
-                let preferences = values.get("open-in-target-preferences")?;
-                preferences["perPath"][cwd]
-                    .as_str()
-                    .or(preferences["global"].as_str())
-                    .map(str::to_owned)
-            });
         let request = host::Request::post(
-            "open-file",
-            Some(json!({"hostId": "local", "cwd": cwd, "path": path, "target": target})),
+            "open-in",
+            Some(json!({"hostId": "local", "cwd": cwd, "path": path})),
         );
         let host = self.host.clone();
         let path = path.to_owned();
-        let opened = cx.background_spawn(async move { host.fetch(&request) });
+        let opened = cx.background_spawn(async move {
+            let response = host::json_body(&host.fetch(&request)?)?;
+            anyhow::ensure!(response["success"] == true, "open target failed");
+            Ok::<_, anyhow::Error>(())
+        });
         cx.spawn(async move |this, cx| {
             if let Err(error) = opened.await {
                 eprintln!("codex-gpui: cannot open {path} in the editor: {error:#}");

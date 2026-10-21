@@ -1,7 +1,7 @@
 use super::LocalHost;
 #[cfg(target_os = "macos")]
 use super::native_apps;
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, ensure};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::{
@@ -280,13 +280,7 @@ impl LocalHost {
             .settings
             .as_ref()
             .context("host settings are unavailable")?;
-        let custom = if let Some(bridge) = &self.bridge {
-            let mut config: Value =
-                pollster::block_on(bridge.request("config/read", json!({"includeLayers": false})))?;
-            custom_handlers(config["config"]["custom_file_handlers"].take())
-        } else {
-            Map::new()
-        };
+        let custom = self.file_handlers(query.cwd.as_deref())?;
         let targets: Vec<_> = TARGETS.iter().filter(|target| target.supported()).collect();
         let mut rows: Vec<_> = targets.iter().map(|target| target.metadata()).collect();
         for (id, handler) in &custom {
@@ -294,28 +288,7 @@ impl LocalHost {
             rows.push(json!({"id": target, "target": target,
                 "label": handler["label"], "icon": custom_icon(handler["icon"].as_str().unwrap()), "kind": "editor"}));
         }
-        let configured = {
-            let values = settings.read_all();
-            let prefs = values
-                .get("open-in-target-preferences")
-                .unwrap_or(&Value::Null);
-            let known = |value: &Value| {
-                let value = value.as_str()?;
-                let value = if value == "finder" {
-                    "fileManager"
-                } else {
-                    value
-                };
-                rows.iter()
-                    .any(|row| row["id"] == value)
-                    .then(|| value.to_owned())
-            };
-            query
-                .cwd
-                .as_ref()
-                .and_then(|cwd| known(&prefs["perPath"][cwd]))
-                .or_else(|| known(&prefs["global"]))
-        };
+        let configured = saved_preference(Some(settings), query.cwd.as_deref(), &custom);
         let deferred = query.defer_enrichment && query.path.is_none();
         let mut available = Vec::new();
         if !deferred {
@@ -454,10 +427,6 @@ fn resolve_path(path: &str, cwd: Option<&str>) -> Result<String> {
     if Url::parse(path).is_ok_and(|url| matches!(url.scheme(), "http" | "https")) {
         return Ok(path.to_owned());
     }
-    let path = path
-        .strip_prefix("a/")
-        .or_else(|| path.strip_prefix("b/"))
-        .unwrap_or(path);
     let path = if path.starts_with("file:") {
         Url::parse(path)?
             .to_file_path()
@@ -473,16 +442,23 @@ fn resolve_path(path: &str, cwd: Option<&str>) -> Result<String> {
             None => std::env::current_dir()?,
         };
         let joined = cwd.join(&path);
-        if joined.exists() {
+        if joined.symlink_metadata().is_ok() {
             joined
         } else {
+            let path = path
+                .strip_prefix("a")
+                .or_else(|_| path.strip_prefix("b"))
+                .ok()
+                .filter(|path| !path.as_os_str().is_empty())
+                .unwrap_or(&path);
+            let joined = cwd.join(path);
             let name = cwd.file_name();
             let remainder = path
                 .components()
                 .skip_while(|part| Some(part.as_os_str()) != name)
                 .skip(1)
                 .collect::<PathBuf>();
-            if remainder.as_os_str().is_empty() {
+            if joined.exists() || remainder.as_os_str().is_empty() {
                 joined
             } else {
                 cwd.join(remainder)
@@ -1327,5 +1303,975 @@ mod tests {
         assert!(native_path("https://example.com"));
         assert!(!office_path("https://example.com/file.docx"));
         Ok(())
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenRequest {
+    path: String,
+    cwd: Option<String>,
+    target: Option<String>,
+    app_path: Option<String>,
+    line: Option<u32>,
+    column: Option<u32>,
+    persist_preferred_target_path: Option<String>,
+}
+
+#[derive(Clone, Copy, serde::Serialize)]
+struct Location {
+    line: u32,
+    column: u32,
+}
+
+#[derive(Clone, Copy)]
+struct Launch<'a> {
+    target: &'a str,
+    command: &'a Path,
+    path: &'a str,
+    app_path: Option<&'a str>,
+    location: Option<Location>,
+}
+
+impl LocalHost {
+    fn file_handlers(&self, cwd: Option<&str>) -> Result<Map<String, Value>> {
+        if let Some(bridge) = &self.bridge
+            && !bridge.is_acp()
+        {
+            let config: Value = pollster::block_on(
+                bridge.request("config/read", json!({"includeLayers": true, "cwd": cwd})),
+            )?;
+            Ok(layered_handlers(config))
+        } else {
+            Ok(Map::new())
+        }
+    }
+
+    pub(super) fn open_in(&self, params: &Value) -> Result<Value> {
+        let request = OpenRequest::deserialize(params).context("invalid open-in request")?;
+        let result = self.open_target(&request);
+        if let Err(error) = &result {
+            eprintln!("codex-gpui: cannot open target: {error:#}");
+        }
+        Ok(json!({"success": result.is_ok()}))
+    }
+
+    fn open_target(&self, request: &OpenRequest) -> Result<()> {
+        ensure!(
+            !request.path.is_empty() && !request.path.contains('\0'),
+            "invalid open path"
+        );
+        let discovery = Discovery::new();
+        if is_web_url(&request.path) {
+            ensure!(
+                request
+                    .target
+                    .as_deref()
+                    .is_none_or(|target| target == "systemDefault"),
+                "web URLs require the default-application target"
+            );
+            return self.launch(
+                Launch {
+                    target: "systemDefault",
+                    command: &self.opener,
+                    path: &request.path,
+                    app_path: request.app_path.as_deref(),
+                    location: None,
+                },
+                &discovery,
+                &Map::new(),
+            );
+        }
+        let path = checked_project_path(&request.path, request.cwd.as_deref())?;
+        let path_text = path.to_str().context("open path must be UTF-8")?;
+        let custom = self.file_handlers(request.cwd.as_deref())?;
+        let resolve = |id: &str| -> Option<PathBuf> {
+            if TARGETS
+                .iter()
+                .any(|target| target.id == id && target.supported())
+            {
+                discovery.command(id)
+            } else {
+                id.strip_prefix("custom:")
+                    .and_then(|id| custom.get(id))
+                    .and_then(|handler| discovery.executable(handler["command"].as_str()?))
+            }
+        };
+        let explicit = request.target.is_some();
+        let (mut target, mut command) = if let Some(id) = &request.target {
+            (
+                id.clone(),
+                resolve(id).context("requested open target is unavailable")?,
+            )
+        } else {
+            saved_preference(self.settings.as_ref(), request.cwd.as_deref(), &custom)
+                .and_then(|id| resolve(&id).map(|command| (id, command)))
+                .or_else(|| {
+                    TARGETS
+                        .iter()
+                        .filter(|target| target.supported())
+                        .find_map(|target| {
+                            resolve(target.id).map(|command| (target.id.to_owned(), command))
+                        })
+                })
+                .or_else(|| {
+                    custom.keys().find_map(|id| {
+                        let target = format!("custom:{id}");
+                        resolve(&target).map(|command| (target, command))
+                    })
+                })
+                .context("no available open target")?
+        };
+        let location = request.line.map(|line| Location {
+            line,
+            column: request.column.unwrap_or(1),
+        });
+        if !explicit {
+            let file_manager = path.is_dir()
+                || (cfg!(target_os = "macos")
+                    && native_path(path_text)
+                    && location.is_none()
+                    && is_editor_target(&target, &custom));
+            if file_manager {
+                if let Some(found) = discovery.command("fileManager") {
+                    target = "fileManager".into();
+                    command = found;
+                }
+            } else if !cfg!(target_os = "macos") && native_path(path_text) {
+                target = "systemDefault".into();
+                command = self.opener.clone();
+            }
+        }
+        if let Some(preference_path) = &request.persist_preferred_target_path
+            && (explicit
+                || saved_preference(self.settings.as_ref(), Some(preference_path), &custom)
+                    .is_none())
+        {
+            let mut settings = self
+                .settings
+                .clone()
+                .context("host settings are unavailable")?;
+            settings.update("open-in-target-preferences", |previous| {
+                let mut per_path = previous
+                    .and_then(|value| value["perPath"].as_object())
+                    .cloned()
+                    .unwrap_or_default();
+                per_path.insert(preference_path.clone(), json!(target));
+                Ok(json!({"global": target, "perPath": per_path}))
+            })?;
+        }
+        self.launch(
+            Launch {
+                target: &target,
+                command: &command,
+                path: path_text,
+                app_path: request.app_path.as_deref(),
+                location,
+            },
+            &discovery,
+            &custom,
+        )
+    }
+
+    fn launch(
+        &self,
+        launch: Launch<'_>,
+        discovery: &Discovery,
+        custom: &Map<String, Value>,
+    ) -> Result<()> {
+        if let Some(id) = launch.target.strip_prefix("custom:") {
+            return launch_custom(
+                launch,
+                custom.get(id).context("custom target is unavailable")?,
+            );
+        }
+        let target = TARGETS
+            .iter()
+            .find(|target| target.id == launch.target && target.supported())
+            .context("unknown open target")?;
+        if target.kind == "systemDefault" {
+            return self.launch_default(launch, discovery);
+        }
+        if target.kind == "terminal" {
+            return self.launch_terminal(launch, discovery);
+        }
+        if target.kind == "fileManager" {
+            let mut command = Command::new(if cfg!(target_os = "macos") {
+                &self.opener
+            } else {
+                launch.command
+            });
+            if cfg!(target_os = "macos") {
+                command.arg("-R");
+            }
+            return run_open_command(command.arg(launch.path), None);
+        }
+        if cfg!(target_os = "linux")
+            && launch
+                .command
+                .extension()
+                .is_some_and(|extension| extension == "desktop")
+        {
+            let gio = discovery
+                .executable("gio")
+                .context("desktop application launcher is unavailable")?;
+            return run_open_command(
+                Command::new(gio)
+                    .arg("launch")
+                    .arg(launch.command)
+                    .arg(launch.path),
+                None,
+            );
+        }
+        match launch.target {
+            "vscode" | "vscodeInsiders" | "windsurf" | "antigravity" | "devin" => run_open_command(
+                Command::new(launch.command)
+                    .arg("--goto")
+                    .arg(location_path(launch)),
+                None,
+            ),
+            "cursor" if cfg!(target_os = "macos") => {
+                let cli = launch
+                    .command
+                    .parent()
+                    .and_then(Path::parent)
+                    .context("invalid Cursor application")?
+                    .join("Resources/app/out/cli.js");
+                let mut command = Command::new(launch.command);
+                if let Some(value) = std::env::var_os("NODE_OPTIONS") {
+                    command.env("VSCODE_NODE_OPTIONS", value);
+                }
+                if let Some(value) = std::env::var_os("NODE_REPL_EXTERNAL_MODULE") {
+                    command.env("VSCODE_NODE_REPL_EXTERNAL_MODULE", value);
+                }
+                command
+                    .env_remove("NODE_OPTIONS")
+                    .env_remove("NODE_REPL_EXTERNAL_MODULE")
+                    .env("ELECTRON_RUN_AS_NODE", "1")
+                    .arg(cli)
+                    .arg("--goto")
+                    .arg(location_path(launch));
+                run_open_command(&mut command, None)
+            }
+            "cursor" => run_open_command(
+                Command::new(launch.command)
+                    .arg("--goto")
+                    .arg(location_path(launch)),
+                None,
+            ),
+            "bbedit" | "emacs" if cfg!(target_os = "macos") => run_open_command(
+                Command::new(&self.opener)
+                    .arg("-a")
+                    .arg(if launch.target == "bbedit" {
+                        "BBEdit"
+                    } else {
+                        "Emacs"
+                    })
+                    .arg(launch.path),
+                None,
+            ),
+            "emacs" => {
+                let mut command = Command::new(launch.command);
+                if let Some(location) = launch.location {
+                    command.arg(format!("+{}:{}", location.line, location.column));
+                }
+                run_open_command(command.arg(launch.path), None)
+            }
+            "textmate" => {
+                let path = if let Some(location) = launch.location {
+                    let mut uri = Url::parse("txmt://open/")?;
+                    uri.query_pairs_mut()
+                        .append_pair(
+                            "url",
+                            Url::from_file_path(launch.path)
+                                .map_err(|_| anyhow::anyhow!("invalid TextMate path"))?
+                                .as_str(),
+                        )
+                        .append_pair("line", &location.line.to_string())
+                        .append_pair("column", &location.column.to_string());
+                    uri.to_string()
+                } else {
+                    launch.path.to_owned()
+                };
+                run_open_command(
+                    Command::new(&self.opener).args(["-a", "TextMate", &path]),
+                    None,
+                )
+            }
+            "sublimeText" => run_open_command(
+                Command::new(launch.command).arg(location_path(launch)),
+                None,
+            ),
+            "zed" => {
+                if cfg!(target_os = "macos")
+                    && let Some(app) = app_bundle(launch.command)
+                {
+                    run_open_command(
+                        Command::new(&self.opener)
+                            .arg("-a")
+                            .arg(app)
+                            .arg(launch.path),
+                        None,
+                    )?;
+                    if launch.location.is_some() {
+                        let command = discovery
+                            .executable("zed")
+                            .unwrap_or_else(|| launch.command.to_path_buf());
+                        let _ = run_open_command(
+                            Command::new(command).arg(location_path(launch)),
+                            None,
+                        );
+                    }
+                    Ok(())
+                } else {
+                    run_open_command(
+                        Command::new(launch.command).arg(location_path(launch)),
+                        None,
+                    )
+                }
+            }
+            "xcode" => {
+                if launch
+                    .command
+                    .extension()
+                    .is_some_and(|extension| extension == "app")
+                {
+                    return run_open_command(
+                        Command::new(&self.opener)
+                            .arg("-a")
+                            .arg(launch.command)
+                            .arg(launch.path),
+                        None,
+                    );
+                }
+                let mut command = Command::new(launch.command);
+                if let Some(project) = xcode_container(Path::new(launch.path)) {
+                    command.arg("--project").arg(project);
+                }
+                if let Some(location) = launch.location {
+                    command.arg("--line").arg(location.line.to_string());
+                }
+                run_open_command(command.arg(launch.path), None)
+            }
+            _ if jetbrains_tool(launch.target).is_some() => {
+                let mut command = Command::new(launch.command);
+                if let Some(location) = launch.location {
+                    command.args([
+                        "--line",
+                        &location.line.to_string(),
+                        "--column",
+                        &location.column.to_string(),
+                    ]);
+                }
+                run_open_command(command.arg(launch.path), None)
+            }
+            _ => anyhow::bail!("unsupported open target"),
+        }
+    }
+
+    fn launch_default(&self, launch: Launch<'_>, discovery: &Discovery) -> Result<()> {
+        if cfg!(target_os = "macos") {
+            let mut command = Command::new(&self.opener);
+            if let Some(app) = launch.app_path {
+                let app = Path::new(app);
+                ensure!(
+                    app.is_absolute()
+                        && app.is_dir()
+                        && app.extension().is_some_and(|extension| extension == "app"),
+                    "invalid native application path"
+                );
+                command.arg("-a").arg(app);
+            }
+            return run_open_command(command.arg(launch.path), None);
+        }
+        if let Some(app) = launch.app_path {
+            let app = Path::new(app);
+            ensure!(
+                app.is_absolute()
+                    && app.is_file()
+                    && app
+                        .extension()
+                        .is_some_and(|extension| extension == "desktop"),
+                "invalid desktop application path"
+            );
+            let gio = discovery
+                .executable("gio")
+                .context("desktop application launcher is unavailable")?;
+            return run_open_command(
+                Command::new(gio).arg("launch").arg(app).arg(launch.path),
+                None,
+            );
+        }
+        if self.opener != Path::new("/usr/bin/open") || self.opener.exists() {
+            return run_open_command(Command::new(&self.opener).arg(launch.path), None);
+        }
+        if let Some(opener) = discovery.executable("xdg-open") {
+            run_open_command(Command::new(opener).arg(launch.path), None)
+        } else {
+            let gio = discovery
+                .executable("gio")
+                .context("default application launcher is unavailable")?;
+            run_open_command(Command::new(gio).arg("open").arg(launch.path), None)
+        }
+    }
+
+    fn launch_terminal(&self, launch: Launch<'_>, discovery: &Discovery) -> Result<()> {
+        let path = Path::new(launch.path);
+        let directory = if path.is_dir() {
+            path
+        } else {
+            path.parent().context("file has no parent")?
+        };
+        let shell = std::env::var("SHELL")
+            .ok()
+            .filter(|shell| !shell.trim().is_empty())
+            .unwrap_or_else(|| {
+                if cfg!(target_os = "macos") {
+                    "/bin/zsh"
+                } else {
+                    "/bin/sh"
+                }
+                .into()
+            });
+        let editor = editor_command(discovery);
+        if cfg!(target_os = "macos") {
+            if path.is_file()
+                && let Some(editor) = editor
+            {
+                let script = editor_script(&editor, launch.path, launch.location)?;
+                if let Some(mut command) =
+                    mac_terminal_command(launch.target, &self.opener, &shell, &script)?
+                {
+                    if run_open_command(&mut command, None).is_ok() {
+                        return Ok(());
+                    }
+                    eprintln!("codex-gpui: terminal editor command failed; opening the directory");
+                }
+            }
+            let app = match launch.target {
+                "terminal" => "Terminal",
+                "iterm2" => "iTerm",
+                "kitty" => "kitty",
+                "ghostty" => "Ghostty",
+                "warp" => "Warp",
+                _ => anyhow::bail!("unsupported terminal"),
+            };
+            return run_open_command(
+                Command::new(&self.opener).arg("-a").arg(app).arg(directory),
+                None,
+            );
+        }
+        let name = launch
+            .command
+            .file_name()
+            .and_then(|name| name.to_str())
+            .context("invalid terminal command")?;
+        let mut command = Command::new(launch.command);
+        match name {
+            "kitty" => {
+                command.arg("--directory").arg(directory);
+            }
+            "ghostty" => {
+                command.arg(format!("--working-directory={}", directory.display()));
+            }
+            "konsole" => {
+                command.arg("--workdir").arg(directory);
+            }
+            "alacritty" | "gnome-terminal" | "kgx" | "mate-terminal" | "tilix"
+            | "xfce4-terminal" => {
+                command.arg("--working-directory").arg(directory);
+            }
+            "x-terminal-emulator" | "zutty" => {}
+            _ => anyhow::bail!("unsupported Linux terminal command"),
+        }
+        if path.is_file()
+            && let Some(editor) = editor
+        {
+            let script = editor_script(&editor, launch.path, launch.location)?;
+            match name {
+                "kitty" => {
+                    command.args([&shell, "-lc", &script]);
+                }
+                "mate-terminal" | "xfce4-terminal" => {
+                    command.args(["--execute", &shell, "-lc", &script]);
+                }
+                "gnome-terminal" => {
+                    command.args(["--", &shell, "-lc", &script]);
+                }
+                _ => {
+                    command.args(["-e", &shell, "-lc", &script]);
+                }
+            }
+        } else if matches!(name, "x-terminal-emulator" | "zutty") {
+            let script = format!(
+                "cd {} && exec {}",
+                shlex::try_quote(
+                    directory
+                        .to_str()
+                        .context("terminal directory must be UTF-8")?
+                )?,
+                shlex::try_quote(&shell)?
+            );
+            command.args(["-e", &shell, "-lc", &script]);
+        }
+        run_open_command(&mut command, None)
+    }
+}
+
+fn normalize_target<'a>(target: &'a str, custom: &Map<String, Value>) -> Option<&'a str> {
+    let target = if target == "finder" {
+        "fileManager"
+    } else {
+        target
+    };
+    (TARGETS
+        .iter()
+        .any(|candidate| candidate.id == target && candidate.supported())
+        || target
+            .strip_prefix("custom:")
+            .is_some_and(|id| custom.contains_key(id)))
+    .then_some(target)
+}
+
+fn saved_preference(
+    settings: Option<&crate::host_settings::Settings>,
+    cwd: Option<&str>,
+    custom: &Map<String, Value>,
+) -> Option<String> {
+    let settings = settings?;
+    let values = settings.read_all();
+    let prefs = values.get("open-in-target-preferences")?;
+    cwd.and_then(|cwd| prefs["perPath"][cwd].as_str())
+        .and_then(|target| normalize_target(target, custom))
+        .or_else(|| {
+            prefs["global"]
+                .as_str()
+                .and_then(|target| normalize_target(target, custom))
+        })
+        .map(str::to_owned)
+}
+
+fn is_editor_target(target: &str, custom: &Map<String, Value>) -> bool {
+    TARGETS
+        .iter()
+        .any(|candidate| candidate.id == target && candidate.kind == "editor")
+        || target
+            .strip_prefix("custom:")
+            .is_some_and(|id| custom.contains_key(id))
+}
+
+fn is_web_url(path: &str) -> bool {
+    Url::parse(path).is_ok_and(|url| matches!(url.scheme(), "http" | "https"))
+}
+
+fn checked_project_path(path: &str, cwd: Option<&str>) -> Result<PathBuf> {
+    let cwd = cwd
+        .map(PathBuf::from)
+        .map_or_else(std::env::current_dir, Ok)?;
+    ensure!(cwd.is_absolute(), "project directory must be absolute");
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(&cwd)
+        .args(["rev-parse", "--show-toplevel"])
+        .output();
+    let root = output
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|path| PathBuf::from(path.trim_end_matches(['\n', '\r'])))
+        .unwrap_or_else(|| cwd.clone())
+        .canonicalize()
+        .context("resolve the project folder")?;
+    let path = PathBuf::from(resolve_path(path, cwd.to_str())?)
+        .canonicalize()
+        .context("open path no longer exists")?;
+    ensure!(path.starts_with(root), "open path is outside the project");
+    ensure!(
+        path.is_file() || path.is_dir(),
+        "open path is not a file or folder"
+    );
+    Ok(path)
+}
+
+fn location_path(launch: Launch<'_>) -> String {
+    launch.location.map_or_else(
+        || launch.path.to_owned(),
+        |location| format!("{}:{}:{}", launch.path, location.line, location.column),
+    )
+}
+
+fn app_bundle(command: &Path) -> Option<PathBuf> {
+    let value = command.to_str()?;
+    value
+        .find(".app/Contents/MacOS/")
+        .map(|index| PathBuf::from(&value[..index + 4]))
+}
+
+fn xcode_container(path: &Path) -> Option<PathBuf> {
+    let mut directory = if path.is_dir() { path } else { path.parent()? };
+    let mut package = None;
+    loop {
+        let entries: Vec<_> = fs::read_dir(directory)
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .collect();
+        if let Some(workspace) = entries.iter().find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "xcworkspace")
+        }) {
+            return Some(workspace.clone());
+        }
+        if let Some(project) = entries.iter().find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "xcodeproj")
+        }) {
+            return Some(project.clone());
+        }
+        if package.is_none()
+            && entries
+                .iter()
+                .any(|path| path.file_name().is_some_and(|name| name == "Package.swift"))
+        {
+            package = Some(directory.to_path_buf());
+        }
+        let Some(parent) = directory.parent() else {
+            return package;
+        };
+        directory = parent;
+    }
+}
+
+fn run_open_command(command: &mut Command, input: Option<&[u8]>) -> Result<()> {
+    use std::{io::Write as _, process::Stdio};
+    command
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut child = command.spawn().context("start open target")?;
+    let written = if let Some(input) = input {
+        child
+            .stdin
+            .take()
+            .context("open target has no stdin")?
+            .write_all(input)
+    } else {
+        Ok(())
+    };
+    let status = child.wait().context("wait for open target")?;
+    written.context("write open target input")?;
+    ensure!(status.success(), "open target exited unsuccessfully");
+    Ok(())
+}
+
+fn launch_custom(launch: Launch<'_>, handler: &Value) -> Result<()> {
+    let mut command = Command::new(launch.command);
+    if let Some(args) = handler["args"].as_array() {
+        command.args(args.iter().filter_map(Value::as_str));
+    }
+    let payload = || json!({"target": launch.target, "path": launch.path, "appPath": launch.app_path, "location": launch.location});
+    match handler["input"].as_str().unwrap_or("path") {
+        "path" => run_open_command(command.arg(launch.path), None),
+        "json_argument" => run_open_command(command.arg(payload().to_string()), None),
+        "json_stdin" => {
+            let mut payload = payload();
+            payload["hostConfig"] = json!({"id": "local", "kind": "local"});
+            payload["remoteWorkspaceRoot"] = Value::Null;
+            payload["remotePath"] = Value::Null;
+            run_open_command(&mut command, Some(payload.to_string().as_bytes()))
+        }
+        _ => anyhow::bail!("unsupported custom target input"),
+    }
+}
+
+fn editor_command(discovery: &Discovery) -> Option<String> {
+    ["VISUAL", "EDITOR"]
+        .into_iter()
+        .find_map(|key| {
+            std::env::var(key)
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .or_else(|| {
+            ["nvim", "vim", "nano", "less"]
+                .into_iter()
+                .find_map(|name| discovery.executable(name))
+                .map(|path| path.to_string_lossy().into_owned())
+        })
+}
+
+fn editor_script(editor: &str, path: &str, location: Option<Location>) -> Result<String> {
+    let directory = Path::new(path)
+        .parent()
+        .context("editor path has no parent")?
+        .to_str()
+        .context("editor directory must be UTF-8")?;
+    let command = if let Some(mut args) = shlex::split(editor).filter(|args| !args.is_empty()) {
+        let executable = Path::new(&args[0])
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("")
+            .trim_end_matches(".exe")
+            .to_lowercase();
+        if let Some(location) = location {
+            let argument = match executable.as_str() {
+                "nvim" | "vim" => Some(format!(
+                    "+call cursor({},{})",
+                    location.line, location.column
+                )),
+                "nano" => Some(format!("+{},{}", location.line, location.column)),
+                "less" => Some(format!("+{}g", location.line)),
+                _ => None,
+            };
+            if let Some(argument) = argument {
+                let index = args
+                    .iter()
+                    .position(|argument| argument == "--")
+                    .unwrap_or(args.len());
+                args.insert(index, argument);
+            }
+        }
+        args.push(path.to_owned());
+        shlex::try_join(args.iter().map(String::as_str))?
+    } else {
+        format!("{editor} {}", shlex::try_quote(path)?)
+    };
+    Ok(format!("cd {} && {command}", shlex::try_quote(directory)?))
+}
+
+fn mac_terminal_command(
+    target: &str,
+    opener: &Path,
+    shell: &str,
+    script: &str,
+) -> Result<Option<Command>> {
+    if matches!(target, "terminal" | "iterm2") {
+        ensure!(
+            !script.chars().any(char::is_control),
+            "control characters are unsafe in an interactive terminal command"
+        );
+    }
+    let mut command = match target {
+        "kitty" | "ghostty" => Command::new(opener),
+        "terminal" | "iterm2" => Command::new("/usr/bin/osascript"),
+        _ => return Ok(None),
+    };
+    match target {
+        "kitty" => {
+            command.args(["-na", "kitty.app", "--args", shell, "-lc", script]);
+        }
+        "ghostty" => {
+            command.args(["-na", "Ghostty.app", "--args", "-e", shell, "-lc", script]);
+        }
+        "terminal" | "iterm2" => {
+            let mut escaped = String::with_capacity(script.len());
+            for ch in script.chars() {
+                if matches!(ch, '\\' | '"') {
+                    escaped.push('\\');
+                }
+                escaped.push(ch);
+            }
+            let source = if target == "terminal" {
+                format!("tell application \"Terminal\" to do script \"{escaped}\"")
+            } else {
+                format!(
+                    "tell application \"iTerm\"\ncreate window with default profile\ntell current session of current window to write text \"{escaped}\"\nend tell"
+                )
+            };
+            command.arg("-e").arg(source);
+        }
+        _ => return Ok(None),
+    }
+    Ok(Some(command))
+}
+
+#[cfg(test)]
+mod launch_tests {
+    use super::*;
+    use crate::{
+        host::{Host, Request, json_body},
+        host_settings::Settings,
+    };
+    use bridge::Bridge;
+    use std::{os::unix::fs::PermissionsExt, sync::Arc};
+
+    #[test]
+    fn custom_launch_modes_preserve_paths_preferences_and_failure_results() -> Result<()> {
+        #[cfg(target_os = "macos")]
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        let layered = layered_handlers(json!({
+            "config": {},
+            "layers": [
+                {"disabledReason": "project is not trusted", "config": {"custom_file_handlers": {
+                    "tool": {"command": "/blocked"}
+                }}},
+                {"config": {"custom_file_handlers": {"tool": {"command": "/user-tool"}}}},
+                {"config": {"custom_file_handlers": {"tool": {
+                    "label": "System tool", "icon": "apps/vscode.png", "command": "/system-tool", "args": ["kept"]
+                }}}}
+            ]
+        }));
+        assert_eq!(layered["tool"]["command"], "/user-tool");
+        assert_eq!(layered["tool"]["label"], "System tool");
+        assert_eq!(layered["tool"]["args"], json!(["kept"]));
+        let directory = tempfile::tempdir()?;
+        let project = directory.path().join("project");
+        fs::create_dir(&project)?;
+        let marker = directory.path().join("injected");
+        let file = project.join(format!("name;touch {}", marker.display()));
+        fs::create_dir_all(file.parent().unwrap())?;
+        fs::write(&file, "keep")?;
+        let file = file.canonicalize()?;
+        let handler = directory.path().join("handler.sh");
+        fs::write(
+            &handler,
+            "#!/bin/sh\ncase \"$2\" in\nstdin) cat > \"$1\";;\nfail) exit 3;;\n*) printf '%s' \"$3\" > \"$1\";;\nesac\n",
+        )?;
+        fs::set_permissions(&handler, fs::Permissions::from_mode(0o755))?;
+        let mut settings = Settings::default();
+        settings.write(
+            "open-in-target-preferences",
+            json!({"perPath": {"/kept": "vscode", "/other-project": "custom:elsewhere"}}),
+        )?;
+        for (mode, input) in [
+            ("path", "path"),
+            ("argument", "json_argument"),
+            ("stdin", "json_stdin"),
+            ("fail", "path"),
+        ] {
+            let output = directory.path().join(format!("{mode}.json"));
+            let script = directory.path().join(format!("{mode}.jsonl"));
+            let config = json!({"config": {"custom_file_handlers": {
+                (mode): {"label": mode, "icon": "apps/vscode.png", "command": handler, "args": [output, mode], "input": input}
+            }}});
+            fs::write(
+                &script,
+                format!(
+                    "{}\n{}\n",
+                    json!({"dir": "send", "msg": {"id": 1, "method": "config/read", "params": {"includeLayers": true, "cwd": project}}}),
+                    json!({"dir": "recv", "msg": {"id": 1, "result": config}})
+                ),
+            )?;
+            let (bridge, _) = Bridge::replay(&script)?;
+            let host = LocalHost::new(directory.path())
+                .with_settings(Some(settings.clone()))
+                .with_bridge(Arc::new(bridge));
+            let target = format!("custom:{mode}");
+            let response = json_body(&host.fetch(&Request::post(
+                "open-in",
+                Some(json!({
+                    "cwd": project, "path": file, "target": target, "line": 4, "column": 2,
+                    "persistPreferredTargetPath": project
+                })),
+            ))?)?;
+            assert_eq!(response["success"], mode != "fail");
+            assert_eq!(
+                settings.read_all()["open-in-target-preferences"]["global"],
+                target
+            );
+            assert_eq!(
+                settings.read_all()["open-in-target-preferences"]["perPath"]["/kept"],
+                "vscode"
+            );
+            assert_eq!(
+                settings.read_all()["open-in-target-preferences"]["perPath"]["/other-project"],
+                "custom:elsewhere"
+            );
+            if mode == "fail" {
+                assert!(!output.exists());
+            } else if mode == "path" {
+                assert_eq!(fs::read_to_string(&output)?, file.to_str().unwrap());
+            } else {
+                let payload: Value = serde_json::from_slice(&fs::read(&output)?)?;
+                assert_eq!(payload["path"], file.to_str().unwrap());
+                assert_eq!(payload["target"], target);
+                assert_eq!(payload["location"], json!({"line": 4, "column": 2}));
+                if mode == "stdin" {
+                    assert_eq!(
+                        payload["hostConfig"],
+                        json!({"id": "local", "kind": "local"})
+                    );
+                    assert!(payload["remotePath"].is_null());
+                }
+            }
+            assert!(!marker.exists(), "a file path executed as shell input");
+        }
+        let shell = editor_script("/usr/bin/printf '%s'", file.to_str().unwrap(), None)?;
+        let output = Command::new("/bin/sh").arg("-c").arg(shell).output()?;
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8(output.stdout)?, file.to_str().unwrap());
+        assert!(!marker.exists());
+        for target in ["terminal", "iterm2"] {
+            assert!(
+                mac_terminal_command(
+                    target,
+                    Path::new("/usr/bin/open"),
+                    "/bin/sh",
+                    "unsafe\u{3}input"
+                )
+                .is_err()
+            );
+        }
+        assert_eq!(fs::read_to_string(file)?, "keep");
+        Ok(())
+    }
+
+    #[test]
+    fn literal_project_paths_win_over_diff_prefixes() -> Result<()> {
+        #[cfg(target_os = "macos")]
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        let project = tempfile::tempdir()?;
+        let cwd = project.path().to_str().unwrap();
+        fs::write(project.path().join("file.txt"), "wrong file")?;
+        for prefix in ["a", "b"] {
+            fs::create_dir(project.path().join(prefix))?;
+            fs::write(project.path().join(prefix).join("file.txt"), prefix)?;
+            let path = checked_project_path(&format!("{prefix}/file.txt"), Some(cwd))?;
+            assert_eq!(fs::read_to_string(path)?, prefix);
+        }
+        fs::write(project.path().join("fallback.txt"), "diff fallback")?;
+        let path = checked_project_path("a/fallback.txt", Some(cwd))?;
+        assert_eq!(fs::read_to_string(path)?, "diff fallback");
+        Ok(())
+    }
+}
+
+fn layered_handlers(mut config: Value) -> Map<String, Value> {
+    let mut handlers = config["config"]["custom_file_handlers"].take();
+    if let Value::Array(layers) = config["layers"].take() {
+        // The app-server lists higher-priority layers first.
+        for mut layer in layers.into_iter().rev() {
+            if layer["disabledReason"].is_null()
+                && layer["config"].get("custom_file_handlers").is_some()
+            {
+                merge_handler_layer(
+                    &mut handlers,
+                    layer["config"]["custom_file_handlers"].take(),
+                );
+            }
+        }
+    }
+    custom_handlers(handlers)
+}
+
+fn merge_handler_layer(base: &mut Value, incoming: Value) {
+    match (base, incoming) {
+        (Value::Object(base), Value::Object(incoming)) => {
+            for (key, value) in incoming {
+                merge_handler_layer(base.entry(key).or_insert(Value::Null), value);
+            }
+        }
+        (base, incoming) => *base = incoming,
     }
 }
