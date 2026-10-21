@@ -336,6 +336,8 @@ The capture regression checks live-state restoration, another window, a closed-w
 The focused project-control crop now matches the original, including the tooltip shadow over the ring.
 The original recordings, masks and strict gates stay unchanged; remaining tooltip and rail differences are tracked separately.
 
+New chat adds a Back entry even when Home is already open.
+
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Launch to `/` | entry | Hero, announcement slot and composer. | Route Home, rail Home selected, composer focused, Recents loaded. | PASS (`launch_home`, `parity_home`) |
