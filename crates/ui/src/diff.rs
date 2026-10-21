@@ -1157,13 +1157,26 @@ impl Render for DiffPanel {
                     if file.open && file.problem.is_some() {
                         d.child(controls::problem_body(file.problem.unwrap_or_default(), &t))
                     } else if file.open {
-                        d.children(file.hunks.iter().enumerate().map(|(index, h)| {
-                            let controls =
-                                matches!(self.source, DiffSource::Unstaged | DiffSource::Staged)
-                                    && h.lines.iter().any(|l| l.kind != Kind::Context);
+                        // The original code scroll container owns an opaque raster layer.
+                        d.child(
                             div()
-                                .when(controls, |d| {
-                                    d.child(
+                                .relative()
+                                .flex()
+                                .flex_col()
+                                .layer()
+                                .child(shapes::decoration(Decoration {
+                                    fill: Some(t.surface),
+                                    ..Default::default()
+                                }))
+                                .children(file.hunks.iter().enumerate().map(|(index, h)| {
+                                    let controls =
+                                        matches!(
+                                            self.source,
+                                            DiffSource::Unstaged | DiffSource::Staged
+                                        ) && h.lines.iter().any(|l| l.kind != Kind::Context);
+                                    div()
+                                        .when(controls, |d| {
+                                            d.child(
                                         div()
                                             .flex()
                                             .justify_end()
@@ -1227,17 +1240,18 @@ impl Render for DiffPanel {
                                                     .child(text("Revert", 12., 20., 430., t.text)),
                                             ),
                                     )
-                                })
-                                .child(hunk(
-                                    h,
-                                    &t,
-                                    &line_index,
-                                    self,
-                                    self.layout.split(file, code_width),
-                                    (i, index),
-                                    cx,
-                                ))
-                        }))
+                                        })
+                                        .child(hunk(
+                                            h,
+                                            &t,
+                                            &line_index,
+                                            self,
+                                            self.layout.split(file, code_width),
+                                            (i, index),
+                                            cx,
+                                        ))
+                                })),
+                        )
                     } else {
                         line_index.set(
                             line_index.get()
