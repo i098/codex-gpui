@@ -445,17 +445,7 @@ pub fn paint_icon(
     cx: &App,
 ) -> bool {
     #[cfg(target_os = "macos")]
-    return skia::paint_icon(
-        src,
-        key,
-        bounds,
-        flip_x,
-        color,
-        layer,
-        gpui::TransformationMatrix::unit(),
-        window,
-        cx,
-    );
+    return skia::paint_icon(src, key, bounds, flip_x, color, layer, None, window, cx);
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (src, key, bounds, flip_x, color, layer, window, cx);
@@ -485,7 +475,7 @@ pub fn paint_icon_transformed(
         flip_x,
         color,
         layer,
-        transformation,
+        Some(transformation),
         window,
         cx,
     );

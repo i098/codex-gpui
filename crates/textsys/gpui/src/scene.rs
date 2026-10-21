@@ -87,7 +87,7 @@ impl Scene {
     pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
         let mut primitive = primitive.into();
         let clipped_bounds = primitive
-            .bounds()
+            .paint_bounds()
             .intersect(&primitive.content_mask().bounds);
 
         if clipped_bounds.is_empty() {
@@ -243,6 +243,35 @@ impl Primitive {
             Primitive::PolychromeSprite(sprite) => &sprite.bounds,
             Primitive::Surface(surface) => &surface.bounds,
         }
+    }
+
+    fn paint_bounds(&self) -> Bounds<ScaledPixels> {
+        let transformation = match self {
+            Primitive::MonochromeSprite(sprite) => sprite.transformation,
+            Primitive::SubpixelSprite(sprite) => sprite.transformation,
+            _ => return *self.bounds(),
+        };
+        if transformation == TransformationMatrix::unit() {
+            return *self.bounds();
+        }
+        let bounds = self.bounds();
+        let (left, top) = (bounds.origin.x.0, bounds.origin.y.0);
+        let (right, bottom) = (left + bounds.size.width.0, top + bounds.size.height.0);
+        let mut min = [f32::INFINITY; 2];
+        let mut max = [f32::NEG_INFINITY; 2];
+        for [x, y] in [[left, top], [right, top], [right, bottom], [left, bottom]] {
+            for axis in 0..2 {
+                let value = transformation.rotation_scale[axis][0] * x
+                    + transformation.rotation_scale[axis][1] * y
+                    + transformation.translation[axis];
+                min[axis] = min[axis].min(value);
+                max[axis] = max[axis].max(value);
+            }
+        }
+        Bounds::new(
+            Point::new(ScaledPixels(min[0]), ScaledPixels(min[1])),
+            Size::new(ScaledPixels(max[0] - min[0]), ScaledPixels(max[1] - min[1])),
+        )
     }
 
     pub fn content_mask(&self) -> &ContentMask<ScaledPixels> {

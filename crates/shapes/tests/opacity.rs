@@ -351,3 +351,94 @@ fn nested_saved_device_stays_inside_parent() -> anyhow::Result<()> {
     assert_eq!(image.get_pixel(45, 65).0, [0, 0, 0, 255]);
     Ok(())
 }
+
+struct MovedIcon {
+    source_x: f32,
+    translation: f32,
+    clipped: bool,
+}
+
+impl Render for MovedIcon {
+    fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        let (source_x, translation, clipped) = (self.source_x, self.translation, self.clipped);
+        div().size_full().bg(gpui::black()).child(
+            gpui::canvas(
+                |_, _, _| (),
+                move |_, _, window, cx| {
+                    let bounds = Bounds::new(point(px(source_x), px(4.)), size(px(16.), px(16.)));
+                    let matrix = gpui::Transformation::translate(point(px(translation), px(0.)))
+                        .into_matrix(bounds.center(), window.scale_factor());
+                    let paint = |window: &mut Window| {
+                        assert!(shapes::paint_icon_transformed(
+                            b"<svg viewBox='0 0 1 1'><path d='M0 0H1V1H0Z'/></svg>",
+                            "moved-icon",
+                            bounds,
+                            false,
+                            gpui::white(),
+                            None,
+                            matrix,
+                            window,
+                            cx,
+                        ));
+                    };
+                    if clipped {
+                        window.with_content_mask(
+                            Some(gpui::ContentMask {
+                                bounds: Bounds::new(point(px(20.), px(4.)), size(px(16.), px(16.))),
+                            }),
+                            paint,
+                        );
+                    } else {
+                        paint(window);
+                    }
+                },
+            )
+            .size_full(),
+        )
+    }
+}
+
+#[test]
+fn transformed_icons_enter_the_window_and_parent_clip() -> anyhow::Result<()> {
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("{info}");
+        std::process::exit(101);
+    }));
+    let mut cx = gpui::HeadlessAppContext::with_platform(
+        textsys::text_system(),
+        Arc::new(()),
+        gpui_platform::current_headless_renderer,
+    );
+    let mut images = Vec::new();
+    for (source_x, translation, clipped) in [
+        (-12., 32., false),
+        (-32., 52., false),
+        (2., 18., true),
+        (20., 0., false),
+    ] {
+        let window = cx.open_window(size(px(64.), px(24.)), |_, cx| {
+            cx.new(|_| MovedIcon {
+                source_x,
+                translation,
+                clipped,
+            })
+        })?;
+        cx.run_until_parked();
+        images.push(cx.capture_screenshot(window.into())?);
+        cx.update_window(window.into(), |_, window, _| window.remove_window())?;
+    }
+    let expected = images.last().unwrap();
+    assert_eq!(expected.get_pixel(40, 8).0, [255, 255, 255, 255]);
+    assert_eq!(expected.get_pixel(39, 8).0, [0, 0, 0, 255]);
+    assert_eq!(
+        expected
+            .pixels()
+            .filter(|p| p.0 == [255, 255, 255, 255])
+            .count(),
+        1024
+    );
+    for actual in &images[..3] {
+        assert_eq!(actual, expected);
+    }
+    Ok(())
+}

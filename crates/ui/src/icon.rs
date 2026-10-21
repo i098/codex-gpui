@@ -236,20 +236,35 @@ impl Element for Icon {
                     return;
                 }
                 let path = format!("icons/{name}.svg");
-                if let Ok(Some(src)) = cx.asset_source().load(&path)
-                    && shapes::paint_icon_transformed(
-                        &src,
-                        &path,
-                        Bounds::new(bounds.origin, css),
-                        flip_x,
-                        color,
-                        composited.or(own_layer.then_some(bounds.origin)),
-                        transform,
-                        window,
-                        cx,
-                    )
-                {
-                    return;
+                if let Ok(Some(src)) = cx.asset_source().load(&path) {
+                    let layer = composited.or(own_layer.then_some(bounds.origin));
+                    let painted = if transformation.is_some() {
+                        shapes::paint_icon_transformed(
+                            &src,
+                            &path,
+                            Bounds::new(bounds.origin, css),
+                            flip_x,
+                            color,
+                            layer,
+                            transform,
+                            window,
+                            cx,
+                        )
+                    } else {
+                        shapes::paint_icon(
+                            &src,
+                            &path,
+                            Bounds::new(bounds.origin, css),
+                            flip_x,
+                            color,
+                            layer,
+                            window,
+                            cx,
+                        )
+                    };
+                    if painted {
+                        return;
+                    }
                 }
                 let mut matrix = transform;
                 if flip_x {
