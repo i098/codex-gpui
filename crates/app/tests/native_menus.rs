@@ -1,3 +1,5 @@
+#![cfg(target_os = "macos")]
+
 mod common;
 
 use anyhow::Result;
@@ -5,9 +7,6 @@ use common::Fx;
 
 #[test]
 fn edit_menu_preserves_unselected_text_and_plain_paste_is_undoable() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        return Ok(());
-    }
     let mut fx = Fx::new()?;
     fx.focus_composer()?;
     fx.composer().update(&mut fx.cx, |composer, cx| {
