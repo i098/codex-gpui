@@ -317,6 +317,9 @@ Home, Thread, Settings, Automations, Mobile, and Archive each own their action r
 `app::Route` and its saved values stay unchanged.
 Shared RPC handlers and state remain on `Root` in `lib.rs`.
 
+The default pinned-summary layout hides the thread identity in a single pane.
+Opening a right pane restores the header identity; the toolbar actions stay available.
+
 `LocalHost` serves `native-desktop-apps` and `native-desktop-app-by-bundle-id` through the desktop fetch boundary.
 On macOS, the adapter reads Spotlight metadata, applies the original app exclusions, and supports usage or display-name ordering.
 It returns each app's path, bundle ID, and display name without launching the app.
