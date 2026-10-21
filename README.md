@@ -146,6 +146,11 @@ Revision exports use `beforeRef` and `afterRef`; staged and working-tree exports
 Raw export omits untracked files above the original 256-file limit but keeps tracked changes. This does not limit the existing Changes list.
 Run `cargo test -p app --test diff_file_reads` for real Git apply round trips and source-boundary checks.
 
+`ui::screens::diff::panel::word::changes` returns removed and added UTF-8 byte ranges for the original `word-alt` comparison.
+It ignores a final LF or CRLF and returns no highlights above 1,000 UTF-16 units per line.
+The API preserves the original edit-path order and final-span boundaries. It does not change rendered controls.
+Run `cargo test -p ui --lib screens::diff::panel::word` for its boundary checks.
+
 `ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.
 The multi-select emits `SelectionChanged`; the caller saves the value and can restore it with `set_checked` if saving fails.
 `ui::confirmation::Confirmation` emits one confirm or cancel result and returns focus to the previous control.
