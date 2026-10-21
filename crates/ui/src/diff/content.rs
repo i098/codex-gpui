@@ -21,8 +21,6 @@ pub struct BlobError {
 
 #[derive(Clone)]
 pub struct FullFileRequest {
-    pub index: usize,
-    pub generation: u64,
     pub cwd: String,
     pub requests: Vec<BlobRequest>,
     pub before: Option<usize>,
@@ -73,8 +71,6 @@ mod tests {
 
     fn request() -> FullFileRequest {
         FullFileRequest {
-            index: 0,
-            generation: 0,
             cwd: "/repo".into(),
             requests: (0..2)
                 .map(|_| BlobRequest {

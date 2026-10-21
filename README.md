@@ -146,7 +146,7 @@ Run `cargo test -p ui --test settings_kit` for the keyboard and locked-choice ch
 
 `app::diff_content::read_full_file` loads typed before/after data through the existing Git object host.
 It preserves line endings and the host's working-file fallback policy, with a 5 MiB object limit.
-Missing or oversized objects return `FullError::Unavailable`; invalid paths or reply structures return `FullError::Failed`.
+Missing or oversized objects return `FullError::Unavailable`; invalid disk-fallback paths or reply structures return `FullError::Failed`.
 Run `cargo test -p app --test diff_content` for real Git object and repository-boundary checks.
 
 Scheduled > New task accepts instructions, a daily or weekly repeat, and a local time in `HH:MM` format.

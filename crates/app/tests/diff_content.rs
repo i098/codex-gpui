@@ -32,8 +32,6 @@ fn repository() -> Result<tempfile::TempDir> {
 
 fn one_side(root: &Path, path: &str, oid: Option<String>, fallback: bool) -> FullFileRequest {
     FullFileRequest {
-        index: 0,
-        generation: 0,
         cwd: root.to_string_lossy().into_owned(),
         requests: vec![BlobRequest {
             path: path.into(),
@@ -56,8 +54,6 @@ fn full_file_reads_preserve_sides_line_endings_and_disk_fallback() -> Result<()>
     fs::write(root.join("file.txt"), "after\r\n尾\n")?;
     let after = git(root, &["hash-object", "file.txt"])?;
     let request = FullFileRequest {
-        index: 0,
-        generation: 0,
         cwd: root.to_string_lossy().into_owned(),
         requests: vec![
             BlobRequest {
