@@ -82,6 +82,18 @@ pub fn bind_standalone_diff(panel: &Entity<DiffPanel>, host: Arc<dyn Host>, cx: 
         DiffRequest::LoadPreview(request) => {
             crate::diff_preview::load(panel, host.clone(), request.clone(), cx)
         }
+        DiffRequest::ContextMenu(request) => {
+            crate::diff_context::load(panel, host.clone(), request.clone(), cx);
+        }
+        DiffRequest::OpenTarget(request) => {
+            let opened = crate::diff_context::open(host.clone(), request, cx);
+            cx.spawn(async move |_| {
+                if let Err(error) = opened.await {
+                    eprintln!("codex-gpui: could not open file: {error}");
+                }
+            })
+            .detach();
+        }
         DiffRequest::Preference(path, value) => {
             if let Some(key) = path.strip_prefix("host.")
                 && cx.has_global::<crate::host_settings::Settings>()

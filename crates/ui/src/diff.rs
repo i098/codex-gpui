@@ -70,10 +70,13 @@ pub mod comments;
 mod repositories;
 pub use repositories::ReviewRepository;
 
+#[path = "diff/context.rs"]
+mod context;
 #[path = "diff/imports.rs"]
 mod imports;
 #[path = "diff/options.rs"]
 mod options;
+pub use context::{ContextRequest, OpenTargetRequest, OpenTargets};
 
 /// Panel width the capture had stored (`app-shell:right-panel-width:v3`) before clamping.
 const STORED_WIDTH: f32 = 664.17;
@@ -226,10 +229,15 @@ pub enum DiffRequest {
         files: Vec<RevertChanges>,
     },
     CreateRepository,
-    OpenTab(String),
+    OpenTab {
+        path: String,
+        line: Option<u32>,
+    },
     SourceChanged,
     Notice(&'static str),
     CopyGitApply,
+    ContextMenu(ContextRequest),
+    OpenTarget(OpenTargetRequest),
     LoadFullFile(FullFileRequest),
     LoadPreview(PreviewRequest),
     Preference(&'static str, serde_json::Value),
@@ -332,6 +340,7 @@ pub struct DiffPanel {
     content_generation: u64,
     rich_preview: bool,
     annotations: comment_view::Annotations,
+    context: context::State,
 }
 
 impl DiffPanel {
@@ -457,6 +466,7 @@ impl DiffPanel {
             content_generation: 0,
             rich_preview: false,
             annotations: comment_view::Annotations::default(),
+            context: context::State::default(),
         };
         panel
             .annotations
@@ -745,6 +755,7 @@ impl DiffPanel {
 
     fn replace_files(&mut self, mut files: Vec<FileDiff>) {
         self.content_generation = self.content_generation.wrapping_add(1);
+        self.cancel_context_request();
         self.active_file = self
             .files
             .get(self.active_file)
@@ -779,11 +790,12 @@ impl DiffPanel {
         self.refresh_jump();
         self.selection = None;
         self.selecting = false;
-        if self
-            .menu
-            .as_ref()
-            .is_some_and(|m| matches!(m.kind, menu::Kind::Header | menu::Kind::Body))
-        {
+        if self.menu.as_ref().is_some_and(|m| {
+            matches!(
+                m.kind,
+                menu::Kind::Header | menu::Kind::Body | menu::Kind::OpenWith
+            )
+        }) {
             self.menu = None;
         }
         self.refresh_filtered_view();
@@ -858,6 +870,11 @@ impl DiffPanel {
     }
 
     fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.context.pending && event.keystroke.key == "escape" {
+            self.cancel_context_request();
+            cx.stop_propagation();
+            return;
+        }
         if self.jump.is_some() {
             self.jump_key(event, cx);
             return;
@@ -1367,7 +1384,7 @@ impl Render for DiffPanel {
                     .on_mouse_down(
                         MouseButton::Right,
                         cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
-                            this.open_menu(i, menu::Kind::Body, event.position, window, cx);
+                            this.request_context_menu(i, None, event.position, window, cx);
                         }),
                     )
                     .child(self.scrolling_file_header(i, file, scroll_top, &t, cx))
@@ -1495,6 +1512,7 @@ impl Render for DiffPanel {
                 MouseButton::Left,
                 cx.listener(move |this, _, window, cx| {
                     this.selection = None;
+                    this.cancel_context_request();
                     this.selecting = false;
                     window.focus(&focus, cx);
                     cx.notify();
@@ -2945,8 +2963,21 @@ fn hunk(
         .cursor_pointer()
         .group("diff-comment-line")
         .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                this.request_context_menu(
+                    location.0,
+                    Some((side, number)),
+                    event.position,
+                    window,
+                    cx,
+                );
+            }),
+        )
+        .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                this.cancel_context_request();
                 let offset = down_layout
                     .index_for_position(event.position)
                     .unwrap_or_else(|i| i);

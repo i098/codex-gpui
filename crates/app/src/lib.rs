@@ -8,6 +8,7 @@ pub use cloud_task::parse_task_response;
 pub mod computer_use_requests;
 mod diff_comments;
 mod diff_content;
+mod diff_context;
 mod diff_options;
 mod diff_preview;
 mod diff_repositories;
@@ -1151,10 +1152,12 @@ impl Root {
                 }),
             ),
             DiffRequest::Open(_)
-            | DiffRequest::OpenTab(_)
+            | DiffRequest::OpenTab { .. }
             | DiffRequest::SourceChanged
             | DiffRequest::Notice(_)
             | DiffRequest::CopyGitApply
+            | DiffRequest::ContextMenu(_)
+            | DiffRequest::OpenTarget(_)
             | DiffRequest::LoadFullFile(_)
             | DiffRequest::LoadPreview(_)
             | DiffRequest::CommentsChanged(_)
@@ -2849,10 +2852,14 @@ impl Root {
                 DiffRequest::Notice(text) => this.toast(Toast::info(*text), cx),
                 DiffRequest::Refresh => this.refresh_diff(panel.clone(), &cwd, cx),
                 DiffRequest::CopyGitApply => this.copy_diff_patch(panel.clone(), cx),
-                DiffRequest::OpenTab(path) => this.open_file(
+                DiffRequest::ContextMenu(request) => {
+                    diff_context::load(panel.clone(), this.host.clone(), request.clone(), cx)
+                }
+                DiffRequest::OpenTarget(request) => this.launch_diff_target(request, cx),
+                DiffRequest::OpenTab { path, line } => this.open_file(
                     &OpenFile {
                         path: path.clone(),
-                        line: None,
+                        line: *line,
                     },
                     window,
                     cx,

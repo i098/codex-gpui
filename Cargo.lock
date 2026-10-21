@@ -6169,6 +6169,7 @@ dependencies = [
  "tree-sitter-typescript",
  "two-face",
  "unicode-width",
+ "url",
  "uuid",
 ]
 

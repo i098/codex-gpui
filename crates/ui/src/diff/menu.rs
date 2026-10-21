@@ -1,5 +1,5 @@
 use super::*;
-use gpui::{Anchor, Point, Role, anchored, point};
+use gpui::{Anchor, Point, Role, StyledImage, anchored, point};
 use std::path::{Component, Path, PathBuf};
 
 const SOURCE_WIDTH: f32 = 200.;
@@ -61,6 +61,7 @@ pub(super) enum Kind {
     Branches,
     Commits,
     Repositories,
+    OpenWith,
 }
 
 pub(super) struct Menu {
@@ -68,11 +69,11 @@ pub(super) struct Menu {
     pub(super) kind: Kind,
     position: Point<Pixels>,
     active: Option<usize>,
-    selected: String,
+    pub(super) selected: String,
     return_focus: Option<FocusHandle>,
     query: controls::TextField,
     choices: Vec<(usize, i32)>,
-    parent_source: bool,
+    parent: Option<Kind>,
     options_start: usize,
 }
 
@@ -238,7 +239,8 @@ impl DiffPanel {
                     3
                 }
             }
-            Some(Kind::Body) => 4,
+            Some(Kind::Body) => self.context.items.len(),
+            Some(Kind::OpenWith) => self.context.target_count(),
         };
         (0..count).map(move |index| {
             let ready = !self.pending && self.error.is_none();
@@ -303,15 +305,11 @@ impl DiffPanel {
                     ),
                     _ => ("Revert file", ready),
                 },
-                Kind::Body => match index {
-                    0 => (
-                        "Copy selection",
-                        !self.menu.as_ref().unwrap().selected.is_empty(),
-                    ),
-                    1 => ("Copy path", true),
-                    2 => ("Copy relative path", true),
-                    _ => ("Toggle line wrap", true),
-                },
+                Kind::Body => {
+                    let item = &self.context.items[index];
+                    (item.label.as_ref(), item.enabled)
+                }
+                Kind::OpenWith => (self.context.target_label(index), true),
             }
         })
     }
@@ -347,6 +345,7 @@ impl DiffPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.cancel_context_request();
         let position = if matches!(kind, Kind::Source | Kind::Repositories) {
             let extra = if kind == Kind::Source {
                 self.repository_label().map_or(px(0.), |label| {
@@ -392,7 +391,7 @@ impl DiffPanel {
             return_focus: window.focused(cx),
             query: controls::TextField::default(),
             choices: Vec::new(),
-            parent_source: false,
+            parent: None,
             options_start: if (if self.standalone {
                 window.viewport_size().width
             } else {
@@ -436,13 +435,27 @@ impl DiffPanel {
             return;
         }
         match event.keystroke.key.as_str() {
-            "left" | "escape" if menu.kind == Kind::Commits && menu.parent_source => {
+            "left" | "escape" if menu.parent.is_some() => {
+                let parent = menu.parent.unwrap();
+                let active = if parent == Kind::Source {
+                    Some(4)
+                } else {
+                    self.context.open_with_index()
+                };
                 let menu = self.menu.as_mut().unwrap();
-                menu.kind = Kind::Source;
-                menu.active = Some(4);
+                menu.kind = parent;
+                menu.parent = None;
+                menu.active = active;
             }
             "right" if menu.kind == Kind::Source && menu.active == Some(4) => {
                 self.activate_menu(4, window, cx);
+            }
+            "right"
+                if menu.kind == Kind::Body
+                    && menu.active.is_some()
+                    && menu.active == self.context.open_with_index() =>
+            {
+                self.open_targets_menu(cx);
             }
             "escape" => self.close_menu(window, cx),
             "enter" | "space" => {
@@ -498,7 +511,7 @@ impl DiffPanel {
         let source = SOURCES[index];
         if source == DiffSource::Commits {
             self.open_menu(0, Kind::Commits, position, window, cx);
-            self.menu.as_mut().unwrap().parent_source = true;
+            self.menu.as_mut().unwrap().parent = Some(Kind::Source);
             if !self.pending {
                 cx.emit(DiffRequest::Refresh);
             }
@@ -541,11 +554,12 @@ impl DiffPanel {
 
     pub(super) fn request_open_tab(&self, file: usize, cx: &mut Context<Self>) {
         if let Some(path) = self.file_path(file) {
-            cx.emit(DiffRequest::OpenTab(path));
+            cx.emit(DiffRequest::OpenTab { path, line: None });
         }
     }
 
     fn close_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.cancel_context_request();
         if let Some(menu) = self.menu.take()
             && let Some(focus) = menu.return_focus
         {
@@ -553,6 +567,15 @@ impl DiffPanel {
         }
         cx.stop_propagation();
         cx.notify();
+    }
+
+    fn open_targets_menu(&mut self, cx: &mut Context<Self>) {
+        if let Some(menu) = &mut self.menu {
+            menu.kind = Kind::OpenWith;
+            menu.parent = Some(Kind::Body);
+            menu.active = None;
+            cx.notify();
+        }
     }
 
     fn activate_menu(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -570,9 +593,27 @@ impl DiffPanel {
         let Some((_, true)) = self.menu_items().nth(index) else {
             return;
         };
+        if self
+            .menu
+            .as_ref()
+            .is_some_and(|menu| menu.kind == Kind::Body)
+            && self.context.items[index].action == context::Action::OpenWith
+        {
+            self.open_targets_menu(cx);
+            cx.stop_propagation();
+            return;
+        }
         let Some(menu) = self.menu.take() else { return };
         if let Some(focus) = menu.return_focus {
             window.focus(&focus, cx);
+        }
+        if menu.kind == Kind::Body {
+            self.activate_context(index, menu.selected, window, cx);
+            return;
+        }
+        if menu.kind == Kind::OpenWith {
+            self.activate_target(index, cx);
+            return;
         }
         if matches!(menu.kind, Kind::Branches | Kind::Commits) {
             if let Some(repository) = &self.repository {
@@ -631,46 +672,22 @@ impl DiffPanel {
             cx.notify();
             return;
         }
-        let root = self.file_root().to_owned();
-        let label = match (menu.kind, index) {
-            (Kind::Header, 0) => "Copy path",
-            (Kind::Header, 1) => "Open in editor",
-            (Kind::Header, 2) => "Collapse file",
-            (Kind::Header, 3) => {
-                if self.source == DiffSource::Staged {
-                    "Unstage file"
-                } else {
-                    "Stage file"
-                }
-            }
-            (Kind::Header, _) => "Revert file",
-            (_, 0) => "Copy selection",
-            (_, 1) => "Copy path",
-            (_, 2) => "Copy relative path",
-            _ => "Toggle line wrap",
-        };
         let file = &mut self.files[menu.file];
-        match label {
-            "Stage file" => cx.emit(DiffRequest::Stage(format!("{}{}", file.dir, file.name))),
-            "Unstage file" => cx.emit(DiffRequest::Unstage(format!("{}{}", file.dir, file.name))),
-            "Revert file" => self.request_revert(menu.file, None, cx),
-            "Open in editor" => self.request_open(menu.file, cx),
-            "Copy selection" => cx.write_to_clipboard(ClipboardItem::new_string(menu.selected)),
-            "Copy path" | "Copy relative path" => {
-                let relative = format!("{}{}", file.dir, file.name);
-                let path = if menu.kind == Kind::Header || label == "Copy relative path" {
-                    relative
-                } else {
-                    absolute_path(&root, &relative)
-                };
-                cx.write_to_clipboard(ClipboardItem::new_string(path));
-            }
-            "Collapse file" | "Expand file" => {
+        match index {
+            0 => cx.write_to_clipboard(ClipboardItem::new_string(format!(
+                "{}{}",
+                file.dir, file.name
+            ))),
+            1 => self.request_open(menu.file, cx),
+            2 => {
                 file.open = !file.open;
                 self.selection = None;
             }
-            "Toggle line wrap" => self.toggle_wrap(cx),
-            _ => unreachable!(),
+            3 if self.source == DiffSource::Staged => {
+                cx.emit(DiffRequest::Unstage(format!("{}{}", file.dir, file.name)))
+            }
+            3 => cx.emit(DiffRequest::Stage(format!("{}{}", file.dir, file.name))),
+            _ => self.request_revert(menu.file, None, cx),
         }
         cx.stop_propagation();
         cx.notify();
@@ -751,6 +768,11 @@ impl DiffPanel {
             .map(|(i, (label, enabled))| {
                 let option = options.then_some(i + option_start);
                 let checked = option.and_then(|index| self.option_checked(index));
+                let context_icon = match kind {
+                    Kind::Body => self.context.items[i].icon.clone(),
+                    Kind::OpenWith => self.context.target_icon(i),
+                    _ => None,
+                };
                 let row = div()
                     .id((row_id, i))
                     .role(Role::MenuItem)
@@ -785,8 +807,13 @@ impl DiffPanel {
                                     {
                                         this.choose_source(i, position, window, cx);
                                     }
+                                } else if kind == Kind::Body
+                                    && this.context.open_with_index() == Some(i)
+                                {
+                                    this.open_targets_menu(cx);
                                 } else if let Some(menu) = &mut this.menu {
                                     menu.kind = kind;
+                                    menu.parent = None;
                                     menu.active = Some(i);
                                     cx.notify();
                                 }
@@ -795,7 +822,20 @@ impl DiffPanel {
                     })
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        if source && this.menu.as_ref().is_some_and(|m| m.kind != Kind::Source) {
+                        if kind == Kind::Body
+                            && this
+                                .menu
+                                .as_ref()
+                                .is_some_and(|menu| menu.kind == Kind::OpenWith)
+                        {
+                            if let Some(menu) = &mut this.menu {
+                                menu.kind = Kind::Body;
+                                menu.parent = None;
+                            }
+                            this.activate_menu(i, window, cx);
+                        } else if source
+                            && this.menu.as_ref().is_some_and(|m| m.kind != Kind::Source)
+                        {
                             let position = this.menu.as_ref().unwrap().position;
                             this.close_menu(window, cx);
                             this.choose_source(i, position, window, cx);
@@ -816,6 +856,14 @@ impl DiffPanel {
                             255
                         };
                         d.child(source_glyph(data, name, t.text, opacity))
+                    })
+                    .when_some(context_icon, |d, image| {
+                        d.child(
+                            gpui::img(image)
+                                .size(px(16.))
+                                .object_fit(gpui::ObjectFit::Contain)
+                                .flex_none(),
+                        )
                     })
                     .child(
                         text(
@@ -850,17 +898,23 @@ impl DiffPanel {
                             && self.picker_selected(kind, i),
                         |d| d.child(source_glyph(SOURCE_CHECK, "diff-picker-check", t.text, 191)),
                     )
-                    .when(source && i == 4, |d| {
-                        d.child(source_glyph(
-                            SOURCE_SUBMENU,
-                            "diff-source-submenu",
-                            t.text_tertiary,
-                            255,
-                        ))
-                    });
+                    .when(
+                        source && i == 4
+                            || kind == Kind::Body && self.context.open_with_index() == Some(i),
+                        |d| {
+                            d.child(source_glyph(
+                                SOURCE_SUBMENU,
+                                "diff-source-submenu",
+                                t.text_tertiary,
+                                255,
+                            ))
+                        },
+                    );
                 div()
                     .when(
-                        source && matches!(i, 1 | 4) || options && i > 0 && option == Some(4),
+                        source && matches!(i, 1 | 4)
+                            || options && i > 0 && option == Some(4)
+                            || kind == Kind::Body && self.context.items[i].separator,
                         |d| {
                             d.child(
                                 div()
@@ -970,11 +1024,20 @@ impl DiffPanel {
 
     pub(super) fn menu_overlay(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
         let menu = self.menu.as_ref().expect("open diff menu");
-        let parent = menu.kind == Kind::Commits && menu.parent_source;
-        let position = if parent {
-            menu.position + point(px(SOURCE_WIDTH), px(4. + 4. * ROW + 18.))
-        } else {
-            menu.position
+        let parent = match (menu.kind, menu.parent) {
+            (Kind::Commits, Some(Kind::Source)) => Some((Kind::Source, 4)),
+            (Kind::OpenWith, Some(Kind::Body)) => self
+                .context
+                .open_with_index()
+                .map(|index| (Kind::Body, index)),
+            _ => None,
+        };
+        let position = match parent {
+            Some((Kind::Source, _)) => {
+                menu.position + point(px(SOURCE_WIDTH), px(4. + 4. * ROW + 18.))
+            }
+            Some((_, index)) => menu.position + point(px(220.), px(4. + index as f32 * 29.)),
+            None => menu.position,
         };
         deferred(
             anchored().position(point(px(0.), px(0.))).child(
@@ -989,13 +1052,13 @@ impl DiffPanel {
                         MouseButton::Right,
                         cx.listener(|this, _, window, cx| this.close_menu(window, cx)),
                     )
-                    .when(parent, |d| {
+                    .when_some(parent, |d, (kind, index)| {
                         d.child(
                             anchored()
                                 .position(menu.position)
                                 .anchor(Anchor::TopLeft)
                                 .snap_to_window_with_margin(px(8.))
-                                .child(self.popup(Kind::Source, Some(4), window, cx)),
+                                .child(self.popup(kind, Some(index), window, cx)),
                         )
                     })
                     .when(menu.kind != Kind::Options, |d| {

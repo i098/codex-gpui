@@ -89,7 +89,8 @@ fn choose(fx: &mut Fx, label: &str) -> Result<()> {
             root.diff_panel()?
                 .read(cx)
                 .menu_items()
-                .position(|(item, enabled)| item == label && enabled)
+                .filter(|(_, enabled)| *enabled)
+                .position(|(item, _)| item == label)
         })
         .context("diff option")?;
     fx.keys("home")?;
@@ -119,6 +120,16 @@ fn update_patch(fx: &mut Fx, patch: String) {
             cx,
         )
     });
+}
+
+fn body_menu(fx: &mut Fx, at: (f32, f32)) -> Result<()> {
+    fx.right_click(at)?;
+    fx.wait("diff context menu", |fx| {
+        fx.read(|root, cx| {
+            root.diff_panel()
+                .is_some_and(|panel| panel.read(cx).menu_items().len() > 0)
+        })
+    })
 }
 
 #[test]
@@ -309,5 +320,55 @@ fn copied_git_command_keeps_hidden_whitespace_changes() -> Result<()> {
             == fs::read_to_string(repo.path().join("file.txt"))?
     );
     ensure!(fs::read_to_string(clone.join("spacing.txt"))? == "value  =  1\n");
+    Ok(())
+}
+
+#[test]
+fn context_menu_opens_line_comments_and_file_tabs() -> Result<()> {
+    let (repo, mut fx) = prepare(false)?;
+    fx.reference_shot()?;
+    body_menu(&mut fx, (900., 184.))?;
+    fx.reference_shot()?
+        .save(output()?.join("diff-context-menu.png"))?;
+    choose(&mut fx, "Request changes")?;
+    fx.wait("context line comment", |fx| {
+        fx.read(|root, cx| {
+            root.diff_panel()
+                .is_some_and(|panel| panel.read(cx).comment_draft().is_some())
+        })
+    })?;
+    fx.type_text("Keep this line checked.")?;
+    fx.keys("escape")?;
+    body_menu(&mut fx, (900., 184.))?;
+    choose(&mut fx, "Copy path")?;
+    let copied = fx
+        .cx
+        .update(|cx| cx.read_from_clipboard().and_then(|item| item.text()));
+    ensure!(copied.as_deref() == repo.path().join("file.txt").to_str());
+    body_menu(&mut fx, (900., 184.))?;
+    choose(&mut fx, "Copy relative path")?;
+    let copied = fx
+        .cx
+        .update(|cx| cx.read_from_clipboard().and_then(|item| item.text()));
+    ensure!(copied.as_deref() == Some("file.txt"));
+    body_menu(&mut fx, (900., 184.))?;
+    choose(&mut fx, "Open with")?;
+    fx.reference_shot()?
+        .save(output()?.join("diff-open-with.png"))?;
+    choose(&mut fx, "New tab")?;
+    fx.wait("context file tab", |fx| {
+        fx.read(|root, cx| {
+            root.file_view().is_some_and(|view| {
+                let view = view.read(cx);
+                view.path.ends_with("/file.txt")
+                    && view.contents.as_ref().is_some_and(|text| {
+                        text.as_deref()
+                            .is_ok_and(|text| text.contains("changed 40"))
+                    })
+            })
+        })
+    })?;
+    fx.reference_shot()?
+        .save(output()?.join("diff-context-file-tab.png"))?;
     Ok(())
 }
