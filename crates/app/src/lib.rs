@@ -7,6 +7,7 @@ pub mod computer_use_requests;
 mod features;
 pub mod host;
 pub mod host_settings;
+pub mod oauth;
 pub mod qa;
 mod search;
 mod section_actions;
@@ -433,6 +434,7 @@ pub struct Root {
     chatgpt_account: bool,
     bridge: Arc<Bridge>,
     host: Arc<dyn host::Host>,
+    oauth: oauth::Connections,
     project_load: Option<Task<()>>,
     picking_project: bool,
     automations: Option<Result<Value, String>>,
@@ -717,6 +719,7 @@ impl Root {
                 host::CloudHost::from_env(host::app_server_credentials(bridge.clone()))
                     .with_bridge(bridge.clone()),
             ),
+            oauth: oauth::Connections::default(),
             bridge,
             automations: None,
             automation_load: None,
@@ -1026,6 +1029,7 @@ impl Root {
 
     /// Replaces the desktop host and cancels pending UI callbacks for its reads and updates.
     pub fn set_host(&mut self, host: Arc<dyn host::Host>, cx: &mut Context<Self>) {
+        self.invalidate_oauth(cx);
         self.automation_load = None;
         self.project_load = None;
         self.suggestion_load = None;
@@ -2139,6 +2143,7 @@ impl Root {
         self.flush_settings(cx);
         self.settings_page = None;
         self.suggestion_load = None;
+        self.oauth.leave_page();
         let (can_back, can_forward) = (!self.back.is_empty(), !self.forward.is_empty());
         self.archive_page = None;
         self.mobile_page = None;
@@ -2723,6 +2728,7 @@ impl Root {
                         this.login = Some(cx.new(Login::new));
                         this.account_email = None;
                         this.chatgpt_account = false;
+                        this.invalidate_oauth(cx);
                         let host = this.host.clone();
                         cx.background_spawn(async move { host.invalidate_identity() })
                             .detach();
@@ -4412,6 +4418,7 @@ impl Root {
     /// Every server message: streamed into the open thread and the sign-in view, plus
     /// Recents updates and approval prompts.
     pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        self.oauth_account_event(&event, cx);
         if let Some(login) = &self.login {
             login.update(cx, |login, cx| login.apply(&event, cx));
             if matches!(&event, Event::Notification { method, params }
@@ -5393,6 +5400,11 @@ impl Render for Root {
             (None, Some(split)) => split.clone().into_any_element(),
             (None, None) => self.shell.clone().into_any_element(),
         };
+        let content = self
+            .oauth
+            .page
+            .as_ref()
+            .map_or(content, |page| page.clone().into_any_element());
         let root = div()
             .size_full()
             .relative()

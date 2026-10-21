@@ -7,6 +7,7 @@ pub use settings::computer_use;
 pub mod diff;
 pub mod home;
 pub mod mobile;
+pub mod oauth;
 pub mod settings;
 pub mod sidebar;
 pub mod terminal;
