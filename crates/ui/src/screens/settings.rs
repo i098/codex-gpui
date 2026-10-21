@@ -370,14 +370,16 @@ impl SettingsNav {
             .when(label != EXTERNAL, |d| {
                 d.on_click(cx.listener(move |this, _, window, cx| {
                     if this.page.read(cx).subtree.is_some() {
-                        window.dispatch_action(Box::new(subtrees::OpenSection {
-                            label: label.into(),
-                        }), cx);
+                        window.dispatch_action(
+                            Box::new(subtrees::OpenSection {
+                                label: label.into(),
+                            }),
+                            cx,
+                        );
                         return;
                     }
                     this.page.update(cx, |p, cx| {
                         p.section = label;
-                        p.subtree = None;
                         cx.notify();
                     })
                 }))
@@ -1021,9 +1023,12 @@ impl SettingsPane {
                         button("View", t.text_alpha_5, None, t)
                             .id("open-source-licenses")
                             .on_click(|_, window, cx| {
-                                window.dispatch_action(Box::new(subtrees::OpenSubtree {
-                                    path: subtrees::LICENSES_PATH.into(),
-                                }), cx);
+                                window.dispatch_action(
+                                    Box::new(subtrees::OpenSubtree {
+                                        path: subtrees::LICENSES_PATH.into(),
+                                    }),
+                                    cx,
+                                );
                             })
                             .into_any_element(),
                     ),

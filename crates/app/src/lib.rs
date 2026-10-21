@@ -2159,10 +2159,10 @@ impl Root {
                 let section = self.settings_section.take();
                 let (shell, page) = settings::shell(&config, &self.skills, section, cx);
                 self.settings_page = Some(page.clone());
-                if let Route::SettingsSubtree(path) = &self.state.route {
-                    if let Some(view) = self.settings_subtree(path, cx) {
-                        page.update(cx, |page, cx| page.show_subtree(view, cx));
-                    }
+                if let Route::SettingsSubtree(path) = &self.state.route
+                    && let Some(view) = self.settings_subtree(path, cx)
+                {
+                    page.update(cx, |page, cx| page.show_subtree(view, cx));
                 }
                 cx.subscribe(&page, |this, page, e: &SettingChanged, cx| {
                     this.write_setting(e, cx);
