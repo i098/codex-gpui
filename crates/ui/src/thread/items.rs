@@ -16,6 +16,7 @@ pub(super) fn user_bubble(
 ) -> Div {
     const COLLAPSED_LINES: usize = 20;
     const LINE: f32 = 22.75;
+    const CONTROLS_WIDTH: f32 = 187.73;
     let t = cx.theme().clone();
     let width = markdown::line_width() * 0.7 - 32.;
     let lines = if width > 0. {
@@ -49,6 +50,15 @@ pub(super) fn user_bubble(
     } else {
         0
     };
+    // The hover controls row sits 4 px below the bubble. Its time label wraps to two lines
+    // (row 32 px instead of 26) once the column is narrower than the row's widest layout,
+    // 187.73 px in the original's wide state.
+    let line = markdown::line_width();
+    let reserve = if line > 0. && line < CONTROLS_WIDTH {
+        36.
+    } else {
+        30.
+    };
     let collapsible = lines > COLLAPSED_LINES;
     let expanded =
         window.use_keyed_state(SharedString::from(format!("{id}-expanded")), cx, |_, _| {
@@ -61,7 +71,8 @@ pub(super) fn user_bubble(
         .font_weight(FontWeight(430.))
         .text_color(white())
         .when(collapsed, |d| {
-            d.max_h(px(LINE * (COLLAPSED_LINES - 1) as f32))
+            // `collapsible-user-message-content` sets `max-height: ceil(line-height * 19)`.
+            d.max_h(px((LINE * (COLLAPSED_LINES - 1) as f32).ceil()))
                 .line_clamp(COLLAPSED_LINES - 1)
         })
         .child(match find {
@@ -98,26 +109,32 @@ pub(super) fn user_bubble(
                 d.child(icon("chevron-down-small", 14., t.text_tertiary))
             })
     });
-    // ponytail: a collapsed message sits 5.5 px higher above what follows (one measured state).
-    div()
-        .flex()
-        .flex_col()
-        .items_end()
-        .pb(px(if collapsed { 35.5 } else { 30. }))
-        .child(
-            div()
-                .relative()
-                .max_w(relative(0.7))
-                .py(px(10.))
-                .px(px(16.))
-                .child(shapes::decoration(shapes::Decoration {
-                    radius: Corners::all(px(22.)),
-                    corner: shapes::Corner::Squircle,
-                    fill: Some(t.user_message_background),
-                    ..Default::default()
-                }))
-                .child(div().flex().flex_col().child(body).children(toggle)),
-        )
+    div().flex().flex_col().items_end().pb(px(reserve)).child(
+        div()
+            .relative()
+            .max_w(relative(0.7))
+            .py(px(10.))
+            .px(px(16.))
+            .child(shapes::decoration(shapes::Decoration {
+                radius: Corners::all(px(22.)),
+                corner: shapes::Corner::Squircle,
+                fill: Some(t.user_message_background),
+                ..Default::default()
+            }))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .child(
+                        div()
+                            .w_full()
+                            .child(body)
+                            .when(collapsed, |d| d.child(text("…", 14., LINE, 430., white()))),
+                    )
+                    .children(toggle),
+            ),
+    )
 }
 
 /// A row that wraps its word boxes like an inline formatting context. Chromium lets a line's
@@ -273,6 +290,8 @@ pub(super) fn diff_card(
                     .items_center()
                     .gap(px(10.))
                     .p(px(12.))
+                    // The card clips its buttons in a narrow column.
+                    .overflow_hidden()
                     .child(
                         div()
                             .relative()
@@ -659,12 +678,23 @@ pub(super) fn activity(
         let w = width(window, &s, 14., 430., None);
         (text(s, 14., 21., 430., color), w)
     };
-    let boxed = |label: gpui::AnyElement, w: Pixels| div().flex_none().w(w).child(label);
+    // The label is exactly as wide as its text, and shrinks with an ellipsis (`truncate`) in a
+    // column too narrow for it.
+    let boxed = |label: gpui::AnyElement, w: Pixels| {
+        div()
+            .w(w)
+            .min_w_0()
+            .flex_shrink(1.)
+            .overflow_hidden()
+            .text_ellipsis()
+            .child(label)
+    };
     let plain = |(label, w): (Div, Pixels)| boxed(label.into_any_element(), w);
     // A 21 px line: a 16 px icon, then its words.
     let row = |icon_name: &'static str, words: Div| {
         div()
             .h(px(21.))
+            .min_w_0()
             .flex()
             .items_center()
             .gap(px(6.))
@@ -688,6 +718,9 @@ pub(super) fn activity(
         div()
             .id(group.clone())
             .group(group.clone())
+            .min_w_0()
+            .max_w_full()
+            .self_start()
             .flex()
             .items_center()
             .gap(px(4.))

@@ -383,6 +383,7 @@ impl Markdown<'_> {
     fn inline(&mut self, style: Typography) -> (Vec<AnyElement>, bool) {
         let mut row = Vec::new();
         let mut task = false;
+        let mut glue = false;
         while let Some(event) = self.events.peek() {
             match event {
                 Event::End(_)
@@ -396,8 +397,10 @@ impl Markdown<'_> {
                 | Event::Rule => break,
                 _ => {}
             }
+            let glued = std::mem::take(&mut glue);
             match self.events.next().expect("peeked event") {
                 Event::Text(s) | Event::Html(s) | Event::InlineHtml(s) => {
+                    let mut glue = glued;
                     let mut at = self.events.start;
                     let line = LINE_WIDTH.with(|w| w.get());
                     for word in s.split_inclusive(' ') {
@@ -407,7 +410,24 @@ impl Markdown<'_> {
                         {
                             let here = at;
                             at += chunk.len();
-                            row.push(self.word(chunk, Some(here), style).into_any_element());
+                            let word = self.word(chunk, Some(here), style);
+                            // No break opportunity between a chip and the text that touches it.
+                            if glue && !chunk.starts_with(char::is_whitespace) {
+                                if let Some(chip) = row.pop() {
+                                    row.push(
+                                        div()
+                                            .flex()
+                                            .flex_none()
+                                            .child(chip)
+                                            .child(word)
+                                            .into_any_element(),
+                                    );
+                                    glue = false;
+                                    continue;
+                                }
+                            }
+                            glue = false;
+                            row.push(word.into_any_element());
                         }
                     }
                 }
@@ -423,6 +443,7 @@ impl Markdown<'_> {
                             .into_iter()
                             .map(|part| part.into_any_element()),
                     );
+                    glue = true;
                 }
                 Event::Start(tag) => {
                     let next = match tag {
@@ -887,7 +908,19 @@ fn break_long<'s>(
 
 /// A wrapped inline row that ends a block: `newlines` is what Chrome's `Selection.toString`
 /// emits after it (two for paragraphs and headings).
-fn block(row: Vec<AnyElement>, newlines: usize) -> Div {
+fn block(mut row: Vec<AnyElement>, newlines: usize) -> Div {
+    // `wrap_row` gives every line 4 px for a hanging space; the block's last word has none, so
+    // it carries those 4 px as padding to wrap as it would without the allowance.
+    if let Some(last) = row.pop() {
+        row.push(
+            div()
+                .flex()
+                .flex_none()
+                .pr(px(4.))
+                .child(last)
+                .into_any_element(),
+        );
+    }
     wrap_row().children(row).child(block_end(newlines))
 }
 
