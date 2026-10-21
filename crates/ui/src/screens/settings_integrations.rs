@@ -511,8 +511,7 @@ impl Manager {
 
     fn server_row(
         &self,
-        key: &str,
-        config: Option<&Value>,
+        (key, config): (&str, Option<&Value>),
         status: Option<&Value>,
         state: &State,
         t: &Theme,
@@ -661,8 +660,7 @@ impl Manager {
             })
             .map(|(key, config)| {
                 self.server_row(
-                    key,
-                    Some(config),
+                    (key, Some(config)),
                     statuses.iter().find(|s| s["name"] == *key),
                     state,
                     t,
@@ -684,8 +682,7 @@ impl Manager {
             })
             .map(|status| {
                 self.server_row(
-                    status["name"].as_str().unwrap_or(""),
-                    None,
+                    (status["name"].as_str().unwrap_or(""), None),
                     Some(status),
                     state,
                     t,
@@ -1591,11 +1588,11 @@ impl Manager {
         title: String,
         content: Div,
         controls: Vec<String>,
-        pending: bool,
         t: &Theme,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let pending = cx.global::<State>().pending;
         let controls = controls
             .into_iter()
             .map(|id| {
@@ -1681,7 +1678,6 @@ impl Manager {
                 hook_source_title(source, state),
                 content,
                 controls,
-                state.pending,
                 t,
                 window,
                 cx,
@@ -1741,7 +1737,6 @@ impl Manager {
                 title_label,
                 confirm,
                 vec!["cancel-removal".into(), "confirm-removal".into()],
-                pending,
                 t,
                 window,
                 cx,

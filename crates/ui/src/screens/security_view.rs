@@ -195,6 +195,7 @@ impl SecurityPage {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let mut header = div()
+            .layer()
             .h(px(46.))
             .flex_none()
             .px(px(8.))

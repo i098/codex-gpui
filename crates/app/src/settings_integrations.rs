@@ -119,11 +119,11 @@ impl Root {
                             if let Action::RemoveServer(key) = &action {
                                 state.suppressed_servers.insert(key.clone());
                             }
-                            if let Action::Authenticate { name, .. } = &action {
-                                if let Some(url) = url {
-                                    state.oauth.insert(name.clone(), Some(url.clone()));
-                                    cx.open_url(&url);
-                                }
+                            if let Action::Authenticate { name, .. } = &action
+                                && let Some(url) = url
+                            {
+                                state.oauth.insert(name.clone(), Some(url.clone()));
+                                cx.open_url(&url);
                             }
                         }
                         Err(error) => {
@@ -289,10 +289,10 @@ async fn load(
                 let url = plugin["interface"]["logoUrlDark"]
                     .as_str()
                     .or_else(|| plugin["interface"]["logoUrl"].as_str());
-                if let Some(url) = url {
-                    if let Ok(data) = load_icon(host, url) {
-                        plugin["iconDataUrl"] = data.into();
-                    }
+                if let Some(url) = url
+                    && let Ok(data) = load_icon(host, url)
+                {
+                    plugin["iconDataUrl"] = data.into();
                 }
             }
         }
