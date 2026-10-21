@@ -6,7 +6,6 @@ use gpui::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
-use theme::ActiveTheme as _;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Method {
@@ -67,6 +66,7 @@ impl Bedrock {
         let fields = std::array::from_fn(|index| {
             let field = cx.new(|cx| {
                 let mut field = Composer::settings_field("", "", false, cx);
+                field.set_compact_field(cx);
                 field.set_secret(matches!(index, 2 | 3 | 4), cx);
                 field.set_field_label(
                     [
@@ -95,19 +95,19 @@ impl Bedrock {
         }
     }
 
-    fn field(&self, index: usize, cx: &gpui::App) -> String {
-        self.fields[index].read(cx).field_text().to_owned()
+    fn field<'a>(&self, index: usize, cx: &'a gpui::App) -> &'a str {
+        self.fields[index].read(cx).field_text()
     }
 
     fn request(&self, cx: &gpui::App) -> Option<(&'static str, Value)> {
         let Step::Entry(method) = self.step else {
             return None;
         };
-        let region = self.field(5, cx).trim().to_owned();
+        let region = self.field(5, cx).trim();
         if region.is_empty() {
             return None;
         }
-        let key = self.field(0, cx).trim().to_owned();
+        let key = self.field(0, cx).trim();
         Some(match method {
             Method::Profile if !key.is_empty() => (
                 "account/bedrock/setup",
@@ -122,7 +122,7 @@ impl Bedrock {
             {
                 (
                     "account/login/start",
-                    json!({"type":"amazonBedrockAccessKeys", "accessKeyId":self.field(1,cx).trim(), "secretAccessKey":self.field(2,cx), "sessionToken":self.field(3,cx), "region":region}),
+                    json!({"type":"amazonBedrockAccessKeys", "accessKeyId":self.field(1,cx), "secretAccessKey":self.field(2,cx), "sessionToken":(!self.field(3,cx).trim().is_empty()).then(||self.field(3,cx)), "region":region}),
                 )
             }
             Method::ApiKey if !self.field(4, cx).trim().is_empty() => (
@@ -313,7 +313,7 @@ impl Login {
         if self.pending || !matches!(bedrock.step, Step::GovCloud(_)) {
             return;
         }
-        let region = bedrock.field(5, cx);
+        let region = bedrock.field(5, cx).to_owned();
         self.pending = true;
         cx.emit(LoginEvent::CheckGovCloud { region });
         cx.notify();
@@ -341,7 +341,7 @@ impl Login {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl gpui::IntoElement {
-        let t = cx.theme().clone();
+        let t = super::login_theme(cx);
         let bedrock = self.bedrock.as_ref().expect("Bedrock view requires state");
         let mut body = div().w_full().flex().flex_col().gap(px(12.));
         if let Some(error) = &self.error {
@@ -543,6 +543,16 @@ impl Login {
             .w_full()
             .h_full()
             .id("bedrock-setup")
+            .capture_action(cx.listener(|this, _: &crate::composer::Submit, _, cx| {
+                if this
+                    .bedrock
+                    .as_ref()
+                    .is_some_and(|bedrock| matches!(bedrock.step, Step::Entry(_)))
+                {
+                    this.submit_bedrock(cx);
+                    cx.stop_propagation();
+                }
+            }))
             .overflow_y_scroll()
             .py(px(48.))
             .px(px(24.))
@@ -560,7 +570,7 @@ impl Login {
                             .flex_col()
                             .items_center()
                             .gap(px(16.))
-                            .child(icon("codex-logo", 40., t.text))
+                            .child(icon("signin-chatgpt", 36., t.text))
                             .child(
                                 text("Set up Amazon Bedrock", 28., 36., 400., t.text)
                                     .w(px(316.))
@@ -579,5 +589,35 @@ impl Login {
             self.error = None;
             cx.notify();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_session_tokens_are_null_without_trimming_credentials() {
+        let mut app = gpui::HeadlessAppContext::new(textsys::text_system());
+        let login = app.new(Login::new);
+        login.update(&mut app, |_, cx| {
+            let mut bedrock = Bedrock::new(cx);
+            bedrock.step = Step::Entry(Method::AccessKeys);
+            for (index, value) in [
+                (1, " access-id "),
+                (2, " secret "),
+                (3, "   "),
+                (5, " us-east-2 "),
+            ] {
+                bedrock.fields[index].update(cx, |field, cx| field.set_text(value, cx));
+            }
+            let (_, request) = bedrock.request(cx).unwrap();
+            assert_eq!(request["accessKeyId"], " access-id ");
+            assert_eq!(request["secretAccessKey"], " secret ");
+            assert_eq!(request["sessionToken"], Value::Null);
+            assert_eq!(request["region"], "us-east-2");
+            bedrock.fields[3].update(cx, |field, cx| field.set_text(" token ", cx));
+            assert_eq!(bedrock.request(cx).unwrap().1["sessionToken"], " token ");
+        });
     }
 }

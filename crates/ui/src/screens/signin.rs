@@ -380,6 +380,17 @@ use gpui::{
 use serde_json::{Value, json};
 use theme::{ActiveTheme as _, Theme};
 
+fn login_theme(cx: &App) -> Theme {
+    let mut theme = cx.theme().clone();
+    if theme.appearance == theme::Appearance::Dark {
+        theme.text = gpui::rgb(0xdfdfdf).into();
+        theme.button_primary_solid = theme.text;
+        theme.text_inverse = gpui::rgb(0x2d2d2d).into();
+        theme.text_description = gpui::Hsla::from(gpui::rgb(0xffffff)).opacity(0.498);
+    }
+    theme
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Provider {
     SignIn,
@@ -414,6 +425,7 @@ pub struct Options {
     pub all_browser_accounts: bool,
     pub desktop_auth: bool,
     pub streamlined_login: bool,
+    pub browser_help: bool,
     pub browser_profiles: Vec<BrowserProfile>,
 }
 
@@ -485,6 +497,7 @@ impl Login {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let api_key = cx.new(|cx| {
             let mut field = Composer::settings_field("sk-…", "", false, cx);
+            field.set_compact_field(cx);
             field.set_field_label("OpenAI API key", cx);
             field
         });
@@ -767,8 +780,10 @@ impl Login {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let t = cx.theme().clone();
+        let t = login_theme(cx);
         let label = label.into();
+        let api_form =
+            self.stage == Stage::ApiKey && matches!(command, Command::Submit | Command::Back);
         let color = match style {
             Style::Primary => t.text_inverse,
             Style::Link => t.text_description,
@@ -780,7 +795,9 @@ impl Login {
             .aria_label(label.clone())
             .relative()
             .w_full()
-            .h(px(if matches!(style, Style::Primary) {
+            .h(px(if api_form {
+                36.
+            } else if matches!(style, Style::Primary) {
                 48.
             } else {
                 46.
@@ -805,8 +822,12 @@ impl Login {
             }));
         button = match style {
             Style::Primary => button
+                .when(api_form, |button| button.border_1().border_color(t.border))
                 .bg(t.button_primary_solid)
                 .hover(move |style| style.bg(t.text.opacity(0.8))),
+            Style::Outline if api_form => button
+                .bg(t.text_alpha_5)
+                .hover(move |style| style.bg(t.text_alpha_10)),
             Style::Outline => {
                 let background = over(t.ghost_hover, t.surface);
                 button
@@ -823,13 +844,13 @@ impl Login {
         };
         let label = div()
             .text_size(px(14.))
-            .line_height(px(20.))
-            .font_weight(gpui::FontWeight(500.))
+            .line_height(px(if api_form { 18. } else { 20. }))
+            .font_weight(gpui::FontWeight(if api_form { 430. } else { 500. }))
             .whitespace_nowrap()
             .child(label)
             .when(matches!(style, Style::Link), |label| label.underline());
         if matches!(command, Command::Start(Provider::SignIn)) && matches!(style, Style::Primary) {
-            button = button.child(icon("codex-logo", 24., color));
+            button = button.child(icon("signin-provider", 24., color));
         }
         if let Command::Start(provider @ (Provider::Google | Provider::Microsoft)) = command {
             let asset = if provider == Provider::Google {
@@ -863,7 +884,7 @@ fn cancel(id: String, cx: &App) {
 
 impl Render for Login {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = cx.theme().clone();
+        let t = login_theme(cx);
         let frame = div()
             .size_full()
             .flex()
@@ -908,14 +929,77 @@ impl Render for Login {
         if self.bedrock.is_some() {
             return frame.child(self.bedrock_view(window, cx));
         }
+        if self.pending && self.stage == Stage::Welcome {
+            let controls = div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(px(24.))
+                .child(
+                    self.button(
+                        "cancel",
+                        "Cancel sign-in",
+                        Command::Cancel,
+                        Style::Outline,
+                        window,
+                        cx,
+                    )
+                    .h(px(42.))
+                    .text_color(t.text_description),
+                )
+                .when(self.options.browser_help, |controls| {
+                    controls.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(text(
+                                "Browser didn't open?",
+                                14.,
+                                20.,
+                                400.,
+                                t.text_description,
+                            ))
+                            .child(
+                                self.button(
+                                    "copy-signin-link",
+                                    "Copy sign-in link",
+                                    Command::CopyLink,
+                                    Style::Link,
+                                    window,
+                                    cx,
+                                )
+                                .when(self.login_url.is_none(), |button| button.opacity(0.5)),
+                            ),
+                    )
+                });
+            return frame.pb(px(48.)).child(
+                div()
+                    .w(px(340.))
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(32.))
+                    .child(icon("signin-chatgpt", 40., t.text))
+                    .child(text(
+                        "Continue signing in with your browser",
+                        14.,
+                        20.,
+                        400.,
+                        t.text_description,
+                    ))
+                    .child(controls),
+            );
+        }
         if self.browser_loading && self.stage == Stage::Welcome {
             return frame.child(text("Loading…", 14., 20., 400., t.text_description));
         }
         let heading = if self.stage == Stage::OtherMethods {
             "Sign in another way"
-        } else if self.stage == Stage::ApiKey || !self.policy.permits_chatgpt() {
+        } else if !self.policy.permits_chatgpt() {
             "Sign in with an API key"
-        } else if !self.options.browser_profiles.is_empty() {
+        } else if self.stage == Stage::Welcome && !self.options.browser_profiles.is_empty() {
             "Welcome back"
         } else {
             "Sign in to ChatGPT"
@@ -927,9 +1011,9 @@ impl Render for Login {
                 .role(gpui::Role::Button)
                 .aria_label("Play Snake")
                 .relative()
-                .size(px(40.))
+                .size(px(36.))
                 .cursor_pointer()
-                .child(icon("codex-logo", 40., t.text))
+                .child(icon("signin-chatgpt", 36., t.text))
                 .on_click(
                     cx.listener(|this, _, window, cx| this.command(Command::PlaySnake, window, cx)),
                 )
@@ -969,34 +1053,7 @@ impl Render for Login {
                 },
             );
         let mut body = div().w_full().flex().flex_col().items_center().gap(px(12.));
-        if self.pending && self.stage == Stage::Welcome {
-            body = body
-                .child(text(
-                    "Continue signing in with your browser",
-                    14.,
-                    20.,
-                    400.,
-                    t.text_description,
-                ))
-                .child(self.button(
-                    "cancel",
-                    "Cancel sign-in",
-                    Command::Cancel,
-                    Style::Outline,
-                    window,
-                    cx,
-                ))
-                .when(self.login_url.is_some(), |body| {
-                    body.child(self.button(
-                        "copy-signin-link",
-                        "Copy sign-in link",
-                        Command::CopyLink,
-                        Style::Outline,
-                        window,
-                        cx,
-                    ))
-                });
-        } else if self.stage == Stage::ApiKey {
+        if self.stage == Stage::ApiKey {
             let field = self.api_key.clone();
             body = body
                 .items_start()
@@ -1006,16 +1063,14 @@ impl Render for Login {
                         .flex()
                         .flex_col()
                         .gap(px(8.))
-                        .child(text("OpenAI API key", 14., 20., 500., t.text))
+                        .child(text("OpenAI API key", 14., 21., 500., t.text))
                         .child(
                             div()
                                 .w_full()
-                                .capture_key_down(cx.listener(
-                                    |this, event: &KeyDownEvent, _, cx| {
-                                        if event.keystroke.key == "enter" {
-                                            this.submit(cx);
-                                            cx.stop_propagation();
-                                        }
+                                .capture_action(cx.listener(
+                                    |this, _: &crate::composer::Submit, _, cx| {
+                                        this.submit(cx);
+                                        cx.stop_propagation();
                                     },
                                 ))
                                 .child(field),
@@ -1060,7 +1115,7 @@ impl Render for Login {
                             .when(
                                 self.pending
                                     || self.api_key.read(cx).field_text().trim().is_empty(),
-                                |button| button.opacity(0.5),
+                                |button| button.opacity(0.4),
                             ),
                         ),
                 );

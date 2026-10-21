@@ -5,6 +5,11 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use ui::screens::onboarding::{Completion, Onboarding, OnboardingEvent, Page, Project};
 
+pub(crate) struct ContextData {
+    account: Option<Value>,
+    projects: Vec<Project>,
+}
+
 fn context_request() -> host::Request {
     host::Request::Http(
         json!({"url":"/wham/onboarding/context","method":"GET","headers":{"OAI-Language":"en-US","X-OpenAI-Attach-Auth":"1","X-OpenAI-Attach-Integrity-State":"1","originator":"Codex Desktop"},"returnErrorResponse":true}),
@@ -33,6 +38,31 @@ impl Root {
     pub fn onboarding(&self) -> Option<&Entity<Onboarding>> {
         self.onboarding_page.as_ref()
     }
+    pub fn first_app_connected(
+        &self,
+        previous: Option<&[Value]>,
+        next: &[Value],
+        cx: &mut Context<Self>,
+    ) {
+        if !first_accessible_app(previous, next) {
+            return;
+        }
+        let host = self.host.clone();
+        let Some(home) = std::env::var_os("HOME") else {
+            return;
+        };
+        let home = PathBuf::from(home);
+        cx.background_spawn(async move {
+            for domain in [None, Some("science")] {
+                let request = host::Request::post("ambient-suggestions-refresh", Some(json!({
+                    "domain":domain,"hostId":"local","projectRoot":home,"mode":"first-plugin-connect"
+                })));
+                if let Err(error) = host.fetch(&request).and_then(|response| host::json_body(&response)) {
+                    eprintln!("Failed to refresh first-app suggestions: {error}");
+                }
+            }
+        }).detach();
+    }
 
     pub(crate) fn maybe_onboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.chatgpt_account
@@ -58,17 +88,28 @@ impl Root {
                         "Onboarding context lacks completion state"
                     );
                     Ok::<_, anyhow::Error>(
-                        context["desktop_onboarding_completed_at"].is_null()
-                            && workspaces.is_empty(),
+                        if context["desktop_onboarding_completed_at"].is_null()
+                            && workspaces.is_empty()
+                        {
+                            Some(ContextData {
+                                account: Some(context),
+                                projects: workspaces,
+                            })
+                        } else {
+                            None
+                        },
                     )
                 })
                 .await;
             this.update_in(cx, |this, window, cx| {
                 this.onboarding_load = None;
                 if epoch == this.navigation_epoch
-                    && result.unwrap_or(false)
                     && this.state.route == Route::Home
+                    && this.chatgpt_account
+                    && this.login.is_none()
+                    && let Ok(Some(context)) = result
                 {
+                    this.onboarding_context = Some(context);
                     this.navigate(Route::Onboarding(Page::Welcome), window, cx);
                 }
             })
@@ -83,26 +124,59 @@ impl Root {
         cx: &mut Context<Self>,
     ) {
         let view = cx.new(|_| Onboarding::new(page, self.chatgpt_account));
-        cx.subscribe_in(&view,window,|this,view,event:&OnboardingEvent,window,cx| {
-            if this.onboarding_page.as_ref()!=Some(view) {return;}
-            match event {
-                OnboardingEvent::Reload=>this.read_onboarding(view.clone(),window,cx),
-                OnboardingEvent::Complete(completion)=>this.complete_onboarding(view.clone(),completion.clone(),window,cx),
-                OnboardingEvent::FirstRunComplete=>{
-                    let key=if this.chatgpt_account {"viewed2025-09-15-full-chatgpt-auth-nux"}else{"viewed2025-09-15-apikey-auth-nux"};
-                    let result=(||{let settings=cx.global_mut::<host_settings::Settings>();settings.write("viewed2025-09-15-nux",json!(true))?;settings.write(key,json!(true))})();
-                    match result {Ok(())=>this.navigate(Route::Home,window,cx),Err(error)=>view.update(cx,|view,cx|view.set_error(format!("Could not save setup: {error}"),cx))}
+        cx.subscribe_in(
+            &view,
+            window,
+            |this, view, event: &OnboardingEvent, window, cx| {
+                if this.onboarding_page.as_ref() != Some(view) {
+                    return;
                 }
-                OnboardingEvent::PickFolder=>this.pick_onboarding_folder(view.clone(),window,cx),
-                OnboardingEvent::CreateProject=>this.create_onboarding_project(view.clone(),window,cx),
-                OnboardingEvent::OpenImport(completion)=>{
-                    let result=cx.global_mut::<host_settings::Settings>().write("electron:onboarding-welcome-v2-role-state",json!({"roles":completion.roles,"personalizedSuggestionsEnabled":completion.personalized_suggestions,"workMode":completion.work_mode()}));
-                    if let Err(error)=result {view.update(cx,|view,cx|view.set_error(error.to_string(),cx));return;}
-                    this.settings_section=Some("Import");
-                    this.navigate(Route::Settings,window,cx);
+                match event {
+                    OnboardingEvent::Reload => this.read_onboarding(view.clone(), window, cx),
+                    OnboardingEvent::Complete(completion) => this.complete_onboarding(
+                        view.clone(),
+                        completion.clone(),
+                        Route::Home,
+                        window,
+                        cx,
+                    ),
+                    OnboardingEvent::FirstRunComplete => {
+                        let key = if this.chatgpt_account {
+                            "viewed2025-09-15-full-chatgpt-auth-nux"
+                        } else {
+                            "viewed2025-09-15-apikey-auth-nux"
+                        };
+                        let result = (|| {
+                            let settings = cx.global_mut::<host_settings::Settings>();
+                            settings.write("viewed2025-09-15-nux", json!(true))?;
+                            settings.write(key, json!(true))
+                        })();
+                        match result {
+                            Ok(()) => this.navigate(Route::Home, window, cx),
+                            Err(error) => view.update(cx, |view, cx| {
+                                view.set_error(format!("Could not save setup: {error}"), cx)
+                            }),
+                        }
+                    }
+                    OnboardingEvent::PickFolder => {
+                        this.pick_onboarding_folder(view.clone(), window, cx)
+                    }
+                    OnboardingEvent::CreateProject => {
+                        this.create_onboarding_project(view.clone(), window, cx)
+                    }
+                    OnboardingEvent::OpenImport(completion) => {
+                        this.complete_onboarding(
+                            view.clone(),
+                            completion.clone(),
+                            Route::Settings,
+                            window,
+                            cx,
+                        );
+                    }
                 }
-            }
-        }).detach();
+            },
+        )
+        .detach();
         self.onboarding_page = Some(view.clone());
         if page != Page::FirstRun {
             self.read_onboarding(view, window, cx);
@@ -118,6 +192,7 @@ impl Root {
         let host = self.host.clone();
         let bridge = self.bridge.clone();
         let workspace = view.read(cx).page() == Page::SelectWorkspace;
+        let prepared = self.onboarding_context.take();
         let saved = cx
             .global::<host_settings::Settings>()
             .read_all()
@@ -126,6 +201,9 @@ impl Root {
         self.onboarding_load = Some(cx.spawn_in(window, async move |this, cx| {
             let result = cx
                 .background_spawn(async move {
+                    if let Some(prepared) = prepared {
+                        return Ok(prepared);
+                    }
                     let response = if workspace {
                         None
                     } else {
@@ -133,7 +211,10 @@ impl Root {
                         ensure!(response.is_object(), "Invalid onboarding context");
                         Some(response)
                     };
-                    Ok::<_, anyhow::Error>((response, projects(host.as_ref())?))
+                    Ok::<_, anyhow::Error>(ContextData {
+                        account: response,
+                        projects: projects(host.as_ref())?,
+                    })
                 })
                 .await;
             let mut import_available = false;
@@ -158,7 +239,10 @@ impl Root {
                     return;
                 }
                 view.update(cx, |view, cx| match result {
-                    Ok((context, projects)) => {
+                    Ok(ContextData {
+                        account: context,
+                        projects,
+                    }) => {
                         let roles = saved
                             .as_ref()
                             .and_then(|saved| saved["roles"].as_array())
@@ -192,6 +276,7 @@ impl Root {
         &mut self,
         view: Entity<Onboarding>,
         completion: Completion,
+        destination: Route,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -223,8 +308,9 @@ impl Root {
                 });
                 match result {
                     Ok(completion)=>{
+                        if destination == Route::Settings {this.settings_section=Some("Import");}
                         this.load_projects(cx);
-                        if let Some(root)=completion.roots.first() {this.select_project(root.clone(),window,cx);}else{this.navigate(Route::Home,window,cx);}
+                        if destination == Route::Home && let Some(root)=completion.roots.first() {this.select_project(root.clone(),window,cx);}else{this.navigate(destination,window,cx);}
                     }
                     Err(error)=>view.update(cx,|view,cx|view.set_error(format!("Couldn't finish setup — try again: {error}"),cx)),
                 }
@@ -347,6 +433,11 @@ fn create_project(documents: &Path) -> Result<PathBuf> {
     unreachable!()
 }
 
+fn first_accessible_app(previous: Option<&[Value]>, next: &[Value]) -> bool {
+    let active = |app: &Value| app["isAccessible"] == true && app["isEnabled"] == true;
+    previous.is_some_and(|apps| !apps.iter().any(active)) && next.iter().any(active)
+}
+
 fn successful_response(response: &Value) -> Result<()> {
     let response = response.get("value").unwrap_or(response);
     ensure!(
@@ -368,6 +459,16 @@ fn successful_response(response: &Value) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn first_app_refresh_requires_a_known_zero_to_one_transition() {
+        let enabled = [json!({"isAccessible":true,"isEnabled":true})];
+        let disabled = [json!({"isAccessible":true,"isEnabled":false})];
+        assert!(!first_accessible_app(None, &enabled));
+        assert!(first_accessible_app(Some(&[]), &enabled));
+        assert!(first_accessible_app(Some(&disabled), &enabled));
+        assert!(!first_accessible_app(Some(&enabled), &enabled));
+        assert!(!first_accessible_app(Some(&disabled), &disabled));
+    }
     #[test]
     fn workspace_creation_preserves_existing_folders() -> Result<()> {
         let home = tempfile::tempdir()?;

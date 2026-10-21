@@ -512,6 +512,7 @@ fn options(response: &Value) -> Result<Options> {
     Ok(Options {
         providers: provider["enabled"] == true,
         bedrock: payload["feature_gates"]["1934304769"]["value"] == true,
+        browser_help: payload["feature_gates"]["2502927686"]["value"] == true,
         api_key_help: matches!(
             api["api_key_help_variant"].as_str(),
             Some("link" | "explanation" | "explanation-with-chatgpt")

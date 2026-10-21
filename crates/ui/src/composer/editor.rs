@@ -555,26 +555,36 @@ impl Composer {
     pub(super) fn editor(&self, cx: &mut Context<Self>) -> Div {
         div()
             .px(px(
-                if self.request_parent.is_some() && self.request_compact && !self.secret {
+                if self.request_compact && (self.request_parent.is_none() || !self.secret) {
                     10.
                 } else {
                     12.
                 },
             ))
-            .pb(px(if self.request_parent.is_some() {
-                0.
-            } else {
-                4.
-            }))
-            .min_h(px(if self.request_parent.is_some() {
-                20.
-            } else {
-                48.
-            }))
+            .pb(px(
+                if self.request_parent.is_some() || self.request_compact {
+                    0.
+                } else {
+                    4.
+                },
+            ))
+            .min_h(px(
+                if self.request_parent.is_some() || self.request_compact {
+                    20.
+                } else {
+                    48.
+                },
+            ))
             .cursor(CursorStyle::IBeam)
             .text_size(FONT_SIZE)
             .line_height(LINE_HEIGHT)
-            .font_weight(gpui::FontWeight(430.))
+            .font_weight(gpui::FontWeight(
+                if self.request_compact && self.request_parent.is_none() {
+                    500.
+                } else {
+                    430.
+                },
+            ))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_click))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -812,7 +822,7 @@ pub(super) fn shape(
         .text_system()
         .shape_text(
             s.into(),
-            if composer.request_compact && !composer.secret {
+            if composer.request_compact && (composer.request_parent.is_none() || !composer.secret) {
                 px(13.)
             } else {
                 FONT_SIZE

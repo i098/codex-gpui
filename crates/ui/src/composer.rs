@@ -750,6 +750,11 @@ impl Composer {
         cx.notify();
     }
 
+    pub(crate) fn set_compact_field(&mut self, cx: &mut Context<Self>) {
+        self.request_compact = true;
+        cx.notify();
+    }
+
     pub fn message_edit(
         message: &str,
         cancel: impl Fn(&mut Window, &mut App) + 'static,
@@ -1909,9 +1914,13 @@ impl Render for Composer {
                     .when(self.request_parent.is_none(), |d| {
                         d.border_1()
                             .border_color(t.border)
-                            .rounded(px(8.))
+                            .rounded(if self.request_compact {
+                                Theme::RADIUS_MD
+                            } else {
+                                px(8.)
+                            })
                             .bg(t.background_panel)
-                            .py(px(8.))
+                            .py(px(if self.request_compact { 7. } else { 8. }))
                     })
                     .when(self.request_parent.is_some(), |d| {
                         d.px(px(1.))

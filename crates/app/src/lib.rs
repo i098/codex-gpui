@@ -209,7 +209,6 @@ pub fn menus() -> Vec<Menu> {
     ]
 }
 
-
 /// The thread route's side panel tab.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SidePanel {
@@ -413,6 +412,7 @@ pub struct Root {
     settings_page: Option<Entity<settings::SettingsPage>>,
     onboarding_page: Option<Entity<ui::screens::onboarding::Onboarding>>,
     onboarding_load: Option<Task<()>>,
+    onboarding_context: Option<onboarding::ContextData>,
     /// `⌘K` command menu over the window.
     command_menu: Option<Entity<CommandMenu>>,
     dialog: Option<Entity<Dialog>>,
@@ -701,6 +701,7 @@ impl Root {
             settings_page: None,
             onboarding_page: None,
             onboarding_load: None,
+            onboarding_context: None,
             command_menu: None,
             dialog: None,
             dialog_to_composer: false,
@@ -2079,7 +2080,6 @@ impl Root {
         }
     }
 
-
     /// HC-033: a printable key (no ⌘/⌃, not Space) typed outside an editable, with no
     /// dialog, menu or popover open, goes to the route's composer and focuses it.
     /// Content ancestors can hold plain focus handles without being popovers.
@@ -2501,6 +2501,9 @@ impl Root {
                 match result {
                     Ok(_) => {
                         this.login = Some(this.new_login(window, cx));
+                        this.onboarding_load = None;
+                        this.onboarding_context = None;
+                        this.onboarding_page = None;
                         this.account_email = None;
                         this.chatgpt_account = false;
                         let host = this.host.clone();
@@ -5134,6 +5137,7 @@ impl Render for Root {
                 .relative()
                 .font_family(ui::SANS)
                 .track_focus(&self.focus)
+                .on_key_down(ui::focus::tab)
                 .on_action(cx.listener(|this, _: &CloseWindow, window, cx| {
                     this.close_window(window, cx);
                 }))

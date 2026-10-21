@@ -355,7 +355,11 @@ impl Onboarding {
                         .collect();
                 }
             }
-            Action::Import => cx.emit(OnboardingEvent::OpenImport(self.completion(false))),
+            Action::Import => {
+                self.busy = true;
+                self.error = None;
+                cx.emit(OnboardingEvent::OpenImport(self.completion(false)));
+            }
             Action::NotNow => self.complete(false, cx),
         }
         cx.notify();
