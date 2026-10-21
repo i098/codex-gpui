@@ -33,6 +33,8 @@ use theme::{ActiveTheme as _, Theme};
 #[path = "computer_use.rs"]
 pub mod computer_use;
 
+pub mod appearance;
+
 /// The app's theme setting (`ThemeSetting`): `system`, `light` or `dark`.
 pub const THEME: &str = "host.appearance-theme";
 
@@ -461,6 +463,7 @@ pub struct SettingsPane {
     /// Pointer over that menu: a press there is not a click outside.
     menu_hovered: bool,
     git_fields: Vec<(&'static str, Entity<Composer>)>,
+    appearance: appearance::State,
 }
 
 /// `Confirm before closing a window` options, default first.
@@ -489,12 +492,17 @@ impl SettingsPane {
             cx.notify();
         })
         .detach();
+        cx.subscribe(&page, |this, _, result: &appearance::PairSaved, cx| {
+            this.appearance_pair_saved(result, cx);
+        })
+        .detach();
         Self {
             page,
             layer: Layer::default(),
             open_select: None,
             menu_hovered: false,
             git_fields: Vec::new(),
+            appearance: appearance::State::default(),
         }
     }
 
@@ -640,15 +648,6 @@ impl SettingsPane {
                     }))
             }))
             .into_any_element()
-    }
-
-    /// Appearance ▸ Theme: the app applies and keeps the choice (`SetTheme`).
-    /// ponytail: the chrome theme, font size and motion rows are not here; add them with the
-    /// settings they drive.
-    fn appearance(&self, t: &Theme, cx: &mut Context<Self>) -> Vec<(&'static str, Vec<Div>)> {
-        let options = &[("light", "Light"), ("dark", "Dark"), ("system", "System")];
-        let theme = self.segmented(THEME, "system", options, t, cx);
-        vec![("Theme", vec![settings_row("Theme", None, theme, t)])]
     }
 
     fn git(
@@ -1142,10 +1141,12 @@ impl Render for SettingsPane {
         if section == "Computer use" {
             return super::computer_use::render(window, cx);
         }
+        if section == "Appearance" {
+            return self.render_appearance(window, cx);
+        }
         // Unimplemented sections retain their title-only surface.
         let groups = match section {
             "General" => self.general(&t, window, cx),
-            "Appearance" => self.appearance(&t, cx),
             "Git" => self.git(&t, window, cx),
             _ => Vec::new(),
         };

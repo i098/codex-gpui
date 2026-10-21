@@ -254,8 +254,8 @@ pub fn text(
     color: Hsla,
 ) -> Div {
     div()
-        .text_size(px(size))
-        .line_height(px(line_height))
+        .text_size(gpui::rems(size / 16.))
+        .line_height(gpui::rems(line_height / 16.))
         .font_weight(FontWeight(weight))
         .text_color(color)
         .whitespace_nowrap()
@@ -1123,6 +1123,9 @@ impl Shell {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
+        let appearance = cx.try_global::<screens::settings::appearance::Preferences>();
+        let ui_font = appearance.map_or_else(|| SharedString::from(SANS), |p| p.ui_family.clone());
+        let smoothing = appearance.is_none_or(|p| p.smoothing);
         let main_focus = focus::handle("main-content", -1, window, cx);
         let main_focus = main_focus.read(cx).handle.clone().tab_stop(false);
         let skip_focus = focus::handle("skip-to-content", -1, window, cx);
@@ -1425,7 +1428,8 @@ impl Render for Shell {
             .relative()
             .overflow_hidden()
             .on_key_down(focus::tab)
-            .font_family(SANS)
+            .font_family(ui_font)
+            .font_features(textsys::font_smoothing(smoothing))
             .bg(under)
             .child(page)
             .when(progress > 0., |d| d.child(self.sidebar_panel(&t, progress)))

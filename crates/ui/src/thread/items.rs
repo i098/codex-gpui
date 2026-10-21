@@ -559,7 +559,7 @@ pub(super) fn activity(
         col = col.child(match entry {
             Activity::Markdown(id, text) => {
                 let segments = fades.get(id).map(Vec::as_slice).unwrap_or_default();
-                markdown(text, window, t, segments)
+                markdown(text, window, t, cx, segments)
             }
             Activity::Running(command) => {
                 row("thread-terminal", plain(label(command.to_owned(), text60)))

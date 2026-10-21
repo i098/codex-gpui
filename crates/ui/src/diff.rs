@@ -2046,6 +2046,12 @@ impl Render for FileView {
                 .into_any_element(),
             Some(Ok(contents)) => {
                 let syntax = Syntax::of(&t);
+                let preferences =
+                    cx.try_global::<crate::screens::settings::appearance::Preferences>();
+                let code_size = preferences.map_or(CODE_SIZE, |p| p.code_size);
+                let code_line = CODE_LINE * code_size / CODE_SIZE;
+                let family =
+                    preferences.map_or_else(|| SharedString::from(MONO), |p| p.code_family.clone());
                 let python = self.path.ends_with(".py");
                 let lines: Vec<_> = controls::lines(contents).collect();
                 let gutter = px(CH * lines.len().to_string().len().max(4) as f32 + 16.);
@@ -2058,9 +2064,9 @@ impl Render for FileView {
                     .flex()
                     .flex_col()
                     .py(px(8.))
-                    .font_family(MONO)
-                    .text_size(px(CODE_SIZE))
-                    .line_height(px(CODE_LINE))
+                    .font_family(family)
+                    .text_size(px(code_size))
+                    .line_height(px(code_line))
                     .text_color(t.text)
                     .children(lines.into_iter().enumerate().map(|(i, line)| {
                         let number = i as u32 + 1;
@@ -2076,7 +2082,7 @@ impl Render for FileView {
                             StyledText::new(text)
                         };
                         div()
-                            .h(px(CODE_LINE))
+                            .h(px(code_line))
                             .flex()
                             .bg(bg)
                             .child(
@@ -2544,6 +2550,12 @@ fn hunk(
     cx: &Context<DiffPanel>,
 ) -> Div {
     let syntax = Syntax::of(t);
+    let preferences = cx.try_global::<crate::screens::settings::appearance::Preferences>();
+    let code_size = preferences.map_or(CODE_SIZE, |p| p.code_size);
+    let code_line = CODE_LINE * code_size / CODE_SIZE;
+    let ch = CH * code_size / CODE_SIZE;
+    let symbols = preferences.is_some_and(|p| p.symbols);
+    let family = preferences.map_or_else(|| SharedString::from(MONO), |p| p.code_family.clone());
     let digits = h
         .lines
         .iter()
@@ -2552,7 +2564,7 @@ fn hunk(
         .unwrap_or(0)
         .to_string()
         .len();
-    let gutter = px(52.5625 + CH * digits.saturating_sub(4) as f32);
+    let gutter = px(52.5625 * code_size / CODE_SIZE + ch * digits.saturating_sub(4) as f32);
     let base_index = line_index.get();
     line_index.set(base_index + h.lines.len());
     let content_width = h
@@ -2561,17 +2573,17 @@ fn hunk(
         .map(|line| line.text.len())
         .max()
         .unwrap_or(0) as f32
-        * CH;
-    let minimum_width = (gutter + px(content_width + CH)) * if split { 2. } else { 1. };
+        * ch;
+    let minimum_width = (gutter + px(content_width + ch)) * if split { 2. } else { 1. };
     let row = |number: Option<u32>,
                (number_bg, number_fg): (Hsla, Hsla),
                bg: Hsla,
                content: StyledText,
                mark: Option<gpui::AnyElement>,
-               bar: Option<Hsla>| {
+               bar: Option<(Hsla, &'static str)>| {
         div()
-            .h(px(CODE_LINE))
-            .when(panel.wrap, |d| d.h_auto().min_h(px(CODE_LINE)))
+            .h(px(code_line))
+            .when(panel.wrap, |d| d.h_auto().min_h(px(code_line)))
             .flex()
             .gap(px(2.))
             .child(
@@ -2585,12 +2597,22 @@ fn hunk(
                     .justify_end()
                     .items_center()
                     .when(panel.wrap, |d| d.items_start())
-                    .pr(px(CH))
+                    .pr(px(ch))
                     .child(shapes::decoration(Decoration {
                         fill: Some(number_bg),
                         ..Default::default()
                     }))
-                    .when_some(bar, |d, color| {
+                    .when_some(bar, |d, (color, sign)| {
+                        if symbols {
+                            return d.child(
+                                div()
+                                    .absolute()
+                                    .left(px(6.))
+                                    .top_0()
+                                    .child(sign)
+                                    .text_color(color),
+                            );
+                        }
                         d.child(div().absolute().left_0().top_0().w(px(4.)).h_full().child(
                             shapes::decoration(Decoration {
                                 fill: Some(color),
@@ -2606,7 +2628,7 @@ fn hunk(
                     .relative()
                     .flex_1()
                     .h_full()
-                    .when(panel.wrap, |d| d.h_auto().min_h(px(CODE_LINE)).min_w_0())
+                    .when(panel.wrap, |d| d.h_auto().min_h(px(code_line)).min_w_0())
                     .flex()
                     .items_center()
                     .when(panel.wrap, |d| d.flex_col().items_stretch())
@@ -2679,7 +2701,8 @@ fn hunk(
             bg,
             content,
             mark,
-            (l.kind != Kind::Context).then_some(number_fg),
+            (l.kind != Kind::Context)
+                .then_some((number_fg, if l.kind == Kind::Added { "+" } else { "−" })),
         )
         .cursor_pointer()
         .on_mouse_down(
@@ -2721,10 +2744,10 @@ fn hunk(
         .flex()
         .flex_col()
         .when(!panel.wrap, |d| d.min_w(minimum_width))
-        .font_family(MONO)
+        .font_family(family)
         .font_weight(FontWeight(430.))
-        .text_size(px(CODE_SIZE))
-        .line_height(px(CODE_LINE))
+        .text_size(px(code_size))
+        .line_height(px(code_line))
         .text_color(rgb(if t.appearance == Appearance::Dark {
             0xfcfcfc
         } else {
@@ -2759,7 +2782,7 @@ fn hunk(
                                 .flex_1()
                                 .min_w_0()
                                 .overflow_hidden()
-                                .min_h(px(CODE_LINE))
+                                .min_h(px(code_line))
                                 .children(old.map(|i| {
                                     render_line(&h.lines[i], base_index + i, h.lines[i].old_number)
                                 })),
@@ -2769,7 +2792,7 @@ fn hunk(
                                 .flex_1()
                                 .min_w_0()
                                 .overflow_hidden()
-                                .min_h(px(CODE_LINE))
+                                .min_h(px(code_line))
                                 .children(new.map(|i| {
                                     render_line(&h.lines[i], base_index + i, h.lines[i].number)
                                 })),

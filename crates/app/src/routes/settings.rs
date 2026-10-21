@@ -35,6 +35,9 @@ pub(super) fn page(root: &mut Root, cx: &mut Context<Root>) -> Entity<Shell> {
     let (shell, page) = settings::shell(&config, &root.skills, section, cx);
     root.settings_page = Some(page.clone());
     cx.subscribe(&page, |this, page, e: &SettingChanged, cx| {
+        if appearance::handle_change(this, &page, e, cx) {
+            return;
+        }
         this.write_setting(e, cx);
         if e.path.starts_with("host.") && e.path != settings::THEME {
             let mut values = cx

@@ -3,6 +3,7 @@
 //! plus the key bindings and menu bar. `main.rs` only opens the window;
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
+mod appearance;
 pub mod computer_use_requests;
 mod features;
 pub mod host;
@@ -498,6 +499,7 @@ impl Root {
                 Err(error) => eprintln!("codex-gpui: cannot load host settings: {error:#}"),
             }
         }
+        appearance::apply(state.theme.theme(window.appearance()), cx);
         let this = cx.weak_entity();
         let computer_use = this.clone();
         cx.set_global(ComputerUseState {
@@ -2069,6 +2071,7 @@ impl Root {
             });
         }
     }
+
 
     /// HC-033: a printable key (no ⌘/⌃, not Space) typed outside an editable, with no
     /// dialog, menu or popover open, goes to the route's composer and focuses it.
@@ -3959,6 +3962,22 @@ impl Root {
                 };
                 self.toast(Toast::danger(message), cx);
             } else {
+                if matches!(
+                    key,
+                    "appearanceLightChromeTheme"
+                        | "appearanceDarkChromeTheme"
+                        | "appearanceLightCodeThemeId"
+                        | "appearanceDarkCodeThemeId"
+                        | "sansFontSize"
+                        | "codeFontSize"
+                        | "appearanceDiffMarkerStyle"
+                        | "usePointerCursors"
+                        | "useFontSmoothing"
+                        | "reduced-motion-preference"
+                        | "dock-icon-preference"
+                ) {
+                    appearance::refresh(cx);
+                }
                 let message = match key {
                     "git-branch-prefix" => Some("Saved branch prefix".to_owned()),
                     "git-pull-request-merge-method" => {
@@ -4422,7 +4441,7 @@ impl Root {
     }
 
     fn apply_theme(&self, window: &mut Window, cx: &mut Context<Self>) {
-        cx.set_global(self.state.theme.theme(window.appearance()));
+        appearance::apply(self.state.theme.theme(window.appearance()), cx);
         window.refresh();
     }
 
@@ -5139,7 +5158,8 @@ fn generation_instructions(context: &str) -> String {
 }
 
 impl Render for Root {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        appearance::window(window, cx);
         if let Some(login) = &self.login {
             return div()
                 .size_full()

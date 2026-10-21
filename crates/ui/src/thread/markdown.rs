@@ -141,9 +141,10 @@ pub(super) fn markdown(
     source: &str,
     window: &Window,
     t: &Theme,
+    cx: &App,
     segments: &[StreamSegment],
 ) -> Div {
-    with_find(source, window, t, None, segments)
+    with_find(source, window, t, cx, None, segments)
 }
 
 /// [`markdown`] with the find matches of this answer highlighted.
@@ -151,9 +152,11 @@ pub(super) fn with_find(
     source: &str,
     window: &Window,
     t: &Theme,
+    cx: &App,
     find: Option<&FindPaint>,
     segments: &[StreamSegment],
 ) -> Div {
+    let preferences = cx.try_global::<crate::screens::settings::appearance::Preferences>();
     Markdown {
         events: Events {
             inner: Parser::new_ext(source, OPTIONS)
@@ -165,6 +168,8 @@ pub(super) fn with_find(
         },
         window,
         theme: t,
+        content_font: preferences.map_or_else(|| SANS.into(), |p| p.content_family.clone()),
+        code_font: preferences.map_or_else(|| MONO.into(), |p| p.code_family.clone()),
         find,
         source,
         segments,
@@ -178,6 +183,8 @@ struct Markdown<'a> {
     events: Events<'a>,
     window: &'a Window,
     theme: &'a Theme,
+    content_font: SharedString,
+    code_font: SharedString,
     find: Option<&'a FindPaint>,
     source: &'a str,
     segments: &'a [StreamSegment],
@@ -559,15 +566,17 @@ impl Markdown<'_> {
         let fades = self.fades(s);
         if !style.italic && !style.strike && find.is_none() && fades.is_empty() {
             return (
-                width(self.window, s, style.size, style.weight, None),
-                text(
-                    s.to_owned(),
+                width(
+                    self.window,
+                    s,
                     style.size,
-                    style.line_height,
                     style.weight,
-                    color,
-                )
-                .into_any_element(),
+                    Some(self.content_font.as_ref()),
+                ),
+                run_style(style.size, style.line_height, style.weight, color)
+                    .font_family(self.content_font.clone())
+                    .child(s.to_owned())
+                    .into_any_element(),
             );
         }
         let font = gpui::Font {
@@ -577,7 +586,7 @@ impl Markdown<'_> {
             } else {
                 gpui::FontStyle::Normal
             },
-            ..font(SANS)
+            ..font(self.content_font.clone())
         };
         let run = TextRun {
             len: s.len(),
@@ -593,6 +602,7 @@ impl Markdown<'_> {
             .layout_line(s, px(style.size), &[run], None)
             .width;
         let label = run_style(style.size, style.line_height, style.weight, color)
+            .font_family(self.content_font.clone())
             .when(style.italic, |d| d.italic())
             .when(style.strike, |d| d.line_through());
         // ponytail: a find highlight replaces the fade of its word; both at once is rare.
@@ -685,25 +695,33 @@ impl Markdown<'_> {
             .absolute()
             .size_full(),
         );
-        let space = width(self.window, " ", 12.88, 430., Some(MONO));
+        let space = width(self.window, " ", 12.88, 430., Some(self.code_font.as_ref()));
         let mut offset = at;
         let mut parts = Vec::with_capacity(count);
         for (index, word) in code.split_inclusive(' ').enumerate() {
             let fades = self.fades(word);
-            let word_width = width(self.window, word, 12.88, 430., Some(MONO));
+            let word_width = width(
+                self.window,
+                word,
+                12.88,
+                430.,
+                Some(self.code_font.as_ref()),
+            );
             let label = match self.find {
                 Some(find) => div().flex_none().w(word_width).child(
                     run_style(12.88, 15., 430., self.theme.text)
-                        .font_family(MONO)
+                        .font_family(self.code_font.clone())
                         .child(find.text(word, offset)),
                 ),
                 None if !fades.is_empty() => div().flex_none().w(word_width).child(
                     run_style(12.88, 15., 430., self.theme.text)
-                        .font_family(MONO)
+                        .font_family(self.code_font.clone())
                         .child(StyledText::new(word.to_owned()).with_highlights(fades)),
                 ),
                 None => div().flex_none().w(word_width).child(
-                    text(word.to_owned(), 12.88, 15., 430., self.theme.text).font_family(MONO),
+                    run_style(12.88, 15., 430., self.theme.text)
+                        .font_family(self.code_font.clone())
+                        .child(word.to_owned()),
                 ),
             };
             let measured = positions.clone();
@@ -859,6 +877,13 @@ impl RenderOnce for CodeBlock {
         let t = cx.theme();
         let light = usize::from(t.appearance == Appearance::Light);
         let foreground = t.text;
+        let preferences = cx.try_global::<crate::screens::settings::appearance::Preferences>();
+        let code_size = preferences.map_or(12., |p| p.code_size);
+        let code_family =
+            preferences.map_or_else(|| SharedString::from(MONO), |p| p.code_family.clone());
+        let smoothing = preferences.is_none_or(|p| p.smoothing);
+        let custom_theme = preferences.and_then(|p| p.code_theme.clone());
+        let preset = preferences.map_or("codex", |p| p.preset.as_str());
         let token = match self.language.as_ref() {
             "py" => "python",
             "js" | "jsx" => "javascript",
@@ -875,9 +900,15 @@ impl RenderOnce for CodeBlock {
         } else {
             syntax.name.clone().into()
         };
-        let key = SharedString::from(format!("{}-{light}", self.id));
+        let key = SharedString::from(format!(
+            "{}-{light}-{code_family}-{code_size}-{preset}-{smoothing}",
+            self.id
+        ));
         let state = window.use_keyed_state(key, cx, |window, cx| {
-            let mut highlighter = HighlightLines::new(syntax, &CODE_THEMES[light]);
+            let mut highlighter = HighlightLines::new(
+                syntax,
+                custom_theme.as_deref().unwrap_or(&CODE_THEMES[light]),
+            );
             let mut width = px(0.);
             let lines = self
                 .code
@@ -901,7 +932,8 @@ impl RenderOnce for CodeBlock {
                                             } else {
                                                 gpui::FontStyle::Normal
                                             },
-                                            ..font(MONO)
+                                            features: textsys::font_smoothing(smoothing),
+                                            ..font(code_family.clone())
                                         },
                                         color: rgb((u32::from(style.foreground.r) << 16)
                                             | (u32::from(style.foreground.g) << 8)
@@ -920,7 +952,8 @@ impl RenderOnce for CodeBlock {
                                 len: line.len(),
                                 font: gpui::Font {
                                     weight: FontWeight(430.),
-                                    ..font(MONO)
+                                    features: textsys::font_smoothing(smoothing),
+                                    ..font(code_family.clone())
                                 },
                                 color: foreground,
                                 background_color: None,
@@ -932,7 +965,7 @@ impl RenderOnce for CodeBlock {
                     width = width.max(
                         window
                             .text_system()
-                            .layout_line(line, px(12.), &runs, None)
+                            .layout_line(line, px(code_size), &runs, None)
                             .width,
                     );
                     (SharedString::from(line.to_owned()), runs)
@@ -1009,10 +1042,10 @@ impl RenderOnce for CodeBlock {
             .when(wrap, |d| d.w_full())
             .children(s.lines.iter().map(|(line, runs)| {
                 div()
-                    .min_h(px(20.))
-                    .text_size(px(12.))
-                    .line_height(px(20.))
-                    .font_family(MONO)
+                    .min_h(px(code_size * 20. / 12.))
+                    .text_size(px(code_size))
+                    .line_height(px(code_size * 20. / 12.))
+                    .font_family(code_family.clone())
                     .font_weight(FontWeight(430.))
                     .when(!wrap, |d| d.whitespace_nowrap())
                     .child(StyledText::new(line.clone()).with_runs(runs.clone()))

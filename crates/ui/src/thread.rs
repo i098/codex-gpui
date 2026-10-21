@@ -1600,6 +1600,7 @@ impl ThreadView {
                     answer,
                     window,
                     t,
+                    cx,
                     self.find_paint(item).as_ref(),
                     self.fades(item),
                 ));
@@ -1715,6 +1716,7 @@ impl ThreadView {
                 answer,
                 window,
                 t,
+                cx,
                 self.find_paint(item).as_ref(),
                 self.fades(item),
             ));
@@ -1776,6 +1778,7 @@ impl ThreadView {
                     text,
                     window,
                     t,
+                    cx,
                     self.find_paint(id).as_ref(),
                     self.fades(id),
                 ));
