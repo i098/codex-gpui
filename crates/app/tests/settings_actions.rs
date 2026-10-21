@@ -561,7 +561,6 @@ fn failed_workspace_registration_removes_only_the_new_empty_folder() -> Result<(
     Ok(())
 }
 
-
 #[cfg(target_os = "macos")]
 #[test]
 fn quit_from_a_clean_window_protects_another_windows_draft() -> Result<()> {
