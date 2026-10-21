@@ -109,8 +109,9 @@ fn is_pdf(path: &str) -> bool {
         .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
 }
 
-pub(super) fn supported(path: &str) -> bool {
-    is_pdf(path) || image_format(path).is_some()
+pub(super) fn enabled(path: &str, rich_preview: bool) -> bool {
+    is_pdf(path)
+        || image_format(path).is_some_and(|format| format != ImageFormat::Svg || rich_preview)
 }
 
 type Raster = Rc<RefCell<Option<(Bounds<Pixels>, f32, Hsla, Arc<RenderImage>)>>>;
@@ -162,12 +163,10 @@ impl DiffPanel {
 
     pub(super) fn toggle_rich_preview(&mut self, cx: &mut Context<Self>) {
         self.rich_preview = !self.rich_preview;
-        if self.standalone {
-            cx.emit(DiffRequest::Preference(
-                "host.diffRichPreview",
-                self.rich_preview.into(),
-            ));
-        }
+        cx.emit(DiffRequest::Preference(
+            "host.diffRichPreview",
+            self.rich_preview.into(),
+        ));
         cx.notify();
     }
     fn preview_sources(&self, index: usize) -> [Option<PreviewSource>; 2] {
@@ -241,9 +240,6 @@ impl DiffPanel {
         scale: f32,
         cx: &mut Context<Self>,
     ) {
-        if !self.rich_preview {
-            return;
-        }
         let first = if self.capped() {
             self.active_file
         } else {
@@ -258,7 +254,7 @@ impl DiffPanel {
             let Some(file) = self.files.get(index) else {
                 continue;
             };
-            if !file.open || !supported(&file.name) {
+            if !file.open || !enabled(&file.name, self.rich_preview) {
                 continue;
             }
             if file.preview.is_some() {
@@ -359,10 +355,11 @@ impl DiffPanel {
     }
 
     pub(super) fn preview(&self, index: usize, width: Pixels, cx: &Context<Self>) -> Option<Div> {
-        if !self.rich_preview {
+        let file = self.files.get(index)?;
+        if !enabled(&file.name, self.rich_preview) {
             return None;
         }
-        let preview = self.files[index].preview.as_ref()?;
+        let preview = file.preview.as_ref()?;
         let t = cx.theme();
         let columns = if preview.after_only { 1. } else { 2. };
         let available = (width / columns - px(24.)).max(px(1.));
@@ -593,4 +590,20 @@ fn picture(content: &PreviewContent, cache: Raster, page: Hsla, svg: bool) -> gp
             }
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::enabled;
+
+    #[test]
+    fn raster_images_and_pdf_ignore_the_svg_preview_toggle() {
+        for path in ["image.png", "image.JPG", "image.gif", "page.PDF"] {
+            assert!(enabled(path, false));
+            assert!(enabled(path, true));
+        }
+        assert!(!enabled("drawing.svg", false));
+        assert!(enabled("drawing.SVG", true));
+        assert!(!enabled("source.rs", true));
+    }
 }

@@ -252,12 +252,10 @@ impl DiffPanel {
     }
 
     pub fn set_preferences(&mut self, values: &serde_json::Map<String, serde_json::Value>) {
-        if self.standalone {
-            self.rich_preview = values
-                .get("diffRichPreview")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false);
-        }
+        self.rich_preview = values
+            .get("diffRichPreview")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
         self.full_files = values
             .get("load-full-files")
             .and_then(serde_json::Value::as_bool)
@@ -273,11 +271,10 @@ impl DiffPanel {
     }
 
     fn request_full_file(&mut self, index: usize, cx: &mut Context<Self>) {
-        if self.rich_preview
-            && self
-                .files
-                .get(index)
-                .is_some_and(|file| preview::supported(&file.name))
+        if self
+            .files
+            .get(index)
+            .is_some_and(|file| preview::enabled(&file.name, self.rich_preview))
         {
             return;
         }

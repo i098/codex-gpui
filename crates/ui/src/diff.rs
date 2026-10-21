@@ -431,7 +431,7 @@ impl DiffPanel {
             last_turn_state: None,
             full_files: true,
             content_generation: 0,
-            rich_preview: true,
+            rich_preview: false,
             annotations: comment_view::Annotations::default(),
         };
         panel

@@ -143,9 +143,9 @@ Expand a context separator to show 20 more lines in either direction or the comp
 The view checks full content against the displayed patch and preserves the patch when a read fails.
 Line wrapping, word differences, and full-file loading use the existing host settings store.
 Run `cargo test -p app --test diff_file_reads` for file boundaries and `cargo test -p app --test diff_content` on macOS for expansion and retry.
-Rich preview reads image and PDF bytes from each selected Git version or working file.
+Image and PDF previews read bytes from each selected Git version or working file.
 PDF previews use macOS rendering and keep separate page controls for each side.
-Use the Rich preview option to return to the text diff.
+Use the Rich preview option to switch SVG files between rendered previews and text.
 Run `cargo test -p app --test diff_preview` on macOS for image version and PDF page checks.
 
 `ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.

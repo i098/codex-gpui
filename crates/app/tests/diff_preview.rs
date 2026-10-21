@@ -101,6 +101,23 @@ fn page(fx: &Fx, side: usize) -> Option<(usize, usize)> {
     fx.read(|root, cx| root.diff_panel()?.read(cx).preview_page(0, side))
 }
 
+fn toggle_preview(fx: &mut Fx) -> Result<()> {
+    fx.click((1192., 68.))?;
+    let option = fx
+        .read(|root, cx| {
+            root.diff_panel()?
+                .read(cx)
+                .menu_items()
+                .position(|(label, enabled)| label == "Rich preview" && enabled)
+        })
+        .context("Rich preview option")?;
+    fx.keys("home")?;
+    for _ in 0..option {
+        fx.keys("down")?;
+    }
+    fx.keys("enter")
+}
+
 fn colored(image: &image::RgbaImage, x: u32, y: u32, channel: usize) -> bool {
     let pixel = image.get_pixel(x * 2, y * 2).0;
     pixel[channel] > 240 && pixel[(channel + 1) % 3] < 15 && pixel[(channel + 2) % 3] < 15
@@ -151,6 +168,7 @@ fn changed_images_and_pdf_pages_use_real_file_reads() -> Result<()> {
         "The working image was not blue"
     );
 
+    toggle_preview(&mut fx)?;
     set_patch(&mut fx, &pdf_patch)?;
     fx.wait("first PDF page", |fx| page(fx, 1) == Some((1, 2)))?;
     let image = fx.reference_shot()?;
@@ -170,23 +188,14 @@ fn changed_images_and_pdf_pages_use_real_file_reads() -> Result<()> {
     fx.click((1209., 144.))?;
     fx.wait("previous PDF page", |fx| page(fx, 1) == Some((1, 2)))?;
 
-    fx.click((1192., 68.))?;
-    let option = fx
-        .read(|root, cx| {
-            root.diff_panel()?
-                .read(cx)
-                .menu_items()
-                .position(|(label, enabled)| label == "Rich preview" && enabled)
-        })
-        .context("Rich preview option")?;
-    fx.keys("home")?;
-    for _ in 0..option {
-        fx.keys("down")?;
-    }
-    fx.keys("enter")?;
+    toggle_preview(&mut fx)?;
     ensure!(
         !fx.read(|root, cx| root.diff_panel().unwrap().read(cx).shows_rich_preview()),
         "Rich preview stayed enabled"
+    );
+    ensure!(
+        page(&fx, 1) == Some((1, 2)),
+        "The PDF preview must remain visible with rich preview disabled"
     );
     fx.reference_shot()?
         .save(output.join("pdf-rich-preview-off.png"))?;
