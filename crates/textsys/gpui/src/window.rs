@@ -77,6 +77,7 @@ use self::a11y::ROOT_NODE_ID;
 use crate::util::{
     atomic_incr_if_not_zero, ceil_to_device_pixel, floor_to_device_pixel, round_half_toward_zero,
     round_half_toward_zero_f64, round_half_up, round_stroke_to_device_pixel, round_to_device_pixel,
+    snap_border_to_device_pixel,
 };
 pub use prompts::*;
 
@@ -3389,7 +3390,8 @@ impl Window {
 
     #[inline]
     fn snap_border_widths(&self, edges: Edges<Pixels>) -> Edges<ScaledPixels> {
-        edges.map(|e| self.snap_stroke(*e))
+        let scale = self.scale_factor();
+        edges.map(|e| ScaledPixels(snap_border_to_device_pixel(e.0, scale)))
     }
 
     /// Floors the near edge and ceils the far edge, producing a strict superset of the raw region.

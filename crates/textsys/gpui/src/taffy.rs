@@ -1,7 +1,7 @@
 use crate::{
     AbsoluteLength, App, Bounds, DefiniteLength, Edges, GridTemplate, Length, Pixels, Point, Size,
     Style, Window, size,
-    util::{round_half_up, round_stroke_to_device_pixel, round_to_device_pixel},
+    util::{round_half_up, round_to_device_pixel, snap_border_to_device_pixel},
 };
 use collections::{FxHashMap, FxHashSet};
 use std::{fmt::Debug, ops::Range};
@@ -449,7 +449,7 @@ fn border_widths_to_taffy(
     scale_factor: f32,
 ) -> TaffyRect<taffy::style::LengthPercentage> {
     let snap = |w: &AbsoluteLength| {
-        taffy::style::LengthPercentage::length(round_stroke_to_device_pixel(
+        taffy::style::LengthPercentage::length(snap_border_to_device_pixel(
             w.to_pixels(rem_size).0,
             scale_factor,
         ))
@@ -801,7 +801,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn border_widths_to_taffy_use_stroke_snapping() {
+    fn border_widths_to_taffy_snap_as_blink_border_widths() {
         let border_widths = Edges {
             top: Pixels(0.0).into(),
             right: Pixels(0.4).into(),
@@ -824,8 +824,11 @@ mod tests {
         );
         assert_eq!(
             taffy_border.left,
-            taffy::style::LengthPercentage::length(2.0)
+            taffy::style::LengthPercentage::length(1.0)
         );
+        // 1 px at 90% zoom on a 2x display is 1.8 device px: 1, not 2.
+        let zoomed = border_widths_to_taffy(&Edges::all(Pixels(1.0).into()), Pixels(16.0), 1.8);
+        assert_eq!(zoomed.top, taffy::style::LengthPercentage::length(1.0));
     }
 
     #[test]
