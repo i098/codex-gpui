@@ -235,6 +235,11 @@ impl LineWrapper {
                     return None;
                 }
                 let available = truncate_width - layout(truncation_affix).width;
+                // Blink leaves the line as it is (clipped by the box) when the ellipsis alone
+                // does not fit.
+                if available < px(0.) {
+                    return None;
+                }
                 let glyphs = line_layout.runs.iter().flat_map(|r| &r.glyphs);
                 let ends = glyphs.clone().skip(1).map(|g| g.position.x);
                 return glyphs
