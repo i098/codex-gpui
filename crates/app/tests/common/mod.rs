@@ -218,10 +218,15 @@ impl Fx {
             elapsed_since: Some(Instant::now()),
             ..CAPTURE_CLOCK
         };
+        // Linux checks need layout and input; macOS captures need the native renderer.
+        #[cfg(not(target_os = "linux"))]
+        let renderer = gpui_platform::current_headless_renderer;
+        #[cfg(target_os = "linux")]
+        let renderer = || Ok(None);
         let mut cx = HeadlessAppContext::with_platform(
             textsys::text_system(),
             Arc::new(theme::Assets),
-            gpui_platform::current_headless_renderer,
+            renderer,
         );
         cx.update(|cx| {
             theme::load_fonts(cx);
