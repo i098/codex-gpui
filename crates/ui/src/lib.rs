@@ -1300,6 +1300,10 @@ impl Render for Shell {
                 bounds.origin + point(main_left, Theme::TITLEBAR_HEIGHT),
                 page_surface.bottom_right(),
             );
+            // Its `clip-path` box (`inset(0 0 0 -r)` under an open sidebar) keeps the fraction
+            // of a zoomed edge.
+            let clip_left = if open { main.left() - r } else { main.left() };
+            let clip = Bounds::from_corners(point(clip_left, main.top()), main.bottom_right());
             let line = open.then(|| {
                 let line = Bounds::new(main.origin, size(MAIN_HAIRLINE, main.size.height));
                 main.origin.x += MAIN_HAIRLINE;
@@ -1307,12 +1311,14 @@ impl Render for Shell {
                 line
             });
             let main_surface = |window: &mut Window, cx: &mut App| {
-                if let Some(line) = line {
-                    shapes::paint(&hairline, None, line, window, cx);
-                }
-                for _ in 0..fills {
-                    shapes::paint(fill, None, main, window, cx);
-                }
+                shapes::with_unsnapped_clip(clip, window, |window| {
+                    if let Some(line) = line {
+                        shapes::paint(&hairline, None, line, window, cx);
+                    }
+                    for _ in 0..fills {
+                        shapes::paint(fill, None, main, window, cx);
+                    }
+                });
             };
             window.with_skia_layer(255, |window| {
                 shapes::paint(&layout, None, bounds, window, cx);

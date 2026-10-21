@@ -1931,6 +1931,30 @@ pub(crate) fn with_rounded_clip<R>(
     out
 }
 
+/// `crate::with_unsnapped_clip` on macOS.
+pub(crate) fn with_unsnapped_clip<R>(
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    paint: impl FnOnce(&mut Window) -> R,
+) -> R {
+    let s = window.scale_factor();
+    let [l, t, r, b] =
+        [bounds.left(), bounds.top(), bounds.right(), bounds.bottom()].map(|v| f32::from(v) * s);
+    let rr = Rounded {
+        r: [l, t, r - l, b - t],
+        radii: [[0.; 2]; 4],
+    };
+    let clip = Contour {
+        rr,
+        k: [2.; 4],
+        origin: rr,
+    };
+    CLIPS.with_borrow_mut(|c| c.push((clip, None)));
+    let out = paint(window);
+    CLIPS.with_borrow_mut(|c| c.pop());
+    out
+}
+
 /// `crate::with_layer` on macOS: the [`CLIPS`] that cover the layer's device px leave it, and
 /// Skia draws the content on a device that starts at the layer's top-left px.
 pub(crate) fn with_layer<R>(
