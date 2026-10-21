@@ -37,10 +37,11 @@ pub enum TerminalEvent {
     Directory(usize),
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct RowDecorations {
     pub selection: Option<((usize, usize), (usize, usize))>,
-    pub cursor: Option<(usize, usize)>,
+    /// Row, column and whether the terminal has focus: blurred, xterm shows an outline cursor.
+    pub cursor: Option<(usize, usize, bool)>,
     pub link: Option<(usize, Range<usize>)>,
     /// A selection that ends above the viewport: xterm draws it over the first visible row,
     /// from column 0 to its end column, and the text under it is hidden.
@@ -51,6 +52,8 @@ pub struct TerminalSurface {
     pub buffer: Buffer,
     pub writable: bool,
     pub interacted: bool,
+    /// The terminal had focus once; xterm then keeps drawing its cursor after a blur.
+    had_focus: bool,
     focus: FocusHandle,
     scroll: UniformListScrollHandle,
     bounds: Bounds<Pixels>,
@@ -75,6 +78,7 @@ impl TerminalSurface {
             buffer: Buffer::default(),
             writable,
             interacted: false,
+            had_focus: false,
             focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
             bounds: Bounds::default(),
@@ -308,21 +312,17 @@ impl Render for TerminalSurface {
         .top_0()
         .left_0()
         .size_full();
+        let focused = self.focus.is_focused(window);
+        self.had_focus |= focused;
         let rows_entity = cx.entity();
-        let first_visible = (-f32::from(self.scroll.0.borrow().base_handle.offset().y)
-            / f32::from(self.row_height)
-            + 0.001)
-            .floor()
-            .max(0.) as usize;
-        let above = self.selection.and_then(|(a, b)| {
-            let end = a.max(b);
-            (end.0 < first_visible).then_some((first_visible, end.1))
-        });
         let decorations = RowDecorations {
-            above,
+            above: None,
             selection: self.selection,
-            cursor: (!self.buffer.cursor_hidden && self.focus.is_focused(window))
-                .then_some(self.buffer.cursor),
+            cursor: (!self.buffer.cursor_hidden && (focused || self.had_focus)).then_some((
+                self.buffer.cursor.0,
+                self.buffer.cursor.1,
+                focused,
+            )),
             link: self
                 .hovered_link
                 .as_ref()
@@ -340,6 +340,16 @@ impl Render for TerminalSurface {
             self.buffer.rows.len(),
             move |range, _, cx| {
                 let surface = rows_entity.read(cx);
+                // The list's current scroll position (not the previous frame's) decides the
+                // overlay of a selection that ends above the viewport.
+                let first_visible = range.start;
+                let decorations = RowDecorations {
+                    above: surface.selection.and_then(|(a, b)| {
+                        let end = a.max(b);
+                        (end.0 < first_visible).then_some((first_visible, end.1))
+                    }),
+                    ..decorations.clone()
+                };
                 range
                     .map(|index| {
                         row_element(
@@ -607,18 +617,19 @@ pub(super) fn row_element(
                 .bg(opaque),
         );
     }
-    if let Some((cursor_row, col)) = decorations.cursor
+    if let Some((cursor_row, col, focused)) = decorations.cursor
         && cursor_row == index
     {
-        line = line.child(
-            div()
-                .absolute()
-                .left(cell_width * col as f32)
-                .top_0()
-                .w(px(1.))
-                .h(row_height)
-                .bg(foreground),
-        );
+        let cursor = div()
+            .absolute()
+            .left(cell_width * col as f32)
+            .top_0()
+            .h(row_height);
+        line = line.child(if focused {
+            cursor.w(px(1.)).bg(foreground)
+        } else {
+            cursor.w(cell_width).border_1().border_color(foreground)
+        });
     }
     line
 }

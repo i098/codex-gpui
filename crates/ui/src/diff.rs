@@ -1740,8 +1740,21 @@ impl Render for SplitMain {
         if !self.visibility.get().visible {
             return div().size_full().child(self.thread.clone());
         }
-        let t = cx.theme();
         let width = panel_width(window, cx);
+        // The original's resizer covers the panel's left 16 px (not centered on the border),
+        // except while the thread summary pane lies over it.
+        let summary_open = self
+            .thread
+            .clone()
+            .downcast::<ThreadView>()
+            .ok()
+            .is_some_and(|thread| thread.read(cx).summary_open);
+        let resizer_focus = crate::focus::handle("panel-resize", -1, window, cx)
+            .read(cx)
+            .handle
+            .clone()
+            .tab_stop(false);
+        let t = cx.theme();
         div()
             .size_full()
             .relative()
@@ -1761,15 +1774,17 @@ impl Render for SplitMain {
                 div()
                     .id("panel-resize")
                     .role(gpui::Role::Splitter)
+                    .track_focus(&resizer_focus)
                     .absolute()
                     .top_0()
                     .bottom_0()
-                    .right(width - px(8.))
+                    .right(width - px(if summary_open { 8. } else { 16. }))
                     .w(px(16.))
                     .cursor(CursorStyle::ResizeLeftRight)
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(move |this, e: &MouseDownEvent, _, cx| {
+                        cx.listener(move |this, e: &MouseDownEvent, window, cx| {
+                            window.focus(&resizer_focus, cx);
                             this.drag_anchor = Some(width + e.position.x);
                             cx.stop_propagation();
                             cx.notify();
