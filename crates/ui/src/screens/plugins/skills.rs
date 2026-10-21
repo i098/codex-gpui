@@ -1,11 +1,20 @@
 use super::*;
-use gpui::{AnyElement, Corners};
+use gpui::{AnyElement, Corners, ImageSource, StyledImage, img};
 use theme::Appearance;
 
 #[derive(Clone, Copy)]
 enum Group {
     Installed,
     Selected,
+}
+
+fn icon_value<'a>(skill: &'a Value, keys: [&str; 2]) -> Option<&'a str> {
+    let fields = skill
+        .get("interface")
+        .filter(|value| value.is_object())
+        .unwrap_or(skill);
+    keys.into_iter()
+        .find_map(|key| fields[key].as_str().filter(|value| !value.is_empty()))
 }
 
 impl Page {
@@ -189,8 +198,10 @@ impl Page {
         } else {
             skills.len().min(6)
         };
-        let cards = div().grid().grid_cols(2).gap(px(8.)).children(
-            skills[..limit]
+        let visible = &skills[..limit];
+        let gap = if !all && skills.len() > 6 { 8. } else { 16. };
+        let cards = div().grid().grid_cols(2).gap(px(gap)).children(
+            visible
                 .iter()
                 .map(|skill| self.skill_card(skill, group, installed, window, cx)),
         );
@@ -272,11 +283,6 @@ impl Page {
                 Group::Selected => "selected",
             }
         );
-        let icon_name = if t.appearance == Appearance::Dark {
-            "skill-default-dark"
-        } else {
-            "skill-default-light"
-        };
         let action = if installed {
             if skill["enabled"] == false {
                 text("Disabled", 12., 16., 430., t.text_secondary).into_any_element()
@@ -348,7 +354,7 @@ impl Page {
                             fill: Some(t.surface_secondary),
                             ..Default::default()
                         }))
-                        .child(icon(icon_name, 24., t.text_secondary)),
+                        .child(self.skill_artwork(skill, cx)),
                 )
                 .child(
                     div()
@@ -393,6 +399,43 @@ impl Page {
             }
         }))
         .into_any_element()
+    }
+
+    fn skill_artwork(&self, skill: &Value, cx: &App) -> AnyElement {
+        let large = icon_value(skill, ["iconLargeUrl", "iconLarge"]);
+        let source = large.or_else(|| icon_value(skill, ["iconSmallUrl", "iconSmall"]));
+        let size = if large.is_some() { 40. } else { 24. };
+        let fallback_name = match string(skill, "name") {
+            "openai-docs" => "skill-openai-docs",
+            "review-agent" => "skill-review-agent",
+            "skill-installer" => "skill-installer",
+            _ if cx.theme().appearance == Appearance::Dark => "skill-default-dark",
+            _ => "skill-default-light",
+        };
+        let color = cx.theme().text.opacity(0.65);
+        let fallback = move || icon(fallback_name, size, color).into_any_element();
+        let resource = source.and_then(|source| {
+            if source.starts_with("https://") || source.starts_with("http://") {
+                Some(ImageSource::from(source.to_owned()))
+            } else if source.contains("://") {
+                None
+            } else {
+                let path = Path::new(source);
+                Some(ImageSource::from(if path.is_absolute() {
+                    path.to_owned()
+                } else {
+                    Path::new(string(skill, "path")).parent()?.join(path)
+                }))
+            }
+        });
+        match resource {
+            Some(resource) => img(resource)
+                .size(px(size))
+                .with_loading(fallback)
+                .with_fallback(fallback)
+                .into_any_element(),
+            None => fallback(),
+        }
     }
 
     fn toggle_skill_group(&mut self, group: Group, cx: &mut Context<Self>) {

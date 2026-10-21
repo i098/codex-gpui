@@ -78,6 +78,12 @@ pub struct Mention {
     link: String,
 }
 
+pub struct DraftMention<'a> {
+    pub label: &'a str,
+    pub link: String,
+    pub icon: &'static str,
+}
+
 /// Room for the chip's 16 px icon and 3 px gap: em space + three-per-em space (18.7 px at
 /// 14 px). ponytail: a glyph placeholder instead of an inline box, which textsys lacks.
 pub(super) const ICON_SLOT: &str = "\u{2003}\u{2004}";
@@ -143,6 +149,24 @@ fn request(requests: Vec<(&'static str, Value)>, cx: &App) {
 }
 
 impl Composer {
+    /// Replaces a draft with one atomic chip and trailing text without sending a turn.
+    /// `link` is the Markdown token returned by `prompt()` instead of the displayed label.
+    pub fn set_mention_draft(
+        &mut self,
+        mention: DraftMention<'_>,
+        text: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let DraftMention { label, link, icon } = mention;
+        self.reset_text(format!("{ICON_SLOT}{label} {text}"), cx);
+        self.mentions.push(Mention {
+            range: 0..ICON_SLOT.len() + label.len(),
+            icon,
+            link,
+        });
+        cx.notify();
+    }
+
     pub(super) fn toggle_add(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if std::mem::take(&mut self.slash.add_mouse_open) || (self.slash.open && self.slash.mention)
         {
@@ -294,7 +318,7 @@ impl Composer {
         if let Some(action) = ACTIONS.get(index) {
             (action.title, action.description, action.icon)
         } else if let Some(skill) = self.slash.skills.get(index - ACTIONS.len()) {
-            (&skill.title, &skill.description, "sidebar-cmd-create-page")
+            (&skill.title, &skill.description, "skill-mention")
         } else {
             let file = &self.slash.search.files[index - ACTIONS.len() - self.slash.skills.len()];
             // The directory part shows after the name (`src`).
@@ -323,7 +347,7 @@ impl Composer {
             None if index < files => {
                 let skill = &self.slash.skills[index - ACTIONS.len()];
                 let link = format!("[${}]({})", skill.name, skill.path);
-                (skill.title.clone(), link, "sidebar-cmd-create-page")
+                (skill.title.clone(), link, "skill-mention")
             }
             None => {
                 let file = &self.slash.search.files[index - files];

@@ -68,7 +68,16 @@ impl Root {
             return;
         }
         let starter = if seen { "" } else { "help me create a plugin" };
-        self.plugin_prefill(&format!("[$plugin-creator]({path}) {starter}"), window, cx);
+        self.plugin_prefill(
+            ui::composer::DraftMention {
+                label: "Plugin Creator",
+                link: format!("[$plugin-creator]({path})"),
+                icon: "skill-mention",
+            },
+            starter,
+            window,
+            cx,
+        );
     }
 
     fn settings_integration_action(&mut self, action: Action, cx: &mut Context<Self>) {

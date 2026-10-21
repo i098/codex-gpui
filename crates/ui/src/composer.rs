@@ -170,6 +170,7 @@ mod menu {
     }
 }
 mod mention;
+pub use mention::DraftMention;
 mod menus;
 mod slash;
 pub use slash::SlashCommand;
@@ -1138,14 +1139,18 @@ impl Composer {
     }
 
     pub fn set_text(&mut self, s: &str, cx: &mut Context<Self>) {
-        self.content = s.into();
+        self.reset_text(s.to_owned(), cx);
+        cx.notify();
+    }
+
+    fn reset_text(&mut self, content: String, cx: &mut Context<Self>) {
+        self.content = content;
         self.mentions.clear();
-        self.selected_range = s.len()..s.len();
+        self.selected_range = self.content.len()..self.content.len();
         self.marked_range = None;
         self.history = editor::History::default();
         self.slash.reset();
         self.end_search(cx);
-        cx.notify();
     }
 
     /// Clears account-bound drafts and invalidates pending attachment work.

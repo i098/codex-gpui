@@ -154,15 +154,18 @@ Both pages load app-server data and support search.
 Skills groups standalone entries by scope and excludes plugin-owned skills.
 Recommended skills use the original vendor cache and installation paths.
 Directory navigation preserves the category, marketplace, search, and share query parameters.
+Unsupported host routes keep their host identity and do not read local catalogs.
 Plugin installation, removal, enablement, and sharing wait for server responses.
 Failed operations keep the last confirmed catalog state.
 Share creates a remote link only after Copy link; only personal-marketplace plugins can publish a shared version.
 Plugins with install-time authentication require confirmed app connections before Try now.
 New skill prepares an editable draft without sending a turn.
+Skill and plugin prefills show mention chips and keep their serialized prompt tokens.
 App connections open the original browser setup flow; Check connection reads the app list again.
 Manage opens Settings > Plugins, which owns the management tabs and marketplace controls.
 The existing 36 reference frames do not cover these routes.
-Run `cargo test -p app --test plugins -- --test-threads=1` on macOS for the native failure and draft checks.
+Run `cargo test -p app --test plugins -- --test-threads=1` for host-isolation and draft checks.
+The same command also runs installation and sharing checks on macOS.
 
 
 Scheduled > New task accepts instructions, a daily or weekly repeat, and a local time in `HH:MM` format.

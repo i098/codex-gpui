@@ -1,11 +1,13 @@
-#![cfg(target_os = "macos")]
-
 mod common;
 
 use anyhow::{Context as _, Result, ensure};
 use common::*;
-use serde_json::{Value, json};
-use ui::screens::plugins::{Action, Modal, Resource};
+use serde_json::Value;
+#[cfg(target_os = "macos")]
+use serde_json::json;
+#[cfg(target_os = "macos")]
+use ui::screens::plugins::Modal;
+use ui::screens::plugins::{Action, Resource};
 
 #[test]
 fn proxy() {
@@ -21,6 +23,7 @@ fn catalog_fixture() -> Result<Vec<Value>> {
     Ok(lines)
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn failed_install_keeps_the_recorded_plugin_uninstalled() -> Result<()> {
     let mut lines = catalog_fixture()?;
@@ -107,8 +110,12 @@ fn new_skill_prepares_an_editable_draft_without_sending_a_turn() -> Result<()> {
     fx.cx
         .update(|cx| page.update(cx, |page, cx| page.act(Action::NewSkill, cx)));
     fx.wait("new skill draft", |fx| fx.route() == app::Route::Home)?;
-    let draft = fx.composer_text()?;
+    let draft = fx.read(|root, cx| root.composer(cx).read(cx).prompt());
     ensure!(draft.starts_with("[$skill-creator](") && draft.ends_with("help me create a skill"));
+    ensure!(
+        !fx.composer_text()?.contains("]("),
+        "The draft displayed raw mention markup"
+    );
     ensure!(
         fx.sent()?
             .iter()
@@ -117,6 +124,7 @@ fn new_skill_prepares_an_editable_draft_without_sending_a_turn() -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn opening_share_does_not_publish_a_plugin() -> Result<()> {
     let mut fx = Fx::captured("dark", (1280., 832.), catalog_fixture()?)?;
@@ -162,6 +170,83 @@ fn opening_share_does_not_publish_a_plugin() -> Result<()> {
         fx.sent()?
             .iter()
             .all(|message| message["method"] != "plugin/share/save")
+    );
+    Ok(())
+}
+
+#[test]
+fn unsupported_host_never_reads_local_catalogs() -> Result<()> {
+    let mut fx = Fx::captured("dark", (1280., 832.), catalog_fixture()?)?;
+    fx.action(Box::new(ui::OpenPlugins))?;
+    fx.wait("local catalog loaded", |fx| {
+        fx.read(|root, cx| {
+            root.plugins_page()
+                .is_some_and(|page| matches!(page.read(cx).data.skills, Resource::Ready(_)))
+        })
+    })?;
+    fx.wait("local manager snapshot", |fx| {
+        fx.read(|_, cx| {
+            cx.global::<ui::screens::settings::integrations::State>()
+                .gates_loaded
+        })
+    })?;
+    let data_reads = |messages: Vec<Value>| {
+        messages
+            .into_iter()
+            .filter(|message| {
+                matches!(
+                    message["method"].as_str(),
+                    Some("plugin/list" | "plugin/installed" | "skills/list" | "app/list")
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = data_reads(fx.sent()?);
+    let page = fx
+        .read(|root, _| root.plugins_page().cloned())
+        .context("local page")?;
+    fx.cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.act(Action::Navigate("/skills?hostId=unsupported".into()), cx)
+        })
+    });
+    fx.wait("unsupported host", |fx| {
+        fx.read(|root, cx| {
+            root.plugins_page().is_some_and(|page| {
+                page.read(cx).host_id == "unsupported"
+                    && matches!(page.read(cx).data.skills, Resource::Failed(_))
+            })
+        })
+    })?;
+    let page = fx
+        .read(|root, _| root.plugins_page().cloned())
+        .context("unsupported page")?;
+    fx.read(|_, cx| {
+        let page = page.read(cx);
+        ensure!(page.data.personal_marketplace.is_none());
+        ensure!(matches!(page.data.plugins, Resource::Failed(_)));
+        ensure!(matches!(page.data.apps, Resource::Failed(_)));
+        Ok::<_, anyhow::Error>(())
+    })?;
+    fx.cx
+        .update(|cx| page.update(cx, |page, cx| page.act(Action::Refresh, cx)));
+    fx.cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.act(Action::Navigate("/plugins".into()), cx)
+        })
+    });
+    fx.wait("host-preserving navigation", |fx| {
+        fx.read(|root, cx| {
+            root.plugins_page().is_some_and(|page| {
+                page.read(cx).tab == ui::screens::plugins::Tab::Plugins
+                    && page.read(cx).host_id == "unsupported"
+                    && matches!(page.read(cx).data.plugins, Resource::Failed(_))
+            })
+        })
+    })?;
+    ensure!(
+        data_reads(fx.sent()?) == before,
+        "Unsupported host read a local catalog"
     );
     Ok(())
 }

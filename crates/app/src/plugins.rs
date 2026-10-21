@@ -55,10 +55,12 @@ impl Root {
                     .or_insert_with(|| value.into_owned());
             }
         }
-        let available = !self.bridge.is_acp()
-            && self.config["features"]["plugins"] != false
-            && params.get("hostId").is_none_or(|host| host == "local");
+        let host_id = params.remove("hostId").unwrap_or_else(|| "local".into());
+        let local_host = host_id == "local";
+        let available =
+            !self.bridge.is_acp() && self.config["features"]["plugins"] != false && local_host;
         if !self.bridge.is_acp()
+            && local_host
             && cx
                 .try_global::<ui::screens::settings::integrations::State>()
                 .is_none_or(|state| !state.gates_loaded)
@@ -67,6 +69,7 @@ impl Root {
         }
         let page = cx.new(|cx| Page::new(&route, available, cx));
         page.update(cx, |page, cx| {
+            page.host_id = host_id;
             page.directory = match params
                 .remove("directoryTab")
                 .or_else(|| params.remove("directory"))
@@ -108,6 +111,18 @@ impl Root {
             cx.notify();
             page.generation
         });
+        if page.read(cx).host_id != "local" {
+            page.update(cx, |page, cx| {
+                page.data = Data {
+                    plugins: Resource::Failed("Plugins are not available for this host".into()),
+                    skills: Resource::Failed("Skills are not available for this host".into()),
+                    apps: Resource::Failed("Apps are not available for this host".into()),
+                    personal_marketplace: None,
+                };
+                cx.notify();
+            });
+            return;
+        }
         let bridge = self.bridge.clone();
         let cwd = self.cwd.clone();
         let personal_marketplace = std::env::var_os("HOME")
@@ -348,6 +363,19 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let local_host = page.read(cx).host_id == "local";
+        if !local_host
+            && !matches!(
+                action,
+                Action::Navigate(_) | Action::SelectDirectory(_) | Action::Refresh
+            )
+        {
+            page.update(cx, |page, cx| {
+                page.error = Some("Plugins are not available for this host".into());
+                cx.notify();
+            });
+            return;
+        }
         let personal = match action {
             Action::Share(plugin)
             | Action::CreateShare(plugin)
@@ -377,7 +405,16 @@ impl Root {
             }
             Action::Manage => self.open_settings_section("Plugins", window, cx),
             Action::Navigate(route) => {
-                self.open_plugins(route, window, cx);
+                if local_host {
+                    self.open_plugins(route, window, cx);
+                } else {
+                    match route_query(route, "hostId", &page.read(cx).host_id) {
+                        Ok(route) => {
+                            self.open_plugins(&route, window, cx);
+                        }
+                        Err(error) => self.toast(Toast::danger(error.to_string()), cx),
+                    }
+                }
             }
             Action::SelectDirectory(directory) => {
                 if let Route::Plugins(route) = &self.state.route {
@@ -395,9 +432,11 @@ impl Root {
                 cx,
             ),
             Action::Refresh => {
-                self.load_settings_integrations(cx);
-                if page.read(cx).skill_section == plugins::SkillSection::Recommended {
-                    self.load_recommended_skills(page.clone(), true, cx);
+                if local_host {
+                    self.load_settings_integrations(cx);
+                    if page.read(cx).skill_section == plugins::SkillSection::Recommended {
+                        self.load_recommended_skills(page.clone(), true, cx);
+                    }
                 }
                 let route = match &self.state.route {
                     Route::Plugins(route) => route.clone(),
@@ -429,11 +468,18 @@ impl Root {
                     });
                     return;
                 };
-                let prompt = plugin.summary["interface"]["defaultPrompt"]
+                let prompts = &plugin.summary["interface"]["defaultPrompt"];
+                let prompt = prompts
                     .as_str()
+                    .or_else(|| prompts.as_array()?.first()?.as_str())
                     .unwrap_or("");
                 self.plugin_prefill(
-                    &format!("[@{}](plugin://{}) {}", plugin.title(), plugin.id(), prompt),
+                    ui::composer::DraftMention {
+                        label: plugin.title(),
+                        link: format!("[@{}](plugin://{})", plugin.title(), plugin.id()),
+                        icon: "sidebar-plugins",
+                    },
+                    prompt,
                     window,
                     cx,
                 );
@@ -447,8 +493,13 @@ impl Root {
                     .into_iter()
                     .flatten()
                     .find(|skill| skill["name"] == "skill-creator")
-                    .map(|skill| plugins::string(skill, "path").to_owned());
-                if let Some(path) = creator {
+                    .map(|skill| {
+                        (
+                            plugins::string(skill, "path").to_owned(),
+                            plugins::skill_title(skill),
+                        )
+                    });
+                if let Some((path, label)) = creator {
                     if cx.try_global::<host_settings::Settings>().is_none() {
                         cx.set_global(host_settings::Settings::default());
                     }
@@ -475,7 +526,16 @@ impl Root {
                         }
                     }
                     let starter = if seen { "" } else { "help me create a skill" };
-                    self.plugin_prefill(&format!("[$skill-creator]({path}) {starter}"), window, cx);
+                    self.plugin_prefill(
+                        ui::composer::DraftMention {
+                            label: &label,
+                            link: format!("[$skill-creator]({path})"),
+                            icon: "skill-mention",
+                        },
+                        starter,
+                        window,
+                        cx,
+                    );
                 } else {
                     page.update(cx, |page, cx| {
                         page.error = Some("The skill-creator skill is not available".into());
@@ -505,13 +565,16 @@ impl Root {
 
     pub(crate) fn plugin_prefill(
         &mut self,
+        mention: ui::composer::DraftMention<'_>,
         prompt: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.new_chat(window, cx);
         let composer = self.home.read(cx).composer.clone();
-        composer.update(cx, |composer, cx| composer.set_text(prompt, cx));
+        composer.update(cx, |composer, cx| {
+            composer.set_mention_draft(mention, prompt, cx)
+        });
         window.focus(&composer.focus_handle(cx), cx);
     }
 

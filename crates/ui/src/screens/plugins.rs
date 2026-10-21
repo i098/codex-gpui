@@ -280,6 +280,7 @@ pub enum Modal {
 
 pub struct Page {
     pub tab: Tab,
+    pub host_id: String,
     pub directory: Directory,
     pub category: Option<String>,
     pub marketplace_path: Option<String>,
@@ -352,6 +353,7 @@ impl Page {
         .detach();
         Self {
             tab,
+            host_id: "local".into(),
             directory: Directory::Public,
             category: None,
             marketplace_path: None,

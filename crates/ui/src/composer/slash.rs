@@ -476,7 +476,7 @@ impl Composer {
             (command.title, description, command.icon)
         } else {
             let skill = &self.slash.skills[index - COMMANDS.len()];
-            (&skill.title, &skill.description, "sidebar-cmd-create-page")
+            (&skill.title, &skill.description, "skill-mention")
         }
     }
 

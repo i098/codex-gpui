@@ -213,12 +213,16 @@ impl Page {
                 cx,
             ));
         let is_skills = self.tab == Tab::Skills;
-        let enabled = !is_skills
-            || self.data.skills.value().is_some_and(|skills| {
-                skills
-                    .iter()
-                    .any(|skill| skill["name"] == "skill-creator" && skill["enabled"] == true)
-            });
+        let enabled = self.host_id == "local"
+            && if is_skills {
+                self.data.skills.value().is_some_and(|skills| {
+                    skills
+                        .iter()
+                        .any(|skill| skill["name"] == "skill-creator" && skill["enabled"] == true)
+                })
+            } else {
+                self.available
+            };
         let label = "Add";
         let handle = focus::handle("plugins-add", 0, window, cx);
         let button = div()

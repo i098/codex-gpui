@@ -100,15 +100,20 @@ impl Sidebar {
 impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
-        let (tab, detail) = {
+        let (tab, detail, local_host) = {
             let page = self.page.read(cx);
             (
                 page.tab,
                 page.detail.as_ref().map(|plugin| plugin.id().to_owned()),
+                page.host_id == "local",
             )
         };
         let state = cx.global::<crate::screens::settings::integrations::State>();
-        let installed = state.plugins.clone();
+        let installed = if local_host {
+            state.plugins.clone()
+        } else {
+            Load::Failed("Plugins are not available for this host".into())
+        };
         let hidden = state.hidden_plugins.clone();
         let mut header = div().h(px(52.)).flex_none().px(px(8.)).child(
             div()
@@ -235,13 +240,20 @@ impl Render for Sidebar {
                 for plugin in plugins {
                     let id = string(plugin, "id");
                     let known_icon = match string(plugin, "name") {
-                        "google-calendar" => Some("app-google-calendar"),
-                        "gmail" => Some("app-gmail"),
-                        "github" => Some("app-github"),
+                        "google-calendar" => Some(
+                            img("icons/app-google-calendar.svg")
+                                .size(px(16.))
+                                .into_any_element(),
+                        ),
+                        "gmail" => {
+                            Some(img("icons/app-gmail.svg").size(px(16.)).into_any_element())
+                        }
+                        "github" => {
+                            Some(icon("app-github", 16., t.text_default_nav).into_any_element())
+                        }
                         _ => None,
                     };
                     let artwork = known_icon
-                        .map(|name| icon(name, 16., t.text_default_nav).into_any_element())
                         .or_else(|| {
                             plugin["iconDataUrl"]
                                 .as_str()
