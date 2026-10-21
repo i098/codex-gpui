@@ -500,7 +500,7 @@ impl DiffPanel {
         line: u32,
         window: &Window,
         cx: &Context<Self>,
-    ) -> Vec<gpui::AnyElement> {
+    ) -> Vec<(gpui::AnyElement, Hsla)> {
         let file_diff = &self.files[file];
         let matches = |position: &Position| {
             position.side == side
@@ -510,6 +510,12 @@ impl DiffPanel {
         };
         let mut rows = Vec::new();
         let t = cx.theme();
+        let annotation_background: Hsla = rgb(if t.appearance == Appearance::Dark {
+            0x202020
+        } else {
+            0xfbfbfb
+        })
+        .into();
         // ponytail: scan the small annotation list; index by file and line if review threads grow large.
         for entry in self.annotations.entries.iter().filter(|entry| {
             matches(&entry.comment.position) && !self.annotations.dismissed.contains(&entry.key)
@@ -522,14 +528,19 @@ impl DiffPanel {
             {
                 continue;
             }
+            if !entry.model {
+                rows.push((
+                    local_comment(entry, file, cx).into_any_element(),
+                    annotation_background,
+                ));
+                continue;
+            }
             let key = entry.key.clone();
             let toggle_key = key.clone();
             let dismiss_key = key.clone();
-            let edit_key = key.clone();
             let comment_text = entry.comment.text();
             let label = format!(
-                "{} comment on {} {}",
-                if entry.model { "Review" } else { "Local" },
+                "Review comment on {} {}",
                 if entry.comment.position.start_line.is_some() {
                     "lines"
                 } else {
@@ -562,17 +573,13 @@ impl DiffPanel {
                         cx.notify();
                     },
                 ))
-                .when(entry.model, |d| {
-                    d.child(comment_button(
-                        "Dismiss comment",
-                        false,
-                        t,
-                        cx,
-                        move |this, window, cx| {
-                            this.dismiss_comment(dismiss_key.clone(), window, cx)
-                        },
-                    ))
-                });
+                .child(comment_button(
+                    "Dismiss comment",
+                    false,
+                    t,
+                    cx,
+                    move |this, window, cx| this.dismiss_comment(dismiss_key.clone(), window, cx),
+                ));
             let mut card = div()
                 .id(SharedString::from(format!("diff-comment-{key}")))
                 .w_full()
@@ -607,47 +614,28 @@ impl DiffPanel {
                                         .items_center()
                                         .justify_center()
                                         .role(gpui::Role::Image)
-                                        .aria_label(if entry.model {
-                                            "Codex avatar"
-                                        } else {
-                                            "Your avatar"
-                                        })
-                                        .when(entry.model, |d| {
-                                            d.child(shapes::decoration(Decoration {
-                                                radius: Corners::all(px(9999.)),
-                                                fill: Some(over(
-                                                    t.surface_secondary.opacity(0.6),
+                                        .aria_label("Codex avatar")
+                                        .child(shapes::decoration(Decoration {
+                                            radius: Corners::all(px(9999.)),
+                                            fill: Some(over(
+                                                t.surface_secondary.opacity(0.6),
+                                                over(t.surface_secondary.opacity(0.92), t.surface),
+                                            )),
+                                            border: Some((
+                                                px(1.),
+                                                over(
+                                                    t.border.opacity(0.2),
                                                     over(
                                                         t.surface_secondary.opacity(0.92),
                                                         t.surface,
                                                     ),
-                                                )),
-                                                border: Some((
-                                                    px(1.),
-                                                    over(
-                                                        t.border.opacity(0.2),
-                                                        over(
-                                                            t.surface_secondary.opacity(0.92),
-                                                            t.surface,
-                                                        ),
-                                                    ),
-                                                )),
-                                                ..Default::default()
-                                            }))
-                                        })
-                                        .child(if entry.model {
-                                            icon("diff-codex", 16., t.text).into_any_element()
-                                        } else {
-                                            crate::avatar().into_any_element()
-                                        }),
+                                                ),
+                                            )),
+                                            ..Default::default()
+                                        }))
+                                        .child(icon("diff-codex", 16., t.text)),
                                 )
-                                .child(text(
-                                    if entry.model { "Codex" } else { "You" },
-                                    13.,
-                                    18.571_428,
-                                    500.,
-                                    t.text,
-                                )),
+                                .child(text("Codex", 13., 18.571_428, 500., t.text)),
                         )
                         .child(buttons),
                 );
@@ -659,30 +647,6 @@ impl DiffPanel {
                         t,
                     ))
                     .child(text(label, 12., 16., 400., t.text_tertiary));
-                if !entry.model {
-                    let keyboard_key = edit_key.clone();
-                    card = card
-                        .cursor_pointer()
-                        .role(gpui::Role::Button)
-                        .aria_label("Edit comment")
-                        .tab_index(0)
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.open_comment(file, side, line, Some(edit_key.clone()), window, cx);
-                        }))
-                        .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
-                            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                                this.open_comment(
-                                    file,
-                                    side,
-                                    line,
-                                    Some(keyboard_key.clone()),
-                                    window,
-                                    cx,
-                                );
-                                cx.stop_propagation();
-                            }
-                        }));
-                }
             } else {
                 card = card.child(
                     text(
@@ -695,55 +659,30 @@ impl DiffPanel {
                     .truncate(),
                 );
             }
-            rows.push(
+            rows.push((
                 div()
                     .w_full()
                     .max_w(px(768.))
                     .p(px(6.))
                     .child(card)
                     .into_any_element(),
-            );
+                annotation_background,
+            ));
         }
         if let Some(draft) = &self.annotations.draft
             && matches(&draft.position)
         {
             let editing = draft.editing.is_some();
             let enabled = !draft.editor.read(cx).field_text().trim().is_empty();
-            let title = format!(
-                "Local comment on {} {}",
-                if draft.position.start_line.is_some() {
-                    "lines"
-                } else {
-                    "line"
-                },
-                draft.position.display_range(),
-            );
-            rows.push(
+            rows.push((
                 div()
                     .w_full()
                     .max_w(px(768.))
                     .p(px(6.))
                     .font_family(SANS)
                     .child(
-                        div()
-                            .relative()
-                            .rounded(px(12.5))
-                            .flex()
-                            .flex_col()
-                            .child(shapes::decoration(Decoration {
-                                radius: Corners::all(px(12.5)),
-                                fill: Some(if t.appearance == Appearance::Dark {
-                                    gpui::white().opacity(0.03)
-                                } else {
-                                    t.primary_soft_alpha
-                                }),
-                                shadows: vec![
-                                    shadow(t.border_strong, 0., 0., 0.5, false),
-                                    shadow(black().opacity(0.04), 3., 7.5, 0., false),
-                                    shadow(black().opacity(0.05), 0., 20., 0., false),
-                                ],
-                                ..Default::default()
-                            }))
+                        local_comment_frame(&draft.position, t)
+                            .child(div().p(px(12.)).child(draft.editor.clone()))
                             .child(
                                 div()
                                     .flex()
@@ -751,41 +690,8 @@ impl DiffPanel {
                                     .justify_between()
                                     .gap(px(8.))
                                     .px(px(12.))
-                                    .pt(px(8.))
-                                    .pb(px(2.))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap(px(10.))
-                                            .child(
-                                                div()
-                                                    .id("draft-comment-author")
-                                                    .size(px(24.))
-                                                    .flex_none()
-                                                    .rounded_full()
-                                                    .bg(rgb(0xff7419))
-                                                    .flex()
-                                                    .items_center()
-                                                    .justify_center()
-                                                    .role(gpui::Role::Image)
-                                                    .aria_label("Your avatar")
-                                                    .child(text("U", 12., 16., 400., t.text)),
-                                            )
-                                            .child(text("You", 12., 16., 430., t.text_tertiary)),
-                                    )
-                                    .child(text(title, 12., 16., 430., t.text_tertiary)),
-                            )
-                            .child(div().p(px(12.)).child(draft.editor.clone()))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_end()
-                                    .gap(px(8.))
-                                    .px(px(12.))
                                     .py(px(8.))
-                                    .when_some(draft.editing.clone(), |d, key| {
+                                    .child(div().when_some(draft.editing.clone(), |d, key| {
                                         d.child(comment_button(
                                             "Delete",
                                             false,
@@ -795,33 +701,152 @@ impl DiffPanel {
                                                 this.delete_comment(&key, window, cx)
                                             },
                                         ))
-                                    })
-                                    .child(comment_button(
-                                        "Cancel",
-                                        false,
-                                        t,
-                                        cx,
-                                        Self::abort_comment,
-                                    ))
+                                    }))
                                     .child(
-                                        comment_button(
-                                            if editing { "Save" } else { "Comment" },
-                                            true,
-                                            t,
-                                            cx,
-                                            Self::save_comment,
-                                        )
-                                        .aria_disabled(!enabled)
-                                        .tab_stop(enabled)
-                                        .when(!enabled, |d| d.opacity(0.5)),
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(8.))
+                                            .child(comment_button(
+                                                "Cancel",
+                                                false,
+                                                t,
+                                                cx,
+                                                Self::abort_comment,
+                                            ))
+                                            .child(
+                                                comment_button(
+                                                    if editing { "Save" } else { "Comment" },
+                                                    true,
+                                                    t,
+                                                    cx,
+                                                    Self::save_comment,
+                                                )
+                                                .aria_disabled(!enabled)
+                                                .tab_stop(enabled)
+                                                .when(!enabled, |d| d.opacity(0.5)),
+                                            ),
                                     ),
                             ),
                     )
                     .into_any_element(),
-            );
+                if editing {
+                    annotation_background
+                } else {
+                    t.surface
+                },
+            ));
         }
         rows
     }
+}
+
+fn local_comment_frame(position: &Position, t: &Theme) -> Div {
+    let title = format!(
+        "Local comment on {} {}",
+        if position.start_line.is_some() {
+            "lines"
+        } else {
+            "line"
+        },
+        position.display_range(),
+    );
+    div()
+        .relative()
+        .rounded(px(12.5))
+        .flex()
+        .flex_col()
+        .font_family(SANS)
+        .child(shapes::decoration(Decoration {
+            radius: Corners::all(px(12.5)),
+            fill: Some(if t.appearance == Appearance::Dark {
+                gpui::white().opacity(0.03)
+            } else {
+                t.primary_soft_alpha
+            }),
+            shadows: vec![
+                shadow(t.border_strong, 0., 0., 0.5, false),
+                shadow(black().opacity(0.04), 3., 7.5, 0., false),
+                shadow(black().opacity(0.05), 0., 20., 0., false),
+            ],
+            ..Default::default()
+        }))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(px(8.))
+                .px(px(12.))
+                .pt(px(8.))
+                .pb(px(2.))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(10.))
+                        .child(
+                            div()
+                                .id("comment-author")
+                                .size(px(24.))
+                                .flex_none()
+                                .rounded_full()
+                                .bg(rgb(0xff7419))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .role(gpui::Role::Image)
+                                .aria_label("Your avatar")
+                                .child(text("U", 12., 16., 400., t.text)),
+                        )
+                        .child(text("You", 12., 16., 430., t.text_tertiary)),
+                )
+                .child(text(title, 12., 16., 430., t.text_tertiary)),
+        )
+}
+
+fn local_comment(entry: &Entry, file: usize, cx: &Context<DiffPanel>) -> Div {
+    let t = cx.theme();
+    let key = entry.key.clone();
+    let delete_key = key.clone();
+    let keyboard_key = key.clone();
+    let side = entry.comment.position.side;
+    let line = entry.comment.position.line.get();
+    let card = local_comment_frame(&entry.comment.position, t)
+        .id(SharedString::from(format!("diff-comment-{key}")))
+        .cursor_pointer()
+        .role(gpui::Role::Button)
+        .aria_label("Edit comment")
+        .tab_index(0)
+        .on_click(cx.listener(move |this, _, window, cx| {
+            this.open_comment(file, side, line, Some(key.clone()), window, cx);
+        }))
+        .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                this.open_comment(file, side, line, Some(keyboard_key.clone()), window, cx);
+                cx.stop_propagation();
+            }
+        }))
+        .child(
+            div()
+                .p(px(12.))
+                .child(text(entry.comment.text(), 14., 22.75, 430., t.text)),
+        )
+        .child(
+            div()
+                .flex()
+                .justify_end()
+                .px(px(12.))
+                .py(px(8.))
+                .child(comment_button(
+                    "Delete",
+                    false,
+                    t,
+                    cx,
+                    move |this, window, cx| this.delete_comment(&delete_key, window, cx),
+                )),
+        );
+    div().w_full().max_w(px(768.)).p(px(6.)).child(card)
 }
 
 fn comment_button(

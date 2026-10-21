@@ -530,6 +530,7 @@ enum Menu {
     Permissions,
     Effort,
     Models,
+    Comments,
 }
 
 /// Index of the `Speed` sub trigger among the effort menu's items.
@@ -602,6 +603,7 @@ pub struct Composer {
     submitted: Vec<attach::Attachment>,
     diff_comments: Vec<crate::screens::diff::panel::comments::Comment>,
     submitted_diff_comments: Vec<crate::screens::diff::panel::comments::Comment>,
+    comments_close: Option<Task<()>>,
     pending_attachments: usize,
     attachment_generation: u64,
     attachment_error: Option<&'static str>,
@@ -623,6 +625,7 @@ pub struct Composer {
     speed_timer: Option<Task<()>>,
     permissions_focus: FocusHandle,
     model_focus: FocusHandle,
+    comments_focus: FocusHandle,
     /// The card's (`composer-footer` container's) width, CSS px: see `SM_WIDTH`, `XS_WIDTH`.
     footer_width: f32,
     menu_trigger_hovered: bool,
@@ -692,6 +695,7 @@ impl Composer {
             submitted: Vec::new(),
             diff_comments: Vec::new(),
             submitted_diff_comments: Vec::new(),
+            comments_close: None,
             pending_attachments: 0,
             attachment_generation: 0,
             attachment_error: None,
@@ -710,6 +714,7 @@ impl Composer {
             speed_timer: None,
             permissions_focus: cx.focus_handle().tab_stop(true),
             model_focus: cx.focus_handle().tab_stop(true),
+            comments_focus: cx.focus_handle().tab_stop(true),
             footer_width: f32::INFINITY,
             menu_trigger_hovered: false,
             approval: None,
@@ -1356,10 +1361,12 @@ impl Composer {
                 Menu::Permissions => Permission::ALL.len(),
                 Menu::Models => self.models.len(),
                 Menu::Effort => 3,
+                Menu::Comments => self.diff_comments.len(),
             };
             self.menu_focus.prepare(count, cx);
             self.menu_focus.trigger = match menu {
                 Menu::Permissions => self.permissions_focus.clone(),
+                Menu::Comments => self.comments_focus.clone(),
                 _ => self.model_focus.clone(),
             };
             self.menu_focus.content.focus(window, cx);
@@ -1382,7 +1389,7 @@ impl Composer {
             // Escape returns focus to the trigger of the Radix menus (permissions, the
             // `Speed` submenu: f2c.json step 24); the model picker's close focuses the editor
             // (refs/interactions/s033.json).
-            if menu == Menu::Permissions || self.speed_open {
+            if matches!(menu, Menu::Permissions | Menu::Comments) || self.speed_open {
                 self.menu_focus.restore(window, cx);
             } else {
                 self.focus_handle.focus(window, cx);
@@ -1588,6 +1595,7 @@ impl Composer {
                 }
                 _ => {}
             },
+            Some(Menu::Comments) => self.open_comment_attachment(index, window, cx),
             None => {}
         }
         cx.notify();
@@ -2023,7 +2031,6 @@ impl Render for Composer {
                     .flex_col()
                     .when(self.docked, |d| d.layer())
                     .when(!editing, |d| d.child(self.attachments_row(&t, cx)))
-                    .when(!editing, |d| d.child(self.diff_comment_chips(&t, cx)))
                     .when_some(self.attachment_error, |d, error| {
                         d.child(label(error, t.text))
                     })

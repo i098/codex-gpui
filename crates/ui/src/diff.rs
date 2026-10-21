@@ -3097,10 +3097,11 @@ fn hunk(
             .flex()
             .flex_col()
             .child(line)
-            .children(comments.into_iter().map(|comment| {
+            .children(comments.into_iter().map(|(comment, background)| {
                 div()
                     .flex()
                     .items_stretch()
+                    .bg(background)
                     .child(
                         deferred(
                             div()

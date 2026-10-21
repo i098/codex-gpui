@@ -531,6 +531,11 @@ The gutter opens a comment editor for one line or a selected range.
 Comments support edit, cancel, delete, and send actions.
 The draft keeps its selected lines visible and uses the original author header and line reference.
 Its text layout and input hit testing share the comment editor's line height.
+Saved local comments keep the draft card's author header and text metrics.
+Editing preserves the stored comment until Save.
+The composer groups comments in one count attachment.
+Its preview opens the selected source file; `Remove comments attachment` clears the stored comments.
+Closing the keyboard preview restores focus to its trigger.
 Dismissed model comments persist after confirmation.
 `diff_comments` checks those actions through native pointer and keyboard input.
 

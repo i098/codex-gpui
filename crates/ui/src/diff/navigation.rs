@@ -66,7 +66,7 @@ impl DiffPanel {
             }));
         if offset > px(0.) {
             deferred(header.relative().top(offset).bg(t.surface))
-                .with_priority(1)
+                .with_priority(2)
                 .into_any_element()
         } else {
             header.into_any_element()

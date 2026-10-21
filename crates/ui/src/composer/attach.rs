@@ -294,9 +294,11 @@ impl Composer {
             .flex()
             .flex_wrap()
             .gap(px(6.))
-            .when(!self.attachments.is_empty(), |d| {
-                d.pt(px(12.)).px(px(12.)).gap(px(12.)).items_end()
-            })
+            .when(
+                !self.attachments.is_empty() || !self.diff_comments.is_empty(),
+                |d| d.pt(px(12.)).px(px(12.)).gap(px(12.)).items_end(),
+            )
+            .when(!self.diff_comments.is_empty(), |d| d.pb(px(10.)))
             .children(
                 self.attachments
                     .iter()
@@ -375,6 +377,9 @@ impl Composer {
                             .into_any_element()
                     }),
             )
+            .when(!self.diff_comments.is_empty(), |d| {
+                d.child(self.diff_comment_attachment(t, cx))
+            })
     }
 
     fn remove_paste_button(&self, i: usize, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {

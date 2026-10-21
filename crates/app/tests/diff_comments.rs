@@ -207,6 +207,66 @@ fn gutter_comments_keep_ranges_and_support_edit_cancel_delete_and_send() -> Resu
 }
 
 #[test]
+fn comment_attachment_opens_the_file_and_removes_persisted_comments() -> Result<()> {
+    let (repo, mut fx) = prepare(false)?;
+    fx.drag((686., 194.4), (686., 302.4), 6)?;
+    fx.click((704., 302.4))?;
+    fx.wait("comment editor", |fx| draft(fx))?;
+    fx.type_text("Check this range.")?;
+    fx.keys("tab tab enter")?;
+    fx.wait("saved attachment", |fx| {
+        comment_text(fx).as_deref() == Some("Check this range.")
+    })?;
+    let settings =
+        app::host_settings::Settings::load(repo.path().join(".proof-settings/host.json"))?;
+    ensure!(
+        settings.read_all()["diff_comments"][SUBTRACT][0]["content"][0]["text"]
+            == "Check this range."
+    );
+    fx.click((420., 701.7))?;
+    fx.hover((800., 12.))?;
+    fx.advance(std::time::Duration::from_millis(150))?;
+    let composer = fx.composer();
+    let (open, _, trigger_focused) = fx.cx.update_window(fx.window, |_, window, cx| {
+        composer.read(cx).menu_state(window)
+    })?;
+    ensure!(
+        !open && trigger_focused,
+        "Closing the preview lost keyboard focus"
+    );
+    fx.click((420., 701.7))?;
+    fx.keys("down enter")?;
+    let expected = fs::read_to_string(repo.path().join("file.rs"))?;
+    fx.wait("comment source file", |fx| {
+        fx.read(|root, cx| {
+            root.file_view().is_some_and(|file| {
+                let file = file.read(cx);
+                file.path.ends_with("/file.rs")
+                    && file.line == Some(7)
+                    && file
+                        .contents
+                        .as_ref()
+                        .is_some_and(|contents| contents.as_deref() == Ok(expected.as_str()))
+            })
+        })
+    })?;
+    fx.action(Box::new(ui::screens::diff::panel::CloseSideTab(1)))?;
+    fx.click((466., 701.7))?;
+    fx.wait("removed attachment", |fx| comment_text(fx).is_none())?;
+    let settings =
+        app::host_settings::Settings::load(repo.path().join(".proof-settings/host.json"))?;
+    ensure!(
+        settings
+            .read_all()
+            .get("diff_comments")
+            .and_then(|comments| comments.get(SUBTRACT))
+            .is_none(),
+        "Removed comments returned after reloading their storage"
+    );
+    Ok(())
+}
+
+#[test]
 fn model_comment_dismissal_uses_confirmation_and_persists() -> Result<()> {
     let (repo, mut fx) = prepare(true)?;
     fx.reference_shot()?
