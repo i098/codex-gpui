@@ -32,6 +32,8 @@ use theme::{ActiveTheme as _, Theme};
 
 #[path = "computer_use.rs"]
 pub mod computer_use;
+#[path = "keyboard_shortcuts.rs"]
+pub mod keyboard_shortcuts;
 
 /// The app's theme setting (`ThemeSetting`): `system`, `light` or `dark`.
 pub const THEME: &str = "host.appearance-theme";
@@ -302,6 +304,7 @@ impl SettingsNav {
         };
         div()
             .id("settings-search")
+            .key_context("Editable")
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down))
             .on_click(cx.listener(|this, _, window, cx| this.focus.focus(window, cx)))
@@ -1141,6 +1144,9 @@ impl Render for SettingsPane {
         let section = self.page.read(cx).section;
         if section == "Computer use" {
             return super::computer_use::render(window, cx);
+        }
+        if section == "Keyboard shortcuts" {
+            return keyboard_shortcuts::render(window, cx);
         }
         // Unimplemented sections retain their title-only surface.
         let groups = match section {

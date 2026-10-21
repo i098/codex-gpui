@@ -29,6 +29,7 @@ pub mod screens;
 pub mod settings_kit;
 pub mod toast;
 pub mod tooltip;
+pub mod zoom;
 
 actions!(
     shell,
@@ -122,6 +123,7 @@ pub struct Shell {
     avatar_hovered: bool,
     sidebar: AnyView,
     main: AnyView,
+    bottom: Option<AnyView>,
 }
 
 /// The fixture account's 24 px avatar with its circular clip baked into alpha. The two
@@ -165,12 +167,22 @@ impl Shell {
             avatar_hovered: false,
             sidebar,
             main,
+            bottom: None,
         }
     }
 
     pub fn set_main(&mut self, main: AnyView, cx: &mut Context<Self>) {
         self.main = main;
         cx.notify();
+    }
+
+    pub fn set_bottom(&mut self, bottom: Option<AnyView>, cx: &mut Context<Self>) {
+        if self.bottom.as_ref().map(|view| view.entity_id())
+            != bottom.as_ref().map(|view| view.entity_id())
+        {
+            self.bottom = bottom;
+            cx.notify();
+        }
     }
 
     pub fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
@@ -961,7 +973,13 @@ impl Shell {
     /// (`background-clip: padding-box`) paint with the page in `render`: with the sidebar open
     /// the left edge is square and the right corners are rounded by its `clip-path`; with it
     /// closed it is a plain 12 px rounded box. `left` is its edge, `open` its shape.
-    fn main_panel(&self, left: Pixels, open: bool, focus: &gpui::FocusHandle) -> Div {
+    fn main_panel(
+        &self,
+        left: Pixels,
+        open: bool,
+        focus: &gpui::FocusHandle,
+        theme: &Theme,
+    ) -> Div {
         let r = Theme::RADIUS_XL_BASE;
         let panel = div()
             .tab_group()
@@ -973,7 +991,26 @@ impl Shell {
             .right(PAGE_INSET)
             .bottom(PAGE_INSET)
             .overflow_hidden()
-            .child(self.main.clone());
+            .child(if let Some(bottom) = &self.bottom {
+                div()
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .child(div().flex_1().min_h_0().child(self.main.clone()))
+                    .child(
+                        div()
+                            .h(px(280.))
+                            .min_h(px(160.))
+                            .max_h(gpui::relative(0.5))
+                            .flex_none()
+                            .border_t_1()
+                            .border_color(theme.border)
+                            .child(bottom.clone()),
+                    )
+                    .into_any_element()
+            } else {
+                self.main.clone().into_any_element()
+            });
         if self.main_composited {
             return panel.left(if open { left + MAIN_HAIRLINE } else { left });
         }
@@ -1429,7 +1466,7 @@ impl Render for Shell {
             .bg(under)
             .child(page)
             .when(progress > 0., |d| d.child(self.sidebar_panel(&t, progress)))
-            .child(self.main_panel(main_left, open, &main_focus))
+            .child(self.main_panel(main_left, open, &main_focus, &t))
             .when(composited || self.main_backgrounds > 0, |d| {
                 d.child(corners)
             })

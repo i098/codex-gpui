@@ -12,13 +12,18 @@ use crate::Root;
 use gpui::{App, Context, Div};
 
 mod command_destinations;
-mod shortcuts;
+mod keymap;
+pub(crate) mod shortcuts;
+pub(crate) mod terminal;
 pub(crate) use command_destinations::OpenThreadInNewWindow;
 
 /// Called by [`crate::init`], after the app's own bindings.
 pub(crate) fn init(cx: &mut App) {
-    command_destinations::init(cx);
     shortcuts::init(cx);
+}
+
+pub(crate) fn install_shortcuts(cx: &mut App) {
+    keymap::install(cx);
 }
 
 /// Called by `Root::render` on the root element, after the app's own actions.
