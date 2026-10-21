@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use ui::screens::{
     computer_use::Load,
+    settings::keyboard_shortcuts::{Change, KeyboardState},
     settings::voice::{Catalog, Policy, VoiceAction, VoiceData, VoiceState},
 };
 
@@ -39,6 +40,13 @@ impl Root {
         };
         if let VoiceAction::SetPreference(key, value) = &action {
             state.error = set_preference(&mut state, key, value.clone(), cx)
+                .err()
+                .map(|error| error.to_string());
+            cx.set_global(state);
+            return;
+        }
+        if let VoiceAction::SetHotkey(kind, value) = &action {
+            state.error = set_hotkey(*kind, value.clone(), cx)
                 .err()
                 .map(|error| error.to_string());
             cx.set_global(state);
@@ -112,6 +120,32 @@ fn set_preference(state: &mut VoiceState, key: &str, value: Value, cx: &mut App)
     Ok(())
 }
 
+fn set_hotkey(
+    kind: ui::screens::settings::voice::Hotkey,
+    value: Option<String>,
+    cx: &mut App,
+) -> Result<()> {
+    let keyboard = cx
+        .try_global::<KeyboardState>()
+        .context("Keyboard shortcuts are unavailable")?;
+    ensure!(keyboard.loaded, "Keyboard shortcuts are not loaded");
+    let dispatch = keyboard
+        .dispatch
+        .clone()
+        .context("Keyboard shortcuts are unavailable")?;
+    dispatch(
+        Change::Bindings {
+            command: kind.command().to_owned(),
+            keys: value.into_iter().collect(),
+        },
+        cx,
+    );
+    if let Some(error) = &cx.global::<KeyboardState>().error {
+        bail!("{error}");
+    }
+    Ok(())
+}
+
 fn apply(
     host: &dyn Host,
     bridge: &bridge::Bridge,
@@ -120,42 +154,10 @@ fn apply(
 ) -> Result<VoiceData> {
     let settings = host.voice_settings()?;
     let identity = host.identity();
-    let mut hotkeys = previous.hotkeys.clone();
     match &action {
-        VoiceAction::Refresh
-        | VoiceAction::Microphones
-        | VoiceAction::Dictionary
-        | VoiceAction::SetPreference(_, _) => {}
-        VoiceAction::SetHotkey(kind, value) => {
-            let request = match kind {
-                ui::screens::settings::voice::Hotkey::Voice => Request::post(
-                    "set-codex-command-keybinding",
-                    Some(
-                        json!({"commandId":kind.command(),"update":value.as_ref().map_or(json!({"type":"clear"}),|v|json!({"type":"set","accelerator":v}))}),
-                    ),
-                ),
-                ui::screens::settings::voice::Hotkey::Hold => {
-                    Request::post("global-dictation-set-hotkey", Some(json!({"hotkey":value})))
-                }
-                ui::screens::settings::voice::Hotkey::Toggle => Request::post(
-                    "global-dictation-set-toggle-hotkey",
-                    Some(json!({"hotkey":value})),
-                ),
-            };
-            let result = host::json_body(&host.fetch(&request)?)?;
-            ensure!(
-                result["success"] != false,
-                "{}",
-                result["error"]
-                    .as_str()
-                    .unwrap_or("Failed to update voice chat hotkey")
-            );
-            let key = match kind {
-                ui::screens::settings::voice::Hotkey::Voice => "voice",
-                ui::screens::settings::voice::Hotkey::Hold => "configuredHotkey",
-                ui::screens::settings::voice::Hotkey::Toggle => "configuredToggleHotkey",
-            };
-            hotkeys[key] = json!(value);
+        VoiceAction::Refresh | VoiceAction::Microphones | VoiceAction::Dictionary => {}
+        VoiceAction::SetPreference(_, _) | VoiceAction::SetHotkey(_, _) => {
+            bail!("Local Voice changes require the UI-thread writer")
         }
         VoiceAction::SetVoice(slug) => {
             ensure!(
@@ -227,13 +229,6 @@ fn apply(
         }
     }
     let mut data = read(host, previous)?;
-    if matches!(action, VoiceAction::Refresh) {
-        hotkeys = host
-            .fetch(&Request::post("global-dictation-hotkey-state", None))
-            .and_then(|v| host::json_body(&v))
-            .unwrap_or_else(|_| json!({"supported":false}));
-    }
-    data.hotkeys = hotkeys;
     if matches!(action, VoiceAction::Microphones) {
         data.microphones = load(host::voice::microphones());
     }
@@ -279,7 +274,6 @@ fn read(host: &dyn Host, previous: &VoiceData) -> Result<VoiceData> {
     Ok(VoiceData {
         policy: previous.policy.clone(),
         values: settings.values()?,
-        hotkeys: previous.hotkeys.clone(),
         catalog: previous.catalog.clone(),
         language: previous.language.clone(),
         microphones: previous.microphones.clone(),
@@ -562,5 +556,36 @@ mod tests {
         assert!(import_words(&data, &["first".into(), "too many characters".into()]).is_err());
         let words = ["existing".into(), "new".into(), "new".into()];
         assert_eq!(import_words(&data, &words).unwrap(), ["new"]);
+    }
+
+    #[test]
+    fn voice_hotkeys_use_the_shared_persistent_keymap() -> Result<()> {
+        use ui::screens::settings::voice::Hotkey;
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("preferences.json");
+        let mut cx = gpui::HeadlessAppContext::with_asset_source(
+            textsys::text_system(),
+            Arc::new(theme::Assets),
+        );
+        cx.update(|cx| -> Result<()> {
+            cx.set_global(crate::host_settings::Settings::load(path.clone())?);
+            crate::features::install_shortcuts(cx);
+            set_hotkey(Hotkey::Hold, Some("Control+Alt+Shift+F20".into()), cx)?;
+            let saved: Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+            assert_eq!(
+                saved["codex-command-keybindings"]["globalDictationHold"],
+                json!(["Control+Alt+Shift+F20"])
+            );
+            let before = std::fs::read(&path)?;
+            assert!(set_hotkey(Hotkey::Toggle, Some("Control+Alt+Shift+F20".into()), cx).is_err());
+            assert_eq!(std::fs::read(&path)?, before);
+            set_hotkey(Hotkey::Hold, None, cx)?;
+            let saved: Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+            assert_eq!(
+                saved["codex-command-keybindings"]["globalDictationHold"],
+                json!([])
+            );
+            Ok(())
+        })
     }
 }

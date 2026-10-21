@@ -324,7 +324,7 @@ pub fn canonical(accelerator: &str) -> String {
         .join(" ")
 }
 
-fn capture(stroke: &Keystroke) -> Option<String> {
+pub(super) fn capture(stroke: &Keystroke) -> Option<String> {
     if matches!(
         stroke.key.as_str(),
         "shift" | "control" | "alt" | "cmd" | "fn"
@@ -339,7 +339,7 @@ fn capture(stroke: &Keystroke) -> Option<String> {
     Some(key)
 }
 
-fn modifier_accelerator(modifiers: Modifiers) -> String {
+pub(super) fn modifier_accelerator(modifiers: Modifiers) -> String {
     [
         (modifiers.function, "Fn"),
         (modifiers.control, "Control"),

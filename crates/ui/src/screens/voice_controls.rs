@@ -1,9 +1,6 @@
 use super::*;
 use crate::{composer::popover, icon::icon};
-use gpui::{
-    Anchor, AppContext as _, Focusable as _, KeyUpEvent, MouseButton, SharedString, anchored,
-    deferred, point,
-};
+use gpui::{Anchor, Focusable as _, MouseButton, SharedString, anchored, deferred, point};
 
 impl Voice {
     fn choice(
@@ -325,66 +322,61 @@ impl Voice {
             ),
         };
         let capturing = self.capturing == Some(kind);
-        let value = state.data.accelerator(kind);
-        let disabled = state.pending || state.dispatch.is_none();
+        let value = accelerator(kind, cx);
+        let disabled = !keymap_supported(cx);
         let control = if capturing {
             button("Press keys…", t.text_alpha_5, Some(t.border), &t)
                 .id("voice-hotkey-capture")
                 .track_focus(&self.capture_focus)
                 .role(gpui::Role::TextInput)
                 .aria_label(format!("{label} capture"))
-                .on_key_down(cx.listener(move |this, e: &KeyDownEvent, _, cx| {
-                    if e.keystroke.key == "escape" {
-                        this.capturing = None;
-                        cx.notify();
-                        cx.stop_propagation();
-                        return;
-                    }
-                    if let Some(value) = captured_key(e) {
-                        this.capturing = None;
-                        this.dispatch(VoiceAction::SetHotkey(kind, Some(value)), cx);
-                        cx.notify();
-                    }
-                    cx.stop_propagation();
-                }))
-                .on_key_up(cx.listener(move |this, e: &KeyUpEvent, _, cx| {
-                    let value = match e.keystroke.key.as_str() {
-                        "shift" => Some("LeftShift"),
-                        "control" => Some("LeftControl"),
-                        "alt" => Some("LeftOption"),
-                        "cmd" => Some("LeftCommand"),
-                        "fn" => Some("Fn"),
-                        _ => None,
-                    };
-                    if let Some(value) = value {
-                        this.capturing = None;
-                        this.dispatch(VoiceAction::SetHotkey(kind, Some(value.into())), cx);
-                        cx.notify();
-                    }
-                    cx.stop_propagation();
-                }))
                 .into_any_element()
         } else {
-            let formatted = value.map(display_hotkey).unwrap_or_else(|| "Off".into());
+            let formatted = value
+                .as_deref()
+                .map(keyboard::key_label)
+                .unwrap_or_else(|| "Off".into());
+            let handle = focus::handle(kind.command(), 0, window, cx);
+            let return_focus = handle.read(cx).handle.clone();
+            let key_focus = return_focus.clone();
+            let trigger = focus::ring(
+                div()
+                    .id(kind.command())
+                    .h(px(28.))
+                    .px(px(9.))
+                    .relative()
+                    .flex()
+                    .items_center()
+                    .role(gpui::Role::Button)
+                    .aria_label(label)
+                    .aria_disabled(disabled)
+                    .child(super::super::on_card(
+                        12.5,
+                        shapes::Corner::Squircle,
+                        t.text_alpha_5,
+                        Some(t.border),
+                    ))
+                    .child(text(formatted, 13., 18., 430., t.text)),
+                &handle,
+                px(12.5),
+                px(2.),
+                cx,
+            )
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if !disabled {
+                    this.begin_capture(kind, return_focus.clone(), window, cx);
+                }
+            }))
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+                if !disabled && matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    this.begin_capture(kind, key_focus.clone(), window, cx);
+                    cx.stop_propagation();
+                }
+            }));
             div()
                 .flex()
                 .gap(px(8.))
-                .child(
-                    div()
-                        .id(kind.command())
-                        .role(gpui::Role::Button)
-                        .aria_label(label)
-                        .aria_disabled(disabled)
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            if disabled {
-                                return;
-                            }
-                            this.capturing = Some(kind);
-                            this.capture_focus.focus(window, cx);
-                            cx.notify();
-                        }))
-                        .child(text(formatted, 13., 18., 430., t.text)),
-                )
+                .child(trigger)
                 .children(value.map(|_| {
                     self.action(
                         format!("clear-{}", kind.command()),
@@ -813,39 +805,6 @@ pub(super) fn voice_name(value: &str) -> String {
         .next()
         .map(|c| c.to_uppercase().collect::<String>() + chars.as_str())
         .unwrap_or_default()
-}
-fn display_hotkey(value: &str) -> String {
-    value
-        .replace("Command", "⌘")
-        .replace("Ctrl", "⌃")
-        .replace("Alt", "⌥")
-        .replace("Shift", "⇧")
-        .replace('+', " ")
-}
-fn captured_key(event: &KeyDownEvent) -> Option<String> {
-    let key = &event.keystroke.key;
-    if matches!(
-        key.as_str(),
-        "shift" | "control" | "alt" | "cmd" | "fn" | "escape"
-    ) {
-        return None;
-    }
-    let mut parts = Vec::new();
-    let m = &event.keystroke.modifiers;
-    if m.control {
-        parts.push("Ctrl".to_owned())
-    }
-    if m.platform {
-        parts.push("Command".to_owned())
-    }
-    if m.alt {
-        parts.push("Alt".to_owned())
-    }
-    if m.shift {
-        parts.push("Shift".to_owned())
-    }
-    parts.push(key.to_uppercase());
-    Some(parts.join("+"))
 }
 const LANGUAGES: &[(&str, &str)] = &[
     ("auto", "Auto-detect"),

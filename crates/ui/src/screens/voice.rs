@@ -1,10 +1,11 @@
 use super::computer_use::Load;
+use super::keyboard_shortcuts::{self as keyboard, KeyboardState};
 use super::{button, switch};
 use crate::{composer::Composer, focus, text};
 use gpui::{
-    AnyElement, App, Context, Div, Entity, FocusHandle, Global, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, Render, StatefulInteractiveElement, Styled, Window, div,
-    prelude::FluentBuilder as _, px,
+    AnyElement, App, AppContext as _, BorrowAppContext as _, Context, Div, Entity, FocusHandle,
+    Global, InteractiveElement, IntoElement, KeyDownEvent, Keystroke, Modifiers, ParentElement,
+    Render, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder as _, px,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -163,7 +164,6 @@ pub enum VoiceAction {
 pub struct VoiceData {
     pub policy: Policy,
     pub values: Value,
-    pub hotkeys: Value,
     pub catalog: Load<Catalog>,
     pub language: Load<String>,
     pub microphones: Load<Vec<Microphone>>,
@@ -177,7 +177,6 @@ impl Default for VoiceData {
         Self {
             policy: Policy::default(),
             values: Value::Null,
-            hotkeys: Value::Null,
             catalog: Load::Loading,
             language: Load::Loading,
             microphones: Load::Loading,
@@ -201,14 +200,19 @@ impl VoiceData {
             .map(str::to_owned)
             .collect()
     }
-    fn accelerator(&self, hotkey: Hotkey) -> Option<&str> {
-        let key = match hotkey {
-            Hotkey::Voice => "voice",
-            Hotkey::Hold => "configuredHotkey",
-            Hotkey::Toggle => "configuredToggleHotkey",
-        };
-        self.hotkeys[key].as_str()
-    }
+}
+
+fn keymap_supported(cx: &App) -> bool {
+    cx.try_global::<KeyboardState>()
+        .is_some_and(|state| state.loaded && state.dispatch.is_some())
+}
+
+fn accelerator(kind: Hotkey, cx: &App) -> Option<String> {
+    let state = cx.try_global::<KeyboardState>()?;
+    let command = keyboard::commands()
+        .iter()
+        .find(|command| command.id == kind.command())?;
+    state.preferences.keys(command).next().map(str::to_owned)
 }
 
 pub type Dispatch = Arc<dyn Fn(VoiceAction, &mut App) + Send + Sync>;
@@ -225,22 +229,7 @@ impl Global for VoiceState {}
 
 pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
     window
-        .use_keyed_state("voice-settings-page", cx, |_, cx| {
-            cx.observe_global::<VoiceState>(|_, cx| cx.notify())
-                .detach();
-            Voice {
-                menu: None,
-                menu_hovered: false,
-                capturing: None,
-                capture_focus: cx.focus_handle(),
-                advanced: false,
-                dictionary_open: false,
-                fields: Vec::new(),
-                cloud_field: None,
-                submitted_word: None,
-                imported: None,
-            }
-        })
+        .use_keyed_state("voice-settings-page", cx, Voice::new)
         .into_any_element()
 }
 
@@ -249,6 +238,9 @@ struct Voice {
     menu_hovered: bool,
     capturing: Option<Hotkey>,
     capture_focus: FocusHandle,
+    return_focus: Option<FocusHandle>,
+    held_modifiers: Option<Modifiers>,
+    _key_interceptor: gpui::Subscription,
     advanced: bool,
     dictionary_open: bool,
     fields: Vec<Entity<Composer>>,
@@ -258,10 +250,139 @@ struct Voice {
 }
 
 impl Voice {
+    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        cx.observe_global::<VoiceState>(|_, cx| cx.notify())
+            .detach();
+        cx.observe_global::<KeyboardState>(|_, cx| cx.notify())
+            .detach();
+        let capture_focus = cx.focus_handle();
+        let owner = cx.entity_id();
+        cx.on_release(move |_, cx| {
+            if cx
+                .try_global::<KeyboardState>()
+                .is_some_and(|state| state.capture_owner == Some(owner))
+            {
+                cx.update_global::<KeyboardState, _>(|state, _| state.capture_owner = None);
+            }
+        })
+        .detach();
+        cx.on_blur(&capture_focus, window, |this, window, cx| {
+            if this.capturing.is_some() {
+                this.finish_capture(None, window, cx);
+            }
+        })
+        .detach();
+        let weak = cx.weak_entity();
+        let key_interceptor = cx.intercept_keystrokes(move |event, window, cx| {
+            if matches!(
+                event.keystroke.key.as_str(),
+                "shift" | "control" | "alt" | "platform" | "function" | "cmd" | "fn"
+            ) {
+                return;
+            }
+            if let Some(page) = weak.upgrade() {
+                let state = page.read(cx);
+                if state.capturing.is_some() && state.capture_focus.is_focused(window) {
+                    page.update(cx, |this, cx| {
+                        this.capture_key(&event.keystroke, window, cx)
+                    });
+                    cx.stop_propagation();
+                }
+            }
+        });
+        Self {
+            menu: None,
+            menu_hovered: false,
+            capturing: None,
+            capture_focus,
+            return_focus: None,
+            held_modifiers: None,
+            _key_interceptor: key_interceptor,
+            advanced: false,
+            dictionary_open: false,
+            fields: Vec::new(),
+            cloud_field: None,
+            submitted_word: None,
+            imported: None,
+        }
+    }
+
+    fn publish_capture(&self, active: bool, cx: &mut Context<Self>) {
+        let owner = cx.entity_id();
+        if let Some(state) = cx.try_global::<KeyboardState>() {
+            let next = if active {
+                Some(owner)
+            } else {
+                state.capture_owner.filter(|id| *id != owner)
+            };
+            cx.update_global::<KeyboardState, _>(|state, _| state.capture_owner = next);
+        }
+    }
+
+    fn begin_capture(
+        &mut self,
+        kind: Hotkey,
+        return_focus: FocusHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if cx.has_global::<VoiceState>() {
+            cx.update_global::<VoiceState, _>(|state, _| state.error = None);
+        }
+        self.capturing = Some(kind);
+        self.return_focus = Some(return_focus);
+        self.held_modifiers = None;
+        self.publish_capture(true, cx);
+        self.capture_focus.focus(window, cx);
+        cx.notify();
+    }
+
+    fn finish_capture(
+        &mut self,
+        value: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let kind = self.capturing.take();
+        self.held_modifiers = None;
+        self.publish_capture(false, cx);
+        if let Some(focus) = self.return_focus.take() {
+            focus.focus(window, cx);
+        }
+        if let (Some(kind), Some(value)) = (kind, value) {
+            self.dispatch(VoiceAction::SetHotkey(kind, Some(value)), cx);
+        }
+        cx.notify();
+    }
+
+    fn capture_key(&mut self, stroke: &Keystroke, window: &mut Window, cx: &mut Context<Self>) {
+        if stroke.key == "escape" {
+            self.finish_capture(None, window, cx);
+        } else if let Some(value) = keyboard::capture(stroke) {
+            self.finish_capture(Some(value), window, cx);
+        }
+        cx.stop_propagation();
+    }
+
+    fn modifiers(&mut self, modifiers: Modifiers, window: &mut Window, cx: &mut Context<Self>) {
+        if self.capturing.is_none() || !self.capture_focus.is_focused(window) {
+            return;
+        }
+        if modifiers == Modifiers::default() {
+            if let Some(held) = self.held_modifiers.take() {
+                self.finish_capture(Some(keyboard::modifier_accelerator(held)), window, cx);
+            }
+        } else {
+            *self.held_modifiers.get_or_insert_default() |= modifiers;
+        }
+    }
     fn dispatch(&self, action: VoiceAction, cx: &mut Context<Self>) {
         let state = cx.try_global::<VoiceState>();
         if state.is_some_and(|state| state.pending)
-            && !matches!(action, VoiceAction::SetPreference(_, _))
+            && !matches!(
+                action,
+                VoiceAction::SetPreference(_, _) | VoiceAction::SetHotkey(_, _)
+            )
         {
             return;
         }
@@ -281,7 +402,8 @@ impl Voice {
     ) -> AnyElement {
         let id = id.into();
         let t = cx.theme().clone();
-        let disabled = state.pending || state.dispatch.is_none();
+        let disabled = (state.pending && !matches!(action, VoiceAction::SetHotkey(_, _)))
+            || state.dispatch.is_none();
         let handle = focus::handle(id.clone(), 0, window, cx);
         let key_action = action.clone();
         focus::ring(
@@ -384,7 +506,7 @@ impl Render for Voice {
                 div().into_any_element()
             };
             let mut rows = vec![row(label, description, control, &t)];
-            if data.policy.realtime == Access::Allowed && data.hotkeys["supported"] != false {
+            if data.policy.realtime == Access::Allowed && keymap_supported(cx) {
                 rows.push(self.hotkey(Hotkey::Voice, &state, window, cx));
             }
             if data.policy.screen_context {
@@ -416,7 +538,7 @@ impl Render for Voice {
                 &t,
             ));
         }
-        if data.policy.global_dictation && data.hotkeys["supported"] != false {
+        if data.policy.global_dictation && keymap_supported(cx) {
             rows.push(self.hotkey(Hotkey::Hold, &state, window, cx));
             if self.advanced {
                 rows.push(self.hotkey(Hotkey::Toggle, &state, window, cx));
@@ -428,15 +550,19 @@ impl Render for Voice {
             rows.extend(self.recordings(&state, window, cx));
         }
         groups.push(group("Dictation", rows, &t));
-        if data.account_dictionary
-            || data.policy.global_dictation && data.hotkeys["supported"] != false
-        {
+        if data.account_dictionary || data.policy.global_dictation && keymap_supported(cx) {
             groups.push(self.dictionary(&state, window, cx));
         }
         let modal = self
             .dictionary_open
             .then(|| self.dictionary_dialog(&state, window, cx));
         div()
+            .id("voice-settings-root")
+            .on_modifiers_changed(cx.listener(
+                |this, event: &gpui::ModifiersChangedEvent, window, cx| {
+                    this.modifiers(event.modifiers, window, cx)
+                },
+            ))
             .size_full()
             .relative()
             .flex()
