@@ -152,6 +152,7 @@ Open an existing task with `cargo run -p app -- /remote/<task-id>`.
 The `/hotkey-window/remote/<task-id>` path selects the compact content variant.
 The page uses the app-server's ChatGPT identity for the original `/wham/tasks` API.
 It reads task turns, streams setup logs and thread events, and supports image previews and follow-up image uploads.
+A log download failure does not hide the task's setup error.
 Applying changes selects a configured local project with the same Git remote.
 Apply and Revert use a temporary Git index, so they do not change the user's staged files.
 The result dialog lists applied, conflicted, and skipped paths.

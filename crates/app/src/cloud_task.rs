@@ -478,12 +478,13 @@ fn run(
             let turns = fetch_json(host, &identity, &format!("{base}/turns"))?;
             let mut data = project(&detail, &turns)?;
             for turn in &mut data.turns {
-                if turn.phase == Phase::SetupFailed {
-                    let logs = fetch_json(
+                if turn.phase == Phase::SetupFailed
+                    && let Ok(logs) = fetch_json(
                         host,
                         &identity,
                         &format!("{base}/turns/{}/logs", segment(&turn.id)),
-                    )?;
+                    )
+                {
                     turn.logs = logs["logs"]
                         .as_array()
                         .into_iter()
@@ -532,10 +533,10 @@ fn run(
                     if cancelled.load(Ordering::Acquire) {
                         return false;
                     }
-                    if let Some(id) = event["id"].as_str() {
-                        if !seen.insert(id.to_owned()) {
-                            return true;
-                        }
+                    if let Some(id) = event["id"].as_str()
+                        && !seen.insert(id.to_owned())
+                    {
+                        return true;
                     }
                     send.send_blocking(Update::Event(turn.clone(), event))
                         .is_ok()
@@ -743,15 +744,14 @@ fn project(detail: &Value, turns: &Value) -> Result<CloudTask> {
                 .items
                 .iter()
                 .any(|item| matches!(item, ThreadItem::AgentMessage { .. }))
+            && let Some(assistant) = assistant
         {
-            if let Some(assistant) = assistant {
-                let text = content(&assistant["output_items"]);
-                if !text.trim().is_empty() {
-                    turn.items.push(ThreadItem::AgentMessage {
-                        id: format!("cloud-assistant-message:{assistant_id}"),
-                        text,
-                    });
-                }
+            let text = content(&assistant["output_items"]);
+            if !text.trim().is_empty() {
+                turn.items.push(ThreadItem::AgentMessage {
+                    id: format!("cloud-assistant-message:{assistant_id}"),
+                    text,
+                });
             }
         }
         let images = user["input_items"]
@@ -1003,6 +1003,47 @@ mod recovery_tests {
         );
         assert!(
             matches!(receive.try_recv().unwrap(), Update::Snapshot(data, _) if data.title == "Recovered" && !data.working)
+        );
+    }
+
+    #[test]
+    fn missing_setup_logs_do_not_hide_the_failed_task() {
+        struct MissingLogs<'a>(&'a AtomicBool);
+        impl Host for MissingLogs<'_> {
+            fn identity(&self) -> Option<Identity> {
+                FlakyHost(AtomicUsize::new(1)).identity()
+            }
+            fn fetch(&self, request: &Request) -> Result<Value> {
+                let Request::Http(request) = request else {
+                    bail!("expected HTTP");
+                };
+                let url = request["url"].as_str().unwrap();
+                if url.ends_with("/logs") {
+                    self.0.store(true, Ordering::Release);
+                    bail!("setup logs unavailable");
+                }
+                let body = if url.ends_with("/turns") {
+                    json!({})
+                } else {
+                    json!({
+                        "task":{"id":"task","title":"Failed setup"},
+                        "current_user_turn":{"id":"user","input_items":[]},
+                        "current_assistant_turn":{
+                            "id":"assistant","previous_turn_id":"user","turn_status":"failed","output_items":[],
+                            "error":{"code":"startup_script_failed"}
+                        }
+                    })
+                };
+                Ok(
+                    json!({"value":{"response":{"__response":{"status":200,"body":body.to_string()}}}}),
+                )
+            }
+        }
+        let cancelled = AtomicBool::new(false);
+        let (send, receive) = async_channel::unbounded();
+        run(&MissingLogs(&cancelled), "task", &cancelled, &send).unwrap();
+        assert!(
+            matches!(receive.try_recv().unwrap(), Update::Snapshot(data, _) if data.turns[0].phase == Phase::SetupFailed)
         );
     }
 }
