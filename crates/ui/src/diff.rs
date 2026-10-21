@@ -1526,7 +1526,7 @@ impl Render for DiffPanel {
                                         (i, index),
                                         &line_index,
                                         self,
-                                        self.layout.split(file, code_width),
+                                        code_width,
                                         window,
                                         cx,
                                     ))
@@ -2763,6 +2763,23 @@ fn line_colors(kind: Kind, t: &Theme) -> (Hsla, Hsla, Hsla) {
     }
 }
 
+fn selected_line_colors(kind: Kind, t: &Theme) -> (Hsla, Hsla, Hsla) {
+    let dark = t.appearance == Appearance::Dark;
+    let (gutter, content) = match (dark, kind) {
+        (true, Kind::Context) => (0x3a506b, 0x2e3a4a),
+        (true, Kind::Added) => (0x36556a, 0x334e55),
+        (true, Kind::Removed) => (0x4c4d64, 0x50404c),
+        (false, Kind::Context) => (0xd5e6ff, 0xe1edff),
+        (false, Kind::Added) => (0xc7e0f2, 0xcde4ec),
+        (false, Kind::Removed) => (0xd5d8ef, 0xdfd9e8),
+    };
+    (
+        rgb(gutter).into(),
+        rgb(content).into(),
+        rgb(if dark { 0x96c4ff } else { 0x20649e }).into(),
+    )
+}
+
 fn range_mark(
     line: &Line,
     range: Range<usize>,
@@ -2822,11 +2839,12 @@ fn hunk(
     location: (usize, usize),
     line_index: &Cell<usize>,
     panel: &DiffPanel,
-    split: bool,
+    width: Pixels,
     window: &Window,
     cx: &Context<DiffPanel>,
 ) -> Div {
     let t = cx.theme();
+    let split = panel.layout.split(&panel.files[location.0], width);
     let digits = h
         .lines
         .iter()
@@ -2836,6 +2854,9 @@ fn hunk(
         .to_string()
         .len();
     let gutter = px(52.5625 + CH * digits.saturating_sub(4) as f32);
+    let column_width = if split { (width - px(2.)) / 2. } else { width };
+    let annotation_offset = px(f32::from(gutter).ceil()) - gutter;
+    let annotation_width = px(f32::from(column_width - gutter).floor().max(0.));
     let base_index = line_index.get();
     line_index.set(base_index + h.lines.len());
     let content_width = h
@@ -2859,32 +2880,35 @@ fn hunk(
             .flex()
             .gap(px(2.))
             .child(
-                div()
-                    .relative()
-                    .w(gutter - px(2.))
-                    .flex_none()
-                    .h_full()
-                    .when(panel.wrap, |d| d.h_auto())
-                    .flex()
-                    .justify_end()
-                    .items_center()
-                    .when(panel.wrap, |d| d.items_start())
-                    .pr(px(CH))
-                    .child(shapes::decoration(Decoration {
-                        fill: Some(number_bg),
-                        ..Default::default()
-                    }))
-                    .when_some(bar, |d, color| {
-                        d.child(div().absolute().left_0().top_0().w(px(4.)).h_full().child(
-                            shapes::decoration(Decoration {
-                                fill: Some(color),
-                                ..Default::default()
-                            }),
-                        ))
-                    })
-                    .text_color(number_fg)
-                    .when_some(number, |d, n| d.child(n.to_string()))
-                    .children(utility),
+                deferred(
+                    div()
+                        .relative()
+                        .w(gutter - px(2.))
+                        .flex_none()
+                        .h_full()
+                        .when(panel.wrap, |d| d.h_auto())
+                        .flex()
+                        .justify_end()
+                        .items_center()
+                        .when(panel.wrap, |d| d.items_start())
+                        .pr(px(CH))
+                        .child(shapes::decoration(Decoration {
+                            fill: Some(number_bg),
+                            ..Default::default()
+                        }))
+                        .when_some(bar, |d, color| {
+                            d.child(div().absolute().left_0().top_0().w(px(4.)).h_full().child(
+                                shapes::decoration(Decoration {
+                                    fill: Some(color),
+                                    ..Default::default()
+                                }),
+                            ))
+                        })
+                        .text_color(number_fg)
+                        .when_some(number, |d, n| d.child(n.to_string()))
+                        .children(utility),
+                )
+                .with_priority(1),
             )
             .child(
                 div()
@@ -2907,13 +2931,14 @@ fn hunk(
             )
     };
     let render_line = |l: &Line, index: usize, number: u32, side: comments::Side| {
-        let (mut number_bg, bg, number_fg) = line_colors(l.kind, t);
-        if panel.comment_selection_contains(location.0, side, number)
+        let (mut number_bg, mut bg, mut number_fg) = line_colors(l.kind, t);
+        let bar = (l.kind != Kind::Context).then_some(number_fg);
+        let selected = panel.comment_selection_contains(location.0, side, number)
             || !split
                 && l.kind == Kind::Context
-                && panel.comment_selection_contains(location.0, comments::Side::Left, l.old_number)
-        {
-            number_bg = over(t.text_selection, number_bg);
+                && panel.comment_selection_contains(location.0, comments::Side::Left, l.old_number);
+        if selected {
+            (number_bg, bg, number_fg) = selected_line_colors(l.kind, t);
         }
         let found = l.matches.iter().map(|range| {
             (
@@ -3000,7 +3025,7 @@ fn hunk(
             bg,
             content,
             mark,
-            (l.kind != Kind::Context).then_some(number_fg),
+            bar,
             panel.comment_gutter(location.0, side, number, cx),
         )
         .cursor_pointer()
@@ -3063,7 +3088,41 @@ fn hunk(
                 cx,
             ));
         }
-        div().flex().flex_col().child(line).children(comments)
+        let gutter_color = if selected {
+            selected_line_colors(Kind::Context, t).0
+        } else {
+            t.surface
+        };
+        div()
+            .flex()
+            .flex_col()
+            .child(line)
+            .children(comments.into_iter().map(|comment| {
+                div()
+                    .flex()
+                    .items_stretch()
+                    .child(
+                        deferred(
+                            div()
+                                .w(gutter)
+                                .flex_none()
+                                .border_r_2()
+                                .border_color(t.surface)
+                                .bg(gutter_color),
+                        )
+                        .with_priority(1),
+                    )
+                    .child(
+                        deferred(
+                            div()
+                                .ml(annotation_offset)
+                                .w(annotation_width)
+                                .flex_none()
+                                .child(comment),
+                        )
+                        .with_priority(0),
+                    )
+            }))
     };
     div()
         .flex()

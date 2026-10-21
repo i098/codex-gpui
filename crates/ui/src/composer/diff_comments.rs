@@ -25,6 +25,7 @@ impl Composer {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut editor = Self::settings_field("Add a comment…", value, true, cx);
+        editor.line_height = px(22.75);
         editor.on_cancel_edit = Some(Rc::new(cancel));
         editor.focus_handle.focus(window, cx);
         editor

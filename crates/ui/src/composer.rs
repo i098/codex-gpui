@@ -595,6 +595,7 @@ pub struct Composer {
     /// Shaped lines and editor bounds of the last paint, for hit testing.
     lines: Vec<WrappedLine>,
     bounds: Option<Bounds<Pixels>>,
+    line_height: Pixels,
     attachments: Vec<attach::Attachment>,
     /// The attachments of the last submission, until the next one: [`Self::restore_submission`]
     /// puts them back when starting the chat failed.
@@ -686,6 +687,7 @@ impl Composer {
             is_selecting: false,
             lines: Vec::new(),
             bounds: None,
+            line_height: LINE_HEIGHT,
             attachments: Vec::new(),
             submitted: Vec::new(),
             diff_comments: Vec::new(),
@@ -1937,7 +1939,7 @@ impl Render for Composer {
         if self.plain_field.is_some() {
             return div().w_full().child(
                 card.key_context(KEY_CONTEXT)
-                    .when(self.request_parent.is_none(), |d| {
+                    .when(self.request_parent.is_none() && !editing, |d| {
                         d.border_1()
                             .border_color(t.border)
                             .rounded(px(8.))
@@ -1979,7 +1981,15 @@ impl Render for Composer {
                         .aria_placeholder(self.placeholder.clone())
                         .when(!self.secret, |d| d.aria_value(self.content.clone()))
                     })
-                    .child(self.editor(cx).when(self.request_number, |d| d.pr(px(30.))))
+                    .child(
+                        self.editor(cx)
+                            .id("composer-field-editor")
+                            .when(editing, |d| {
+                                d.max_h(window.viewport_size().height / 4.)
+                                    .overflow_y_scroll()
+                            })
+                            .when(self.request_number, |d| d.pr(px(30.))),
+                    )
                     .when(self.request_number, |d| {
                         d.child(self.request_number_stepper(&t, cx))
                     }),

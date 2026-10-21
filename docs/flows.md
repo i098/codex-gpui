@@ -529,6 +529,8 @@ A failed `Open in editor` action shows `Unable to open in editor` and preserves 
 `s027::failed_editor_launch_keeps_the_diff_and_reports_the_error` runs the real host with a controlled opener on an owned repository.
 The gutter opens a comment editor for one line or a selected range.
 Comments support edit, cancel, delete, and send actions.
+The draft keeps its selected lines visible and uses the original author header and line reference.
+Its text layout and input hit testing share the comment editor's line height.
 Dismissed model comments persist after confirmation.
 `diff_comments` checks those actions through native pointer and keyboard input.
 

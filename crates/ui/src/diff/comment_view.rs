@@ -212,6 +212,12 @@ impl DiffPanel {
             return None;
         }
         let t = cx.theme();
+        let drafting = self.annotations.draft.as_ref().is_some_and(|draft| {
+            let shown = &self.files[file];
+            draft.position.side == side
+                && draft.position.line.get() == line
+                && draft.position.path.strip_suffix(shown.name.as_ref()) == Some(shown.dir.as_ref())
+        });
         Some(
             div()
                 .absolute()
@@ -272,9 +278,10 @@ impl DiffPanel {
                             "comment-gutter-{file}-{side:?}-{line}"
                         )))
                         .absolute()
-                        .right(px(-2.))
+                        .right_0()
                         .top_0()
                         .opacity(0.)
+                        .when(drafting, |d| d.opacity(1.))
                         .group_hover("diff-comment-line", |d| d.opacity(1.))
                         .focus(|d| d.opacity(1.))
                         .role(gpui::Role::Button)
@@ -380,6 +387,14 @@ impl DiffPanel {
                 window,
                 cx,
             )
+        });
+        self.annotations.selection = Some(Selection {
+            file,
+            start: (
+                position.start_side.unwrap_or(position.side),
+                position.start_line.unwrap_or(position.line).get(),
+            ),
+            end: (position.side, position.line.get()),
         });
         let observe = cx.observe(&editor, |_, _, cx| cx.notify());
         self.annotations.draft = Some(Draft {
@@ -694,11 +709,15 @@ impl DiffPanel {
         {
             let editing = draft.editing.is_some();
             let enabled = !draft.editor.read(cx).field_text().trim().is_empty();
-            let title = if let Some(start_line) = draft.position.start_line {
-                format!("Comment on lines {} to {}", start_line, draft.position.line)
-            } else {
-                format!("Comment on line {}", draft.position.line)
-            };
+            let title = format!(
+                "Local comment on {} {}",
+                if draft.position.start_line.is_some() {
+                    "lines"
+                } else {
+                    "line"
+                },
+                draft.position.display_range(),
+            );
             rows.push(
                 div()
                     .w_full()
@@ -707,21 +726,65 @@ impl DiffPanel {
                     .font_family(SANS)
                     .child(
                         div()
+                            .relative()
                             .rounded(px(12.5))
-                            .border_1()
-                            .border_color(over(t.border.opacity(0.24), t.surface))
-                            .bg(over(t.surface_secondary.opacity(0.92), t.surface))
-                            .p(px(12.))
                             .flex()
                             .flex_col()
-                            .gap(px(8.))
-                            .child(text(title, 12., 16., 400., t.text_tertiary))
-                            .child(draft.editor.clone())
+                            .child(shapes::decoration(Decoration {
+                                radius: Corners::all(px(12.5)),
+                                fill: Some(if t.appearance == Appearance::Dark {
+                                    gpui::white().opacity(0.03)
+                                } else {
+                                    t.primary_soft_alpha
+                                }),
+                                shadows: vec![
+                                    shadow(t.border_strong, 0., 0., 0.5, false),
+                                    shadow(black().opacity(0.04), 3., 7.5, 0., false),
+                                    shadow(black().opacity(0.05), 0., 20., 0., false),
+                                ],
+                                ..Default::default()
+                            }))
                             .child(
                                 div()
                                     .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .gap(px(8.))
+                                    .px(px(12.))
+                                    .pt(px(8.))
+                                    .pb(px(2.))
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(10.))
+                                            .child(
+                                                div()
+                                                    .id("draft-comment-author")
+                                                    .size(px(24.))
+                                                    .flex_none()
+                                                    .rounded_full()
+                                                    .bg(rgb(0xff7419))
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .role(gpui::Role::Image)
+                                                    .aria_label("Your avatar")
+                                                    .child(text("U", 12., 16., 400., t.text)),
+                                            )
+                                            .child(text("You", 12., 16., 430., t.text_tertiary)),
+                                    )
+                                    .child(text(title, 12., 16., 430., t.text_tertiary)),
+                            )
+                            .child(div().p(px(12.)).child(draft.editor.clone()))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
                                     .justify_end()
                                     .gap(px(8.))
+                                    .px(px(12.))
+                                    .py(px(8.))
                                     .when_some(draft.editing.clone(), |d, key| {
                                         d.child(comment_button(
                                             "Delete",
@@ -750,7 +813,7 @@ impl DiffPanel {
                                         )
                                         .aria_disabled(!enabled)
                                         .tab_stop(enabled)
-                                        .when(!enabled, |d| d.opacity(0.4)),
+                                        .when(!enabled, |d| d.opacity(0.5)),
                                     ),
                             ),
                     )
@@ -776,12 +839,18 @@ fn comment_button(
         .tab_index(0)
         .cursor_pointer()
         .px(px(8.))
-        .h(px(28.))
-        .rounded_full()
+        .h(px(24.))
+        .rounded(px(12.5))
+        .border_1()
+        .border_color(if primary {
+            t.border
+        } else {
+            t.border.opacity(0.)
+        })
         .flex()
         .items_center()
         .justify_center()
-        .when(primary, |d| d.bg(t.text))
+        .when(primary, |d| d.bg(t.button_primary_solid))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _, window, cx| {
             action(this, window, cx);
@@ -795,10 +864,14 @@ fn comment_button(
         }))
         .child(text(
             label,
-            13.,
-            18.571_428,
+            12.,
+            16.,
             430.,
-            if primary { t.surface } else { t.text },
+            if primary {
+                t.surface_elevated_secondary
+            } else {
+                t.text_tertiary
+            },
         ))
 }
 
