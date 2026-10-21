@@ -1158,9 +1158,8 @@ const EDITORS: [(&str, &str); 11] = [
     ("xcode", "Xcode"),
 ];
 
-/// `open-file`: opens `path`, a file inside the project of `cwd`, in the editor `target` (the
-/// default app without one). The path must resolve, symlinks included, to a regular file under
-/// the Git root of `cwd` (`cwd` itself outside a repository). `opener` reports its own failure.
+/// Opens a file or directory in the selected editor.
+/// The canonical path must remain inside the project root, including through symlinks.
 fn open_file(opener: &Path, params: &Value) -> Result<Value> {
     let cwd = Path::new(params["cwd"].as_str().context("missing cwd")?);
     let path = Path::new(params["path"].as_str().context("missing path")?);
@@ -1185,7 +1184,7 @@ fn open_file(opener: &Path, params: &Value) -> Result<Value> {
         .canonicalize()
         .with_context(|| format!("{} no longer exists", path.display()))?;
     ensure!(file.starts_with(&root), "file is outside the project");
-    ensure!(file.is_file(), "{} is not a file", file.display());
+    ensure!(file.is_file() || file.is_dir(), "{} is not a file or directory", file.display());
     let mut command = std::process::Command::new(opener);
     match params["target"].as_str() {
         None | Some("systemDefault") => {}

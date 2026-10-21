@@ -9,6 +9,7 @@ mod features;
 pub mod host;
 pub mod host_settings;
 pub mod qa;
+mod plugins;
 mod search;
 mod section_actions;
 mod window_shell;
@@ -218,6 +219,7 @@ pub enum Route {
     Automation(String),
     /// Profile menu ▸ `Set up mobile` (`/codex-mobile`).
     Mobile,
+    Plugins(String),
     Archive,
 }
 
@@ -420,6 +422,7 @@ pub struct Root {
     archive_page: Option<Entity<ArchivedChats>>,
     /// The Mobile route's setup page.
     mobile_page: Option<Entity<mobile::MobileSetupPage>>,
+    plugins_page: Option<Entity<ui::screens::plugins::Page>>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
     settings_page: Option<Entity<settings::SettingsPage>>,
@@ -699,6 +702,7 @@ impl Root {
             page: None,
             archive_page: None,
             mobile_page: None,
+            plugins_page: None,
             settings_section: None,
             settings_page: None,
             command_menu: None,
@@ -2149,7 +2153,9 @@ impl Root {
         let (can_back, can_forward) = (!self.back.is_empty(), !self.forward.is_empty());
         self.archive_page = None;
         self.mobile_page = None;
+        self.plugins_page = None;
         self.page = match self.state.route.clone() {
+            Route::Plugins(route) => Some(self.plugins_shell(route, window, cx)),
             Route::Settings => {
                 self.load_computer_use(cx);
                 // The Appearance page shows the theme the app keeps.
@@ -4436,6 +4442,7 @@ impl Root {
     /// Every server message: streamed into the open thread and the sign-in view, plus
     /// Recents updates and approval prompts.
     pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        self.plugins_event(&event, cx);
         if let Some(login) = &self.login {
             login.update(cx, |login, cx| login.apply(&event, cx));
             if matches!(&event, Event::Notification { method, params }
@@ -5460,6 +5467,9 @@ impl Render for Root {
                     this.open_dialog(DialogKind::FullAccess, window, cx);
                 }),
             )
+            .on_action(cx.listener(|this, _: &ui::OpenPlugins, window, cx| {
+                this.open_plugins("/plugins", window, cx);
+            }))
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
                 this.navigate(Route::Settings, window, cx)
             }))
