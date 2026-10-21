@@ -2235,7 +2235,16 @@ pub(crate) fn raster_images(
     };
     let (contour, _) = ops(&d, layer.local(clip, s), s);
     let [x0, y0, w, h] = contour.rr.r.map(|v| v as i32);
-    let dev = |v: Pixels| f32::from(v) * s;
+    // A logical px value times the scale carries f32 error; a box snapped to device px must
+    // map to whole device px, or Skia's sample positions tie-break differently.
+    let dev = |v: Pixels| {
+        let d = f32::from(v) * s;
+        if (d - d.round()).abs() < 1e-3 {
+            d.round()
+        } else {
+            d
+        }
+    };
     let mut group = Rect::new_empty();
     let draws: Vec<_> = images
         .iter()

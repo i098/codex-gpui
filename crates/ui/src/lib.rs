@@ -9,10 +9,11 @@ use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, Bounds, ClickEvent, ContentMask, Context,
     Corners, CursorStyle, DispatchPhase, Div, FontWeight, Hsla, Image, ImageFormat,
     InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, Pixels, Point, Render, Rgba, SharedString, Stateful, StatefulInteractiveElement,
-    Styled, Svg, Window, actions, canvas, div, fill, img, point, prelude::FluentBuilder as _, px,
-    size, svg,
+    ParentElement, Pixels, Point, Render, RenderImage, Rgba, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, Svg, Window, actions, canvas, div, fill, img, point,
+    prelude::FluentBuilder as _, px, size, svg,
 };
+use std::cell::RefCell;
 use std::sync::{Arc, LazyLock};
 use std::time::Instant;
 use theme::{ActiveTheme as _, Theme};
@@ -141,23 +142,61 @@ pub struct Shell {
     main: AnyView,
 }
 
-/// The fixture account's 24 px avatar with its circular clip baked into alpha. The two
-/// straight-alpha layers are solved so GPUI's sprite blend lands on the refs' pixels over
-/// both layout colors; `avatar-fix.png` only covers edge pixels one layer cannot reach.
-fn avatar() -> impl IntoElement {
-    static LAYERS: LazyLock<[Arc<Image>; 2]> = LazyLock::new(|| {
-        [
-            &include_bytes!("../assets/avatar.png")[..],
-            include_bytes!("../assets/avatar-fix.png"),
-        ]
-        .map(|png| Arc::new(Image::from_bytes(ImageFormat::Png, png.to_vec())))
-    });
-    let layer = |image: &Arc<Image>| img(image.clone()).absolute().size(px(24.));
-    div()
-        .relative()
-        .size(px(24.))
-        .child(layer(&LAYERS[0]))
-        .child(layer(&LAYERS[1]))
+/// The fixture account's 24 px avatar (`rounded-full object-cover` `<img>`), rasterized the way
+/// Chromium draws it in the profile button's layer: the JPEG decoded to scale, drawn bilinear
+/// into the snapped box under its anti-aliased circular clip, and composited over `under`.
+///
+/// `avatar-decoded-64.png` is the capture's 256 px JPEG data URL (sha256 6e76408f…dd2375)
+/// decoded by libjpeg-turbo at scale 2/8, as Blink decodes a JPEG to the smallest supported
+/// size at least the drawn size (Pillow: `Image.draft("RGB", (64, 64))`).
+// ponytail: one decode size, valid while the avatar is at most 64 device px (scale 2.66);
+// add the 3/8 and larger decodes when a larger zoom matters.
+fn avatar(under: Hsla) -> AnyElement {
+    const PNG: &[u8] = include_bytes!("../assets/avatar-decoded-64.png");
+    if !cfg!(target_os = "macos") {
+        let image = Arc::new(Image::from_bytes(ImageFormat::Png, PNG.to_vec()));
+        return img(image).size(px(24.)).rounded_full().into_any_element();
+    }
+    static DECODED: LazyLock<image::RgbaImage> =
+        LazyLock::new(|| image::load_from_memory(PNG).expect("avatar").to_rgba8());
+    type Cached = (Bounds<Pixels>, Hsla, Arc<RenderImage>);
+    thread_local! {
+        static CACHE: RefCell<Option<Cached>> = const { RefCell::new(None) };
+    }
+    canvas(
+        |_, _, _| {},
+        move |bounds, (), window, _| {
+            let s = window.scale_factor();
+            let dev = |v: Pixels| (f32::from(v) * s).round();
+            let (x, y) = (dev(bounds.left()), dev(bounds.top()));
+            let (w, h) = (dev(bounds.right()) - x, dev(bounds.bottom()) - y);
+            let at = Bounds::new(point(px(x / s), px(y / s)), size(px(w / s), px(h / s)));
+            let cached = CACHE.with_borrow(|c| {
+                c.as_ref()
+                    .filter(|(b, u, _)| *b == at && *u == under)
+                    .map(|(_, _, image)| image.clone())
+            });
+            let Some(image) = cached.or_else(|| {
+                let image = Arc::new(shapes::raster_images(
+                    &[(&DECODED, at)],
+                    at,
+                    Corners::all(px(w.min(h) / 2. / s)),
+                    shapes::Corner::Round,
+                    shapes::ImageComposition::Composited(under),
+                    window,
+                )?);
+                CACHE.set(Some((at, under, image.clone())));
+                Some(image)
+            }) else {
+                return;
+            };
+            window
+                .paint_image(at, at, Corners::default(), image, 0, false)
+                .ok();
+        },
+    )
+    .size(px(24.))
+    .into_any_element()
 }
 
 impl Shell {
@@ -746,6 +785,15 @@ impl Shell {
             )
         };
         let profile_focus = focus::handle("rail-profile", 0, window, cx);
+        // The avatar composites over the rail, or over the profile button's hover fill.
+        // ponytail: the hover fill's end color, not its 150 ms fade; pass the fade's color if
+        // the avatar's corners ever show during it.
+        let under = over(t.page_surface_layout, t.background_surface_under);
+        let avatar_under = if self.avatar_hovered {
+            over(hover_bg, under)
+        } else {
+            under
+        };
         let mut item = |name: &'static str| {
             let on = selected == Some(name);
             let fg = if on { t.text } else { t.text_tertiary };
@@ -860,6 +908,8 @@ impl Shell {
                     cx,
                 )
                 .size(px(36.))
+                // The original composites the profile button: the avatar rasterizes in its layer.
+                .layer()
                 .flex()
                 .items_center()
                 .justify_center()
@@ -870,7 +920,7 @@ impl Shell {
                     cx.notify();
                 }))
                 .child(motion::ButtonVisual {
-                    glyph: div().size(px(24.)).child(avatar()),
+                    glyph: div().size(px(24.)).child(avatar(avatar_under)),
                     radius: RADIUS_RAIL,
                     hover: hover_bg,
                     foreground: hover_fg,
