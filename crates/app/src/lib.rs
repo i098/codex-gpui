@@ -170,6 +170,7 @@ pub fn init(cx: &mut App) {
     hotkey::init(cx);
     native_menus::init(cx);
     screenshot::init(cx);
+    updater::init(cx);
     cx.on_action(|_: &Quit, cx| cx.defer(routes::request_quit));
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
