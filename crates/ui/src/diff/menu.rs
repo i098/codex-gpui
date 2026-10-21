@@ -17,11 +17,17 @@ const SOURCES: [DiffSource; 6] = [
 const SOURCE_CHECK: &[u8] = br#"<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><path d="M12.7216 2.99666C12.8863 2.75824 13.2125 2.69837 13.4511 2.86287C13.6895 3.0274 13.75 3.35377 13.5858 3.59236L7.20011 12.8472C6.97922 13.1685 6.52057 13.2111 6.24405 12.9361L2.45987 9.18123C2.25451 8.97704 2.25305 8.64475 2.45694 8.43904C2.66115 8.23343 2.99433 8.23205 3.20011 8.43611L6.62296 11.8326L12.7216 2.99666Z" fill="currentColor"/></svg>"#;
 const SOURCE_SUBMENU: &[u8] = br#"<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><path d="M5.96236 11.6289C5.75734 11.8339 5.75734 12.166 5.96236 12.3711C6.16739 12.5761 6.49953 12.5761 6.70455 12.3711L10.4692 8.60641C10.8039 8.27129 10.8039 7.72863 10.4692 7.39351L6.70455 3.62887C6.49952 3.42384 6.16739 3.42384 5.96236 3.62887C5.75734 3.83389 5.75734 4.16603 5.96236 4.37105L9.59127 7.99996L5.96236 11.6289Z" fill="currentColor"/></svg>"#;
 
+#[derive(Clone, Copy)]
+enum GlyphOpacity {
+    Svg(u8),
+    Compositor(u8),
+}
+
 fn source_glyph(
     data: impl Into<std::borrow::Cow<'static, [u8]>>,
     id: &'static str,
     color: Hsla,
-    opacity: u8,
+    opacity: GlyphOpacity,
     compositor_opacity: u8,
 ) -> impl IntoElement {
     let data = data.into();
@@ -29,7 +35,8 @@ fn source_glyph(
         |_, _, _| {},
         move |bounds, (), window, cx| {
             let paint = |window: &mut Window| {
-                let origin = (opacity != 255 || compositor_opacity != 255).then_some(bounds.origin);
+                let origin = matches!(opacity, GlyphOpacity::Svg(alpha) if alpha != 255)
+                    .then_some(bounds.origin);
                 if !shapes::paint_icon(data.as_ref(), id, bounds, false, color, origin, window, cx)
                 {
                     window
@@ -44,13 +51,15 @@ fn source_glyph(
                         .ok();
                 }
             };
-            let svg = |window: &mut Window| {
-                if opacity == 255 {
-                    paint(window);
-                } else {
+            let svg = |window: &mut Window| match opacity {
+                GlyphOpacity::Svg(255) | GlyphOpacity::Compositor(255) => paint(window),
+                GlyphOpacity::Svg(alpha) => {
                     let ink = shapes::icon_paint_bounds(data.as_ref(), id, bounds, false, window)
                         .unwrap_or(bounds);
-                    shapes::with_layer(opacity, ink, window, paint);
+                    shapes::with_layer(alpha, ink, window, paint);
+                }
+                GlyphOpacity::Compositor(alpha) => {
+                    shapes::with_composited_opacity(alpha, bounds, window, cx, paint);
                 }
             };
             if compositor_opacity == 255 {
@@ -870,7 +879,11 @@ impl DiffPanel {
                             data,
                             name,
                             t.text,
-                            opacity,
+                            if index == 0 {
+                                GlyphOpacity::Compositor(opacity)
+                            } else {
+                                GlyphOpacity::Svg(opacity)
+                            },
                             if enabled { 255 } else { 128 },
                         ))
                     })
@@ -904,7 +917,7 @@ impl DiffPanel {
                             SOURCE_CHECK,
                             "diff-source-check",
                             t.text,
-                            191,
+                            GlyphOpacity::Svg(191),
                             255,
                         ))
                     })
@@ -929,7 +942,7 @@ impl DiffPanel {
                                 SOURCE_CHECK,
                                 "diff-picker-check",
                                 t.text,
-                                191,
+                                GlyphOpacity::Svg(191),
                                 255,
                             ))
                         },
@@ -942,7 +955,7 @@ impl DiffPanel {
                                 SOURCE_SUBMENU,
                                 "diff-source-submenu",
                                 t.text_tertiary,
-                                255,
+                                GlyphOpacity::Svg(255),
                                 255,
                             ))
                         },

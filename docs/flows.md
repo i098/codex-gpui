@@ -609,6 +609,7 @@ The standalone entry reads a Git-style unified patch from disk without starting 
 Auto uses split layout only when both sides change and the file pane is at least 800 px wide.
 The file tree filter changes the tree, not the displayed code.
 The Word diffs option toggles separate changed-word spans without changing the patch or line counts.
+Review menu icons retain the original SVG or compositor opacity, including disabled rows and nested popup layers.
 Find highlights use rounded inline boxes and keep the current match visible.
 The tokenizer follows the original word-alt joining rule and keeps UTF-8 boundaries.
 It skips word spans above 1,000 UTF-16 units per line or 2,000 changed lines per file.
