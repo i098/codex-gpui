@@ -85,10 +85,10 @@ pub async fn detect(bridge: &Bridge, policy: Policy) -> Result<Vec<DetectedItem>
             }
         }
     }
-    if items.is_empty() {
-        if let Some(error) = failure {
-            return Err(error);
-        }
+    if items.is_empty()
+        && let Some(error) = failure
+    {
+        return Err(error);
     }
     items.sort_by_key(|item| (item.provider_id, item.item.item_type));
     Ok(items)
@@ -130,11 +130,12 @@ pub async fn import_items(bridge: &Bridge, selected: &[DetectedItem]) -> Result<
             let event = events
                 .recv_timeout(deadline.saturating_duration_since(Instant::now()))
                 .context("external agent import did not complete")?;
-            if let Event::Notification { method, params } = event {
-                if method == "externalAgentConfig/import/completed" && params["importId"] == id {
-                    completions.push(params);
-                    break;
-                }
+            if let Event::Notification { method, params } = event
+                && method == "externalAgentConfig/import/completed"
+                && params["importId"] == id
+            {
+                completions.push(params);
+                break;
             }
         }
     }
@@ -272,11 +273,10 @@ impl Root {
                 cx.update_global::<ImportState, _>(|state, _| match result {
                     Ok(policy) => {
                         state.policy = policy;
-                        state.policy_error = None;
                     }
                     Err(error) => {
                         state.policy = Policy::default();
-                        state.policy_error = Some(error.to_string());
+                        eprintln!("codex-gpui: import feature policy: {error:#}");
                     }
                 });
                 root.sync_imports(cx);
@@ -340,13 +340,13 @@ impl Root {
         {
             self.load_import_policy(cx);
         }
-        if method == "mcpServer/oauth/login/completed" {
-            if let Some(name) = params["name"].as_str() {
-                cx.update_global::<ImportState, _>(|state, _| {
-                    state.auth_urls.remove(name);
-                });
-                self.refresh_imports(cx);
-            }
+        if method == "mcpServer/oauth/login/completed"
+            && let Some(name) = params["name"].as_str()
+        {
+            cx.update_global::<ImportState, _>(|state, _| {
+                state.auth_urls.remove(name);
+            });
+            self.refresh_imports(cx);
         }
     }
 
@@ -368,19 +368,29 @@ impl Root {
         cx.spawn(async move |_, cx| {
             let result = bridge
                 .request::<_, Value>("mcpServer/oauth/login", json!({"name":name}))
-                .await;
+                .await
+                .and_then(|response| {
+                    let Some(url) = response["authorizationUrl"].as_str() else {
+                        return Ok(None);
+                    };
+                    let parsed = url::Url::parse(url)?;
+                    ensure!(
+                        matches!(parsed.scheme(), "http" | "https"),
+                        "invalid OAuth URL scheme"
+                    );
+                    Ok(Some(url.to_owned()))
+                });
             cx.update(|cx| match result {
-                Ok(response) => {
-                    if let Some(url) = response["authorizationUrl"].as_str() {
-                        cx.open_url(url);
-                        cx.update_global::<ImportState, _>(|state, _| {
-                            state.auth_urls.insert(name, Some(url.to_owned()));
-                        });
-                    } else {
-                        cx.update_global::<ImportState, _>(|state, _| {
-                            state.auth_urls.remove(&name);
-                        });
-                    }
+                Ok(Some(url)) => {
+                    cx.open_url(&url);
+                    cx.update_global::<ImportState, _>(|state, _| {
+                        state.auth_urls.insert(name, Some(url));
+                    });
+                }
+                Ok(None) => {
+                    cx.update_global::<ImportState, _>(|state, _| {
+                        state.auth_urls.remove(&name);
+                    });
                 }
                 Err(error) => {
                     eprintln!("codex-gpui: imported MCP login: {error:#}");
@@ -453,11 +463,7 @@ impl Root {
                 ItemType::Skills | ItemType::Commands | ItemType::Plugins => {
                     self.open_settings_section("Plugins", window, cx)
                 }
-                _ => {
-                    if let Ok(url) = url::Url::from_file_path(&target) {
-                        cx.open_url(url.as_str());
-                    }
-                }
+                ItemType::AgentsMd | ItemType::Config | ItemType::Subagents | ItemType::Memory => {}
             },
         }
     }
@@ -513,7 +519,6 @@ impl Root {
                     }
                     Err(error) => {
                         eprintln!("codex-gpui: import sync: {error:#}");
-                        root.finish_import_sync(cx);
                         root.toast(Toast::danger("Unable to sync imports"), cx);
                     }
                 }
@@ -566,22 +571,7 @@ impl Root {
             state.preferences.clone()
         };
         if !automatic {
-            sync.merge_import(&items, chrono::Utc::now().timestamp_millis());
-            for item in detected.iter().filter(|item| {
-                !items.contains(item)
-                    && items
-                        .iter()
-                        .any(|selected| selected.provider_id == item.provider_id)
-            }) {
-                let key = if item.item.item_type == ItemType::Sessions {
-                    "chats".into()
-                } else if item.project().is_some() {
-                    format!("projects:{}", item.key())
-                } else {
-                    item.key()
-                };
-                sync.selection.insert(key, false);
-            }
+            sync.merge_import(detected, &items, chrono::Utc::now().timestamp_millis());
         }
         if let Err(error) = persist(cx, imports::SYNC_STATE, json!(sync)) {
             cx.update_global::<ImportState, _>(|state, _| {
@@ -606,10 +596,17 @@ impl Root {
         let host = self.host.clone();
         let run = cx.background_spawn(async move {
             let result = pollster::block_on(import_items(&bridge, &items));
-            let projects: Result<Vec<String>> = if result.is_ok() {
-                items
+            let projects: Result<Vec<String>> = if let Ok(completions) = &result {
+                completions
                     .iter()
-                    .filter_map(|item| item.project())
+                    .flat_map(|completion| {
+                        completion["itemTypeResults"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                    })
+                    .flat_map(|category| category["successes"].as_array().into_iter().flatten())
+                    .filter_map(|success| success["cwd"].as_str().filter(|cwd| !cwd.is_empty()))
                     .collect::<BTreeSet<_>>()
                     .into_iter()
                     .map(|root| host.add_project(std::path::Path::new(root)))

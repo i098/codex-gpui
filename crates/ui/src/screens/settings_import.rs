@@ -5,10 +5,9 @@ use bridge::imports::{
     CategoryPreference, DetectedItem, History, ItemType, Policy, Preferences, Provider, SyncState,
 };
 use gpui::{
-    BorrowAppContext as _,
-    AnyElement, App, Context, Div, FocusHandle, Global, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, Render, ScrollHandle, SharedString, StatefulInteractiveElement,
-    Styled, Window, div, prelude::FluentBuilder as _, px,
+    AnyElement, App, BorrowAppContext as _, Context, Div, FocusHandle, Global, InteractiveElement,
+    IntoElement, KeyDownEvent, ParentElement, Render, ScrollHandle, SharedString,
+    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder as _, px,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -31,7 +30,6 @@ pub type Dispatch = Arc<dyn Fn(ImportAction, &mut Window, &mut App) + Send + Syn
 #[derive(Clone, Default)]
 pub struct ImportState {
     pub policy: Policy,
-    pub policy_error: Option<String>,
     pub detected: Load<Arc<Vec<DetectedItem>>>,
     pub histories: Load<Arc<Vec<History>>>,
     pub mcp_auth: Load<Arc<Vec<String>>>,
@@ -41,7 +39,6 @@ pub struct ImportState {
     pub sync_enabled: bool,
     pub running: Option<Arc<Vec<DetectedItem>>>,
     pub pending: bool,
-    pub saving: bool,
     pub reviewing: bool,
     pub modal_open: bool,
     pub policy_request: u64,
@@ -83,6 +80,7 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
             expanded: BTreeSet::new(),
             categories: BTreeSet::new(),
             show_all_history: false,
+            history_head: None,
             import_completed: 0,
             preferences_saved: 0,
             attention_tab: ItemType::McpServerConfig,
@@ -137,6 +135,7 @@ struct ImportPage {
     expanded: BTreeSet<String>,
     categories: BTreeSet<(String, ItemType)>,
     show_all_history: bool,
+    history_head: Option<String>,
     import_completed: u64,
     preferences_saved: u64,
     attention_tab: ItemType,
@@ -193,10 +192,10 @@ impl ImportPage {
                 self.modal_focus.focus(window, cx);
             }
             Control::Select(index) => {
-                if let Some(Modal::Review { selected, .. }) = &mut self.modal {
-                    if !selected.remove(&index) {
-                        selected.insert(index);
-                    }
+                if let Some(Modal::Review { selected, .. }) = &mut self.modal
+                    && !selected.remove(&index)
+                {
+                    selected.insert(index);
                 }
             }
             Control::Import => {
@@ -246,21 +245,19 @@ impl ImportPage {
                 }
             }
             Control::Save => {
-                if let Some(Modal::Customize { preferences, .. }) = &self.modal {
-                    if ItemType::ALL
+                if let Some(Modal::Customize { preferences, .. }) = &self.modal
+                    && ItemType::ALL
                         .iter()
                         .any(|category| preferences.category_selected(*category, &state.sync_state))
-                        && !state.saving
-                    {
-                        Self::dispatch(
-                            ImportAction::SavePreferences(preferences.clone()),
-                            window,
-                            cx,
-                        );
-                    }
+                {
+                    Self::dispatch(
+                        ImportAction::SavePreferences(preferences.clone()),
+                        window,
+                        cx,
+                    );
                 }
             }
-            Control::Close if !state.pending && !state.saving => self.close(window, cx),
+            Control::Close if !state.pending => self.close(window, cx),
             Control::Close => {}
             Control::History(id) => {
                 if !self.expanded.remove(&id) {
@@ -278,6 +275,28 @@ impl ImportPage {
         cx.notify();
     }
 
+    fn bind_control(
+        &self,
+        element: gpui::Stateful<Div>,
+        control: Control,
+        disabled: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<Div> {
+        let keyboard = control.clone();
+        element
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if !disabled {
+                    this.activate(control.clone(), window, cx);
+                }
+            }))
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+                if !disabled && matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    this.activate(keyboard.clone(), window, cx);
+                    cx.stop_propagation();
+                }
+            }))
+    }
+
     fn action(
         &self,
         id: impl Into<SharedString>,
@@ -290,8 +309,7 @@ impl ImportPage {
         let id = id.into();
         let t = cx.theme().clone();
         let handle = focus::handle(id.clone(), 0, window, cx);
-        let keyboard = control.clone();
-        focus::ring(
+        let element = focus::ring(
             button(label, t.text_alpha_5, None, &t)
                 .id(id)
                 .role(gpui::Role::Button)
@@ -302,25 +320,14 @@ impl ImportPage {
             px(12.5),
             px(2.),
             cx,
-        )
-        .on_click(cx.listener(move |this, _, window, cx| {
-            if !disabled {
-                this.activate(control.clone(), window, cx);
-            }
-        }))
-        .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
-            if !disabled && matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                this.activate(keyboard.clone(), window, cx);
-                cx.stop_propagation();
-            }
-        }))
-        .into_any_element()
+        );
+        self.bind_control(element, control, disabled, cx)
+            .into_any_element()
     }
 
     fn toggle(
         &self,
-        id: &'static str,
-        label: &'static str,
+        (id, label): (&'static str, &'static str),
         on: bool,
         control: Control,
         disabled: bool,
@@ -329,8 +336,7 @@ impl ImportPage {
     ) -> AnyElement {
         let t = cx.theme().clone();
         let handle = focus::handle(id, 0, window, cx);
-        let keyboard = control.clone();
-        focus::ring(
+        let element = focus::ring(
             switch(id, on, disabled, &t)
                 .role(gpui::Role::Switch)
                 .aria_label(label)
@@ -344,19 +350,9 @@ impl ImportPage {
             Theme::RADIUS_FULL,
             px(2.),
             cx,
-        )
-        .on_click(cx.listener(move |this, _, window, cx| {
-            if !disabled {
-                this.activate(control.clone(), window, cx);
-            }
-        }))
-        .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
-            if !disabled && matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                this.activate(keyboard.clone(), window, cx);
-                cx.stop_propagation();
-            }
-        }))
-        .into_any_element()
+        );
+        self.bind_control(element, control, disabled, cx)
+            .into_any_element()
     }
 
     fn disclosure(
@@ -369,34 +365,22 @@ impl ImportPage {
         cx: &mut Context<Self>,
     ) -> Div {
         let handle = focus::handle(id.clone(), 0, window, cx);
-        let keyboard = control.clone();
-        div().child(
-            focus::ring(
-                content
-                    .id(id)
-                    .role(gpui::Role::Button)
-                    .aria_expanded(expanded),
-                &handle,
-                px(0.),
-                px(-2.),
-                cx,
-            )
-            .on_click(
-                cx.listener(move |this, _, window, cx| this.activate(control.clone(), window, cx)),
-            )
-            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
-                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                    this.activate(keyboard.clone(), window, cx);
-                    cx.stop_propagation();
-                }
-            })),
-        )
+        let element = focus::ring(
+            content
+                .id(id)
+                .role(gpui::Role::Button)
+                .aria_expanded(expanded),
+            &handle,
+            px(0.),
+            px(-2.),
+            cx,
+        );
+        div().child(self.bind_control(element, control, false, cx))
     }
 
     fn checkbox(
         &self,
-        id: impl Into<SharedString>,
-        label: &str,
+        (id, label): (impl Into<SharedString>, &str),
         checked: Option<bool>,
         control: Control,
         disabled: bool,
@@ -406,8 +390,7 @@ impl ImportPage {
         let t = cx.theme().clone();
         let id = id.into();
         let handle = focus::handle(id.clone(), 0, window, cx);
-        let keyboard = control.clone();
-        focus::ring(
+        let element = focus::ring(
             div()
                 .id(id)
                 .role(gpui::Role::CheckBox)
@@ -444,19 +427,9 @@ impl ImportPage {
             px(5.),
             px(2.),
             cx,
-        )
-        .on_click(cx.listener(move |this, _, window, cx| {
-            if !disabled {
-                this.activate(control.clone(), window, cx);
-            }
-        }))
-        .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
-            if !disabled && matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                this.activate(keyboard.clone(), window, cx);
-                cx.stop_propagation();
-            }
-        }))
-        .into_any_element()
+        );
+        self.bind_control(element, control, disabled, cx)
+            .into_any_element()
     }
 
     fn detection(&self, state: &ImportState, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -534,30 +507,26 @@ impl ImportPage {
                 }
                 Load::Ready(items) => {
                     subtitle = Some("Detected setup that can be added to ChatGPT");
-                    [
-                        Provider::ClaudeCode,
-                        Provider::ClaudeCowork,
-                        Provider::Cursor,
-                    ]
-                    .into_iter()
-                    .filter(|provider| items.iter().any(|item| item.provider_id == *provider))
-                    .map(|provider| {
-                        row(
-                            provider.label(),
-                            None,
-                            Some(provider_icon(provider, &t)),
-                            self.action(
-                                provider.id(),
-                                "Import",
-                                Control::Review(provider),
-                                state.pending,
-                                window,
-                                cx,
-                            ),
-                            &t,
-                        )
-                    })
-                    .collect()
+                    [Provider::ClaudeCode, Provider::Cursor]
+                        .into_iter()
+                        .filter(|provider| items.iter().any(|item| item.provider_id == *provider))
+                        .map(|provider| {
+                            row(
+                                provider.label(),
+                                None,
+                                Some(provider_icon(provider, &t)),
+                                self.action(
+                                    provider.id(),
+                                    "Import",
+                                    Control::Review(provider),
+                                    state.pending,
+                                    window,
+                                    cx,
+                                ),
+                                &t,
+                            )
+                        })
+                        .collect()
                 }
             }
         };
@@ -587,11 +556,10 @@ impl ImportPage {
                     Some(description.into()),
                     None,
                     self.toggle(
-                        "keep-imports-in-sync",
-                        "Keep imports in sync",
+                        ("keep-imports-in-sync", "Keep imports in sync"),
                         state.sync_enabled,
                         Control::Dispatch(ImportAction::SetSync(!state.sync_enabled)),
-                        state.saving,
+                        false,
                         window,
                         cx,
                     ),
@@ -609,7 +577,7 @@ impl ImportPage {
                         "customize-import-sync",
                         "Customize",
                         Control::Customize,
-                        !connected || state.saving,
+                        !connected,
                         window,
                         cx,
                     ),
@@ -1077,6 +1045,48 @@ impl ImportPage {
         ))
     }
 
+    fn dialog_action(
+        &self,
+        (id, label): (&'static str, &'static str),
+        control: Control,
+        (fill, foreground): (gpui::Hsla, gpui::Hsla),
+        disabled: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = cx.theme().clone();
+        let handle = focus::handle(id, 0, window, cx);
+        let element = focus::ring(
+            div()
+                .id(id)
+                .role(gpui::Role::Button)
+                .aria_label(label)
+                .aria_disabled(disabled)
+                .h(px(32.))
+                .px(px(16.))
+                .border_1()
+                .border_color(gpui::transparent_black())
+                .relative()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(on_card(
+                    12.5,
+                    shapes::Corner::Squircle,
+                    fill,
+                    Some(theme.border),
+                ))
+                .child(text(label, 14., 18., 430., foreground))
+                .when(disabled, |element| element.opacity(0.4)),
+            &handle,
+            px(12.5),
+            px(0.),
+            cx,
+        );
+        self.bind_control(element, control, disabled, cx)
+            .into_any_element()
+    }
+
     fn dialog(
         &self,
         state: &ImportState,
@@ -1086,6 +1096,7 @@ impl ImportPage {
         let modal = self.modal.as_ref()?;
         let t = cx.theme().clone();
         let mut rows = Vec::new();
+        let mut footer_rows = Vec::new();
         let mut focus_ids = Vec::new();
         let (title, subtitle, save, disabled) = match modal {
             Modal::Review {
@@ -1104,8 +1115,7 @@ impl ImportPage {
                         Some(item.item.description.clone()),
                         None,
                         self.checkbox(
-                            format!("import-item-{index}"),
-                            label,
+                            (format!("import-item-{index}"), label),
                             Some(selected.contains(&index)),
                             Control::Select(index),
                             state.pending,
@@ -1150,13 +1160,12 @@ impl ImportPage {
                     rows.push(row(
                         category.label(),
                         detail,
-                        Some(icon(category.icon(), 16., t.text_secondary).into_any_element()),
+                        Some(icon(category.icon(), 20., t.text_secondary).into_any_element()),
                         self.checkbox(
-                            format!("sync-category-{}", category.id()),
-                            category.label(),
+                            (format!("sync-category-{}", category.id()), category.label()),
                             preferences.category_checked(category, &state.sync_state),
                             Control::Category(category),
-                            state.saving,
+                            false,
                             window,
                             cx,
                         ),
@@ -1164,16 +1173,15 @@ impl ImportPage {
                     ));
                     focus_ids.push(format!("sync-category-{}", category.id()));
                 }
-                rows.push(row(
+                footer_rows.push(row(
                     "Sync all categories",
                     Some("Include categories found in the future".into()),
                     None,
                     self.toggle(
-                        "sync-all-categories",
-                        "Sync all categories",
+                        ("sync-all-categories", "Sync all categories"),
                         *preferences == Preferences::All,
                         Control::AllCategories,
-                        state.saving,
+                        false,
                         window,
                         cx,
                     ),
@@ -1181,16 +1189,15 @@ impl ImportPage {
                 ));
                 focus_ids.push("sync-all-categories".into());
                 if known.len() < ItemType::ALL.len() {
-                    rows.push(row(
+                    footer_rows.push(row(
                         "Show all categories",
                         Some("Choose what to sync when new categories become available".into()),
                         None,
                         self.toggle(
-                            "show-sync-categories",
-                            "Show all categories",
+                            ("show-sync-categories", "Show all categories"),
                             *show_all,
                             Control::ShowCategories,
-                            state.saving,
+                            false,
                             window,
                             cx,
                         ),
@@ -1198,37 +1205,49 @@ impl ImportPage {
                     ));
                     focus_ids.push("show-sync-categories".into());
                 }
-                rows.push(div().px(px(16.)).py(px(12.)).child(text("Changes apply to future syncs. Content already imported stays in ChatGPT", 13., 18., 430., t.text_secondary).whitespace_normal()));
+                footer_rows.push(
+                    text(
+                        "Changes apply to future syncs. Content already imported stays in ChatGPT",
+                        13.,
+                        16.,
+                        430.,
+                        t.text_secondary,
+                    )
+                    .whitespace_normal(),
+                );
                 let empty = !ItemType::ALL
                     .iter()
                     .any(|category| preferences.category_selected(*category, &state.sync_state));
                 if empty {
-                    rows.push(div().p(px(16.)).child(text("Select at least one category. To stop syncing, turn off “Keep imports in sync”", 13., 18., 430., t.text_secondary).whitespace_normal()));
+                    footer_rows.push(text("Select at least one category. To stop syncing, turn off “Keep imports in sync”", 13., 16., 430., t.text_secondary).whitespace_normal());
                 }
                 (
                     "Content to sync".into(),
                     "Applies to all connected sources and projects",
                     Control::Save,
-                    empty || state.saving,
+                    empty,
                 )
             }
         };
-        let cancel = self.action(
-            "cancel-import-dialog",
-            "Cancel",
+        let cancel = self.dialog_action(
+            ("cancel-import-dialog", "Cancel"),
             Control::Close,
-            state.pending || state.saving,
+            (t.primary_soft_alpha, t.text),
+            state.pending,
             window,
             cx,
         );
-        let save = self.action(
-            "save-import-dialog",
-            if matches!(modal, Modal::Review { .. }) {
-                "Import to ChatGPT"
-            } else {
-                "Save"
-            },
+        let save = self.dialog_action(
+            (
+                "save-import-dialog",
+                if matches!(modal, Modal::Review { .. }) {
+                    "Import to ChatGPT"
+                } else {
+                    "Save"
+                },
+            ),
             save,
+            (t.button_primary_solid, t.menu_background),
             disabled,
             window,
             cx,
@@ -1238,105 +1257,132 @@ impl ImportPage {
             .into_iter()
             .map(|id: String| focus::handle(id, 0, window, cx).read(cx).handle.clone())
             .collect();
-        let saving = state.pending || state.saving;
-        Some(
-            gpui::deferred(
+        let pending = state.pending;
+        let viewport = window.viewport_size();
+        let surface = div()
+            .id("import-dialog")
+            .role(gpui::Role::Dialog)
+            .aria_label(title.clone())
+            .track_focus(&self.modal_focus)
+            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+                if event.keystroke.key == "escape" && !pending {
+                    this.close(window, cx);
+                    cx.stop_propagation();
+                }
+                if event.keystroke.key == "tab" {
+                    let current = focus_order
+                        .iter()
+                        .position(|handle| handle.is_focused(window));
+                    let next = if event.keystroke.modifiers.shift {
+                        current
+                            .filter(|index| *index > 0)
+                            .map_or(focus_order.len() - 1, |index| index - 1)
+                    } else {
+                        current.map_or(0, |index| (index + 1) % focus_order.len())
+                    };
+                    focus_order[next].focus(window, cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .w(px(680_f32.min(f32::from(viewport.width) * 0.92)))
+            .max_h(px(720_f32.min(f32::from(viewport.height) - 64.)))
+            .relative()
+            .flex()
+            .flex_col()
+            .p(px(20.))
+            .child(shapes::backdrop_blur(
+                px(24.),
+                shapes::Fill::Color,
+                false,
+                shapes::Decoration {
+                    radius: gpui::Corners::all(px(25.)),
+                    fill: Some(gpui::Hsla {
+                        a: 0.9,
+                        ..t.surface_elevated_secondary
+                    }),
+                    shadows: vec![
+                        crate::composer::shadow(t.border, 0., 0., 0.5, false),
+                        crate::composer::shadow(gpui::rgba(0x0000001a).into(), 4., 8., -2., false),
+                    ],
+                    ..Default::default()
+                },
+            ))
+            .child(
                 div()
-                    .absolute()
-                    .inset_0()
-                    .occlude()
-                    .bg(t.dialog_backdrop)
+                    .flex_none()
                     .flex()
-                    .items_center()
-                    .justify_center()
-                    .on_mouse_down(
-                        gpui::MouseButton::Left,
-                        cx.listener(move |this, _, window, cx| {
-                            if !saving {
-                                this.close(window, cx);
-                            }
-                        }),
-                    )
+                    .flex_col()
+                    .gap(px(4.))
+                    .child(text(title, 20., 28., 600., t.text))
+                    .child(text(subtitle, 14., 21., 430., t.text_tertiary).whitespace_normal()),
+            )
+            .child(
+                div()
+                    .id("import-dialog-content")
+                    .pt(px(12.))
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(card(
+                        rows,
+                        on_card(
+                            20.,
+                            shapes::Corner::Squircle,
+                            t.background_panel,
+                            Some(t.border),
+                        ),
+                        &t,
+                    )),
+            )
+            .child(
+                div()
+                    .pt(px(12.))
+                    .flex_none()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .children(footer_rows)
+                    .children(state.error.as_ref().map(|error| {
+                        div()
+                            .id("import-dialog-error")
+                            .role(gpui::Role::Alert)
+                            .child(
+                                text(error.clone(), 14., 21., 430., t.text_error)
+                                    .whitespace_normal(),
+                            )
+                    }))
                     .child(
                         div()
-                            .id("import-dialog")
-                            .role(gpui::Role::Dialog)
-                            .aria_label(title.clone())
-                            .track_focus(&self.modal_focus)
-                            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
-                                cx.stop_propagation()
-                            })
-                            .on_key_down(cx.listener(
-                                move |this, event: &KeyDownEvent, window, cx| {
-                                    if event.keystroke.key == "escape" && !saving {
-                                        this.close(window, cx);
-                                        cx.stop_propagation();
-                                    }
-                                    if event.keystroke.key == "tab" {
-                                        let current = focus_order
-                                            .iter()
-                                            .position(|handle| handle.is_focused(window));
-                                        let next = if event.keystroke.modifiers.shift {
-                                            current
-                                                .filter(|index| *index > 0)
-                                                .map_or(focus_order.len() - 1, |index| index - 1)
-                                        } else {
-                                            current
-                                                .map_or(0, |index| (index + 1) % focus_order.len())
-                                        };
-                                        focus_order[next].focus(window, cx);
-                                        cx.stop_propagation();
-                                    }
-                                },
-                            ))
-                            .w(px(640.))
-                            .max_w_full()
-                            .max_h(px(720.))
-                            .relative()
                             .flex()
-                            .flex_col()
-                            .child(on_card(
-                                24.,
-                                shapes::Corner::Squircle,
-                                t.background_panel,
-                                Some(t.border),
-                            ))
-                            .child(
-                                div()
-                                    .p(px(24.))
-                                    .flex_none()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(8.))
-                                    .child(text(title, 20., 26., 500., t.text))
-                                    .child(
-                                        text(subtitle, 14., 20., 430., t.text_secondary)
-                                            .whitespace_normal(),
-                                    ),
+                            .items_center()
+                            .justify_end()
+                            .gap(px(12.))
+                            .child(cancel)
+                            .child(save),
+                    ),
+            );
+        Some(
+            gpui::deferred(
+                gpui::anchored()
+                    .position(gpui::point(px(0.), px(0.)))
+                    .child(
+                        div()
+                            .w(viewport.width)
+                            .h(viewport.height)
+                            .occlude()
+                            .bg(gpui::rgba(0x00000022))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(move |this, _, window, cx| {
+                                    if !pending {
+                                        this.close(window, cx);
+                                    }
+                                }),
                             )
-                            .child(
-                                div()
-                                    .id("import-dialog-content")
-                                    .min_h_0()
-                                    .overflow_y_scroll()
-                                    .children(rows),
-                            )
-                            .children(state.error.as_ref().map(|error| {
-                                div().id("import-dialog-error").px(px(24.)).py(px(8.)).role(gpui::Role::Alert).child(
-                                    text(error.clone(), 13., 18., 430., t.text_error)
-                                        .whitespace_normal(),
-                                )
-                            }))
-                            .child(
-                                div()
-                                    .p(px(24.))
-                                    .flex_none()
-                                    .flex()
-                                    .justify_end()
-                                    .gap(px(8.))
-                                    .child(cancel)
-                                    .child(save),
-                            ),
+                            .child(surface),
                     ),
             )
             .into_any_element(),
@@ -1356,16 +1402,25 @@ impl Render for ImportPage {
         }
         if state.import_completed != self.import_completed {
             self.import_completed = state.import_completed;
-            self.close(window, cx);
-            if let Load::Ready(histories) = &state.histories {
-                if let Some(history) = histories.first() {
-                    self.expanded.insert(history.import_id.clone());
-                }
+            if matches!(self.modal, Some(Modal::Review { .. })) {
+                self.close(window, cx);
             }
         }
         if state.preferences_saved != self.preferences_saved {
             self.preferences_saved = state.preferences_saved;
             self.close(window, cx);
+        }
+        if let Load::Ready(histories) = &state.histories
+            && let Some(latest) = histories.first()
+            && self.history_head.as_deref() != Some(latest.import_id.as_str())
+        {
+            self.history_head = Some(latest.import_id.clone());
+            self.expanded.extend(
+                histories
+                    .iter()
+                    .filter(|history| latest.completed_at_ms - history.completed_at_ms <= 60_000)
+                    .map(|history| history.import_id.clone()),
+            );
         }
         let detection = self.detection(&state, window, cx);
         let sync = state.policy.sync.then(|| self.sync(&state, window, cx));
@@ -1423,7 +1478,15 @@ fn row(
                         })),
                 ),
         )
-        .child(div().flex_none().child(control))
+        .child(
+            div()
+                .flex_none()
+                .min_w(px(160.))
+                .flex()
+                .items_center()
+                .justify_end()
+                .child(control),
+        )
 }
 
 fn group(
@@ -1433,7 +1496,6 @@ fn group(
     layer: &Layer,
     t: &Theme,
 ) -> Div {
-    let last = rows.len().saturating_sub(1);
     div()
         .flex()
         .flex_col()
@@ -1449,38 +1511,45 @@ fn group(
                     subtitle.map(|subtitle| text(subtitle, 12., 16., 430., t.text_secondary)),
                 ),
         )
-        .child(
+        .child(card(
+            rows,
+            deco(
+                layer,
+                20.,
+                shapes::Corner::Squircle,
+                t.background_panel,
+                Some(t.border),
+            ),
+            t,
+        ))
+}
+
+fn card(rows: Vec<Div>, surface: AnyElement, t: &Theme) -> Div {
+    let last = rows.len().saturating_sub(1);
+    div()
+        .relative()
+        .p(px(1.))
+        .child(surface)
+        .child(rounded_clip(
+            px(19.),
+            shapes::Corner::Squircle,
             div()
-                .relative()
-                .p(px(1.))
-                .child(deco(
-                    layer,
-                    20.,
-                    shapes::Corner::Squircle,
-                    t.background_panel,
-                    Some(t.border),
-                ))
-                .child(rounded_clip(
-                    px(19.),
-                    shapes::Corner::Squircle,
-                    div()
-                        .flex()
-                        .flex_col()
-                        .children(rows.into_iter().enumerate().map(|(index, row)| {
-                            row.when(index < last, |row| {
-                                row.child(
-                                    div()
-                                        .absolute()
-                                        .left(px(16.))
-                                        .right(px(16.))
-                                        .bottom_0()
-                                        .h(px(1.))
-                                        .bg(t.border),
-                                )
-                            })
-                        })),
-                )),
-        )
+                .flex()
+                .flex_col()
+                .children(rows.into_iter().enumerate().map(|(index, row)| {
+                    row.when(index < last, |row| {
+                        row.child(
+                            div()
+                                .absolute()
+                                .left(px(16.))
+                                .right(px(16.))
+                                .bottom_0()
+                                .h(px(1.))
+                                .bg(t.border),
+                        )
+                    })
+                })),
+        ))
 }
 
 fn provider_icon(provider: Provider, t: &Theme) -> AnyElement {
@@ -1540,11 +1609,27 @@ fn known_categories(state: &ImportState) -> BTreeSet<ItemType> {
             );
         }
     }
-    categories.extend(
-        ItemType::ALL
-            .into_iter()
-            .filter(|category| state.sync_state.category_selected(*category)),
-    );
+    categories.extend(ItemType::ALL.into_iter().filter(|category| {
+        if *category == ItemType::Sessions {
+            return state.sync_state.selection.contains_key("chats");
+        }
+        state.sync_state.selection.keys().any(|key| {
+            let mut parts = key.split(':');
+            let first = parts.next();
+            let item_type = if first == Some("projects") {
+                parts.next()
+            } else {
+                first
+            };
+            let provider = parts.next();
+            item_type == Some(category.id())
+                && state
+                    .sync_state
+                    .provider_ids
+                    .iter()
+                    .any(|id| Some(id.id()) == provider)
+        })
+    }));
     categories
 }
 
@@ -1630,6 +1715,33 @@ mod tests {
     use gpui::{AppContext as _, HeadlessAppContext, Keystroke, size};
 
     #[test]
+    fn legacy_project_selection_does_not_invent_available_categories() {
+        let item = DetectedItem {
+            provider_id: Provider::ClaudeCode,
+            item: bridge::imports::MigrationItem {
+                item_type: ItemType::AgentsMd,
+                description: "Recorded instructions".into(),
+                cwd: Some("/owned/project".into()),
+                details: None,
+            },
+        };
+        let state = ImportState {
+            detected: Load::Ready(Arc::new(vec![item])),
+            sync_state: SyncState {
+                version: 1,
+                provider_ids: vec![Provider::ClaudeCode],
+                selection: BTreeMap::from([("projects".into(), true)]),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            known_categories(&state),
+            BTreeSet::from([ItemType::AgentsMd])
+        );
+    }
+
+    #[test]
     fn customization_cancels_drafts_and_rejects_an_empty_selection() {
         #[cfg(target_os = "macos")]
         std::panic::set_hook(Box::new(|info| {
@@ -1656,7 +1768,11 @@ mod tests {
             },
         };
         let mut sync_state = SyncState::default();
-        sync_state.merge_import(std::slice::from_ref(&item), 1_000);
+        sync_state.merge_import(
+            std::slice::from_ref(&item),
+            std::slice::from_ref(&item),
+            1_000,
+        );
         cx.update(|cx| {
             theme::load_fonts(cx);
             cx.set_global(Theme::dark());
@@ -1685,6 +1801,7 @@ mod tests {
                     expanded: BTreeSet::new(),
                     categories: BTreeSet::new(),
                     show_all_history: false,
+                    history_head: None,
                     import_completed: 0,
                     preferences_saved: 0,
                     attention_tab: ItemType::McpServerConfig,
@@ -1710,15 +1827,14 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
         capture(&mut cx, "native-customize.png");
-        window
-            .update(&mut cx, |_, window, cx| {
-                focus::handle("sync-category-SKILLS", 0, window, cx)
-                    .read(cx)
-                    .handle
-                    .focus(window, cx);
-                window.dispatch_keystroke(Keystroke::parse("space").unwrap(), cx);
-            })
-            .unwrap();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.dispatch_keystroke(Keystroke::parse("tab").unwrap(), cx);
+            window.dispatch_keystroke(Keystroke::parse("space").unwrap(), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update(|cx| cx.update_global::<ImportState, _>(|state, _| state.import_completed += 1));
+        window.update(&mut cx, |_, _, cx| cx.notify()).unwrap();
         cx.run_until_parked();
         window
             .update(&mut cx, |page, window, cx| {
@@ -1740,11 +1856,10 @@ mod tests {
             })
             .unwrap();
         capture(&mut cx, "native-empty-selection.png");
-        window
-            .update(&mut cx, |_, window, cx| {
-                window.dispatch_keystroke(Keystroke::parse("escape").unwrap(), cx);
-            })
-            .unwrap();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.dispatch_keystroke(Keystroke::parse("escape").unwrap(), cx);
+        })
+        .unwrap();
         cx.run_until_parked();
         window
             .update(&mut cx, |page, window, cx| {

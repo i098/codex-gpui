@@ -114,13 +114,14 @@ impl ItemType {
 
     pub fn icon(self) -> &'static str {
         match self {
-            Self::Sessions => "new-chat",
-            Self::AgentsMd | Self::Memory => "settings-import",
-            Self::Config | Self::McpServerConfig => "settings-configuration",
-            Self::Hooks => "settings-hooks",
-            Self::Skills | Self::Commands => "settings-code-review",
-            Self::Subagents => "settings-profile",
-            Self::Plugins => "settings-plugins",
+            Self::Sessions => "import-category-chats",
+            Self::AgentsMd | Self::Memory => "import-category-document",
+            Self::Config | Self::McpServerConfig => "import-category-braces",
+            Self::Hooks => "import-category-bolt",
+            Self::Skills => "import-category-wrench",
+            Self::Commands => "import-category-terminal",
+            Self::Subagents => "import-category-person",
+            Self::Plugins => "import-category-plugin",
         }
     }
 }
@@ -272,10 +273,16 @@ impl SyncState {
         if on && off { None } else { Some(on) }
     }
 
-    pub fn merge_import(&mut self, items: &[DetectedItem], now_ms: i64) {
+    pub fn merge_import(
+        &mut self,
+        detected: &[DetectedItem],
+        selected: &[DetectedItem],
+        now_ms: i64,
+    ) {
+        let existing = std::mem::take(&mut self.selection);
         self.version = 1;
         self.last_sync_started_at_ms = Some(now_ms);
-        for item in items {
+        for item in selected {
             if !self.provider_ids.contains(&item.provider_id) {
                 self.provider_ids.push(item.provider_id);
             }
@@ -289,6 +296,23 @@ impl SyncState {
                 self.selection.insert(item.key(), true);
             }
         }
+        for item in detected.iter().filter(|item| {
+            !selected.contains(item)
+                && selected
+                    .iter()
+                    .any(|selected| selected.provider_id == item.provider_id)
+        }) {
+            let key = if item.item.item_type == ItemType::Sessions {
+                "chats".into()
+            } else if item.project().is_some() {
+                self.selection.entry("projects".into()).or_insert(false);
+                format!("projects:{}", item.key())
+            } else {
+                item.key()
+            };
+            self.selection.entry(key).or_insert(false);
+        }
+        self.selection.extend(existing);
     }
 }
 
@@ -379,7 +403,8 @@ mod tests {
         let future = item(Provider::ClaudeCode, ItemType::Skills, None, "new");
         let foreign = item(Provider::Cursor, ItemType::Skills, None, "new");
         let mut state = SyncState::default();
-        state.merge_import(&[original.clone(), project.clone()], 1_000);
+        let selected = [original.clone(), project.clone()];
+        state.merge_import(&selected, &selected, 1_000);
         assert!(Preferences::Original.allows(&original, &state));
         assert!(Preferences::Original.allows(&project, &state));
         assert!(!Preferences::Original.allows(&future, &state));
@@ -392,6 +417,32 @@ mod tests {
         assert!(!state.due(1_000 + SYNC_INTERVAL_MS - 1));
         assert!(state.due(1_000 + SYNC_INTERVAL_MS));
         assert!(!state.due(999));
+    }
+
+    #[test]
+    fn another_provider_import_keeps_existing_sync_choices() {
+        let claude_chat = item(
+            Provider::ClaudeCode,
+            ItemType::Sessions,
+            None,
+            "Claude chats",
+        );
+        let cursor_chat = item(Provider::Cursor, ItemType::Sessions, None, "Cursor chats");
+        let cursor_skill = item(Provider::Cursor, ItemType::Skills, None, "Cursor skill");
+        let mut state = SyncState::default();
+        state.merge_import(
+            std::slice::from_ref(&claude_chat),
+            std::slice::from_ref(&claude_chat),
+            1_000,
+        );
+        state.merge_import(
+            &[cursor_chat, cursor_skill.clone()],
+            std::slice::from_ref(&cursor_skill),
+            2_000,
+        );
+        assert_eq!(state.selection.get("chats"), Some(&true));
+        assert!(Preferences::Original.allows(&claude_chat, &state));
+        assert_eq!(state.provider_ids, [Provider::ClaudeCode, Provider::Cursor]);
     }
 
     #[test]

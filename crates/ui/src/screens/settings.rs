@@ -52,7 +52,11 @@ pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
     }
     if !cx.has_global::<imports::ImportState>() {
         cx.set_global(imports::ImportState {
-            policy: bridge::imports::Policy { enabled: true, sync: true, cursor: true },
+            policy: bridge::imports::Policy {
+                enabled: true,
+                sync: true,
+                cursor: true,
+            },
             ..Default::default()
         });
     }
@@ -277,7 +281,8 @@ pub struct SettingsNav {
 impl SettingsNav {
     fn new(page: Entity<SettingsPage>, cx: &mut Context<Self>) -> Self {
         cx.observe(&page, |_, _, cx| cx.notify()).detach();
-        cx.observe_global::<imports::ImportState>(|_, cx| cx.notify()).detach();
+        cx.observe_global::<imports::ImportState>(|_, cx| cx.notify())
+            .detach();
         Self {
             page,
             focus: cx.focus_handle(),
