@@ -161,3 +161,79 @@ fn summary_menu_tracks_the_active_thread_and_toggles_from_composer_focus() -> Re
     assert!(!fx.cx.update(|cx| thread.read(cx).summary_open));
     Ok(())
 }
+
+#[test]
+fn navigation_shortcut_tracks_the_visible_diff_panel() -> Result<()> {
+    let mut fx = Fx::new()?;
+    let available = |fx: &mut Fx| {
+        fx.cx.update_window(fx.window, |_, window, cx| {
+            window.is_action_available(&app::native_menus::ToggleNavigationPanel, cx)
+        })
+    };
+    assert!(!available(&mut fx)?);
+    fx.keys("cmd-2")?;
+    fx.wait_thread("01a13de9-6fff-78e1-84fc-ebb3a2dc873f")?;
+    assert!(!available(&mut fx)?);
+    fx.action(Box::new(ui::OpenChangesPanel))?;
+    let panel = fx
+        .read(|root, _| root.diff_panel().cloned())
+        .expect("open Changes");
+    assert!(available(&mut fx)?);
+    fx.keys("cmd-shift-e")?;
+    assert!(fx.cx.update(|cx| panel.read(cx).file_tree_open()));
+    fx.menu("View", "Toggle navigation panel")?;
+    assert!(!fx.cx.update(|cx| panel.read(cx).file_tree_open()));
+    fx.action(Box::new(ui::ToggleChangesPanel))?;
+    assert!(!available(&mut fx)?);
+    Ok(())
+}
+
+#[test]
+fn first_navigation_click_pins_the_preview_and_opens_the_tree() -> Result<()> {
+    let mut fx = Fx::new()?;
+    fx.keys("cmd-2")?;
+    fx.wait_thread("01a13de9-6fff-78e1-84fc-ebb3a2dc873f")?;
+    let link = fx.at("thread", "src/math.py")?;
+    fx.click(link)?;
+    let file = fx
+        .read(|root, _| root.file_view().cloned())
+        .expect("file preview");
+    assert!(fx.read(|_, cx| file.read(cx).is_preview()));
+    fx.click((1177., 68.))?;
+    assert!(fx.read(|_, cx| file.read(cx).file_tree_open()));
+    assert!(!fx.read(|_, cx| file.read(cx).is_preview()));
+    file.update(&mut fx.cx, |view, cx| {
+        view.navigate_file(view.path.clone(), None, cx);
+        view.set_contents(Ok("first\nsecond\n".into()), cx);
+        view.set_tree_directory(
+            "",
+            Ok(serde_json::json!({
+                "directoryPath": "",
+                "entries": [{ "name": "other.rs", "path": "other.rs", "type": "file" }]
+            })),
+            cx,
+        );
+    });
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        file.update(cx, |view, cx| view.focus_file_tree(window, cx));
+    })?;
+    fx.keys("cmd-l 2 enter")?;
+    assert_eq!(fx.read(|_, cx| file.read(cx).line), Some(2));
+    Ok(())
+}
+
+#[test]
+fn first_file_search_click_preserves_the_search_input_focus() -> Result<()> {
+    let mut fx = Fx::new()?;
+    fx.keys("cmd-2")?;
+    fx.wait_thread("01a13de9-6fff-78e1-84fc-ebb3a2dc873f")?;
+    fx.composer().update(&mut fx.cx, |composer, cx| {
+        composer.set_text("keep draft", cx)
+    });
+    let link = fx.at("thread", "src/math.py")?;
+    fx.click(link)?;
+    fx.click((1139., 68.))?;
+    fx.type_text("math")?;
+    assert_eq!(fx.composer_text()?, "keep draft");
+    Ok(())
+}

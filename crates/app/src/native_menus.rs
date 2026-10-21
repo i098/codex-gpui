@@ -1,4 +1,5 @@
 mod about;
+pub(crate) mod navigation;
 
 use crate::{
     CloseWindow, FindInThread, GoBack, GoForward, Hide, HideOthers, LogOut, Minimize, NewChat,
@@ -22,6 +23,7 @@ actions!(
         BringAllToFront,
         ToggleFullScreen,
         TogglePinnedSummary,
+        ToggleNavigationPanel,
     ]
 );
 
@@ -31,6 +33,7 @@ pub(crate) fn init(cx: &mut App) {
         KeyBinding::new("cmd-shift-v", PasteAndMatchStyle, None),
         KeyBinding::new("cmd-alt-shift-v", PasteAndMatchStyle, None),
         KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, None),
+        KeyBinding::new("cmd-shift-e", ToggleNavigationPanel, None),
     ]);
     cx.on_action(|_: &OpenDocumentation, cx| {
         cx.open_url("https://developers.openai.com/codex/app")
@@ -67,6 +70,7 @@ pub(crate) fn actions(root: Div, owner: &crate::Root, cx: &mut Context<crate::Ro
     } else {
         root
     };
+    let root = navigation::actions(root, owner, cx);
     if ui::native_text::is_speaking(cx) {
         root.on_action(|_: &ui::StopSpeaking, _, cx| ui::native_text::stop_speaking(cx))
     } else {
@@ -144,6 +148,7 @@ pub(crate) fn menus() -> Vec<Menu> {
         Menu::new("View").items([
             MenuItem::action("Toggle Sidebar", ToggleSidebar),
             MenuItem::action("Toggle Pinned Summary", TogglePinnedSummary),
+            MenuItem::action("Toggle navigation panel", ToggleNavigationPanel),
             MenuItem::action("Toggle Changes Panel", ToggleChangesPanel),
             MenuItem::separator(),
             MenuItem::action("Find", FindInThread),

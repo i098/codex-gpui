@@ -70,7 +70,7 @@ pub mod computer_use;
 mod editor;
 mod footer;
 mod requests;
-mod menu {
+pub(crate) mod menu {
     //! Focus rules for the recorded Radix menus: arrows stop at the ends, Escape returns
     //! focus to the trigger, and Enter or Space activates the focused item.
 
@@ -159,7 +159,7 @@ mod menu {
         }
     }
 
-    pub(super) fn trigger_focus(style: StyleRefinement) -> StyleRefinement {
+    pub(crate) fn trigger_focus(style: StyleRefinement) -> StyleRefinement {
         style.shadow(vec![BoxShadow {
             color: rgb(0x3a83f7).into(),
             offset: point(px(0.), px(0.)),
@@ -572,6 +572,13 @@ const QUEUE_ACTIONS: &str = "Queued message actions";
 const QUEUE_EDIT: &str = "queuedEdit";
 const QUEUE_SWITCH: &str = "queuedQueueing";
 const QUEUE_MENU_WIDTH: f32 = 220.;
+
+#[derive(Clone, Copy)]
+struct EmbeddedField {
+    font_size: Pixels,
+    line_height: Pixels,
+}
+
 pub struct Composer {
     focus_handle: FocusHandle,
     placeholder: SharedString,
@@ -647,6 +654,7 @@ pub struct Composer {
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
+    embedded_field: Option<EmbeddedField>,
 }
 
 impl Composer {
@@ -725,6 +733,7 @@ impl Composer {
             on_approval: None,
             on_model: None,
             plain_field: None,
+            embedded_field: None,
         }
     }
 
@@ -737,6 +746,21 @@ impl Composer {
         let mut editor = Self::new(placeholder, false, cx);
         editor.plain_field = Some(multiline);
         editor.set_text(value, cx);
+        editor
+    }
+
+    pub fn embedded_field(
+        placeholder: &'static str,
+        value: &str,
+        text_size: Pixels,
+        line_height: Pixels,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut editor = Self::settings_field(placeholder, value, false, cx);
+        editor.embedded_field = Some(EmbeddedField {
+            font_size: text_size,
+            line_height,
+        });
         editor
     }
 
@@ -1913,6 +1937,15 @@ impl Render for Composer {
             .on_action(cx.listener(Self::next_command))
             .on_action(cx.listener(Self::previous_command))
             .relative();
+        if self.embedded_field.is_some() {
+            return div().w_full().child(
+                card.key_context(KEY_CONTEXT)
+                    .role(gpui::Role::TextInput)
+                    .aria_label(self.placeholder.clone())
+                    .aria_value(self.content.clone())
+                    .child(self.editor(cx)),
+            );
+        }
         if self.plain_field.is_some() {
             return div().w_full().child(
                 card.key_context(KEY_CONTEXT)

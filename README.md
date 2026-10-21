@@ -496,6 +496,8 @@ Edit supports plain-text Paste and Match Style and selection-only Delete, includ
 View contains Find; Help opens the Codex changelog, troubleshooting guide, and service status page.
 View > Toggle Pinned Summary opens and closes the current thread summary.
 Home, sign-in, and pending thread loads keep this command disabled.
+View > Toggle navigation panel (`Command+Shift+E`) switches the active Changes tree or file browser.
+The file browser reads workspace entries and uses app-server file search; clearing the filter restores the browse selection.
 The `native_menus` and `s013` tests check the edit actions and Find navigation on macOS.
 About shows this build's version in a separate window; Escape closes it.
 The Window menu has Bring All to Front, and Control+Command+F toggles the active window's fullscreen state.
