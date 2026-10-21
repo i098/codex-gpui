@@ -177,6 +177,10 @@ fn avatar(under: Hsla) -> AnyElement {
                     .map(|(_, _, image)| image.clone())
             });
             let Some(image) = cached.or_else(|| {
+                // The replaced raster (another box or hover color) leaves the sprite atlas.
+                if let Some((_, _, old)) = CACHE.take() {
+                    window.drop_image(old).ok();
+                }
                 let image = Arc::new(shapes::raster_images(
                     &[(&DECODED, at)],
                     at,
