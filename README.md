@@ -345,6 +345,9 @@ An extra layer changes glyph edge bytes even when its opacity is one.
 `shapes` links Skia binaries built with Chromium's `SkUserConfig.h` legacy defines.
 `.cargo/config.toml` points `SKIA_BINARIES_URL` to these binaries.
 
+Raster output buffers stop at the visible viewport.
+Compositor tiles keep their original size, so long scrollers preserve edge rasterization.
+
 On macOS, popup backdrops capture the current frame's scene before the popup.
 The capture includes text, images, clipping, and opacity.
 Nested filters use the parent layer's content, not its already-filtered backdrop.
