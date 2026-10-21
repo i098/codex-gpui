@@ -313,6 +313,7 @@ pub(crate) fn execute(host: &dyn host::Host, operation: &Operation) -> Result<Va
             None,
         ),
         Operation::Configs => return configs(host, &identity),
+        Operation::Vault => return vault_entries(host, &identity),
         Operation::Config(id) => ("GET", cloud_path(&[id]), None),
         Operation::ConfigDelete(id) => ("DELETE", cloud_path(&[id]), None),
         Operation::ConfigCreate(body) => ("POST", cloud_path(&[]), Some(body.clone())),
@@ -334,6 +335,35 @@ fn cloud_path(parts: &[&str]) -> String {
         .expect("HTTP URL")
         .extend(parts.iter().copied());
     url.into()
+}
+
+fn vault_entries(host: &dyn host::Host, identity: &host::Identity) -> Result<Value> {
+    let mut entries = Vec::new();
+    for namespace in ["sensitive", "not_sensitive"] {
+        let mut cursor: Option<String> = None;
+        let mut seen = std::collections::HashSet::new();
+        loop {
+            let mut url =
+                Url::parse("https://codex-cloud-backend.chatgpt.com/v1/personal-secrets")?;
+            url.query_pairs_mut().append_pair("namespace", namespace);
+            if let Some(cursor) = &cursor {
+                url.query_pairs_mut().append_pair("cursor", cursor);
+            }
+            let page = request(host, identity, "GET", url.as_str(), None)?;
+            for secret in page["secrets"]
+                .as_array()
+                .context("Invalid personal vault response")?
+            {
+                entries.push(json!({"namespace":namespace,"secret":secret}));
+            }
+            cursor = page["next_cursor"].as_str().map(str::to_owned);
+            let Some(next) = &cursor else {
+                break;
+            };
+            ensure!(seen.insert(next.clone()), "Personal vault cursor repeated");
+        }
+    }
+    Ok(entries.into())
 }
 
 fn configs(host: &dyn host::Host, identity: &host::Identity) -> Result<Value> {
@@ -459,6 +489,7 @@ fn error_label(operation: &Operation) -> &'static str {
         Operation::Reset(_) => "Unable to reset cloud environment cache",
         Operation::Access => "Unable to load cloud access",
         Operation::Configs => "Couldn’t load saved environments",
+        Operation::Vault => "Couldn’t load all personal vault entries",
         Operation::Config(_) => "Couldn’t load environment",
         Operation::ConfigSave { .. } => "Couldn’t save environment. Reload and try again",
         Operation::ConfigDelete(_) => "Couldn’t delete environment",

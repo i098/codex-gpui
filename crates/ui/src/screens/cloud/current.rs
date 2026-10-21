@@ -1,5 +1,12 @@
 use super::*;
 
+#[derive(Clone, Copy)]
+enum CurrentControl {
+    Create,
+    Retry,
+    Tab(bool),
+}
+
 #[derive(Default)]
 pub(super) struct Current {
     pub records: Vec<Value>,
@@ -10,6 +17,8 @@ pub(super) struct Current {
     pub network: String,
     pub sharing: String,
     pub deleting: Option<String>,
+    pub vault: bool,
+    pub vault_entries: Vec<Value>,
 }
 
 impl CloudPage {
@@ -72,6 +81,12 @@ impl CloudPage {
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
         match operation {
+            Operation::Vault => {
+                self.current.vault_entries = body
+                    .as_array()
+                    .ok_or("Couldn’t load all personal vault entries")?
+                    .clone();
+            }
             Operation::Configs => {
                 self.current.records = body
                     .as_array()
@@ -236,6 +251,231 @@ impl CloudPage {
         self.load(Operation::ConfigCreate(json!({"name":name,"repositories":repositories,"network_policy":{"type":"restricted","presets":["package_managers"],"egress_rules":[]},"share_settings":"private","start_onboarding":false})),cx);
     }
 
+    pub(super) fn current_screen(&self, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.theme().clone();
+        let secondary = gpui::Hsla { a: 0.65, ..t.text };
+        div().size_full().relative().flex().flex_col()
+            .child(div().h(px(46.)).flex_none())
+            .child(div().id("cloud-current-page").overflow_y_scroll().flex_1().layer()
+                .child(div().pt(px(16.)).pb(px(1.)).flex().flex_col().items_center()
+                    .child(div().w_full().max_w(px(768.)).px(px(20.))
+                        .child(div().py(px(12.)).flex().flex_col().gap(px(4.))
+                            .child(text("Codex Cloud",28.,33.6,500.,t.text))
+                            .child(text("Set up cloud environments with the repositories, tools, and settings Codex needs to work on your projects",14.,24.,430.,secondary)))))
+                .child(div().flex().flex_col().items_center()
+                    .child(div().w_full().max_w(px(768.)).px(px(20.)).pb(px(20.))
+                        .when(self.access.cloud,|d|d.child(self.current_page(cx))))))
+            .children(self.overlay(cx)).children(self.menu_overlay(cx)).into_any_element()
+    }
+
+    fn current_button(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        kind: CurrentControl,
+        cx: &mut Context<Self>,
+        action: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) -> AnyElement {
+        let t = cx.theme().clone();
+        let secondary = gpui::Hsla { a: 0.65, ..t.text };
+        let clear = gpui::rgba(0).into();
+        let (height, padding, size, line, weight, color, fill, radius, border) = match kind {
+            CurrentControl::Create => (
+                28.,
+                9.,
+                13.,
+                18.,
+                430.,
+                t.control_background,
+                t.button_primary_solid,
+                12.5,
+                Some(t.border),
+            ),
+            CurrentControl::Retry => (
+                24.,
+                9.,
+                12.,
+                16.,
+                430.,
+                t.text,
+                t.text_alpha_5,
+                12.5,
+                Some(clear),
+            ),
+            CurrentControl::Tab(selected) => (
+                26.571428,
+                8.,
+                13.,
+                18.571428,
+                500.,
+                if selected { t.text } else { secondary },
+                if selected { t.surface_secondary } else { clear },
+                10.,
+                None,
+            ),
+        };
+        let content = div()
+            .h(px(height))
+            .px(px(padding))
+            .relative()
+            .flex()
+            .items_center()
+            .justify_center()
+            .gap(px(4.))
+            .child(super::super::settings::on_card(
+                radius,
+                shapes::Corner::Squircle,
+                fill,
+                border,
+            ))
+            .when(matches!(kind, CurrentControl::Create), |d| {
+                d.child(crate::icon::icon("cloud-create", 16., color))
+            })
+            .child(text(label, size, line, weight, color));
+        self.wire_button(id.into(), label.into(), content, cx, action)
+    }
+
+    fn current_toolbar(&self, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.theme().clone();
+        let secondary = gpui::Hsla { a: 0.65, ..t.text };
+        div()
+            .relative()
+            .pt(px(20.))
+            .pb(px(8.))
+            .child(
+                div()
+                    .pb(px(8.))
+                    .flex()
+                    .items_start()
+                    .gap(px(16.))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(2.))
+                            .child(self.current_button(
+                                "cloud-environments-tab",
+                                "Environments",
+                                CurrentControl::Tab(!self.current.vault),
+                                cx,
+                                |this, _, cx| {
+                                    this.current.vault = false;
+                                    this.current.config = None;
+                                    this.refresh(cx);
+                                },
+                            ))
+                            .child(self.current_button(
+                                "cloud-vault-tab",
+                                "Personal vault",
+                                CurrentControl::Tab(self.current.vault),
+                                cx,
+                                |this, _, cx| {
+                                    this.current.vault = true;
+                                    this.current.config = None;
+                                    this.load(Operation::Vault, cx);
+                                },
+                            )),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .justify_end()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(
+                                div()
+                                    .w(px(160.))
+                                    .h(px(28.))
+                                    .px(px(13.))
+                                    .relative()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(4.))
+                                    .child(super::super::settings::on_card(
+                                        9999.,
+                                        shapes::Corner::Round,
+                                        gpui::rgba(0).into(),
+                                        Some(t.border_strong),
+                                    ))
+                                    .child(crate::icon::icon("search", 16., secondary))
+                                    .child(div().flex_1().min_w_0().child(self.query.clone())),
+                            )
+                            .when(!self.current.vault, |d| {
+                                d.child(self.current_button(
+                                    "config-create",
+                                    "Create environment",
+                                    CurrentControl::Create,
+                                    cx,
+                                    |this, _, cx| {
+                                        this.current.creating = true;
+                                        this.current.repositories.clear();
+                                        this.repository_picker = true;
+                                        this.load(Operation::Repositories(String::new()), cx);
+                                    },
+                                ))
+                            }),
+                    ),
+            )
+            .child(
+                gpui::deferred(
+                    div()
+                        .absolute()
+                        .top_full()
+                        .left_0()
+                        .right_0()
+                        .h(px(32.))
+                        .bg(gpui::linear_gradient(
+                            180.,
+                            gpui::linear_color_stop(t.surface, 0.),
+                            gpui::linear_color_stop(gpui::Hsla { a: 0., ..t.surface }, 1.),
+                        )),
+                )
+                .with_priority(1),
+            )
+            .into_any_element()
+    }
+
+    fn current_notice(&self, message: &str, retry: bool, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.theme().clone();
+        let secondary = gpui::Hsla { a: 0.65, ..t.text };
+        div()
+            .relative()
+            .p(px(1.))
+            .child(super::super::settings::on_card(
+                20.,
+                shapes::Corner::Squircle,
+                t.background_panel,
+                Some(t.border),
+            ))
+            .child(
+                div()
+                    .min_h(px(64.))
+                    .px(px(16.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(text(message.to_owned(), 13., 18.571428, 430., secondary))
+                    .when(retry, |d| {
+                        d.child(self.current_button(
+                            "cloud-current-retry",
+                            "Retry",
+                            CurrentControl::Retry,
+                            cx,
+                            |this, _, cx| {
+                                if this.current.vault {
+                                    this.load(Operation::Vault, cx);
+                                } else {
+                                    this.refresh(cx);
+                                }
+                            },
+                        ))
+                    }),
+            )
+            .into_any_element()
+    }
+
     pub(super) fn current_page(&self, cx: &mut Context<Self>) -> AnyElement {
         let t = cx.theme().clone();
         if let Some(config) = &self.current.config {
@@ -393,44 +633,41 @@ impl CloudPage {
                 )
             })
             .collect::<Vec<_>>();
+        let contents = if let Some(error) = self.error.as_deref() {
+            self.current_notice(error, true, cx)
+        } else if self.pending {
+            self.current_notice(
+                if self.current.vault {
+                    "Loading personal vault…"
+                } else {
+                    "Loading saved environments…"
+                },
+                false,
+                cx,
+            )
+        } else if self.current.vault {
+            let entries = self
+                .current
+                .vault_entries
+                .iter()
+                .filter_map(|entry| entry["secret"]["name"].as_str())
+                .map(|name| text(name.to_owned(), 13., 18.571428, 430., t.text).into_any_element())
+                .collect::<Vec<_>>();
+            if entries.is_empty() {
+                self.current_notice("No entries yet", false, cx)
+            } else {
+                Self::group("", entries, &t)
+            }
+        } else if self.current.records.is_empty() {
+            self.current_notice("No saved environments", false, cx)
+        } else {
+            Self::group("", rows, &t)
+        };
         div()
             .flex()
             .flex_col()
-            .gap(px(16.))
-            .child(
-                div()
-                    .flex()
-                    .gap(px(8.))
-                    .child(div().flex_1().child(self.query.clone()))
-                    .child(
-                        self.button("config-search", "Search", false, cx, |_, _, cx| cx.notify()),
-                    )
-                    .child(self.button(
-                        "config-create",
-                        "Create environment",
-                        true,
-                        cx,
-                        |this, _, cx| {
-                            this.current.creating = true;
-                            this.current.repositories.clear();
-                            this.repository_picker = true;
-                            this.load(Operation::Repositories(String::new()), cx);
-                        },
-                    )),
-            )
-            .child(Self::group("Environments", rows, &t))
-            .when(
-                self.current.records.is_empty() && !self.pending && self.error.is_none(),
-                |d| {
-                    d.child(text(
-                        "No saved environments",
-                        14.,
-                        21.,
-                        430.,
-                        t.text_secondary,
-                    ))
-                },
-            )
+            .child(self.current_toolbar(cx))
+            .child(div().pt(px(20.)).child(contents))
             .into_any_element()
     }
 }

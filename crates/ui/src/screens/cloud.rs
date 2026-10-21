@@ -6,7 +6,7 @@ use crate::{
     focus, text,
 };
 use gpui::{
-    AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle,
+    AnyElement, App, AppContext as _, Context, Div, Entity, EventEmitter, FocusHandle,
     InteractiveElement, IntoElement, ParentElement, Render, SharedString,
     StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder as _, px,
 };
@@ -42,6 +42,7 @@ pub enum Operation {
     Delete(String),
     Reset(String),
     Configs,
+    Vault,
     Config(String),
     ConfigSave {
         id: String,
@@ -112,8 +113,8 @@ impl EventEmitter<Request> for CloudPage {}
 
 impl CloudPage {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        let query =
-            cx.new(|cx| Composer::settings_field("Search cloud environments", "", false, cx));
+        let query = cx.new(|cx| Composer::settings_search("Search environments", "", cx));
+        cx.observe(&query, |_, _, cx| cx.notify()).detach();
         Self {
             access: Access::default(),
             access_loaded: false,
@@ -159,6 +160,7 @@ impl CloudPage {
                 | Operation::Machines
                 | Operation::Repositories(_)
                 | Operation::Configs
+                | Operation::Vault
                 | Operation::Config(_)
         )
         .then(|| operation.clone());
@@ -212,6 +214,7 @@ impl CloudPage {
     ) -> Result<(), String> {
         match operation {
             Operation::Configs
+            | Operation::Vault
             | Operation::Config(_)
             | Operation::ConfigSave { .. }
             | Operation::ConfigDelete(_)
@@ -500,6 +503,26 @@ impl CloudPage {
             t.primary_soft_alpha
         };
         let color = if primary { t.background_panel } else { t.text };
+        let content = div()
+            .h(px(32.))
+            .px(px(12.))
+            .rounded(px(12.))
+            .bg(fill)
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .child(text(label.clone(), 13., 18., 500., color));
+        self.wire_button(id, label, content, cx, action)
+    }
+
+    fn wire_button(
+        &self,
+        id: SharedString,
+        label: SharedString,
+        content: Div,
+        cx: &mut Context<Self>,
+        action: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) -> AnyElement {
         let action = std::rc::Rc::new(action);
         let click = action.clone();
         let disabled = self.pending;
@@ -509,7 +532,7 @@ impl CloudPage {
             .entry(id.clone())
             .or_insert_with(|| cx.focus_handle().tab_stop(true))
             .clone();
-        div()
+        content
             .id(id)
             .role(gpui::Role::Button)
             .aria_label(label.clone())
@@ -519,15 +542,7 @@ impl CloudPage {
                     handle.focus(window, cx);
                 }
             })
-            .h(px(32.))
-            .px(px(12.))
-            .rounded(px(12.))
-            .bg(fill)
-            .flex()
-            .items_center()
-            .gap(px(6.))
             .when(disabled, |d| d.opacity(0.5))
-            .child(text(label, 13., 18., 500., color))
             .on_click(cx.listener(move |this, _, window, cx| {
                 if !disabled {
                     click(this, window, cx);
@@ -1528,34 +1543,29 @@ impl CloudPage {
 impl Render for CloudPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.prepare_fields(cx);
+        if self.current_mode == Some(true) {
+            return self.current_screen(cx);
+        }
         let t = cx.theme().clone();
-        let title = if self.current_mode == Some(true) {
-            "Codex Cloud".to_owned()
-        } else {
-            match self.view {
-                View::List => "Legacy Codex Cloud".to_owned(),
-                View::Detail => self
-                    .selected
-                    .as_ref()
-                    .map(|e| e.label.clone())
-                    .unwrap_or_else(|| "Cloud environment".into()),
-                View::Editor => {
-                    if self.editor.as_ref().is_some_and(|e| e.original.is_some()) {
-                        "Edit cloud environment".into()
-                    } else {
-                        "Create cloud environment".into()
-                    }
+        let title = match self.view {
+            View::List => "Legacy Codex Cloud".to_owned(),
+            View::Detail => self
+                .selected
+                .as_ref()
+                .map(|e| e.label.clone())
+                .unwrap_or_else(|| "Cloud environment".into()),
+            View::Editor => {
+                if self.editor.as_ref().is_some_and(|e| e.original.is_some()) {
+                    "Edit cloud environment".into()
+                } else {
+                    "Create cloud environment".into()
                 }
             }
         };
-        let body = if self.current_mode == Some(true) {
-            self.current_page(cx)
-        } else {
-            match self.view {
-                View::List => self.list(cx),
-                View::Detail => self.detail(cx),
-                View::Editor => self.editor(cx),
-            }
+        let body = match self.view {
+            View::List => self.list(cx),
+            View::Detail => self.detail(cx),
+            View::Editor => self.editor(cx),
         };
         div()
             .size_full()
@@ -1582,14 +1592,7 @@ impl Render for CloudPage {
                             .flex_col()
                             .gap(px(20.))
                             .child(text(title, 28., 33.6, 500., t.text))
-                            .when(
-                                if self.current_mode == Some(true) {
-                                    self.access.cloud
-                                } else {
-                                    self.access.legacy
-                                },
-                                |d| d.child(body),
-                            )
+                            .when(self.access.legacy, |d| d.child(body))
                             .when(!self.access_loaded, |d| {
                                 d.child(text(
                                     "Loading cloud access…",
@@ -1620,5 +1623,6 @@ impl Render for CloudPage {
             )
             .children(self.overlay(cx))
             .children(self.menu_overlay(cx))
+            .into_any_element()
     }
 }
