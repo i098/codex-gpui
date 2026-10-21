@@ -995,6 +995,13 @@ mod tests {
             eprintln!("{info}");
             std::process::exit(101);
         }));
+        let oracle: Value = serde_json::from_slice(&std::fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/route1/oracle.json"),
+        )?)?;
+        let seen = oracle["persisted-atoms"]["state"]["seen-model-upgrade-list"].clone();
+        anyhow::ensure!(seen.is_array(), "Recorded announcement history is missing");
+        let mut settings = crate::host_settings::Settings::default();
+        settings.write("seen-model-upgrade-list", seen)?;
         let mut app = gpui::HeadlessAppContext::with_platform(
             textsys::text_system(),
             Arc::new(theme::Assets),
@@ -1003,7 +1010,7 @@ mod tests {
         app.update(|cx| {
             theme::load_fonts(cx);
             cx.set_global(theme::Theme::dark());
-            cx.set_global(crate::host_settings::Settings::default());
+            cx.set_global(settings);
             crate::init(cx);
         });
         app.allow_parking();
@@ -1087,6 +1094,16 @@ mod tests {
             );
             app.run_until_parked();
             std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        if let Some(directory) = std::env::var_os("CGX_HOTKEY_EVIDENCE") {
+            std::fs::create_dir_all(&directory)?;
+            app.update_window(popup.into(), |_, window, cx| {
+                ui::composer::Composer::set_caret_transparent(cx, true);
+                window.refresh();
+            })?;
+            app.run_until_parked();
+            app.capture_screenshot(popup.into())?
+                .save(Path::new(&directory).join("native-hotkey-home-empty.png"))?;
         }
         app.update_window(popup.into(), |_, window, cx| {
             popup_root.update(cx, |root, cx| {
