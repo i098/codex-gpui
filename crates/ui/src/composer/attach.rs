@@ -20,6 +20,7 @@ use std::{
 
 pub(super) enum Content {
     File,
+    ContextFile,
     Text(String),
     Image(Arc<gpui::Image>),
 }
@@ -40,6 +41,10 @@ impl Attachment {
             content: Content::File,
             persisted: false,
         }
+    }
+
+    pub(super) fn is_context_file(&self) -> bool {
+        matches!(self.content, Content::ContextFile)
     }
 
     /// A dropped or picked file: an image shows its thumbnail (its bytes stay where they
@@ -230,7 +235,9 @@ impl Composer {
                 cx.background_executor()
                     .spawn(async move { persist(image).map_err(Into::into) }),
             ),
-            Content::File => unreachable!("only clipboard contents are persisted"),
+            Content::File | Content::ContextFile => {
+                unreachable!("only clipboard contents are persisted")
+            }
         };
         cx.spawn(async move |this, cx| {
             let result = save.await;
@@ -286,6 +293,22 @@ impl Composer {
         cx.notify();
     }
 
+    /// Adds a context-file card without changing the draft or its selection.
+    pub fn add_context_file(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if self.attachments.iter().any(|attachment| {
+            matches!(attachment.content, Content::File | Content::ContextFile)
+                && attachment.path == path
+        }) {
+            return;
+        }
+        self.attachments.push(Attachment {
+            path,
+            content: Content::ContextFile,
+            persisted: false,
+        });
+        cx.notify();
+    }
+
     pub(super) fn attachments_row(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
         div()
             .pt(px(8.))
@@ -297,6 +320,12 @@ impl Composer {
             .when(!self.attachments.is_empty(), |d| {
                 d.pt(px(12.)).px(px(12.)).gap(px(12.)).items_end()
             })
+            .when(
+                self.attachments
+                    .iter()
+                    .any(|a| matches!(a.content, Content::ContextFile)),
+                |row| row.pb(px(10.)),
+            )
             .children(
                 self.attachments
                     .iter()
@@ -310,6 +339,9 @@ impl Composer {
                     )
                     .map(|(i, attachment)| {
                         match &attachment.content {
+                            Content::ContextFile => {
+                                return self.context_file_card(i, attachment, t, cx);
+                            }
                             Content::Text(content) => {
                                 return self.text_attachment(i, content, t, cx);
                             }
@@ -377,7 +409,160 @@ impl Composer {
             )
     }
 
-    fn remove_paste_button(&self, i: usize, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+    fn context_file_card(
+        &self,
+        i: usize,
+        attachment: &Attachment,
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let name = attachment
+            .path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        let remove_label = format!("Remove {name}");
+        let code = attachment
+            .path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| {
+                [
+                    "py", "rs", "js", "jsx", "ts", "tsx", "go", "c", "cpp", "h", "java", "swift",
+                    "json", "toml", "yaml", "yml", "sh", "css", "html",
+                ]
+                .iter()
+                .any(|suffix| ext.eq_ignore_ascii_case(suffix))
+            });
+        let group: SharedString = format!("context-file-{i}").into();
+        let surface_decoration = |color, fill| {
+            shapes::decoration(shapes::Decoration {
+                radius: Corners::all(px(10.)),
+                corner: shapes::Corner::Squircle,
+                fill,
+                shadows: vec![shapes::Shadow {
+                    color,
+                    offset: point(px(0.), px(0.)),
+                    blur: px(0.),
+                    spread: px(1.),
+                    inset: true,
+                }],
+                ..Default::default()
+            })
+        };
+        let surface = div()
+            .relative()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(shapes::decoration(deco(0., t.surface_secondary, vec![])))
+            .child(
+                div()
+                    .h(px(90.))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icon("context-file-document", 24., t.text.opacity(0.65)).runtime()),
+            )
+            .child(
+                div()
+                    .relative()
+                    .h(px(32.))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .px(px(8.))
+                    .child(shapes::decoration(deco(0., t.surface, vec![])))
+                    .child(
+                        icon(
+                            if code {
+                                "context-file-code"
+                            } else {
+                                "context-file-document"
+                            },
+                            16.,
+                            t.text,
+                        )
+                        .runtime(),
+                    )
+                    .child(
+                        text(name.clone(), 12., 16., 430., t.text)
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis(),
+                    ),
+            );
+        div()
+            .id(("context-file", i))
+            .group(group.clone())
+            .role(gpui::Role::Group)
+            .aria_label(name)
+            .relative()
+            .w(px(160.))
+            .h(px(122.))
+            .flex_none()
+            .child(crate::rounded_clip(
+                px(10.),
+                shapes::Corner::Squircle,
+                surface,
+            ))
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .group_hover(group.clone(), |s| s.opacity(0.))
+                    .child(surface_decoration(t.border, None)),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .opacity(0.)
+                    .group_hover(group.clone(), |s| s.opacity(1.))
+                    .child(surface_decoration(t.border_strong, Some(t.text_alpha_5))),
+            )
+            .child(
+                self.remove_paste_button(i, t, cx)
+                    .role(gpui::Role::Button)
+                    .focusable()
+                    .tab_index(0)
+                    .focus_visible(menu::trigger_focus)
+                    .aria_label(remove_label)
+                    .on_key_down(cx.listener(move |this, event: &gpui::KeyDownEvent, _, cx| {
+                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                            this.remove_paste(i, cx);
+                            cx.stop_propagation();
+                        }
+                    }))
+                    .top(px(-2.))
+                    .right(px(-2.))
+                    .shadow(vec![
+                        gpui::BoxShadow {
+                            color: t.surface,
+                            offset: point(px(0.), px(0.)),
+                            blur_radius: px(0.),
+                            spread_radius: px(2.),
+                            inset: false,
+                        },
+                        gpui::BoxShadow {
+                            color: t.shadow_sm,
+                            offset: point(px(0.), px(1.)),
+                            blur_radius: px(2.),
+                            spread_radius: -px(1.),
+                            inset: false,
+                        },
+                    ])
+                    .opacity(0.)
+                    .group_hover(group, |s| s.opacity(1.))
+                    .focus(|s| s.opacity(1.)),
+            )
+            .into_any_element()
+    }
+
+    fn remove_paste_button(&self, i: usize, t: &Theme, cx: &mut Context<Self>) -> Stateful<Div> {
         div()
             .id(("remove-attachment", i))
             .absolute()
@@ -488,5 +673,42 @@ impl Composer {
             )
             .child(self.remove_paste_button(i, t, cx))
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::AppContext as _;
+
+    #[test]
+    fn context_cards_preserve_the_draft_and_deduplicate_files() {
+        #[cfg(target_os = "macos")]
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        let mut cx = gpui::HeadlessAppContext::new(textsys::text_system());
+        let composer = cx.new(|cx| Composer::new("Work with Codex", true, cx));
+        composer.update(&mut cx, |composer, cx| {
+            composer.set_text("before after", cx);
+            composer.selected_range = 7..7;
+            composer.add_context_file("/work/main.rs".into(), cx);
+            composer.add_context_file("/work/main.rs".into(), cx);
+            composer
+                .attachments
+                .push(Attachment::file("/work/attached.rs".into()));
+            composer.add_context_file("/work/attached.rs".into(), cx);
+            assert_eq!(composer.prompt(), "before after");
+            assert_eq!(composer.selected_range, 7..7);
+            assert_eq!(
+                composer
+                    .attachments
+                    .iter()
+                    .map(|a| a.path.as_path())
+                    .collect::<Vec<_>>(),
+                [Path::new("/work/main.rs"), Path::new("/work/attached.rs")]
+            );
+        });
     }
 }
